@@ -230,3 +230,272 @@ fn soft_rz_flushes_prep_before_an_absorbed_rz_tail() {
         &[QubitId(1)]
     );
 }
+
+fn reset_fixture(mode: ScheduledTransport) -> QisEngine {
+    let mut engine = QisEngine::new(
+        Box::new(crate::QisHeliosInterface::new()),
+        Box::new(crate::selene_simple_runtime().unwrap()),
+    );
+    engine.scheduled_transport = mode;
+    engine.set_num_qubits_hint(2);
+    engine
+        .load_program(
+            program(PULSE_TAIL, true, true).as_bytes(),
+            ProgramFormat::LlvmIrText,
+        )
+        .unwrap();
+    engine
+}
+
+fn assert_waiting(engine: &mut QisEngine, stage: &EngineStage<ByteMessage, Shot>) {
+    let EngineStage::NeedsProcessing(commands) = stage else {
+        panic!("worker must wait for measurement")
+    };
+    assert_ne!(commands.as_bytes(), [0_u8; 0]);
+    assert_eq!(engine.measurement_mapping, [0]);
+    assert_eq!(engine.wait_for_result_needed(0), Some(0));
+    assert!(engine.interface.is_none());
+    assert!(!engine.check_worker_complete());
+}
+
+fn finish_reset_shot(
+    engine: &mut QisEngine,
+    quantum: &mut impl Engine<Input = ByteMessage, Output = ByteMessage>,
+    mut stage: EngineStage<ByteMessage, Shot>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(Instant::now() < deadline, "second shot did not finish");
+        match stage {
+            EngineStage::NeedsProcessing(commands) => {
+                let reply = quantum.process(commands).unwrap();
+                stage = engine.continue_processing(reply).unwrap();
+            }
+            EngineStage::Complete(shot) => {
+                assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+                assert!(engine.interface.is_some());
+                assert!(engine.dynamic_state.as_ref().unwrap().finalized);
+                return;
+            }
+        }
+    }
+}
+
+#[test]
+fn reset_discards_real_worker_execution_failure_and_reuses_interface() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let source = program(
+        &format!(
+            "br i1 %read, label %success, label %failure\n\
+             failure:\n\
+             call void @panic(i32 1042, ptr null)\n\
+             ret i64 0\n\
+             success:\n{PULSE_TAIL}"
+        ),
+        true,
+        true,
+    ) + "\ndeclare void @panic(i32, ptr)\n";
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    let stage = engine.start(()).unwrap();
+    assert_waiting(&mut engine, &stage);
+    // Let the abandoned shot fail without consuming its worker result through
+    // continue_processing/check_worker_complete. Reset must reclaim it itself.
+    engine.set_dynamic_result(0, 0).unwrap();
+    engine.signal_dynamic_result_ready().unwrap();
+    let wait_started = Instant::now();
+    assert_eq!(engine.wait_for_result_needed(2_000), None);
+    assert!(wait_started.elapsed() < Duration::from_secs(2));
+    let worker_id = engine
+        .persistent_worker
+        .as_ref()
+        .unwrap()
+        .handle
+        .thread()
+        .id();
+    engine.reset_all().unwrap();
+    assert!(engine.interface.is_some());
+    assert!(engine.reset_failure.is_none());
+    assert!(engine.dynamic_state.is_none());
+    let stage = engine.start(()).unwrap();
+    assert_eq!(
+        engine
+            .persistent_worker
+            .as_ref()
+            .unwrap()
+            .handle
+            .thread()
+            .id(),
+        worker_id
+    );
+    finish_reset_shot(&mut engine, &mut StateVecEngine::new(2), stage);
+}
+
+#[test]
+fn midshot_reset_reuses_real_worker_through_every_entry_point() {
+    type ResetFn = fn(&mut QisEngine) -> Result<(), PecosError>;
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let resets: [ResetFn; 3] = [Engine::reset, ClassicalEngine::reset, ControlEngine::reset];
+    for reset in resets {
+        let mut engine = reset_fixture(ScheduledTransport::Off);
+        let trace = OperationTraceStore::default();
+        engine.set_operation_trace_collector(Arc::clone(&trace));
+        let stage = engine.start(()).unwrap();
+        assert_waiting(&mut engine, &stage);
+        let aborted_shot = engine.trace_shot_index;
+        let worker_id = engine
+            .persistent_worker
+            .as_ref()
+            .unwrap()
+            .handle
+            .thread()
+            .id();
+        reset(&mut engine).unwrap();
+        assert!(engine.interface.is_some());
+        assert!(engine.dynamic_state.is_none());
+        assert!(
+            !trace
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|chunk| chunk.stage == "trace_complete")
+        );
+        reset(&mut engine).unwrap();
+        let stage = engine.start(()).unwrap();
+        assert_eq!(
+            engine
+                .persistent_worker
+                .as_ref()
+                .unwrap()
+                .handle
+                .thread()
+                .id(),
+            worker_id
+        );
+        finish_reset_shot(&mut engine, &mut StateVecEngine::new(2), stage);
+        let trace = trace.lock().unwrap();
+        let terminal: Vec<_> = trace
+            .iter()
+            .filter(|chunk| chunk.stage == "trace_complete")
+            .collect();
+        assert_eq!(terminal.len(), 1);
+        assert_eq!(terminal[0].shot_index, aborted_shot + 1);
+    }
+}
+
+#[test]
+fn midshot_reset_targets_only_its_engine_on_shared_host_thread() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut first = reset_fixture(ScheduledTransport::Off);
+    let first_stage = first.start(()).unwrap();
+    assert_waiting(&mut first, &first_stage);
+    let mut second = reset_fixture(ScheduledTransport::Off);
+    let second_stage = second.start(()).unwrap();
+    assert_waiting(&mut second, &second_stage);
+    // Host TLS now belongs to second. Reset must still cancel first's worker.
+    ControlEngine::reset(&mut first).unwrap();
+    assert!(first.interface.is_some());
+    assert_waiting(&mut second, &second_stage);
+    finish_reset_shot(&mut second, &mut StateVecEngine::new(2), second_stage);
+    let stage = first.start(()).unwrap();
+    finish_reset_shot(&mut first, &mut StateVecEngine::new(2), stage);
+}
+
+#[test]
+fn midshot_reset_from_thread_without_registered_context() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let stage = engine.start(()).unwrap();
+    assert_waiting(&mut engine, &stage);
+    let mut engine = std::thread::spawn(move || {
+        // New thread has never registered an FFI context.
+        ControlEngine::reset(&mut engine).unwrap();
+        assert!(engine.interface.is_some());
+        engine
+    })
+    .join()
+    .unwrap();
+    let stage = engine.start(()).unwrap();
+    finish_reset_shot(&mut engine, &mut StateVecEngine::new(2), stage);
+}
+
+#[test]
+fn scheduled_midshot_reset_discards_aborted_shot_and_reuses_worker() {
+    use pecos_engines::noise::IntoNoiseModel;
+    use pecos_engines::quantum_system::QuantumSystem;
+    use pecos_engines::runtime_frame::ShotContext;
+    use pecos_engines::scheduled_events::{
+        ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventIdleZ, ScheduledEventOp,
+        ScheduledGateBuffer,
+    };
+    use pecos_engines::scheduled_frame::ScheduledIdleZ;
+
+    struct GatesOnly;
+    impl ScheduledBatchAdapter for GatesOnly {
+        fn validate(&self, batch: &ScheduledEventBatch) -> Result<(), PecosError> {
+            if batch
+                .operations
+                .iter()
+                .any(|op| matches!(op, ScheduledEventOp::Custom { .. }))
+            {
+                return Err(PecosError::Input("unexpected custom event".into()));
+            }
+            Ok(())
+        }
+        fn translate(
+            &mut self,
+            batch: &ScheduledEventBatch,
+            out: &mut ScheduledGateBuffer<'_>,
+        ) -> Result<(), PecosError> {
+            for op in &batch.operations {
+                match op {
+                    ScheduledEventOp::Gate(gate) => out.push(gate.as_ref().clone())?,
+                    ScheduledEventOp::Custom { .. } => {
+                        return Err(PecosError::Input("unexpected custom event".into()));
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        let mut engine = reset_fixture(mode);
+        let stage = engine.start(()).unwrap();
+        assert_waiting(&mut engine, &stage);
+        // Scheduled start deliberately rejects operation tracing. Install an
+        // observer only for reset, so accidental certification cannot go unseen.
+        let trace = OperationTraceStore::default();
+        engine.set_operation_trace_collector(Arc::clone(&trace));
+        ControlEngine::reset(&mut engine).unwrap();
+        assert!(engine.interface.is_some());
+        assert_eq!(trace.lock().unwrap().len(), 0);
+        // Probe admission before start() performs its own reset: otherwise that
+        // reset could mask an abandoned scheduled shot here.
+        engine
+            .runtime
+            .shot_start(u64::try_from(engine.trace_shot_index + 1).unwrap(), None)
+            .unwrap();
+        engine.operation_trace_collector = None;
+        let profile = ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap();
+        let noise = if mode == ScheduledTransport::V4 {
+            ScheduledEventIdleZ::new(profile, |_| Ok(Box::new(GatesOnly))).into_noise_model()
+        } else {
+            profile.into_noise_model()
+        };
+        let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
+        let stage = engine.start(()).unwrap();
+        quantum
+            .begin_shot(ShotContext {
+                run: 1,
+                worker: 0,
+                shot: engine.trace_shot_index,
+            })
+            .unwrap();
+        finish_reset_shot(&mut engine, &mut quantum, stage);
+        assert_eq!(trace.lock().unwrap().len(), 0);
+    }
+}

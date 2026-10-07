@@ -11,9 +11,21 @@
 //! 2. The main thread returns operations via `ControlEngine::start()` / `continue_processing()`
 //! 3. `continue_processing()` receives measurements and signals the worker to continue
 //! 4. The worker resumes with the measurement results available
+//!
+//! Reset requests cooperative cancellation and reclaims the worker's interface
+//! before resetting runtime/scheduler state. Its ten-second deadline bounds only
+//! the result-channel wait, not host synchronization or a runtime plugin's exit.
+//! Native loops and blocking callbacks that never reach a QIS checkpoint cannot
+//! be cancelled; reset fails and stays latched until a later reset reclaims the
+//! worker. Python `run` and `reset` share a simulation mutex, so Python reset
+//! cannot interrupt a running call. Dropping an active engine and recovering its
+//! original worker through `Clone` are outside this cancellation contract.
+//! Cancellation also transfers through in-process Selene QIS plugin frames that
+//! call PECOS entry points, so plugins must not hold locks or owned resources
+//! across any `selene_*` or QIS entry call.
 
 use crate::program::QisInterfaceBuilder;
-use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, ProgramFormat};
+use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat};
 use crate::runtime::{QisRuntime, for_each_quantum_qubit};
 use crate::scheduled_transport::ScheduledTransport;
 use log::{debug, warn};
@@ -35,6 +47,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+const RESET_WORKER_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TRACE_ENGINE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -81,7 +96,50 @@ pub type OperationTraceStore = Arc<Mutex<Vec<OperationTraceChunk>>>;
 /// The error arm also carries the interface back when the worker still holds
 /// it, so one failed shot does not permanently strip the engine of its
 /// interface. `None` means the interface was genuinely lost (worker died).
-type WorkerResult = Result<(OperationList, BoxedInterface), (String, Option<BoxedInterface>)>;
+type WorkerResult =
+    Result<(OperationList, BoxedInterface), (WorkerFailure, Option<BoxedInterface>)>;
+
+/// Preserve execution and teardown failures independently across the worker channel.
+#[derive(Debug)]
+struct WorkerFailure {
+    execution: Option<InterfaceError>,
+    teardown: Option<InterfaceError>,
+}
+
+impl WorkerFailure {
+    fn cancelled(&self) -> bool {
+        matches!(
+            self.execution,
+            Some(InterfaceError::ProgramError(
+                pecos_qis_ffi_types::ProgramError::Cancelled
+            ))
+        ) && self.teardown.is_none()
+    }
+}
+
+impl From<String> for WorkerFailure {
+    fn from(message: String) -> Self {
+        Self {
+            execution: Some(InterfaceError::Other(message)),
+            teardown: None,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkerFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(error) = &self.execution {
+            write!(f, "{error}")?;
+        }
+        if let Some(error) = &self.teardown {
+            write!(
+                f,
+                "; worker teardown (disable_dynamic_mode) failed: {error}"
+            )?;
+        }
+        Ok(())
+    }
+}
 
 /// Simulator commands plus one metadata record per lowered quantum gate.
 struct LoweredCommandBatch {
@@ -141,8 +199,8 @@ struct PersistentDynamicWorker {
     work_tx: Sender<DynamicWorkItem>,
     /// Channel to receive results from the worker (wrapped in Mutex for Sync)
     result_rx: Mutex<Receiver<WorkerResult>>,
-    /// Thread handle (joined on drop)
-    _handle: JoinHandle<()>,
+    /// Persistent thread handle (dropping it detaches; joining is out of scope).
+    handle: JoinHandle<()>,
 }
 
 impl PersistentDynamicWorker {
@@ -169,11 +227,13 @@ impl PersistentDynamicWorker {
                     // back with BOTH outcomes so the engine stays usable.
                     let send_result = match (result, teardown) {
                         (Ok(collector), Ok(())) => Ok((collector, interface)),
-                        (Ok(_), Err(e)) => Err((
-                            format!("worker teardown (disable_dynamic_mode) failed: {e}"),
+                        (execution, teardown) => Err((
+                            WorkerFailure {
+                                execution: execution.err(),
+                                teardown: teardown.err(),
+                            },
                             Some(interface),
                         )),
-                        (Err(e), _) => Err((e.to_string(), Some(interface))),
                     };
 
                     if result_tx.send(send_result).is_err() {
@@ -189,25 +249,39 @@ impl PersistentDynamicWorker {
         Self {
             work_tx,
             result_rx: Mutex::new(result_rx),
-            _handle: handle,
+            handle,
         }
     }
 
     /// Send a work item to the persistent worker
     fn execute(&self, interface: BoxedInterface) -> Result<(), PecosError> {
+        debug!(
+            "Submitting shot to dynamic worker {:?}",
+            self.handle.thread().id()
+        );
         self.work_tx
             .send(DynamicWorkItem { interface })
             .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
     }
 
-    /// Receive the result from the persistent worker (blocking)
-    #[allow(dead_code)]
-    fn recv_result(&self) -> Result<WorkerResult, PecosError> {
-        self.result_rx
+    /// Bound only the channel wait, using a monotonic deadline and no helper thread.
+    fn recv_result_until(&self, deadline: Instant) -> Result<WorkerResult, PecosError> {
+        let receiver = self
+            .result_rx
             .lock()
-            .map_err(|_| PecosError::Generic("Result receiver lock poisoned".to_string()))?
-            .recv()
-            .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
+            .map_err(|_| PecosError::Generic("dynamic worker result lock poisoned".to_string()))?;
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|error| {
+                PecosError::Generic(match error {
+                    mpsc::RecvTimeoutError::Timeout => {
+                        "timed out reclaiming dynamic worker interface".to_string()
+                    }
+                    mpsc::RecvTimeoutError::Disconnected => {
+                        "dynamic worker result channel disconnected".to_string()
+                    }
+                })
+            })
     }
 
     /// Try to receive a result without blocking.
@@ -218,7 +292,7 @@ impl PersistentDynamicWorker {
     fn try_recv_result(&self) -> Option<WorkerResult> {
         let Ok(rx) = self.result_rx.lock() else {
             return Some(Err((
-                "dynamic worker result lock poisoned".to_string(),
+                "dynamic worker result lock poisoned".to_string().into(),
                 None,
             )));
         };
@@ -226,7 +300,9 @@ impl PersistentDynamicWorker {
             Ok(result) => Some(result),
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => Some(Err((
-                "dynamic worker thread died before returning a result".to_string(),
+                "dynamic worker thread died before returning a result"
+                    .to_string()
+                    .into(),
                 None,
             ))),
         }
@@ -1719,12 +1795,18 @@ impl QisEngine {
     /// interface, and clear per-shot state. A failure is latched in
     /// `reset_failure` until a later reset succeeds.
     fn reset_all(&mut self) -> Result<(), PecosError> {
+        self.reset_all_with_timeout(RESET_WORKER_TIMEOUT)
+    }
+
+    fn reset_all_with_timeout(&mut self, timeout: Duration) -> Result<(), PecosError> {
         debug!("QisEngine: reset() called");
-        self.abort_dynamic_execution();
         let reset = self
-            .runtime
-            .reset()
-            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))
+            .abort_dynamic_execution(timeout)
+            .and_then(|()| {
+                self.runtime
+                    .reset()
+                    .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))
+            })
             .and_then(|()| match self.interface {
                 Some(ref mut interface) => interface
                     .reset()
@@ -1745,16 +1827,65 @@ impl QisEngine {
         Ok(())
     }
 
-    /// Abort dynamic execution (cleanup)
-    fn abort_dynamic_execution(&mut self) {
-        // Abort execution via sync handle if available
-        if let Some(ref state) = self.dynamic_state
-            && let Some(ref handle) = state.sync_handle
+    /// Reclaim ownership before discarding any shot state. Pure native loops
+    /// and blocking callbacks cannot be interrupted until their next checkpoint.
+    /// The deadline bounds the receive, not host waits or runtime/plugin reset.
+    fn abort_dynamic_execution(&mut self, timeout: Duration) -> Result<(), PecosError> {
+        if let Some(state) = &self.dynamic_state
+            && !state.execution_complete
         {
-            let _ = handle.abort_execution();
+            let worker = self.persistent_worker.as_ref().ok_or_else(|| {
+                PecosError::Generic("No dynamic worker available to reclaim interface".to_string())
+            })?;
+            // A late result recovers even if cancellation itself is unavailable.
+            let result = if let Some(result) = worker.try_recv_result() {
+                result
+            } else {
+                let handle = state.sync_handle.as_ref().ok_or_else(|| {
+                    PecosError::Generic("No sync handle available to cancel worker".to_string())
+                })?;
+                handle
+                    .abort_execution()
+                    .map_err(crate::interface_impl::interface_error_to_pecos)?;
+                worker.recv_result_until(Instant::now() + timeout)?
+            };
+            let failure = match result {
+                Ok((_, interface)) => {
+                    self.interface = Some(interface);
+                    None
+                }
+                Err((failure, interface)) => {
+                    if let Some(interface) = interface {
+                        self.interface = Some(interface);
+                    }
+                    Some(failure)
+                }
+            };
+            // This receive is one-shot, even when the result reports a failure.
+            if let Some(state) = self.dynamic_state.as_mut() {
+                state.execution_complete = true;
+            }
+            if let Some(failure) = failure
+                && !failure.cancelled()
+            {
+                if failure.teardown.is_some() || self.interface.is_none() {
+                    return Err(PecosError::Generic(format!(
+                        "dynamic QIS worker failed during reset: {failure}"
+                    )));
+                }
+                warn!("Discarding abandoned QIS shot execution failure during reset: {failure}");
+            }
+        }
+        // A shot's interface must come back before its state is discarded; an
+        // engine that never ran a dynamic shot has nothing to reclaim.
+        if self.dynamic_state.is_some() && self.interface.is_none() {
+            return Err(PecosError::Generic(
+                "Reset could not reclaim worker interface".to_string(),
+            ));
         }
         self.dynamic_state = None;
         self.pending_dynamic_ops.clear();
+        Ok(())
     }
 }
 
@@ -2063,6 +2194,11 @@ impl ControlEngine for QisEngine {
         input: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         debug!("QisEngine::continue_processing called");
+        if let Some(failure) = &self.reset_failure {
+            return Err(PecosError::Generic(format!(
+                "Cannot continue after failed reset: {failure}"
+            )));
+        }
 
         // Verify dynamic state exists (set by start())
         if self.dynamic_state.is_none() {
@@ -2188,6 +2324,9 @@ impl ControlEngine for QisEngine {
 
 #[cfg(test)]
 mod tests {
+    mod reset_tests {
+        include!("ccengine_reset_tests.rs");
+    }
     use super::*;
     use crate::runtime::{ClassicalState, Result as RuntimeResult};
     use tempfile::TempDir;
@@ -3866,7 +4005,8 @@ mod tests {
             let runtime = ShotEndAndResetFailRuntime::default();
             let fail_reset = std::sync::Arc::clone(&runtime.fail_reset);
             fail_reset.store(true, Ordering::SeqCst);
-            let mut engine = QisEngine::with_runtime(Box::new(runtime));
+            let mut engine =
+                QisEngine::new(Box::new(FlakyResetInterface::default()), Box::new(runtime));
             engine.measurement_results.insert(0, 1);
             engine.dynamic_state = Some(DynamicExecutionState {
                 sync_handle: None,

@@ -27,15 +27,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: actions
-            build-mode: ""
-          - language: c-cpp
-            build-mode: none
-          - language: python
-            build-mode: ""
-          - language: rust
-            build-mode: none
+        # Rust analysis takes about 25 minutes, the longest required check on a
+        # pull request, so it runs on pushes to the main branches, on the weekly
+        # schedule and on dispatch, not on pull requests.
+        include: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+          && '[{"language":"actions","build-mode":""},{"language":"c-cpp","build-mode":"none"},{"language":"python","build-mode":""}]'
+          || '[{"language":"actions","build-mode":""},{"language":"c-cpp","build-mode":"none"},{"language":"python","build-mode":""},{"language":"rust","build-mode":"none"}]') }}
 
     steps:
       - name: Harden the runner (egress audit)

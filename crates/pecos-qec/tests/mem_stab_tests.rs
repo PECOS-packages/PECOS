@@ -87,7 +87,7 @@ fn parity_with_raw_pipeline() {
     // Path 2: raw pipeline, identical inputs + seed.
     let dag = repetition_code_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
     let mnm = MemBuilder::new(&influence_map)
         .with_noise_config(noise.clone())
         .build()
@@ -190,7 +190,9 @@ fn builder_forwards_per_gate_rate_tables() {
 
     // Parity: the same configuration through the direct pipeline must agree.
     let circuit = repetition_code_circuit();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     let direct: f64 = MemBuilder::new(&map)
         .with_noise_config(with_table)
         .build()

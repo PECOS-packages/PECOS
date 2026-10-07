@@ -19,7 +19,7 @@
 //! sampled shots.
 
 use super::dem_builder::record_offset_to_absolute_index;
-use super::propagator::{Direction, apply_gate, is_supported_prep_gate};
+use super::propagator::{Direction, apply_gate_unchecked, is_supported_prep_gate};
 use pecos_core::gate_type::GateType;
 use pecos_core::{Pauli, PauliString};
 use pecos_quantum::{AnnotationKind, DagCircuit};
@@ -32,6 +32,10 @@ type MeasurementRecordMap = BTreeMap<usize, Vec<(usize, usize)>>;
 /// Errors returned while building or applying a Pauli-frame lookup.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PauliFrameLookupError {
+    /// A gate cannot be represented by Pauli propagation.
+    #[error(transparent)]
+    UnsupportedGate(#[from] super::propagator::UnsupportedGateError),
+
     /// A tracked-Pauli annotation has no `meta_node` set.
     #[error(
         "tracked-Pauli annotation is missing its meta_node; cannot determine spacetime position"
@@ -134,6 +138,10 @@ impl PauliFrameLookup {
         detector_records: &[Vec<i32>],
         observable_records: &[Vec<i32>],
     ) -> Result<Self, PauliFrameLookupError> {
+        if let Some(error) = super::propagator::DagFaultAnalyzer::new(dag).first_unsupported_gate()
+        {
+            return Err(error.into());
+        }
         let tracked_annotations: Vec<&pecos_quantum::PauliAnnotation> = dag
             .annotations()
             .iter()
@@ -528,9 +536,12 @@ fn propagate_tracked_pauli_forward(
                 }
             }
             _ => {
-                // Pauli-frame lookup intentionally preserves its historical
-                // permissive treatment of unsupported gates.
-                let _outcome = apply_gate(&mut prop, gate, Direction::Forward);
+                // PauliFrameLookup::from_circuit preflights with DagFaultAnalyzer.
+                let outcome = apply_gate_unchecked(&mut prop, gate, Direction::Forward);
+                debug_assert_eq!(
+                    outcome,
+                    super::propagator::PauliPropagationOutcome::Propagated
+                );
             }
         }
     }

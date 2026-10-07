@@ -62,7 +62,7 @@ fn per_qubit_measurement_rate_raises_only_targeted_qubit() {
     // contribution.
     let dag = build_three_ancilla_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let q0 = QubitId::from(0usize);
     let cfg_only_q0 = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.0, 0.0, 0.0, 0.0))
@@ -108,7 +108,7 @@ fn per_qubit_measurement_rate_raises_only_targeted_qubit() {
 fn per_qubit_init_rate_raises_only_targeted_qubit() {
     let dag = build_three_ancilla_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let q1 = QubitId::from(1usize);
     let cfg_only_q1 = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.0, 0.0, 0.0, 0.0))
@@ -144,7 +144,7 @@ fn per_qubit_measurement_path_uses_base_rate_without_overrides() {
     // use scalar p_meas exactly.
     let dag = build_three_ancilla_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::uniform(0.05));
     let sim_per_gate = DemSamplerBuilder::new(&influence)

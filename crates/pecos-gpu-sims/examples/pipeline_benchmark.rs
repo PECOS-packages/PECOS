@@ -157,7 +157,9 @@ fn benchmark_circuit(
 ) -> BenchmarkResult {
     // Build influence map (common to both pipelines)
     let build_start = Instant::now();
-    let builder = InfluenceBuilder::new(circuit).with_z(tracked_pauli_qubits);
+    let builder = InfluenceBuilder::new(circuit)
+        .unwrap()
+        .with_z(tracked_pauli_qubits);
     let influence_map = builder.build().expect("circuit is replayable");
     let build_time = build_start.elapsed();
 

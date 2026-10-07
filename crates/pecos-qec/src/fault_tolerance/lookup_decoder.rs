@@ -485,6 +485,7 @@ mod tests {
             .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
+            .unwrap()
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
             .build()
@@ -506,6 +507,7 @@ mod tests {
             .expect("refs are from this circuit");
 
         let map = InfluenceBuilder::new(&dag)
+            .unwrap()
             .build()
             .expect("circuit is replayable");
         assert_eq!(map.num_observables(), 0);

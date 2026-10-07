@@ -92,7 +92,9 @@ fn main() {
 
         // Build influence map
         let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
+        let builder = InfluenceBuilder::new(&circuit)
+            .unwrap()
+            .with_z(&tracked_pauli_qubits);
         let influence_map = builder.build().expect("circuit is replayable");
 
         let num_locations = influence_map.locations.len();
@@ -181,7 +183,9 @@ fn main() {
         let num_data = distance * distance;
 
         let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
+        let builder = InfluenceBuilder::new(&circuit)
+            .unwrap()
+            .with_z(&tracked_pauli_qubits);
         let influence_map = builder.build().expect("circuit is replayable");
 
         let (

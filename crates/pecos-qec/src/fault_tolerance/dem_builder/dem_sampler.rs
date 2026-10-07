@@ -47,7 +47,7 @@
 //! dag.mz(&[2]);
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
+//! let influence_map = analyzer.build_influence_map().unwrap();
 //!
 //! // Build sampler with detector definitions
 //! let sampler = DemSamplerBuilder::new(&influence_map)
@@ -3087,7 +3087,9 @@ mod tests {
             &[(0, 1)],
         ));
         circuit.mz(&[0, 1]);
-        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let mut noise = NoiseConfig::uniform(0.001);
         noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
         let error = SamplingEngineBuilder::new(&map)
@@ -3190,7 +3192,7 @@ mod tests {
             dag.pz(&[q]);
             dag.mz(&[q]);
         }
-        DagFaultAnalyzer::new(&dag).build_influence_map()
+        DagFaultAnalyzer::new(&dag).build_influence_map().unwrap()
     }
 
     #[test]
@@ -3278,7 +3280,7 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Zero noise should produce no errors
         let sampler = SamplingEngineBuilder::new(&influence_map)
@@ -3308,7 +3310,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Define detector on the measurement
         let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
@@ -3343,7 +3345,7 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let json_sampler = SamplingEngineBuilder::new(&influence_map)
             .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
@@ -3381,7 +3383,7 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -3426,7 +3428,7 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.5, 0.0, 0.0, 0.0) // High noise rate for testing
@@ -3463,7 +3465,7 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -3504,7 +3506,7 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Use low noise to exercise geometric sampling effectively
         let sampler = SamplingEngineBuilder::new(&influence_map)
@@ -3549,7 +3551,7 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Low error rate - should use geometric
         let sampler = SamplingEngineBuilder::new(&influence_map)
@@ -3580,7 +3582,7 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // High error rate - should use SIMD
         let sampler = SamplingEngineBuilder::new(&influence_map)
@@ -3614,7 +3616,7 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.001, 0.001, 0.001, 0.001)

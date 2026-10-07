@@ -164,7 +164,7 @@ The backward propagator produces a **fault influence map** relating fault locati
 Cache-optimized format using CSR (Compressed Sparse Row) arrays:
 
 ```rust
-let map = propagator.build_influence_map();
+let map = propagator.build_influence_map().unwrap();
 
 // Fast classification without allocations
 let (has_syndrome, has_logical) = map.classify_fault(loc_idx, pauli);

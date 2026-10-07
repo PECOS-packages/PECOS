@@ -59,7 +59,7 @@ fn create_surface_code_sampler(
 
     // Build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Build DEM sampler with simple detectors
     let num_measurements = num_ancilla * rounds + num_data;

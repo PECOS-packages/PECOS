@@ -50,7 +50,7 @@
 //!     .with_z_ancillas(&[3, 4])        // For syndrome extraction
 //!     .with_logical_z(&[], &[0, 1, 2]); // Z logical operator
 //!
-//! let checker = GadgetChecker::new(&circuit, config);
+//! let checker = GadgetChecker::new(&circuit, config).unwrap();
 //! let analysis = checker.analyze(1); // Check 1-fault tolerance
 //!
 //! println!("Is 1-FT: {}", analysis.is_fault_tolerant());
@@ -61,6 +61,7 @@ use super::pauli_prop_checker::{
     compute_stabilizer_syndromes, extract_measurement_rounds, extract_output_error,
     get_syndrome_flips,
 };
+use super::propagator::UnsupportedGateError;
 use super::{
     FaultCheckConfig, FaultConfiguration, PauliFault, PauliFaultIterator, SpacetimeLocation,
     extract_spacetime_locations,
@@ -623,6 +624,9 @@ pub struct GadgetHistoryPattern {
 ///
 /// This checker handles gadgets with input/output qubits, enumerating all
 /// combinations of input faults (s) and internal faults (r) with s + r <= t.
+///
+/// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct GadgetChecker<'a> {
     circuit: &'a TickCircuit,
     config: GadgetConfig,
@@ -631,16 +635,22 @@ pub struct GadgetChecker<'a> {
 
 impl<'a> GadgetChecker<'a> {
     /// Creates a new gadget checker.
-    #[must_use]
-    pub fn new(circuit: &'a TickCircuit, config: GadgetConfig) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn new(
+        circuit: &'a TickCircuit,
+        config: GadgetConfig,
+    ) -> Result<Self, UnsupportedGateError> {
+        super::propagator::validate_tick_circuit(circuit)?;
         // Extract internal fault locations (excluding input qubit initialization)
         let internal_locations = extract_spacetime_locations(circuit, false);
 
-        Self {
+        Ok(Self {
             circuit,
             config,
             internal_locations,
-        }
+        })
     }
 
     /// Creates a new gadget checker with I/O auto-detected from the circuit.
@@ -662,14 +672,16 @@ impl<'a> GadgetChecker<'a> {
     /// circuit.tick().cx(&[(0, 3), (1, 4)]);
     /// circuit.tick().mz(&[3, 4]);
     ///
-    /// let checker = GadgetChecker::from_circuit(&circuit)
+    /// let checker = GadgetChecker::from_circuit(&circuit).unwrap()
     ///     .with_z_ancillas(&[3, 4])
     ///     .with_logical_z(&[], &[0, 1]);
     ///
     /// assert!(checker.has_input_qubits());
     /// ```
-    #[must_use]
-    pub fn from_circuit(circuit: &'a TickCircuit) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn from_circuit(circuit: &'a TickCircuit) -> Result<Self, UnsupportedGateError> {
         let config = GadgetConfig::from_circuit(circuit);
         Self::new(circuit, config)
     }
@@ -1868,7 +1880,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze(1);
 
         println!("Self-contained gadget analysis:");
@@ -1888,7 +1900,7 @@ mod tests {
         circuit.tick().pz(&[1]);
         circuit.tick().cx(&[(1, 0)]);
         circuit.tick().mz(&[1]);
-        let checker = GadgetChecker::new(&circuit, GadgetConfig::new());
+        let checker = GadgetChecker::new(&circuit, GadgetConfig::new()).unwrap();
 
         let (prop, _) = checker.propagate(&[(1, 1)], &FaultConfiguration::new());
 
@@ -1912,7 +1924,7 @@ mod tests {
         circuit.tick().mz(&[0]);
         circuit.tick().h(&[0]);
         circuit.tick().cx(&[(0, 1)]);
-        let checker = GadgetChecker::new(&circuit, GadgetConfig::new());
+        let checker = GadgetChecker::new(&circuit, GadgetConfig::new()).unwrap();
 
         let (prop, _) = checker.propagate(&[(0, 3)], &FaultConfiguration::new());
 
@@ -1931,14 +1943,14 @@ mod tests {
     fn measurements_keep_the_anticommuting_flip_readable() {
         let mut z_circuit = TickCircuit::new();
         z_circuit.tick().mz(&[0]);
-        let checker = GadgetChecker::new(&z_circuit, GadgetConfig::new());
+        let checker = GadgetChecker::new(&z_circuit, GadgetConfig::new()).unwrap();
         let (prop, flips) = checker.propagate(&[(0, 1)], &FaultConfiguration::new());
         assert!(prop.contains_x(0), "MZ discarded its own outcome flip");
         assert!(flips.contains(&(0, 0)), "MZ did not record its own flip");
 
         let mut x_circuit = TickCircuit::new();
         x_circuit.tick().mx(&[0]);
-        let checker = GadgetChecker::new(&x_circuit, GadgetConfig::new());
+        let checker = GadgetChecker::new(&x_circuit, GadgetConfig::new()).unwrap();
         let (prop, flips) = checker.propagate(&[(0, 2)], &FaultConfiguration::new());
         assert!(prop.contains_z(0), "MX discarded its own outcome flip");
         assert!(!prop.contains_x(0), "MX kept the component it absorbs");
@@ -1974,7 +1986,7 @@ mod tests {
             .with_output_qubits(&[0])
             .with_ancilla_qubits(&[1])
             .with_z_ancillas(&[1]);
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         let rounds = extract_measurement_rounds(&circuit);
         assert_eq!(rounds.len(), 2, "two measurement rounds expected");
@@ -2009,7 +2021,8 @@ mod tests {
             GadgetConfig::syndrome_extraction()
                 .with_ancilla_qubits(&[1])
                 .with_z_ancillas(&[1]),
-        );
+        )
+        .unwrap();
         let reused_rounds = extract_measurement_rounds(&reused);
         assert_eq!(reused_rounds.len(), 2, "two measurement rounds expected");
         let z_before_round_1 = FaultConfiguration::with_faults(vec![PauliFault::new(
@@ -2042,7 +2055,8 @@ mod tests {
             GadgetConfig::syndrome_extraction()
                 .with_ancilla_qubits(&[1])
                 .with_z_ancillas(&[1]),
-        );
+        )
+        .unwrap();
 
         let rounds = extract_measurement_rounds(&circuit);
         assert_eq!(rounds.len(), 1, "the MPZ tick is a measurement round");
@@ -2078,7 +2092,8 @@ mod tests {
             GadgetConfig::syndrome_extraction()
                 .with_ancilla_qubits(&[1])
                 .with_x_ancillas(&[1]),
-        );
+        )
+        .unwrap();
 
         // Z and Y anticommute with an X-basis readout; X commutes with it.
         for (pauli, name, expected) in [(3, "Z", true), (2, "Y", true), (1, "X", false)] {
@@ -2106,7 +2121,8 @@ mod tests {
                 .with_input_qubits(&[0, 1])
                 .with_ancilla_qubits(&[2, 3])
                 .with_z_ancillas(&[2, 3]),
-        );
+        )
+        .unwrap();
 
         // The second pair of the batch is the one a first-pair-only walk drops.
         let (_, flips) = checker.propagate(&[(1, 1)], &FaultConfiguration::new());
@@ -2134,7 +2150,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze(1);
 
         println!("Syndrome extraction gadget analysis:");
@@ -2153,7 +2169,7 @@ mod tests {
             .with_output_qubits(&[0, 1, 2])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze(1);
 
         println!("State preparation gadget analysis:");
@@ -2168,7 +2184,7 @@ mod tests {
             .with_input_qubits(&[0, 1, 2])
             .with_output_qubits(&[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         // Weight-0 input faults: just empty
         let w0 = checker.enumerate_input_faults(0);
@@ -2208,7 +2224,7 @@ mod tests {
             .with_output_qubits(&[0, 1, 2])
             .with_z_ancillas(&[3, 4]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze(1);
 
         // We should have tested:
@@ -2238,7 +2254,7 @@ mod tests {
             .with_output_qubits(&[0, 1, 2])
             .with_z_ancillas(&[3, 4]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis_t2 = checker.analyze(2);
         let analysis_t1 = checker.analyze(1);
 
@@ -2272,8 +2288,8 @@ mod tests {
             .with_output_qubits(&[0, 1, 2])
             .with_z_ancillas(&[3, 4]);
 
-        let checker_with = GadgetChecker::new(&circuit, config_with_input);
-        let checker_without = GadgetChecker::new(&circuit, config_no_input);
+        let checker_with = GadgetChecker::new(&circuit, config_with_input).unwrap();
+        let checker_without = GadgetChecker::new(&circuit, config_no_input).unwrap();
 
         let analysis_with = checker_with.analyze(1);
         let analysis_without = checker_without.analyze(1);
@@ -2303,7 +2319,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         // Analyze with collecting failures
         let analysis = checker.analyze_with_options(1, true);
@@ -2333,7 +2349,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         // Analyze t=2
         let analysis = checker.analyze_with_options(2, true);
@@ -2353,7 +2369,7 @@ mod tests {
                 .with_output_qubits(&[0, 1, 2])
                 .with_z_ancillas(&[3, 4])
                 .with_logical_z(&[], &[0, 1, 2]);
-            let checker = GadgetChecker::new(&circuit, config_no_input);
+            let checker = GadgetChecker::new(&circuit, config_no_input).unwrap();
             checker.analyze(2).total_tested
         };
 
@@ -2372,7 +2388,7 @@ mod tests {
         let config = GadgetConfig::state_preparation().with_output_qubits(&[0, 1, 2]);
         // Note: no input qubits specified
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         // Weight-1 input faults should return empty since no input qubits
         let input_faults_w1 = checker.enumerate_input_faults(1);
@@ -2396,7 +2412,7 @@ mod tests {
             .with_output_qubits(&[0, 1, 2])
             .with_z_ancillas(&[3, 4]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         // Count input fault patterns
         let input_w0 = checker.enumerate_input_faults(0).len(); // 1
@@ -2446,6 +2462,7 @@ mod tests {
         let circuit = build_syndrome_extraction_circuit();
 
         let checker = GadgetChecker::from_circuit(&circuit)
+            .unwrap()
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
@@ -2487,7 +2504,7 @@ mod tests {
         circuit.tick().cx(&[(0, 2)]);
         // No measurement - outputs go to next stage
 
-        let checker = GadgetChecker::from_circuit(&circuit);
+        let checker = GadgetChecker::from_circuit(&circuit).unwrap();
 
         assert!(!checker.has_input_qubits(), "State prep has no inputs");
         assert!(checker.has_output_qubits(), "State prep has outputs");
@@ -2507,7 +2524,9 @@ mod tests {
         // No prep - qubits come from previous stage
         circuit.tick().mz(&[0, 1, 2]); // Measure all
 
-        let checker = GadgetChecker::from_circuit(&circuit).with_z_ancillas(&[0, 1, 2]);
+        let checker = GadgetChecker::from_circuit(&circuit)
+            .unwrap()
+            .with_z_ancillas(&[0, 1, 2]);
 
         assert!(checker.has_input_qubits(), "Final measurement has inputs");
         assert!(
@@ -2543,7 +2562,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze_decoder_requirements(1);
 
         // Verify basic properties
@@ -2608,7 +2627,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
 
         // Follow-up stabilizers (same as the gadget would measure)
         let follow_up = GadgetFollowUpConfig::new(vec![
@@ -2658,7 +2677,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze_with_syndrome_history(1);
 
         // Verify basic properties
@@ -2705,7 +2724,7 @@ mod tests {
             .with_z_ancillas(&[3, 4])
             .with_logical_z(&[], &[0, 1, 2]);
 
-        let checker = GadgetChecker::new(&circuit, config);
+        let checker = GadgetChecker::new(&circuit, config).unwrap();
         let analysis = checker.analyze_decoder_requirements(1);
 
         // Test helper methods

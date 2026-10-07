@@ -42,25 +42,26 @@ for workflow in "${workflows[@]}"; do
   skip_cancelled=false
   [[ " ${superseded_ok[*]} " == *" $workflow "* ]] && skip_cancelled=true
 
+  name="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}" --jq .name)"
   for branch in "${branches[@]}"; do
-    runs="$(gh run list --workflow "$workflow" --branch "$branch" --status completed --limit 200 \
-      --json conclusion,event,headSha,url,workflowName)"
-    run="$(jq -c --argjson skip_cancelled "$skip_cancelled" '
-        map(select(.event != "pull_request" and .event != "pull_request_target"
-                   and .conclusion != "skipped" and .conclusion != "neutral"
-                   and (($skip_cancelled | not) or .conclusion != "cancelled")))
-        | first // empty' <<<"$runs")"
-    if [ -z "$run" ]; then
-      if [ "$(jq length <<<"$runs")" -gt 0 ]; then
-        echo "::warning::${workflow} on ${branch}: no qualifying run among the latest 200 completed runs"
-      fi
-      continue
-    fi
+    # Newest first; page until a run that says something about the branch.
+    run=""
+    for ((page = 1; ; page++)); do
+      runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${branch}&status=completed&per_page=100&page=${page}" \
+        --jq "[.workflow_runs[] | {conclusion, event, head_sha, html_url}]")"
+      [ "$(jq length <<<"$runs")" -gt 0 ] || break
+      run="$(jq -c --argjson skip_cancelled "$skip_cancelled" '
+          map(select(.event != "pull_request" and .event != "pull_request_target"
+                     and .conclusion != "skipped" and .conclusion != "neutral"
+                     and (($skip_cancelled | not) or .conclusion != "cancelled")))
+          | first // empty' <<<"$runs")"
+      [ -z "$run" ] || break
+    done
+    [ -n "$run" ] || continue
 
-    name="$(jq -r .workflowName <<<"$run")"
     conclusion="$(jq -r .conclusion <<<"$run")"
-    url="$(jq -r .url <<<"$run")"
-    sha="$(jq -r .headSha <<<"$run")"
+    url="$(jq -r .html_url <<<"$run")"
+    sha="$(jq -r .head_sha <<<"$run")"
     title="Trunk CI red: ${name} on ${branch}"
     issue="$(jq -r --arg title "$title" 'map(select(.title == $title)) | first | .number // empty' <<<"$open_issues")"
     summary="\`${name}\` concluded **${conclusion}** on \`${branch}\` at ${sha}: ${url}"

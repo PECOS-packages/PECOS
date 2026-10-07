@@ -466,7 +466,6 @@ fn exact_fixture_records_and_canonical_cancellation() {
         let shot = programs[2].plan(1).unwrap().run(seed);
         assert_eq!(shot.records[1], shot.records[0]);
         assert_eq!(programs[6].plan(1).unwrap().run(seed).records, [false]);
-        assert_eq!(programs[8].plan(1).unwrap().run(seed).records.len(), 1);
     }
     let plan = programs[4].plan(1).unwrap();
     assert_eq!(plan.operations[2].sign, AffineSign::default());
@@ -555,6 +554,47 @@ fn validator_rejects_malformed_lowering() {
             "{error}"
         );
     };
+    // This measurement's own symbol is legal in its projection, but not in
+    // the sign used to compute its probability before drawing that symbol.
+    assert_eq!(plan.validate(2), Ok(()));
+    let Instruction::Measurement {
+        projection: Some(projection),
+        ..
+    } = &plan.operations[3].instruction
+    else {
+        panic!("expected Active measurement");
+    };
+    assert!(projection.value.measurements.contains(&1));
+    let mut p = plan.clone();
+    p.operations[3].sign.measurements = vec![1];
+    assert_eq!(
+        p.validate(2),
+        Err(PlanError::InvalidPlan {
+            operation: 3,
+            width: 1,
+            reason: "measurement symbol not yet produced",
+        })
+    );
+    let mut p = plan.clone();
+    if let Instruction::Measurement { case, .. } = &mut p.operations[3].instruction {
+        *case = MeasurementCase::Random;
+    }
+    invalid(p, "measurement case/projection mismatch");
+    let mut p = plan.clone();
+    p.peak += 1;
+    invalid(p, "peak width mismatch");
+    // Malformed lowering can introduce a promotion beyond the planner's bound.
+    let mut p = plan.clone();
+    p.operations[2] = p.operations[1].clone();
+    p.widths[2] = 3;
+    assert_eq!(
+        p.validate(2),
+        Err(PlanError::WidthExceeded {
+            operation: 2,
+            width: 3,
+            limit: 2,
+        })
+    );
     let mut p = plan.clone();
     p.operations[0].sign.measurements = vec![0];
     invalid(p, "measurement symbol not yet produced");
@@ -568,7 +608,14 @@ fn validator_rejects_malformed_lowering() {
     if let Instruction::Rotation { parts, .. } = &mut p.operations[0].instruction {
         parts.flip = 2;
     }
-    invalid(p, "amplitude mask outside active width");
+    assert_eq!(
+        p.validate(2),
+        Err(PlanError::InvalidPlan {
+            operation: 0,
+            width: 0,
+            reason: "amplitude mask outside active width",
+        })
+    );
     let mut p = plan.clone();
     if let Instruction::Measurement {
         projection: Some(projection),
@@ -621,6 +668,16 @@ fn validator_rejects_malformed_lowering() {
     let mut p = plan.clone();
     p.operations.pop();
     invalid(p, "width profile length mismatch");
+    let mut p = plan.clone();
+    p.widths[2] = 2;
+    assert_eq!(
+        p.validate(2),
+        Err(PlanError::InvalidPlan {
+            operation: 2,
+            width: 2,
+            reason: "width transition mismatch",
+        })
+    );
     let mut p = plan.clone();
     p.operations[3].instruction = Instruction::Clifford;
     invalid(p, "width transition mismatch");

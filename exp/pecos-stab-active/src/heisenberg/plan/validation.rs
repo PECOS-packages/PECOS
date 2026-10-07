@@ -42,11 +42,16 @@ pub(super) fn check_sign(
     Ok(())
 }
 
-fn check_parts(parts: &Descriptor, operation: usize, width: usize) -> Result<(), PlanError> {
-    if parts.flip >= 1 << width || parts.sign >= 1 << width {
+fn check_parts(
+    parts: &Descriptor,
+    operation: usize,
+    active_width: usize,
+    input_width: usize,
+) -> Result<(), PlanError> {
+    if parts.flip >= 1 << active_width || parts.sign >= 1 << active_width {
         return Err(invalid(
             operation,
-            width,
+            input_width,
             "amplitude mask outside active width",
         ));
     }
@@ -63,7 +68,14 @@ impl SamplingPlan {
             return Err(invalid(0, 0, "width profile length mismatch"));
         }
         for (index, (op, &expected)) in self.operations.iter().zip(&self.widths).enumerate() {
-            check_sign(&op.sign, &produced, self.num_noise_symbols, index, width)?;
+            let input_width = width;
+            check_sign(
+                &op.sign,
+                &produced,
+                self.num_noise_symbols,
+                index,
+                input_width,
+            )?;
             match &op.instruction {
                 Instruction::Clifford => {}
                 Instruction::Rotation { double, parts, .. } => {
@@ -75,7 +87,7 @@ impl SamplingPlan {
                             limit,
                         });
                     }
-                    check_parts(parts, index, width)?;
+                    check_parts(parts, index, width, input_width)?;
                 }
                 Instruction::Measurement {
                     case,
@@ -84,27 +96,31 @@ impl SamplingPlan {
                     record,
                     projection,
                 } => {
-                    check_parts(parts, index, width)?;
+                    check_parts(parts, index, width, input_width)?;
                     let Some(entry) = produced.get_mut(*symbol) else {
-                        return Err(invalid(index, width, "measurement symbol out of range"));
+                        return Err(invalid(
+                            index,
+                            input_width,
+                            "measurement symbol out of range",
+                        ));
                     };
                     if *entry {
-                        return Err(invalid(index, width, "duplicate measurement symbol"));
+                        return Err(invalid(index, input_width, "duplicate measurement symbol"));
                     }
                     *entry = true;
                     if let Some(ordinal) = record {
                         let Some(entry) = records.get_mut(*ordinal) else {
-                            return Err(invalid(index, width, "record ordinal out of range"));
+                            return Err(invalid(index, input_width, "record ordinal out of range"));
                         };
                         if *entry {
-                            return Err(invalid(index, width, "duplicate record ordinal"));
+                            return Err(invalid(index, input_width, "duplicate record ordinal"));
                         }
                         *entry = true;
                     }
                     if (*case == MeasurementCase::Active) != projection.is_some() {
                         return Err(invalid(
                             index,
-                            width,
+                            input_width,
                             "measurement case/projection mismatch",
                         ));
                     }
@@ -114,12 +130,12 @@ impl SamplingPlan {
                             &produced,
                             self.num_noise_symbols,
                             index,
-                            width,
+                            input_width,
                         )?;
                         if projection.pivot >= width {
                             return Err(invalid(
                                 index,
-                                width,
+                                input_width,
                                 "projection pivot outside active width",
                             ));
                         }
@@ -131,7 +147,7 @@ impl SamplingPlan {
                             if !valid {
                                 return Err(invalid(
                                     index,
-                                    width,
+                                    input_width,
                                     "coordinate gate outside active width",
                                 ));
                             }
@@ -142,7 +158,7 @@ impl SamplingPlan {
             }
             peak = peak.max(width);
             if width != expected {
-                return Err(invalid(index, width, "width transition mismatch"));
+                return Err(invalid(index, input_width, "width transition mismatch"));
             }
         }
         let end = self.operations.len();

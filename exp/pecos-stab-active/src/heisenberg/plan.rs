@@ -28,6 +28,8 @@ pub enum PlanError {
     /// An invalid lowered instruction (also detects internal planner errors).
     InvalidPlan {
         operation: usize,
+        /// Active width immediately before `operation`. For end-of-plan errors
+        /// (`operation` equals the operation count), this is the final width.
         width: usize,
         reason: &'static str,
     },
@@ -117,8 +119,8 @@ pub struct SamplingPlan {
     num_records: usize,
     detectors: Vec<Vec<usize>>,
     observables: Vec<Vec<usize>>,
-    widths: Vec<usize>,
-    peak: usize,
+    pub(super) widths: Vec<usize>,
+    pub(super) peak: usize,
 }
 
 impl SamplingPlan {
@@ -126,13 +128,6 @@ impl SamplingPlan {
     #[must_use]
     pub fn width_profile(&self) -> &[usize] {
         &self.widths
-    }
-
-    /// Symbol terms in each effective sign (the constant is not a term).
-    pub fn sign_term_counts(&self) -> impl Iterator<Item = usize> + '_ {
-        self.operations
-            .iter()
-            .map(|op| op.sign.noise.len() + op.sign.measurements.len())
     }
 
     /// Allocate reusable buffers sized to this plan's peak active width.
@@ -168,7 +163,9 @@ fn outcome_bit(sign: &AffineSign, symbol: usize, eta: bool) -> AffineSign {
 }
 
 impl HeisenbergProgram {
-    /// Lower once, retaining the signed executor as an independent reference.
+    /// Build a reusable sampling plan.
+    /// [`Self::run`] remains the independent reference executor; it is not a
+    /// wrapper around this plan.
     ///
     /// # Errors
     /// Returns a platform-limit error or an operation/width-bearing planning error.
@@ -194,6 +191,7 @@ impl HeisenbergProgram {
         let mut operations = Vec::with_capacity(self.operations.len());
         let mut widths = Vec::with_capacity(self.operations.len());
         for (index, operation) in self.operations.iter().enumerate() {
+            let input_width = structure.width();
             let correction_start = corrections.len();
             let op = match operation {
                 HeisenbergOp::Rotation { pauli, angle, sign } => {
@@ -259,9 +257,7 @@ impl HeisenbergProgram {
                         value,
                     });
                     // The final validator checks uniqueness and pre-draw causality.
-                    if let Some(entry) = produced.get_mut(*symbol) {
-                        *entry = true;
-                    }
+                    produced[*symbol] = true;
                     PlannedOp {
                         sign: prime,
                         instruction: Instruction::Measurement {
@@ -275,13 +271,7 @@ impl HeisenbergProgram {
                 }
             };
             for (_, bit) in &corrections[correction_start..] {
-                validation::check_sign(
-                    bit,
-                    &produced,
-                    self.num_noise_symbols,
-                    index,
-                    structure.width(),
-                )?;
+                validation::check_sign(bit, &produced, self.num_noise_symbols, index, input_width)?;
             }
             observe(&structure, &corrections, &op, index);
             widths.push(structure.width());

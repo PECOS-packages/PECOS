@@ -22,7 +22,7 @@ pub(crate) enum RemovalEvent {
     MeasurementAfter,
 }
 
-fn body(operation: &HeisenbergOp) -> &VirtualPauli {
+pub(super) fn body(operation: &HeisenbergOp) -> &VirtualPauli {
     match operation {
         HeisenbergOp::Rotation { pauli, .. } | HeisenbergOp::Measurement { pauli, .. } => pauli,
     }

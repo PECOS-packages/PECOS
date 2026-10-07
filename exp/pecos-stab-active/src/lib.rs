@@ -47,7 +47,8 @@ use structure::{ActiveStructure, MeasurementData};
 pub mod heisenberg;
 pub use heisenberg::{
     AffineSign, CompileError, HeisenbergOp, HeisenbergProgram, PlanError, Sampler, SamplingPlan,
-    ShotResult, VirtualPauli, drop_measured_rotations, fuse_rotations,
+    ShotResult, VirtualPauli, drop_measured_rotations, fuse_rotations, plan_scheduled,
+    schedule_for_width,
 };
 
 /// A normalized dense vector on an ordered subset of stabilizer coordinates.

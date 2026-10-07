@@ -1,7 +1,7 @@
 // Copyright 2026 The PECOS Developers
 // Licensed under the Apache License, Version 2.0.
 
-//! Unscheduled Heisenberg programs in the virtual basis of the initial `|0^n>`.
+//! Heisenberg programs in the virtual basis of the initial `|0^n>`.
 //! Cliffords are replayed only at compilation. Pauli faults and reset corrections
 //! enter affine signs through symplectic anticommutation with later operations.
 
@@ -10,6 +10,7 @@ mod dispatch;
 mod noise;
 mod passes;
 mod plan;
+mod schedule;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -21,6 +22,7 @@ pub use passes::{drop_measured_rotations, fuse_rotations};
 use pecos_core::{Angle64, PauliBitmaskVec};
 use pecos_quantum::TickCircuit;
 pub use plan::{PlanError, Sampler, SamplingPlan};
+pub use schedule::{plan_scheduled, schedule_for_width};
 pub(crate) use validation::ProgramError;
 
 /// A constant XOR noise symbols XOR measurement symbols (including hidden resets).
@@ -194,16 +196,7 @@ impl HeisenbergProgram {
         self.operations
             .iter()
             .map(|operation| {
-                match operation {
-                    HeisenbergOp::Rotation { pauli, angle, .. } => {
-                        let rotation = structure.rotation(*angle, pauli.factors(), false);
-                        let _ = rotation.apply_rotation();
-                    }
-                    HeisenbergOp::Measurement { pauli, .. } => {
-                        let measurement = structure.measurement(pauli.factors(), false);
-                        let _ = measurement.apply_measurement(false);
-                    }
-                }
+                replay_width_operation(&mut structure, operation);
                 structure.width()
             })
             .collect()
@@ -311,5 +304,22 @@ impl HeisenbergProgram {
             peak_active_width: state.peak_active_width(),
         };
         (shot, measurements)
+    }
+}
+
+// Reference replay shared by the width probe and scheduler. Signs are positive
+// and raw outcomes zero; Active projection still includes the basis sign.
+fn replay_width_operation(structure: &mut ActiveStructure, operation: &HeisenbergOp) {
+    match operation {
+        HeisenbergOp::Rotation { pauli, angle, .. } => {
+            let _ = structure
+                .rotation(*angle, pauli.factors(), false)
+                .apply_rotation();
+        }
+        HeisenbergOp::Measurement { pauli, .. } => {
+            let _ = structure
+                .measurement(pauli.factors(), false)
+                .apply_measurement(false);
+        }
     }
 }

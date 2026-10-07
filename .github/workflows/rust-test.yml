@@ -1,5 +1,5 @@
 name: Rust test / linting
-run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR smoke' }})
+run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR lint' }})
 
 permissions:
   contents: read
@@ -217,14 +217,16 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
   rust-test:
+    # Pull requests get the Ubuntu workspace tests from the required pr-core-rust
+    # gate; the full three-OS suite runs after merge, or on a pull request that
+    # carries the ci:full-rust label.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')
     needs: [pre-commit, rust-lint]
     runs-on: ${{ matrix.os }}
-    env:
-      FULL_RUST_TESTS: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust') }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-rust') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
+        os: [ubuntu-latest, macos-latest, windows-2022]
 
     steps:
       - name: Harden the runner (egress audit)
@@ -312,7 +314,7 @@ jobs:
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
-        if: matrix.os == 'macos-latest' && env.FULL_RUST_TESTS == 'true'
+        if: matrix.os == 'macos-latest'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
@@ -323,11 +325,11 @@ jobs:
           cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
-        if: runner.os == 'Windows' && env.FULL_RUST_TESTS == 'true'
+        if: runner.os == 'Windows'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)
-        if: matrix.os == 'macos-latest' && env.FULL_RUST_TESTS == 'true'
+        if: matrix.os == 'macos-latest'
         env:
           # Prevent Homebrew/system library paths from interfering with linking
           LIBRARY_PATH: /usr/lib
@@ -336,15 +338,10 @@ jobs:
           ./target/release/pecos rust test
 
       - name: Run tests (Linux)
-        if: matrix.os == 'ubuntu-latest' && env.FULL_RUST_TESTS == 'true'
+        if: matrix.os == 'ubuntu-latest'
         run: |
           ./target/release/pecos rust test
 
-      - name: Run tests (Linux PR smoke path)
-        if: matrix.os == 'ubuntu-latest' && env.FULL_RUST_TESTS != 'true'
-        run: |
-          ./target/release/pecos rust test --help
-
       - name: Run tests (Windows)
-        if: runner.os == 'Windows' && env.FULL_RUST_TESTS == 'true'
+        if: runner.os == 'Windows'
         run: .\target\release\pecos.exe rust test

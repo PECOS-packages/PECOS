@@ -291,9 +291,10 @@ pytest *args:
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
 
-# Run the substantive PR Python lane after building the test-only native bindings it needs.
+# Run the substantive Python lane, plus pecos-rslib's Rust unit tests, after building the test-only native bindings it needs.
 [group('test')]
 python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (python-ci-build-test profile)
+    just rslib-rust-test
     just pytest-ci-core
 
 # Run pecos-rslib's own Rust unit tests. `pecos rust test` excludes this crate
@@ -357,8 +358,8 @@ pytest-ci-core-shard shard:
       rest)
         # pecos-rslib's own Rust unit tests ride this shard: it is a required
         # check that runs on pull requests and has already built the crate, so
-        # the marginal cost is the test run. `python-ci-core` cannot host them --
-        # its heavy step is post-merge only and skips on a pull request.
+        # the marginal cost is the test run. `python-ci-core` runs them again
+        # post-merge; its heavy step skips on a pull request.
         just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"

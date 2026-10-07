@@ -65,7 +65,7 @@ jobs:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       # Assign on its own line so a git failure aborts the step (fail closed).
       run: |
-        run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*')"
+        run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*' Cargo.toml Cargo.lock)"
         case "$run" in
           true|false) ;;
           *)

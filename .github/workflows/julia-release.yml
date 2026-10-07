@@ -102,7 +102,7 @@ jobs:
           # label / julia/ changes. Assign on its own line so a git failure
           # aborts the step (fail closed).
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*')"
+            run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*' Cargo.toml Cargo.lock)"
             case "$run" in
               true|false) ;;
               *)

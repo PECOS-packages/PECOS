@@ -35,6 +35,7 @@ on:
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - 'scripts/check_python_workspace.py'
+      - '.github/uv.toml'
       - '.github/workflows/python-test.yml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
@@ -54,6 +55,7 @@ on:
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - 'scripts/check_python_workspace.py'
+      - '.github/uv.toml'
       - '.github/workflows/python-test.yml'
   workflow_dispatch:
 

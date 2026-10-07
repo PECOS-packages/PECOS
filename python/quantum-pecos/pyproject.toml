@@ -78,7 +78,7 @@ all = [
 #   uv pip install -e .[cuda12]   # CUDA 12
 # V100/Volta (CC 7.0): cuStateVec dropped Volta at 25.09, so pin
 #   cuquantum-python-cu12>=25.3,<25.9 manually (see cuda-setup.md).
-# The Rust GPU backend (CudaStateVec/CudaStabilizer) is a separate install:
+# The Rust GPU backend (CudaStateVec) is a separate install:
 #   pip install pecos-rslib-cuda
 cuda13 = [
     "cupy-cuda13x>=13.0.0; python_version >= '3.11'",

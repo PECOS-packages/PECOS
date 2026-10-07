@@ -22,16 +22,26 @@ if [ "$HAS_JULIA_LABEL" = "true" ]; then
   exit 0
 fi
 
-julia_paths='^(julia/|\.github/workflows/julia-|scripts/ci/julia-should-run\.sh$)'
-changed="$(git diff --name-only "$PR_BASE_SHA"...HEAD)"
+# Git pathspecs, not a regex over printed names: git quotes unusual filenames,
+# and a printed rename shows only its destination, hiding a move out of julia/.
+julia_paths=(julia/ '.github/workflows/julia-*' scripts/ci/julia-should-run.sh)
+diff_range="${PR_BASE_SHA:?PR_BASE_SHA is empty}...HEAD"
 
-# Here-strings, not `printf | grep -q`: under pipefail an early-exiting grep can
-# SIGPIPE the producer and turn a match into a failed pipeline.
-if grep -qE "$julia_paths" <<<"$changed"; then
-  echo "PR changes Julia files:" >&2
-  grep -E "$julia_paths" <<<"$changed" | sed 's/^/  /' >&2
-  echo "true"
-else
-  echo "PR changes no Julia files and lacks the ci:julia label; skipping Julia CI." >&2
-  echo "false"
-fi
+# --quiet exits 0 for no changes, 1 for changes, and anything else on error.
+status=0
+git diff --quiet "$diff_range" -- "${julia_paths[@]}" || status=$?
+case "$status" in
+  0)
+    echo "PR changes no Julia files and lacks the ci:julia label; skipping Julia CI." >&2
+    echo "false"
+    ;;
+  1)
+    echo "PR changes Julia files:" >&2
+    git diff --name-only "$diff_range" -- "${julia_paths[@]}" | sed 's/^/  /' >&2
+    echo "true"
+    ;;
+  *)
+    echo "git diff failed with status $status" >&2
+    exit "$status"
+    ;;
+esac

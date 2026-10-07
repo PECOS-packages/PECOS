@@ -21,8 +21,11 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
   # Unrelated label events must not cancel an active run.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selene-plugins' && github.run_id || 'validation' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selene-plugins' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -106,7 +109,10 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
-          key: ${{ matrix.os }}
+          # One cache per runner OS/arch, shared with build-wheels. Per-plugin caches
+          # (6 plugins x 4 runners) filled the 10 GB repository cache on every dev
+          # push and evicted the caches the PR core gate restores.
+          shared-key: selene-plugins
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
@@ -226,9 +232,10 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
-          key: ${{ matrix.os }}-${{ matrix.plugin.name }}
+          # Restore the test job's release build of every plugin; only that job saves.
+          shared-key: selene-plugins
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+          save-if: false
 
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'

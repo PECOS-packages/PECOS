@@ -4437,6 +4437,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-phase-poly"
+version = "0.2.0-dev.0"
+dependencies = [
+ "num-complex 0.4.6",
+ "pecos-core",
+ "pecos-random",
+ "pecos-simulators",
+]
+
+[[package]]
 name = "pecos-phir"
 version = "0.2.0-dev.0"
 dependencies = [

@@ -479,6 +479,12 @@ to_string_source_graphlike_decomposed()), or use a decoder that accepts
 hyperedges such as bp_osd or tesseract.
 ```
 
+For graph matchers, prefer `DetectorErrorModel.to_string_source_graphlike_decomposed()`
+and check for residual hyperedges. It uses source provenance to choose components.
+The terminal projection mentioned in the diagnostic is a coordinate-based
+approximation: it invents components that need not be physical mechanisms and
+can decode less accurately even when their observable labels are consistent.
+
 Decode such a model with a decoder that represents hyperedges directly --
 `bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
 decomposed projection (a model written with `^` separators passes: each component is graphlike). See

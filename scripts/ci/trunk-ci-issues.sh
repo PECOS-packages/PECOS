@@ -43,14 +43,19 @@ for workflow in "${workflows[@]}"; do
   [[ " ${superseded_ok[*]} " == *" $workflow "* ]] && skip_cancelled=true
 
   for branch in "${branches[@]}"; do
-    run="$(gh run list --workflow "$workflow" --branch "$branch" --status completed --limit 30 \
-      --json conclusion,event,headSha,url,workflowName |
-      jq -c --argjson skip_cancelled "$skip_cancelled" '
+    runs="$(gh run list --workflow "$workflow" --branch "$branch" --status completed --limit 200 \
+      --json conclusion,event,headSha,url,workflowName)"
+    run="$(jq -c --argjson skip_cancelled "$skip_cancelled" '
         map(select(.event != "pull_request" and .event != "pull_request_target"
                    and .conclusion != "skipped" and .conclusion != "neutral"
                    and (($skip_cancelled | not) or .conclusion != "cancelled")))
-        | first // empty')"
-    [ -n "$run" ] || continue
+        | first // empty' <<<"$runs")"
+    if [ -z "$run" ]; then
+      if [ "$(jq length <<<"$runs")" -gt 0 ]; then
+        echo "::warning::${workflow} on ${branch}: no qualifying run among the latest 200 completed runs"
+      fi
+      continue
+    fi
 
     name="$(jq -r .workflowName <<<"$run")"
     conclusion="$(jq -r .conclusion <<<"$run")"
@@ -74,9 +79,14 @@ for workflow in "${workflows[@]}"; do
 
 A main-branch run is red. Fix or revert within 24 hours, and do not merge unrelated pull requests onto a red branch. This issue closes itself once \`${name}\` succeeds on \`${branch}\` again."
           echo "opened: ${title}"
-        elif ! gh issue view "$issue" --json body,comments --jq '[.body, .comments[].body] | join("\n")' | grep -qF "$url"; then
-          gh issue comment "$issue" --body "Still red. ${summary}"
-          echo "commented #${issue}: ${title}"
+        else
+          # Read the whole issue before searching it: `grep -q` on a pipe can exit
+          # early and SIGPIPE the producer, which pipefail reports as "not found".
+          issue_text="$(gh issue view "$issue" --json body,comments --jq '[.body, .comments[].body] | join("\n")')"
+          if ! grep -qF "$url" <<<"$issue_text"; then
+            gh issue comment "$issue" --body "Still red. ${summary}"
+            echo "commented #${issue}: ${title}"
+          fi
         fi
         ;;
       *)

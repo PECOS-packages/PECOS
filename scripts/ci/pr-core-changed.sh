@@ -32,7 +32,9 @@ changed="$(git diff --name-only "$base"...HEAD)"
 # and run. Anything not on the allowlist runs.
 ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
 
-if printf '%s\n' "$changed" | grep -qvE "$ignore"; then
+# Here-string, not `printf | grep -q`: under pipefail an early-exiting grep can
+# SIGPIPE the producer on a large diff and turn a match into "false".
+if grep -qvE "$ignore" <<<"$changed"; then
   echo "true"
 else
   echo "false"

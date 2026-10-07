@@ -580,6 +580,7 @@ unexpected_writable_permissions="$(
         $1 == ".github/workflows/julia-release.yml" && $2 == "publish_release" && $3 == "contents" { next }
         $1 == ".github/workflows/codeql.yml" && $2 == "-" && $3 == "security-events" { next }
         $1 == ".github/workflows/osv-scanner.yml" && $2 == "-" && $3 == "security-events" { next }
+        $1 == ".github/workflows/trunk-ci-issues.yml" && $2 == "track" && $3 == "issues" { next }
         NF { print }
     '
 )"

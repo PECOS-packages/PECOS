@@ -279,6 +279,26 @@ fn advance_right_identity_environment(
     previous
 }
 
+/// Bring finite tensor components to unit scale before squaring them.
+/// Componentwise division also works when the scale's reciprocal would overflow.
+fn rescale_normalization_tensor(tensor: &mut DMatrix<Complex64>) {
+    assert!(
+        tensor
+            .iter()
+            .all(|value| value.re.is_finite() && value.im.is_finite()),
+        "cannot normalize an MPS with non-finite tensor components"
+    );
+    let scale = tensor
+        .iter()
+        .flat_map(|value| [value.re.abs(), value.im.abs()])
+        .fold(0.0_f64, f64::max);
+    assert!(
+        scale > 0.0,
+        "cannot normalize a zero-norm MPS after projection"
+    );
+    tensor.unscale_mut(scale);
+}
+
 impl Mps {
     /// Create an MPS initialized to |00...0> with bond dimension 1 everywhere.
     #[must_use]
@@ -850,6 +870,10 @@ impl Mps {
     }
 
     /// Compute the squared norm `<psi|psi>` by contracting the MPS with itself.
+    ///
+    /// Subnormal results have reduced relative precision, and extreme scales
+    /// can underflow or overflow. [`Self::normalize`] uses rescaled contractions
+    /// in those ranges instead of dividing by this rounded squared norm.
     #[must_use]
     pub fn norm_squared(&self) -> f64 {
         // Contract from left to right, building the transfer matrix product.
@@ -1005,6 +1029,17 @@ impl Mps {
     }
 
     /// Normalize the MPS so that `<psi|psi> = 1`.
+    ///
+    /// Normal-range squared norms retain the original arithmetic and tensor
+    /// gauge. Otherwise, rescale components before squaring; without a tracked
+    /// center, also rescale each prefix environment to avoid accumulated decay.
+    /// This may redistribute scalar factors between untracked site tensors,
+    /// but preserves the represented state and any tracked center.
+    ///
+    /// # Panics
+    ///
+    /// Panics if rescaled normalization encounters a zero state or non-finite
+    /// tensor components.
     pub fn normalize(&mut self) {
         if self.tensors.is_empty() {
             return;
@@ -1027,14 +1062,37 @@ impl Mps {
                 self.tensors[center].iter().map(Complex64::norm_sqr).sum()
             },
         );
-        debug_assert!(
-            norm_sq > 0.0,
-            "cannot normalize a zero-norm MPS after projection"
-        );
-        if norm_sq > 0.0 {
+        if norm_sq.is_normal() && norm_sq > 0.0 {
             let inv_norm = Complex64::new(1.0 / norm_sq.sqrt(), 0.0);
             let site = self.center.unwrap_or(0);
             self.scale_tensor(site, inv_norm);
+        } else if let Some(center) = self.center {
+            let tensor = &mut self.tensors[center];
+            rescale_normalization_tensor(tensor);
+            let scaled_norm_squared: f64 = tensor.iter().map(Complex64::norm_sqr).sum();
+            tensor.unscale_mut(scaled_norm_squared.sqrt());
+        } else {
+            // The small scale need not be at site zero. Normalize successive
+            // prefixes, contracting only bounded components and environments.
+            // Every tensor change is a positive scalar, so the full ket changes
+            // only by its overall normalization; no factorization is needed.
+            let mut environment = DMatrix::from_element(1, 1, Complex64::new(1.0, 0.0));
+            for (site, tensor) in self.tensors.iter_mut().enumerate() {
+                rescale_normalization_tensor(tensor);
+                environment = advance_left_identity_environment(
+                    &environment,
+                    tensor,
+                    self.phys_dim,
+                    self.bond_dims[site + 1],
+                );
+                let prefix_norm_squared = environment.trace().re;
+                assert!(
+                    prefix_norm_squared.is_finite() && prefix_norm_squared > 0.0,
+                    "cannot normalize a zero or non-finite MPS contraction"
+                );
+                tensor.unscale_mut(prefix_norm_squared.sqrt());
+                environment.unscale_mut(prefix_norm_squared);
+            }
         }
     }
 
@@ -1826,6 +1884,87 @@ mod tests {
         assert_eq!(mps.tracked_center_for_test(), Some(2));
         assert_eq!(mps.full_canonical_sweep_count(), 0);
         assert_eq!(mps.center_reuse_count(), 1);
+    }
+
+    #[test]
+    fn normalize_subnormal_entangled_state() {
+        for scale in [1e-158, 1e-160, 1e-200, 1e200] {
+            for center in [None, Some(0), Some(2)] {
+                let mut reference = seeded_random_mps(4, 2, 910, MpsConfig::default());
+                reference.normalize();
+                let mut scaled = reference.clone();
+                if let Some(site) = center {
+                    scaled.canonicalize_at(site);
+                } else {
+                    scaled.center = None;
+                }
+                scaled.scale_tensor(center.unwrap_or(1), Complex64::new(scale, 0.0));
+                scaled.normalize();
+                assert_eq!(scaled.center, center);
+                assert!((scaled.norm_squared() - 1.0).abs() < 1e-12);
+                for (actual, expected) in scaled.state_vector().iter().zip(reference.state_vector())
+                {
+                    assert!((*actual - expected).norm() < 1e-12);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn normalize_subnormal_components_and_distributed_decay() {
+        for scale in [1e-158, 1e-160, f64::from_bits(1)] {
+            let mut mps = Mps::new(1, MpsConfig::default());
+            mps.tensors[0][(0, 0)] = Complex64::new(scale, 0.0);
+            mps.tensors[0][(0, 1)] = Complex64::new(0.0, scale);
+            mps.normalize();
+            assert!((mps.norm_squared() - 1.0).abs() < 1e-12);
+            assert!((mps.tensors[0][(0, 0)].re - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-12);
+            assert!((mps.tensors[0][(0, 1)].im - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-12);
+        }
+        let mut mps = Mps::new(4, MpsConfig::default());
+        for tensor in &mut mps.tensors {
+            tensor[(0, 0)] = Complex64::new(1e-40, 0.0);
+            tensor[(0, 1)] = Complex64::new(0.0, 1e-40);
+        }
+        mps.center = None;
+        assert!(mps.norm_squared().is_subnormal());
+        mps.normalize();
+        assert!((mps.norm_squared() - 1.0).abs() < 1e-12);
+        for amplitude in mps.state_vector() {
+            assert!((amplitude.norm() - 0.25).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn normalization_normal_range_matches_legacy_bits() {
+        for center in [None, Some(0), Some(2)] {
+            for scale in [0.5, 1.0, 2.0] {
+                let mut actual = seeded_random_mps(4, 2, 910, MpsConfig::default());
+                if let Some(site) = center {
+                    actual.canonicalize_at(site);
+                } else {
+                    actual.center = None;
+                }
+                actual.scale_tensor(center.unwrap_or(0), Complex64::new(scale, 0.0));
+                let mut legacy = actual.clone();
+                let norm_squared = center.map_or_else(
+                    || legacy.norm_squared(),
+                    |site| legacy.tensors[site].iter().map(Complex64::norm_sqr).sum(),
+                );
+                legacy.scale_tensor(
+                    center.unwrap_or(0),
+                    Complex64::new(1.0 / norm_squared.sqrt(), 0.0),
+                );
+                actual.normalize();
+                assert_eq!(actual.center, legacy.center);
+                for (actual, expected) in actual.tensors.iter().zip(&legacy.tensors) {
+                    for (actual, expected) in actual.iter().zip(expected.iter()) {
+                        assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+                        assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+                    }
+                }
+            }
+        }
     }
 
     #[test]

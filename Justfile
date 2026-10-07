@@ -458,14 +458,13 @@ python-ci-lint: _msvc-bootstrap ensure-local-build-env python-workspace-check
         echo "(No CUDA -- linting with default features only)"
     fi
 
+    echo "==> Checking Python lockfiles..."
+    uv lock --check --project .
+    uv lock --check --project exp/zluppy
     echo "==> Checking Rust formatting..."
     cargo fmt --all -- --check
     echo "==> Running clippy..."
     cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
-    echo "==> Running pre-commit..."
-    uv run --frozen pre-commit run --all-files
-    echo "==> Running cargo check..."
-    cargo check --locked --workspace --all-targets
 
 # Run cargo check
 [group('lint')]

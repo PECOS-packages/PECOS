@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 
 const TOL: f64 = 1e-10;
 
-fn index(rng: &mut PecosRng, n: usize) -> usize {
+pub(crate) fn index(rng: &mut PecosRng, n: usize) -> usize {
     usize::try_from(rng.next_u64() % u64::try_from(n).unwrap()).unwrap()
 }
 
@@ -54,7 +54,7 @@ fn assert_unchanged(sim: &PhasePoly, before: &PhasePoly) {
     assert_rng_unchanged(&sim.rng, &before.rng);
 }
 
-fn assert_state(sim: &PhasePoly, reference: &[Complex64]) {
+pub(crate) fn assert_state(sim: &PhasePoly, reference: &[Complex64]) {
     assert_invariants(sim);
     let state = sim.state_vector();
     close(state.iter().map(Complex64::norm_sqr).sum(), 1.0);
@@ -167,7 +167,7 @@ fn matrices() -> &'static Vec<Vec<Vec<Complex64>>> {
     })
 }
 
-fn dense_gate(state: &mut [Complex64], gate: usize, qubits: &[QubitId]) {
+pub(crate) fn dense_gate(state: &mut [Complex64], gate: usize, qubits: &[QubitId]) {
     let columns = &matrices()[gate];
     let affected = qubits.iter().fold(0, |mask, q| mask | (1 << q.0));
     let old = state.to_vec();
@@ -189,7 +189,7 @@ fn dense_gate(state: &mut [Complex64], gate: usize, qubits: &[QubitId]) {
     }
 }
 
-fn dense_projection(
+pub(crate) fn dense_projection(
     state: &[Complex64],
     qubits: &[QubitId],
     is_x: bool,

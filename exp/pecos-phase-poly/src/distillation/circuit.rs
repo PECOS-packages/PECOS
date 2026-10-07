@@ -73,6 +73,52 @@ impl TriorthogonalMatrix {
         Ok(ops)
     }
 
+    /// Build the same encoder, noisy T layer, correction and syndromes as
+    /// [`Self::circuit`], using typed channels and one detector per syndrome.
+    /// X strings use CX ladders around a single MX; logical W expectations
+    /// are omitted because they are queries rather than measurements.
+    ///
+    /// # Errors
+    /// Requires finite `p` in `[0,1]`, as in [`Self::circuit`].
+    pub fn tick_circuit(&self, p: f64) -> Result<pecos_quantum::TickCircuit, String> {
+        use pecos_core::{Gate, channel, gate_type::GateType};
+        let mut circuit = pecos_quantum::TickCircuit::new();
+        for op in self.circuit(p)? {
+            let (kind, qubits) = match op {
+                Op::PZ(q) => (GateType::PZ, vec![q]),
+                Op::PX(q) => (GateType::PX, vec![q]),
+                Op::CX(a, b) => (GateType::CX, vec![a, b]),
+                Op::CZ(a, b) => (GateType::CZ, vec![a, b]),
+                Op::S(q) => (GateType::SZ, vec![q]),
+                Op::Sdg(q) => (GateType::SZdg, vec![q]),
+                Op::Z(q) => (GateType::Z, vec![q]),
+                Op::T(q) => (GateType::T, vec![q]),
+                Op::ZError(q, rate) => {
+                    circuit.tick().channel(channel::Dephasing(rate, q));
+                    continue;
+                }
+                Op::MeasureX(support) => {
+                    // Validated independent matrix rows are nonzero.
+                    let first = support[0];
+                    for &other in &support[1..] {
+                        circuit.tick().cx(&[(first, other)]);
+                    }
+                    let refs = circuit.tick().mx(&[first]);
+                    circuit.detector(&refs).map_err(|e| e.to_string())?;
+                    for &other in support[1..].iter().rev() {
+                        circuit.tick().cx(&[(first, other)]);
+                    }
+                    continue;
+                }
+                Op::ExpectW(_) => continue,
+            };
+            let tick = circuit.num_ticks();
+            circuit.tick();
+            circuit.ticks_mut()[tick].add_gate(Gate::simple(kind, qubits));
+        }
+        Ok(circuit)
+    }
+
     // R = A G; Gaussian elimination keeps A alongside R. Every pivot column
     // is a unit vector, hence f[p_b] = y_b and x_a = XOR_b A[b,a] f[p_b].
     fn reduced(&self) -> (Vec<Mask>, Vec<Mask>, Vec<usize>) {

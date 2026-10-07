@@ -58,6 +58,7 @@ mod binary;
 pub mod distillation;
 mod measurement;
 mod quadratic;
+pub mod runner;
 pub use measurement::{IncompatibleMeasurement, XMeasurementCase};
 
 #[cfg(test)]

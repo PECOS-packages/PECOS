@@ -165,3 +165,48 @@ patterns at each weight three through five per matrix. Statistical tests use
 the accepted count for output errors. A union bound over all 18 comparisons
 limits the joint failure probability to 1.8e-7. The 128-qubit G(40) test runs
 three ideal shots and prints elapsed time with `-- --nocapture`.
+
+## TickCircuit shot runner
+
+`runner::compile(&circuit)` (also `Program::compile`) validates every batch and
+annotation before producing a reusable `Program`. Supported gates are I, Idle,
+TrackedPauliMeta, X/Y/Z, SZ/SZdg, T/Tdg, CX/CZ, PZ/PX, MZ/MX/MPZ, and Pauli-mixture
+Channel expressions. RZ and RZZ require exact Angle64 multiples of pi/4; SZZ and
+SZZdg are supported too. RZZ uses a CX–T-power–CX parity circuit. Compilation
+rejects unsupported gates, malformed batches, missing or duplicate measurement
+IDs, and unresolved annotation references with their original locations.
+I, Idle, and TrackedPauliMeta batches are shape-free no-ops, including empty
+batches, matching StabActive. Empty batches of real gates remain invalid.
+
+`program.run_shot(&mut sim, &mut noise_rng)` resets a caller-supplied PhasePoly
+of exactly `program.num_qubits()` qubits and executes the whole program. Its
+measurement RNG remains separate from the supplied noise RNG. A successful
+`runner::ShotResult` contains `records`, `detectors`, and `observables`, all bool
+vectors. Records follow execution order rather than stable-ID allocation order.
+Detector/observable values are raw XOR parities, without reference normalization;
+`program.detectors()` and `program.observables()` expose their record lists.
+`program.run_shots(count, seed)` constructs independent seeded streams and
+collects completed shots, stopping at the first error.
+
+No compatibility certification is attempted. The iterative-measurements theorem
+in arXiv:2610.06811 Section 6 guarantees compatibility under Pauli noise when every
+noiseless X measurement is deterministic or case 1 on every noiseless branch.
+Otherwise an incompatible MX returns `RunError::Measurement` with tick, batch,
+qubit and the underlying `IncompatibleMeasurement`; the simulator retains the
+executed prefix. A qubit-count mismatch is rejected before either state or RNG
+changes.
+
+`matrix.tick_circuit(p)` translates the existing distillation operations into a
+TickCircuit. Each T is immediately followed by `(1-p) I + p Z`, each syndrome
+uses a CX ladder around MX and gets one detector annotation, and logical W
+expectation queries are omitted. For example:
+
+```rust
+use pecos_phase_poly::{distillation::TriorthogonalMatrix, runner::Program};
+
+let circuit = TriorthogonalMatrix::rm15().tick_circuit(0.05).unwrap();
+let program = Program::compile(&circuit).unwrap();
+let shots = program.run_shots(100, 2027).unwrap();
+let accepted = shots.iter().filter(|s| s.detectors.iter().all(|b| !b)).count();
+println!("accepted {accepted}/100");
+```

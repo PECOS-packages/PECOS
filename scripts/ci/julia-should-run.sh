@@ -28,8 +28,9 @@ julia_paths=(julia/ '.github/workflows/julia-*' scripts/ci/julia-should-run.sh)
 diff_range="${PR_BASE_SHA:?PR_BASE_SHA is empty}...HEAD"
 
 # --quiet exits 0 for no changes, 1 for changes, and anything else on error.
+# --no-ext-diff/--no-textconv: compare blobs, not a configured driver's view.
 status=0
-git diff --quiet "$diff_range" -- "${julia_paths[@]}" || status=$?
+git diff --quiet --no-ext-diff --no-textconv "$diff_range" -- "${julia_paths[@]}" || status=$?
 case "$status" in
   0)
     echo "PR changes no Julia files and lacks the ci:julia label; skipping Julia CI." >&2

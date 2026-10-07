@@ -548,6 +548,12 @@ while IFS= read -r file; do
     workflow_files+=("$file")
 done < <(collect_files .github/workflows -g '*.yml' -g '*.yaml')
 
+# The process substitution above cannot report a failed listing, and with no
+# files every check below would pass vacuously.
+if ((${#workflow_files[@]} == 0)); then
+    fail "no workflow files found under .github/workflows"
+fi
+
 missing_top_level_permissions=()
 for file in "${workflow_files[@]}"; do
     if ! rg -q '^permissions:\s*$' "$file"; then

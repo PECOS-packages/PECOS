@@ -55,6 +55,16 @@ def test_reported(tmp_path: Path, top: str, job: str, expected: list[str]) -> No
     assert run(tmp_path, workflow(top, job)) == (0, expected)
 
 
+def test_yaml11_boolean_job_ids_stay_distinct(tmp_path: Path) -> None:
+    # YAML 1.1 reads both ids as True, so a plain loader keeps only the last job.
+    text = (
+        "name: t\non: push\njobs:\n"
+        "  on:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    steps:\n      - run: true\n"
+        "  yes:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n"
+    )
+    assert run(tmp_path, text) == (0, ["on\tcontents"])
+
+
 @pytest.mark.parametrize(
     ("top", "job"),
     [
@@ -76,6 +86,8 @@ def test_read_only(tmp_path: Path, top: str, job: str) -> None:
         workflow("permissions:\n  - contents\n"),
         workflow("", "    permissions: true\n"),
         "name: t\non: push\njobs:\n  build: run\n",
+        workflow("permissions:\n  contents: write\npermissions:\n  contents: read\n"),
+        "name: t\non: push\njobs:\n  a:\n    permissions: write-all\n  a:\n    runs-on: x\n",
         "name: t\non: push\n",
         "jobs: [\n",
     ],

@@ -12,9 +12,12 @@ for the workflow-level ``permissions:`` and SCOPE is ``write-all`` for that
 shorthand. FILE is printed with forward slashes on every platform.
 
 The workflow is parsed as YAML, so quoting, comments and spacing cannot hide a
-grant, and every scope is reported rather than a fixed list of names. A
-``permissions:`` value the GitHub schema does not allow exits 1, so the check
-fails closed instead of reading an unknown form as "no write".
+grant, and every scope is reported rather than a fixed list of names. Mapping
+keys stay as written, as GitHub reads them: YAML 1.1 would turn job ids such as
+``on`` and ``yes`` into the same boolean and drop one job. Duplicate keys, which
+GitHub rejects, exit 1, as does a ``permissions:`` value the GitHub schema does
+not allow, so the check fails closed instead of reading an unknown form as
+"no write".
 """
 
 from __future__ import annotations
@@ -26,6 +29,26 @@ import yaml
 
 LEVELS = {"read", "write", "none"}
 SHORTHANDS = {"read-all", "write-all"}
+
+
+class WorkflowLoader(yaml.SafeLoader):
+    """SafeLoader that keeps scalar mapping keys as written and rejects duplicates."""
+
+
+def construct_mapping(loader: WorkflowLoader, node: yaml.MappingNode) -> dict:
+    loader.flatten_mapping(node)
+    mapping = {}
+    for key_node, value_node in node.value:
+        scalar = isinstance(key_node, yaml.ScalarNode)
+        key = key_node.value if scalar else loader.construct_object(key_node)
+        if key in mapping:
+            msg = f"duplicate key {key!r}"
+            raise yaml.constructor.ConstructorError(None, None, msg, key_node.start_mark)
+        mapping[key] = loader.construct_object(value_node)
+    return mapping
+
+
+WorkflowLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping)
 
 
 def write_scopes(permissions: object, where: str) -> list[str]:
@@ -52,7 +75,11 @@ def write_scopes(permissions: object, where: str) -> list[str]:
 
 def grants(path: Path) -> list[tuple[str, str]]:
     """Return ``(job, scope)`` for every write grant in the workflow at ``path``."""
-    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loader = WorkflowLoader(path.read_text(encoding="utf-8"))
+    try:
+        workflow = loader.get_single_data()
+    finally:
+        loader.dispose()
     if not isinstance(workflow, dict):
         msg = f"{path}: not a workflow mapping"
         raise TypeError(msg)
@@ -70,6 +97,9 @@ def grants(path: Path) -> list[tuple[str, str]]:
 
 
 def main(argv: list[str]) -> int:
+    # The integrity check splits this output in bash; Windows text mode would
+    # otherwise end each line with CRLF and leave a CR on the last field.
+    sys.stdout.reconfigure(newline="\n")
     try:
         for name in argv[1:]:
             for job, scope in grants(Path(name)):

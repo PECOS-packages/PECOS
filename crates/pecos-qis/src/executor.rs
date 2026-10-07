@@ -2687,31 +2687,52 @@ mod tests {
         // SAFETY: This counter has no arguments and does not transfer.
         let live: Symbol<unsafe extern "C" fn() -> usize> =
             unsafe { ffi.get(b"pecos_get_live_allocation_count\0").unwrap() };
+        // Hand-written IR must follow the C ABI the Selene adapters export.
+        // The 8-byte `SeleneBoolResult` returns in one integer register on
+        // every 64-bit target. The 16-byte `SeleneU64Result` returns in two
+        // registers on SysV and AArch64 but through a hidden pointer on Windows.
+        #[cfg(not(windows))]
+        let selene_u64 = (
+            "declare {i32, i64} @selene_future_read_u64(ptr, i64)",
+            "%value = call {i32, i64} @selene_future_read_u64(ptr null, i64 0)",
+        );
+        #[cfg(windows)]
+        let selene_u64 = (
+            "declare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
+            "%out = alloca {i32, i64}
+                    call void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 0)",
+        );
         let reads = [
-            ("i1", "___read_future_bool", "i64 0", "i64"),
-            ("i64", "___read_future_uint", "i64 0", "i64"),
-            ("i32", "__quantum__rt__result_get_one", "i64 0", "i64"),
             (
-                "{i32, i1}",
+                "___read_future_bool",
+                "declare i1 @___read_future_bool(i64)",
+                "%value = call i1 @___read_future_bool(i64 0)",
+            ),
+            (
+                "___read_future_uint",
+                "declare i64 @___read_future_uint(i64)",
+                "%value = call i64 @___read_future_uint(i64 0)",
+            ),
+            (
+                "__quantum__rt__result_get_one",
+                "declare i32 @__quantum__rt__result_get_one(i64)",
+                "%value = call i32 @__quantum__rt__result_get_one(i64 0)",
+            ),
+            (
                 "selene_future_read_bool",
-                "ptr null, i64 0",
-                "ptr, i64",
+                "declare i64 @selene_future_read_bool(ptr, i64)",
+                "%value = call i64 @selene_future_read_bool(ptr null, i64 0)",
             ),
-            (
-                "{i32, i64}",
-                "selene_future_read_u64",
-                "ptr null, i64 0",
-                "ptr, i64",
-            ),
+            ("selene_future_read_u64", selene_u64.0, selene_u64.1),
         ];
-        for (ty, reader, args, params) in reads {
+        for (reader, declaration, call) in reads {
             let source = format!(
                 r"
                 declare ptr @heap_alloc(i64)
-                declare {ty} @{reader}({params})
+                {declaration}
                 define i64 @qmain(i64 %shot) {{
                     %allocation = call ptr @heap_alloc(i64 16)
-                    %value = call {ty} @{reader}({args})
+                    {call}
                     ret i64 0
                 }}
             "

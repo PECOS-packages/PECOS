@@ -23,6 +23,7 @@ env:
   CARGO_NET_RETRY: "10"
 
 on:
+  # Merges into the main branches always run, whatever they touch.
   push:
     branches:
       - main
@@ -31,26 +32,16 @@ on:
       - master
     tags:
       - 'jl-*'  # Trigger on Julia-specific tags
-    paths:
-      - 'julia/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/ci/**'
-      - '.github/workflows/julia-release.yml'
+  # No `paths:` filter: GitHub applies it to label events too, so adding
+  # ci:julia could never start a run on a PR that leaves julia/ alone. The
+  # check_pr_push job decides instead (scripts/ci/julia-should-run.sh).
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches:
       - main
       - dev
       - development
       - master
-    paths:
-      - 'julia/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/ci/**'
-      - '.github/workflows/julia-release.yml'
   workflow_dispatch:
     inputs:
       sha:
@@ -62,7 +53,8 @@ on:
         default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Unrelated label events must not cancel an active run.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -73,7 +65,7 @@ jobs:
   check_pr_push:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'pull_request' && github.event.action != 'closed' ||
+      github.event_name == 'pull_request' && github.event.action != 'closed' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia') ||
       github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
       github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-')
     outputs:
@@ -84,10 +76,17 @@ jobs:
         with:
           egress-policy: audit
 
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Check if should run on PR push
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
+          HAS_JULIA_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:julia') }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
@@ -98,9 +97,19 @@ jobs:
           # Always run on pushes to main branches
           elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
-          # For PRs, check the TRIGGER_ON_PR_PUSH setting
+          # For PRs, check the TRIGGER_ON_PR_PUSH setting, then the ci:julia
+          # label / julia/ changes. Assign on its own line so a git failure
+          # aborts the step (fail closed).
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            echo "run=true" >> $GITHUB_OUTPUT
+            run="$(bash scripts/ci/julia-should-run.sh)"
+            case "$run" in
+              true|false) ;;
+              *)
+                echo "unexpected julia-should-run output: <$run>" >&2
+                exit 1
+                ;;
+            esac
+            echo "run=$run" >> $GITHUB_OUTPUT
           else
             echo "run=false" >> $GITHUB_OUTPUT
           fi

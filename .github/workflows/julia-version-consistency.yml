@@ -19,12 +19,50 @@ on:
     branches: [ "main", "master", "development", "dev" ]
     # The tag check below only means something when a release tag is what triggered the run.
     tags: [ "jl-*" ]
+  # No `paths:` filter: the julia-changes job decides (see julia-test.yml).
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
 
 jobs:
+  julia-changes:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Decide whether to run Julia CI
+      id: detect
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        HAS_JULIA_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:julia') }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # Assign on its own line so a git failure aborts the step (fail closed).
+      run: |
+        run="$(bash scripts/ci/julia-should-run.sh)"
+        case "$run" in
+          true|false) ;;
+          *)
+            echo "unexpected julia-should-run output: <$run>" >&2
+            exit 1
+            ;;
+        esac
+        printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+
   check-julia-versions:
+    needs: julia-changes
+    if: needs.julia-changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
     - name: Harden the runner (egress audit)

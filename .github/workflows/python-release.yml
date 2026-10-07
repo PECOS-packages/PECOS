@@ -56,10 +56,6 @@ on:
       sha:
         description: Commit SHA
         type: string
-      dry_run:
-        description: 'Dry run (build but not publish)'
-        type: boolean
-        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

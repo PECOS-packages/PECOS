@@ -45,12 +45,8 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit SHA
+        description: Commit SHA to build (manual runs build and test; only a jl-* tag push publishes)
         type: string
-      dry_run:
-        description: 'Dry run (build but not publish)'
-        type: boolean
-        default: true
 
 concurrency:
   # Unrelated label events must not cancel an active run.
@@ -67,7 +63,8 @@ jobs:
     if: |
       github.event_name == 'pull_request' && github.event.action != 'closed' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia') ||
       github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-')
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-') ||
+      github.event_name == 'workflow_dispatch'
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
@@ -91,8 +88,12 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
+          # Always run on manual dispatch (build and test only; publish_release
+          # needs a jl-* tag push)
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
           # Always run on tag pushes (jl-* tags trigger releases)
-          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/jl-* ]]; then
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/jl-* ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # Always run on pushes to main branches
           elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
@@ -547,6 +548,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Create distribution directories
@@ -598,7 +600,7 @@ jobs:
             printf '# For release: %s\n\n' "$RELEASE_REF_NAME"
             printf '%s\n' '[PECOS_julia]'
             printf '%s\n\n' 'git-tree-sha1 = "0000000000000000000000000000000000000000"  # Tree hash will be computed on first use'
-          } > ../julia/PECOS.jl/Artifacts.toml
+          } > Artifacts.toml
 
           # Add download entries for each platform
           for tarball in binaries/*.tar.gz; do
@@ -611,12 +613,12 @@ jobs:
                 printf '%s\n' '[[PECOS_julia.download]]'
                 printf 'url = "https://github.com/PECOS-packages/PECOS/releases/download/%s/%s"\n' "$RELEASE_REF_NAME" "$filename"
                 printf 'sha256 = "%s"\n\n' "$sha256"
-              } >> ../julia/PECOS.jl/Artifacts.toml
+              } >> Artifacts.toml
             fi
           done
 
           echo "Generated Artifacts.toml:"
-          cat ../julia/PECOS.jl/Artifacts.toml
+          cat Artifacts.toml
 
       - name: Create submission instructions
         env:
@@ -693,9 +695,35 @@ jobs:
           if-no-files-found: error
           retention-days: 30  # Keep for 30 days
 
+  # Publishes only from a jl-* tag push, and is the only job with write access:
+  # the jobs above also run on pull requests and stay read-only.
+  publish_release:
+    needs: create_release_bundle
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      # Keeps the token so the Artifacts.toml commit below can be pushed.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download release bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: pecos-julia-release-bundle
+
+      - name: Unpack release bundle
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: tar -xzf "pecos-julia-release-bundle-${RUN_NUMBER}.tar.gz"
+
       - name: Determine if pre-release
         id: check-prerelease
-        if: startsWith(github.ref, 'refs/tags/jl-')
         env:
           RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
@@ -713,7 +741,6 @@ jobs:
           fi
 
       - name: Create GitHub Release and Upload Binaries
-        if: startsWith(github.ref, 'refs/tags/jl-')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-bundle/binaries/*.tar.gz
@@ -734,17 +761,16 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Commit Artifacts.toml to branch
-        if: startsWith(github.ref, 'refs/tags/jl-')
         env:
           RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
-          # Configure git
+          cp release-bundle/Artifacts.toml julia/PECOS.jl/Artifacts.toml
+
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          # Add and commit the Artifacts.toml
           git add julia/PECOS.jl/Artifacts.toml
-          git commit -m "Add Artifacts.toml for $RELEASE_REF_NAME" || echo "No changes to commit"
+          git diff --cached --quiet || git commit -m "Add Artifacts.toml for $RELEASE_REF_NAME"
 
-          # Push to the tag's branch
-          git push origin "HEAD:${RELEASE_REF_NAME}-artifacts" || echo "Push failed"
+          # Push to the tag's artifacts branch
+          git push origin "HEAD:refs/heads/${RELEASE_REF_NAME}-artifacts"

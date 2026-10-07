@@ -565,6 +565,8 @@ unexpected_writable_permissions="$(
     printf '%s\n' "$writable_permissions" | awk -F: '
         $1 == ".github/workflows/julia-update-hash.yml" &&
             $0 ~ /^[^:]+:[0-9]+:[[:space:]]+(contents|pull-requests): write[[:space:]]*$/ { next }
+        $1 == ".github/workflows/julia-release.yml" &&
+            $0 ~ /^[^:]+:[0-9]+:[[:space:]]+contents: write[[:space:]]*$/ { next }
         $1 == ".github/workflows/codeql.yml" &&
             $0 ~ /^[^:]+:[0-9]+:[[:space:]]+security-events: write[[:space:]]*$/ { next }
         $1 == ".github/workflows/osv-scanner.yml" &&

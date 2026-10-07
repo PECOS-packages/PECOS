@@ -14,6 +14,8 @@
 # Usage: scripts/ci/trunk-ci-issues.sh
 # Environment: GH_TOKEN and GH_REPO for the gh CLI.
 set -euo pipefail
+# Command substitutions (issue_text, gh calls) fail the script like any command.
+shopt -s inherit_errexit
 
 branches=(dev master)
 workflows=(
@@ -120,39 +122,54 @@ A main-branch run is red. Fix or revert within 24 hours, and do not merge unrela
   done
 done
 
-# Open high- and critical-severity code scanning alerts on dev, one line each.
+# Open high- and critical-severity code scanning alerts on dev, oldest first.
+# Alert numbers only grow, so an alert is new when its number is above every
+# number the issue already mentions (a reopened alert keeps its old number and
+# is not announced again); at most 100 are listed per message, which
+# keeps each one under GitHub's body limit and posts a backlog in batches.
 title="Trunk code scanning: open high-severity alerts on dev"
 issue="$(find_issue "$title")"
 # shellcheck disable=SC2016 # the backticks are literal Markdown in the jq output
 alerts="$(gh api --paginate "repos/{owner}/{repo}/code-scanning/alerts?state=open&ref=refs/heads/dev&per_page=100" \
   --jq '.[] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")
-        | "- \(.html_url) `\(.rule.id)` (\(.rule.security_severity_level)) in `\(.most_recent_instance.location.path)`"')"
+        | "\(.number)\t- \(.html_url) `\(.rule.id)` (\(.rule.security_severity_level)) in `\(.most_recent_instance.location.path)`"' |
+  sort -n)"
+alerts_url="https://github.com/${GH_REPO}/security/code-scanning?query=is%3Aopen+branch%3Adev"
+
 if [ -z "$alerts" ]; then
   if [ -n "$issue" ]; then
     gh issue close "$issue" --comment "No open high- or critical-severity code scanning alerts on dev."
     echo "closed #${issue}: ${title}"
   fi
-elif [ -z "$issue" ]; then
-  gh issue create --title "$title" --label bug --label severity:high \
-    --body "Open high- and critical-severity code scanning alerts on \`dev\`:
+else
+  last_reported=0
+  if [ -n "$issue" ]; then
+    text="$(issue_text "$issue")"
+    last_reported="$({ grep -oE 'code-scanning/[0-9]+' <<<"$text" || true; } | cut -d/ -f2 | sort -n | tail -n 1)"
+    last_reported="${last_reported:-0}"
+  fi
+  new_alerts="$(awk -F'\t' -v last="$last_reported" '$1 > last { print $2 }' <<<"$alerts")"
+  if [ -n "$new_alerts" ]; then
+    count="$(wc -l <<<"$new_alerts")"
+    listed="$(head -n 100 <<<"$new_alerts")"
+    if [ "$count" -gt 100 ]; then
+      listed="${listed}
+- ...and $((count - 100)) more, listed in later comments: ${alerts_url}"
+    fi
+    if [ -z "$issue" ]; then
+      gh issue create --title "$title" --label bug --label severity:high \
+        --body "Open high- and critical-severity code scanning alerts on \`dev\`:
 
-${alerts}
+${listed}
 
 Fix each alert, or dismiss it with a reason in the Security tab if it is a false positive. This issue gets a comment when new alerts appear and closes itself when none are open."
-  echo "opened: ${title}"
-else
-  text="$(issue_text "$issue")"
-  new_alerts="$(while IFS= read -r line; do
-    alert_url="${line#- }"
-    alert_url="${alert_url%% *}"
-    # The trailing space keeps alert 12 from matching alert 123.
-    grep -qF "${alert_url} " <<<"$text" || printf '%s\n' "$line"
-  done <<<"$alerts")"
-  if [ -n "$new_alerts" ]; then
-    gh issue comment "$issue" --body "New open alerts on \`dev\`:
+      echo "opened: ${title}"
+    else
+      gh issue comment "$issue" --body "New open alerts on \`dev\`:
 
-${new_alerts}"
-    echo "commented #${issue}: ${title}"
+${listed}"
+      echo "commented #${issue}: ${title}"
+    fi
   fi
 fi
 

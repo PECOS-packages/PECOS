@@ -46,15 +46,15 @@ jobs:
       id: detect
       env:
         EVENT_NAME: ${{ github.event_name }}
-        HAS_JULIA_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:julia') }}
+        PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       # Assign on its own line so a git failure aborts the step (fail closed).
       run: |
-        run="$(bash scripts/ci/julia-should-run.sh)"
+        run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*')"
         case "$run" in
           true|false) ;;
           *)
-            echo "unexpected julia-should-run output: <$run>" >&2
+            echo "unexpected pr-lane-should-run output: <$run>" >&2
             exit 1
             ;;
         esac

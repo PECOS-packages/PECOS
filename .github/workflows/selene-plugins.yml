@@ -8,40 +8,21 @@ env:
   RUSTFLAGS: -C debuginfo=0
 
 on:
+  # Merges into the main branches always run, whatever they touch.
   push:
-    branches: [master, development, dev]
-    paths:
-      - 'python/selene-plugins/**'
-      - 'crates/pecos-engines/**'
-      - 'crates/pecos-random/**'
-      - 'crates/pecos-quantum/**'
-      - 'crates/pecos-simulators/**'
-      - 'crates/pecos-core/**'
-      - 'exp/pecos-stab-tn/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/selene-plugins.yml'
+    branches: [main, master, development, dev]
+  # No `paths:` filter: GitHub applies it to label events too, so adding
+  # ci:selene-plugins could never start a run on a PR that leaves
+  # python/selene-plugins/ alone. The selene-changes job decides instead
+  # (scripts/ci/pr-lane-should-run.sh).
   pull_request:
-    branches: [master, development, dev]
-    paths:
-      - 'python/selene-plugins/**'
-      - 'crates/pecos-engines/**'
-      - 'crates/pecos-random/**'
-      - 'crates/pecos-quantum/**'
-      - 'crates/pecos-simulators/**'
-      - 'crates/pecos-core/**'
-      - 'exp/pecos-stab-tn/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/selene-plugins.yml'
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main, master, development, dev]
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Unrelated label events must not cancel an active run.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selene-plugins' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -49,8 +30,44 @@ defaults:
     shell: bash
 
 jobs:
+  selene-changes:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:selene-plugins'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether to run Selene plugin CI
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        # Assign on its own line so a git failure aborts the step (fail closed).
+        run: |
+          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml)"
+          case "$run" in
+            true|false) ;;
+            *)
+              echo "unexpected pr-lane-should-run output: <$run>" >&2
+              exit 1
+              ;;
+          esac
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+
   # Build and test on the current platform (fast feedback)
   test:
+    needs: selene-changes
+    if: needs.selene-changes.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     # Linux push/dispatch runs include the extended semantic suite as well.
     timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request' && 60 || 30 }}

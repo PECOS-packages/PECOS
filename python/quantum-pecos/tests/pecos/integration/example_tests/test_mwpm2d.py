@@ -25,19 +25,16 @@ def test_single_data_errors(qecc, distance, pauli) -> None:
     runner = pc.circuit_runners.Standard(seed=1)
     extraction = pc.circuits.LogicalCircuit(suppress_warning=True)
     extraction.append(qecc.gate("I", num_syn_extract=1))
-    preparation = pc.circuits.LogicalCircuit(suppress_warning=True)
-    # Project into the codespace without using the medial code's broken init instruction.
-    preparation.append(qecc.gate("I", num_syn_extract=1, forced_outcome=0))
     logical_ops = qecc.instruction("instr_syn_extract").final_logical_ops[0]
 
     for qudit in sorted(qecc.data_qudit_set):
         error = pc.circuits.QuantumCircuit([{pauli: {qudit}}])
         for basis, logical in [("|0>", "Z"), ("|+>", "X")]:
             context = (qecc.name, distance, pauli, qudit, basis)
-            init = pc.circuits.QuantumCircuit([{f"init {basis}": qecc.data_qudit_set}])
+            init = pc.circuits.LogicalCircuit(suppress_warning=True)
+            init.append(qecc.gate(f"ideal init {basis}"))
             state = pc.simulators.SparseStabPy(qecc.num_qudits)
-            runner.run(state, init)
-            prepared, _ = runner.run(state, preparation)
+            prepared, _ = runner.run(state, init)
             assert not prepared.simplified(last=True), context
             initial_sign = state.logical_sign(logical_ops[logical])
             runner.run(state, error)

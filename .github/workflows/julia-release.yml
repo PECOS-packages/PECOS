@@ -764,6 +764,25 @@ jobs:
         env:
           RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
+          branch="refs/heads/${RELEASE_REF_NAME}-artifacts"
+
+          # A re-run after a successful publish finds the branch already there;
+          # committing again would only make a sibling commit the push rejects.
+          # --exit-code: 0 = branch exists, 2 = no such branch, else an error.
+          status=0
+          git ls-remote --exit-code origin "$branch" > /dev/null || status=$?
+          case "$status" in
+            0)
+              echo "$branch already exists; Artifacts.toml for $RELEASE_REF_NAME is already published."
+              exit 0
+              ;;
+            2) ;;
+            *)
+              echo "git ls-remote failed with status $status" >&2
+              exit "$status"
+              ;;
+          esac
+
           cp release-bundle/Artifacts.toml julia/PECOS.jl/Artifacts.toml
 
           git config --local user.email "action@github.com"
@@ -772,5 +791,4 @@ jobs:
           git add julia/PECOS.jl/Artifacts.toml
           git diff --cached --quiet || git commit -m "Add Artifacts.toml for $RELEASE_REF_NAME"
 
-          # Push to the tag's artifacts branch
-          git push origin "HEAD:refs/heads/${RELEASE_REF_NAME}-artifacts"
+          git push origin "HEAD:$branch"

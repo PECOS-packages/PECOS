@@ -129,7 +129,7 @@ def _assert_event_rates_consistent(meas_event_counts, native_event_counts):
 @pytest.mark.parametrize(
     ("distance", "rounds", "shots"),
     [
-        (3, 6, 2_500),
+        (3, 6, 25_000),
         (5, 10, 2_500),
     ],
 )

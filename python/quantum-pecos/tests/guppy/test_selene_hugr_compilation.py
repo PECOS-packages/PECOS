@@ -185,36 +185,6 @@ class TestLLVMGeneration:
         ), "Should apply X as rxy(pi, 0)"
         assert "call i64 @___lazy_measure(" in llvm_ir, "Should measure the qubit"
 
-    def test_llvm_ir_patterns(self) -> None:
-        """Test that generated LLVM IR follows expected patterns."""
-        # Create expected LLVM IR pattern for reference
-        expected_llvm_pattern = """
-        ; Quantum intrinsics
-        declare void @__quantum__qis__h__body(i64)
-        declare void @__quantum__qis__x__body(i64)
-        declare void @__quantum__qis__y__body(i64)
-        declare void @__quantum__qis__z__body(i64)
-        declare void @__quantum__qis__cnot__body(i64, i64)
-        declare i1 @__quantum__qis__mz__body(i64)
-        declare void @__quantum__rt__result_record_output(i64, i8*)
-        """
-
-        # Verify pattern structure
-        intrinsics = [
-            "@__quantum__qis__h__body",
-            "@__quantum__qis__x__body",
-            "@__quantum__qis__cnot__body",
-            "@__quantum__qis__mz__body",
-        ]
-
-        for intrinsic in intrinsics:
-            assert intrinsic in expected_llvm_pattern, f"Pattern should include {intrinsic}"
-
-        # Check parameter types
-        assert "(i64)" in expected_llvm_pattern, "Single qubit ops should take i64"
-        assert "(i64, i64)" in expected_llvm_pattern, "Two qubit ops should take two i64"
-        assert "i1 @__quantum__qis__mz" in expected_llvm_pattern, "Measurement should return i1"
-
 
 class TestHUGRVersionCompatibility:
     """Test HUGR envelope format compatibility."""

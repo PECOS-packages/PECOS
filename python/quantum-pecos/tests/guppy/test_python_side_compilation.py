@@ -43,13 +43,8 @@ class TestPythonSideCompilation:
         from pecos import Guppy, sim
         from pecos_rslib import state_vector
 
-        try:
-            # The sim API handles Guppy → HUGR → Selene compilation
-            results = sim(Guppy(bell_pair_circuit)).qubits(2).quantum(state_vector()).seed(42).run(100).to_dict()
-        except (RuntimeError, ValueError) as e:
-            if "compilation" in str(e).lower() or "not supported" in str(e):
-                pytest.skip(f"HUGR compilation issue: {e}")
-            pytest.fail(f"HUGR pass-through failed: {e}")
+        # The sim API handles Guppy → HUGR → Selene compilation
+        results = sim(Guppy(bell_pair_circuit)).qubits(2).quantum(state_vector()).seed(42).run(100).to_dict()
 
         # Verify results structure
         assert hasattr(results, "__getitem__"), "Results should be dict-like"

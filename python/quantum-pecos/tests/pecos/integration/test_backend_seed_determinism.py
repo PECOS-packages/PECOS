@@ -14,6 +14,8 @@
 Regression test for issue #89 (https://github.com/PECOS-packages/PECOS/issues/89).
 """
 
+import importlib
+
 import pytest
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.noise.generic_error_model import GenericErrorModel
@@ -271,12 +273,11 @@ def test_custatevec_determinism() -> None:
 def test_mps_determinism() -> None:
     """Test seed determinism for MPS simulator."""
     try:
-        from pecos.simulators import MPS
-
-        if MPS is None:
-            pytest.skip("MPS not available")
-    except ImportError:
-        pytest.skip("MPS requires pytket")
+        importlib.import_module("pecos.simulators.mps_pytket")
+    except ModuleNotFoundError as error:
+        if not error.name or error.name.split(".")[0] not in {"pytket", "cupy", "cuquantum"}:
+            raise
+        pytest.skip(f"MPS requires {error.name}")
 
     seed = 7
     shots = 100

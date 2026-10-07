@@ -116,20 +116,11 @@ class TestSeleneBuildProcess:
             )
             assert instance is not None, "Build should create an instance"
 
-            # Check if LLVM/QIS files were generated during build
-            # Selene may create intermediate .ll or .bc files
-            list(build_dir.glob("**/*.ll"))
-            list(build_dir.glob("**/*.bc"))
-
-            # Log what was created (for debugging)
-            all_files = list(build_dir.rglob("*"))
-            file_types = {f.suffix for f in all_files if f.is_file()}
-
-            # The build process should create some artifacts
-            assert len(all_files) > 1, f"Build created files with extensions: {file_types}"
-
-            # Note: The exact intermediate files depend on Selene's implementation
-            # The key point is that HUGR → QIS/LLVM happens internally
+            # Selene retains the lowered Helios QIS as LLVM bitcode.
+            bitcode_files = list(build_dir.rglob("*.bc"))
+            assert bitcode_files, "HUGR build should produce LLVM bitcode"
+            for bitcode_file in bitcode_files:
+                assert bitcode_file.read_bytes().startswith(b"BC\xc0\xde"), f"Invalid LLVM bitcode: {bitcode_file}"
 
     def test_qis_program_with_sim_api(self) -> None:
         """Test QIS programs using the sim() API.
@@ -142,7 +133,7 @@ class TestSeleneBuildProcess:
         1. build(HUGR) → Selene executable (for building executables)
         2. sim(Qis) → PECOS execution (for direct simulation)
         """
-        from pecos import Guppy, Qis, sim
+        from pecos import Qis, sim
         from pecos_rslib import state_vector
 
         # Create Selene QIS format LLVM IR - use textwrap to avoid indentation issues
@@ -207,7 +198,7 @@ class TestSeleneBuildProcess:
 
     def test_qis_program_with_comments(self) -> None:
         """Test that QIS programs with comments are properly handled."""
-        from pecos import Guppy, Qis, sim
+        from pecos import Qis, sim
         from pecos_rslib import state_vector
 
         # Create QIS with extensive comments
@@ -264,7 +255,7 @@ class TestSeleneBuildProcess:
 
     def test_qis_edge_cases(self) -> None:
         """Test QIS programs with edge cases like empty lines, multiple spaces, etc."""
-        from pecos import Guppy, Qis, sim
+        from pecos import Qis, sim
         from pecos_rslib import state_vector
 
         # QIS with various formatting edge cases
@@ -308,7 +299,7 @@ class TestSeleneBuildProcess:
         Test that the same QIS LLVM IR produces consistent results when run
         multiple times with the same seed.
         """
-        from pecos import Guppy, Qis, sim
+        from pecos import Qis, sim
         from pecos_rslib import state_vector
 
         # Same QIS program for both

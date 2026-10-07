@@ -12,7 +12,9 @@ def pecos_rslib_cuda() -> types.ModuleType:
         import pecos_rslib_cuda
 
         return pecos_rslib_cuda
-    except ImportError:
+    except ModuleNotFoundError as error:
+        if error.name != "pecos_rslib_cuda":
+            raise
         pytest.skip("pecos_rslib_cuda not installed")
 
 
@@ -70,13 +72,8 @@ def test_custabilizer_creation(pecos_rslib_cuda) -> None:
     if not pecos_rslib_cuda.is_cuquantum_available():
         pytest.skip("cuQuantum not available")
 
-    try:
-        sim = pecos_rslib_cuda.CuStabilizer(100)
-        assert sim.num_qubits == 100
-    except RuntimeError as e:
-        if "not supported" in str(e).lower() or "API changed" in str(e):
-            pytest.skip("CuStabilizer API changed in cuQuantum 25.11+")
-        raise
+    sim = pecos_rslib_cuda.CuStabilizer(100)
+    assert sim.num_qubits == 100
 
 
 @pytest.mark.cuda
@@ -85,21 +82,16 @@ def test_custabilizer_ghz_state(pecos_rslib_cuda) -> None:
     if not pecos_rslib_cuda.is_cuquantum_available():
         pytest.skip("cuQuantum not available")
 
-    try:
-        n = 10
-        sim = pecos_rslib_cuda.CuStabilizer(n)
+    n = 10
+    sim = pecos_rslib_cuda.CuStabilizer(n)
 
-        # Create GHZ state: H on first qubit, then CX chain
-        sim.h([0])
-        for i in range(n - 1):
-            sim.cx([i, i + 1])
+    # Create GHZ state: H on first qubit, then CX chain
+    sim.h([0])
+    for i in range(n - 1):
+        sim.cx([i, i + 1])
 
-        # All qubits should be correlated in measurement
-        results = sim.mz(list(range(n)))
+    # All qubits should be correlated in measurement
+    results = sim.mz(list(range(n)))
 
-        # All should be the same value
-        assert all(r == results[0] for r in results)
-    except RuntimeError as e:
-        if "not supported" in str(e).lower() or "API changed" in str(e):
-            pytest.skip("CuStabilizer API changed in cuQuantum 25.11+")
-        raise
+    # All should be the same value
+    assert all(r == results[0] for r in results)

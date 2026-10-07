@@ -124,13 +124,7 @@ class TestGuppyResultMechanisms:
         for name, func in guppy_functions.items():
             hugr_bytes = compile_guppy_to_hugr(func)
 
-            try:
-                llvm_ir = compile_hugr_to_qis(hugr_bytes)
-            except Exception as e:
-                # Known issues with some compilation paths
-                if "Unknown type" in str(e) or "not supported" in str(e):
-                    pytest.skip(f"Known compilation issue for {name}: {e}")
-                pytest.fail(f"Failed to compile {name} to LLVM: {e}")
+            llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
             # Verify LLVM IR was generated
             assert llvm_ir is not None, f"{name} should compile to LLVM IR"
@@ -269,13 +263,8 @@ class TestLLVMResultPatterns:
             result("test", m)
 
         # Compile to LLVM
-        try:
-            hugr_bytes = compile_guppy_to_hugr(simple_result)
-            llvm_ir = compile_hugr_to_qis(hugr_bytes)
-        except Exception as e:
-            if "Unknown type" in str(e) or "not supported" in str(e):
-                pytest.skip(f"Known compilation issue: {e}")
-            pytest.fail(f"Compilation failed: {e}")
+        hugr_bytes = compile_guppy_to_hugr(simple_result)
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
         # Check for expected LLVM patterns
         patterns_to_check = [

@@ -165,11 +165,9 @@ class TestLLVMSimulation:
         assert isinstance(results, dict), "Results should be a dictionary"
         assert len(results) > 0, "Should have some results"
 
-        # Check for measurements
-        if "c" in results:
-            measurements = results["c"]
-            assert len(measurements) == 10, "Should have 10 shots"
-            assert all(m in [0, 1] for m in measurements), "Measurements should be binary"
+        measurements = results["measurement_0"]
+        assert len(measurements) == 10, "Should have 10 shots"
+        assert all(m in [0, 1] for m in measurements), "Measurements should be binary"
 
     def test_sim_api_with_llvm_bell_state(self) -> None:
         """Test sim API with Bell state in LLVM IR."""
@@ -228,17 +226,15 @@ class TestLLVMSimulation:
 
         assert isinstance(results, dict), "Results should be a dictionary"
 
-        # Check if we have correlated measurements
-        if "c0" in results and "c1" in results:
-            m0 = results["c0"]
-            m1 = results["c1"]
+        m0 = results["measurement_0"]
+        m1 = results["measurement_1"]
 
-            assert len(m0) == 50, "Should have 50 shots for qubit 0"
-            assert len(m1) == 50, "Should have 50 shots for qubit 1"
+        assert len(m0) == 50, "Should have 50 shots for qubit 0"
+        assert len(m1) == 50, "Should have 50 shots for qubit 1"
 
-            # Bell state should be correlated
-            correlated = sum(1 for i in range(50) if m0[i] == m1[i])
-            assert correlated == 50, f"Bell state should be perfectly correlated, got {correlated}/50"
+        # Bell state should be correlated
+        correlated = sum(1 for i in range(50) if m0[i] == m1[i])
+        assert correlated == 50, f"Bell state should be perfectly correlated, got {correlated}/50"
 
 
 class TestHUGRSimulation:

@@ -108,16 +108,8 @@ class TestComplexArrayPatterns:
             Return(c),
         )
 
-        # Note: Slicing syntax q[0:2] might not be fully supported yet
-        # This test documents the desired pattern
-
-        try:
-            guppy_code = SlrConverter(prog).guppy()
-            # Just verify code generates without error
-            assert "def main" in guppy_code
-        except (NotImplementedError, AttributeError):
-            # Expected to fail with current implementation
-            pass
+        guppy_code = SlrConverter(prog).guppy()
+        assert "def main" in guppy_code
 
     def test_dynamic_sized_arrays(self) -> None:
         """Test handling arrays with runtime-determined sizes."""

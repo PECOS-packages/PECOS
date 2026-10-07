@@ -445,6 +445,7 @@ struct Column {
     detector_toggle: Vec<u64>,
     logical_toggle: Vec<u64>,
     close_mask: Vec<u64>,
+    has_closing_detectors: bool,
     active_mask: Vec<u64>,
     suffix_compatibility: Vec<SuffixRow>,
     log_odds: f64,
@@ -456,11 +457,13 @@ struct Column {
 
 /// Losslessly omit zero detector words outside each column's live span.
 /// Word order within the span is unchanged, preserving numeric tie-breaks.
+const IMPLICIT_ZERO_WORD: usize = usize::MAX;
+
 #[derive(Clone, Debug)]
 struct CompactColumn {
     first_word: usize,
     parent_words: usize,
-    // Parent word index (or MAX for an implicit zero), toggle, active mask.
+    // Parent word index (or IMPLICIT_ZERO_WORD), toggle, active mask.
     output: Vec<(usize, u64, u64)>,
     // Parent word index, original observed word index, closing mask, toggle.
     closing: Vec<(usize, usize, u64, u64)>,
@@ -476,7 +479,7 @@ impl CompactColumn {
         let source = |word: usize| {
             word.checked_sub(previous_span.0)
                 .filter(|&index| index < previous_span.1)
-                .unwrap_or(usize::MAX)
+                .unwrap_or(IMPLICIT_ZERO_WORD)
         };
         Self {
             first_word,
@@ -506,8 +509,9 @@ impl Column {
     ) {
         *transitions += 1;
         let plan = &self.compact;
+        debug_assert_eq!(parent.len(), plan.parent_words + self.logical_toggle.len());
         let read = |index: usize| {
-            if index == usize::MAX {
+            if index == IMPLICIT_ZERO_WORD {
                 0
             } else {
                 parent[index]
@@ -544,6 +548,7 @@ enum Kernel {
 struct FactorColumn {
     outcomes: Vec<ColumnOutcome>,
     close_mask: Vec<u64>,
+    has_closing_detectors: bool,
     active_mask: Vec<u64>,
     suffix_compatibility: Vec<SuffixRow>,
 }
@@ -1276,6 +1281,7 @@ impl TrellisDecoder {
                 compact,
                 detector_toggle,
                 logical_toggle,
+                has_closing_detectors: close_mask.iter().any(|&mask| mask != 0),
                 close_mask,
                 active_mask: open_detectors.clone(),
                 suffix_compatibility: Vec::new(),
@@ -1470,6 +1476,7 @@ impl TrellisDecoder {
             and_not_assign(&mut open_detectors, &close_mask);
             columns.push(FactorColumn {
                 outcomes,
+                has_closing_detectors: close_mask.iter().any(|&mask| mask != 0),
                 close_mask,
                 active_mask: open_detectors.clone(),
                 suffix_compatibility: Vec::new(),
@@ -2031,7 +2038,7 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
                 detector_words: frontier.detector_words,
-                has_closing_detectors: column.close_mask.iter().any(|&mask| mask != 0),
+                has_closing_detectors: column.has_closing_detectors,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed,
@@ -2185,7 +2192,7 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
                 detector_words: frontier.detector_words,
-                has_closing_detectors: column.close_mask.iter().any(|&mask| mask != 0),
+                has_closing_detectors: column.has_closing_detectors,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed,
@@ -2294,7 +2301,7 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
                 detector_words: frontier.detector_words,
-                has_closing_detectors: column.close_mask.iter().any(|&mask| mask != 0),
+                has_closing_detectors: column.has_closing_detectors,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed,
@@ -3434,6 +3441,7 @@ mod tests {
                     detector_toggle: toggle.clone(),
                     logical_toggle: logical_toggle.clone(),
                     close_mask: close.clone(),
+                    has_closing_detectors: close.iter().any(|&mask| mask != 0),
                     active_mask: active.clone(),
                     suffix_compatibility: Vec::new(),
                     log_odds: 0.0,

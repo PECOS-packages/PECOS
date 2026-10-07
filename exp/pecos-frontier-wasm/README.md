@@ -15,9 +15,11 @@ result; query `frontier_status_i64`. The no-argument, no-result `init`,
 
 These wrappers preserve the decoder's existing 32-bit packed-word layout.
 Both sign-extended `i32` and zero-extended `u32` words are accepted; values
-outside those ranges return -1 without truncation. The original `i32` exports
-remain available for existing callers. Use only the `_i64` integer-valued
-exports from a Helios HUGR.
+outside those ranges return -1, set status 3, and clear correction words.
+`frontier_stream_finish_round_i64` returns successful corrections zero-extended
+to `0..=u32::MAX`, so every negative result is unambiguously an error. The
+original `i32` exports remain available for existing callers. Use only the
+`_i64` integer-valued exports from a Helios HUGR.
 
 ## Build
 
@@ -206,13 +208,6 @@ and pruning tie-breaks are preserved. This changes the state representation,
 not the noise model, beam size, or decoding approximation. The integer and
 general N-ary kernels retain their full-width representation.
 
-When the acceptance criterion is **mean final-correction latency**, compute
-the arithmetic mean across every measured final call, including slow shots.
-Keep startup warmup separate and report whether the dataset was sampled.
-Tail statistics remain useful diagnostics, but an occasional call above the
-mean-latency target is not by itself a failure of that criterion. Local timing
-improvements still require confirmation in the target hardware runtime.
-
 Before running a production model on hardware, tune the decoder configuration
 and re-measure its latency on the target system. In a 2,000-shot Wasmtime JIT
 benchmark on a fast desktop, a rotated-memory-Z model at physical error rate
@@ -221,3 +216,15 @@ rounds, and 57.9 ms median / 124.8 ms p99 / 158 ms maximum at distance 5 with
 five rounds. The latter is close enough to Quantinuum's approximately 250 ms
 per-call hardware limit that desktop measurements should not be treated as a
 hardware safety margin.
+
+For a reproducible native throughput comparison on a checked-in public model,
+run the same command at the base and candidate revisions:
+
+```console
+cargo run --release -p pecos-frontier --example public_dem_benchmark -- \
+  examples/surface_code_circuits/surface_code_d7_z_stim.dem 256 5 24301
+```
+
+The output includes the model dimensions, seed, failures, and prediction
+checksum alongside mean decode time. Treat it as a throughput probe rather
+than a hardware-latency measurement.

@@ -436,9 +436,17 @@ fn helios_round(bit_count: i64, words: [i64; 4]) -> Option<(i32, [i32; 4])> {
     ))
 }
 
+fn reject_helios_call() -> i64 {
+    STATE.with_borrow_mut(|state| {
+        state.status = STATUS_DECODE_ERROR;
+        state.result = [0; 4];
+    });
+    -1
+}
+
 /// Helios-compatible i64 call boundary; the decoder retains its i32 word layout.
 /// Packed words may be sign-extended i32 or zero-extended u32 values.
-/// Invalid values return -1 without truncating or changing the stream.
+/// Invalid values return -1, set decode-error status, and clear stale results.
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_stream_push_i64(
     bit_count: i64,
@@ -448,12 +456,13 @@ pub extern "C" fn frontier_stream_push_i64(
     s3: i64,
 ) -> i64 {
     let Some((count, [w0, w1, w2, w3])) = helios_round(bit_count, [s0, s1, s2, s3]) else {
-        return -1;
+        return reject_helios_call();
     };
     i64::from(frontier_stream_push(count, w0, w1, w2, w3))
 }
 
-/// Helios final-block-to-correction call, including sign extension of errors.
+/// Helios final-block-to-correction call.
+/// Successful correction words are zero-extended from u32; errors return -1.
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_stream_finish_round_i64(
     bit_count: i64,
@@ -463,9 +472,14 @@ pub extern "C" fn frontier_stream_finish_round_i64(
     s3: i64,
 ) -> i64 {
     let Some((count, [w0, w1, w2, w3])) = helios_round(bit_count, [s0, s1, s2, s3]) else {
-        return -1;
+        return reject_helios_call();
     };
-    i64::from(frontier_stream_finish_round(count, w0, w1, w2, w3))
+    let correction = frontier_stream_finish_round(count, w0, w1, w2, w3);
+    if frontier_status() == STATUS_OK {
+        i64::from(correction.cast_unsigned())
+    } else {
+        -1
+    }
 }
 
 /// Helios-compatible status query.
@@ -635,11 +649,23 @@ mod tests {
         assert_eq!(helios_word(-1), Some(-1));
         assert_eq!(helios_word(1_i64 << 32), None);
         assert_eq!(helios_word(i64::from(i32::MIN) - 1), None);
+        STATE.with_borrow_mut(|state| {
+            state.initialize("error(0.1) D0 L0");
+            state.result = [7; 4];
+        });
+        frontier_stream_begin();
         assert_eq!(frontier_stream_push_i64(1_i64 << 32, 0, 0, 0, 0), -1);
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_DECODE_ERROR));
+        assert_eq!(STATE.with_borrow(|state| state.result), [0; 4]);
+
+        frontier_stream_begin();
+        STATE.with_borrow_mut(|state| state.result = [7; 4]);
         assert_eq!(
             frontier_stream_finish_round_i64(1, 1_i64 << 32, 0, 0, 0),
             -1
         );
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_DECODE_ERROR));
+        assert_eq!(STATE.with_borrow(|state| state.result), [0; 4]);
     }
 
     #[test]
@@ -660,6 +686,24 @@ mod tests {
             i64::from(frontier_stream_finish_round(1, 1, 0, 0, 0)),
             unsigned
         );
+    }
+
+    #[test]
+    fn helios_final_correction_is_zero_extended() {
+        let observables = (0..32)
+            .map(|observable| format!("L{observable}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        STATE.with_borrow_mut(|state| {
+            state.initialize(&format!("error(0.1) D0 {observables}"));
+        });
+
+        frontier_stream_begin();
+        assert_eq!(
+            frontier_stream_finish_round_i64(1, 1, 0, 0, 0),
+            i64::from(u32::MAX)
+        );
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_OK));
     }
 
     #[test]

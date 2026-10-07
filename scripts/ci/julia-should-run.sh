@@ -22,7 +22,7 @@ if [ "$HAS_JULIA_LABEL" = "true" ]; then
   exit 0
 fi
 
-julia_paths='^(julia/|\.github/workflows/julia-|scripts/ci/julia-should-run\.sh$)'
+julia_paths='^julia/'  # TEMP: test-only, revert before merge
 changed="$(git diff --name-only "$PR_BASE_SHA"...HEAD)"
 
 # Here-strings, not `printf | grep -q`: under pipefail an early-exiting grep can

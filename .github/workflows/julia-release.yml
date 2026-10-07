@@ -793,6 +793,10 @@ jobs:
           draft: false
           prerelease: ${{ steps.check-prerelease.outputs.is_prerelease }}
           fail_on_unmatched_files: true
+          # The action deletes an existing asset before uploading its
+          # replacement. Once Artifacts.toml is published, keep the assets it
+          # points at and only upload any that are missing.
+          overwrite_files: ${{ steps.artifacts-branch.outputs.state != 'published' }}
 
       - name: Commit Artifacts.toml to branch
         if: steps.artifacts-branch.outputs.state == 'new'

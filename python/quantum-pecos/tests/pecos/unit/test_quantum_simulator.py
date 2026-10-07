@@ -134,15 +134,13 @@ def test_cuda_import_failure_yields_named_error(monkeypatch) -> None:
         dispatch.QuantumSimulator("CudaStateVec").init(2)
 
 
-@pytest.mark.parametrize("backend", list(dispatch._BACKENDS))
-def test_seed_flag_matches_real_constructor(backend) -> None:
-    """Each table entry's seed flag agrees with the real class signature."""
-    loader, takes_seed, _ = dispatch._BACKENDS[backend]
-    cls = loader()
+@pytest.mark.parametrize(("backend", "class_name", "takes_seed"), BACKENDS)
+def test_seed_flag_matches_real_constructor(backend, class_name, takes_seed) -> None:
+    """The real classes' signatures agree with the seed flags the dispatch contract asserts."""
+    module = simulators if class_name == "CudaStateVec" else dispatch
+    cls = getattr(module, class_name)
     if cls is None:
         pytest.skip(f"{backend!r} is unavailable on this machine")
     params = inspect.signature(cls).parameters.values()
-    accepts_seed = any(
-        p.name == "seed" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params
-    )
+    accepts_seed = any(p.name == "seed" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
     assert accepts_seed == takes_seed

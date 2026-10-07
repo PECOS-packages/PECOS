@@ -20,14 +20,11 @@ and ideal decoding scenarios.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from pecos.circuits import QuantumCircuit
 from pecos.decoders.mwpm2d import precomputing
 from pecos.graph import Graph
-
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -76,8 +73,17 @@ class MWPM2D:
         """Takes measurement results and outputs a result.
 
         logic_range identifies over what part of self.logic we are decoding over.
+
+        Raises:
+            ValueError: If a syndrome label is absent from both precomputed node maps.
         """
         syndromes = set(measurements.simplified(last=True))
+
+        decode_data = self.precomputed_data
+        unknown = syndromes - decode_data["X"]["node_map"].keys() - decode_data["Z"]["node_map"].keys()
+        if unknown:
+            msg = f"Unknown syndrome labels: {sorted(unknown, key=str)!r}"
+            raise ValueError(msg)
 
         tuple_key = frozenset(syndromes)
 
@@ -85,8 +91,6 @@ class MWPM2D:
             return self.recorded_recovery[tuple_key]
 
         recovery = QuantumCircuit(1)
-
-        decode_data = self.precomputed_data
 
         correction_x = []
         correction_z = []
@@ -100,24 +104,8 @@ class MWPM2D:
             distance_graph = check_type_decode["dist_graph"]
             virtual_edge_data = check_type_decode["virtual_edge_data"]
 
-            active_syn = set(syndromes)
-
-            # Filter active_syn to only include nodes that exist in distance_graph
-            valid_nodes = set(distance_graph.nodes())
-            invalid_syndromes = active_syn - valid_nodes
-
-            if invalid_syndromes:
-                logger.warning(
-                    "Decoder received syndrome indices not present in distance graph for %s checks. "
-                    "Invalid indices: %s. "
-                    "Valid node range: 0-%d. "
-                    "This may indicate a mismatch between syndrome extraction and decoder precomputation.",
-                    check_type,
-                    sorted(invalid_syndromes),
-                    len(valid_nodes) - 1,
-                )
-
-            active_syn = active_syn & valid_nodes
+            node_map = check_type_decode["node_map"]
+            active_syn = {node_map[label] for label in syndromes if label in node_map}
 
             # Build a new graph instead of using subgraph (which renumbers nodes)
             # We need to keep the original node IDs from distance_graph
@@ -152,9 +140,6 @@ class MWPM2D:
             new_name = self.itr_v_name()
             active_virt = set()
             for s in active_syn:
-                # Only add virtual nodes for syndromes that have precomputed edge data
-                if s not in virtual_edge_data:
-                    continue
                 edge_data = virtual_edge_data[s]
                 next(new_name)
                 # Create the virtual node and optionally store the name as an attribute
@@ -186,26 +171,19 @@ class MWPM2D:
             matching.update(dict(matching_edges))
 
             nodes_paired = set()
-            # for n1 in real_graph.nodes():
-            # Only iterate over syndrome nodes that are actually in the matching
-            for n1 in syndromes & active_syn:
-                # Skip nodes that aren't in the matching (e.g., filtered out during subgraph)
-                if n1 not in matching:
-                    continue
-
+            # Matching and recovery paths use graph node IDs, not syndrome labels.
+            for n1 in active_syn:
                 n2 = matching[n1]
 
-                # Don't continue if node has already been covered or path starts and ends with virtuals.
-                if n1 in nodes_paired or (n1 in active_virt and n2 in active_virt):
+                # n1 is always a real syndrome, so only skip pairs already covered from the other end.
+                if n1 in nodes_paired:
                     continue
 
                 nodes_paired.add(n2)
 
                 # Get data_path attribute from the matched edge
                 edge_attrs = real_graph.edge_attrs(n1, n2)
-                data_path = edge_attrs.get("data_path")
-                if data_path is not None:
-                    correction.extend(data_path)
+                correction.extend(edge_attrs["data_path"])
 
         correction_x = set(correction_x)
         correction_z = set(correction_z)

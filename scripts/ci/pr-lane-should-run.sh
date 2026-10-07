@@ -23,7 +23,8 @@ if [ "$EVENT_NAME" != "pull_request" ]; then
   exit 0
 fi
 
-has_label="$(jq -r --arg wanted "$label" 'index($wanted) != null' <<<"$PR_LABELS")"
+# Case-insensitive, like the label comparisons in the workflow expressions.
+has_label="$(jq -r --arg wanted "$label" 'map(ascii_downcase) | index($wanted | ascii_downcase) != null' <<<"$PR_LABELS")"
 if [ "$has_label" = "true" ]; then
   echo "PR carries the $label label; running this lane." >&2
   echo "true"

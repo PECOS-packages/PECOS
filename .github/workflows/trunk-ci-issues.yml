@@ -1,9 +1,10 @@
 name: Trunk CI issues
 
-# Opens an issue when a workflow is red on a main branch and closes it when the
-# workflow is green again (scripts/ci/trunk-ci-issues.sh). It polls on a schedule
-# instead of reacting to other workflows' completion events, a privileged trigger
-# that the dependency integrity check rejects.
+# Opens an issue when a workflow is red on a main branch, or when dev has open
+# high-severity code scanning alerts, and closes it once that clears
+# (scripts/ci/trunk-ci-issues.sh). It polls on a schedule instead of reacting
+# to other workflows' completion events, a privileged trigger that the
+# dependency integrity check rejects.
 
 permissions:
   contents: read
@@ -25,6 +26,7 @@ jobs:
       actions: read
       contents: read
       issues: write
+      security-events: read
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

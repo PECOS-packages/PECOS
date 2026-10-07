@@ -58,8 +58,11 @@ on:
       - '.pre-commit-config.yaml'
 
 concurrency:
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
   # Unrelated label events must not cancel an active validation run.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full-rust' && github.run_id || 'validation' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full-rust' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 jobs:

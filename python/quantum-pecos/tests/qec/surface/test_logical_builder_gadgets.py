@@ -70,11 +70,11 @@ SHAPES = (
 # Pin metadata omitted by the original goldens so sign bookkeeping cannot change provenance.
 TELEPORTATION_METADATA = {
     "d3_sz_teleport_first_op": {
-        "injection_readouts": [
+        "teleportation_readouts": [
             {
                 "data_patch": "D",
                 "ancilla_patch": "Y",
-                "injection_type": "SZ",
+                "teleportation_type": "SZ",
                 "basis": "Z",
                 "meas_ids": [64, 65, 66],
                 "records": [-34, -33, -32],
@@ -107,11 +107,11 @@ TELEPORTATION_METADATA = {
         ),
     },
     "d3_sz_teleport_memory_first": {
-        "injection_readouts": [
+        "teleportation_readouts": [
             {
                 "data_patch": "D",
                 "ancilla_patch": "Y",
-                "injection_type": "SZ",
+                "teleportation_type": "SZ",
                 "basis": "Z",
                 "meas_ids": [80, 81, 82],
                 "records": [-34, -33, -32],
@@ -341,7 +341,7 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
             builder.add_sz_via_teleportation("D", "Y", 2, 2)
             builder.add_memory("D", 2, "Z")
         else:
-            builder.add_t_via_injection("D", "A", 2, 2)
+            builder.add_t_teleportation_placeholder("D", "A", 2, 2)
     return builder
 
 
@@ -369,13 +369,13 @@ def test_golden_parity(shape):
         # The generator's five metadata keys are named explicitly; TickCircuit cannot enumerate them.
         assert all(
             tc.get_meta(key) is not None
-            for key in ("detectors", "observables", "num_measurements", "measurement_keys", "injection_readouts")
+            for key in ("detectors", "observables", "num_measurements", "measurement_keys", "teleportation_readouts")
         )
         assert tc.get_meta("measurement_keys").encode() == baseline["measurement_keys"].encode()
         assert [
             {key: value for key, value in entry.items() if not key.startswith("resource_sign_")}
-            for entry in json.loads(tc.get_meta("injection_readouts"))
-        ] == baseline["injection_readouts"]
+            for entry in json.loads(tc.get_meta("teleportation_readouts"))
+        ] == baseline["teleportation_readouts"]
 
 
 @pytest.mark.parametrize("shape", SHAPES)
@@ -1091,7 +1091,10 @@ def test_gate_after_patch_final_memory_rejected(method, labels, output):
     assert builder.patches["B"].x_z_swapped
 
 
-@pytest.mark.parametrize(("method", "rounds_before"), [("add_sz_via_teleportation", 1), ("add_t_via_injection", 0)])
+@pytest.mark.parametrize(
+    ("method", "rounds_before"),
+    [("add_sz_via_teleportation", 1), ("add_t_teleportation_placeholder", 0)],
+)
 def test_teleportation_validates_expanded_preparations(method, rounds_before):
     builder = BuilderProbe()
     for label, offset in [("A", 0), ("B", 17)]:
@@ -1280,7 +1283,10 @@ def test_y_readout_composes_fold_and_x():
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(explicit.to_tick_circuit())
 
 
-@pytest.mark.parametrize("method", ["add_transversal_cx", "add_sz_via_teleportation", "add_t_via_injection"])
+@pytest.mark.parametrize(
+    "method",
+    ["add_transversal_cx", "add_sz_via_teleportation", "add_t_teleportation_placeholder"],
+)
 @pytest.mark.parametrize("mismatch", ["rectangle", "rotated", "orientation", "stabilizer", "logical"])
 def test_static_geometry_registration(method, mismatch):
     first = SurfacePatch.create(3)
@@ -1317,7 +1323,7 @@ def test_runtime_orientation_check():
         builder.to_tick_circuit()
 
 
-@pytest.mark.parametrize("method", ["add_sz_via_teleportation", "add_t_via_injection"])
+@pytest.mark.parametrize("method", ["add_sz_via_teleportation", "add_t_teleportation_placeholder"])
 def test_fresh_ancilla_atomic(method):
     builder = make_builder("d3_cx_zz")
     before = list(builder.operations)
@@ -1564,11 +1570,11 @@ def test_allocation_order_with_old_and_fresh_patches():
 
 
 @pytest.mark.parametrize("shape", [name for name in SHAPES if "teleport" in name or "inject" in name])
-def test_injection_readout_is_separate_from_data_observable(shape):
+def test_teleportation_readout_is_separate_from_data_observable(shape):
     builder = make_builder(shape)
     tc = builder.to_tick_circuit()
     observables = json.loads(tc.get_meta("observables"))
-    readouts = json.loads(tc.get_meta("injection_readouts"))
+    readouts = json.loads(tc.get_meta("teleportation_readouts"))
     assert len(observables) == len(readouts) == 1
     observable, readout = observables[0], readouts[0]
     assert observable["id"] == 0
@@ -1598,7 +1604,7 @@ def test_injection_readout_is_separate_from_data_observable(shape):
     assert raw_values == {0, 1}
     assert stim.Circuit(builder.to_stim()).detector_error_model().num_observables == 1
     descriptor = builder.build_algorithm_descriptor()
-    assert descriptor["injection_readouts"] == [readout | {"data_z_frame_slot": 1, "ancilla_z_frame_slot": 3}]
+    assert descriptor["teleportation_readouts"] == [readout | {"data_z_frame_slot": 1, "ancilla_z_frame_slot": 3}]
     assert descriptor["num_observables"] == 1
     assert descriptor["num_frame_slots"] == 4
     if "inject" in shape:
@@ -1665,7 +1671,10 @@ def test_replay_qalloc_resets_to_zero():
     assert simulate_tick_circuit(tc)[0] == [0]
 
 
-@pytest.mark.parametrize("method", ["add_transversal_cx", "add_sz_via_teleportation", "add_t_via_injection"])
+@pytest.mark.parametrize(
+    "method",
+    ["add_transversal_cx", "add_sz_via_teleportation", "add_t_teleportation_placeholder"],
+)
 def test_geometry_equality_uses_stabilizer_indices(method):
     first, second = SurfacePatch.create(3), SurfacePatch.create(3)
     second.geometry.x_stabilizers.reverse()
@@ -1778,7 +1787,7 @@ def test_sz_teleportation_requires_odd_ancilla(dx, dz):
     assert builder.operations == []
 
 
-@pytest.mark.parametrize("helper", ["add_sz_via_teleportation", "add_t_via_injection"])
+@pytest.mark.parametrize("helper", ["add_sz_via_teleportation", "add_t_teleportation_placeholder"])
 @pytest.mark.parametrize(
     ("method", "args"),
     [
@@ -1790,10 +1799,10 @@ def test_sz_teleportation_requires_odd_ancilla(dx, dz):
         ("add_transversal_cx", ("D", "A")),
         ("add_transversal_cx", ("A", "D")),
         ("add_sz_via_teleportation", ("A", "B")),
-        ("add_t_via_injection", ("A", "B")),
+        ("add_t_teleportation_placeholder", ("A", "B")),
     ],
 )
-def test_consumed_injection_ancilla_rejects_operations(helper, method, args):
+def test_consumed_teleportation_ancilla_rejects_operations(helper, method, args):
     builder = BuilderProbe()
     patch = SurfacePatch.create(3)
     for i, label in enumerate(("D", "A", "B")):
@@ -1819,8 +1828,8 @@ def test_y_preparation_has_no_final_observable(basis, seed):
     assert stim.Circuit(builder.to_stim()).detector_error_model().num_observables == 0
 
 
-@pytest.mark.parametrize("helper", ["add_sz_via_teleportation", "add_t_via_injection"])
-def test_injection_readout_requires_logical_operator(helper):
+@pytest.mark.parametrize("helper", ["add_sz_via_teleportation", "add_t_teleportation_placeholder"])
+def test_teleportation_readout_requires_logical_operator(helper):
     builder = BuilderProbe()
     patch = SurfacePatch.create(3)
     patch.geometry.logical_z = None
@@ -2312,7 +2321,7 @@ def _signed_membership(tc, tick, pauli, seed):
 @pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
 def test_sz_resource_sign_correction(dx, dz, alternate_x, expected_reference):
     _, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
-    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
     tick = _first_measurement_tick(tc, set(range(patch.geometry.num_data)))
     logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits)
     assert json.loads(tc.get_meta("observables")) == []
@@ -2395,7 +2404,7 @@ def test_resource_sign_matches_projected_state(dx, dz, alternate_x, expected_ref
     allocation = GeneratorProbe(builder.patches, []).allocation("A")
     projection_tick = _first_measurement_tick(tc, set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits))
     logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits, patch.geometry.num_qubits)
-    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
     signs = set()
     for seed in range(16):
         positive, negative = _signed_membership(tc, projection_tick + 1, logical_y, seed)
@@ -2420,11 +2429,11 @@ def test_resource_sign_metadata(dx, dz, preceding_rounds):
         builder.add_memory("D", 1, "X")
     builder.add_sz_via_teleportation("D", "A", 2, 2)
     tc = builder.to_tick_circuit()
-    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
     assert set(readout) == {
         "data_patch",
         "ancilla_patch",
-        "injection_type",
+        "teleportation_type",
         "basis",
         "meas_ids",
         "records",
@@ -2444,7 +2453,7 @@ def test_resource_sign_metadata(dx, dz, preceding_rounds):
     checks, reference = _resource_sign_checks(patch)
     assert {(row[1], row[2]) for row in selected} == set(checks)
     assert readout["resource_sign_reference"] == reference
-    descriptor_readout = builder.build_algorithm_descriptor()["injection_readouts"][0]
+    descriptor_readout = builder.build_algorithm_descriptor()["teleportation_readouts"][0]
     assert {key: descriptor_readout[key] for key in readout} == readout
 
 
@@ -2471,7 +2480,7 @@ def test_resource_sign_rejects_non_real_phase_in_invalid_geometry():
 @pytest.mark.parametrize(("dx", "dz", "family", "reference"), [(1, 1, None, 0), (1, 3, "X", 1), (3, 1, "Z", 1)])
 def test_resource_sign_degenerate_ancilla(dx, dz, family, reference):
     _, patch, tc = _resource_program(dx, dz)
-    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
     ids = readout["resource_sign_meas_ids"]
     assert len(ids) == int(family is not None)
     assert readout["resource_sign_records"] == [mid - tc.num_measurements() for mid in ids]

@@ -83,6 +83,8 @@ from pecos.qec.surface.decode import (
     surface_code_memory,
     syndromes_to_detection_events,
 )
+from pecos.qec.surface.hook_injection import HookInjection, hook_injection
+from pecos.qec.surface.injection import StateInjection, injection_correction_supports, state_injection
 from pecos.qec.surface.layouts import (
     StabilizerSupport,
     compute_rotated_x_stabilizers,
@@ -141,6 +143,11 @@ def __getattr__(name: str) -> type[NoiseParameters]:
 
 
 __all__ = [
+    "HookInjection",
+    "hook_injection",
+    "StateInjection",
+    "state_injection",
+    "injection_correction_supports",
     # Twirling config (Pauli-frame randomization)
     "GuppyRngMaskConfig",
     "TwirlConfig",

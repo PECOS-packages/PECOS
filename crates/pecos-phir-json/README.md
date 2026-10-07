@@ -15,55 +15,91 @@ PHIR-JSON is designed to:
 
 ### Basic Example
 
+`PhirJsonEngine` is a classical controller. Standalone `process(())` executes
+programs that generate no quantum commands; it returns an error as soon as a
+non-empty command batch is produced. Quantum programs need
+`start()`/`continue_processing()` with a quantum engine, or the simulation builder:
+
 ```rust
-use pecos_phir_json::PhirJsonEngine;
-use pecos_engines::core::shot_results::OutputFormat;
-use std::path::Path;
+use pecos_engines::{ClassicalControlEngineBuilder, PecosError, StateVectorEngineBuilder};
+use pecos_phir_json::phir_json_engine;
+use std::collections::BTreeSet;
 
-// Load a PHIR program from a file (v0.1 implementation)
-let engine = PhirJsonEngine::new(Path::new("examples/bell.phir.json"))?;
+fn main() -> Result<(), PecosError> {
+    let bell = r#"{
+      "format": "PHIR/JSON",
+      "version": "0.1.0",
+      "ops": [
+        {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+        {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 2},
+        {"qop": "H", "args": [["q", 0]]},
+        {"qop": "CX", "args": [["q", 0], ["q", 1]]},
+        {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+        {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
+        {"cop": "Result", "args": ["m"], "returns": ["c"]}
+      ]
+    }"#;
 
-// Process the program
-let results = engine.process(())?;
+    let results = phir_json_engine()
+        .json(bell)?
+        .to_sim()
+        .quantum(StateVectorEngineBuilder::default())
+        .seed(42)
+        .run(100)?;
 
-// Format the results
-let formatted_results = engine.get_formatted_results(OutputFormat::PrettyJson)?;
-println!("{}", formatted_results);
+    let outcomes: BTreeSet<_> = results
+        .shots
+        .iter()
+        .map(|shot| shot.data["c"].as_u32().unwrap())
+        .collect();
+    assert_eq!(outcomes, BTreeSet::from([0, 3]));
+    println!("{}", results.to_compact_json());
+    Ok(())
+}
 ```
 
 ### Using with Automatic Version Detection
 
 ```rust
+use pecos_engines::{DepolarizingNoiseModel, MonteCarloEngine, PecosError};
 use pecos_phir_json::setup_phir_json_engine;
-use pecos_engines::{MonteCarloEngine, engines::noise::DepolarizingNoiseModel};
 use std::path::Path;
 
-// Create a classical engine from a PHIR program file
-// The version will be automatically detected from the file
-let classical_engine = setup_phir_json_engine(Path::new("examples/bell.phir.json"))?;
+fn main() -> Result<(), PecosError> {
+    // Create a classical engine from a PHIR program file; the version is detected
+    // from the file. The path is relative to this crate's directory.
+    let classical_engine =
+        setup_phir_json_engine(Path::new("../../examples/phir/bell.phir.json"))?;
 
-// Run the program with a noise model
-let noise_model = Box::new(DepolarizingNoiseModel::new_uniform(0.01));
-let results = MonteCarloEngine::run_with_noise_model(
-    classical_engine,
-    noise_model,
-    100, // shots
-    2,   // workers
-    None // seed
-)?;
+    // Run the program with a noise model
+    let noise_model = Box::new(DepolarizingNoiseModel::new_uniform(0.01));
+    let results = MonteCarloEngine::run_with_noise_model(
+        classical_engine,
+        noise_model,
+        100,      // shots
+        2,        // workers
+        Some(42), // seed
+    )?;
+    assert_eq!(results.shots.len(), 100);
 
-println!("{}", results);
+    println!("{results}");
+    Ok(())
+}
 ```
 
 ### Explicit Version Selection
 
 ```rust
-// For specific version implementations
+use pecos_engines::PecosError;
 use pecos_phir_json::setup_phir_json_v0_1_engine;
 use std::path::Path;
 
-// Explicitly use v0.1 implementation
-let engine = setup_phir_json_v0_1_engine(Path::new("examples/bell.phir.json"))?;
+fn main() -> Result<(), PecosError> {
+    // Explicitly use the v0.1 implementation
+    let engine = setup_phir_json_v0_1_engine(Path::new("../../examples/phir/bell.phir.json"))?;
+    assert_eq!(engine.num_qubits(), 2);
+    Ok(())
+}
 ```
 
 ## PHIR File Format
@@ -113,48 +149,10 @@ For alternative validation, the [Python Pydantic PHIR validator](https://github.
 
 ### Testing with Inline JSON
 
-For testing PHIR programs, you can use the `run_phir_simulation_from_json` helper function to run a simulation directly from a JSON string:
-
-```rust
-use pecos_core::errors::PecosError;
-use pecos_engines::PassThroughNoiseModel;
-
-// Import helpers from common module
-use crate::common::phir_test_utils::run_phir_simulation_from_json;
-
-#[test]
-fn test_bell_state_with_inline_json() -> Result<(), PecosError> {
-    // Define the Bell state PHIR program directly in the test
-    let phir_json = r#"{
-      "format": "PHIR/JSON",
-      "version": "0.1.0",
-      "metadata": {"description": "Bell state preparation"},
-      "ops": [
-        {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
-        {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 2},
-        {"qop": "H", "args": [["q", 0]]},
-        {"qop": "CX", "args": [["q", 0], ["q", 1]]},
-        {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
-        {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
-        {"cop": "Result", "args": ["m"], "returns": ["output"]}
-      ]
-    }"#;
-
-    // Run with a single shot and no noise using the full simulation pipeline
-    let results = run_phir_simulation_from_json(
-        phir_json,
-        1,  // shots
-        1,  // workers
-        None,  // No specific seed
-        None::<PassThroughNoiseModel>,  // No noise model
-    )?;
-
-    // Process the results...
-    Ok(())
-}
-```
-
-This approach makes tests more readable and maintainable by keeping the test data and verification code together in one place.
+A program can be passed as a JSON string with `phir_json_engine().json(...)`, as in the
+[Basic Example](#basic-example), which keeps the test data and verification code together in
+one place. This crate's own integration tests also use the `run_phir_simulation_from_json`
+helper in `tests/common/phir_test_utils.rs`, which adds noise-model and worker options.
 
 > **Note**: Work is currently in progress to extend the PhirJsonEngine to support the full PHIR specification. Some
 > advanced features may not be fully implemented yet. The specification itself is also evolving - the "Result"
@@ -227,16 +225,24 @@ The conversion paths are:
 ### Converting PHIR-JSON to PHIR Module
 
 ```rust
+use pecos_engines::PecosError;
 use pecos_phir_json::phir_json_to_module;
 
-// Convert PHIR-JSON string directly to PHIR Module
-let json_str = r#"{
-    "format": "PHIR/JSON",
-    "version": "0.1.0",
-    "ops": [...]
-}"#;
+fn main() -> Result<(), PecosError> {
+    // Convert PHIR-JSON string directly to PHIR Module
+    let json_str = r#"{
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"qop": "H", "args": [["q", 0]]}
+        ]
+    }"#;
 
-let module = phir_json_to_module(json_str)?;
+    let module = phir_json_to_module(json_str)?;
+    println!("{module:?}");
+    Ok(())
+}
 ```
 
 ### Example: PHIR-JSON to Module Converter

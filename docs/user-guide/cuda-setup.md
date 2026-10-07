@@ -11,8 +11,9 @@ PECOS supports GPU-accelerated quantum simulation through two approaches:
 - **MPS**: Matrix Product State simulator using cuTensorNet
 
 ### Rust cuQuantum Bindings (via pecos-rslib-cuda)
+
+No GPU stabilizer simulator is currently provided; the Rust crate `pecos-cuquantum` exposes raw Pauli-frame simulation as `CuFrameSimulator` (not available from Python); see [issue #1068](https://github.com/PECOS-packages/PECOS/issues/1068).
 - **CudaStateVec**: GPU-accelerated state vector simulator (Rust bindings)
-- **CudaStabilizer**: GPU-accelerated stabilizer simulator (Clifford-only, scales to 1000s of qubits)
 - **CuTensorNet**: Tensor network handle for contractions
 - **CuDensityMat**: Density matrix simulator for open quantum systems
 
@@ -360,7 +361,6 @@ pip install quantum-pecos
 | StateVec (CPU) | Any | ~25 | All | Baseline | Easy |
 | CuStateVec (Python) | NVIDIA GPU | ~30 | All | 10-50x faster | Medium |
 | CudaStateVec (Rust) | NVIDIA GPU | ~30 | All | 10-50x faster | Complex |
-| CudaStabilizer (Rust) | NVIDIA GPU | 1000s | Clifford only | Very fast | Complex |
 | MPS (GPU) | NVIDIA GPU | 50+ | All | Varies | Medium |
 
 ## GPU Simulators: Python vs Rust
@@ -381,20 +381,18 @@ PECOS provides GPU acceleration through multiple backends:
 **Status**: Fully Working
 
 - **CudaStateVec**: GPU-accelerated state vector simulator (~30 qubits)
-- **CudaStabilizer**: GPU-accelerated stabilizer simulator (Clifford-only, 1000s of qubits)
 - **CuTensorNet**: Tensor network handle for advanced contractions
 - **CuDensityMat**: Density matrix simulator for noisy/open quantum systems
 - **CUDA Version**: Requires CUDA 12+ and cuQuantum SDK
 - **Setup**: See "Rust cuQuantum Bindings Setup" section below
 
 The Rust bindings provide direct cuQuantum integration without Python package dependencies. They are particularly useful for:
-- Stabilizer simulations with many qubits (CudaStabilizer)
 - Integration with quantum-pecos's HybridEngine
 - Reproducible simulations with seed support
 
 ## Rust cuQuantum Bindings Setup
 
-To use the Rust-based CUDA simulators (CudaStateVec, CudaStabilizer), you need:
+To use the Rust-based CUDA simulators (CudaStateVec), you need:
 
 ### Requirements
 
@@ -447,15 +445,6 @@ if is_cuquantum_available():
     sim.run_gate("CX", [(0, 1)])
     results = sim.run_gate("Measure", [0, 1])
 
-    # Stabilizer simulator (Clifford-only, scales to 1000s of qubits)
-    from pecos.simulators import CudaStabilizer
-
-    sim = CudaStabilizer(1000)
-    sim.run_gate("H", [0])
-    for i in range(100):
-        sim.run_gate("CX", [(i, i + 1)])
-    results = sim.run_gate("Measure", list(range(100)))
-
     # Using with QuantumSimulator
     from pecos.simulators.quantum_simulator import QuantumSimulator
 
@@ -476,7 +465,6 @@ else:
 | Feature | Python (cupy/cuquantum-python) | Rust (pecos-rslib-cuda) |
 |---------|-------------------------------|------------------------|
 | State Vector | CuStateVec | CudaStateVec |
-| Stabilizer | - | CudaStabilizer |
 | MPS/Tensor Network | MPS (pytket) | CuTensorNet (handle only) |
 | Density Matrix | - | CuDensityMat |
 | Setup Complexity | Easier (pip install) | Requires cuQuantum SDK |
@@ -533,10 +521,9 @@ To use GPU simulators in PECOS:
    print(f"cuQuantum available: {is_cuquantum_available()}")
 
    if is_cuquantum_available():
-       from pecos.simulators import CudaStateVec, CudaStabilizer
+       from pecos.simulators import CudaStateVec
 
        sim = CudaStateVec(4)  # State vector (~30 qubits max)
-       sim = CudaStabilizer(1000)  # Stabilizer (1000s of qubits, Clifford only)
    else:
        print("Rust cuQuantum bindings are not available on this machine.")
    ```
@@ -544,6 +531,5 @@ To use GPU simulators in PECOS:
 ### Choosing an Approach
 
 - **For most users**: Python cuQuantum bindings are easier to set up
-- **For stabilizer simulations**: Use CudaStabilizer (Rust) for 1000s of qubits
 - **For reproducibility**: Rust bindings have full seed support
 - **For density matrices**: Use CuDensityMat (Rust) for open quantum systems

@@ -86,7 +86,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU, Python) | Large circuits with GPU | CUDA, cuQuantum |
 | **CudaStateVec** | State vector (GPU, Rust) | Large circuits, reproducible seeded runs | CUDA, cuQuantum, cuda-rust build |
-| **CudaStabilizer** | Stabilizer (GPU, Rust) | Very large Clifford circuits (1000s of qubits) | CUDA, cuQuantum, cuda-rust build |
 | **MPS** | Tensor network | Low-entanglement circuits | CUDA, cuQuantum |
 | **density_matrix** | Density matrix | Noisy/mixed state simulation | None |
 
@@ -349,6 +348,8 @@ results = sim(Qasm(circuit)).quantum(CuStateVec).run(100)
 pip install "quantum-pecos[cuda13]"
 ```
 
+No GPU stabilizer simulator is currently provided; the Rust crate `pecos-cuquantum` exposes raw Pauli-frame simulation as `CuFrameSimulator` (not available from Python); see [issue #1068](https://github.com/PECOS-packages/PECOS/issues/1068).
+
 See [CUDA Setup Guide](cuda-setup.md) for detailed installation instructions.
 
 ### MPS (Matrix Product State, Python only)
@@ -474,7 +475,6 @@ Approximate performance characteristics (relative, not absolute):
 | StabVec | ★★★★ | Limited to Clifford + Rz | Low | 1000+ |
 | CuStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
 | CudaStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
-| CudaStabilizer | ★★★★★ | N/A | Low | 1000+ (GPU) |
 | MPS | ★★★ | ★★★ | ~n × chi² | Varies |
 | density_matrix | ★★ | ★★ | 4^n | ~15 |
 

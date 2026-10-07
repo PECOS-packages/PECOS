@@ -8,6 +8,7 @@
 mod builder;
 mod dispatch;
 mod noise;
+mod passes;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -15,6 +16,7 @@ mod validation;
 use crate::{ActiveStructure, PauliKindForDecomp, StabActive};
 pub use builder::CompileError;
 pub use noise::NoiseChannel;
+pub use passes::{drop_measured_rotations, fuse_rotations};
 use pecos_core::{Angle64, PauliBitmaskVec};
 use pecos_quantum::TickCircuit;
 pub(crate) use validation::ProgramError;

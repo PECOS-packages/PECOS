@@ -98,7 +98,7 @@ For `C† P C = phi X^F Z^G`, the virtual Hermitian body is
 noise bits XOR earlier measurement symbols selected by anticommutation.
 A reset's hidden measurement is a symbol; its conditional correction contributes
 to later signs. Measurements are never flattened into noise dependencies.
-Stable measurement IDs are mapped to visible execution ordinals for annotations.
+Stable measurement IDs are mapped to record ordinals for annotations.
 
 `StabActive::rotate_pauli(angle, factors, negative)` and
 `StabActive::measure_pauli(factors, negative)` expose arbitrary Hermitian Pauli

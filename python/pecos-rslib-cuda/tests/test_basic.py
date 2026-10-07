@@ -64,34 +64,3 @@ def test_custatevec_bell_state(pecos_rslib_cuda) -> None:
 
     # Should be 100% correlated
     assert correlations == trials
-
-
-@pytest.mark.cuda
-def test_custabilizer_creation(pecos_rslib_cuda) -> None:
-    """Test CuStabilizer creation (requires CUDA)."""
-    if not pecos_rslib_cuda.is_cuquantum_available():
-        pytest.skip("cuQuantum not available")
-
-    sim = pecos_rslib_cuda.CuStabilizer(100)
-    assert sim.num_qubits == 100
-
-
-@pytest.mark.cuda
-def test_custabilizer_ghz_state(pecos_rslib_cuda) -> None:
-    """Test creating a GHZ state with stabilizer (requires CUDA)."""
-    if not pecos_rslib_cuda.is_cuquantum_available():
-        pytest.skip("cuQuantum not available")
-
-    n = 10
-    sim = pecos_rslib_cuda.CuStabilizer(n)
-
-    # Create GHZ state: H on first qubit, then CX chain
-    sim.h([0])
-    for i in range(n - 1):
-        sim.cx([i, i + 1])
-
-    # All qubits should be correlated in measurement
-    results = sim.mz(list(range(n)))
-
-    # All should be the same value
-    assert all(r == results[0] for r in results)

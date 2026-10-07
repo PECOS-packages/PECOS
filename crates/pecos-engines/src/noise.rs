@@ -126,18 +126,6 @@ impl BaseNoiseModel {
     pub fn rng_mut(&mut self) -> &mut NoiseRng<PecosRng> {
         &mut self.rng
     }
-
-    /// Check if a message contains measurement results
-    ///
-    /// # Arguments
-    /// * `message` - The `ByteMessage` to check
-    ///
-    /// # Returns
-    /// true if the message contains measurement results, false otherwise
-    #[must_use]
-    pub fn has_measurements(&self, message: &ByteMessage) -> bool {
-        NoiseUtils::has_measurements(message)
-    }
 }
 
 impl Default for BaseNoiseModel {
@@ -216,21 +204,6 @@ mod base_tests {
             PecosRng::seed_from_u64(42),
             "RNG should be initialized with seed 42"
         );
-    }
-
-    #[test]
-    fn test_base_noise_model_has_measurements() {
-        let model = BaseNoiseModel::new();
-
-        // Test with a message that has no measurements
-        let empty_msg = ByteMessage::new(&[]);
-        assert!(!model.has_measurements(&empty_msg));
-
-        // Test with a message that has measurements
-        let mut builder = ByteMessage::outcomes_builder();
-        builder.add_outcomes(&[0]);
-        let measure_msg = builder.build();
-        assert!(model.has_measurements(&measure_msg));
     }
 }
 

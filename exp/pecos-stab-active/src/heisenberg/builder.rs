@@ -4,7 +4,8 @@
 use super::{
     AffineSign, HeisenbergOp, HeisenbergProgram, NoiseChannel, VirtualPauli, dispatch, noise,
 };
-use crate::{PauliKindForDecomp, clifford_turns, rotate_tableau};
+use crate::PauliKindForDecomp;
+use crate::structure::{clifford_turns, rotate_tableau};
 use num_complex::Complex64;
 use pecos_core::{BitmaskStorage, MeasId, PauliBitmaskVec, gate_type::GateType};
 use pecos_quantum::{AnnotationKind, Gate, TickCircuit};
@@ -380,5 +381,12 @@ pub(super) fn compile(circuit: &TickCircuit) -> Result<HeisenbergProgram, Compil
             );
         }
     }
-    Ok(builder.program)
+    let operations = std::mem::take(&mut builder.program.operations);
+    let program = builder
+        .program
+        .with_operations(operations)
+        .unwrap_or_else(|error| {
+            panic!("compile produced an invalid program (builder bug): {error}")
+        });
+    Ok(program)
 }

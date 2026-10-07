@@ -3550,3 +3550,6 @@ final:
         );
     }
 }
+
+#[cfg(test)]
+mod boxed_classical_tests;

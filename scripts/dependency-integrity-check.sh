@@ -548,6 +548,12 @@ while IFS= read -r file; do
     workflow_files+=("$file")
 done < <(collect_files .github/workflows -g '*.yml' -g '*.yaml')
 
+# The process substitution above cannot report a failed listing, and with no
+# files every check below would pass vacuously.
+if ((${#workflow_files[@]} == 0)); then
+    fail "no workflow files found under .github/workflows"
+fi
+
 missing_top_level_permissions=()
 for file in "${workflow_files[@]}"; do
     if ! rg -q '^permissions:\s*$' "$file"; then
@@ -560,15 +566,20 @@ if ((${#missing_top_level_permissions[@]} > 0)); then
     fail "workflow files must declare top-level read-only permissions"
 fi
 
-writable_permissions="$(rg -n '^[[:space:]]*(contents|packages|id-token|pull-requests|actions|security-events): write[[:space:]]*$' .github/workflows | sed 's#\\#/#g' || true)"
+# scripts/ci/workflow_permissions.py parses each workflow as YAML and prints
+# every write grant as FILE<TAB>JOB<TAB>SCOPE (JOB "-" = workflow level), so
+# quoting, comments, spacing and unlisted scope names cannot hide one. Each
+# allowed grant is pinned to its file, job and scope.
+if ! writable_permissions="$(uv run --frozen python scripts/ci/workflow_permissions.py "${workflow_files[@]}")"; then
+    fail "could not parse workflow permissions"
+fi
 unexpected_writable_permissions="$(
-    printf '%s\n' "$writable_permissions" | awk -F: '
-        $1 == ".github/workflows/julia-update-hash.yml" &&
-            $0 ~ /^[^:]+:[0-9]+:[[:space:]]+(contents|pull-requests): write[[:space:]]*$/ { next }
-        $1 == ".github/workflows/codeql.yml" &&
-            $0 ~ /^[^:]+:[0-9]+:[[:space:]]+security-events: write[[:space:]]*$/ { next }
-        $1 == ".github/workflows/osv-scanner.yml" &&
-            $0 ~ /^[^:]+:[0-9]+:[[:space:]]+security-events: write[[:space:]]*$/ { next }
+    printf '%s\n' "$writable_permissions" | awk -F'\t' '
+        $1 == ".github/workflows/julia-update-hash.yml" && $2 == "update-build-hash" &&
+            ($3 == "contents" || $3 == "pull-requests") { next }
+        $1 == ".github/workflows/julia-release.yml" && $2 == "publish_release" && $3 == "contents" { next }
+        $1 == ".github/workflows/codeql.yml" && $2 == "-" && $3 == "security-events" { next }
+        $1 == ".github/workflows/osv-scanner.yml" && $2 == "-" && $3 == "security-events" { next }
         NF { print }
     '
 )"

@@ -86,7 +86,10 @@ pub(crate) mod sampler;
 mod slice;
 mod types;
 
-pub use builder::{DemBuilder, DemBuilderError, resolve_result_tags};
+pub use builder::{
+    DemBuilder, DemBuilderError, ParsedDetector, ParsedObservable, parse_detectors_json,
+    parse_observables_json, resolve_result_tags,
+};
 pub use dem_sampler::{SamplingEngine, SamplingStatistics};
 pub use equivalence::{
     ComparisonDetails, ComparisonMethod, DemParseError, EffectKey, EquivalenceResult,

@@ -28,7 +28,6 @@ try:
     from pecos_rslib_cuda import (
         is_cudensitymat_usable,
         is_cuquantum_available,
-        is_custabilizer_usable,
         is_custatevec_usable,
         is_cutensornet_usable,
     )
@@ -37,12 +36,10 @@ try:
 except ImportError:
     CUQUANTUM_AVAILABLE = False
     CUSTATEVEC_USABLE = False
-    CUSTABILIZER_USABLE = False
     CUTENSORNET_USABLE = False
     CUDENSITYMAT_USABLE = False
 else:
     CUSTATEVEC_USABLE = is_custatevec_usable()
-    CUSTABILIZER_USABLE = is_custabilizer_usable()
     CUTENSORNET_USABLE = is_cutensornet_usable()
     CUDENSITYMAT_USABLE = is_cudensitymat_usable()
 
@@ -189,114 +186,6 @@ class TestCudaStateVec:
         sim.run_gate("SYY", [(2, 3)])
 
 
-class TestCudaStabilizer:
-    """Tests for CudaStabilizer (Rust cuQuantum stabilizer simulator)."""
-
-    pytestmark = pytest.mark.skipif(
-        not CUSTABILIZER_USABLE,
-        reason="CudaStabilizer runtime is not usable on this machine",
-    )
-
-    def test_import(self) -> None:
-        """Test that CudaStabilizer can be imported."""
-        from pecos.simulators import CudaStabilizer
-
-        assert CudaStabilizer is not None
-
-    def test_creation(self) -> None:
-        """Test creating a CudaStabilizer simulator."""
-        from pecos.simulators import CudaStabilizer
-
-        sim = CudaStabilizer(100)
-        assert sim.num_qubits == 100
-
-    def test_creation_with_seed(self) -> None:
-        """Test creating a CudaStabilizer simulator with a seed."""
-        from pecos.simulators import CudaStabilizer
-
-        sim = CudaStabilizer(50, seed=42)
-        assert sim.num_qubits == 50
-
-    def test_large_qubit_count(self) -> None:
-        """Test that CudaStabilizer can handle many qubits (Clifford-only)."""
-        from pecos.simulators import CudaStabilizer
-
-        # Stabilizer simulators can handle many more qubits than state vector
-        sim = CudaStabilizer(500)
-        assert sim.num_qubits == 500
-
-        # Apply some Clifford gates
-        sim.run_gate("H", [0])
-        for i in range(10):
-            sim.run_gate("CX", [(i, i + 1)])
-
-    def test_clifford_gates(self) -> None:
-        """Test Clifford gate operations."""
-        from pecos.simulators import CudaStabilizer
-
-        sim = CudaStabilizer(4)
-
-        # Pauli gates
-        sim.run_gate("X", [0])
-        sim.run_gate("Y", [1])
-        sim.run_gate("Z", [2])
-
-        # Hadamard
-        sim.run_gate("H", [0, 1, 2, 3])
-
-        # S gate
-        sim.run_gate("S", [0])
-        sim.run_gate("Sd", [1])
-
-        # Two-qubit Clifford
-        sim.run_gate("CX", [(0, 1)])
-        sim.run_gate("CZ", [(2, 3)])
-
-    def test_non_clifford_raises(self) -> None:
-        """Test that non-Clifford gates raise an error."""
-        from pecos.simulators import CudaStabilizer
-
-        sim = CudaStabilizer(2)
-
-        # T gate is non-Clifford and should raise ValueError
-        with pytest.raises(ValueError, match="not a Clifford gate"):
-            sim.run_gate("T", [0])
-
-    def test_measurement(self) -> None:
-        """Test measurement operations."""
-        from pecos.simulators import CudaStabilizer
-
-        sim = CudaStabilizer(2)
-
-        # Prepare and measure
-        sim.run_gate("H", [0])
-        sim.run_gate("CX", [(0, 1)])
-        result = sim.run_gate("Measure", [0, 1])
-
-        # Should have measurement results
-        assert isinstance(result, dict)
-
-    def test_surface_code_syndrome(self) -> None:
-        """Test a simple surface code syndrome extraction pattern."""
-        from pecos.simulators import CudaStabilizer
-
-        # 9 qubits for a distance-3 surface code
-        sim = CudaStabilizer(9)
-
-        # Initialize data qubits
-        sim.run_gate("Init +Z", [0, 1, 2, 3, 4, 5, 6, 7, 8])
-
-        # Simple X stabilizer check (H-CX-CX-H pattern)
-        sim.run_gate("H", [4])  # Ancilla
-        sim.run_gate("CX", [(4, 0)])  # Connect to data qubits
-        sim.run_gate("CX", [(4, 1)])
-        sim.run_gate("H", [4])
-        result = sim.run_gate("Measure", [4])
-
-        # In +Z state, X stabilizer measurement should give 0
-        assert 4 in result or (4,) in result
-
-
 class TestCuTensorNet:
     """Tests for CuTensorNet handle."""
 
@@ -384,16 +273,3 @@ class TestQuantumSimulatorBackend:
         sim.init(4)
 
         assert sim.num_qubits == 4
-
-    @pytest.mark.skipif(
-        not CUSTABILIZER_USABLE,
-        reason="CudaStabilizer runtime is not usable on this machine",
-    )
-    def test_cuda_stabilizer_backend(self) -> None:
-        """Test QuantumSimulator with CudaStabilizer backend."""
-        from pecos.simulators.quantum_simulator import QuantumSimulator
-
-        sim = QuantumSimulator(backend="CudaStabilizer")
-        sim.init(10)
-
-        assert sim.num_qubits == 10

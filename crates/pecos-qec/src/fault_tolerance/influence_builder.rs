@@ -314,9 +314,12 @@ impl<'a> InfluenceBuilder<'a> {
                 pecos_quantum::AnnotationKind::Observable { measurement_ids } => {
                     let mut terms = Vec::new();
                     for &meas_id in measurement_ids {
-                        // Each id names one measurement, so each term is Z on
-                        // that measurement's own qubit -- not a Z-spray over
-                        // every qubit of a batched node.
+                        // Each id names one measurement, so each term touches
+                        // only that measurement's own qubit -- not a spray over
+                        // every qubit of a batched node. The term is the Pauli
+                        // the measurement reads (X for MX, Z otherwise), as for
+                        // detector seeds; a Z term on an MX readout makes the
+                        // observable sensitive to the wrong faults.
                         let mref = circuit.find_measurement(meas_id).map_err(|source| {
                             AnnotationIngestError::ObservableRefUnresolved {
                                 annotation_index,
@@ -324,8 +327,16 @@ impl<'a> InfluenceBuilder<'a> {
                                 source,
                             }
                         })?;
+                        let qubit = mref.qubit.index();
+                        let reads_x = circuit
+                            .gate(mref.node)
+                            .is_some_and(|gate| gate.gate_type == pecos_quantum::GateType::MX);
                         terms.push(PauliPropagationTerm {
-                            pauli: PauliString::zs(&[mref.qubit.index()]),
+                            pauli: if reads_x {
+                                PauliString::xs(&[qubit])
+                            } else {
+                                PauliString::zs(&[qubit])
+                            },
                             start_node: Some(mref.node),
                         });
                     }
@@ -597,7 +608,9 @@ impl<'a> InfluenceBuilder<'a> {
                 // Batched measurement nodes are refused by the replay, so the
                 // node holds exactly one measurement.
                 let qubit = gate.qubits.first().map_or(0, pecos_core::QubitId::index);
-                measurements[meas_idx] = (node, qubit, 0);
+                // Same convention as the propagator extractors: 1 = X (MX), 0 = Z.
+                let basis = u8::from(gate.gate_type == pecos_quantum::GateType::MX);
+                measurements[meas_idx] = (node, qubit, basis);
                 if let Some(&id) = gate.meas_ids.first() {
                     meas_ids[meas_idx] = id;
                     any_id = true;
@@ -1237,6 +1250,28 @@ mod tests {
             !map.locations.is_empty(),
             "influence map must contain fault locations"
         );
+    }
+
+    /// The map's measurement metadata records the basis each gate reads; the
+    /// replay's internal H-then-MZ for MX must not leak into it as Z.
+    #[test]
+    fn measurement_metadata_records_the_measured_basis() {
+        let mut dag = DagCircuit::new();
+        dag.add_gate_auto_wire(pecos_core::Gate::px(&[0]));
+        dag.pz(&[1]);
+        dag.add_gate_auto_wire(pecos_core::Gate::mx(&[0]));
+        dag.mz(&[1]);
+
+        let map = InfluenceBuilder::new(&dag)
+            .build()
+            .expect("circuit is replayable");
+
+        let bases: std::collections::BTreeSet<(usize, u8)> = map
+            .measurements
+            .iter()
+            .map(|&(_, qubit, basis)| (qubit, basis))
+            .collect();
+        assert_eq!(bases, [(0, 1), (1, 0)].into());
     }
 
     #[test]

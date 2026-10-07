@@ -65,3 +65,103 @@ Tests use independent gate matrices from `StateVec`, dense projectors, a dense
 3PP-membership oracle based on affine support and a Boolean Moebius transform,
 random signed Pauli expectations, brute-force quadratic sums, and a 256-qubit
 smoke circuit.
+
+## Triorthogonal distillation
+
+The public `distillation` module implements the circuit and finite-sum oracles
+of Bravyi and Haah, arXiv:1209.2426, Sections “Triorthogonal matrices”,
+“Distillation subroutine”, and “A family of triorthogonal matrices”.
+`TriorthogonalMatrix::new(&rows, k)` validates a rectangular binary
+matrix, odd/even row order, pair/triple overlap parity, and row independence.
+The first `k` rows are logical rows; the remaining rows are syndrome rows.
+Zero logical rows or zero syndrome rows are supported; an empty row list
+represents the 0×0 matrix. Constructors are
+`TriorthogonalMatrix::bravyi_haah(k)` for even `k >= 2`, and
+`TriorthogonalMatrix::rm15()` for the 15-to-1 matrix. `n()`, `m()`, `k()`, and
+`rows()` expose dimensions and the original matrix.
+
+`matrix.circuit(p)` returns public `Op` values: PZ, PX, CX, CZ, S, Sdg, Z, T,
+ZError, MeasureX, and ExpectW. Gaussian elimination tracks `R = A G`, so each
+original coefficient is a parity of physical pivot bits. The encoder prepares
+`|G>`, physical T gates are each followed by a Z error, and the diagonal Clifford
+correction cancels the unwanted linear and quadratic phases. The weight
+inclusion-exclusion expansion is a congruence modulo eight, not an integer
+identity truncated at degree three. Fourth and higher terms vanish modulo eight;
+triorthogonality also removes the cubic term. S powers and CZ parities are
+accumulated before emission. Syndrome measurements use the original even rows.
+Logical W queries use `(Xbar + Ybar)/sqrt(2)`, including the sign
+`Ybar = i (-i)^weight Y(row)`.
+
+`run_shot(&mut sim, &ops, &mut errors)` resets and runs a complete circuit.
+The callback `errors(op_index, qubit_index, p) -> bool` decides every Z error.
+`run_shot_sampled(&mut sim, &ops, &mut rng)` samples with a caller-owned
+`PecosRng`; its error RNG is separate from the simulator's measurement RNG.
+`ShotResult` contains syndrome `MeasurementResult`s (including determinism),
+acceptance, and optional logical W expectations. Rejected shots have no output
+expectations. Generated circuits always give deterministic syndromes for a
+specified physical error pattern. Unsupported measurements in manually edited
+operation streams propagate `IncompatibleMeasurement`.
+
+`matrix.weight_enumerators()` returns `WeightEnumerators { even, cosets }`,
+integer coefficient vectors indexed by weight. Each `cosets[a]` enumerates
+only `G0 + f^a`; adding `even` gives the paper's `G0 + {0,f^a}` enumerator.
+Enumeration takes exponential time in the number of even rows and polynomial
+memory. Counts use checked `u64` arithmetic and report overflow.
+`weights.oracles(p)` evaluates the paper's full `P_s` and `qdual` expressions:
+
+```text
+x = 1 - 2p
+P_s = W_even(x) / W_even(1)
+q_a = (1 - W_coset_a(x) / W_even(x)) / 2
+```
+
+These are finite-sum formulas, with ordinary floating-point rounding at
+numerical evaluation (including cancellation near p=0). `pattern_oracle(&bits)`
+returns the syndrome from even-row dot products and conditional logical signs
+from odd-row dot products. It is independent of the circuit and simulator.
+
+Run the example in release mode:
+
+```sh
+cargo run -p pecos-phase-poly --release --example distillation -- scaling 20 100 0.05 2026 16
+cargo run -p pecos-phase-poly --release --example distillation -- emit 4 0.05 20000 2026 /tmp/distillation-k4
+cargo run -p pecos-phase-poly --release --example distillation -- emit rm15 0.05 20000 2027 /tmp/distillation-rm15
+```
+
+Scaling arguments are maximum even k, shots, p, seed, and optional active-width
+limit (default 16). Timings include reset, all preparations/gates/noise, and
+syndrome measurements; logical expectation queries are excluded from both
+simulators because `StabActive` does not expose an expectation query. The same
+error RNG seed is used, and complete syndrome streams are compared. Each X
+string in `StabActive` uses CX from its first qubit to every other qubit, MX on
+the first, then the same CX gates. The peak active width is `m = k+3`: physical
+Z operators are parities of m free encoder coordinates, and transversal T
+includes every pivot. Subsequent Clifford gates and measurements cannot
+increase the width. The example configures `with_max_active_width(limit)` and
+skips circuits with `m > limit` before execution, without catching panics.
+Initialization is outside the timer; each shot's reset is inside it.
+
+Emit arguments are even k (or `rm15`), p, shots, seed, and output prefix. It
+writes `<prefix>.stim` and `<prefix>.json`. JSON contains k, n, p, shots, seed,
+accepted, acceptance_rate, per-logical mean_w, P_s, and q_a. If no shots are
+accepted, each mean_w entry is null. Output expectations are computed on every
+accepted shot, without collapsing the logical state.
+
+`to_stim(&ops)` writes R/RX, CX/CZ, S/S_DAG/Z, T, Z_ERROR, and X-string MPP.
+A DETECTOR rec[-1] immediately follows each syndrome measurement. This is a
+Stim dialect: T denotes diag(1, exp(i*pi/4)); `EXP_VAL P Q` is an extension that
+reports the expectation of each listed Pauli product separately, without measuring
+or collapsing the state and without adding a measurement record. Each logical
+output gets one `EXP_VAL X(f) Y(f)` line; its W check is `(<X(f)> + <Y(f)>)/sqrt(2)`,
+meaningful on shots with all detectors zero. Products use `*`; a leading `!` on
+their first factor negates the entire product. These semantics are also documented
+in the emitted file's comments.
+
+Tests transcribe the paper's 5×14 example, check exact enumerators and integer
+series coefficients, compare small ideal circuits with `StateVec` and independent
+target amplitudes, exhaust errors of weight at most two, and sample 300 distinct
+patterns at each weight three through five per matrix. Statistical tests use
+20,000 shots per case and a two-sided Bernoulli Bernstein bound, conditional on
+the accepted count for output errors. A union bound over all 18 comparisons
+limits the joint failure probability to 1.8e-7. The 128-qubit G(40) test runs
+three ideal shots and prints elapsed time with `-- --nocapture`.

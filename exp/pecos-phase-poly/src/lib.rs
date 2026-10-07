@@ -55,6 +55,7 @@ use quadratic::{Clifford, GaussSum, root};
 use std::collections::BTreeMap;
 
 mod binary;
+pub mod distillation;
 mod measurement;
 mod quadratic;
 pub use measurement::{IncompatibleMeasurement, XMeasurementCase};

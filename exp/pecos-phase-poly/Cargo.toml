@@ -18,5 +18,9 @@ pecos-simulators.workspace = true
 pecos-random.workspace = true
 num-complex.workspace = true
 
+[dev-dependencies]
+pecos-stab-active = { path = "../pecos-stab-active" }
+serde_json.workspace = true
+
 [lints]
 workspace = true

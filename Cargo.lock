@@ -4444,6 +4444,8 @@ dependencies = [
  "pecos-core",
  "pecos-random",
  "pecos-simulators",
+ "pecos-stab-active",
+ "serde_json",
 ]
 
 [[package]]

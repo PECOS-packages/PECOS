@@ -34,7 +34,7 @@ on:
       - 'jl-*'  # Trigger on Julia-specific tags
   # No `paths:` filter: GitHub applies it to label events too, so adding
   # ci:julia could never start a run on a PR that leaves julia/ alone. The
-  # check_pr_push job decides instead (scripts/ci/julia-should-run.sh).
+  # check_pr_push job decides instead (scripts/ci/pr-lane-should-run.sh).
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches:
@@ -85,7 +85,7 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          HAS_JULIA_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:julia') }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
@@ -101,11 +101,11 @@ jobs:
           # label / julia/ changes. Assign on its own line so a git failure
           # aborts the step (fail closed).
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            run="$(bash scripts/ci/julia-should-run.sh)"
+            run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*')"
             case "$run" in
               true|false) ;;
               *)
-                echo "unexpected julia-should-run output: <$run>" >&2
+                echo "unexpected pr-lane-should-run output: <$run>" >&2
                 exit 1
                 ;;
             esac

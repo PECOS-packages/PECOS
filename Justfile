@@ -792,6 +792,11 @@ julia-lint: (julia-build "release")
 pytest-perf: build-release
     uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
+# Performance tests against the CI test environment built in release mode (nightly CI).
+[group('test')]
+python-ci-perf: (python-ci-build-test "release")
+    uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
+
 # Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:

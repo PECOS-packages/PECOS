@@ -8,12 +8,18 @@ on:
     branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
+      - 'mkdocs.yml'
+      - 'scripts/docs/**'
+      - 'python/quantum-pecos/tests/docs/**'
       - 'Justfile'
       - '.github/workflows/test-docs-examples.yml'
   pull_request:
     branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
+      - 'mkdocs.yml'
+      - 'scripts/docs/**'
+      - 'python/quantum-pecos/tests/docs/**'
       - 'Justfile'
       - '.github/workflows/test-docs-examples.yml'
   workflow_dispatch:
@@ -101,6 +107,22 @@ jobs:
 
       - name: Test documentation examples
         run: just docs-test
+
+      # docs-test regenerates the Rust doc-test crate from docs/. The crate is
+      # committed, so a difference means a docs change was not regenerated and
+      # its Rust examples would never run.
+      - name: Check the generated Rust doc-test crate is committed
+        run: |
+          crate=python/quantum-pecos/tests/docs/rust_crate
+          if [ -n "$(git status --porcelain -- "$crate")" ]; then
+            git status --porcelain -- "$crate"
+            echo "::error::$crate is out of date with docs/; run 'uv run --frozen python scripts/docs/generate_doc_tests.py' and commit the result"
+            exit 1
+          fi
+
+      # The post-merge slow lane runs these too, but only for package changes.
+      - name: Run the Rust documentation examples
+        run: uv run --frozen pytest python/quantum-pecos/tests/docs/test_rust_unified_crate.py -m slow -v
 
       - name: Build documentation
         if: success()

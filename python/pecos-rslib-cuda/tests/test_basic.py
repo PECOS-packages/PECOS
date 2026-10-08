@@ -12,7 +12,9 @@ def pecos_rslib_cuda() -> types.ModuleType:
         import pecos_rslib_cuda
 
         return pecos_rslib_cuda
-    except ImportError:
+    except ModuleNotFoundError as error:
+        if error.name != "pecos_rslib_cuda":
+            raise
         pytest.skip("pecos_rslib_cuda not installed")
 
 

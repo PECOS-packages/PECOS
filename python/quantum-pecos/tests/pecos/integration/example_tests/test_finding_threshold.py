@@ -12,10 +12,14 @@
 
 """Integration tests for quantum error correction threshold finding."""
 
+from math import isfinite
+
 import pecos as pc
+import pytest
 from pecos.analysis.threshold_curve import func
 
 
+@pytest.mark.slow
 def test_finding_threshold() -> None:
     """Test threshold finding for quantum error correction codes."""
     depolar = pc.noise.DepolarModel(
@@ -31,27 +35,32 @@ def test_finding_threshold() -> None:
 
     plog = []
     for d in ds:
-        for p in ps:
-            surface = pc.qeccs.Surface4444(distance=d)
-            mwpm2d = pc.decoders.MWPM2D(surface)
+        surface = pc.qeccs.Surface4444(distance=d)
+        mwpm2d = pc.decoders.MWPM2D(surface)
+        for i, p in enumerate(ps):
             plog.append(
                 pc.analysis.codecapacity_logical_rate(
-                    10,
+                    250,
                     surface,
                     d,
                     depolar,
                     error_params={"p": p},
                     decoder=mwpm2d,
+                    seed=101 + 100 * d + i,
                     verbose=False,
                 )[0],
             )
 
     plog = pc.array(plog)
 
-    # print("Finished!")
+    p0 = (0.155, 1.5, 0.15, 1, 1)
+    opt, std = pc.analysis.threshold_fit(plist, dlist, plog, func, p0, maxfev=10000)
 
-    try:
-        p0 = (0.1, 1.5, 1, 1, 1)
-        pc.analysis.threshold_fit(plist, dlist, plog, func, p0, maxfev=1000)
-    except RuntimeError:
-        pass
+    # Conventional matching has a depolarizing code-capacity threshold of about 15.5%:
+    # https://arxiv.org/html/2212.11632v3#S2 (nonrotated planar code).
+    # With d=5,7,9 and 250 shots the fitted value varies with the seed: twelve seed offsets
+    # gave 0.10 to 0.18 (mean 0.144, sd 0.021), so the band is about three sd wide each way.
+    # A decoder that does not decode leaves no crossing, and the fit then fails to converge.
+    assert all(isfinite(value) for value in opt)
+    assert all(isfinite(value) for value in std)
+    assert 0.08 < opt[0] < 0.22

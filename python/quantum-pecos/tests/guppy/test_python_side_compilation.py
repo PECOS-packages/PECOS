@@ -9,11 +9,8 @@ class TestPythonSideCompilation:
     @pytest.fixture
     def simple_circuit(self) -> object:
         """Fixture providing a simple quantum circuit."""
-        try:
-            from guppylang.decorator import guppy
-            from guppylang.std.quantum import h, measure, qubit
-        except ImportError:
-            pytest.skip("Guppy not available")
+        from guppylang.decorator import guppy
+        from guppylang.std.quantum import h, measure, qubit
 
         @guppy
         def simple_circuit() -> bool:
@@ -27,11 +24,8 @@ class TestPythonSideCompilation:
     @pytest.fixture
     def bell_pair_circuit(self) -> object:
         """Fixture providing a Bell pair circuit."""
-        try:
-            from guppylang.decorator import guppy
-            from guppylang.std.quantum import cx, h, measure, qubit
-        except ImportError:
-            pytest.skip("Guppy not available")
+        from guppylang.decorator import guppy
+        from guppylang.std.quantum import cx, h, measure, qubit
 
         @guppy
         def bell_pair() -> tuple[bool, bool]:
@@ -46,19 +40,11 @@ class TestPythonSideCompilation:
 
     def test_hugr_pass_through_compilation(self, bell_pair_circuit: object) -> None:
         """Test the HUGR pass-through path (Guppy → HUGR → Rust)."""
-        try:
-            from pecos import Guppy, sim
-            from pecos_rslib import state_vector
-        except ImportError as e:
-            pytest.skip(f"Required modules not available: {e}")
+        from pecos import Guppy, sim
+        from pecos_rslib import state_vector
 
-        try:
-            # The sim API handles Guppy → HUGR → Selene compilation
-            results = sim(Guppy(bell_pair_circuit)).qubits(2).quantum(state_vector()).seed(42).run(100).to_dict()
-        except (RuntimeError, ValueError) as e:
-            if "compilation" in str(e).lower() or "not supported" in str(e):
-                pytest.skip(f"HUGR compilation issue: {e}")
-            pytest.fail(f"HUGR pass-through failed: {e}")
+        # The sim API handles Guppy → HUGR → Selene compilation
+        results = sim(Guppy(bell_pair_circuit)).qubits(2).quantum(state_vector()).seed(42).run(100).to_dict()
 
         # Verify results structure
         assert hasattr(results, "__getitem__"), "Results should be dict-like"
@@ -73,10 +59,7 @@ class TestPythonSideCompilation:
 
     def test_compilation_output_structure(self, simple_circuit: object) -> None:
         """Test the structure of compilation outputs."""
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         try:
             # Compile to HUGR
@@ -104,10 +87,7 @@ class TestCompilationErrorHandling:
 
     def test_invalid_function_compilation(self) -> None:
         """Test compilation with invalid function."""
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         # Try to compile a non-Guppy function
         def regular_function() -> int:

@@ -421,7 +421,7 @@ def codecapacity_logical_rate2(
     error_params: ErrorParams,
     decoder: Decoder,
     seed: int | None = None,
-    state_sim: SimulatorProtocol | None = None,
+    state_sim: type[SimulatorProtocol] | None = None,
     *,
     verbose: bool = True,
     circuit_runner: Standard | None = None,
@@ -429,9 +429,9 @@ def codecapacity_logical_rate2(
 ) -> tuple[float, float]:
     """A tool for determining the code-capacity logical-error rate for syndrome extraction.
 
-    In this analysis only logical |0> is prepared and each run consists of an ideal logical |0> preparation followed by
-    a single round of syndrome extraction. The error rate is determined by number of runs with logical failures divided
-    by the total number of runs.
+    Each run prepares ideal logical |0> and |+> states and applies the same errors during one round of syndrome
+    extraction to both states. A run fails if either logical sign changes after recovery. The error rate is the
+    number of failed runs divided by the total number of runs.
 
     Args:
     ----
@@ -442,7 +442,7 @@ def codecapacity_logical_rate2(
         error_params: Dictionary of error parameters (must include 'p' for error probability).
         decoder: The decoder instance for error correction.
         seed: Random seed for reproducibility.
-        state_sim: The state simulator to use.
+        state_sim: The simulator class to use (defaults to SparseStabPy).
         verbose: If True, prints detailed progress and results.
         circuit_runner: The circuit runner to use for simulations.
         basis: The basis for logical measurements (e.g., 'X' or 'Z').
@@ -467,8 +467,11 @@ def codecapacity_logical_rate2(
     initplus = pc.circuits.LogicalCircuit(suppress_warning=True)
     initplus.append(qecc.gate("ideal init |+>"))
 
-    logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]["Z"]
-    logical_ops_plus = qecc.instruction("instr_init_plus").logical_stabs[0]["X"]
+    logical_ops_zero = qecc.instruction("instr_init_zero").final_logical_ops[0]["Z"]
+    logical_ops_plus = qecc.instruction("instr_init_plus").final_logical_ops[0]["X"]
+
+    if state_sim is None:
+        state_sim = SparseStabPy
 
     num_failure = 0
 

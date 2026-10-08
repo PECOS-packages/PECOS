@@ -9,18 +9,10 @@ sys.path.insert(
 )
 
 import pytest
+import stim
 from pecos.slr import CReg, Main, Parallel, QReg, Repeat, Return, SlrConverter
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
-
-# Check if stim is available for additional testing
-try:
-    import stim
-
-    STIM_AVAILABLE = True
-except ImportError:
-    STIM_AVAILABLE = False
-    stim = None
 
 
 def _return_declared_cregs(prog: Main) -> Main:
@@ -73,7 +65,6 @@ class TestConversionConsistency:
             cx in qc_qasm.lower() for cx in cx_variants
         ), f"CX variants {cx_variants} missing from QuantumCircuit QASM"
 
-    @pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
     def test_stim_slr_qasm_consistency(self) -> None:
         """Test consistency between Stim and SLR through QASM."""
         # Create a Stim circuit
@@ -280,7 +271,6 @@ class TestConversionConsistency:
         assert reset_count >= 3
         assert measure_count >= 3
 
-    @pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
     def test_noise_instruction_handling(self) -> None:
         """Test that noise instructions are properly handled (as comments)."""
         stim_circuit = stim.Circuit(

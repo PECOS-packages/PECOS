@@ -286,7 +286,7 @@ pytest *args:
     else
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
-        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
         uv run --frozen pytest -n auto python/selene-plugins -m "not slow"
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
@@ -325,7 +325,7 @@ rslib-rust-test:
 pytest-ci-core:
     uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
     uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
-    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
 # One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
@@ -343,7 +343,7 @@ pytest-ci-core-shard shard:
     #!/usr/bin/env bash
     set -euo pipefail
     QP=python/quantum-pecos/tests
-    CORE_MARKERS="not optional_dependency and not slow"
+    CORE_MARKERS="not slow"
     HARVEST="$QP/qec/surface/test_pauli_mask_harvest.py"
     case "{{shard}}" in
       qec-surface-harvest)
@@ -797,15 +797,10 @@ pytest-perf: build-release
 python-ci-perf: (python-ci-build-test "release")
     uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
-# Run tests for optional dependencies (only quantum-pecos carries the marker)
-[group('test')]
-pytest-dep:
-    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "optional_dependency"
-
 # Run the slower integration lane (excluded from the default fast lane)
 [group('test')]
 pytest-slow:
-    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow and not optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow"
 
 
 

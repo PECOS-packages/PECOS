@@ -1,11 +1,13 @@
 """Test HUGR compilation through Selene."""
 
+import re
+
 import pytest
 from guppylang.decorator import guppy as guppy_decorator
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from hugr.package import Package
 from pecos import Guppy, sim
-from pecos.compilation_pipeline import compile_guppy_to_hugr
+from pecos.compilation_pipeline import compile_guppy_to_hugr, compile_hugr_to_qis
 from pecos_rslib import state_vector
 
 # compile_guppy_to_hugr returns the BINARY HUGR envelope (Model format): the
@@ -26,7 +28,6 @@ def _op_names(pkg: Package) -> set[str]:
     return names
 
 
-@pytest.mark.optional_dependency
 class TestSeleneHUGRCompilation:
     """Test HUGR compilation through Selene."""
 
@@ -44,28 +45,22 @@ class TestSeleneHUGRCompilation:
             return measure(q1).read(), measure(q2).read()
 
         # The sim API handles HUGR compilation internally
-        try:
-            results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
+        results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
-            # Verify results structure
-            assert hasattr(results, "__getitem__"), "Results should be dict-like"
+        # Verify results structure
+        assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
-            # Two untagged measurements per shot land in measurement_0 and measurement_1.
-            m1 = results["measurement_0"]
-            m2 = results["measurement_1"]
+        # Two untagged measurements per shot land in measurement_0 and measurement_1.
+        m1 = results["measurement_0"]
+        m2 = results["measurement_1"]
 
-            assert len(m1) == 100, "Should have 100 measurements for qubit 1"
-            assert len(m2) == 100, "Should have 100 measurements for qubit 2"
+        assert len(m1) == 100, "Should have 100 measurements for qubit 1"
+        assert len(m2) == 100, "Should have 100 measurements for qubit 2"
 
-            # Bell state measurements should be correlated
-            correlated = sum(1 for i in range(100) if m1[i] == m2[i])
-            correlation_rate = correlated / 100
-            assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
-
-        except (ImportError, RuntimeError, ValueError) as e:
-            if "not supported" in str(e).lower() or "not available" in str(e).lower():
-                pytest.skip(f"HUGR compilation not fully supported: {e}")
-            pytest.fail(f"Unexpected compilation error: {e}")
+        # Bell state measurements should be correlated
+        correlated = sum(1 for i in range(100) if m1[i] == m2[i])
+        correlation_rate = correlated / 100
+        assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
 
     def test_direct_hugr_compilation(self) -> None:
         """Test direct HUGR compilation without simulation."""
@@ -162,7 +157,6 @@ class TestSeleneHUGRCompilation:
         assert len(pkg.modules) >= 1, "HUGR package should contain at least one module"
 
 
-@pytest.mark.optional_dependency
 class TestLLVMGeneration:
     """Test LLVM IR generation from quantum circuits."""
 
@@ -180,54 +174,18 @@ class TestLLVMGeneration:
         hugr_bytes = compile_guppy_to_hugr(simple_measurement)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
 
-        # Try to convert HUGR to LLVM (if available)
-        try:
-            from pecos.backends import hugr_to_llvm
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert isinstance(llvm_ir, str), "Should produce LLVM IR string"
 
-            llvm_ir = hugr_to_llvm(hugr_bytes)
-            assert isinstance(llvm_ir, str), "Should produce LLVM IR string"
-            assert len(llvm_ir) > 0, "LLVM IR should not be empty"
-
-            # Verify LLVM structure
-            assert "define" in llvm_ir, "Should have function definitions"
-            assert "@__quantum__" in llvm_ir, "Should have quantum intrinsics"
-
-        except ImportError:
-            # HUGR to LLVM conversion might not be available yet
-            pass
-
-    def test_llvm_ir_patterns(self) -> None:
-        """Test that generated LLVM IR follows expected patterns."""
-        # Create expected LLVM IR pattern for reference
-        expected_llvm_pattern = """
-        ; Quantum intrinsics
-        declare void @__quantum__qis__h__body(i64)
-        declare void @__quantum__qis__x__body(i64)
-        declare void @__quantum__qis__y__body(i64)
-        declare void @__quantum__qis__z__body(i64)
-        declare void @__quantum__qis__cnot__body(i64, i64)
-        declare i1 @__quantum__qis__mz__body(i64)
-        declare void @__quantum__rt__result_record_output(i64, i8*)
-        """
-
-        # Verify pattern structure
-        intrinsics = [
-            "@__quantum__qis__h__body",
-            "@__quantum__qis__x__body",
-            "@__quantum__qis__cnot__body",
-            "@__quantum__qis__mz__body",
-        ]
-
-        for intrinsic in intrinsics:
-            assert intrinsic in expected_llvm_pattern, f"Pattern should include {intrinsic}"
-
-        # Check parameter types
-        assert "(i64)" in expected_llvm_pattern, "Single qubit ops should take i64"
-        assert "(i64, i64)" in expected_llvm_pattern, "Two qubit ops should take two i64"
-        assert "i1 @__quantum__qis__mz" in expected_llvm_pattern, "Measurement should return i1"
+        # Selene QIS allocates, applies X as rxy(theta=pi, phi=0), and measures
+        assert "call i64 @___qalloc()" in llvm_ir, "Should allocate a qubit"
+        assert re.search(
+            r"call void @___rxy\(i64 %[\w.]+, double 0x400921FB54442D18, double 0\.000000e\+00\)",
+            llvm_ir,
+        ), "Should apply X as rxy(pi, 0)"
+        assert "call i64 @___lazy_measure(" in llvm_ir, "Should measure the qubit"
 
 
-@pytest.mark.optional_dependency
 class TestHUGRVersionCompatibility:
     """Test HUGR envelope format compatibility."""
 

@@ -536,14 +536,12 @@ jobs:
     - name: Execute WASM compatibility smoke test
       run: python scripts/ci/smoke_wasm_foreign_object.py
 
-  # Post-merge lanes excluded from the PR fast path: the slow integration
-  # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
-  # marked `optional_dependency`).
+  # Post-merge lane excluded from the PR fast path: the slow integration tests.
   python-slow-postmerge:
-    # workflow_dispatch escape hatch: the optional-dependency suite
-    # (guppy/selene/QIR) otherwise has NO pre-merge path -- a branch whose
-    # risk lives in that suite could only get its first CI signal after
-    # landing. Dispatch is manual-only; the PR fast path is unaffected.
+    # workflow_dispatch escape hatch: the slow suite otherwise has NO pre-merge
+    # path -- a branch whose risk lives in that suite could only get its first
+    # CI signal after landing. Dispatch is manual-only; the PR fast path is
+    # unaffected.
     if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -618,9 +616,6 @@ jobs:
       # lane imports. pytest COLLECTION imports every module under tests/, and
       # tests/qec imports pecos_rslib_exp at module level.
       run: just python-ci-build-test
-
-    - name: Run optional-dependency Python tests
-      run: just pytest-dep
 
     - name: Run slow Python tests
       run: just pytest-slow

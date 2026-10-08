@@ -9,6 +9,7 @@ mod builder;
 mod dispatch;
 mod noise;
 mod passes;
+mod plan;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -19,6 +20,7 @@ pub use noise::NoiseChannel;
 pub use passes::{drop_measured_rotations, fuse_rotations};
 use pecos_core::{Angle64, PauliBitmaskVec};
 use pecos_quantum::TickCircuit;
+pub use plan::{PlanError, Sampler, SamplingPlan};
 pub(crate) use validation::ProgramError;
 
 /// A constant XOR noise symbols XOR measurement symbols (including hidden resets).
@@ -34,6 +36,25 @@ pub struct AffineSign {
 }
 
 impl AffineSign {
+    /// Canonical XOR, including inputs with unsorted or repeated symbols.
+    #[must_use]
+    pub fn xor(&self, other: &Self) -> Self {
+        fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
+            let mut terms = std::collections::BTreeSet::new();
+            for &term in a.iter().chain(b) {
+                if !terms.insert(term) {
+                    terms.remove(&term);
+                }
+            }
+            terms.into_iter().collect()
+        }
+        Self {
+            constant: self.constant ^ other.constant,
+            noise: symmetric_difference(&self.noise, &other.noise),
+            measurements: symmetric_difference(&self.measurements, &other.measurements),
+        }
+    }
+
     /// Evaluate `constant XOR noise XOR measurements`.
     /// The measurement slice is indexed by symbol, which equals execution
     /// position in compiled order.

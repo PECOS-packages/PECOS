@@ -34,19 +34,20 @@ use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, ForcedMeasurement, MeasurementResult,
     QuantumSimulator,
 };
-use pecos_stab_tn::stab_mps::coordinate_tableau::{
-    CoordinateDecomposition, CoordinateGate, MeasurementCase,
-};
+#[cfg(test)]
+use pecos_stab_tn::stab_mps::coordinate_tableau::{CoordinateDecomposition, MeasurementCase};
+#[cfg(test)]
 use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
 pub use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
 
+mod kernels;
 mod structure;
 use structure::{ActiveStructure, MeasurementData};
 
 pub mod heisenberg;
 pub use heisenberg::{
-    AffineSign, CompileError, HeisenbergOp, HeisenbergProgram, ShotResult, VirtualPauli,
-    drop_measured_rotations, fuse_rotations,
+    AffineSign, CompileError, HeisenbergOp, HeisenbergProgram, PlanError, Sampler, SamplingPlan,
+    ShotResult, VirtualPauli, drop_measured_rotations, fuse_rotations,
 };
 
 /// A normalized dense vector on an ordered subset of stabilizer coordinates.
@@ -121,18 +122,6 @@ impl StabActive {
         )
     }
 
-    fn normalize(amplitudes: &mut [Complex64]) {
-        let norm = amplitudes
-            .iter()
-            .map(Complex64::norm_sqr)
-            .sum::<f64>()
-            .sqrt();
-        assert!(norm > 0.0, "cannot normalize a zero state");
-        for amplitude in amplitudes {
-            *amplitude /= norm;
-        }
-    }
-
     fn pauli_rotation(&mut self, theta: Angle64, pauli: &[(usize, PauliKindForDecomp)]) {
         self.rotate_pauli(theta, pauli, false);
     }
@@ -162,108 +151,42 @@ impl StabActive {
             return;
         };
         if work.double {
-            self.amplitudes
-                .resize(self.amplitudes.len() * 2, Complex64::new(0.0, 0.0));
+            kernels::double(&mut self.amplitudes);
         }
-        let theta = work.theta;
         let parts = work.parts;
-        let flip = mask(&parts.active_flips);
-        let sign = mask(&parts.active_signs);
-        // Convert the fixed-point magnitude before restoring the sign: subtracting
-        // two floating-point turns would erase tiny negative rotations near zero.
-        let radians = if theta > Angle64::HALF_TURN {
-            -(-theta).to_radians()
-        } else {
-            theta.to_radians()
-        };
-        let (sine, cosine) = (radians / 2.0).sin_cos();
-        let coefficient = Complex64::new(0.0, -sine) * parts.phase;
-        if flip == 0 {
-            for (index, amplitude) in self.amplitudes.iter_mut().enumerate() {
-                *amplitude *= cosine + coefficient * parity(index & sign);
-            }
-        } else {
-            for index in 0..self.amplitudes.len() {
-                let partner = index ^ flip;
-                if index < partner {
-                    let a = self.amplitudes[index];
-                    let b = self.amplitudes[partner];
-                    self.amplitudes[index] = cosine * a + coefficient * parity(partner & sign) * b;
-                    self.amplitudes[partner] = cosine * b + coefficient * parity(index & sign) * a;
-                }
-            }
-        }
-        Self::normalize(&mut self.amplitudes);
+        kernels::rotate(
+            &mut self.amplitudes,
+            work.theta,
+            kernels::mask(&parts.active_flips),
+            kernels::mask(&parts.active_signs),
+            parts.phase,
+        );
     }
 
+    #[cfg(test)]
     fn active_expectation(amplitudes: &[Complex64], parts: &CoordinateDecomposition) -> Complex64 {
-        let flip = mask(&parts.active_flips);
-        let sign = mask(&parts.active_signs);
-        amplitudes
-            .iter()
-            .enumerate()
-            .map(|(index, a)| {
-                amplitudes[index ^ flip].conj() * parts.phase * parity(index & sign) * a
-            })
-            .sum()
+        kernels::active_expectation(
+            amplitudes,
+            kernels::mask(&parts.active_flips),
+            kernels::mask(&parts.active_signs),
+            parts.phase,
+        )
     }
 
-    /// Return the outcome-one probability used by measurement and the dense oracle.
-    ///
-    /// Active expectations within [`EXPECTATION_ENDPOINT_TOLERANCE`] of either
-    /// endpoint are treated as that exact eigenvalue before computing probability
-    /// or drawing from the RNG. This matches the shared measurement policy and
-    /// prevents a forced projector from amplifying a cancellation residue.
     fn measurement_probability(amplitudes: &[Complex64], measurement: &MeasurementData) -> f64 {
         let parts = measurement.parts();
-        match measurement.case() {
-            MeasurementCase::Random => 0.5,
-            MeasurementCase::Deterministic => f64::from(parts.phase.re < 0.0),
-            MeasurementCase::Active => {
-                let expectation = Self::active_expectation(amplitudes, parts).re;
-                let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
-                    expectation.signum()
-                } else {
-                    expectation
-                };
-                ((1.0 - expectation) / 2.0).clamp(0.0, 1.0)
-            }
-        }
+        kernels::measurement_probability(
+            amplitudes,
+            measurement.case(),
+            kernels::mask(&parts.active_flips),
+            kernels::mask(&parts.active_signs),
+            parts.phase,
+        )
     }
 
     #[cfg(test)]
     fn probability_one(&self, parts: &CoordinateDecomposition) -> f64 {
         Self::measurement_probability(&self.amplitudes, &MeasurementData::new(parts.clone()))
-    }
-
-    fn coordinate_gate(amplitudes: &mut [Complex64], gate: CoordinateGate) {
-        match gate {
-            CoordinateGate::Sdg(bit) => {
-                for (index, amplitude) in amplitudes.iter_mut().enumerate() {
-                    if index & (1 << bit) != 0 {
-                        *amplitude *= Complex64::new(0.0, -1.0);
-                    }
-                }
-            }
-            CoordinateGate::H(bit) => {
-                for index in 0..amplitudes.len() {
-                    if index & (1 << bit) == 0 {
-                        let partner = index ^ (1 << bit);
-                        let a = amplitudes[index];
-                        let b = amplitudes[partner];
-                        amplitudes[index] = (a + b) * std::f64::consts::FRAC_1_SQRT_2;
-                        amplitudes[partner] = (a - b) * std::f64::consts::FRAC_1_SQRT_2;
-                    }
-                }
-            }
-            CoordinateGate::Cx(control, target) => {
-                for index in 0..amplitudes.len() {
-                    if index & (1 << control) != 0 && index & (1 << target) == 0 {
-                        amplitudes.swap(index, index ^ (1 << target));
-                    }
-                }
-            }
-        }
     }
 
     fn measure(&mut self, qubit: usize, forced: Option<bool>) -> MeasurementResult {
@@ -299,35 +222,20 @@ impl StabActive {
         };
         if let Some(active) = measurement.apply_measurement(outcome) {
             for &gate in active.gates() {
-                Self::coordinate_gate(&mut self.amplitudes, gate);
+                kernels::coordinate_gate(&mut self.amplitudes, gate);
             }
             let projection = active.projection();
-            let value = projection.value();
-            let bit_mask = 1 << projection.pivot_bit();
-            self.amplitudes = self
-                .amplitudes
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| (index & bit_mask != 0) == value)
-                .map(|(_, &a)| a)
-                .collect();
-            Self::normalize(&mut self.amplitudes);
+            kernels::project(
+                &mut self.amplitudes,
+                projection.pivot_bit(),
+                projection.value(),
+            );
+            kernels::normalize(&mut self.amplitudes);
         }
         MeasurementResult {
             outcome,
             is_deterministic,
         }
-    }
-}
-
-fn mask(bits: &[usize]) -> usize {
-    bits.iter().fold(0, |value, &bit| value | (1 << bit))
-}
-fn parity(value: usize) -> f64 {
-    if value.count_ones().is_multiple_of(2) {
-        1.0
-    } else {
-        -1.0
     }
 }
 

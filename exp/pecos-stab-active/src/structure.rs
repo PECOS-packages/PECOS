@@ -3,7 +3,7 @@
 
 //! Signed coordinate structure shared by simulation and width profiling.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, BitmaskStorage, PauliBitmaskVec, QubitId};
 use pecos_simulators::{CliffordGateable, SparseStabY};
 use pecos_stab_tn::stab_mps::coordinate_tableau::{
     self, CoordinateDecomposition, CoordinateGate, MeasurementCase,
@@ -37,6 +37,21 @@ enum RotationKind {
 
 impl Rotation<'_> {
     pub(crate) fn apply_rotation(self) -> Option<RotationWork> {
+        self.apply_rotation_observed(|_, _| {})
+    }
+
+    pub(crate) fn plan_rotation(self) -> (Option<RotationWork>, Option<PauliBitmaskVec>) {
+        let mut correction = None;
+        let work = self.apply_rotation_observed(|structure, pivot| {
+            correction = Some(structure.row_bits(true, pivot));
+        });
+        (work, correction)
+    }
+
+    fn apply_rotation_observed(
+        self,
+        mut promoted: impl FnMut(&ActiveStructure, usize),
+    ) -> Option<RotationWork> {
         let Rotation {
             structure,
             pauli,
@@ -51,12 +66,15 @@ impl Rotation<'_> {
             }
             RotationKind::NonClifford { mut parts, promote } => {
                 if promote {
-                    coordinate_tableau::promote(
+                    let pivot = coordinate_tableau::promote(
                         &mut structure.tableau,
                         &mut structure.active,
                         pauli,
                         false,
                     );
+                    // localize_dormant leaves this stabilizer unchanged; read it
+                    // after promote without splitting the shared primitive.
+                    promoted(structure, pivot);
                     structure.peak_width = structure.peak_width.max(structure.width());
                     parts = coordinate_tableau::decompose(
                         &structure.tableau,
@@ -128,6 +146,25 @@ impl MeasurementData {
 
 impl Measurement<'_> {
     pub(crate) fn apply_measurement(self, outcome: bool) -> Option<ActiveMeasurement> {
+        self.apply_measurement_observed(outcome, false, |_, _, _| {})
+    }
+
+    pub(crate) fn plan_measurement(self) -> MeasurementPlanWork {
+        let mut row = None;
+        let mut eta = false;
+        let active = self.apply_measurement_observed(false, true, |structure, pivot, negative| {
+            row = Some(structure.row_bits(false, pivot));
+            eta = negative;
+        });
+        MeasurementPlanWork { active, row, eta }
+    }
+
+    fn apply_measurement_observed(
+        self,
+        outcome: bool,
+        reference: bool,
+        mut basis_ready: impl FnMut(&ActiveStructure, usize, bool),
+    ) -> Option<ActiveMeasurement> {
         let Measurement {
             structure,
             pauli,
@@ -143,6 +180,8 @@ impl Measurement<'_> {
                     negative,
                     outcome,
                 );
+                // measure_random uses the first dormant flip as its pivot.
+                basis_ready(structure, data.parts.dormant_flips[0], false);
                 None
             }
             MeasurementCase::Deterministic => None,
@@ -153,7 +192,12 @@ impl Measurement<'_> {
                     pauli,
                     negative,
                 );
-                let value = outcome ^ basis.negative;
+                basis_ready(structure, structure.active[basis.pivot_bit], basis.negative);
+                let value = if reference {
+                    false
+                } else {
+                    outcome ^ basis.negative
+                };
                 coordinate_tableau::demote(
                     &mut structure.tableau,
                     &mut structure.active,
@@ -174,6 +218,12 @@ impl Measurement<'_> {
     pub(crate) fn data(&self) -> &MeasurementData {
         &self.data
     }
+}
+
+pub(crate) struct MeasurementPlanWork {
+    pub(crate) active: Option<ActiveMeasurement>,
+    pub(crate) row: Option<PauliBitmaskVec>,
+    pub(crate) eta: bool,
 }
 
 #[must_use]
@@ -210,6 +260,24 @@ impl Projection {
 }
 
 impl ActiveStructure {
+    // Reuse SparseStabY's row accessors and PauliBitmaskVec's word-level
+    // symplectic commutation. Row scalar phases do not affect conjugation.
+    pub(crate) fn row_bits(&self, stabilizer: bool, index: usize) -> PauliBitmaskVec {
+        let rows = if stabilizer {
+            self.tableau.stabs()
+        } else {
+            self.tableau.destabs()
+        };
+        let mut bits = PauliBitmaskVec::identity();
+        for q in &rows.row_x[index] {
+            bits.x_bits.set_bit(q);
+        }
+        for q in &rows.row_z[index] {
+            bits.z_bits.set_bit(q);
+        }
+        bits
+    }
+
     #[cfg(test)]
     pub(crate) fn tableau(&self) -> &SparseStabY {
         &self.tableau

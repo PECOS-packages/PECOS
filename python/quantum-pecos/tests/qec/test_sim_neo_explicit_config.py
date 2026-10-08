@@ -20,11 +20,8 @@ the same messages as the Rust builder; .auto() opts into automatic selection.
 from __future__ import annotations
 
 import pytest
-
-pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
-
-from pecos.quantum import TickCircuit  # noqa: E402
-from pecos_rslib_exp import monte_carlo, sim_neo, stabilizer  # noqa: E402
+from pecos.quantum import TickCircuit
+from pecos_rslib_exp import monte_carlo, sim_neo, stabilizer
 
 
 def one_qubit_circuit() -> TickCircuit:

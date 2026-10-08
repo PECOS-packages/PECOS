@@ -272,6 +272,9 @@ pub trait DynamicSyncHandle: Send + Sync {
     /// Wait for the worker to need a measurement result
     ///
     /// Returns `Some(result_id)` if worker needs a result, None on timeout or completion.
+    /// A zero timeout is a non-blocking, non-consuming peek of the outstanding
+    /// request. Repeated peeks return the same ID until ready is signalled or
+    /// the worker completes.
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64>;
 
     /// Set a measurement result for the running program

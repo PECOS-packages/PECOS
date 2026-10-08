@@ -46,7 +46,7 @@ fn cancellation_before_wait_survives_output_resets() {
     pecos_clear_program_error();
     assert!(ctx.get().cancel_requested.load(Ordering::Acquire));
     let start = std::time::Instant::now();
-    assert!(!wait_for_result_ready(7, 1_000));
+    assert_eq!(wait_for_result_ready(7), ResultWaitOutcome::Cancelled);
     assert!(start.elapsed() < std::time::Duration::from_millis(500));
 }
 
@@ -78,6 +78,7 @@ fn abort_export_wakes_waiting_reader() {
             // SAFETY: Parent keeps the context alive until this worker joins.
             unsafe { pecos_register_execution_context(address as *mut ExecutionContext) };
             // SAFETY: Valid result ID; no guard means cancellation returns zero.
+            unsafe { __quantum__qis__m__body(0, 7) };
             let result = unsafe { ___read_future_uint(7) };
             // SAFETY: Clear this worker's registration before its context is freed.
             unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
@@ -132,6 +133,7 @@ fn cancellation_after_wait_precedes_ready_result_and_collection_fallback() {
                     pecos_register_execution_context(address as *mut ExecutionContext);
                     pecos_set_program_panic_handler(Some(inspect_transfer));
                 }
+                unsafe { __quantum__qis__m__body(0, 7) };
                 assert_eq!(COLLECTION_MODE_READ_COUNT.get(), 0);
                 let result = reader(7);
                 let observations = (result, TRANSFERS.get(), COLLECTION_MODE_READ_COUNT.get());

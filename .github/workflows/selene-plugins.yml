@@ -57,7 +57,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # Assign on its own line so a git failure aborts the step (fail closed).
         run: |
-          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml Cargo.toml Cargo.lock uv.lock)"
+          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml scripts/ci/smoke_selene_wheel.py Cargo.toml Cargo.lock uv.lock)"
           case "$run" in
             true|false) ;;
             *)
@@ -272,6 +272,23 @@ jobs:
         run: |
           cd python/selene-plugins/${{ matrix.plugin.name }}
           uv build --wheel --out-dir dist
+
+      # The test job runs against editable installs; this checks the wheel that
+      # ships: installed into a clean environment, outside the source tree, its
+      # Selene component must build and its bundled library must load.
+      - name: Smoke-test the built wheel
+        shell: bash
+        env:
+          PLUGIN: ${{ matrix.plugin.name }}
+          PACKAGE: ${{ matrix.plugin.package }}
+        run: |
+          uv export --frozen --no-hashes --all-packages --no-emit-workspace -o "$RUNNER_TEMP/uv-constraints.txt"
+          uv venv "$RUNNER_TEMP/wheel-venv" --python 3.12
+          uv pip install --python "$RUNNER_TEMP/wheel-venv" -c "$RUNNER_TEMP/uv-constraints.txt" python/selene-plugins/"$PLUGIN"/dist/*.whl
+          venv_python="$RUNNER_TEMP/wheel-venv/bin/python"
+          if [ "$RUNNER_OS" = "Windows" ]; then venv_python="$RUNNER_TEMP/wheel-venv/Scripts/python.exe"; fi
+          cd "$RUNNER_TEMP"
+          "$venv_python" "$GITHUB_WORKSPACE/scripts/ci/smoke_selene_wheel.py" "$PACKAGE"
 
       - name: Upload wheel
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

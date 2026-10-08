@@ -1,5 +1,5 @@
 name: Rust test / linting
-run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR smoke' }})
+run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR lint' }})
 
 permissions:
   contents: read
@@ -36,7 +36,6 @@ on:
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
-      - '.pre-commit-config.yaml'
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
@@ -55,7 +54,6 @@ on:
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
-      - '.pre-commit-config.yaml'
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main
@@ -184,50 +182,17 @@ jobs:
           echo "Testing pecos without default features..."
           cd crates/pecos && cargo clippy --locked --all-targets --no-default-features -- -D warnings && cd ../..
 
-  pre-commit:
-    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: '3.x'
-      - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version-file: ".github/uv.toml"
-          # Nothing here benefits from a uv cache; the default (auto) would save
-          # a PR-scoped cache on every pull request.
-          enable-cache: false
-      - name: Harden apt against mirror flakiness
-        run: ./scripts/ci/harden-apt.sh
-
-      - name: Install integrity check tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
-      - name: Install pre-commit
-        run: pip install pre-commit
-      - name: Run pre-commit
-        run: pre-commit run --all-files --show-diff-on-failure
-
   rust-test:
-    needs: [pre-commit, rust-lint]
+    # Pull requests get the Ubuntu workspace tests from the required pr-core-rust
+    # gate; the full three-OS suite runs after merge, or on a pull request that
+    # carries the ci:full-rust label.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')
+    needs: rust-lint
     runs-on: ${{ matrix.os }}
-    env:
-      FULL_RUST_TESTS: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust') }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-rust') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
+        os: [ubuntu-latest, macos-latest, windows-2022]
 
     steps:
       - name: Harden the runner (egress audit)
@@ -315,7 +280,7 @@ jobs:
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
-        if: matrix.os == 'macos-latest' && env.FULL_RUST_TESTS == 'true'
+        if: matrix.os == 'macos-latest'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
@@ -326,11 +291,11 @@ jobs:
           cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
-        if: runner.os == 'Windows' && env.FULL_RUST_TESTS == 'true'
+        if: runner.os == 'Windows'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)
-        if: matrix.os == 'macos-latest' && env.FULL_RUST_TESTS == 'true'
+        if: matrix.os == 'macos-latest'
         env:
           # Prevent Homebrew/system library paths from interfering with linking
           LIBRARY_PATH: /usr/lib
@@ -339,15 +304,10 @@ jobs:
           ./target/release/pecos rust test
 
       - name: Run tests (Linux)
-        if: matrix.os == 'ubuntu-latest' && env.FULL_RUST_TESTS == 'true'
+        if: matrix.os == 'ubuntu-latest'
         run: |
           ./target/release/pecos rust test
 
-      - name: Run tests (Linux PR smoke path)
-        if: matrix.os == 'ubuntu-latest' && env.FULL_RUST_TESTS != 'true'
-        run: |
-          ./target/release/pecos rust test --help
-
       - name: Run tests (Windows)
-        if: runner.os == 'Windows' && env.FULL_RUST_TESTS == 'true'
+        if: runner.os == 'Windows'
         run: .\target\release\pecos.exe rust test

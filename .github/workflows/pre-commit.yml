@@ -1,0 +1,59 @@
+name: Pre-commit
+
+# The one CI run of the pre-commit hooks. It has no path filter: the hooks
+# cover text, TOML, YAML, Python and docs anywhere in the repository.
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ "main", "master", "development", "dev" ]
+  pull_request:
+    branches: [ "main", "master", "development", "dev" ]
+  workflow_dispatch:
+
+concurrency:
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: ".github/uv.toml"
+          # Nothing here benefits from a uv cache; the default (auto) would save
+          # a PR-scoped cache on every pull request.
+          enable-cache: false
+
+      # Only the dev group: pre-commit needs no workspace package (or native build).
+      - name: Install pre-commit
+        run: uv sync --locked --only-group dev
+
+      - name: Run pre-commit
+        env:
+          # The required Dependency Integrity Check workflow runs this hook's
+          # script, plus its parser tests, on every pull request and push.
+          SKIP: dependency-integrity-check
+        run: uv run --frozen --no-sync pre-commit run --all-files --show-diff-on-failure

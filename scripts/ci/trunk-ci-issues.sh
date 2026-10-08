@@ -28,6 +28,7 @@ workflows=(
   julia-release.yml
   julia-test.yml
   julia-version-consistency.yml
+  nightly.yml
   osv-scanner.yml
   python-release.yml
   python-test.yml

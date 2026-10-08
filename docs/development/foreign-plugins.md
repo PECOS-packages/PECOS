@@ -307,6 +307,9 @@ Since `ForeignSimulator` and `PyForeignSimulator` implement `CliffordGateable`, 
 into either stack without modification:
 
 ```rust
+use pecos_foreign::ForeignSimulator;
+use pecos_neo::CircuitRunner;
+
 // Works with pecos-neo's generic runner
 let runner = CircuitRunner::<ForeignSimulator>::new();
 ```

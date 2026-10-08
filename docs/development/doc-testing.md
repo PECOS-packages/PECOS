@@ -124,18 +124,35 @@ Add pytest marks to tests:
 
 ### Test Data Files
 
-Copy test data files to the test directory (for Rust cargo tests):
+For unskipped Rust examples that use external crates and run in the unified cargo
+crate, list comma-separated bare filenames from `docs/assets/test-data/`:
 
 ```markdown
 <!--test-data: repetition_code.hugr-->
 \```rust
+use pecos::prelude::*;
+
 fn main() {
     let data = std::fs::read("repetition_code.hugr").unwrap();
 }
 \```
 ```
 
-Test data files should be placed in `docs/assets/test-data/`.
+The generator copies these files directly into
+`python/quantum-pecos/tests/docs/rust_crate/`, the package root that Cargo uses as
+the working directory for integration tests. Code opens them by bare relative name.
+Continuation tests inherit every data filename named earlier in their chain.
+
+Without a marker, no data is staged. A named source file must exist; otherwise
+generation fails and reports the Markdown file, block number, and missing filename.
+Markers on non-Rust, skipped, non-cargo, hidden, setup, or teardown blocks are
+authoring errors. Use bare filenames, not paths; Cargo metadata and the staging
+manifest name are reserved, and unrelated existing crate files cannot be overwritten.
+
+Every generation refreshes the copies and removes stale copies listed in
+`.test-data-files.json`; unrelated files are left alone. Commit both the copies
+and this generated ownership manifest with the crate so the existing CI drift
+check covers them.
 
 ## Hidden Preambles
 
@@ -190,7 +207,10 @@ Rust code blocks can be tested in two ways:
 1. **Simple Rust** (rustc): Code with `fn main()` that doesn't use external crates
 2. **Cargo Rust**: Code using `pecos` crates (detected by `use pecos*::`)
 
-Incomplete Rust snippets (no `fn main()`, traits, impls without full context) are automatically skipped.
+Incomplete Rust snippets must be completed or explicitly marked skipped (with a
+`<!--skip: reason-->` comment or a `,skip`, `,ignore`, `,no_run`, or `,notest` fence
+suffix). Otherwise generation fails with the Markdown file and block number, for
+both the unified crate and pytest paths.
 
 #### Rust with Cargo Dependencies
 

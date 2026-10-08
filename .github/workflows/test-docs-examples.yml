@@ -108,6 +108,11 @@ jobs:
       - name: Test documentation examples
         run: just docs-test
 
+      # python-test.yml does not watch scripts/docs/**, so this is the lane
+      # that runs the generator's own tests when only the generator changes.
+      - name: Test the documentation test generator
+        run: uv run --frozen pytest python/quantum-pecos/tests/docs/test_generate_doc_tests.py -v
+
       # docs-test regenerates the Rust doc-test crate from docs/. The crate is
       # committed, so a difference means a docs change was not regenerated and
       # its Rust examples would never run.

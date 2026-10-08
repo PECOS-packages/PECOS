@@ -760,6 +760,70 @@ impl Gate {
         Self::simple(GateType::CCX, qubits)
     }
 
+    /// Create CS gate from flat qubit list
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even.
+    #[must_use]
+    pub fn cs_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "CS gate requires an even number of qubits"
+        );
+        Self::simple(
+            GateType::CS,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create CS gate on multiple qubit pairs
+    #[must_use]
+    pub fn cs(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::cs_vec(&flat_qubits)
+    }
+
+    /// Create `CSdg` gate from flat qubit list
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of qubits is not even.
+    #[must_use]
+    pub fn csdg_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        assert!(
+            qubits.len().is_multiple_of(2),
+            "CSdg gate requires an even number of qubits"
+        );
+        Self::simple(
+            GateType::CSdg,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create `CSdg` gate on multiple qubit pairs
+    #[must_use]
+    pub fn csdg(qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)]) -> Self {
+        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
+        Self::csdg_vec(&flat_qubits)
+    }
+
+    /// Create CCZ gate on qubit triples
+    #[must_use]
+    pub fn ccz(
+        triples: &[(
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+        )],
+    ) -> Self {
+        let qubits: GateQubits = triples
+            .iter()
+            .flat_map(|&(c1, c2, t)| [c1.into(), c2.into(), t.into()])
+            .collect();
+        Self::simple(GateType::CCZ, qubits)
+    }
+
     /// Create RXX gate from flat qubit list (`qubit1_1`, `qubit2_1`, `qubit1_2`, `qubit2_2`, ...)
     ///
     /// # Panics

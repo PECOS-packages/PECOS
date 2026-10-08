@@ -73,6 +73,10 @@ pub enum GateType {
     // native rotations before entering the executed IR.
     /// Controlled-H gate (2 qubits)
     CH = 71,
+    /// Controlled-S: diag(1, 1, 1, i).
+    CS = 72,
+    /// Controlled-S adjoint: diag(1, 1, 1, -i).
+    CSdg = 73,
     /// RXX rotation gate
     RXX = 80,
     /// RYY rotation gate
@@ -86,6 +90,8 @@ pub enum GateType {
     RXYXY2Q = 85,
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
+    /// Three-qubit controlled-controlled-Z.
+    CCZ = 91,
 
     /// Measure in the X basis.
     MX = 100,
@@ -459,6 +465,8 @@ impl TryFrom<u8> for GateType {
             58 => GateType::SZZdg,
             59 => GateType::SWAP,
             71 => GateType::CH,
+            72 => GateType::CS,
+            73 => GateType::CSdg,
             80 => GateType::RXX,
             81 => GateType::RYY,
             82 => GateType::RZZ,
@@ -466,6 +474,7 @@ impl TryFrom<u8> for GateType {
             84 => GateType::U2q,
             85 => GateType::RXYXY2Q,
             90 => GateType::CCX,
+            91 => GateType::CCZ,
             100 => GateType::MX,
             104 => GateType::MZ,
             105 => GateType::MeasureLeaked,
@@ -616,6 +625,8 @@ impl GateType {
             | GateType::CY
             | GateType::CZ
             | GateType::CH
+            | GateType::CS
+            | GateType::CSdg
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
@@ -624,6 +635,7 @@ impl GateType {
             | GateType::SZZdg
             | GateType::SWAP
             | GateType::CCX
+            | GateType::CCZ
             | GateType::MX
             | GateType::MZ
             | GateType::MeasureLeaked
@@ -714,6 +726,8 @@ impl GateType {
             | GateType::CY
             | GateType::CZ
             | GateType::CH
+            | GateType::CS
+            | GateType::CSdg
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
@@ -729,7 +743,7 @@ impl GateType {
             | GateType::RXYXY2Q => 2,
 
             // Three-qubit gates
-            GateType::CCX => 3,
+            GateType::CCX | GateType::CCZ => 3,
         }
     }
 
@@ -834,6 +848,9 @@ impl fmt::Display for GateType {
             GateType::CY => write!(f, "CY"),
             GateType::CZ => write!(f, "CZ"),
             GateType::CH => write!(f, "CH"),
+            GateType::CS => write!(f, "CS"),
+            GateType::CSdg => write!(f, "CSdg"),
+            GateType::CCZ => write!(f, "CCZ"),
             GateType::SXX => write!(f, "SXX"),
             GateType::SXXdg => write!(f, "SXXdg"),
             GateType::SYY => write!(f, "SYY"),
@@ -907,6 +924,9 @@ impl std::str::FromStr for GateType {
             "CY" => Ok(GateType::CY),
             "CZ" => Ok(GateType::CZ),
             "CH" => Ok(GateType::CH),
+            "CS" => Ok(GateType::CS),
+            "CSDG" => Ok(GateType::CSdg),
+            "CCZ" => Ok(GateType::CCZ),
             "SXX" => Ok(GateType::SXX),
             "SXXDG" => Ok(GateType::SXXdg),
             "SYY" => Ok(GateType::SYY),
@@ -1423,6 +1443,30 @@ mod tests {
                 );
             }
             assert!(!two_qubit_closure_holds(&mutant));
+        }
+    }
+
+    #[test]
+    fn diagonal_non_clifford_gate_signatures() {
+        for (gate, id, name, arity) in [
+            (GateType::CS, 72, "CS", 2),
+            (GateType::CSdg, 73, "CSdg", 2),
+            (GateType::CCZ, 91, "CCZ", 3),
+        ] {
+            assert_eq!(gate as u8, id);
+            assert_eq!(GateType::try_from(id), Ok(gate));
+            assert_eq!(gate.to_string(), name);
+            assert_eq!(name.parse::<GateType>(), Ok(gate));
+            assert_eq!(name.to_lowercase().parse::<GateType>(), Ok(gate));
+            assert_eq!(gate.quantum_arity(), arity);
+            assert_eq!(gate.classical_arity(), 0);
+            assert_eq!(gate.angle_arity(), 0);
+            assert!(gate.canonical_2q_matrix().is_none());
+        }
+        for id in [
+            11, 12, 13, 14, 15, 18, 19, 20, 21, 22, 23, 60, 61, 70, 101, 102, 103, 131, 132, 133,
+        ] {
+            assert!(GateType::try_from(id).is_err(), "reserved id {id}");
         }
     }
 

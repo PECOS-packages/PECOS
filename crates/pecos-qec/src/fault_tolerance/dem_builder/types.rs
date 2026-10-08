@@ -7769,6 +7769,8 @@ mod tests {
                 GateType::SZZdg,
                 GateType::SWAP,
                 GateType::CH,
+                GateType::CS,
+                GateType::CSdg,
                 GateType::RXX,
                 GateType::RYY,
                 GateType::RZZ,

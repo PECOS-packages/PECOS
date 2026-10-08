@@ -2055,6 +2055,32 @@ impl DagCircuit {
         self
     }
 
+    /// Apply CS gate(s).
+    ///
+    /// Phases the all-ones state by i.
+    pub fn cs(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::cs(&[(q1, q2)]));
+        }
+        self
+    }
+
+    /// Apply `CSdg` gate(s).
+    ///
+    /// Phases the all-ones state by -i.
+    pub fn csdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        for &(q1, q2) in pairs {
+            self.add_gate_auto_wire(Gate::csdg(&[(q1, q2)]));
+        }
+        self
+    }
+
     /// Lower CRZ (controlled-RZ) boundary spelling into native rotations.
     pub fn crz(
         &mut self,
@@ -2084,6 +2110,22 @@ impl DagCircuit {
     ) -> &mut Self {
         self.add_gate_auto_wire(Gate::simple(
             GateType::CCX,
+            vec![c1.into(), c2.into(), target.into()],
+        ));
+        self
+    }
+
+    /// Apply a CCZ gate.
+    ///
+    /// The first two qubits are controls, the third is the target.
+    pub fn ccz(
+        &mut self,
+        c1: impl Into<QubitId>,
+        c2: impl Into<QubitId>,
+        target: impl Into<QubitId>,
+    ) -> &mut Self {
+        self.add_gate_auto_wire(Gate::simple(
+            GateType::CCZ,
             vec![c1.into(), c2.into(), target.into()],
         ));
         self

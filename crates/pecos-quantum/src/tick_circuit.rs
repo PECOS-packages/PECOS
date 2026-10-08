@@ -3047,6 +3047,22 @@ impl<'a> TickHandle<'a> {
         self.add_gate(Gate::ch(pairs))
     }
 
+    /// Apply CS (controlled-S) gate(s) to one or more qubit pairs.
+    pub fn cs(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::cs(pairs))
+    }
+
+    /// Apply `CSdg` (controlled-S adjoint) gate(s) to one or more qubit pairs.
+    pub fn csdg(
+        &mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> &mut Self {
+        self.add_gate(Gate::csdg(pairs))
+    }
+
     /// Apply RXX rotation(s) to one or more qubit pairs.
     ///
     /// # Examples
@@ -3206,6 +3222,26 @@ impl<'a> TickHandle<'a> {
         for &(c1, c2, t) in triples {
             self.add_gate(Gate::simple(
                 GateType::CCX,
+                vec![c1.into(), c2.into(), t.into()],
+            ));
+        }
+        self
+    }
+
+    /// Apply CCZ gate(s).
+    ///
+    /// Each triple is (control1, control2, target).
+    pub fn ccz(
+        &mut self,
+        triples: &[(
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+            impl Into<QubitId> + Copy,
+        )],
+    ) -> &mut Self {
+        for &(c1, c2, t) in triples {
+            self.add_gate(Gate::simple(
+                GateType::CCZ,
                 vec![c1.into(), c2.into(), t.into()],
             ));
         }

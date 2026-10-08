@@ -1562,7 +1562,10 @@ impl<'a> DemSamplerBuilder<'a> {
 /// Compute per-location total error probabilities from noise config.
 ///
 /// For T1/T2 idle noise, returns the sum of biased Pauli probabilities.
-/// For all other gates, returns the gate-type probability.
+/// For all other supported gates, returns the gate-type probability.
+///
+/// # Panics
+/// Panics for unsupported controlled non-Clifford gate locations.
 pub(crate) fn compute_location_probs_from_noise(
     locations: &[super::super::propagator::dag::DagSpacetimeLocation],
     noise: &NoiseConfig,
@@ -1572,6 +1575,13 @@ pub(crate) fn compute_location_probs_from_noise(
         .map(|loc| {
             #[allow(clippy::match_same_arms)]
             match loc.gate_type {
+                GateType::CCZ | GateType::CS | GateType::CSdg | GateType::CCX => {
+                    panic!(
+                        "DEM location probabilities do not support {:?}",
+                        loc.gate_type
+                    )
+                }
+
                 gate_type if is_supported_prep_gate(gate_type) => noise.p_prep,
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
                 gate_type if is_two_qubit_noise_gate(gate_type) => {
@@ -1607,6 +1617,27 @@ pub(crate) fn gate_location_prob_from_locations(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagonal_gates_cannot_reach_location_probability_defaults() {
+        use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = pecos_core::Gate::simple(
+                gt,
+                (0..gt.quantum_arity())
+                    .map(pecos_core::QubitId)
+                    .collect::<Vec<_>>(),
+            );
+            let loc = DagSpacetimeLocation::new(0, gate.qubits.to_vec(), false, &gate);
+            assert!(
+                std::panic::catch_unwind(|| compute_location_probs_from_noise(
+                    &[loc],
+                    &NoiseConfig::uniform(0.1)
+                ))
+                .is_err()
+            );
+        }
+    }
+
     /// The reviewer's happy-path witness for the rewritten detector mapping:
     /// `detector_records_abs` must hold absolute raw-measurement indices, so a
     /// single-measurement detector's event equals that measurement's flip on

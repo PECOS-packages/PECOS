@@ -100,8 +100,8 @@ fn exact_replay_with_out_of_order_stamps() {
         gate.meas_ids = smallvec::smallvec![MeasId::from_raw(id)];
         dag.add_gate_auto_wire(gate);
     }
-    // Analyzer order is spectator(id 4), target(id 9), while emission is target,
-    // spectator. Omitting CX changes q1 from 1 to 0 and leaves q2 at 0.
+    // Emission order is target(id 9), spectator(id 4), regardless of id rank.
+    // Omitting CX changes q1 from 1 to 0 and leaves q2 at 0.
     dag.set_attr(
         "detectors",
         Attribute::String(r#"[{"id":0,"meas_ids":[9]},{"id":1,"meas_ids":[4]}]"#.into()),
@@ -273,5 +273,44 @@ fn exact_replay_must_preserve_physical_measurement_identity() {
     assert!(
         all_match_oracle && all_errors.iter().all(|pair| pair[0] == pair[1]),
         "exact replay violated physical measurement identity; see both DEM pairs above"
+    );
+}
+
+#[test]
+fn exact_pauli_replacement_uses_emission_positions_with_influence_builder_map() {
+    use pecos_core::{Gate, MeasId};
+    use pecos_qec::fault_tolerance::influence_builder::InfluenceBuilder;
+
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0, 1]);
+    dag.cx(&[(0, 1)]);
+    for (qubit, id) in [(1, 9), (0, 4)] {
+        let mut gate = Gate::mz(&[qubit]);
+        gate.meas_ids = smallvec::smallvec![MeasId::from_raw(id)];
+        dag.add_gate_auto_wire(gate);
+    }
+    let map = InfluenceBuilder::new(&dag).build().unwrap();
+    let noise = NoiseConfig::new(0.0, 0.125, 0.0, 0.0)
+        .set_p2_weights(PauliWeights::with_replacement(
+            [],
+            [(PauliString::xs(&[1]), 1.0)],
+        ))
+        .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+    let dem = DemBuilder::new(&map)
+        .with_exact_branch_replay_context(&dag)
+        .with_noise_config(noise)
+        .with_detectors_json(r#"[{"id":0,"meas_ids":[9]},{"id":1,"meas_ids":[4]}]"#)
+        .unwrap()
+        .try_build()
+        .unwrap();
+    // CX leaves |00> unchanged. Replacing it by IX gives |01>, so only
+    // q1's detector D0 flips, with probability 1/8. Its id 9 has rank 1
+    // but emission position 0. No records or record translation are involved.
+    assert_eq!(
+        dem.to_string()
+            .lines()
+            .filter(|line| line.starts_with("error("))
+            .collect::<Vec<_>>(),
+        ["error(0.125) D0"]
     );
 }

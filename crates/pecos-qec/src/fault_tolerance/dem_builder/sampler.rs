@@ -49,6 +49,8 @@ use rand_core::Rng;
 /// Errors from detector definition validation.
 #[derive(Debug, Clone)]
 pub enum DetectorValidationError {
+    /// Invalid circuit definitions from the shared reader or DEM conversion.
+    Definition(Box<crate::fault_tolerance::circuit_definitions::DefinitionError>),
     /// Circuit gate whose action Pauli propagation cannot represent.
     UnsupportedGate(crate::fault_tolerance::propagator::UnsupportedGateError),
     /// A detector definition references a non-deterministic measurement.
@@ -96,6 +98,7 @@ impl From<crate::fault_tolerance::influence_builder::InfluenceBuildError>
 impl std::fmt::Display for DetectorValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Definition(error) => write!(f, "Invalid detector/observable metadata: {error}"),
             Self::UnsupportedGate(error) => write!(f, "DEM sampler {error}"),
             Self::NonDeterministicReference {
                 detector_id,
@@ -146,7 +149,15 @@ impl std::fmt::Display for DetectorValidationError {
     }
 }
 
-impl std::error::Error for DetectorValidationError {}
+impl std::error::Error for DetectorValidationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Definition(error) => Some(error.as_ref()),
+            Self::UnsupportedGate(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for DetectorValidationError {
     fn from(error: crate::fault_tolerance::propagator::UnsupportedGateError) -> Self {
@@ -157,6 +168,7 @@ impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for Detector
 impl From<super::DemBuilderError> for DetectorValidationError {
     fn from(error: super::DemBuilderError) -> Self {
         match error {
+            super::DemBuilderError::Definition(error) => Self::Definition(error),
             super::DemBuilderError::UnsupportedGate(error) => Self::UnsupportedGate(error),
             super::DemBuilderError::ParseError(message) => Self::InvalidMetadata { message },
             super::DemBuilderError::ConfigurationError(message) => {
@@ -484,8 +496,9 @@ impl DemSampler {
     /// # Errors
     ///
     /// Returns [`DetectorValidationError::UnsupportedGate`] for unsupported circuit
-    /// gates, [`DetectorValidationError::InvalidMetadata`] for malformed metadata
-    /// or unsupported measurement batches, and
+    /// gates, [`DetectorValidationError::Definition`] for invalid circuit
+    /// definitions, [`DetectorValidationError::InvalidMetadata`] for unsupported
+    /// measurement batches, and
     /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
@@ -497,6 +510,9 @@ impl DemSampler {
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 
+        let definitions =
+            crate::fault_tolerance::circuit_definitions::definitions_from_dag_circuit(circuit)
+                .map_err(super::DemBuilderError::from)?;
         let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(DetectorValidationError::UnsupportedGate(error.clone()));
@@ -510,70 +526,9 @@ impl DemSampler {
             .map_err(DetectorValidationError::from)?;
         influence_map.merge_dem_outputs_from(&annotation_map);
 
-        // Extract metadata before building (avoids ownership issues with builder methods)
-        let det_json = {
-            use pecos_num::graph::Attribute;
-            circuit.get_attr("detectors").and_then(|a| {
-                if let Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-        };
-        let observables_json = {
-            use pecos_num::graph::Attribute;
-            circuit.get_attr("observables").and_then(|a| {
-                if let Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-        };
-        let num_meas = {
-            use pecos_num::graph::Attribute;
-            circuit.get_attr("num_measurements").and_then(|a| {
-                if let Attribute::String(s) = a {
-                    s.parse::<usize>().ok()
-                } else {
-                    None
-                }
-            })
-        };
-
-        // Build DemBuilder, applying detector/DEM-output JSON if available.
-        // with_detectors_json/with_observables_json consume self, so we
-        // chain them carefully.
-        let builder = DemBuilder::new(&influence_map).with_noise_config(noise.clone());
-
-        let builder = if let Some(ref dj) = det_json {
-            builder.with_detectors_json(dj).map_err(|err| {
-                DetectorValidationError::InvalidMetadata {
-                    message: err.to_string(),
-                }
-            })?
-        } else {
-            builder
-        };
-
-        let builder = if let Some(ref oj) = observables_json {
-            builder.with_observables_json(oj).map_err(|err| {
-                DetectorValidationError::InvalidMetadata {
-                    message: err.to_string(),
-                }
-            })?
-        } else {
-            builder
-        };
-
-        // `try_build` enforces num_measurements == influence-map count, so a
-        // metadata override that disagrees with the circuit is rejected there.
-        let builder = if let Some(n) = num_meas {
-            builder.with_num_measurements(n)
-        } else {
-            builder
-        };
+        let builder = DemBuilder::new(&influence_map)
+            .with_noise_config(noise.clone())
+            .with_circuit_definitions(definitions)?;
 
         let dem = builder.try_build()?;
         Ok(Self::from_detector_error_model(&dem))

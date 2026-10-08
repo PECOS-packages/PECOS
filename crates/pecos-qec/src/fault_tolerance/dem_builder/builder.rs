@@ -23,6 +23,9 @@ use super::types::{
     is_two_qubit_noise_gate, record_offset_to_absolute_index, validate_exclusive_probabilities,
     validate_idle_probabilities,
 };
+use crate::fault_tolerance::circuit_definitions::{
+    CircuitDefinitions, DefinitionError, definitions_from_dag_circuit,
+};
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
     DagFaultInfluenceMap, Direction, Pauli, apply_gate_unchecked,
@@ -184,7 +187,7 @@ impl<'a> DemBuilder<'a> {
     /// Build a `DetectorErrorModel` directly from a circuit and noise.
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
-    /// from circuit metadata (`"detectors"`, `"observables"` attributes).
+    /// from circuit metadata (`"detectors"`, `"observables"` attributes) and annotations.
     ///
     /// ```
     /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
@@ -197,7 +200,7 @@ impl<'a> DemBuilder<'a> {
     /// Build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
-    /// from circuit metadata.
+    /// from circuit metadata and annotations.
     ///
     /// # Errors
     ///
@@ -214,22 +217,16 @@ impl<'a> DemBuilder<'a> {
 
     /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
     ///
-    /// Reads detector/DEM output definitions from circuit metadata and returns
-    /// parser errors instead of dropping malformed metadata.
+    /// Reads detector/DEM output definitions through the shared circuit reader.
     ///
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed or if
     /// the circuit contains a gate Pauli propagation cannot represent.
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         p1: f64,
@@ -243,22 +240,16 @@ impl<'a> DemBuilder<'a> {
     /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and
     /// full noise configuration.
     ///
-    /// Reads detector/DEM output definitions from circuit metadata and returns
-    /// parser errors instead of dropping malformed metadata.
+    /// Reads detector/DEM output definitions through the shared circuit reader.
     ///
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed or if
     /// the circuit contains a gate Pauli propagation cannot represent.
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_circuit_with_noise_config(
         circuit: &pecos_quantum::DagCircuit,
         noise: NoiseConfig,
@@ -296,14 +287,9 @@ impl<'a> DemBuilder<'a> {
     /// `TickCircuit` cannot be converted to a `DagCircuit` (two measurements
     /// sharing a `MeasId`).
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
         p1: f64,
@@ -334,14 +320,9 @@ impl<'a> DemBuilder<'a> {
     /// `TickCircuit` cannot be converted to a `DagCircuit` (two measurements
     /// sharing a `MeasId`).
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_tick_circuit_with_noise_config(
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,
@@ -581,6 +562,67 @@ impl<'a> DemBuilder<'a> {
     /// Returns an error if the JSON is malformed.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, DemBuilderError> {
         self.observables = parse_observables_json(json)?;
+        self.clear_exact_branch_cache();
+        Ok(self)
+    }
+
+    /// Installs reader-resolved emission positions through the existing record path.
+    pub(crate) fn with_circuit_definitions(
+        mut self,
+        definitions: CircuitDefinitions,
+    ) -> Result<Self, DemBuilderError> {
+        let records = |positions: Vec<usize>| {
+            positions
+                .into_iter()
+                .map(|position| {
+                    // Subtract one before conversion so i32::MIN remains representable.
+                    i32::try_from(definitions.num_measurements - position - 1)
+                        .map(|offset| -offset - 1)
+                        .map_err(|_| DemBuilderError::ConfigurationError(
+                            format!("measurement position {position} cannot fit a negative i32 record offset"),
+                        ))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        self.detectors = definitions
+            .detectors
+            .into_iter()
+            .map(|detector| {
+                let coords = match detector.coords {
+                    None => None,
+                    Some(coords) if coords.is_empty() => None,
+                    Some(coords) => {
+                        let length = coords.len();
+                        Some(coords.try_into().map_err(|_| {
+                            DefinitionError::InvalidDetectorCoordinates {
+                                id: detector.id,
+                                length,
+                            }
+                        })?)
+                    }
+                };
+                Ok(ParsedDetector {
+                    id: detector.id,
+                    coords,
+                    label: detector.label,
+                    records: records(detector.measurements)?,
+                    meas_ids: Vec::new(),
+                })
+            })
+            .collect::<Result<_, DemBuilderError>>()?;
+        self.observables = definitions
+            .observables
+            .into_iter()
+            .map(|observable| {
+                Ok(ParsedObservable {
+                    id: observable.id,
+                    label: observable.label,
+                    records: records(observable.measurements)?,
+                    meas_ids: Vec::new(),
+                })
+            })
+            .collect::<Result<_, DemBuilderError>>()?;
+        self.num_measurements = definitions.num_measurements;
         self.clear_exact_branch_cache();
         Ok(self)
     }
@@ -2444,6 +2486,9 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             if influence_observable_ids.contains(&obs.id) {
+                // On the circuit path the reader enforced agreement, and annotation
+                // propagation seeds the measurement basis, so this drops only an
+                // identical duplicate of the propagated observable.
                 continue;
             }
             if obs.records.is_empty() {
@@ -3324,14 +3369,12 @@ fn build_dem_from_circuit(
 ) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
-    use pecos_num::graph::Attribute;
+    let definitions = definitions_from_dag_circuit(circuit)?;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
     if let Some(error) = influence_map.unsupported_gate() {
         return Err(DemBuilderError::UnsupportedGate(error.clone()));
     }
-    let annotated_observable_records =
-        observable_records_from_annotations(circuit, &influence_map)?;
     let annotation_map = InfluenceBuilder::new(circuit)
         .with_circuit_annotations()
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
@@ -3339,54 +3382,10 @@ fn build_dem_from_circuit(
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     influence_map.merge_dem_outputs_from(&annotation_map);
 
-    // Extract metadata before building (to avoid borrow issues)
-    let det_json = circuit.get_attr("detectors").and_then(|a| {
-        if let Attribute::String(s) = a {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
-    let obs_json = circuit.get_attr("observables").and_then(|a| {
-        if let Attribute::String(s) = a {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
-    let num_meas = circuit.get_attr("num_measurements").and_then(|a| {
-        if let Attribute::String(s) = a {
-            s.parse::<usize>().ok()
-        } else {
-            None
-        }
-    });
-
     let builder = DemBuilder::new(&influence_map)
         .with_noise_config(noise)
-        .with_exact_branch_replay_context(circuit);
-
-    let builder = if let Some(ref dj) = det_json {
-        builder.with_detectors_json(dj)?
-    } else {
-        builder
-    };
-
-    let builder = if let Some(ref oj) = obs_json {
-        builder.with_observables_json(oj)?
-    } else if !annotated_observable_records.is_empty() {
-        builder.with_observable_records(annotated_observable_records)
-    } else {
-        builder
-    };
-
-    // `try_build` enforces num_measurements == influence-map count, so a
-    // metadata override that disagrees with the circuit is rejected there.
-    let builder = if let Some(n) = num_meas {
-        builder.with_num_measurements(n)
-    } else {
-        builder
-    };
+        .with_exact_branch_replay_context(circuit)
+        .with_circuit_definitions(definitions)?;
 
     builder.try_build()
 }
@@ -3420,43 +3419,6 @@ fn circuit_with_omitted_two_qubit_gate(
         .update_gate(node, |gate| *gate = replacement)
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     Ok(branch)
-}
-
-fn observable_records_from_annotations(
-    circuit: &pecos_quantum::DagCircuit,
-    influence_map: &DagFaultInfluenceMap,
-) -> Result<Vec<Vec<i32>>, DemBuilderError> {
-    use pecos_quantum::AnnotationKind;
-
-    let num_measurements = influence_map.measurements.len();
-    if num_measurements == 0 {
-        return Ok(Vec::new());
-    }
-
-    circuit
-        .observables()
-        .enumerate()
-        .map(|(annotation_index, ann)| {
-            let AnnotationKind::Observable { measurement_ids } = &ann.kind else {
-                return Ok(Vec::new());
-            };
-            measurement_ids
-                .iter()
-                .map(|&meas_id| {
-                    let meas_idx = influence_map.meas_index_of(meas_id).ok_or_else(|| {
-                        DemBuilderError::ConfigurationError(format!(
-                            "observable annotation {annotation_index} references \
-                                 MeasId({}), which does not resolve to a measurement \
-                                 in the influence map",
-                            meas_id.index()
-                        ))
-                    })?;
-                    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-                    Ok(meas_idx as i32 - num_measurements as i32)
-                })
-                .collect()
-        })
-        .collect()
 }
 
 // ============================================================================
@@ -3679,6 +3641,8 @@ pub fn resolve_result_tags(
 /// Errors that can occur during DEM building.
 #[derive(Debug, Clone)]
 pub enum DemBuilderError {
+    /// Invalid circuit definitions from the shared reader or DEM conversion.
+    Definition(Box<DefinitionError>),
     /// Circuit gate whose action Pauli propagation cannot represent.
     UnsupportedGate(crate::fault_tolerance::propagator::UnsupportedGateError),
     /// JSON parsing error.
@@ -3690,6 +3654,7 @@ pub enum DemBuilderError {
 impl std::fmt::Display for DemBuilderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Definition(error) => write!(f, "DEM builder definitions: {error}"),
             Self::UnsupportedGate(error) => write!(f, "DEM builder {error}"),
             Self::ParseError(msg) => write!(f, "DEM builder parse error: {msg}"),
             Self::ConfigurationError(msg) => write!(f, "DEM builder configuration error: {msg}"),
@@ -3697,7 +3662,21 @@ impl std::fmt::Display for DemBuilderError {
     }
 }
 
-impl std::error::Error for DemBuilderError {}
+impl From<DefinitionError> for DemBuilderError {
+    fn from(error: DefinitionError) -> Self {
+        Self::Definition(Box::new(error))
+    }
+}
+
+impl std::error::Error for DemBuilderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Definition(error) => Some(error.as_ref()),
+            Self::UnsupportedGate(error) => Some(error),
+            Self::ParseError(_) | Self::ConfigurationError(_) => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

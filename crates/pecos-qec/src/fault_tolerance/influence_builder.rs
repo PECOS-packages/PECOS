@@ -297,6 +297,11 @@ impl<'a> InfluenceBuilder<'a> {
     /// non-measurement gate, or a tracked Pauli with no meta gate. Dropping
     /// such references silently produced outputs with missing propagation
     /// terms.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a resolved measurement names a missing gate, violating
+    /// `DagCircuit::find_measurement`'s measurement-reference invariant.
     pub fn with_circuit_annotations(mut self) -> Result<Self, AnnotationIngestError> {
         let circuit = self.dag;
         // Meta gates are inserted when their annotations are added, so on an
@@ -316,9 +321,8 @@ impl<'a> InfluenceBuilder<'a> {
                 pecos_quantum::AnnotationKind::Observable { measurement_ids } => {
                     let mut terms = Vec::new();
                     for &meas_id in measurement_ids {
-                        // Each id names one measurement, so each term is Z on
-                        // that measurement's own qubit -- not a Z-spray over
-                        // every qubit of a batched node.
+                        // Each id seeds its measurement basis on its own qubit,
+                        // including when it belongs to a batched node.
                         let mref = circuit.find_measurement(meas_id).map_err(|source| {
                             AnnotationIngestError::ObservableRefUnresolved {
                                 annotation_index,
@@ -326,8 +330,14 @@ impl<'a> InfluenceBuilder<'a> {
                                 source,
                             }
                         })?;
+                        let gate = circuit.gate(mref.node).expect("resolved measurement node");
+                        let pauli = if gate.gate_type == pecos_quantum::GateType::MX {
+                            PauliString::xs(&[mref.qubit.index()])
+                        } else {
+                            PauliString::zs(&[mref.qubit.index()])
+                        };
                         terms.push(PauliPropagationTerm {
-                            pauli: PauliString::zs(&[mref.qubit.index()]),
+                            pauli,
                             start_node: Some(mref.node),
                         });
                     }

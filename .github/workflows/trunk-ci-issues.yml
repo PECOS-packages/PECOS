@@ -10,11 +10,17 @@ permissions:
   contents: read
 
 on:
+  # GitHub delays and drops scheduled runs under load (one of the first thirteen
+  # hourly runs fired), so every merge also runs the tracker. It reads the
+  # latest completed runs, so a merge reports what earlier merges left red.
+  push:
+    branches: [ "main", "master", "development", "dev" ]
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
 
 concurrency:
+  # One run at a time; a burst of merges collapses into one pending run.
   group: ${{ github.workflow }}
   cancel-in-progress: false
 

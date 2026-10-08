@@ -19,22 +19,30 @@ use std::ops::Range;
 
 /// A decoder failure annotated with the shot that caused it.
 #[derive(Debug)]
-pub(super) struct ShotDecodeError {
-    pub(super) shot_index: usize,
-    pub(super) source: DecoderError,
+pub struct ShotDecodeError {
+    /// Absolute index in the original batch.
+    pub shot_index: usize,
+    /// Original decoder failure.
+    pub source: DecoderError,
 }
 
 impl ShotDecodeError {
-    pub(super) const fn new(shot_index: usize, source: DecoderError) -> Self {
+    /// Attach an absolute shot index to a decoder failure.
+    #[must_use]
+    pub const fn new(shot_index: usize, source: DecoderError) -> Self {
         Self { shot_index, source }
     }
 }
 
 /// Scored output from one contiguous sequential worker range.
-pub(super) struct DecodeRangeResult {
-    pub(super) mismatches: usize,
-    pub(super) predictions: Vec<ObsMask>,
-    pub(super) per_shot_seconds: Vec<f64>,
+#[derive(Debug)]
+pub struct DecodeRangeResult {
+    /// Predictions differing from the true observable flips.
+    pub mismatches: usize,
+    /// Predictions in range order, empty when retention was not requested.
+    pub predictions: Vec<ObsMask>,
+    /// Decode seconds in range order, empty when timing was not requested.
+    pub per_shot_seconds: Vec<f64>,
 }
 
 impl fmt::Display for ShotDecodeError {
@@ -57,7 +65,10 @@ impl std::error::Error for ShotDecodeError {
 ///
 /// The syndrome allocation belongs to the caller and is reused for every shot
 /// in the range. Predictions and timings are allocated only when requested.
-pub(super) fn decode_and_score_range(
+///
+/// # Errors
+/// Returns the first decoding failure with its absolute shot index.
+pub fn decode_and_score_range(
     shots: Range<usize>,
     syndrome: &mut [u8],
     mut access_shot: impl FnMut(usize, &mut [u8]) -> ObsMask,

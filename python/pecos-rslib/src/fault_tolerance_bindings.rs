@@ -130,13 +130,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyString;
 
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
+use pecos_decoders::batch::{DecoderFactory, SampleBatch};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::Arc;
 
 mod batch_decode;
 mod decoder_comparison;
-mod decoder_scoring;
 mod sample_corpus;
 mod sampler_decode;
 
@@ -3264,12 +3264,7 @@ fn create_observable_decoder(
 /// ```
 #[pyclass(name = "SampleBatch", module = "pecos_rslib.qec")]
 pub struct PySampleBatch {
-    /// Columnar bit-packed detector columns: det_columns[det_idx][word_idx]
-    det_columns: Vec<Vec<u64>>,
-    /// Columnar bit-packed observable columns: obs_columns[obs_idx][word_idx]
-    obs_columns: Vec<Vec<u64>>,
-    num_detectors: usize,
-    num_shots: usize,
+    samples: SampleBatch,
     raw_measurements: bool,
     seed: Option<u64>,
     dem: Option<String>,
@@ -3281,14 +3276,7 @@ pub struct PySampleBatch {
 impl PySampleBatch {
     /// Extract syndrome for one shot into a pre-allocated buffer.
     fn extract_syndrome(&self, shot: usize, buf: &mut [u8]) {
-        buf.fill(0);
-        let word_idx = shot / 64;
-        let bit_mask = 1u64 << (shot % 64);
-        for (det_idx, col) in self.det_columns.iter().enumerate() {
-            if col[word_idx] & bit_mask != 0 {
-                buf[det_idx] = 1;
-            }
-        }
+        self.samples.syndrome_into(shot, buf);
     }
 
     /// Reject raw-measurement batches before treating their rows as syndromes.
@@ -3304,15 +3292,7 @@ impl PySampleBatch {
     /// Extract the observable mask for one shot as a wide [`ObsMask`], with no
     /// 64-observable cap (the columnar storage already supports >64 columns).
     fn extract_obs_mask_wide(&self, shot: usize) -> pecos_decoder_core::obs_mask::ObsMask {
-        let word_idx = shot / 64;
-        let bit_mask = 1u64 << (shot % 64);
-        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
-        for (obs_idx, col) in self.obs_columns.iter().enumerate() {
-            if col[word_idx] & bit_mask != 0 {
-                mask.set(obs_idx);
-            }
-        }
-        mask
+        self.samples.observable_flips(shot)
     }
 
     /// Build from columnar sampling data.
@@ -3322,12 +3302,9 @@ impl PySampleBatch {
         num_shots: usize,
         seed: Option<u64>,
     ) -> Self {
-        let num_detectors = det_columns.len();
         Self {
-            det_columns,
-            obs_columns,
-            num_detectors,
-            num_shots,
+            samples: SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+                .expect("sampler columns match the shot count"),
             raw_measurements: false,
             seed,
             dem: None,
@@ -3410,36 +3387,13 @@ impl PySampleBatch {
         observable_masks: &[pecos_decoder_core::obs_mask::ObsMask],
         num_observables: usize,
     ) -> Self {
-        let num_shots = detection_events.len();
-        let num_detectors = detection_events.first().map_or(0, Vec::len);
-        let num_words = num_shots.div_ceil(64);
-
-        // Convert row-major → columnar
-        let mut det_columns = vec![vec![0u64; num_words]; num_detectors];
-        for (shot, row) in detection_events.iter().enumerate() {
-            let word_idx = shot / 64;
-            let bit_mask = 1u64 << (shot % 64);
-            for (det_idx, &val) in row.iter().enumerate() {
-                if val != 0 {
-                    det_columns[det_idx][word_idx] |= bit_mask;
-                }
-            }
-        }
-
-        let mut obs_columns = vec![vec![0u64; num_words]; num_observables];
-        for (shot, mask) in observable_masks.iter().enumerate() {
-            let word_idx = shot / 64;
-            let bit_mask = 1u64 << (shot % 64);
-            for obs_idx in mask.iter_set_bits() {
-                obs_columns[obs_idx][word_idx] |= bit_mask;
-            }
-        }
-
         Self {
-            det_columns,
-            obs_columns,
-            num_detectors,
-            num_shots,
+            samples: SampleBatch::from_row_major(
+                detection_events,
+                observable_masks,
+                num_observables,
+            )
+            .expect("Python constructor validated rows and observable masks"),
             raw_measurements: false,
             seed: None,
             dem: None,
@@ -3451,10 +3405,12 @@ impl PySampleBatch {
 
     fn from_corpus(corpus: LoadedCorpus) -> Self {
         Self {
-            num_detectors: corpus.det_columns.len(),
-            det_columns: corpus.det_columns,
-            obs_columns: corpus.obs_columns,
-            num_shots: corpus.num_shots,
+            samples: SampleBatch::from_columnar(
+                corpus.det_columns,
+                corpus.obs_columns,
+                corpus.num_shots,
+            )
+            .expect("corpus loader validated packed columns"),
             raw_measurements: false,
             seed: corpus.seed,
             dem: Some(corpus.dem),
@@ -3564,7 +3520,7 @@ impl PySampleBatch {
     /// Number of shots in this batch.
     #[getter]
     fn num_shots(&self) -> usize {
-        self.num_shots
+        self.samples.num_shots()
     }
 
     /// Stored observable-column width, i.e. the length of one row of
@@ -3575,7 +3531,7 @@ impl PySampleBatch {
     /// observables, so this is a width rather than a promise about the code.
     #[getter]
     fn num_observables(&self) -> usize {
-        self.obs_columns.len()
+        self.samples.num_observables()
     }
 
     /// Resolved random seed used to generate this batch, if known.
@@ -3648,9 +3604,9 @@ impl PySampleBatch {
         sample_corpus::save(
             &path,
             CorpusToSave {
-                det_columns: &self.det_columns,
-                obs_columns: &self.obs_columns,
-                num_shots: self.num_shots,
+                det_columns: self.samples.det_columns(),
+                obs_columns: self.samples.obs_columns(),
+                num_shots: self.samples.num_shots(),
                 seed: self.seed,
                 dem,
                 metadata_json,
@@ -3669,13 +3625,13 @@ impl PySampleBatch {
 
     /// Get the syndrome for shot `i` as a list of u8 values.
     fn get_syndrome(&self, i: usize) -> PyResult<Vec<u8>> {
-        if i >= self.num_shots {
+        if i >= self.samples.num_shots() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "Shot index {i} out of range (num_shots={})",
-                self.num_shots
+                self.samples.num_shots()
             )));
         }
-        let mut buf = vec![0u8; self.num_detectors];
+        let mut buf = vec![0u8; self.samples.num_detectors()];
         self.extract_syndrome(i, &mut buf);
         Ok(buf)
     }
@@ -3684,7 +3640,7 @@ impl PySampleBatch {
     ///
     /// The result has shape (`num_shots`, `num_detectors`).
     fn detector_events(&self) -> Vec<Vec<bool>> {
-        Self::columns_as_rows(&self.det_columns, self.num_shots)
+        Self::columns_as_rows(self.samples.det_columns(), self.samples.num_shots())
     }
 
     /// Return all observable flips as shots-major boolean lists.
@@ -3696,7 +3652,7 @@ impl PySampleBatch {
     /// width zero). Sampler-produced columns contain all DEM outputs, which can
     /// be a superset of the logical observables.
     fn observable_flips(&self) -> Vec<Vec<bool>> {
-        Self::columns_as_rows(&self.obs_columns, self.num_shots)
+        Self::columns_as_rows(self.samples.obs_columns(), self.samples.num_shots())
     }
 
     /// Observable flips for shot `i` as an [`ObservableFlips`] value.
@@ -3707,15 +3663,15 @@ impl PySampleBatch {
     /// [`observable_flips`] and carries the same caveat about sampler-produced
     /// columns being a superset of the logical observables.
     fn get_observable_flips(&self, i: usize) -> PyResult<PyObservableFlips> {
-        if i >= self.num_shots {
+        if i >= self.samples.num_shots() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "Shot index {i} out of range (num_shots={})",
-                self.num_shots
+                self.samples.num_shots()
             )));
         }
         Ok(PyObservableFlips::from_mask_value(
             self.extract_obs_mask_wide(i),
-            self.obs_columns.len(),
+            self.samples.num_observables(),
         ))
     }
 
@@ -3769,31 +3725,14 @@ impl PySampleBatch {
                 })
             })
             .transpose()?;
-        let traits = spec.execution_traits();
-        let mut plan =
-            pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
-                traits,
-                num_shots: self.num_shots,
-                native_batch_capable: spec.native_batch_capable(),
-                timing,
-                explicit_workers,
-                available_threads: rayon::current_num_threads(),
-            })
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-
-        // Report the workers that can actually run: a worker needs at least one
-        // shot, so anything beyond one worker per shot would only idle. An empty
-        // batch keeps one worker, which builds its decoder and decodes nothing.
-        if plan.path == pecos_decoders::batch::ExecutionPath::Parallel {
-            plan.workers_used = plan
-                .workers_used
-                .min(pecos_decoders::batch::batch_worker_cap(self.num_shots));
-        }
-
+        let mut options = pecos_decoders::batch::DecodeOptions::default()
+            .predictions(predictions)
+            .timing(timing);
+        options.workers = explicit_workers;
         let output = py
-            .detach(|| batch_decode::execute(self, resolved_dem, &spec, &plan, predictions, timing))
-            .map_err(batch_decode::BatchExecutionError::into_pyerr)?;
-        batch_decode::PyDecodeResult::from_execution(py, self.num_shots, plan, output)
+            .detach(|| self.samples.decode_with(resolved_dem, &spec, &options))
+            .map_err(batch_decode::batch_error_to_py)?;
+        batch_decode::PyDecodeResult::from_result(py, output)
     }
 
     /// Decode every shot with a decoder under test (DUT) and a reference decoder.
@@ -3822,14 +3761,14 @@ impl PySampleBatch {
         alpha: f64,
         allow_dem_mismatch: bool,
     ) -> PyResult<PyDecoderComparisonResult> {
-        validate_comparison_arguments(self.num_shots, alpha)
+        validate_comparison_arguments(self.samples.num_shots(), alpha)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut dut = create_observable_decoder(dem, dut_decoder_type)?;
         let mut reference = create_observable_decoder(dem, reference_decoder_type)?;
-        let mut syndrome = vec![0u8; self.num_detectors];
+        let mut syndrome = vec![0u8; self.samples.num_detectors()];
         let counts = compare_decoder_outcomes(
-            self.num_shots,
+            self.samples.num_shots(),
             &mut syndrome,
             |shot, buffer| {
                 self.extract_syndrome(shot, buffer);
@@ -3843,7 +3782,7 @@ impl PySampleBatch {
     }
 
     fn __repr__(&self) -> String {
-        format!("SampleBatch(num_shots={})", self.num_shots)
+        format!("SampleBatch(num_shots={})", self.samples.num_shots())
     }
 }
 
@@ -5646,16 +5585,17 @@ impl PyLogicalSubgraphDecoder {
     ///     Number of logical errors.
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
         batch.ensure_detector_events()?;
-        let detection_events: Vec<Vec<u8>> = (0..batch.num_shots)
+        let detection_events: Vec<Vec<u8>> = (0..batch.samples.num_shots())
             .map(|i| {
-                let mut s = vec![0u8; batch.num_detectors];
+                let mut s = vec![0u8; batch.samples.num_detectors()];
                 batch.extract_syndrome(i, &mut s);
                 s
             })
             .collect();
-        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..batch.num_shots)
-            .map(|i| batch.extract_obs_mask_wide(i))
-            .collect();
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+            (0..batch.samples.num_shots())
+                .map(|i| batch.extract_obs_mask_wide(i))
+                .collect();
         self.inner
             .decode_count_batched(&detection_events, &observable_masks)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
@@ -5704,12 +5644,12 @@ impl PyLogicalSubgraphDecoder {
         let inner_str = inner_decoder
             .unwrap_or(self.inner_decoder.as_str())
             .to_string();
-        let n = batch.num_shots;
+        let n = batch.samples.num_shots();
 
         // Materialize row-major data for parallel decode.
         let events: Vec<Vec<u8>> = (0..n)
             .map(|i| {
-                let mut s = vec![0u8; batch.num_detectors];
+                let mut s = vec![0u8; batch.samples.num_detectors()];
                 batch.extract_syndrome(i, &mut s);
                 s
             })
@@ -5927,8 +5867,8 @@ impl PyWindowedLogicalSubgraphDecoder {
         use pecos_decoder_core::ObservableDecoder;
         batch.ensure_detector_events()?;
         let mut errors = 0usize;
-        let mut syndrome = vec![0u8; batch.num_detectors];
-        for i in 0..batch.num_shots {
+        let mut syndrome = vec![0u8; batch.samples.num_detectors()];
+        for i in 0..batch.samples.num_shots() {
             batch.extract_syndrome(i, &mut syndrome);
             let predicted = self
                 .inner
@@ -6181,8 +6121,8 @@ impl PyLogicalAlgorithmDecoder {
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
         batch.ensure_detector_events()?;
         let mut errors = 0usize;
-        let mut syndrome = vec![0u8; batch.num_detectors];
-        for i in 0..batch.num_shots {
+        let mut syndrome = vec![0u8; batch.samples.num_detectors()];
+        for i in 0..batch.samples.num_shots() {
             batch.extract_syndrome(i, &mut syndrome);
             self.inner.reset();
             let predicted = self
@@ -6523,8 +6463,8 @@ impl PyLogicalCircuitDecoder {
         use pecos_decoder_core::ObservableDecoder;
         batch.ensure_detector_events()?;
         let mut errors = 0usize;
-        let mut syndrome = vec![0u8; batch.num_detectors];
-        for i in 0..batch.num_shots {
+        let mut syndrome = vec![0u8; batch.samples.num_detectors()];
+        for i in 0..batch.samples.num_shots() {
             batch.extract_syndrome(i, &mut syndrome);
             let predicted = self
                 .inner

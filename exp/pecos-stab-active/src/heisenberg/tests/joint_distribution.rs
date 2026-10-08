@@ -131,6 +131,26 @@ pub(super) fn with_noise_by(
     program: &HeisenbergProgram,
     mut run: impl for<'a> FnMut(&[bool], &'a mut Force<'a>) -> (ShotResult, Vec<bool>),
 ) -> JointDistribution {
+    let alternatives = noise_alternatives(program);
+    let mut distribution = JointDistribution::default();
+    let mut branches = 0;
+    for (weight, bits) in alternatives {
+        let fixed = enumerate_measurements(program, &bits, &mut branches, &mut run);
+        for (key, p) in fixed.symbols {
+            let probability = weight * p;
+            assert!(probability.is_finite() && probability >= 0.0);
+            *distribution.symbols.entry(key).or_default() += probability;
+        }
+        for (key, p) in fixed.records {
+            *distribution.records.entry(key).or_default() += weight * p;
+        }
+    }
+    check_mass(&distribution.symbols);
+    check_mass(&distribution.records);
+    distribution
+}
+
+pub(super) fn noise_alternatives(program: &HeisenbergProgram) -> Vec<(f64, Vec<bool>)> {
     let mut alternatives = vec![(1.0, vec![false; program.num_noise_symbols])];
     for channel in &program.noise_channels {
         let total: f64 = channel.alternatives.iter().map(|(p, _)| p).sum();
@@ -154,20 +174,5 @@ pub(super) fn with_noise_by(
         }
         alternatives = next;
     }
-    let mut distribution = JointDistribution::default();
-    let mut branches = 0;
-    for (weight, bits) in alternatives {
-        let fixed = enumerate_measurements(program, &bits, &mut branches, &mut run);
-        for (key, p) in fixed.symbols {
-            let probability = weight * p;
-            assert!(probability.is_finite() && probability >= 0.0);
-            *distribution.symbols.entry(key).or_default() += probability;
-        }
-        for (key, p) in fixed.records {
-            *distribution.records.entry(key).or_default() += weight * p;
-        }
-    }
-    check_mass(&distribution.symbols);
-    check_mass(&distribution.records);
-    distribution
+    alternatives
 }

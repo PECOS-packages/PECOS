@@ -548,7 +548,7 @@ fn half_turn_noise_and_hidden_reset() {
 // likely), 20% HALF_TURN - the last generic angle, 20% its negative,
 // and 20% a fresh generic angle. Each block starts with a generic angle.
 // A rotation repeats the previous qubit and axis with probability 75%.
-fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
+pub(super) fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
     let mut circuit = TickCircuit::new();
     circuit.tick().pz(&[0]);
     circuit.tick().h(&[1]);

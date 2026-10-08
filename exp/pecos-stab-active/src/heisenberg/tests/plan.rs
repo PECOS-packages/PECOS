@@ -187,7 +187,7 @@ fn compare(program: &HeisenbergProgram, coverage: &mut Coverage) {
     }
 }
 
-fn body(n: usize, factors: &[(usize, PauliKindForDecomp)]) -> VirtualPauli {
+pub(super) fn body(n: usize, factors: &[(usize, PauliKindForDecomp)]) -> VirtualPauli {
     builder::pullback(
         &SparseStabY::with_seed(n, 0).with_destab_sign_tracking(),
         factors,
@@ -195,7 +195,7 @@ fn body(n: usize, factors: &[(usize, PauliKindForDecomp)]) -> VirtualPauli {
     .0
 }
 
-fn rotation(
+pub(super) fn rotation(
     n: usize,
     factors: &[(usize, PauliKindForDecomp)],
     angle: Angle64,
@@ -208,7 +208,11 @@ fn rotation(
     }
 }
 
-fn measurement(n: usize, factors: &[(usize, PauliKindForDecomp)], symbol: usize) -> HeisenbergOp {
+pub(super) fn measurement(
+    n: usize,
+    factors: &[(usize, PauliKindForDecomp)],
+    symbol: usize,
+) -> HeisenbergOp {
     HeisenbergOp::Measurement {
         pauli: body(n, factors),
         sign: AffineSign::default(),
@@ -217,7 +221,7 @@ fn measurement(n: usize, factors: &[(usize, PauliKindForDecomp)], symbol: usize)
     }
 }
 
-fn manual(n: usize, operations: Vec<HeisenbergOp>) -> HeisenbergProgram {
+pub(super) fn manual(n: usize, operations: Vec<HeisenbergOp>) -> HeisenbergProgram {
     let measurements = operations
         .iter()
         .filter(|op| matches!(op, HeisenbergOp::Measurement { .. }))
@@ -235,7 +239,7 @@ fn manual(n: usize, operations: Vec<HeisenbergOp>) -> HeisenbergProgram {
     program.with_operations(operations).unwrap()
 }
 
-fn fixtures() -> Vec<HeisenbergProgram> {
+pub(super) fn fixtures() -> Vec<HeisenbergProgram> {
     let theta = Angle64::from_radians(0.37);
     let mut programs = vec![
         manual(

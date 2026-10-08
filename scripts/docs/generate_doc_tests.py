@@ -67,6 +67,7 @@ class CodeBlock:
     block_number: int
     source_file: Path
     line_number: int = 0
+    marker_position: int | None = None
 
     # Markers
     skip: bool = False
@@ -248,10 +249,11 @@ def _parse_marker_comment(comment: str) -> dict:
         result["skip_if_no_cuda"] = True
 
     # Check for regular skip
-    if re.search(r"<!--\s*skip(?:\s*-->|:)", comment, re.IGNORECASE):
+    # The closing delimiter in <!--skip--> is not a hyphenated marker suffix.
+    if re.search(r"<!--\s*skip(?:-->|\b(?!-))", comment, re.IGNORECASE):
         result["skip"] = True
         # Extract reason if present: <!--skip: reason-->
-        match = re.search(r"skip:\s*(.+?)\s*-->", comment, re.IGNORECASE)
+        match = re.search(r"skip\s*:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             result["skip_reason"] = match.group(1).strip()
 
@@ -260,6 +262,7 @@ def _parse_marker_comment(comment: str) -> dict:
         match = re.search(r"expect-error:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             result["expect_error"] = match.group(1).strip()
+            result["skip"] = False  # Don't skip, we want to test the error
 
     # Check for expect-output-block (must check before expect-output substring match)
     if "expect-output-block" in comment_lower:
@@ -307,7 +310,7 @@ def _parse_marker_comment(comment: str) -> dict:
 
     # Check for test data files to copy
     if "test-data" in comment_lower:
-        match = re.search(r"test-data:\s*(.+?)\s*-->", comment, re.IGNORECASE)
+        match = re.search(r"test-data\s*:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             files = [f.strip() for f in match.group(1).split(",")]
             result["test_data"] = files
@@ -340,48 +343,29 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             doc_skip_reason = doc_skip_match.group(1).strip()
 
     # Pattern to find code blocks with optional marker comment before them
-    # Scan all languages so unsupported test-data markers cannot be ignored.
-    # Captures: (marker_comment, hidden_prefix, language, lang_suffix, code)
-    marker_pattern = r"((?:<!--[^>]*-->\s*)*)"
-    fence_pattern = r"(?<!\\)```(hidden-)?([^\n`,]*)(,[^\n`]*)?\n(.*?)```"
+    # Captures: (marker_comment, hidden_prefix, lang_suffix, code)
+    marker_pattern = r"(<!--[^>]*-->\s*)?"
+    fence_pattern = rf"```(hidden-)?{language}(,(?:skip|ignore|no_run|notest))?\n(.*?)```"
     full_pattern = marker_pattern + fence_pattern
 
     blocks = []
     preamble_parts: list[str] = []
     chain_parts: list[str] = []
     chain_test_data: list[str] = []
-    language_counts: dict[str, int] = {}
     setup_code = ""
     block_number = 0
 
     for match in re.finditer(full_pattern, content, re.DOTALL):
         marker_comment = match.group(1) or ""
         is_hidden = bool(match.group(2))
-        block_language = match.group(3)
-        lang_suffix = match.group(4) or ""
-        code = match.group(5)
+        lang_suffix = match.group(3) or ""
+        code = match.group(4)
 
         # Calculate line number where the code block starts
         line_number = _count_line_number(content, match.start())
 
         # Parse the marker comment
         attrs = _parse_marker_comment(marker_comment)
-
-        language_counts[block_language] = language_counts.get(block_language, 0) + 1
-        if attrs["test_data"] and (
-            block_language != "rust"
-            or is_hidden
-            or attrs["is_setup"]
-            or attrs["is_teardown"]
-            or attrs["preamble_reset"]
-        ):
-            msg = (
-                f"{file_path}: block {language_counts[block_language]}: "
-                "test-data requires a visible Rust cargo test block"
-            )
-            raise ValueError(msg)
-        if block_language != language:
-            continue
 
         # Handle preamble reset
         if attrs["preamble_reset"]:
@@ -468,6 +452,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             block_number=block_number,
             source_file=file_path,
             line_number=line_number,
+            marker_position=match.start(1) if marker_comment else None,
             skip=block_skip,
             skip_reason=block_skip_reason,
             skip_if_no_cuda=attrs["skip_if_no_cuda"],
@@ -484,13 +469,31 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             cargo_deps=attrs["cargo_deps"],
             test_data=attrs["test_data"],
         )
-        _validate_block(block)
         chain_test_data.extend(block.test_data)
         if not block.skip:
             block.test_data = list(dict.fromkeys(chain_test_data))
         blocks.append(block)
 
+    # A document skipped as a whole stages nothing, and its markers may be
+    # illustrative text (as on the page documenting them), so only check
+    # marker placement in documents whose blocks can run.
+    if language == "rust" and not doc_skip:
+        _validate_test_data_markers(content, file_path, blocks)
+    for block in blocks:
+        _validate_block(block)
     return blocks
+
+
+def _validate_test_data_markers(content: str, file_path: Path, rust_blocks: list[CodeBlock]) -> None:
+    """Account for every data marker without changing legacy fence extraction."""
+    staged_markers = {
+        block.marker_position for block in rust_blocks if not block.skip and _rust_needs_cargo(block.code)
+    }
+    for marker in re.finditer(r"<!--.*?-->", content, re.DOTALL):
+        if re.search(r"\btest-data\s*:", marker.group(), re.IGNORECASE) and marker.start() not in staged_markers:
+            line_number = _count_line_number(content, marker.start())
+            msg = f"{file_path}:{line_number}: test-data marker requires a visible, unskipped Rust cargo block"
+            raise ValueError(msg)
 
 
 def generate_test_function(block: CodeBlock, file_stem: str) -> str:
@@ -1268,7 +1271,8 @@ def _test_data_name_is_safe(name: str) -> bool:
     """Only allow bare filenames, excluding generator and Cargo metadata."""
     return (
         bool(name)
-        and name not in {".", "..", "Cargo.toml", "Cargo.lock", ".test-data-files.json"}
+        and not name.startswith(".")
+        and name not in {"Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain", "rust-toolchain.toml"}
         and not any(separator in name for separator in ("/", "\\"))
     )
 
@@ -1311,8 +1315,10 @@ def _stage_rust_test_data(blocks: list[CodeBlock], docs_dir: Path, crate_dir: Pa
             (crate_dir / name).unlink(missing_ok=True)
     for name, source in sorted(sources.items()):
         shutil.copyfile(source, crate_dir / name)
-    if sources or manifest.exists():
+    if sources:
         manifest.write_text(json.dumps(sorted(sources), indent=2) + "\n")
+    else:
+        manifest.unlink(missing_ok=True)
 
 
 def _generate_unified_rust_crate(markdown_files: list[Path], docs_dir: Path, crate_dir: Path) -> None:
@@ -1445,8 +1451,8 @@ def main() -> None:
 
     for md_file in markdown_files:
         # Extract Python and Rust blocks
-        python_blocks = extract_code_blocks(md_file, "python")
         rust_blocks = extract_code_blocks(md_file, "rust")
+        python_blocks = extract_code_blocks(md_file, "python")
 
         # Combine all blocks
         all_blocks = python_blocks + rust_blocks

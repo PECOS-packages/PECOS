@@ -146,11 +146,20 @@ Continuation tests inherit every data filename named earlier in their chain.
 Without a marker, no data is staged. A named source file must exist; otherwise
 generation fails and reports the Markdown file, block number, and missing filename.
 Markers on non-Rust, skipped, non-cargo, hidden, setup, or teardown blocks are
-authoring errors. Use bare filenames, not paths; Cargo metadata and the staging
-manifest name are reserved, and unrelated existing crate files cannot be overwritten.
+authoring errors reported with the marker's file and line number. Every literal
+test-data marker must be attached directly to an eligible block; an intervening
+comment detaches it. A document with a document-level skip is exempt from this
+check, since none of its blocks run. Only the immediately preceding comment supplies block markers.
+Use one comment when combining continuation with test-data (for example, put
+`continuation` before `test-data:` in that comment).
+
+Use bare filenames, not paths. `Cargo.toml`, `Cargo.lock`, `build.rs`,
+`rust-toolchain`, `rust-toolchain.toml`, and all names starting with `.` are
+reserved. Unrelated existing crate files and symlink destinations cannot be overwritten.
 
 Every generation refreshes the copies and removes stale copies listed in
-`.test-data-files.json`; unrelated files are left alone. Commit both the copies
+`.test-data-files.json`; unrelated files are left alone. When no files are requested,
+the manifest is removed too. Commit both the copies
 and this generated ownership manifest with the crate so the existing CI drift
 check covers them.
 

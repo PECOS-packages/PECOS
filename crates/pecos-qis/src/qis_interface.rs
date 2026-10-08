@@ -41,6 +41,8 @@ pub enum InterfaceError {
     LoadError(String),
     /// Execution error
     ExecutionError(String),
+    /// Typed program termination, including cooperative cancellation.
+    ProgramError(pecos_qis_ffi_types::ProgramError),
     /// Invalid program format
     InvalidFormat(String),
     /// Other error
@@ -53,6 +55,7 @@ impl std::fmt::Display for InterfaceError {
             Self::LoadError(msg) => write!(f, "Load error: {msg}"),
             Self::ExecutionError(msg) => write!(f, "Execution error: {msg}"),
             Self::InvalidFormat(msg) => write!(f, "Invalid format: {msg}"),
+            Self::ProgramError(error) => error.fmt(f),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -253,7 +256,7 @@ pub trait QisInterface: Send + Sync {
     /// The handle uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS is consistent across threads (important on macOS).
     ///
-    /// Returns None if dynamic execution is not supported.
+    /// Returns None if dynamic execution is unsupported or not yet enabled.
     fn get_sync_handle(&self) -> Option<Box<dyn DynamicSyncHandle>> {
         None
     }

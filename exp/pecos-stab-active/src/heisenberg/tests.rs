@@ -3,6 +3,8 @@
 
 mod joint_distribution;
 mod oracle;
+mod passes;
+mod plan;
 mod reordering;
 mod sampling;
 mod validation;

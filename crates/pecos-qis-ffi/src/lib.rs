@@ -34,6 +34,12 @@ mod random;
 mod selene;
 
 #[cfg(test)]
+mod test_env;
+
+#[cfg(test)]
+mod cancellation_tests;
+
+#[cfg(test)]
 mod named_results_tests;
 
 #[cfg(test)]
@@ -41,9 +47,19 @@ mod random_tests;
 
 // --- Per-Execution Context for Parallel Execution Support ---
 
+/// Cancellation is terminal for an execution context.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum CancellationState {
+    #[default]
+    Running,
+    Requested,
+}
+
 /// State for dynamic circuit synchronization
 #[derive(Debug, Default)]
 pub struct DynamicSyncState {
+    /// Cancellation belongs to this context and participates in the wait predicate.
+    pub cancellation: CancellationState,
     /// Set to true when a measurement result is available
     pub result_ready: bool,
     /// Set to true when `___read_future_bool` needs a result
@@ -63,6 +79,8 @@ pub struct DynamicSyncState {
 /// Nested execution wrappers and re-entrant FFI calls while a context mutex is
 /// held are unsupported: each thread has one jump buffer and non-reentrant mutexes.
 pub struct ExecutionContext {
+    /// Cheap checkpoint mirror of the guarded cancellation state. Never reset.
+    pub cancel_requested: AtomicBool,
     /// Flag indicating dynamic execution mode is active
     pub dynamic_mode_active: AtomicBool,
     /// The result ID that is being waited for
@@ -131,6 +149,7 @@ impl ExecutionContext {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            cancel_requested: AtomicBool::new(false),
             dynamic_mode_active: AtomicBool::new(false),
             waiting_for_result: AtomicU64::new(u64::MAX),
             sync_state: Mutex::new(DynamicSyncState::default()),
@@ -439,7 +458,10 @@ pub extern "C" fn pecos_program_exited() -> bool {
 /// Destroy an execution context
 ///
 /// # Safety
-/// The pointer must have been created by `pecos_create_execution_context`.
+/// The pointer must have been created by `pecos_create_execution_context` and
+/// have no remaining users. Registrations on other threads must already have
+/// been cleared or replaced. Only a matching registration on this thread is
+/// cleared; neither another thread's TLS nor a replacement context is touched.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_destroy_execution_context(ctx: *mut ExecutionContext) {
     // Drop may run during TLS teardown. Do not initialize TLS or log here.
@@ -617,6 +639,32 @@ pub extern "C" fn pecos_enable_dynamic_mode() {
     } else {
         log::warn!("pecos_enable_dynamic_mode: no execution context registered");
     }
+}
+
+/// Request cooperative cancellation on an explicit execution context.
+///
+/// Returns 0 on success, 1 for a null context, and 2 when the synchronization
+/// state is poisoned. A poisoned state is still cancelled and its waiters woken,
+/// so a reader with no timeout can always be reached; the error only reports it.
+///
+/// # Safety
+/// A non-null context must remain live for this call. It need not be registered
+/// on the calling thread. Cancellation lasts for the entire context lifetime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_abort_dynamic_execution(ctx: *mut ExecutionContext) -> i32 {
+    // SAFETY: The caller keeps a non-null context alive for this call.
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    let (mut state, status) = match ctx.sync_state.lock() {
+        Ok(state) => (state, 0),
+        Err(poisoned) => (poisoned.into_inner(), 2),
+    };
+    state.cancellation = CancellationState::Requested;
+    ctx.cancel_requested.store(true, Ordering::Release);
+    drop(state);
+    ctx.sync_condvar.notify_all();
+    status
 }
 
 /// Disable dynamic execution mode (called via FFI from executor)
@@ -816,7 +864,9 @@ pub fn wait_for_result_ready(result_id: u64, timeout_ms: u64) -> bool {
     let result = ctx
         .sync_condvar
         .wait_timeout_while(state, timeout, |state| {
-            !state.result_ready && !state.worker_complete
+            !state.result_ready
+                && !state.worker_complete
+                && state.cancellation == CancellationState::Running
         });
     let Ok((state, timed_out)) = result else {
         return false;

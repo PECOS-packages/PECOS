@@ -1,16 +1,17 @@
-name: Dependency Integrity Check
+name: Pre-commit
+
+# The one CI run of the pre-commit hooks. It has no path filter: the hooks
+# cover text, TOML, YAML, Python and docs anywhere in the repository.
+
+permissions:
+  contents: read
 
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
-  schedule:
-    - cron: "17 9 * * *"
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main
@@ -19,14 +20,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
-defaults:
-  run:
-    shell: bash
-
 jobs:
-  dependency-integrity-check:
+  pre-commit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -46,22 +43,17 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
-          enable-cache: true
-          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+          # Nothing here benefits from a uv cache; the default (auto) would save
+          # a PR-scoped cache on every pull request.
+          enable-cache: false
 
-      - name: Harden apt against mirror flakiness
-        run: ./scripts/ci/harden-apt.sh
+      # Only the dev group: pre-commit needs no workspace package (or native build).
+      - name: Install pre-commit
+        run: uv sync --locked --only-group dev
 
-      - name: Install integrity check tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
-
-      - name: Set up Rust
-        run: rustup show
-
-      - name: Test the workflow parsers the integrity check relies on
-        run: uv run --frozen pytest -q scripts/ci/test_cache_guard.py scripts/ci/test_workflow_permissions.py
-
-      - name: Run dependency integrity checks
-        run: ./scripts/dependency-integrity-check.sh
+      - name: Run pre-commit
+        env:
+          # The required Dependency Integrity Check workflow runs this hook's
+          # script, plus its parser tests, on every pull request and push.
+          SKIP: dependency-integrity-check
+        run: uv run --frozen --no-sync pre-commit run --all-files --show-diff-on-failure

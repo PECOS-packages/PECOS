@@ -313,6 +313,8 @@ fn reset_discards_real_worker_execution_failure_and_reuses_interface() {
         .as_ref()
         .unwrap()
         .handle
+        .as_ref()
+        .unwrap()
         .thread()
         .id();
     engine.reset_all().unwrap();
@@ -326,6 +328,8 @@ fn reset_discards_real_worker_execution_failure_and_reuses_interface() {
             .as_ref()
             .unwrap()
             .handle
+            .as_ref()
+            .unwrap()
             .thread()
             .id(),
         worker_id
@@ -350,6 +354,8 @@ fn midshot_reset_reuses_real_worker_through_every_entry_point() {
             .as_ref()
             .unwrap()
             .handle
+            .as_ref()
+            .unwrap()
             .thread()
             .id();
         reset(&mut engine).unwrap();
@@ -370,6 +376,8 @@ fn midshot_reset_reuses_real_worker_through_every_entry_point() {
                 .as_ref()
                 .unwrap()
                 .handle
+                .as_ref()
+                .unwrap()
                 .thread()
                 .id(),
             worker_id
@@ -498,4 +506,174 @@ fn scheduled_midshot_reset_discards_aborted_shot_and_reuses_worker() {
         finish_reset_shot(&mut engine, &mut quantum, stage);
         assert_eq!(trace.lock().unwrap().len(), 0);
     }
+}
+
+#[test]
+fn drop_cancels_real_worker_waiting_for_measurement() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let counts = Arc::clone(&engine.worker_counts);
+    let stage = engine.start(()).unwrap();
+    assert_waiting(&mut engine, &stage);
+    assert_eq!(counts.live.load(Ordering::SeqCst), 1);
+    drop(engine);
+    counts.assert_joined();
+    // Cancellation returns the interface before the result receiver is dropped.
+    assert_eq!(counts.returned.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn drop_cancels_real_worker_from_another_thread() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let counts = Arc::clone(&engine.worker_counts);
+    let stage = engine.start(()).unwrap();
+    assert_waiting(&mut engine, &stage);
+    std::thread::spawn(move || {
+        // This thread has never registered a Helios execution context.
+        drop(engine);
+        counts.assert_joined();
+        assert_eq!(counts.returned.load(Ordering::SeqCst), 1);
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn drop_joins_idle_real_worker_after_completed_shot() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let counts = Arc::clone(&engine.worker_counts);
+    let stage = engine.start(()).unwrap();
+    finish_reset_shot(&mut engine, &mut StateVecEngine::new(2), stage);
+    assert_eq!(counts.live.load(Ordering::SeqCst), 1);
+    drop(engine);
+    counts.assert_joined();
+}
+
+#[test]
+fn drop_joins_real_worker_with_queued_unconsumed_result() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let counts = Arc::clone(&engine.worker_counts);
+    let stage = engine.start(()).unwrap();
+    assert_waiting(&mut engine, &stage);
+    engine.set_dynamic_result(0, 1).unwrap();
+    engine.signal_dynamic_result_ready().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while counts.returned.load(Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < deadline, "worker did not queue its result");
+        std::thread::yield_now();
+    }
+    assert!(engine.interface.is_none());
+    assert!(!engine.dynamic_state.as_ref().unwrap().execution_complete);
+    // A queued, unconsumed result must not prevent the worker from being joined.
+    drop(engine);
+    counts.assert_joined();
+}
+
+fn assert_monte_carlo_workers_joined(erroring: bool) {
+    use pecos_engines::monte_carlo::MonteCarloEngine;
+
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let source = if erroring {
+        program("call void @panic(i32 1042, ptr null)", true, true)
+            + "\ndeclare void @panic(i32, ptr)\n"
+    } else {
+        program(PULSE_TAIL, true, true)
+    };
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    engine.set_dynamic_config(Box::new(crate::helios_interface_builder()), &source);
+    let counts = Arc::clone(&engine.worker_counts);
+    let mut monte_carlo = MonteCarloEngine::builder()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    for run in 1..=3 {
+        let previous = counts.started.load(Ordering::SeqCst);
+        let result = monte_carlo.run_with_workers(8, 2);
+        if erroring {
+            assert!(result.is_err());
+            // Rayon may stop admitting work after the first error.
+            assert!(counts.started.load(Ordering::SeqCst) > previous);
+        } else {
+            assert_eq!(result.unwrap().len(), 8);
+            assert_eq!(counts.started.load(Ordering::SeqCst), run * 2);
+        }
+        counts.assert_joined();
+    }
+    drop(monte_carlo);
+    counts.assert_joined();
+}
+
+#[test]
+fn drop_joins_monte_carlo_workers_after_repeated_runs() {
+    assert_monte_carlo_workers_joined(false);
+}
+
+#[test]
+fn drop_joins_monte_carlo_workers_after_erroring_runs() {
+    assert_monte_carlo_workers_joined(true);
+}
+
+#[derive(Clone, Debug)]
+struct FailOnMeasurement;
+
+impl Engine for FailOnMeasurement {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+
+    fn process(&mut self, commands: ByteMessage) -> Result<ByteMessage, PecosError> {
+        let gates = commands.quantum_ops()?;
+        if gates.is_empty() {
+            return Ok(ByteMessage::outcomes_builder().build());
+        }
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::MZ));
+        Err(PecosError::Processing(
+            "injected measurement failure".into(),
+        ))
+    }
+    fn reset(&mut self) -> Result<(), PecosError> {
+        Ok(())
+    }
+}
+
+impl pecos_engines::quantum::QuantumEngine for FailOnMeasurement {
+    fn set_seed(&mut self, _: u64) {}
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+#[test]
+fn drop_cancels_monte_carlo_workers_after_quantum_failure() {
+    use pecos_engines::monte_carlo::MonteCarloEngine;
+
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let source = program(PULSE_TAIL, true, true);
+    engine.set_dynamic_config(Box::new(crate::helios_interface_builder()), &source);
+    let counts = Arc::clone(&engine.worker_counts);
+    let mut monte_carlo = MonteCarloEngine::builder()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(FailOnMeasurement))
+        .build();
+    // The quantum side fails before supplying the measurement, leaving the
+    // program blocked on its read when each MonteCarlo clone is dropped.
+    let started = Instant::now();
+    let error = monte_carlo.run_with_workers(8, 2).unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(error.to_string().contains("injected measurement failure"));
+    let live = counts.live.load(Ordering::SeqCst);
+    assert!(
+        elapsed < Duration::from_secs(5) && live == 0,
+        "run took {elapsed:?} and left {live} live workers"
+    );
+    counts.assert_joined();
 }

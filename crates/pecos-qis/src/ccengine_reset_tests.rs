@@ -37,7 +37,7 @@ impl DynamicSyncHandle for SyncHandle {
     }
 }
 
-fn running() -> (
+pub(super) fn running() -> (
     QisEngine,
     Sender<WorkerResult>,
     Arc<AtomicBool>,
@@ -48,10 +48,19 @@ fn running() -> (
     let (result_tx, result_rx) = mpsc::channel();
     let fail = Arc::new(AtomicBool::new(false));
     let calls = Arc::new(AtomicU64::new(0));
+    let worker_counts = Arc::clone(&engine.worker_counts);
+    let exit_guard = drop_tests::WorkerExitGuard::new(Arc::clone(&worker_counts));
     engine.persistent_worker = Some(PersistentDynamicWorker {
-        work_tx,
+        work_tx: Some(work_tx),
         result_rx: Mutex::new(result_rx),
-        handle: std::thread::spawn(move || while work_rx.recv().is_ok() {}),
+        handle: Some(std::thread::spawn(move || {
+            let _exit_guard = exit_guard;
+            let work_rx = work_rx;
+            while work_rx.recv().is_ok() {}
+        })),
+        drop_timeout: RESET_WORKER_TIMEOUT,
+        abort_error: None,
+        worker_counts,
     });
     engine.dynamic_state = Some(DynamicExecutionState {
         execution_complete: false,
@@ -168,7 +177,7 @@ fn cancellation_and_teardown_failure_remain_separate() {
     ] {
         for teardown in [false, true] {
             let (mut engine, sender, _, _) = running();
-            let worker = PersistentDynamicWorker::new();
+            let worker = PersistentDynamicWorker::new(Arc::default());
             worker
                 .execute(Box::new(FailingInterface {
                     execution: execution.clone(),

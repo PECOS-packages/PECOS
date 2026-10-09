@@ -384,7 +384,29 @@ pub(crate) fn named_action(
         | GateType::MeasCrosstalkGlobalPayload
         | GateType::MeasCrosstalkLocalPayload
         | GateType::TrackedPauliMeta => NamedAction::Marker { release: false },
-        _ => {
+        GateType::F
+        | GateType::Fdg
+        | GateType::RX
+        | GateType::RY
+        | GateType::RZ
+        | GateType::T
+        | GateType::Tdg
+        | GateType::U
+        | GateType::RXY1Q
+        | GateType::SWAP
+        | GateType::CH
+        | GateType::CS
+        | GateType::CSdg
+        | GateType::RXX
+        | GateType::RYY
+        | GateType::RZZ
+        | GateType::RXXRYYRZZ
+        | GateType::U2q
+        | GateType::RXYXY2Q
+        | GateType::CCX
+        | GateType::CCZ
+        | GateType::Channel
+        | GateType::Custom => {
             return Err(SymbolicExecutionError::UnsupportedGate {
                 gate_type,
                 gate_index,

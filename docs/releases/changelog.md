@@ -74,6 +74,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust breaking changes
 
+- `DagCircuit::as_dag_mut` has been removed; use the gate APIs to preserve
+  circuit bookkeeping.
 - The `pecos-hugr` crate and `pecos_quantum::hugr_convert` module have been
   removed, including `SimpleHugr`, `SimpleGate`, `HugrConvertError`,
   `NotSimpleError`, `hugr_to_dag_circuit`, `dag_circuit_to_hugr`,

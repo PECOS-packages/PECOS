@@ -1341,6 +1341,10 @@ impl DagCircuit {
     /// gates never reuses or rewinds that sequence, even when a node index is
     /// recycled. Cloning preserves the sequences and their counter; updating a
     /// gate in place preserves its position. Dependencies still take precedence.
+    /// Gates removed and re-added by a pass (e.g. `SimplifyRotations` decompositions)
+    /// receive new sequences and sort after older gates when dependencies allow.
+    /// Measurement record positions are not stable identities across such rewrites;
+    /// `MeasId`s are.
     /// This preserves insertion order for independent measurements. Use it when
     /// measurement record positions must match circuit insertion order, as in
     /// symbolic execution. Prefer
@@ -2679,17 +2683,6 @@ impl DagCircuit {
     #[must_use]
     pub fn as_dag(&self) -> &DAG {
         &self.dag
-    }
-
-    /// Provides mutable access to the underlying DAG.
-    ///
-    /// # Warning
-    ///
-    /// Modifying the DAG directly can break invariants if gates, insertion
-    /// sequences and `edge_qubits` are not kept in sync. Add and remove gate
-    /// nodes through the gate APIs instead.
-    pub fn as_dag_mut(&mut self) -> &mut DAG {
-        &mut self.dag
     }
 
     // ==================== Attributes ====================

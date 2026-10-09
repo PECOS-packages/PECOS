@@ -1211,6 +1211,14 @@ impl SeleneRuntime {
             return Ok(());
         }
 
+        // A failed load or init leaves no plugin shot to end, so latch it:
+        // otherwise shot_end would certify a shot that never started, and later
+        // input would retry loading without a reset.
+        self.load_plugin_inner()
+            .map_err(|error| self.latch_batch_failure(error))
+    }
+
+    fn load_plugin_inner(&mut self) -> Result<()> {
         self.apply_library_search_dirs()?;
         let plugin_num_qubits = self.plugin_num_qubits();
 
@@ -1270,23 +1278,18 @@ impl SeleneRuntime {
                 argv,
             );
 
-            // A failed init leaves no plugin shot to end, so latch it: otherwise
-            // shot_end would certify a shot that never started, and later input
-            // would retry init without a reset.
             if errno != 0 {
-                let error = RuntimeError::FfiError(format!("Init failed with errno {errno}"));
-                self.latch_batch_failure(error.clone());
-                return Err(error);
+                return Err(RuntimeError::FfiError(format!(
+                    "Init failed with errno {errno}"
+                )));
             }
             // Every later plugin call receives this handle; a plugin that reports
             // success without producing one violates the Selene runtime contract.
             if instance.is_null() {
-                let error = RuntimeError::FfiError(
+                return Err(RuntimeError::FfiError(
                     "runtime plugin init reported success but returned a null runtime instance"
                         .into(),
-                );
-                self.latch_batch_failure(error.clone());
-                return Err(error);
+                ));
             }
 
             self.library = Some(ManuallyDrop::new(lib));
@@ -4794,20 +4797,83 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
+    fn failed_load_is_latched_until_reset() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing_plugin = directory.path().join("missing-runtime");
+        for mode in LoweringRoute::ALL {
+            for missing in [true, false] {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                let plugin_path = runtime.plugin_path.clone();
+                let init_args = runtime.init_args.clone();
+                let message = if missing {
+                    runtime.plugin_path = missing_plugin.to_string_lossy().into_owned();
+                    "Failed to load plugin"
+                } else {
+                    runtime.init_args.push("invalid\0argument".into());
+                    "init argument contains NUL byte"
+                };
+                runtime.set_num_qubits(1);
+                runtime.shot_start(0, None).unwrap();
+                let error = mode
+                    .lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                    .unwrap_err();
+                assert!(error.to_string().contains(message), "{mode:?}: {error}");
+                let failed_end = runtime.shot_end().unwrap_err();
+                assert_eq!(failed_end.to_string(), error.to_string(), "{mode:?}");
+
+                // Repair the configuration: retrying a load would now succeed,
+                // but later input must still return the original failure.
+                runtime.plugin_path = plugin_path;
+                runtime.init_args = init_args;
+                let retry = mode
+                    .lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                    .unwrap_err();
+                assert_eq!(retry.to_string(), error.to_string(), "{mode:?}");
+                assert!(runtime.library.is_none());
+                assert!(runtime.instance.is_none());
+
+                runtime.reset().unwrap();
+                runtime.shot_start(1, None).unwrap();
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                    .unwrap();
+                mode.drain(&mut runtime);
+                runtime.shot_end().unwrap();
+                runtime.reset().unwrap();
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
     fn failed_init_is_latched_until_reset() {
-        use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+        type InitFn = unsafe extern "C" fn(
+            *mut *mut c_void,
+            u64,
+            u64,
+            u32,
+            *const *const std::ffi::c_char,
+        ) -> i32;
+        static REAL_INIT: Mutex<Option<InitFn>> = Mutex::new(None);
+        static FAIL_INIT: AtomicBool = AtomicBool::new(true);
         static INIT_ERRNO: AtomicI32 = AtomicI32::new(0);
         static INIT_CALLS: AtomicUsize = AtomicUsize::new(0);
-        // Returns INIT_ERRNO; with errno 0 it reports success without a handle.
+        // While FAIL_INIT is set, returns INIT_ERRNO without producing a handle.
+        // Otherwise initializes for real.
         unsafe extern "C" fn failing_init(
-            _: *mut *mut c_void,
-            _: u64,
-            _: u64,
-            _: u32,
-            _: *const *const std::ffi::c_char,
+            instance: *mut *mut c_void,
+            n_qubits: u64,
+            start: u64,
+            argc: u32,
+            argv: *const *const std::ffi::c_char,
         ) -> i32 {
             INIT_CALLS.fetch_add(1, Ordering::SeqCst);
-            INIT_ERRNO.load(Ordering::SeqCst)
+            if FAIL_INIT.load(Ordering::SeqCst) {
+                return INIT_ERRNO.load(Ordering::SeqCst);
+            }
+            let init = REAL_INIT.lock().unwrap().expect("real init installed");
+            unsafe { init(instance, n_qubits, start, argc, argv) }
         }
 
         // The fixture library holds one process-wide descriptor, so install the
@@ -4833,6 +4899,7 @@ mod tests {
             unsafe { libloading::Library::new(&public_runtime.plugin_path).unwrap() };
         let mut descriptor =
             Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&public_library).unwrap() });
+        *REAL_INIT.lock().unwrap() = Some(descriptor.init_fn);
         descriptor.init_fn = failing_init;
         let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
         unsafe {
@@ -4847,6 +4914,7 @@ mod tests {
         ] {
             INIT_ERRNO.store(errno, Ordering::SeqCst);
             for mode in LoweringRoute::ALL {
+                FAIL_INIT.store(true, Ordering::SeqCst);
                 INIT_CALLS.store(0, Ordering::SeqCst);
                 let mut runtime = SeleneRuntime::new(&plugin);
                 runtime.init_args.clone_from(&public_runtime.init_args);
@@ -4859,12 +4927,26 @@ mod tests {
                 assert!(runtime.instance.is_none());
                 // No shot is certified for a plugin that never started, and later
                 // input reports the latched failure without retrying init.
-                assert!(runtime.shot_end().is_err());
+                let failed_end = runtime.shot_end().unwrap_err();
+                assert!(
+                    failed_end.to_string().contains(message),
+                    "{mode:?}: {failed_end}"
+                );
                 let retry = mode
                     .lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
                     .unwrap_err();
                 assert!(retry.to_string().contains(message), "{retry}");
                 assert_eq!(INIT_CALLS.load(Ordering::SeqCst), 1);
+
+                FAIL_INIT.store(false, Ordering::SeqCst);
+                runtime.reset().unwrap();
+                runtime.shot_start(1, None).unwrap();
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                    .unwrap();
+                assert_eq!(INIT_CALLS.load(Ordering::SeqCst), 2);
+                mode.drain(&mut runtime);
+                runtime.shot_end().unwrap();
+                runtime.reset().unwrap();
             }
         }
     }
@@ -5050,8 +5132,11 @@ mod tests {
                 .unwrap();
             set((&raw mut *descriptor).cast());
         }
-        for mode in LoweringRoute::ALL {
-            FAIL_SHOT_END.store(true, Ordering::SeqCst);
+        for (mode, fail_descriptor) in LoweringRoute::ALL
+            .into_iter()
+            .flat_map(|mode| [false, true].map(|fail_descriptor| (mode, fail_descriptor)))
+        {
+            FAIL_SHOT_END.store(!fail_descriptor, Ordering::SeqCst);
             SHOT_END_CALLS.store(0, Ordering::SeqCst);
             let mut runtime = SeleneRuntime::new(&plugin);
             runtime.init_args.clone_from(&public_runtime.init_args);
@@ -5061,24 +5146,33 @@ mod tests {
                 .unwrap();
             mode.drain(&mut runtime);
 
-            let error = runtime.shot_end().unwrap_err();
-            assert!(
-                error.to_string().contains("shot_end failed with errno 9"),
-                "{error}"
-            );
-            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), 1);
+            // Invalidate only the descriptor header after a successful drain so
+            // the lookup fails inside shot_end, after it takes active_shot.
+            let struct_size = descriptor.struct_size;
+            let message = if fail_descriptor {
+                descriptor.struct_size = 0;
+                "runtime plugin descriptor is too small"
+            } else {
+                "shot_end failed with errno 9"
+            };
+            let finalized = runtime.shot_end();
+            descriptor.struct_size = struct_size;
+            let error = finalized.unwrap_err();
+            assert!(error.to_string().contains(message), "{mode:?}: {error}");
+            assert!(runtime.active_shot.is_none());
+            let failed_calls = usize::from(!fail_descriptor);
+            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), failed_calls);
             // The shot is not certified on retry, and an otherwise valid gate
-            // reports the latched failure without reaching the plugin.
-            assert!(runtime.shot_end().is_err());
-            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), 1);
+            // reports the latched failure without reaching the plugin, even
+            // after repairing the descriptor.
+            let retry = runtime.shot_end().unwrap_err();
+            assert_eq!(retry.to_string(), error.to_string(), "{mode:?}");
+            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), failed_calls);
             let rxy_calls = RXY_CALLS.load(Ordering::SeqCst);
             let blocked = mode
                 .lower(&mut runtime, &[QuantumOp::X(0).into()])
                 .unwrap_err();
-            assert!(
-                blocked.to_string().contains("shot_end failed with errno 9"),
-                "{blocked}"
-            );
+            assert!(blocked.to_string().contains(message), "{blocked}");
             assert_eq!(RXY_CALLS.load(Ordering::SeqCst), rxy_calls);
 
             // After a successful reset a full shot runs and finalizes for real.
@@ -5093,7 +5187,8 @@ mod tests {
             assert!(RXY_CALLS.load(Ordering::SeqCst) > rxy_calls);
             mode.drain(&mut runtime);
             runtime.shot_end().unwrap();
-            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), 2);
+            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), failed_calls + 1);
+            runtime.reset().unwrap();
         }
     }
 

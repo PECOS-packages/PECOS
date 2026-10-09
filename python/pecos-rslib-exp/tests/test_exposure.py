@@ -587,3 +587,28 @@ def test_stab_mps_bulk_frame_injection_requires_tracking(paulis):
             framed.inject_paulis_in_frame(paulis)
     else:
         framed.inject_paulis_in_frame(paulis)
+
+
+@pytest.mark.parametrize("attribute", ["num_measurements", "detectors", "observables"])
+def test_sim_neo_rebuild_rejects_non_string_metadata(attribute):
+    from pecos.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz([0])
+    circuit.set_meta(attribute, 42)
+    with pytest.raises(ValueError, match=rf"{attribute}.*must be a string"):
+        exp.sim_neo(circuit)
+
+
+def test_sim_neo_coherent_rebuild_accepts_duck_typed_circuit_without_metadata():
+    circuit = _boundary_circuit([[("PZ", [0])], [("MZ", [0])]])
+    rows = (
+        exp.sim_neo(circuit)
+        .quantum(exp.meas_sampling())
+        .noise(exp.depolarizing().idle_rz(0.125))
+        .sampling(exp.monte_carlo(128))
+        .seed(1046)
+        .run()
+    )
+    # No detector constrains the raw measurement; synthesis assigns a coin.
+    assert {tuple(row) for row in rows} == {(0,), (1,)}

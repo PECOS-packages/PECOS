@@ -107,6 +107,8 @@ def pseudo_threshold_code_capacity(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
+    rate_params = {} if determine_rate is codecapacity_logical_rate2 else {"basis": basis}
+
     ps = pc.array(ps)
 
     plog = []
@@ -124,7 +126,7 @@ def pseudo_threshold_code_capacity(
             decoder=decoder,
             verbose=verbose,
             circuit_runner=circuit_runner,
-            basis=basis,
+            **rate_params,
         )
         if verbose and time:
             print(f"Runtime: {time} s")

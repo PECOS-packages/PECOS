@@ -279,10 +279,16 @@ impl PyByteMessage {
         PyBytes::new(py, self.inner.as_bytes()).into()
     }
 
-    /// Check if the message is empty
+    /// Check for zero bytes or a structurally valid zero-message batch.
+    ///
+    /// Raises `RuntimeError` if the batch framing is malformed.
     #[pyo3(text_signature = "($self)")]
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty().unwrap_or(true)
+    fn is_empty(&self) -> PyResult<bool> {
+        self.inner.is_empty().map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Failed to check message emptiness in Python bindings: {e}"
+            ))
+        })
     }
 
     /// Parse quantum operations from the message

@@ -186,6 +186,17 @@ pub(super) fn compare(circuit: &TickCircuit, seed: u64) {
         trace.state.peak_active_width(),
         "seed {seed}"
     );
+    let plan = program.plan(26).unwrap();
+    let planned = plan.sampler().fixed_noise_observed(
+        seed,
+        &noise,
+        |probability, symbol, _| {
+            assert!((probability - trace.probabilities[symbol]).abs() < 1e-10);
+            Some(trace.outcomes[symbol])
+        },
+        |_, _, _| {},
+    );
+    assert_eq!(planned, shot);
 }
 
 fn index(rng: &mut PecosRng, n: usize) -> usize {

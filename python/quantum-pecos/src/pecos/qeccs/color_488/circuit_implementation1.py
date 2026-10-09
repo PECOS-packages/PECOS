@@ -129,6 +129,11 @@ class OneAncillaPerCheck:
         if mapping is None:
             mapping = gate_params.get("mapping")
 
+        forced_outcome = gate_params.get("forced_outcome", None)
+        if forced_outcome is None:
+            forced_outcome = abstract_circuit.metadata.get("forced_outcome", True)
+        measurement_params = {} if forced_outcome else {"forced_outcome": 0}
+
         square_x_ticks = gate_params.get("square_x_ticks", self.square_x_ticks)
         square_z_ticks = gate_params.get("square_z_ticks", self.square_z_ticks)
         octagon_x_ticks = gate_params.get("octagon_x_ticks", self.octagon_x_ticks)
@@ -188,6 +193,7 @@ class OneAncillaPerCheck:
                     datas,
                     ancilla,
                     mapping,
+                    measurement_params,
                 )
 
         return circuit
@@ -218,6 +224,7 @@ class OneAncillaPerCheck:
         datas: list[int | None],
         ancilla: int,
         mapping: dict[Any, Any] | None,
+        measurement_params: dict[str, int],
     ) -> None:
         """Add polygon extraction to the circuit.
 
@@ -230,6 +237,7 @@ class OneAncillaPerCheck:
             datas: List of data qubit indices involved in the check
             ancilla: Index of the ancilla qubit used for the measurement
             mapping: Optional qubit mapping dictionary to apply
+            measurement_params: Parameters for the ancilla measurement
 
         """
         if polygon == "square":
@@ -288,10 +296,6 @@ class OneAncillaPerCheck:
         init_tick = ticks[0]
         meas_tick = ticks[-1]
 
-        if mapping is None:
-            circuit.update({"init |0>": {ancilla}}, tick=init_tick)
-            circuit.update({"measure Z": {ancilla}}, tick=meas_tick)
-
-        else:
-            circuit.update({"init |0>": {mapping[ancilla]}}, tick=init_tick)
-            circuit.update({"measure Z": {mapping[ancilla]}}, tick=meas_tick)
+        locations = {ancilla if mapping is None else mapping[ancilla]}
+        circuit.update({"init |0>": locations}, tick=init_tick)
+        circuit.update({"measure Z": locations}, tick=meas_tick, **measurement_params)

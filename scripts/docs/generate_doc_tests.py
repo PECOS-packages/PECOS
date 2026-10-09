@@ -37,12 +37,17 @@ Supported markers in markdown:
 For Rust code blocks:
     ```rust``` or ```rust,ignore```        - Rust code (ignore = skip)
     <!--cargo-deps: serde, tokio-->        - Cargo dependencies needed
+    <!--test-data: a.ext, b.ext-->         - Stage data for unified cargo tests
+
+Incomplete Rust examples must be explicitly skipped or completed.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +67,7 @@ class CodeBlock:
     block_number: int
     source_file: Path
     line_number: int = 0
+    marker_position: int | None = None
 
     # Markers
     skip: bool = False
@@ -191,6 +197,17 @@ def _rust_needs_cargo(code: str) -> bool:
     return bool(re.search(r"extern\s+crate\s+\w+", code))
 
 
+def _validate_block(block: CodeBlock) -> None:
+    """Reject authoring errors before either generation path can drop a block."""
+    location = f"{block.source_file}: block {block.block_number}"
+    if block.test_data and (block.language != "rust" or block.skip or not _rust_needs_cargo(block.code)):
+        msg = f"{location}: test-data requires an unskipped Rust cargo block in the unified crate"
+        raise ValueError(msg)
+    if block.language == "rust" and not block.skip and _rust_is_incomplete(block.code):
+        msg = f"{location}: incomplete Rust example; complete the example or mark it skipped"
+        raise ValueError(msg)
+
+
 def _parse_marker_comment(comment: str) -> dict:
     """Parse a marker comment and return extracted attributes."""
     result = {
@@ -232,10 +249,11 @@ def _parse_marker_comment(comment: str) -> dict:
         result["skip_if_no_cuda"] = True
 
     # Check for regular skip
-    elif "skip" in comment_lower:
+    # The closing delimiter in <!--skip--> is not a hyphenated marker suffix.
+    if re.search(r"<!--\s*skip(?:-->|\b(?!-))", comment, re.IGNORECASE):
         result["skip"] = True
         # Extract reason if present: <!--skip: reason-->
-        match = re.search(r"skip:\s*(.+?)\s*-->", comment, re.IGNORECASE)
+        match = re.search(r"skip\s*:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             result["skip_reason"] = match.group(1).strip()
 
@@ -292,7 +310,7 @@ def _parse_marker_comment(comment: str) -> dict:
 
     # Check for test data files to copy
     if "test-data" in comment_lower:
-        match = re.search(r"test-data:\s*(.+?)\s*-->", comment, re.IGNORECASE)
+        match = re.search(r"test-data\s*:\s*(.+?)\s*-->", comment, re.IGNORECASE)
         if match:
             files = [f.strip() for f in match.group(1).split(",")]
             result["test_data"] = files
@@ -333,6 +351,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
     blocks = []
     preamble_parts: list[str] = []
     chain_parts: list[str] = []
+    chain_test_data: list[str] = []
     setup_code = ""
     block_number = 0
 
@@ -387,6 +406,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
         else:
             body = cleaned_code
             chain_parts = []
+            chain_test_data = []
         chain_parts.append(cleaned_code)
 
         # Build full code with preamble
@@ -432,6 +452,7 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             block_number=block_number,
             source_file=file_path,
             line_number=line_number,
+            marker_position=match.start(1) if marker_comment else None,
             skip=block_skip,
             skip_reason=block_skip_reason,
             skip_if_no_cuda=attrs["skip_if_no_cuda"],
@@ -448,13 +469,37 @@ def extract_code_blocks(file_path: Path, language: str = "python") -> list[CodeB
             cargo_deps=attrs["cargo_deps"],
             test_data=attrs["test_data"],
         )
+        chain_test_data.extend(block.test_data)
+        if not block.skip:
+            block.test_data = list(dict.fromkeys(chain_test_data))
         blocks.append(block)
 
+    # A document skipped as a whole stages nothing, and its markers may be
+    # illustrative text (as on the page documenting them), so only check
+    # marker placement in documents whose blocks can run.
+    if language == "rust" and not doc_skip:
+        _validate_test_data_markers(content, file_path, blocks)
+    for block in blocks:
+        _validate_block(block)
     return blocks
+
+
+def _validate_test_data_markers(content: str, file_path: Path, rust_blocks: list[CodeBlock]) -> None:
+    """Account for every data marker without changing legacy fence extraction."""
+    staged_markers = {
+        block.marker_position for block in rust_blocks if not block.skip and _rust_needs_cargo(block.code)
+    }
+    for marker in re.finditer(r"<!--.*?-->", content, re.DOTALL):
+        if re.search(r"\btest-data\s*:", marker.group(), re.IGNORECASE) and marker.start() not in staged_markers:
+            line_number = _count_line_number(content, marker.start())
+            msg = f"{file_path}:{line_number}: test-data marker requires a visible, unskipped Rust cargo block"
+            raise ValueError(msg)
 
 
 def generate_test_function(block: CodeBlock, file_stem: str) -> str:
     """Generate a pytest test function for a code block."""
+    _validate_block(block)
+
     # Determine test function name - include language for uniqueness
     if block.test_name:
         func_name = f"test_{_sanitize_name(block.test_name)}"
@@ -469,10 +514,6 @@ def generate_test_function(block: CodeBlock, file_stem: str) -> str:
     if block.skip:
         reason = block.skip_reason or "Marked as skip in documentation"
         lines.append(f'@pytest.mark.skip(reason="{reason}")')
-    elif block.language == "rust" and _rust_is_incomplete(block.code):
-        lines.append(
-            '@pytest.mark.skip(reason="Rust code is incomplete (no main function or is a code snippet)")',
-        )
     elif block.skip_if_no_cuda:
         lines.append(
             '@pytest.mark.skipif(not cuda_available(), reason="CUDA (cupy) not available")',
@@ -927,8 +968,8 @@ def generate_test_file(file_path: Path, blocks: list[CodeBlock]) -> str:
                 "def _check_cuda_rust() -> bool:",
                 '    """Return True if CUDA Rust simulators can initialize."""',
                 "    try:",
-                "        from pecos_rslib_cuda import is_custabilizer_usable, is_custatevec_usable",
-                "        return is_custatevec_usable() and is_custabilizer_usable()",
+                "        from pecos_rslib_cuda import is_custatevec_usable",
+                "        return is_custatevec_usable()",
                 "    except ImportError:",
                 "        return False",
                 "",
@@ -1226,11 +1267,68 @@ def _rust_wrap_as_test(code: str, test_name: str) -> str:
     return "\n".join(result_lines)
 
 
+def _test_data_name_is_safe(name: str) -> bool:
+    """Only allow bare filenames, excluding generator and Cargo metadata."""
+    return (
+        bool(name)
+        and not name.startswith(".")
+        and name not in {"Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain", "rust-toolchain.toml"}
+        and not any(separator in name for separator in ("/", "\\"))
+    )
+
+
+def _stage_rust_test_data(blocks: list[CodeBlock], docs_dir: Path, crate_dir: Path) -> None:
+    """Refresh owned data files in Cargo's integration-test working directory."""
+    manifest = crate_dir / ".test-data-files.json"
+    previous = json.loads(manifest.read_text()) if manifest.exists() else []
+    if not isinstance(previous, list) or any(
+        not isinstance(name, str) or not _test_data_name_is_safe(name) for name in previous
+    ):
+        msg = f"Invalid staged test-data manifest: {manifest}"
+        raise ValueError(msg)
+
+    sources: dict[str, Path] = {}
+    for block in blocks:
+        _validate_block(block)
+        for name in block.test_data:
+            location = f"{block.source_file}: block {block.block_number}"
+            if not _test_data_name_is_safe(name):
+                msg = f"{location}: test-data must name a bare, non-reserved filename: {name!r}"
+                raise ValueError(msg)
+            source = docs_dir / "assets" / "test-data" / name
+            if not source.is_file():
+                msg = f"{location}: missing test-data file {name!r} in {source.parent}"
+                raise ValueError(msg)
+            destination = crate_dir / name
+            if destination.is_symlink() or (
+                destination.exists() and (name not in previous or not destination.is_file())
+            ):
+                msg = f"{location}: cannot overwrite unrelated test-data destination {destination}"
+                raise ValueError(msg)
+            sources[name] = source
+
+    crate_dir.mkdir(parents=True, exist_ok=True)
+
+    # Never infer ownership from an extension or from the source data directory.
+    for name in previous:
+        if name not in sources:
+            (crate_dir / name).unlink(missing_ok=True)
+    for name, source in sorted(sources.items()):
+        shutil.copyfile(source, crate_dir / name)
+    if sources:
+        manifest.write_text(json.dumps(sorted(sources), indent=2) + "\n")
+    else:
+        manifest.unlink(missing_ok=True)
+
+
 def _generate_unified_rust_crate(markdown_files: list[Path], docs_dir: Path, crate_dir: Path) -> None:
     """Generate a unified Rust test crate with all doc examples as #[test] functions.
 
     This compiles dependencies once instead of per-test, making Rust doc tests ~100x faster.
     """
+    blocks_by_file = {md_file: extract_code_blocks(md_file, "rust") for md_file in sorted(markdown_files)}
+    _stage_rust_test_data([block for blocks in blocks_by_file.values() for block in blocks], docs_dir, crate_dir)
+
     tests_dir = crate_dir / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1249,15 +1347,14 @@ def _generate_unified_rust_crate(markdown_files: list[Path], docs_dir: Path, cra
 
     total_tests = 0
 
-    for md_file in sorted(markdown_files):
-        rust_blocks = extract_code_blocks(md_file, "rust")
+    for md_file, rust_blocks in blocks_by_file.items():
         if not rust_blocks:
             continue
 
-        # Filter to blocks that need cargo and are not skipped/incomplete
+        # Filter to blocks that need cargo and are not explicitly skipped
         testable = []
         for i, block in enumerate(rust_blocks, 1):
-            if block.skip or _rust_is_incomplete(block.code):
+            if block.skip:
                 continue
             if not _rust_needs_cargo(block.code):
                 continue
@@ -1354,8 +1451,8 @@ def main() -> None:
 
     for md_file in markdown_files:
         # Extract Python and Rust blocks
-        python_blocks = extract_code_blocks(md_file, "python")
         rust_blocks = extract_code_blocks(md_file, "rust")
+        python_blocks = extract_code_blocks(md_file, "python")
 
         # Combine all blocks
         all_blocks = python_blocks + rust_blocks
@@ -1378,14 +1475,7 @@ def main() -> None:
             continue
 
         # Count skipped blocks
-        total_skipped += sum(
-            1
-            for b in pytest_blocks
-            if b.skip
-            or b.skip_if_no_cuda
-            or b.skip_if_no_cuda_rust
-            or (b.language == "rust" and _rust_is_incomplete(b.code))
-        )
+        total_skipped += sum(1 for b in pytest_blocks if b.skip or b.skip_if_no_cuda or b.skip_if_no_cuda_rust)
 
         # Generate test file
         test_content = generate_test_file(md_file, pytest_blocks)

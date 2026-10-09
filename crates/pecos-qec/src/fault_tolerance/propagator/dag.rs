@@ -692,10 +692,9 @@ pub struct DagFaultInfluenceMap {
     /// All measurements in the circuit (node, qubit, basis).
     ///
     /// The order is this map's single private ordinal, shared by `meas_ids`,
-    /// `detectors`, and the influence data. Which order that is depends on the
-    /// builder (`DagFaultAnalyzer` uses id rank; `InfluenceBuilder` uses
-    /// replay order) -- resolve through `meas_index_of`, never by assuming a
-    /// particular ordering.
+    /// `detectors`, and the influence data. Circuit-backed builders use emission
+    /// order (keyed topological node order, then qubit-list order). Hand-built
+    /// maps define their own order; resolve stable ids through `meas_index_of`.
     pub measurements: Vec<(usize, usize, u8)>,
 
     /// `MeasId` IDs for each measurement, in the same order as `measurements`.
@@ -2089,62 +2088,38 @@ impl<'a> DagFaultAnalyzer<'a> {
         None
     }
 
-    /// Extracts all measurements from the circuit, ordered by [`MeasId`].
+    /// Extracts measurements in emission order: keyed topological node order,
+    /// then each gate's qubit-list order. Stable ids name measurements without
+    /// determining their positions.
     ///
-    /// The id is what names a measurement, so it is what orders them; qubit index
-    /// breaks ties. Measurements carrying no id fall back to topological
-    /// position, which only happens for circuits built outside `DagCircuit`'s
-    /// builders.
-    ///
-    /// Returns `(measurements, meas_ids)` where `measurements` is
-    /// `Vec<(node, qubit, basis)>` and `meas_ids` is empty for circuits whose
-    /// measurements carry no ids.
-    ///
-    /// [`MeasId`]: pecos_core::MeasId
+    /// Returns `(measurements, meas_ids)`, with parallel ids when any are present.
+    /// Missing ids use `MeasId::from_raw(usize::MAX)`; if all are missing the id
+    /// vector is empty.
     #[must_use]
     pub fn extract_measurements(&self) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
-        let mut entries = Vec::new(); // (sort_key, qubit, node, basis, Option<MeasId>)
-
-        for &node in self.propagator.topo_order() {
+        let mut measurements = Vec::new();
+        let mut meas_ids = Vec::new();
+        let mut has_meas_ids = false;
+        for node in crate::fault_tolerance::circuit_definitions::dag_circuit_emission_order(
+            self.propagator.dag,
+        ) {
             if let Some(gate) = self.propagator.gate(node) {
                 let basis = match gate.gate_type {
                     GateType::MZ | GateType::MeasureFree | GateType::MPZ => 0, // Z-basis
                     GateType::MX => 1,                                         // X-basis
                     _ => continue,
                 };
-
-                if gate.meas_ids.is_empty() {
-                    let topo_pos = self.propagator.topo_position(node);
-                    for qubit in &gate.qubits {
-                        entries.push((topo_pos, qubit.index(), node, basis, None));
-                    }
-                } else {
-                    for (i, qubit) in gate.qubits.iter().enumerate() {
-                        let mr = gate.meas_ids.get(i).copied();
-                        let sort_key = mr.map_or(usize::MAX, pecos_core::MeasId::index);
-                        entries.push((sort_key, qubit.index(), node, basis, mr));
-                    }
+                for (index, qubit) in gate.qubits.iter().enumerate() {
+                    measurements.push((node, qubit.index(), basis));
+                    let id = gate.meas_ids.get(index).copied();
+                    has_meas_ids |= id.is_some();
+                    meas_ids.push(id.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)));
                 }
             }
         }
-
-        entries.sort_by_key(|&(sort_key, qubit, _, _, _)| (sort_key, qubit));
-
-        let has_meas_ids = entries.iter().any(|(_, _, _, _, mr)| mr.is_some());
-        let meas_ids = if has_meas_ids {
-            entries
-                .iter()
-                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let measurements = entries
-            .into_iter()
-            .map(|(_, qubit, node, basis, _)| (node, qubit, basis))
-            .collect();
-
+        if !has_meas_ids {
+            meas_ids.clear();
+        }
         (measurements, meas_ids)
     }
 
@@ -2725,18 +2700,7 @@ mod tests {
     // Helper Functions
     // =========================================================================
 
-    /// Measurement extraction orders by `MeasId`, never by topological position.
-    ///
-    /// Id-less circuits used to fall back to topological position, so the two
-    /// orderings disagreed for circuits whose wiring does not follow the order
-    /// the measurements were written. The id is what names a measurement, so it
-    /// is what orders them.
-    ///
-    /// For minted ids that comes out as the order the program writes its
-    /// measurements, which is what this case covers. It is a *consequence* of
-    /// minting being sequential, not the rule -- see
-    /// `extraction_follows_supplied_ids_not_the_order_they_were_added` for the
-    /// case where the two differ.
+    /// Minted ids and emission positions agree on an unedited circuit.
     #[test]
     fn minted_ids_extract_in_the_order_the_measurements_were_written() {
         let mut dag = DagCircuit::new();
@@ -2765,23 +2729,14 @@ mod tests {
         );
     }
 
-    /// Supplied ids own the numbering, so extraction follows them even when they
-    /// run counter to the order the measurements were added.
-    ///
-    /// `mz_with_ids` accepts external ids -- Guppy result ids, where the number
-    /// is the result index -- and those need not arrive in ascending order. So
-    /// "id order" is the rule; matching the order of addition is not.
+    /// Supplied ids name measurements without ordering them.
     #[test]
-    fn extraction_follows_supplied_ids_not_the_order_they_were_added() {
+    fn extraction_follows_emission_not_supplied_id_order() {
         use pecos_core::MeasId;
         use pecos_quantum::Gate;
 
-        // Three measurements whose insertion order, topological depth and id
-        // order are pairwise different, so passing this test means following the
-        // ids and nothing else:
-        //   insertion   q0, q1, q2
-        //   topological q1, q2, q0  (by chain depth)
-        //   id order    q2, q0, q1  (ids 1, 5, 9)
+        // The keyed walk visits the inserted q0, q1, q2 measurements in that
+        // order. Their ids are 5, 9, 1; sorting ids would instead give q2,q0,q1.
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1, 2]);
         dag.h(&[0]);
@@ -2804,26 +2759,23 @@ mod tests {
 
         assert_eq!(
             measurements.iter().map(|&(_, q, _)| q).collect::<Vec<_>>(),
-            vec![2, 0, 1],
-            "extraction must follow the supplied ids, not insertion or topological order"
+            vec![0, 1, 2],
+            "extraction must follow emission order"
         );
         assert_eq!(
             meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
-            vec![1, 5, 9]
+            vec![5, 9, 1]
         );
     }
 
-    /// `meas_index_of` resolves an id to the map's own ordinal (id-rank
-    /// order), which the scrambled supplied ids keep distinct from both the
-    /// id values and insertion order.
+    /// `meas_index_of` resolves an id to the map's emission ordinal.
     #[test]
     fn meas_index_of_resolves_against_the_maps_own_ordering() {
         use pecos_core::MeasId;
         use pecos_quantum::Gate;
 
-        // Ids (7, 9, 4) on measurement nodes (3, 4, 5): no id equals its node,
-        // and no id equals its rank (sorted [4, 7, 9] -> ranks 0, 1, 2), so all
-        // three spaces are pairwise distinct for every entry.
+        // q0, q1, q2 emit ids 7, 9, 4 at positions 0, 1, 2 respectively.
+        // Neither id values nor id ranks determine those positions.
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1, 2]);
         for (qubit, id) in [(0usize, 7usize), (1, 9), (2, 4)] {
@@ -2835,11 +2787,11 @@ mod tests {
         let map = DagFaultAnalyzer::new(&dag).build_influence_map();
         assert_eq!(
             map.meas_index_of(MeasId::from_raw(7)),
-            Some(1),
-            "id-rank order is [4, 7, 9], so MeasId(7) is index 1"
+            Some(0),
+            "emission order is [7, 9, 4], so MeasId(7) is index 0"
         );
-        assert_eq!(map.meas_index_of(MeasId::from_raw(9)), Some(2));
-        assert_eq!(map.meas_index_of(MeasId::from_raw(4)), Some(0));
+        assert_eq!(map.meas_index_of(MeasId::from_raw(9)), Some(1));
+        assert_eq!(map.meas_index_of(MeasId::from_raw(4)), Some(2));
         assert_eq!(
             map.meas_index_of(MeasId::from_raw(2)),
             None,

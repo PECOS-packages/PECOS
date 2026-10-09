@@ -286,6 +286,15 @@ pecos_engine_reset(engine);
 pecos_engine_free(engine);
 ```
 
+The v1 `ByteMessage` readers reject malformed framing and batches containing the
+wrong message type. Gate processing accepts only Gate messages; outcome parsing
+accepts only Outcome messages with exactly four payload bytes. The length passed
+with a batch must equal the batch header's `total_size`, so pass the exact message
+length, not the capacity of a larger buffer. On a reader error,
+`pecos_engine_process` and `pecos_parse_outcomes` return `-1` and set their output
+pointer to null and output length to zero. Callers should check the return codes
+before using output buffers. Zero-message batches are valid and return empty results.
+
 ## Compatibility with pecos-neo
 
 Foreign simulators work with both the current `pecos-engines` stack and the experimental
@@ -298,6 +307,9 @@ Since `ForeignSimulator` and `PyForeignSimulator` implement `CliffordGateable`, 
 into either stack without modification:
 
 ```rust
+use pecos_foreign::ForeignSimulator;
+use pecos_neo::CircuitRunner;
+
 // Works with pecos-neo's generic runner
 let runner = CircuitRunner::<ForeignSimulator>::new();
 ```

@@ -19,10 +19,7 @@ import math
 import random
 
 import pytest
-
-pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
-
-from pecos_rslib_exp import (  # noqa: E402
+from pecos_rslib_exp import (
     FrontierCommitteeDecoder,
     FrontierDecoder,
 )

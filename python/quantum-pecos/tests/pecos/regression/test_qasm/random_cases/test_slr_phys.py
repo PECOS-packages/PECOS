@@ -48,7 +48,6 @@ def test_bell() -> None:
     assert SlrConverter(prog).qasm() == qasm
 
 
-@pytest.mark.optional_dependency
 def test_bell_qir() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -64,7 +63,6 @@ def test_bell_qir() -> None:
     assert "__quantum__qis__h__body" in qir
 
 
-@pytest.mark.optional_dependency
 def test_bell_qreg_qir() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -157,7 +155,6 @@ def test_strange_program() -> None:
     assert SlrConverter(prog).qasm() == qasm
 
 
-@pytest.mark.optional_dependency
 def test_control_flow_qir() -> None:
     """Test a program with control flow into QIR."""
     prog = Main(
@@ -194,7 +191,6 @@ def test_control_flow_qir() -> None:
     assert "__quantum__qis__h__body" in qir
 
 
-@pytest.mark.optional_dependency
 def test_plus_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(
@@ -211,7 +207,6 @@ def test_plus_qir() -> None:
     assert "add" in qir
 
 
-@pytest.mark.optional_dependency
 def test_nested_xor_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(
@@ -230,7 +225,6 @@ def test_nested_xor_qir() -> None:
     assert "xor" in qir
 
 
-@pytest.mark.optional_dependency
 def test_minus_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(

@@ -23,7 +23,6 @@ from pecos.analysis.stabilizer_funcs import circ2set, find_stab, op_commutes, re
 from pecos.circuits import LogicalCircuit, QuantumCircuit
 from pecos.decoders import MWPM2D
 from pecos.engines.circuit_runners import Standard
-from pecos.noise.parent_class_error_gen import ErrorCircuits
 from pecos.simulators import SparseStabPy
 
 if TYPE_CHECKING:
@@ -133,8 +132,8 @@ def t_errors_check(
 
     logic = syn_extract if logical_gate is None else logical_gate
 
-    logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]
-    logical_ops_plus = qecc.instruction("instr_init_plus").logical_stabs[0]
+    logical_ops_zero = qecc.instruction("instr_init_zero").final_logical_ops[0]["Z"]
+    logical_ops_plus = qecc.instruction("instr_init_plus").final_logical_ops[0]["X"]
 
     if decoder is None:
         decoder = MWPM2D(qecc)
@@ -147,10 +146,6 @@ def t_errors_check(
 
         for error_comb in error_combinations:
             error_circ = QuantumCircuit(1)
-            errors = ErrorCircuits()
-
-            errors.simple_add(0, 0, 0, before_errors=error_circ)
-
             for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
@@ -160,23 +155,25 @@ def t_errors_check(
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
 
-            output, _ = circ_sim.run(state_zero, logic, error_circuits=errors)
-            circ_sim.run(state_plus, logic, error_circuits=errors)
+            circ_sim.run(state_zero, error_circ)
+            circ_sim.run(state_plus, error_circ)
+            output, _ = circ_sim.run(state_zero, logic)
+            circ_sim.run(state_plus, logic)
 
             syn = output.simplified(last=True)
 
             if syn:
                 # Recovery operation
-                recovery = decoder.decode(syn)
+                recovery = decoder.decode(output)
                 circ_sim.run(state_zero, recovery)
                 circ_sim.run(state_plus, recovery)
 
-            sign_zero = state_zero.logical_sign(*logical_ops_zero)
-            sign_plus = state_plus.logical_sign(*logical_ops_plus)
+            sign_zero = state_zero.logical_sign(logical_ops_zero)
+            sign_plus = state_plus.logical_sign(logical_ops_plus)
 
             if sign_zero or sign_plus:
                 if verbose:
-                    print(errors)
+                    print(error_circ)
                 return False, len(error_comb)
 
             if logical_gate is None:  # The following is only required for EC.
@@ -187,7 +184,7 @@ def t_errors_check(
                 if syn:
                     if verbose:
                         print(f"syndromes = {syn}")
-                        print(errors)
+                        print(error_circ)
                     return False, len(error_comb)
 
     return True, int(t_weight)
@@ -276,8 +273,8 @@ def fault_check(
     else:
         logic = logical_gate
 
-    logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]
-    logical_ops_plus = qecc.instruction("instr_init_plus").logical_stabs[0]
+    logical_ops_zero = qecc.instruction("instr_init_zero").final_logical_ops[0]["Z"]
+    logical_ops_plus = qecc.instruction("instr_init_plus").final_logical_ops[0]["X"]
 
     if decoder is None:
         decoder = MWPM2D(qecc)
@@ -290,10 +287,6 @@ def fault_check(
 
         for error_comb in error_combinations:
             error_circ = QuantumCircuit(1)
-            errors = ErrorCircuits()
-
-            errors.simple_add(0, 0, 0, before_errors=error_circ)
-
             for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
@@ -303,23 +296,25 @@ def fault_check(
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
 
-            output, _ = circ_sim.run(state_zero, logic, error_circuits=errors)
-            circ_sim.run(state_plus, logic, error_circuits=errors)
+            circ_sim.run(state_zero, error_circ)
+            circ_sim.run(state_plus, error_circ)
+            output, _ = circ_sim.run(state_zero, logic)
+            circ_sim.run(state_plus, logic)
 
             syn = output.simplified(last=True)
 
             if syn:
                 # Recovery operation
-                recovery = decoder.decode(syn)
+                recovery = decoder.decode(output)
                 circ_sim.run(state_zero, recovery)
                 circ_sim.run(state_plus, recovery)
 
-            sign_zero = state_zero.logical_sign(*logical_ops_zero)
-            sign_plus = state_plus.logical_sign(*logical_ops_plus)
+            sign_zero = state_zero.logical_sign(logical_ops_zero)
+            sign_plus = state_plus.logical_sign(logical_ops_plus)
 
             if sign_zero or sign_plus:
                 if verbose:
-                    print(errors)
+                    print(error_circ)
                 return False, len(error_comb)
 
     return True, int(t_weight)
@@ -329,7 +324,7 @@ def distance_check(
     qecc: QECCProtocol,
     mode: str | None = None,
     dist_mode: str | None = None,
-) -> int:
+) -> str | bool:
     """Determines the distance of the code by looking for the smallest logical errors.
 
     Args:
@@ -340,8 +335,8 @@ def distance_check(
 
     Returns:
     -------
-        Tuple (bool, int). The bool is whether the check is passed. The int is the weight of error last checked. If the
-        bool is True then int == t_weight. If bool == False, int == weight of error that caused a logical error.
+        A description of the first logical error found, or False if none is found.
+        The default mode searches in increasing error size.
 
     """
     qudit_set = qecc.data_qudit_set
@@ -354,10 +349,11 @@ def distance_check(
 
     circ_sim.run(state, ideal_initlogic)
 
-    logical_op, delogical_op = qecc.instruction("instr_init_zero").logical_stabs[0]
+    logical_ops = qecc.instruction("instr_init_zero").final_logical_ops[0]
+    logical_op, delogical_op = logical_ops["Z"], logical_ops["X"]
 
-    destab_xs, destab_zs = circ2set(delogical_op.items(params=False))
-    stab_xs, stab_zs = circ2set(logical_op.items(params=False))
+    destab_xs, destab_zs = circ2set((symbol, locations) for symbol, locations, _ in delogical_op.items())
+    stab_xs, stab_zs = circ2set((symbol, locations) for symbol, locations, _ in logical_op.items())
 
     remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs)
 

@@ -4,10 +4,7 @@ This test explores whether Selene supports multiple modules or processes just th
 similar to the PECOS compiler behavior we observed.
 """
 
-import json
 import re
-import tempfile
-from pathlib import Path
 
 import pytest
 from guppylang import GuppyModule, guppy
@@ -155,61 +152,3 @@ def test_normalizer_keeps_selene_functions() -> None:
         expected.add(components[-1])
     assert declarations == expected
     assert "pecos_qis_runtime_barrier_qubit_hugr" in declarations
-
-
-def test_hugr_structure_analysis() -> None:
-    """Analyze the structure of HUGR to understand the format."""
-
-    @guppy
-    def test_func() -> bool:
-        q = qubit()
-        h(q)
-        return measure(q).read()
-
-    hugr = test_func.compile()
-    hugr_str = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)
-
-    print("HUGR string format analysis:")
-    print(f"- Length: {len(hugr_str)}")
-    print(f"- Starts with: {hugr_str[:20]}")
-
-    # Extract JSON from HUGR string
-    hugr_json = hugr_str
-    if hugr_str.startswith("HUGRi"):
-        json_start = hugr_str.find('{"modules"')
-        if json_start != -1:
-            hugr_json = hugr_str[json_start:]
-        else:
-            print("No JSON found in HUGR string")
-            return
-
-    # Parse and analyze the JSON structure
-    try:
-        data = json.loads(hugr_json)
-        print("HUGR JSON Structure Analysis:")
-        print(f"- Top-level keys: {list(data.keys())}")
-
-        if "modules" in data:
-            modules = data["modules"]
-            print(f"- Number of modules: {len(modules)}")
-
-            for i, module_data in enumerate(modules):
-                print(f"- Module {i} keys: {list(module_data.keys())}")
-
-                if "nodes" in module_data:
-                    nodes = module_data["nodes"]
-                    func_nodes = [n for n in nodes if n.get("op") == "FuncDefn"]
-                    print(f"  - Function definition nodes: {len(func_nodes)}")
-
-                    for func_node in func_nodes:
-                        func_name = func_node.get("name", "unnamed")
-                        print(f"    - Function: {func_name}")
-
-        # Save the full structure for manual inspection
-        debug_file = Path(tempfile.gettempdir()) / "hugr_structure.json"
-        debug_file.write_text(json.dumps(data, indent=2))
-        print(f"Full HUGR structure saved to: {debug_file}")
-
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse HUGR JSON: {e}")
-        print(f"First 1000 chars: {hugr_json[:1000]}")

@@ -17,6 +17,7 @@
 //!
 //! For a full guide, see `docs/user-guide/fault-tolerance.md`.
 
+pub mod circuit_definitions;
 pub mod circuit_runner;
 pub mod correlation;
 pub mod decoder_integration;

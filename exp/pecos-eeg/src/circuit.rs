@@ -14,8 +14,9 @@ use crate::eeg::EegType;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::{
     BitmaskStorage, Conjugated, conjugate_cx, conjugate_cy, conjugate_cz, conjugate_h,
-    conjugate_swap, conjugate_sx, conjugate_sxdg, conjugate_sy, conjugate_sydg, conjugate_sz,
-    conjugate_szdg, conjugate_x, conjugate_y, conjugate_z,
+    conjugate_swap, conjugate_sx, conjugate_sxdg, conjugate_sxx, conjugate_sxxdg, conjugate_sy,
+    conjugate_sydg, conjugate_syy, conjugate_syydg, conjugate_sz, conjugate_szdg, conjugate_szz,
+    conjugate_szzdg, conjugate_x, conjugate_y, conjugate_z,
 };
 use pecos_core::{Gate, QubitId};
 
@@ -337,7 +338,8 @@ fn propagate_s(mut label: Bm, remaining: &[Gate]) -> (Bm, f64) {
 ///
 /// # Panics
 ///
-/// Panics if the qubit count is not a multiple of the gate's arity.
+/// Panics for unsupported gates or if the qubit count is not a multiple
+/// of the gate's arity.
 fn conjugate_by_gate(label: &Bm, gate: &Gate) -> Option<Conjugated<smallvec::SmallVec<[u64; 8]>>> {
     if gate.qubits.is_empty() {
         return None;
@@ -363,6 +365,13 @@ fn conjugate_by_gate(label: &Bm, gate: &Gate) -> Option<Conjugated<smallvec::Sma
 }
 
 /// Forward conjugation by one operand group of a gate.
+///
+/// `RZ` is modelled in `analyze_with_noise` as a first-order coherent H_Z
+/// generator and leaves labels unchanged here. This assumes small angles:
+/// omitted cross terms are O(angle x rate).
+///
+/// # Panics
+/// Panics for unsupported gates, naming the gate type.
 fn conjugate_operands(
     label: &Bm,
     gate_type: GateType,
@@ -385,7 +394,22 @@ fn conjugate_operands(
         GateType::CY => Some(conjugate_cy(label, q0(), q1())),
         GateType::CZ => Some(conjugate_cz(label, q0(), q1())),
         GateType::SWAP => Some(conjugate_swap(label, q0(), q1())),
-        _ => None,
+        GateType::SZZ => Some(conjugate_szz(label, q0(), q1())),
+        GateType::SZZdg => Some(conjugate_szzdg(label, q0(), q1())),
+        GateType::SXX => Some(conjugate_sxx(label, q0(), q1())),
+        GateType::SXXdg => Some(conjugate_sxxdg(label, q0(), q1())),
+        GateType::SYY => Some(conjugate_syy(label, q0(), q1())),
+        GateType::SYYdg => Some(conjugate_syydg(label, q0(), q1())),
+        GateType::MZ
+        | GateType::MeasureFree
+        | GateType::I
+        | GateType::Idle
+        | GateType::QFree
+        | GateType::RZ => None,
+        // Meta gates (`GateType::is_meta`, e.g. a tracked Pauli's position
+        // marker) do not affect the state.
+        meta if meta.is_meta() => None,
+        other => panic!("EEG forward: unsupported gate type {other:?}"),
     }
 }
 

@@ -309,15 +309,22 @@ impl<'a> InfluenceBuilder<'a> {
     /// non-measurement gate, or a tracked Pauli with no meta gate. Dropping
     /// such references silently produced outputs with missing propagation
     /// terms.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a resolved measurement names a missing gate, violating
+    /// `DagCircuit::find_measurement`'s measurement-reference invariant.
     pub fn with_circuit_annotations(mut self) -> Result<Self, AnnotationIngestError> {
         let circuit = self.dag;
-        // Find TrackedPauliMeta nodes in topological order.
-        // The nth meta-gate corresponds to the nth tracked-Pauli annotation.
-        let meta_nodes: Vec<usize> = circuit
-            .topological_order()
-            .into_iter()
-            .filter(|&node| circuit.gate(node).is_some_and(|g| g.gate_type.is_meta()))
-            .collect();
+        // Meta gates are inserted when their annotations are added, so on an
+        // auto-wired DAG node-index order is annotation order. The keyed emission
+        // walk preserves that pairing even when DFS visits independent qubit
+        // chains in the opposite order.
+        let meta_nodes: Vec<usize> =
+            super::circuit_definitions::dag_circuit_emission_order(circuit)
+                .into_iter()
+                .filter(|&node| circuit.gate(node).is_some_and(|g| g.gate_type.is_meta()))
+                .collect();
 
         let mut operator_idx = 0;
         let mut ingested = Vec::new();
@@ -326,9 +333,8 @@ impl<'a> InfluenceBuilder<'a> {
                 pecos_quantum::AnnotationKind::Observable { measurement_ids } => {
                     let mut terms = Vec::new();
                     for &meas_id in measurement_ids {
-                        // Each id names one measurement, so each term is Z on
-                        // that measurement's own qubit -- not a Z-spray over
-                        // every qubit of a batched node.
+                        // Each id seeds its measurement basis on its own qubit,
+                        // including when it belongs to a batched node.
                         let mref = circuit.find_measurement(meas_id).map_err(|source| {
                             AnnotationIngestError::ObservableRefUnresolved {
                                 annotation_index,
@@ -336,8 +342,14 @@ impl<'a> InfluenceBuilder<'a> {
                                 source,
                             }
                         })?;
+                        let gate = circuit.gate(mref.node).expect("resolved measurement node");
+                        let pauli = if gate.gate_type == pecos_quantum::GateType::MX {
+                            PauliString::xs(&[mref.qubit.index()])
+                        } else {
+                            PauliString::zs(&[mref.qubit.index()])
+                        };
                         terms.push(PauliPropagationTerm {
-                            pauli: PauliString::zs(&[mref.qubit.index()]),
+                            pauli,
                             start_node: Some(mref.node),
                         });
                     }
@@ -418,7 +430,7 @@ impl<'a> InfluenceBuilder<'a> {
     ///
     /// See [`build`](Self::build).
     pub(crate) fn run_symbolic_simulation(&self) -> Result<MeasurementInfo, InfluenceBuildError> {
-        let topo_order = self.propagator.topo_order();
+        let topo_order = super::circuit_definitions::dag_circuit_emission_order(self.dag);
 
         // Determine number of qubits from the circuit
         let max_qubit = topo_order
@@ -438,7 +450,7 @@ impl<'a> InfluenceBuilder<'a> {
         let mut meas_idx = 0;
 
         // Execute circuit symbolically
-        for &node in topo_order {
+        for &node in &topo_order {
             if let Some(op) = self.dag.gate(node) {
                 let qubits: Vec<usize> = op.qubits.iter().map(pecos_core::QubitId::index).collect();
 
@@ -1183,6 +1195,39 @@ mod tests {
     use super::*;
     use crate::fault_tolerance::propagator::DemOutputKind;
     use pecos_quantum::DagCircuit;
+
+    #[test]
+    fn emission_replay_determinism_matches_tick_history() {
+        use crate::fault_tolerance::fault_sampler::symbolic_measurement_history;
+        use pecos_quantum::TickCircuit;
+
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick().h(&[0]);
+        tc.tick().mz(&[0, 1]);
+        tc.tick().mz(&[0]);
+        let dag = DagCircuit::try_from(&tc).unwrap();
+        // The cross-check only exercises the replay order if DFS differs here.
+        assert_ne!(
+            dag.topological_order(),
+            crate::fault_tolerance::circuit_definitions::dag_circuit_emission_order(&dag)
+        );
+        let replay = InfluenceBuilder::new(&dag)
+            .expect("supported circuit")
+            .run_symbolic_simulation()
+            .unwrap();
+        let tick = symbolic_measurement_history(&tc).unwrap();
+        let flags = |history: &pecos_simulators::symbolic_sparse_stab::MeasurementHistory| {
+            history
+                .iter()
+                .map(|m| m.is_deterministic)
+                .collect::<Vec<_>>()
+        };
+        // H q0 makes its first readout random; q1 is prepared zero; repeating
+        // q0 then deterministically returns its earlier random bit.
+        assert_eq!(flags(&tick), [false, true, true]);
+        assert_eq!(flags(&replay.history), flags(&tick));
+    }
 
     fn half_turn_history_matches_named_and_differs_from_removed(two_qubit: bool) {
         use pecos_core::Gate;

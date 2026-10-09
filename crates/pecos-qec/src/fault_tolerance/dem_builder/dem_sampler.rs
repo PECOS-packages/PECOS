@@ -2062,6 +2062,8 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     detector_records: Vec<Vec<i32>>,
     observable_records: Vec<Vec<i32>>,
     measurement_order: Option<Vec<usize>>,
+    detectors_json: Option<String>,
+    observables_json: Option<String>,
     num_tc_measurements: Option<usize>,
 }
 
@@ -2091,6 +2093,8 @@ impl<'a> SamplingEngineBuilder<'a> {
             detector_records: Vec::new(),
             observable_records: Vec::new(),
             measurement_order: None,
+            detectors_json: None,
+            observables_json: None,
             num_tc_measurements: None,
         }
     }
@@ -2161,11 +2165,13 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed or missing required fields.
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using the final measurement order.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
-        self.detector_records =
-            super::builder::parse_detector_record_vectors(json, self.influence_map)
-                .map_err(|err| err.to_string())?;
+        super::builder::validate_sampler_json(json, self.influence_map, true)
+            .map_err(|err| err.to_string())?;
+        self.detectors_json = Some(json.to_string());
         Ok(self)
     }
 
@@ -2174,12 +2180,13 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed, fails schema validation, or
-    /// references measurements out of range for the circuit.
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using the final measurement order.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
-        self.observable_records =
-            super::builder::parse_observable_record_vectors(json, self.influence_map)
-                .map_err(|err| err.to_string())?;
+        super::builder::validate_sampler_json(json, self.influence_map, false)
+            .map_err(|err| err.to_string())?;
+        self.observables_json = Some(json.to_string());
         Ok(self)
     }
 
@@ -2187,6 +2194,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn with_detector_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.detector_records = records;
+        self.detectors_json = None;
         self
     }
 
@@ -2194,6 +2202,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn with_observable_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.observable_records = records;
+        self.observables_json = None;
         self
     }
 
@@ -2214,8 +2223,40 @@ impl<'a> SamplingEngineBuilder<'a> {
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
     /// influence map, or a configuration error for an invalid replacement mode
-    /// or an invalid noise or signature channel.
-    pub fn build(self) -> Result<SamplingEngine, super::DemBuilderError> {
+    /// or an invalid noise or signature channel. Invalid record ranges and
+    /// incomplete measurement orders are rejected for non-empty maps. On an
+    /// empty map, records remain opaque coordinates and bounds are not checked.
+    pub fn build(mut self) -> Result<SamplingEngine, super::DemBuilderError> {
+        let im_to_tc = super::builder::sampler_measurement_mapping(
+            self.influence_map,
+            self.measurement_order.as_deref(),
+        )?;
+        if let Some(json) = &self.detectors_json {
+            self.detector_records = super::builder::parse_detector_record_vectors(
+                json,
+                self.influence_map,
+                im_to_tc.as_deref(),
+            )?;
+        }
+        if let Some(json) = &self.observables_json {
+            self.observable_records = super::builder::parse_observable_record_vectors(
+                json,
+                self.influence_map,
+                im_to_tc.as_deref(),
+            )?;
+        }
+        let num_measurements = self.influence_map.measurements.len();
+        super::builder::validate_sampler_records(
+            "Detector",
+            &self.detector_records,
+            num_measurements,
+        )?;
+        super::builder::validate_sampler_records(
+            "Observable",
+            &self.observable_records,
+            num_measurements,
+        )?;
+
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
@@ -2259,7 +2300,6 @@ impl<'a> SamplingEngineBuilder<'a> {
         let num_tc_measurements = self.num_tc_measurements.unwrap_or(num_im_measurements);
 
         // Build IM -> TC index mapping
-        let im_to_tc = self.build_im_to_tc_mapping();
         let mechanism_context = FaultMechanismContext {
             im_to_tc: im_to_tc.as_deref(),
             influence_observable_ids: &influence_observable_ids,
@@ -2480,39 +2520,6 @@ impl<'a> SamplingEngineBuilder<'a> {
             num_dem_outputs,
             idle_noise_residuals,
         })
-    }
-
-    /// Build mapping from influence map measurement indices to `TickCircuit` indices.
-    fn build_im_to_tc_mapping(&self) -> Option<Vec<usize>> {
-        let tc_order = self.measurement_order.as_ref()?;
-
-        // Build (qubit, occurrence) -> TC index mapping
-        // Use BTreeMap for deterministic iteration order
-        let mut qubit_occurrences: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for (tc_idx, &qubit) in tc_order.iter().enumerate() {
-            qubit_occurrences.entry(qubit).or_default().push(tc_idx);
-        }
-
-        // Track how many times we've seen each qubit in the IM
-        let mut qubit_seen_count: BTreeMap<usize, usize> = BTreeMap::new();
-
-        // For each IM measurement, find corresponding TC index
-        let mapping: Vec<usize> = self
-            .influence_map
-            .measurements
-            .iter()
-            .map(|&(_node, qubit, _basis)| {
-                let occurrence = *qubit_seen_count.entry(qubit).or_insert(0);
-                qubit_seen_count.insert(qubit, occurrence + 1);
-
-                qubit_occurrences
-                    .get(&qubit)
-                    .and_then(|indices| indices.get(occurrence).copied())
-                    .unwrap_or(usize::MAX)
-            })
-            .collect();
-
-        Some(mapping)
     }
 
     /// Process a single Pauli fault (prep X error, measurement X error).
@@ -3199,12 +3206,12 @@ mod tests {
     fn test_record_vectors_empty() {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
-        let records = parse_detector_record_vectors("[]", &im).unwrap();
+        let records = parse_detector_record_vectors("[]", &im, None).unwrap();
         assert!(
             records.is_empty(),
             "expected no detector record vectors, got {records:?}"
         );
-        let records = parse_detector_record_vectors("", &im).unwrap();
+        let records = parse_detector_record_vectors("", &im, None).unwrap();
         assert!(
             records.is_empty(),
             "expected no detector record vectors, got {records:?}"
@@ -3216,7 +3223,7 @@ mod tests {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
         let json = r#"[{"id": 0, "records": [-1, -5]}, {"id": 1, "records": [-2, -3, -4]}]"#;
-        let result = parse_detector_record_vectors(json, &im).unwrap();
+        let result = parse_detector_record_vectors(json, &im, None).unwrap();
         assert_eq!(result, vec![vec![-1, -5], vec![-2, -3, -4]]);
     }
 
@@ -3227,11 +3234,13 @@ mod tests {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
         // Non-list top level (previously -> empty, accepted).
-        assert!(parse_detector_record_vectors("{}", &im).is_err());
+        assert!(parse_detector_record_vectors("{}", &im, None).is_err());
         // Non-integer record value (previously dropped via filter_map(parse.ok)).
-        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,"bad"]}]"#, &im).is_err());
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1,"bad"]}]"#, &im, None).is_err()
+        );
         // Entry referencing neither records nor meas_ids (previously -> empty vec).
-        assert!(parse_detector_record_vectors(r#"[{"id":0}]"#, &im).is_err());
+        assert!(parse_detector_record_vectors(r#"[{"id":0}]"#, &im, None).is_err());
     }
 
     #[test]
@@ -3248,24 +3257,40 @@ mod tests {
         let im3 = im_with_n_measurements(3);
         let im0 = im_with_n_measurements(0);
         // Out-of-range negative offset on a 1-measurement circuit.
-        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1).is_err());
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1, None).is_err()
+        );
         // Out-of-range observable offset, too.
-        assert!(parse_observable_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1).is_err());
+        assert!(
+            parse_observable_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1, None).is_err()
+        );
         // Out-of-range (positional) meas_id.
-        assert!(parse_detector_record_vectors(r#"[{"id":0,"meas_ids":[0,999]}]"#, &im1).is_err());
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"meas_ids":[0,999]}]"#, &im1, None).is_err()
+        );
         // Non-redundant co-present records + meas_ids (3-measurement circuit:
         // records[-1] -> index 2, meas_ids[0] -> index 0).
         assert!(
-            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im3)
-                .is_err()
+            parse_detector_record_vectors(
+                r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#,
+                &im3,
+                None
+            )
+            .is_err()
         );
         // Redundant co-presence is accepted (both -> index 0).
         assert!(
-            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im1)
-                .is_ok()
+            parse_detector_record_vectors(
+                r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#,
+                &im1,
+                None
+            )
+            .is_ok()
         );
         // Empty influence map keeps the opaque escape hatch (no range check).
-        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-99]}]"#, &im0).is_ok());
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-99]}]"#, &im0, None).is_ok()
+        );
     }
 
     #[test]

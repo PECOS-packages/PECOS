@@ -14,8 +14,7 @@ import re
 from functools import cache, lru_cache
 
 import pytest
-
-stim = pytest.importorskip("stim")
+import stim
 
 DIRECT_SOURCE_TYPES = {"Direct", "DirectOneSidedComponent"}
 FAST_DISTANCE = pytest.param(3, id="3")

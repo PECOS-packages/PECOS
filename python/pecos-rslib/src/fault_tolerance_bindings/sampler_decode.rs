@@ -1,12 +1,12 @@
 //! Fused sampling and planned decoding for `DemSampler.decode`.
 
-use super::batch_decode::{BatchExecutionError, BatchExecutionOutput, decode_model};
-use super::decoder_scoring::{DecodeRangeResult, ShotDecodeError};
+use super::batch_decode::{BatchExecutionError, BatchExecutionOutput};
 use crate::batch_decoder_spec::BatchDecoderSpec as DecoderSpec;
 use crate::batch_decoder_spec::DecoderBuildError;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
 use pecos_decoders::DecodeModel;
+use pecos_decoders::batch::{DecodeRangeResult, DecoderFactory, ShotDecodeError};
 use pecos_decoders::batch::{
     ExecutionPath, ExecutionPlan, IndexedChunk, SAMPLING_CHUNK_SHOTS, assemble_indexed_chunks,
     for_each_canonical_sample, sampling_chunks,
@@ -117,7 +117,8 @@ fn preflight_dimensions(
 ) -> Result<(), BatchExecutionError> {
     let decoder_detectors = decoder.num_detectors().ok_or_else(|| {
         BatchExecutionError::Runtime(
-            "decoder specification did not report its detector dimension".to_string(),
+            pecos_decoders::batch::BatchDecodeError::<DecoderError>::MissingDetectorDimension
+                .to_string(),
         )
     })?;
     if decoder_detectors != sampler.num_detectors() {
@@ -230,15 +231,6 @@ fn combine_chunk_results(
                 | BatchExecutionError::Runtime(_)
                 | BatchExecutionError::SamplerDimension { .. },
             ) => {}
-            Err(BatchExecutionError::Dimension {
-                batch_detectors,
-                decoder_detectors,
-            }) => {
-                return Err(BatchExecutionError::Dimension {
-                    batch_detectors,
-                    decoder_detectors,
-                });
-            }
         }
     }
     if let Some(error) = build_error {
@@ -437,7 +429,7 @@ pub(super) fn execute(
     seed: u64,
     options: DecodeOptions,
 ) -> Result<BatchExecutionOutput, BatchExecutionError> {
-    let model = decode_model(spec, dem);
+    let model = spec.decode_model(dem);
     // The wall clock deliberately starts immediately before decoder
     // construction, and therefore includes preflight, sampling, decoding, and
     // scoring while excluding the later conversion into Python objects.

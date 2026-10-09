@@ -913,8 +913,9 @@ impl GeneralNoiseModel {
     }
 
     fn apply_measurement_reply(&mut self, message: ByteMessage) -> Result<ByteMessage, PecosError> {
+        let measurement_outcomes = message.outcomes()?;
         // If there are no measurement results, return the message unchanged
-        if !NoiseUtils::has_measurements(&message) {
+        if measurement_outcomes.is_empty() {
             if !self.measured_qubits.is_empty() {
                 return Err(PecosError::Processing(
                     "missing pending measurement outcomes".into(),
@@ -922,9 +923,6 @@ impl GeneralNoiseModel {
             }
             return Ok(message);
         }
-        // Parse the measurements from the message
-        let measurement_outcomes = message.outcomes()?;
-
         // Create a new message builder where the gates necessary for the
         // transitions will be introduced
         let mut ops_builder = ByteMessage::quantum_operations_builder();

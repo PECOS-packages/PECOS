@@ -23,6 +23,9 @@ use super::types::{
     is_two_qubit_noise_gate, record_offset_to_absolute_index, validate_exclusive_probabilities,
     validate_idle_probabilities,
 };
+use crate::fault_tolerance::circuit_definitions::{
+    CircuitDefinitions, DefinitionError, definitions_from_dag_circuit,
+};
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
     DagFaultInfluenceMap, Direction, Pauli, apply_gate_unchecked,
@@ -45,25 +48,34 @@ use std::rc::Rc;
 
 /// Parsed detector from JSON metadata.
 #[derive(Debug, Clone)]
-struct ParsedDetector {
-    id: u32,
-    coords: Option<[f64; 3]>,
-    records: Vec<i32>,
-    meas_ids: Vec<usize>,
+pub struct ParsedDetector {
+    /// Declared identifier.
+    pub id: u32,
+    /// Optional three-dimensional coordinates.
+    pub coords: Option<[f64; 3]>,
+    /// Measurement record offsets.
+    pub records: Vec<i32>,
+    /// Stable measurement identifiers.
+    pub meas_ids: Vec<usize>,
+    /// Human-readable name from the metadata JSON's `label` field.
+    pub label: Option<String>,
 }
 
 /// Parsed observable from JSON metadata.
 #[derive(Debug, Clone)]
-struct ParsedObservable {
-    id: u32,
-    records: Vec<i32>,
-    meas_ids: Vec<usize>,
+pub struct ParsedObservable {
+    /// Declared identifier.
+    pub id: u32,
+    /// Measurement record offsets.
+    pub records: Vec<i32>,
+    /// Stable measurement identifiers.
+    pub meas_ids: Vec<usize>,
     /// Human-readable name from the metadata JSON's `label` field.
     ///
     /// The metadata format has always carried this and callers already write
     /// it, but it used to be parsed and dropped, leaving circuit annotations as
     /// the only way to get a label onto an observable.
-    label: Option<String>,
+    pub label: Option<String>,
 }
 
 // ============================================================================
@@ -134,9 +146,17 @@ pub struct DemBuilder<'a> {
     /// Optional circuit context for future exact replacement-branch replay.
     exact_branch_context: Option<ExactBranchReplayContext<'a>>,
     /// Ideal symbolic measurement history shared by exact branch replays.
-    exact_ideal_history_cache: RefCell<Option<Rc<MeasurementHistory>>>,
+    exact_ideal_history_cache: RefCell<Option<Rc<ExactIdealReplay>>>,
+    /// Record-position translation shared by ordinary and exact paths.
+    tc_to_influence_cache: RefCell<Option<Rc<BTreeMap<usize, usize>>>>,
     /// Per-gate cache for exact replacement-branch replay effects.
     exact_branch_cache: RefCell<BTreeMap<usize, ExactBranchReplayAnalysis>>,
+}
+
+#[derive(Debug)]
+struct ExactIdealReplay {
+    history: MeasurementHistory,
+    influence_to_history: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -167,7 +187,7 @@ impl<'a> DemBuilder<'a> {
     /// Build a `DetectorErrorModel` directly from a circuit and noise.
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
-    /// from circuit metadata (`"detectors"`, `"observables"` attributes).
+    /// from circuit metadata (`"detectors"`, `"observables"` attributes) and annotations.
     ///
     /// ```
     /// use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
@@ -180,7 +200,7 @@ impl<'a> DemBuilder<'a> {
     /// Build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
-    /// from circuit metadata.
+    /// from circuit metadata and annotations.
     ///
     /// # Errors
     ///
@@ -197,22 +217,16 @@ impl<'a> DemBuilder<'a> {
 
     /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
     ///
-    /// Reads detector/DEM output definitions from circuit metadata and returns
-    /// parser errors instead of dropping malformed metadata.
+    /// Reads detector/DEM output definitions through the shared circuit reader.
     ///
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed or if
     /// the circuit contains a gate Pauli propagation cannot represent.
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         p1: f64,
@@ -226,22 +240,16 @@ impl<'a> DemBuilder<'a> {
     /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and
     /// full noise configuration.
     ///
-    /// Reads detector/DEM output definitions from circuit metadata and returns
-    /// parser errors instead of dropping malformed metadata.
+    /// Reads detector/DEM output definitions through the shared circuit reader.
     ///
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed or if
     /// the circuit contains a gate Pauli propagation cannot represent.
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_circuit_with_noise_config(
         circuit: &pecos_quantum::DagCircuit,
         noise: NoiseConfig,
@@ -279,14 +287,9 @@ impl<'a> DemBuilder<'a> {
     /// `TickCircuit` cannot be converted to a `DagCircuit` (two measurements
     /// sharing a `MeasId`).
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
         p1: f64,
@@ -317,14 +320,9 @@ impl<'a> DemBuilder<'a> {
     /// `TickCircuit` cannot be converted to a `DagCircuit` (two measurements
     /// sharing a `MeasId`).
     ///
-    /// # Panics
-    ///
-    /// Malformed *metadata* is reported as an error, but a circuit whose
-    /// metadata and annotations **contradict each other** is not a parse
-    /// failure and is not reported that way: two definitions of one observable
-    /// disagreeing about the label or the Pauli panic inside
-    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
-    /// sources must agree, or only one should supply the field.
+    /// Returns [`DemBuilderError::Definition`] when metadata and annotations
+    /// disagree, attributes have invalid types, measurement counts differ, or
+    /// detector coordinates cannot be represented in the DEM.
     pub fn try_from_tick_circuit_with_noise_config(
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,
@@ -352,12 +350,15 @@ impl<'a> DemBuilder<'a> {
             measurement_order: None,
             exact_branch_context: None,
             exact_ideal_history_cache: RefCell::new(None),
+            tc_to_influence_cache: RefCell::new(None),
             exact_branch_cache: RefCell::new(BTreeMap::new()),
         }
     }
 
     fn clear_exact_branch_cache(&mut self) {
         self.exact_branch_cache.get_mut().clear();
+        self.exact_ideal_history_cache.get_mut().take();
+        self.tc_to_influence_cache.get_mut().take();
     }
 
     /// Sets the noise configuration from individual parameters.
@@ -380,7 +381,6 @@ impl<'a> DemBuilder<'a> {
         circuit: &'a pecos_quantum::DagCircuit,
     ) -> Self {
         self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
-        self.exact_ideal_history_cache.get_mut().take();
         self.clear_exact_branch_cache();
         self
     }
@@ -566,6 +566,67 @@ impl<'a> DemBuilder<'a> {
         Ok(self)
     }
 
+    /// Installs reader-resolved emission positions through the existing record path.
+    pub(crate) fn with_circuit_definitions(
+        mut self,
+        definitions: CircuitDefinitions,
+    ) -> Result<Self, DemBuilderError> {
+        let records = |positions: Vec<usize>| {
+            positions
+                .into_iter()
+                .map(|position| {
+                    // Subtract one before conversion so i32::MIN remains representable.
+                    i32::try_from(definitions.num_measurements - position - 1)
+                        .map(|offset| -offset - 1)
+                        .map_err(|_| DemBuilderError::ConfigurationError(
+                            format!("measurement position {position} cannot fit a negative i32 record offset"),
+                        ))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        self.detectors = definitions
+            .detectors
+            .into_iter()
+            .map(|detector| {
+                let coords = match detector.coords {
+                    None => None,
+                    Some(coords) if coords.is_empty() => None,
+                    Some(coords) => {
+                        let length = coords.len();
+                        Some(coords.try_into().map_err(|_| {
+                            DefinitionError::InvalidDetectorCoordinates {
+                                id: detector.id,
+                                length,
+                            }
+                        })?)
+                    }
+                };
+                Ok(ParsedDetector {
+                    id: detector.id,
+                    coords,
+                    label: detector.label,
+                    records: records(detector.measurements)?,
+                    meas_ids: Vec::new(),
+                })
+            })
+            .collect::<Result<_, DemBuilderError>>()?;
+        self.observables = definitions
+            .observables
+            .into_iter()
+            .map(|observable| {
+                Ok(ParsedObservable {
+                    id: observable.id,
+                    label: observable.label,
+                    records: records(observable.measurements)?,
+                    meas_ids: Vec::new(),
+                })
+            })
+            .collect::<Result<_, DemBuilderError>>()?;
+        self.num_measurements = definitions.num_measurements;
+        self.clear_exact_branch_cache();
+        Ok(self)
+    }
+
     /// Sets observable definitions from measurement-record offsets.
     #[must_use]
     pub fn with_observable_records(mut self, records: Vec<Vec<i32>>) -> Self {
@@ -630,7 +691,10 @@ impl<'a> DemBuilder<'a> {
     fn validate_metadata_refs(&self) -> Result<(), DemBuilderError> {
         let check = |kind: &str, id: u32, records: &[i32], meas_ids: &[usize]| {
             for &rec in records {
-                if record_offset_to_absolute_index(self.num_measurements, rec).is_none() {
+                if record_offset_to_absolute_index(self.num_measurements, rec)
+                    .filter(|&index| index < self.num_measurements)
+                    .is_none()
+                {
                     return Err(DemBuilderError::ParseError(format!(
                         "{kind} {id} references record offset {rec}, which \
                          is out of range for a circuit with {} \
@@ -639,27 +703,25 @@ impl<'a> DemBuilder<'a> {
                     )));
                 }
             }
-            let mut resolved_offsets = Vec::with_capacity(meas_ids.len());
             for &mid in meas_ids {
-                let offset = self.meas_id_to_record_offset(mid).ok_or_else(|| {
+                self.meas_id_to_record_offset(mid).ok_or_else(|| {
                     DemBuilderError::ParseError(format!(
                         "{kind} {id} references meas_id {mid}, which is not \
                          present in the circuit's {} measurement(s)",
                         self.num_measurements
                     ))
                 })?;
-                resolved_offsets.push(offset);
             }
             if !records.is_empty() && !meas_ids.is_empty() {
-                let mut a = records.to_vec();
-                let mut b = resolved_offsets;
+                let mut a = self.measurement_indices_from_refs(records, &[])?;
+                let mut b = self.measurement_indices_from_refs(&[], meas_ids)?;
                 a.sort_unstable();
                 b.sort_unstable();
                 if a != b {
                     return Err(DemBuilderError::ParseError(format!(
                         "{kind} {id} has both 'records' and 'meas_ids' but \
                          they reference different measurements (records map \
-                         to offsets {a:?}, meas_ids resolve to {b:?}); they \
+                         to positions {a:?}, meas_ids resolve to {b:?}); they \
                          are alternatives, not additive -- the builder would \
                          consume only 'records' and silently drop the rest"
                     )));
@@ -686,11 +748,81 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
+    /// Match record positions to map positions by qubit and occurrence once.
+    fn tc_to_influence(&self) -> Rc<BTreeMap<usize, usize>> {
+        if let Some(cached) = self.tc_to_influence_cache.borrow().as_ref().cloned() {
+            return cached;
+        }
+        // Build a mapping from (qubit, occurrence_index) to influence_map_index
+        // This handles multi-round circuits where the same qubit is measured multiple times
+        let tc_to_influence: BTreeMap<usize, usize> =
+            if let Some(ref order) = self.measurement_order {
+                // Count occurrences of each qubit in TickCircuit order
+                let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
+
+                for &qubit in order {
+                    let count = tc_qubit_counts.entry(qubit).or_insert(0);
+                    tc_qubit_occurrence.push((qubit, *count));
+                    *count += 1;
+                }
+
+                // Count occurrences of each qubit in influence map order
+                let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut im_qubit_occurrence: Vec<(usize, usize)> =
+                    Vec::with_capacity(self.influence_map.measurements.len());
+
+                for &(_, qubit, _) in &self.influence_map.measurements {
+                    let count = im_qubit_counts.entry(qubit).or_insert(0);
+                    im_qubit_occurrence.push((qubit, *count));
+                    *count += 1;
+                }
+
+                // Build (qubit, occurrence) -> influence_map_index mapping
+                let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
+                    .collect();
+
+                // Build TickCircuit index -> influence map index mapping
+                tc_qubit_occurrence
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(tc_idx, &(qubit, occ))| {
+                        qubit_occ_to_im
+                            .get(&(qubit, occ))
+                            .map(|&im_idx| (tc_idx, im_idx))
+                    })
+                    .collect()
+            } else {
+                // No measurement order provided, assume indices match
+                (0..self.num_measurements).map(|i| (i, i)).collect()
+            };
+
+        let mapping = Rc::new(tc_to_influence);
+        *self.tc_to_influence_cache.borrow_mut() = Some(mapping.clone());
+        mapping
+    }
+
+    /// Resolve references into influence-map positions. Records and legacy
+    /// positional IDs use the occurrence translation; stamped IDs already name
+    /// map positions and must not be translated a second time.
     fn measurement_indices_from_refs(
         &self,
         records: &[i32],
         meas_ids: &[usize],
     ) -> Result<Vec<usize>, DemBuilderError> {
+        let translate = |record_index| {
+            self.tc_to_influence()
+                .get(&record_index)
+                .copied()
+                .ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "record position {record_index} has no measurement in the influence map"
+                    ))
+                })
+        };
         if !records.is_empty() {
             return records
                 .iter()
@@ -701,6 +833,7 @@ impl<'a> DemBuilder<'a> {
                             self.num_measurements
                         ))
                     })
+                    .and_then(translate)
                 })
                 .collect();
         }
@@ -708,12 +841,20 @@ impl<'a> DemBuilder<'a> {
         meas_ids
             .iter()
             .map(|&meas_id| {
-                self.resolve_meas_id_to_tc_index(meas_id).ok_or_else(|| {
-                    DemBuilderError::ParseError(format!(
-                        "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
-                        self.num_measurements
-                    ))
-                })
+                self.resolve_meas_id_to_tc_index(meas_id)
+                    .ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
+                            self.num_measurements
+                        ))
+                    })
+                    .and_then(|index| {
+                        if self.influence_map.meas_ids.is_empty() {
+                            translate(index)
+                        } else {
+                            Ok(index)
+                        }
+                    })
             })
             .collect()
     }
@@ -740,8 +881,8 @@ impl<'a> DemBuilder<'a> {
     /// `with_num_measurements` that differs would let out-of-range refs pass
     /// [`Self::validate_metadata_refs`] and silently misbind, so it is an
     /// error. An empty influence map keeps the escape hatch: the count is then
-    /// purely declarative and record offsets are opaque pass-through DEM
-    /// coordinates.
+    /// purely declarative. `try_build` still checks every record and positional
+    /// id against that count; only `build` permits opaque record coordinates.
     fn validate_measurement_count(&self) -> Result<(), DemBuilderError> {
         let actual = self.influence_map.measurements.len();
         if actual != 0 && self.num_measurements != actual {
@@ -751,6 +892,23 @@ impl<'a> DemBuilder<'a> {
                  detector/observable record offsets resolve correctly",
                 self.num_measurements
             )));
+        }
+        if actual != 0
+            && let Some(order) = &self.measurement_order
+        {
+            let uncovered = actual - self.tc_to_influence().len();
+            if uncovered != 0 {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "measurement_order leaves {uncovered} of {actual} measurement(s) uncovered"
+                )));
+            }
+            if order.len() != actual {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "measurement_order has {} entries but the circuit performs {actual} measurement(s); \
+                     a measurement order must cover every measurement so record offsets resolve in the same frame",
+                    order.len()
+                )));
+            }
         }
         // Internal-consistency guard: stable MeasIds must be unique. A
         // duplicate would make stamped-id resolution bind to the wrong
@@ -1334,8 +1492,9 @@ impl<'a> DemBuilder<'a> {
                 self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
             if omitted_branch_flips_measurement_parity_from_histories(
                 request,
-                ideal_history.as_ref(),
+                &ideal_history.history,
                 &branch_info.history,
+                &ideal_history.influence_to_history,
                 &indices,
             )? {
                 xor_toggle_4(&mut triggered_dets, detector.id);
@@ -1347,8 +1506,9 @@ impl<'a> DemBuilder<'a> {
                 self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
             if omitted_branch_flips_measurement_parity_from_histories(
                 request,
-                ideal_history.as_ref(),
+                &ideal_history.history,
                 &branch_info.history,
+                &ideal_history.influence_to_history,
                 &indices,
             )? {
                 xor_toggle_2(&mut triggered_obs, observable.id);
@@ -1367,19 +1527,34 @@ impl<'a> DemBuilder<'a> {
     fn exact_ideal_measurement_history(
         &self,
         context: ExactBranchReplayContext<'_>,
-    ) -> Result<Rc<MeasurementHistory>, DemBuilderError> {
+    ) -> Result<Rc<ExactIdealReplay>, DemBuilderError> {
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
 
         if let Some(cached) = self.exact_ideal_history_cache.borrow().as_ref().cloned() {
             return Ok(cached);
         }
 
-        let history = Rc::new(
-            InfluenceBuilder::new(context.circuit)
-                .run_symbolic_simulation()
-                .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
-                .history,
-        );
+        let info = InfluenceBuilder::new(context.circuit)
+            .run_symbolic_simulation()
+            .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
+        let influence_to_history = self.influence_map.measurements
+            .iter()
+            .enumerate()
+            .map(|(index, &(node, _, _))| {
+                info.node_to_meas_idx.get(node).copied().flatten().ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "exact_branch_replay influence measurement {index} at node {node} has no history entry"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // circuit_with_omitted_two_qubit_gate uses update_gate in place, preserving
+        // node ids and edges. Every branch therefore shares this ideal node mapping.
+        // Outcome dependency sets remain history indices and are never translated.
+        let history = Rc::new(ExactIdealReplay {
+            history: info.history,
+            influence_to_history,
+        });
         *self.exact_ideal_history_cache.borrow_mut() = Some(history.clone());
         Ok(history)
     }
@@ -1510,7 +1685,7 @@ impl<'a> DemBuilder<'a> {
                         dem,
                         meas_to_detectors,
                         meas_to_observables,
-                    );
+                    )?;
                 }
                 GateType::MeasCrosstalkGlobalPayload
                     if !loc.before
@@ -1528,7 +1703,7 @@ impl<'a> DemBuilder<'a> {
                         dem,
                         meas_to_detectors,
                         meas_to_observables,
-                    );
+                    )?;
                 }
                 gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {}
                 GateType::H
@@ -1785,7 +1960,7 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let (bit_flip_probability, leak_probability) =
             match self.noise.measurement_crosstalk_dem_mode {
                 MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing => (
@@ -1800,10 +1975,7 @@ impl<'a> DemBuilder<'a> {
                         "measurement crosstalk exact deterministic mode was validated with context",
                     );
                     let loc = &self.influence_map.locations[loc_idx];
-                    let hidden = Self::hidden_mz_result_before_crosstalk_payload(context, loc)
-                        .expect(
-                            "measurement crosstalk exact deterministic hidden result was validated",
-                        );
+                    let hidden = Self::hidden_mz_result_before_crosstalk_payload(context, loc)?;
                     if hidden.flip {
                         (
                             self.noise.p_meas_crosstalk_model.p_1_to_0,
@@ -1817,7 +1989,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 }
                 MeasurementCrosstalkDemMode::Omitted => {
-                    return;
+                    return Ok(());
                 }
             };
         if matches!(
@@ -1836,7 +2008,7 @@ impl<'a> DemBuilder<'a> {
                 dem,
                 meas_to_detectors,
                 meas_to_observables,
-            );
+            )?;
         } else {
             self.process_measurement_crosstalk_pauli_rates_source_tracked(
                 loc_idx,
@@ -1844,8 +2016,9 @@ impl<'a> DemBuilder<'a> {
                 dem,
                 meas_to_detectors,
                 meas_to_observables,
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// Processes local measurement-crosstalk payloads as single-location Pauli
@@ -1857,22 +2030,21 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let loc = &self.influence_map.locations[loc_idx];
         let [rate_x, rate_y, rate_z] = rates;
-        let effect = |pauli| -> FaultMechanism {
+        let effect = |pauli| -> Result<FaultMechanism, DemBuilderError> {
             if loc.gate_type == GateType::MeasCrosstalkGlobalPayload {
                 let context = self.exact_branch_context.expect(
                     "measurement crosstalk exact deterministic mode was validated with context",
                 );
                 self.exact_measurement_crosstalk_pauli_effect(context, loc, pauli)
-                    .expect("global measurement crosstalk exact replay was validated")
             } else {
-                self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables)
+                Ok(self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables))
             }
         };
-        let x_effect = effect(Pauli::X);
-        let z_effect = effect(Pauli::Z);
+        let x_effect = effect(Pauli::X)?;
+        let z_effect = effect(Pauli::Z)?;
 
         if rate_x > 0.0 && !x_effect.is_empty() {
             dem.add_direct_contribution_with_source(
@@ -1910,6 +2082,7 @@ impl<'a> DemBuilder<'a> {
                 );
             }
         }
+        Ok(())
     }
 
     /// Converts one categorical idle Pauli channel after propagation has
@@ -2293,52 +2466,7 @@ impl<'a> DemBuilder<'a> {
         let mut meas_to_observables: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let influence_observable_ids = self.influence_map.observable_ids();
 
-        // Build a mapping from (qubit, occurrence_index) to influence_map_index
-        // This handles multi-round circuits where the same qubit is measured multiple times
-        let tc_to_influence: BTreeMap<usize, usize> =
-            if let Some(ref order) = self.measurement_order {
-                // Count occurrences of each qubit in TickCircuit order
-                let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
-
-                for &qubit in order {
-                    let count = tc_qubit_counts.entry(qubit).or_insert(0);
-                    tc_qubit_occurrence.push((qubit, *count));
-                    *count += 1;
-                }
-
-                // Count occurrences of each qubit in influence map order
-                let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut im_qubit_occurrence: Vec<(usize, usize)> =
-                    Vec::with_capacity(self.influence_map.measurements.len());
-
-                for &(_, qubit, _) in &self.influence_map.measurements {
-                    let count = im_qubit_counts.entry(qubit).or_insert(0);
-                    im_qubit_occurrence.push((qubit, *count));
-                    *count += 1;
-                }
-
-                // Build (qubit, occurrence) -> influence_map_index mapping
-                let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
-                    .collect();
-
-                // Build TickCircuit index -> influence map index mapping
-                tc_qubit_occurrence
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(tc_idx, &(qubit, occ))| {
-                        qubit_occ_to_im
-                            .get(&(qubit, occ))
-                            .map(|&im_idx| (tc_idx, im_idx))
-                    })
-                    .collect()
-            } else {
-                // No measurement order provided, assume indices match
-                (0..self.num_measurements).map(|i| (i, i)).collect()
-            };
+        let tc_to_influence = self.tc_to_influence();
 
         for det in &self.detectors {
             if det.records.is_empty() {
@@ -2376,6 +2504,9 @@ impl<'a> DemBuilder<'a> {
 
         for obs in &self.observables {
             if influence_observable_ids.contains(&obs.id) {
+                // On the circuit path the reader enforced agreement, and annotation
+                // propagation seeds the measurement basis, so this drops only an
+                // identical duplicate of the propagated observable.
                 continue;
             }
             if obs.records.is_empty() {
@@ -2588,7 +2719,10 @@ fn get_y_decomposition(p1: u8, p2: u8) -> Option<(u8, u8, u8, u8)> {
 // ============================================================================
 
 /// Parses detector definitions from JSON.
-fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderError> {
+///
+/// # Errors
+/// Returns [`DemBuilderError`] when metadata fails schema or JSON validation.
+pub fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderError> {
     let json = json.trim();
     if json.is_empty() || json == "[]" {
         return Ok(Vec::new());
@@ -2620,16 +2754,22 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let coords = extract_coords(object)?;
     let (records, meas_ids) = extract_measurement_refs(object, "detector")?;
 
+    let label = extract_definition_label(object, "detector")?;
+
     Ok(ParsedDetector {
         id,
         coords,
         records,
         meas_ids,
+        label,
     })
 }
 
 /// Parses observable definitions from JSON.
-fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilderError> {
+///
+/// # Errors
+/// Returns [`DemBuilderError`] when metadata fails schema or JSON validation.
+pub fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilderError> {
     let json = json.trim();
     if json.is_empty() || json == "[]" {
         return Ok(Vec::new());
@@ -2659,17 +2799,7 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     )?;
 
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
-    // A present-but-malformed label is rejected rather than silently treated as
-    // absent; the richer DEM metadata parser already holds that line.
-    let label = match object.get("label") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::String(label)) => Some(label.clone()),
-        Some(other) => {
-            return Err(DemBuilderError::ParseError(format!(
-                "observable label must be a string or null, got {other}"
-            )));
-        }
-    };
+    let label = extract_definition_label(object, "observable")?;
 
     Ok(ParsedObservable {
         id,
@@ -2677,6 +2807,128 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
         meas_ids,
         label,
     })
+}
+
+/// A present-but-malformed label is rejected rather than silently treated as
+/// absent; the richer DEM metadata parser already holds that line.
+fn extract_definition_label(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: &str,
+) -> Result<Option<String>, DemBuilderError> {
+    match object.get("label") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(label)) => Ok(Some(label.clone())),
+        Some(other) => Err(DemBuilderError::ParseError(format!(
+            "{kind} label must be a string or null, got {other}"
+        ))),
+    }
+}
+
+/// Validate the caller's order and invert the shared TC-to-map occurrence mapping.
+/// Sampler record vectors are read in TC coordinates; raw dual output is in map order.
+pub(crate) fn sampler_measurement_mapping(
+    map: &DagFaultInfluenceMap,
+    order: Option<&[usize]>,
+) -> Result<Option<Vec<usize>>, DemBuilderError> {
+    let mut builder = DemBuilder::new(map);
+    if let Some(order) = order {
+        builder = builder.with_measurement_order(order.to_vec());
+    }
+    builder.validate_measurement_count()?;
+    if order.is_none() || map.measurements.is_empty() {
+        return Ok(None);
+    }
+    let mut mapping = vec![0; map.measurements.len()];
+    for (&tc, &im) in builder.tc_to_influence().iter() {
+        mapping[im] = tc;
+    }
+    Ok(Some(mapping))
+}
+
+/// Validate raw sampler records at the construction boundary. With no measurements,
+/// records remain opaque coordinates; no circuit exists to bound them against.
+pub(crate) fn validate_sampler_records(
+    kind: &str,
+    records: &[Vec<i32>],
+    num_measurements: usize,
+) -> Result<(), DemBuilderError> {
+    if num_measurements == 0 {
+        return Ok(());
+    }
+    for (id, records) in records.iter().enumerate() {
+        for &record in records {
+            if record_offset_to_absolute_index(num_measurements, record)
+                .filter(|&index| index < num_measurements)
+                .is_none()
+            {
+                return Err(DemBuilderError::ParseError(format!(
+                    "{kind} {id} references record offset {record}, which is out of range \
+                     for a circuit with {num_measurements} measurement(s)"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_dense_sampler_ids(kind: &str, ids: &[u32]) -> Result<(), DemBuilderError> {
+    for pair in ids.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(DemBuilderError::ParseError(format!(
+                "duplicate {kind} id {}",
+                pair[0]
+            )));
+        }
+    }
+    if ids
+        .iter()
+        .enumerate()
+        .any(|(index, &id)| usize::try_from(id) != Ok(index))
+    {
+        return Err(DemBuilderError::ParseError(format!(
+            "{kind} ids {ids:?} must be dense from 0 to {} (exclusive)",
+            ids.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Check schema, dense ids and each reference at the setter. Redundancy depends
+/// on the final measurement order, so it is checked when the sampler is built.
+pub(crate) fn validate_sampler_json(
+    json: &str,
+    map: &DagFaultInfluenceMap,
+    detectors: bool,
+) -> Result<(), DemBuilderError> {
+    reject_duplicate_stamped_meas_ids(map)?;
+    let (kind, mut refs): (_, Vec<_>) = if detectors {
+        (
+            "Detector",
+            parse_detectors_json(json)?
+                .into_iter()
+                .map(|d| (d.id, d.records, d.meas_ids))
+                .collect(),
+        )
+    } else {
+        (
+            "Observable",
+            parse_observables_json(json)?
+                .into_iter()
+                .map(|o| (o.id, o.records, o.meas_ids))
+                .collect(),
+        )
+    };
+    refs.sort_unstable_by_key(|entry| entry.0);
+    validate_dense_sampler_ids(kind, &refs.iter().map(|entry| entry.0).collect::<Vec<_>>())?;
+    for (id, records, meas_ids) in refs {
+        if map.measurements.is_empty() {
+            resolve_sampler_record_vector(kind, id, &records, &meas_ids, map, None)?;
+        } else {
+            resolve_sampler_record_vector(kind, id, &records, &[], map, None)?;
+            resolve_sampler_record_vector(kind, id, &[], &meas_ids, map, None)?;
+        }
+    }
+    Ok(())
 }
 
 /// Parse detector JSON into per-detector measurement-reference vectors for the
@@ -2700,19 +2952,35 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
 /// when it is empty -- matching `DemBuilder`. The returned vector uses the
 /// sampler's storage convention: negative `records` offsets are kept as-is
 /// (preferred when present, like `DemBuilder`), while a `meas_ids`-only entry is
-/// emitted as the resolved absolute indices (positive ints).
+/// emitted as absolute TC positions (positive ints). Stamped ids pass through
+/// `im_to_tc`; legacy positional ids already name TC positions. Entries are
+/// sorted by declared id, which must be unique and dense from zero.
 ///
 /// An empty influence map (no measurements) keeps the escape hatch: refs are
 /// opaque pass-through coordinates and resolution is skipped.
 pub(crate) fn parse_detector_record_vectors(
     json: &str,
     influence_map: &DagFaultInfluenceMap,
+    im_to_tc: Option<&[usize]>,
 ) -> Result<Vec<Vec<i32>>, DemBuilderError> {
     reject_duplicate_stamped_meas_ids(influence_map)?;
-    parse_detectors_json(json)?
+    let mut definitions = parse_detectors_json(json)?;
+    definitions.sort_unstable_by_key(|d| d.id);
+    validate_dense_sampler_ids(
+        "Detector",
+        &definitions.iter().map(|d| d.id).collect::<Vec<_>>(),
+    )?;
+    definitions
         .iter()
         .map(|d| {
-            resolve_sampler_record_vector("Detector", d.id, &d.records, &d.meas_ids, influence_map)
+            resolve_sampler_record_vector(
+                "Detector",
+                d.id,
+                &d.records,
+                &d.meas_ids,
+                influence_map,
+                im_to_tc,
+            )
         })
         .collect()
 }
@@ -2721,9 +2989,16 @@ pub(crate) fn parse_detector_record_vectors(
 pub(crate) fn parse_observable_record_vectors(
     json: &str,
     influence_map: &DagFaultInfluenceMap,
+    im_to_tc: Option<&[usize]>,
 ) -> Result<Vec<Vec<i32>>, DemBuilderError> {
     reject_duplicate_stamped_meas_ids(influence_map)?;
-    parse_observables_json(json)?
+    let mut definitions = parse_observables_json(json)?;
+    definitions.sort_unstable_by_key(|o| o.id);
+    validate_dense_sampler_ids(
+        "Observable",
+        &definitions.iter().map(|o| o.id).collect::<Vec<_>>(),
+    )?;
+    definitions
         .iter()
         .map(|o| {
             resolve_sampler_record_vector(
@@ -2732,17 +3007,12 @@ pub(crate) fn parse_observable_record_vectors(
                 &o.records,
                 &o.meas_ids,
                 influence_map,
+                im_to_tc,
             )
         })
         .collect()
 }
 
-/// Reject a circuit whose stable `MeasId`s are not unique, before resolving any
-/// `meas_ids`. A duplicate would make stamped-id resolution bind to the first
-/// occurrence (an ambiguous, silently-wrong bind); it indicates a trace/replay
-/// bug, not bad caller input. Mirrors the guard in
-/// `DemBuilder::validate_measurement_count` so the sampler JSON path rejects
-/// exactly what `DemBuilder` does.
 /// Whether the map's stamped ids are exactly the positional set `0..n`.
 ///
 /// True for every circuit whose ids were minted by `mz()`; false for external
@@ -2760,6 +3030,12 @@ fn stamped_ids_are_positional(influence_map: &DagFaultInfluenceMap) -> bool {
     seen.into_iter().all(|s| s)
 }
 
+/// Reject a circuit whose stable `MeasId`s are not unique, before resolving any
+/// `meas_ids`. A duplicate would make stamped-id resolution bind to the first
+/// occurrence (an ambiguous, silently-wrong bind); it indicates a trace/replay
+/// bug, not bad caller input. Mirrors the guard in
+/// `DemBuilder::validate_measurement_count` so the sampler JSON path rejects
+/// exactly what `DemBuilder` does.
 fn reject_duplicate_stamped_meas_ids(
     influence_map: &DagFaultInfluenceMap,
 ) -> Result<(), DemBuilderError> {
@@ -2787,6 +3063,7 @@ fn resolve_sampler_meas_id(influence_map: &DagFaultInfluenceMap, meas_id: usize)
             .meas_ids
             .iter()
             .position(|mid| mid.index() == meas_id)
+            .filter(|&index| index < influence_map.measurements.len())
     }
 }
 
@@ -2799,6 +3076,7 @@ fn resolve_sampler_record_vector(
     records: &[i32],
     meas_ids: &[usize],
     influence_map: &DagFaultInfluenceMap,
+    im_to_tc: Option<&[usize]>,
 ) -> Result<Vec<i32>, DemBuilderError> {
     let num_measurements = influence_map.measurements.len();
 
@@ -2825,23 +3103,33 @@ fn resolve_sampler_record_vector(
     let records_abs = records
         .iter()
         .map(|&offset| {
-            record_offset_to_absolute_index(num_measurements, offset).ok_or_else(|| {
-                DemBuilderError::ParseError(format!(
-                    "{kind} {id} references record offset {offset}, which is out of \
-                     range for a circuit with {num_measurements} measurement(s)"
-                ))
-            })
+            record_offset_to_absolute_index(num_measurements, offset)
+                .filter(|&index| index < num_measurements)
+                .ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} {id} references record offset {offset}, which is out of \
+                         range for a circuit with {num_measurements} measurement(s)"
+                    ))
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let meas_ids_abs = meas_ids
         .iter()
         .map(|&meas_id| {
-            resolve_sampler_meas_id(influence_map, meas_id).ok_or_else(|| {
-                DemBuilderError::ParseError(format!(
-                    "{kind} {id} references meas_id {meas_id}, which is not present in \
+            resolve_sampler_meas_id(influence_map, meas_id)
+                .map(|index| {
+                    if influence_map.meas_ids.is_empty() {
+                        index
+                    } else {
+                        im_to_tc.map_or(index, |mapping| mapping[index])
+                    }
+                })
+                .ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} {id} references meas_id {meas_id}, which is not present in \
                      the circuit's {num_measurements} measurement(s)"
-                ))
-            })
+                    ))
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -3108,11 +3396,13 @@ fn omitted_branch_flips_measurement_parity_from_histories(
     request: ExactBranchReplayRequest,
     ideal_history: &MeasurementHistory,
     branch_history: &MeasurementHistory,
+    influence_to_history: &[usize],
     measurement_indices: &[usize],
 ) -> Result<bool, DemBuilderError> {
     measurement_parity_differs_from_histories(
         ideal_history,
         branch_history,
+        influence_to_history,
         measurement_indices,
         &format!(
             "exact_branch_replay omitted gate at node {}",
@@ -3124,11 +3414,22 @@ fn omitted_branch_flips_measurement_parity_from_histories(
 fn measurement_parity_differs_from_histories(
     ideal_history: &MeasurementHistory,
     branch_history: &MeasurementHistory,
+    influence_to_history: &[usize],
     measurement_indices: &[usize],
     context: &str,
 ) -> Result<bool, DemBuilderError> {
-    let ideal = measurement_parity_expression(ideal_history, measurement_indices, "ideal")?;
-    let branch = measurement_parity_expression(branch_history, measurement_indices, "branch")?;
+    let ideal = measurement_parity_expression(
+        ideal_history,
+        influence_to_history,
+        measurement_indices,
+        "ideal",
+    )?;
+    let branch = measurement_parity_expression(
+        branch_history,
+        influence_to_history,
+        measurement_indices,
+        "branch",
+    )?;
     if ideal.dependencies != branch.dependencies {
         return Err(DemBuilderError::ConfigurationError(format!(
             "{context} changes measurement dependencies for parity {measurement_indices:?}; this branch is not representable as a single deterministic DEM event"
@@ -3139,6 +3440,7 @@ fn measurement_parity_differs_from_histories(
 
 fn measurement_parity_expression(
     history: &MeasurementHistory,
+    influence_to_history: &[usize],
     measurement_indices: &[usize],
     history_label: &str,
 ) -> Result<MeasurementParityExpression, DemBuilderError> {
@@ -3146,9 +3448,17 @@ fn measurement_parity_expression(
     let mut flip = false;
 
     for &measurement_idx in measurement_indices {
-        let result = history.get(measurement_idx).ok_or_else(|| {
+        let history_idx = influence_to_history
+            .get(measurement_idx)
+            .copied()
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay influence position {measurement_idx} has no measured node"
+                ))
+            })?;
+        let result = history.get(history_idx).ok_or_else(|| {
             DemBuilderError::ConfigurationError(format!(
-                "exact_branch_replay {history_label} history has no measurement {measurement_idx}"
+                    "exact_branch_replay {history_label} history has no entry {history_idx} for influence measurement {measurement_idx}"
             ))
         })?;
         dependencies.symmetric_difference_update(&result.outcome);
@@ -3220,14 +3530,12 @@ fn build_dem_from_circuit(
 ) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
-    use pecos_num::graph::Attribute;
+    let definitions = definitions_from_dag_circuit(circuit)?;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
     if let Some(error) = influence_map.unsupported_gate() {
         return Err(DemBuilderError::UnsupportedGate(error.clone()));
     }
-    let annotated_observable_records =
-        observable_records_from_annotations(circuit, &influence_map)?;
     let annotation_map = InfluenceBuilder::new(circuit)
         .with_circuit_annotations()
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
@@ -3235,54 +3543,10 @@ fn build_dem_from_circuit(
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     influence_map.merge_dem_outputs_from(&annotation_map);
 
-    // Extract metadata before building (to avoid borrow issues)
-    let det_json = circuit.get_attr("detectors").and_then(|a| {
-        if let Attribute::String(s) = a {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
-    let obs_json = circuit.get_attr("observables").and_then(|a| {
-        if let Attribute::String(s) = a {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
-    let num_meas = circuit.get_attr("num_measurements").and_then(|a| {
-        if let Attribute::String(s) = a {
-            s.parse::<usize>().ok()
-        } else {
-            None
-        }
-    });
-
     let builder = DemBuilder::new(&influence_map)
         .with_noise_config(noise)
-        .with_exact_branch_replay_context(circuit);
-
-    let builder = if let Some(ref dj) = det_json {
-        builder.with_detectors_json(dj)?
-    } else {
-        builder
-    };
-
-    let builder = if let Some(ref oj) = obs_json {
-        builder.with_observables_json(oj)?
-    } else if !annotated_observable_records.is_empty() {
-        builder.with_observable_records(annotated_observable_records)
-    } else {
-        builder
-    };
-
-    // `try_build` enforces num_measurements == influence-map count, so a
-    // metadata override that disagrees with the circuit is rejected there.
-    let builder = if let Some(n) = num_meas {
-        builder.with_num_measurements(n)
-    } else {
-        builder
-    };
+        .with_exact_branch_replay_context(circuit)
+        .with_circuit_definitions(definitions)?;
 
     builder.try_build()
 }
@@ -3316,43 +3580,6 @@ fn circuit_with_omitted_two_qubit_gate(
         .update_gate(node, |gate| *gate = replacement)
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     Ok(branch)
-}
-
-fn observable_records_from_annotations(
-    circuit: &pecos_quantum::DagCircuit,
-    influence_map: &DagFaultInfluenceMap,
-) -> Result<Vec<Vec<i32>>, DemBuilderError> {
-    use pecos_quantum::AnnotationKind;
-
-    let num_measurements = influence_map.measurements.len();
-    if num_measurements == 0 {
-        return Ok(Vec::new());
-    }
-
-    circuit
-        .observables()
-        .enumerate()
-        .map(|(annotation_index, ann)| {
-            let AnnotationKind::Observable { measurement_ids } = &ann.kind else {
-                return Ok(Vec::new());
-            };
-            measurement_ids
-                .iter()
-                .map(|&meas_id| {
-                    let meas_idx = influence_map.meas_index_of(meas_id).ok_or_else(|| {
-                        DemBuilderError::ConfigurationError(format!(
-                            "observable annotation {annotation_index} references \
-                                 MeasId({}), which does not resolve to a measurement \
-                                 in the influence map",
-                            meas_id.index()
-                        ))
-                    })?;
-                    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-                    Ok(meas_idx as i32 - num_measurements as i32)
-                })
-                .collect()
-        })
-        .collect()
 }
 
 // ============================================================================
@@ -3575,6 +3802,8 @@ pub fn resolve_result_tags(
 /// Errors that can occur during DEM building.
 #[derive(Debug, Clone)]
 pub enum DemBuilderError {
+    /// Invalid circuit definitions from the shared reader or DEM conversion.
+    Definition(Box<DefinitionError>),
     /// Circuit gate whose action Pauli propagation cannot represent.
     UnsupportedGate(crate::fault_tolerance::propagator::UnsupportedGateError),
     /// JSON parsing error.
@@ -3586,6 +3815,7 @@ pub enum DemBuilderError {
 impl std::fmt::Display for DemBuilderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Definition(error) => write!(f, "DEM builder definitions: {error}"),
             Self::UnsupportedGate(error) => write!(f, "DEM builder {error}"),
             Self::ParseError(msg) => write!(f, "DEM builder parse error: {msg}"),
             Self::ConfigurationError(msg) => write!(f, "DEM builder configuration error: {msg}"),
@@ -3593,11 +3823,280 @@ impl std::fmt::Display for DemBuilderError {
     }
 }
 
-impl std::error::Error for DemBuilderError {}
+impl From<DefinitionError> for DemBuilderError {
+    fn from(error: DefinitionError) -> Self {
+        Self::Definition(Box::new(error))
+    }
+}
+
+impl std::error::Error for DemBuilderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Definition(error) => Some(error.as_ref()),
+            Self::UnsupportedGate(error) => Some(error),
+            Self::ParseError(_) | Self::ConfigurationError(_) => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn map_only_records_are_bounded() {
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = vec![(0, 0, 0), (1, 1, 0)];
+        assert!(DemBuilder::new(&map).try_build().is_ok());
+        for record in [-3, 2, 5] {
+            let json = format!(r#"[{{"id":0,"records":[{record}]}}]"#);
+            for builder in [
+                DemBuilder::new(&map).with_detectors_json(&json).unwrap(),
+                DemBuilder::new(&map).with_observables_json(&json).unwrap(),
+            ] {
+                let error = builder.try_build().unwrap_err().to_string();
+                assert!(
+                    error.contains(&format!("record offset {record}")),
+                    "{error}"
+                );
+                assert!(error.contains("out of range"), "{error}");
+            }
+        }
+        for record in [-2, -1, 0, 1] {
+            let json = format!(r#"[{{"id":0,"records":[{record}]}}]"#);
+            assert!(
+                DemBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .unwrap()
+                    .try_build()
+                    .is_ok()
+            );
+            assert!(
+                DemBuilder::new(&map)
+                    .with_observables_json(&json)
+                    .unwrap()
+                    .try_build()
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn map_only_redundancy_compares_stamped_positions() {
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = vec![(0, 0, 0), (1, 1, 0)];
+        map.meas_ids = vec![
+            pecos_core::MeasId::from_raw(17),
+            pecos_core::MeasId::from_raw(9),
+        ];
+        for json in [
+            r#"[{"id":0,"records":[0],"meas_ids":[17]}]"#,
+            r#"[{"id":0,"records":[-2],"meas_ids":[17]}]"#,
+            r#"[{"id":0,"meas_ids":[17]}]"#,
+            r#"[{"id":0,"records":[0,1,0],"meas_ids":[17,17,9]}]"#,
+        ] {
+            assert!(
+                DemBuilder::new(&map)
+                    .with_detectors_json(json)
+                    .unwrap()
+                    .try_build()
+                    .is_ok(),
+                "{json}"
+            );
+            assert!(
+                DemBuilder::new(&map)
+                    .with_observables_json(json)
+                    .unwrap()
+                    .try_build()
+                    .is_ok(),
+                "{json}"
+            );
+        }
+        for json in [
+            r#"[{"id":0,"records":[0],"meas_ids":[9]}]"#,
+            r#"[{"id":0,"records":[0,0,1],"meas_ids":[17,9,9]}]"#,
+        ] {
+            for builder in [
+                DemBuilder::new(&map).with_detectors_json(json).unwrap(),
+                DemBuilder::new(&map).with_observables_json(json).unwrap(),
+            ] {
+                let error = builder.try_build().unwrap_err().to_string();
+                assert!(error.contains("has both 'records' and 'meas_ids' but they reference different measurements"), "{error}");
+            }
+        }
+        let error = DemBuilder::new(&map)
+            .with_detectors_json(r#"[{"id":0,"meas_ids":[0]}]"#)
+            .unwrap()
+            .try_build()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("meas_id 0, which is not present"), "{error}");
+    }
+
+    #[test]
+    fn map_only_redundancy_uses_measurement_order() {
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = vec![(0, 0, 0), (1, 1, 0)];
+        // Caller record 0 is q1 (map position 1). Legacy id 0 also names q1.
+        // With stamps [0, 1], stamped id 1 names q1 without translation.
+        for stamped in [false, true] {
+            if stamped {
+                map.meas_ids = vec![
+                    pecos_core::MeasId::from_raw(0),
+                    pecos_core::MeasId::from_raw(1),
+                ];
+            }
+            for (id, accepted) in [(usize::from(stamped), true), (usize::from(!stamped), false)] {
+                let json = format!(r#"[{{"id":0,"records":[0],"meas_ids":[{id}]}}]"#);
+                for builder in [
+                    DemBuilder::new(&map)
+                        .with_measurement_order(vec![1, 0])
+                        .with_detectors_json(&json)
+                        .unwrap(),
+                    DemBuilder::new(&map)
+                        .with_measurement_order(vec![1, 0])
+                        .with_observables_json(&json)
+                        .unwrap(),
+                ] {
+                    let result = builder.try_build();
+                    if accepted {
+                        assert!(result.is_ok(), "{json}, stamped={stamped}");
+                    } else {
+                        let error = result.unwrap_err().to_string();
+                        assert!(error.contains("has both 'records' and 'meas_ids' but they reference different measurements"), "{error}");
+                    }
+                    if accepted {
+                        assert_eq!(
+                            builder.measurement_indices_from_refs(&[0], &[]).unwrap(),
+                            [1]
+                        );
+                        assert_eq!(
+                            builder.measurement_indices_from_refs(&[], &[id]).unwrap(),
+                            [1]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sampler_json_records_are_bounded() {
+        use super::super::{dem_sampler::SamplingEngineBuilder, sampler::DemSamplerBuilder};
+
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = vec![(0, 0, 0), (1, 1, 0)];
+        for record in [-3, -2, -1, 0, 1, 2, 5] {
+            let json = format!(r#"[{{"id":0,"records":[{record}]}}]"#);
+            let accepted = (-2..2).contains(&record);
+            assert_eq!(
+                DemSamplerBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .is_ok(),
+                accepted
+            );
+            assert_eq!(
+                DemSamplerBuilder::new(&map)
+                    .with_observables_json(&json)
+                    .is_ok(),
+                accepted
+            );
+            assert_eq!(
+                SamplingEngineBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .is_ok(),
+                accepted
+            );
+            assert_eq!(
+                SamplingEngineBuilder::new(&map)
+                    .with_observables_json(&json)
+                    .is_ok(),
+                accepted
+            );
+        }
+        // The sampler's empty-map escape hatch still treats records as opaque.
+        let empty = DagFaultInfluenceMap::with_capacity(0);
+        for json in ["[]", "", r#"[{"id":0,"records":[5,-99]}]"#] {
+            assert!(
+                DemSamplerBuilder::new(&empty)
+                    .with_detectors_json(json)
+                    .is_ok()
+            );
+            assert!(
+                DemSamplerBuilder::new(&empty)
+                    .with_observables_json(json)
+                    .is_ok()
+            );
+            assert!(
+                SamplingEngineBuilder::new(&empty)
+                    .with_detectors_json(json)
+                    .is_ok()
+            );
+            assert!(
+                SamplingEngineBuilder::new(&empty)
+                    .with_observables_json(json)
+                    .is_ok()
+            );
+        }
+        assert!(DemBuilder::new(&empty).try_build().is_ok());
+        // try_build has no empty-map bypass; build remains the lax raw API.
+        let builder = DemBuilder::new(&empty)
+            .with_detectors_json(r#"[{"id":0,"records":[5]}]"#)
+            .unwrap();
+        assert!(builder.try_build().is_err());
+        assert!(builder.build().is_ok());
+    }
+
+    #[test]
+    fn exact_parity_rejects_missing_positions_and_history_entries() {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        let mut circuit = pecos_quantum::DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.mz(&[0]);
+        let info = InfluenceBuilder::new(&circuit)
+            .run_symbolic_simulation()
+            .unwrap();
+        // The first mapping has no node for position 0; the second names a
+        // history entry beyond the sole measurement. Both must report errors.
+        for mapping in [vec![], vec![1]] {
+            assert!(matches!(
+                measurement_parity_expression(&info.history, &mapping, &[0], "ideal"),
+                Err(DemBuilderError::ConfigurationError(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn exact_reference_translation_preserves_legacy_ids_and_multiplicity() {
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = vec![(2, 0, 0), (3, 1, 0), (4, 0, 0)];
+        let builder = DemBuilder::new(&map).with_measurement_order(vec![1, 0, 0]);
+        // q1 first, then the first and second q0 measurements. Duplicate
+        // references remain duplicate terms, for XOR cancellation downstream.
+        assert_eq!(
+            builder
+                .measurement_indices_from_refs(&[0, 1, 2, 1], &[])
+                .unwrap(),
+            [1, 0, 2, 0]
+        );
+        assert_eq!(
+            builder
+                .measurement_indices_from_refs(&[], &[0, 1, 2, 1])
+                .unwrap(),
+            [1, 0, 2, 0]
+        );
+        let first = builder.tc_to_influence();
+        assert!(Rc::ptr_eq(&first, &builder.tc_to_influence()));
+        let builder = builder.with_measurement_order(vec![0, 1, 0]);
+        assert_eq!(
+            builder
+                .measurement_indices_from_refs(&[0, 1, 2], &[])
+                .unwrap(),
+            [0, 1, 2]
+        );
+        assert!(!Rc::ptr_eq(&first, &builder.tc_to_influence()));
+    }
 
     #[test]
     fn z_error_before_mx_produces_a_detector_mechanism() {
@@ -4919,6 +5418,8 @@ mod tests {
 
         let builder = builder.with_detectors_json("[]").unwrap();
         assert!(builder.exact_branch_cache.borrow().is_empty());
+        assert!(builder.exact_ideal_history_cache.borrow().is_none());
+        assert!(builder.tc_to_influence_cache.borrow().is_none());
     }
 
     #[test]

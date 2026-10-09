@@ -278,7 +278,7 @@ impl ScheduledExecutor {
             if outcomes.len() != ids.len() {
                 return Err(error("scheduled measurement count mismatch"));
             }
-            let feedback = ids.into_iter().zip(outcomes).collect::<BTreeMap<_, _>>();
+            let feedback = ids.into_iter().zip(outcomes).collect::<Vec<_>>();
             self.runtime
                 .provide_measurement_outcomes(feedback.clone())
                 .map_err(|error| runtime_error(&error))?;
@@ -305,7 +305,6 @@ impl ScheduledExecutor {
     ) -> Result<AdmittedSchedule, PecosError> {
         let mut builder = ByteMessage::quantum_operations_builder();
         let mut ids = Vec::new();
-        let mut program_ids = BTreeSet::new();
         let mut native_ids = BTreeSet::new();
         for batch in batches {
             if batch.runtime_shot_id != self.runtime_shot_id || batch.batch_index != next_batch {
@@ -410,7 +409,6 @@ impl ScheduledExecutor {
                             .remove(&index)
                             .ok_or_else(|| error("missing scheduled measurement mapping"))?;
                         if m.runtime_result != *result_id
-                            || !program_ids.insert(m.program_result)
                             || !native_ids.insert(*result_id)
                             || (matches!(op, RuntimeScheduledOp::MeasureLeaked { .. })
                                 && !m.leakage_aware)

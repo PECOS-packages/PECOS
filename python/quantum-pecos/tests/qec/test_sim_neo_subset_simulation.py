@@ -21,11 +21,8 @@ result.subset (rows are empty for subset runs).
 from __future__ import annotations
 
 import pytest
-
-pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
-
-from pecos.quantum import TickCircuit  # noqa: E402
-from pecos_rslib_exp import (  # noqa: E402
+from pecos.quantum import TickCircuit
+from pecos_rslib_exp import (
     sim_neo,
     stabilizer,
     statevec,

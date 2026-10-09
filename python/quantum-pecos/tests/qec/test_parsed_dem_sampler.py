@@ -11,9 +11,7 @@ These tests verify that:
 
 import numpy as np
 import pytest
-
-# Skip all tests if stim is not installed
-stim = pytest.importorskip("stim")
+import stim
 
 
 class TestParsedDemBasics:

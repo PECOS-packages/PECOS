@@ -41,6 +41,8 @@ pub enum InterfaceError {
     LoadError(String),
     /// Execution error
     ExecutionError(String),
+    /// Typed program termination, including cooperative cancellation.
+    ProgramError(pecos_qis_ffi_types::ProgramError),
     /// Invalid program format
     InvalidFormat(String),
     /// Other error
@@ -53,6 +55,7 @@ impl std::fmt::Display for InterfaceError {
             Self::LoadError(msg) => write!(f, "Load error: {msg}"),
             Self::ExecutionError(msg) => write!(f, "Execution error: {msg}"),
             Self::InvalidFormat(msg) => write!(f, "Invalid format: {msg}"),
+            Self::ProgramError(error) => error.fmt(f),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -253,7 +256,7 @@ pub trait QisInterface: Send + Sync {
     /// The handle uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS is consistent across threads (important on macOS).
     ///
-    /// Returns None if dynamic execution is not supported.
+    /// Returns None if dynamic execution is unsupported or not yet enabled.
     fn get_sync_handle(&self) -> Option<Box<dyn DynamicSyncHandle>> {
         None
     }
@@ -269,6 +272,9 @@ pub trait DynamicSyncHandle: Send + Sync {
     /// Wait for the worker to need a measurement result
     ///
     /// Returns `Some(result_id)` if worker needs a result, None on timeout or completion.
+    /// A zero timeout is a non-blocking, non-consuming peek of the outstanding
+    /// request. Repeated peeks return the same ID until ready is signalled or
+    /// the worker completes.
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64>;
 
     /// Set a measurement result for the running program

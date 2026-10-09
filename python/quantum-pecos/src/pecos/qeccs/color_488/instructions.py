@@ -201,7 +201,7 @@ class InstrInitZero(DefaultLogicalInstruction):
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -219,8 +219,8 @@ class InstrInitZero(DefaultLogicalInstruction):
         # list of tuples of logical check and delogical stabilizer for each logical qudit.
         self.final_logical_ops = [
             {
-                "X": QuantumCircuit([{"Z": set(qecc.sides["bottom"])}]),
-                "Z": QuantumCircuit([{"X": set(qecc.sides["bottom"])}]),
+                "X": QuantumCircuit([{"X": set(qecc.sides["bottom"])}]),
+                "Z": QuantumCircuit([{"Z": set(qecc.sides["bottom"])}]),
             },
         ]
 
@@ -271,7 +271,7 @@ class InstrInitPlus(DefaultLogicalInstruction):
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check

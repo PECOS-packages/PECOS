@@ -699,7 +699,7 @@ fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preser
 }
 
 #[test]
-fn wire_measurement_positions_and_each_identity_namespace_are_checked() {
+fn wire_measurement_positions_and_native_identity_are_checked() {
     let first = batch(0, vec![event(0), gate(Gate::mz(&[0]))]);
     let second = batch(1, vec![gate(Gate::mz(&[0]))]);
     let one = encode_event_batches(std::slice::from_ref(&first)).unwrap();
@@ -710,11 +710,6 @@ fn wire_measurement_positions_and_each_identity_namespace_are_checked() {
         (
             good.as_bytes().len() - 16,
             1,
-            "duplicate scheduled event measurement identity",
-        ),
-        (
-            good.as_bytes().len() - 8,
-            92,
             "duplicate scheduled event measurement identity",
         ),
     ] {
@@ -793,4 +788,34 @@ fn wire_counts_and_event_positions_reject_before_record_allocation() {
         }],
     );
     assert!(decode_event_batches(&encode_event_batches(&[max_payload]).unwrap()).is_ok());
+}
+
+#[test]
+fn repeated_program_id_round_trips_and_reaches_event_adapter() {
+    let mut b = batch(
+        0,
+        vec![gate(Gate::mz(&[0])), event(1), gate(Gate::mz(&[0]))],
+    );
+    b.measurements[1].program_result = b.measurements[0].program_result;
+    let wire = encode_event_batches(&[b.clone()]).unwrap();
+    let decoded = decode_event_batches(&wire).unwrap();
+    assert_eq!(decoded[0].measurements, b.measurements);
+    let mut q = system();
+    begin(&mut q);
+    assert_eq!(q.process(wire).unwrap().outcomes().unwrap(), [0, 1]);
+    // Decoder admission also accepts repeated program IDs in an existing wire.
+    let original = batch(
+        0,
+        vec![gate(Gate::mz(&[0])), event(1), gate(Gate::mz(&[0]))],
+    );
+    let mut bytes = encode_event_batches(&[original])
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+    let end = bytes.len();
+    bytes[end - 8..].copy_from_slice(&b.measurements[0].program_result.to_le_bytes());
+    assert_eq!(
+        decode_event_batches(&ByteMessage::new(&bytes)).unwrap()[0].measurements,
+        b.measurements
+    );
 }

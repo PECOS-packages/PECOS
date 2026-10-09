@@ -5,8 +5,7 @@ fn synthetic() -> SeleneRuntime {
     runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
     runtime.set_num_qubits(4);
     runtime.shot_start(17, Some(41)).unwrap();
-    runtime.runtime_to_program_results.insert(901, 7);
-    runtime.leakage_results.insert(7);
+    runtime.runtime_to_program_results.insert(901, (7, true));
     runtime
 }
 
@@ -501,7 +500,7 @@ fn measurement_feedback_invalidates_terminal_drain() {
         .unwrap();
     runtime.drain_pending_scheduled_operations().unwrap();
     runtime
-        .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+        .provide_measurement_outcomes(Vec::from([(0, 0)]))
         .unwrap();
     assert!(
         runtime.shot_end().is_err(),
@@ -509,9 +508,7 @@ fn measurement_feedback_invalidates_terminal_drain() {
     );
     assert!(runtime.shot_start(43, None).is_err());
     runtime.drain_pending_scheduled_operations().unwrap();
-    runtime
-        .provide_measurement_outcomes(BTreeMap::new())
-        .unwrap();
+    runtime.provide_measurement_outcomes(Vec::new()).unwrap();
     runtime.shot_end().unwrap();
 }
 
@@ -535,4 +532,40 @@ fn inactive_scheduled_extraction_does_not_invoke_custom_handler() {
     assert!(error.contains("no scheduled extraction active"), "{error}");
     assert!(!invoked.load(Ordering::SeqCst));
     assert_eq!(runtime.runtime_batch_index, 0);
+}
+
+#[test]
+fn forced_scheduled_accumulation_uses_transport_byte_budget() {
+    // Custom payloads fill the transport quickly without relying on a loop-level cap.
+    let bytes_per_batch = 40 + 24 + MAX_PAYLOAD_BYTES;
+    let count = (pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / bytes_per_batch;
+    let mut runtime = synthetic();
+    let Err(error) = runtime.collect_scheduled(|runtime| {
+        for index in 0..=count {
+            let result = runtime.retain_scheduled_batch(RuntimeOperationBatch {
+                operations: vec![RuntimeScheduledOp::Custom {
+                    tag: 0,
+                    data: vec![0; MAX_PAYLOAD_BYTES],
+                }],
+                ..Default::default()
+            });
+            if index < count {
+                result.expect("encodable output must fit the forced drain");
+            } else {
+                result?;
+            }
+        }
+        Ok(vec![])
+    }) else {
+        panic!("oversized scheduled output must fail");
+    };
+    let error = error.to_string();
+    assert!(error.contains("event transport limit"), "{error}");
+    assert_eq!(
+        runtime
+            .drain_pending_scheduled_operations()
+            .unwrap_err()
+            .to_string(),
+        error
+    );
 }

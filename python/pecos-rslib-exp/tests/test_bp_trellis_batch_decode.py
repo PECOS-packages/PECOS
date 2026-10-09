@@ -5,10 +5,10 @@
 import math
 import random
 
+import pecos_rslib_exp as exp
 import pytest
 from pecos_rslib.qec import DemSampler, SampleBatch
 
-exp = pytest.importorskip("pecos_rslib_exp")
 bp_trellis = exp.bp_trellis
 
 DEM = "error(0.1) D0 D1 D2 L0\nerror(0.03) D0\nerror(0.03) D1\nerror(0.03) D2\n"
@@ -138,7 +138,6 @@ def test_fused_sampling_matches_sequential_decoding():
 
 
 def test_predictions_match_direct_experimental_binding():
-    exp = pytest.importorskip("pecos_rslib_exp")
     rows = [[(i >> j) & 1 for j in range(3)] for i in range(8)]
     for options in (
         {},

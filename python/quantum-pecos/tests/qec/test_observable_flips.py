@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from pecos_rslib.decoders import (
     BpOsdBuilder,
@@ -99,16 +100,14 @@ def test_constructors_accept_integer_like_values() -> None:
     Both constructors go through ``__index__``, so ``int``, ``bool`` and NumPy
     integer scalars are all accepted on the same footing.
     """
-    numpy = pytest.importorskip("numpy")
-
     # Integer-oriented callers can still construct flips without first converting to bool.
     assert ObservableFlips.from_bits([1, 0, 1]) == ObservableFlips.from_mask(0b101, 3)
     assert ObservableFlips.from_bits([True, 0, 1]) == ObservableFlips.from_mask(0b101, 3)
-    assert ObservableFlips.from_bits(list(numpy.array([1, 0, 1]))) == ObservableFlips.from_mask(0b101, 3)
-    assert ObservableFlips.from_bits([numpy.True_, numpy.False_]) == ObservableFlips.from_mask(0b01, 2)
+    assert ObservableFlips.from_bits(list(np.array([1, 0, 1]))) == ObservableFlips.from_mask(0b101, 3)
+    assert ObservableFlips.from_bits([np.True_, np.False_]) == ObservableFlips.from_mask(0b01, 2)
 
-    assert ObservableFlips.from_mask(numpy.uint64(5), 3) == ObservableFlips.from_mask(5, 3)
-    assert ObservableFlips.from_mask(numpy.int64(5), 3) == ObservableFlips.from_mask(5, 3)
+    assert ObservableFlips.from_mask(np.uint64(5), 3) == ObservableFlips.from_mask(5, 3)
+    assert ObservableFlips.from_mask(np.int64(5), 3) == ObservableFlips.from_mask(5, 3)
 
 
 def test_constructors_reject_non_integers_and_non_bits() -> None:

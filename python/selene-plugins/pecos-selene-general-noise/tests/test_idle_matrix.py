@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import pecos_selene_statevec as statevec_module
 import pytest
 from general_noise_conformance import ConformanceExperiment, ExpectedDistribution
 from guppylang import guppy
@@ -95,7 +96,6 @@ def test_idle_family_duration_sweep(family: IdleFamily, duration: float) -> None
     """Five schedule depths follow each idle family's independent analytic law."""
     excitation = family.excitation_probability(duration)
     if family.name == "coherent":
-        statevec_module = pytest.importorskip("pecos_selene_statevec")
         simulator = statevec_module.StateVecPlugin(random_seed=900 + round(duration * 100))
     else:
         simulator = Stim(random_seed=900 + round(duration * 100))

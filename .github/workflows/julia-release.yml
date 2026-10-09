@@ -16,13 +16,12 @@ permissions:
 
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
-  LLVM_VERSION: "21.1"
-  LLVM_RELEASE_VERSION: "21.1.8"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
 
 on:
+  # Merges into the main branches always run, whatever they touch.
   push:
     branches:
       - main
@@ -31,38 +30,25 @@ on:
       - master
     tags:
       - 'jl-*'  # Trigger on Julia-specific tags
-    paths:
-      - 'julia/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/ci/**'
-      - '.github/workflows/julia-release.yml'
+  # No `paths:` filter: GitHub applies it to label events too, so adding
+  # ci:julia could never start a run on a PR that leaves julia/ alone. The
+  # check_pr_push job decides instead (scripts/ci/pr-lane-should-run.sh).
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches:
       - main
       - dev
       - development
       - master
-    paths:
-      - 'julia/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/ci/**'
-      - '.github/workflows/julia-release.yml'
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit SHA
+        description: Commit SHA to build (manual runs build and test; only a jl-* tag push publishes)
         type: string
-      dry_run:
-        description: 'Dry run (build but not publish)'
-        type: boolean
-        default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Unrelated label events must not cancel an active run.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -73,9 +59,10 @@ jobs:
   check_pr_push:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'pull_request' && github.event.action != 'closed' ||
+      github.event_name == 'pull_request' && github.event.action != 'closed' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia') ||
       github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-')
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-') ||
+      github.event_name == 'workflow_dispatch'
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
@@ -84,23 +71,44 @@ jobs:
         with:
           egress-policy: audit
 
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Check if should run on PR push
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
+          # Always run on manual dispatch (build and test only; publish_release
+          # needs a jl-* tag push)
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
           # Always run on tag pushes (jl-* tags trigger releases)
-          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/jl-* ]]; then
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/jl-* ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # Always run on pushes to main branches
           elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
-          # For PRs, check the TRIGGER_ON_PR_PUSH setting
+          # For PRs, check the TRIGGER_ON_PR_PUSH setting, then the ci:julia
+          # label / julia/ changes. Assign on its own line so a git failure
+          # aborts the step (fail closed).
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            echo "run=true" >> $GITHUB_OUTPUT
+            run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*' Cargo.toml Cargo.lock)"
+            case "$run" in
+              true|false) ;;
+              *)
+                echo "unexpected pr-lane-should-run output: <$run>" >&2
+                exit 1
+                ;;
+            esac
+            echo "run=$run" >> $GITHUB_OUTPUT
           else
             echo "run=false" >> $GITHUB_OUTPUT
           fi
@@ -115,9 +123,10 @@ jobs:
         include:
           - os: ubuntu-latest
             architecture: x86_64
+          # `os` names the artifact; the runner is native arm64.
           - os: ubuntu-latest
             architecture: aarch64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
           - os: macos-15-intel
             architecture: x86_64
             runner: macos-15-intel  # Intel Mac for x86_64
@@ -141,58 +150,6 @@ jobs:
 
       - name: Set up Rust
         run: rustup show
-
-      - name: Install LLVM 21.1 (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            echo "Installing LLVM 21 with Homebrew..."
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
-            LLVM_PREFIX="$(brew --prefix llvm@21)"
-          else
-            echo "Installing LLVM 21.1 using PECOS-managed packages..."
-            cargo run --locked -p pecos-cli --release -- llvm ensure --managed --no-configure || bash scripts/ci/install-llvm-21-conda-linux.sh
-            LLVM_PREFIX="$HOME/.pecos/deps/llvm-21.1"
-          fi
-
-          echo "Setting LLVM environment variables..."
-          cargo run --locked -p pecos-cli --release -- llvm configure "$LLVM_PREFIX"
-          export PECOS_LLVM="$LLVM_PREFIX"
-          export LLVM_SYS_211_PREFIX="$LLVM_PREFIX"
-
-          echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
-          echo "LLVM_SYS_211_PREFIX=$LLVM_SYS_211_PREFIX" >> $GITHUB_ENV
-
-          echo "Verifying LLVM installation..."
-          cargo run --locked -p pecos-cli --release -- llvm check
-
-      - name: Install LLVM 21.1 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $llvmRoot = Join-Path $env:USERPROFILE ".pecos\deps\llvm-21.1"
-          $llvmPrefix = Join-Path $llvmRoot "Library"
-          Write-Host "Installing conda-forge LLVM 21.1..."
-          ./scripts/ci/install-llvm-21-windows.ps1 -InstallDir $llvmRoot -Version ${{ env.LLVM_RELEASE_VERSION }}
-
-          Write-Host "Setting LLVM environment variables..."
-          $env:PECOS_LLVM = $llvmPrefix
-          $env:LLVM_SYS_211_PREFIX = $env:PECOS_LLVM
-          $env:LIBCLANG_PATH = Join-Path $llvmPrefix "bin"
-          cargo run --locked -p pecos-cli --release -- llvm configure "$env:PECOS_LLVM"
-
-          "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LLVM_SYS_211_PREFIX=$env:LLVM_SYS_211_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LIBCLANG_PATH=$env:LIBCLANG_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "Verifying LLVM installation..."
-          cargo run --locked -p pecos-cli --release -- llvm check
-
-      - name: Install Rust target
-        run: |
-          # With native ARM64 runners, no cross-compilation setup is needed
-          # All builds are now native for their respective architectures
-          echo "Using native build for ${{ matrix.architecture }} on ${{ matrix.os }}"
 
       - name: Set up Visual Studio environment on Windows
         if: runner.os == 'Windows'
@@ -309,6 +266,9 @@ jobs:
             architecture: x86_64
           - runner: macos-latest
             os: macos-latest
+            architecture: aarch64
+          - runner: ubuntu-24.04-arm
+            os: ubuntu-latest
             architecture: aarch64
     steps:
       - name: Harden the runner (egress audit)
@@ -538,6 +498,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Create distribution directories
@@ -589,7 +550,7 @@ jobs:
             printf '# For release: %s\n\n' "$RELEASE_REF_NAME"
             printf '%s\n' '[PECOS_julia]'
             printf '%s\n\n' 'git-tree-sha1 = "0000000000000000000000000000000000000000"  # Tree hash will be computed on first use'
-          } > ../julia/PECOS.jl/Artifacts.toml
+          } > Artifacts.toml
 
           # Add download entries for each platform
           for tarball in binaries/*.tar.gz; do
@@ -602,12 +563,12 @@ jobs:
                 printf '%s\n' '[[PECOS_julia.download]]'
                 printf 'url = "https://github.com/PECOS-packages/PECOS/releases/download/%s/%s"\n' "$RELEASE_REF_NAME" "$filename"
                 printf 'sha256 = "%s"\n\n' "$sha256"
-              } >> ../julia/PECOS.jl/Artifacts.toml
+              } >> Artifacts.toml
             fi
           done
 
           echo "Generated Artifacts.toml:"
-          cat ../julia/PECOS.jl/Artifacts.toml
+          cat Artifacts.toml
 
       - name: Create submission instructions
         env:
@@ -684,9 +645,35 @@ jobs:
           if-no-files-found: error
           retention-days: 30  # Keep for 30 days
 
+  # Publishes only from a jl-* tag push, and is the only job with write access:
+  # the jobs above also run on pull requests and stay read-only.
+  publish_release:
+    needs: create_release_bundle
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      # Keeps the token so the Artifacts.toml commit below can be pushed.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download release bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: pecos-julia-release-bundle
+
+      - name: Unpack release bundle
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: tar -xzf "pecos-julia-release-bundle-${RUN_NUMBER}.tar.gz"
+
       - name: Determine if pre-release
         id: check-prerelease
-        if: startsWith(github.ref, 'refs/tags/jl-')
         env:
           RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
@@ -703,8 +690,41 @@ jobs:
             echo "Release version detected: $VERSION"
           fi
 
+      # Runs before the release step, which replaces existing assets: a full
+      # re-run or a re-pushed tag rebuilds tarballs whose checksums no longer
+      # match the Artifacts.toml already published, and that must stop here.
+      - name: Check the tag's artifacts branch
+        id: artifacts-branch
+        env:
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+        run: |
+          branch="refs/heads/${RELEASE_REF_NAME}-artifacts"
+
+          # --exit-code: 0 = branch exists, 2 = no such branch, else an error.
+          status=0
+          git ls-remote --exit-code origin "$branch" > /dev/null || status=$?
+          case "$status" in
+            2)
+              echo "state=new" >> "$GITHUB_OUTPUT"
+              ;;
+            0)
+              git fetch --no-tags --depth=1 origin "$branch"
+              git show FETCH_HEAD:julia/PECOS.jl/Artifacts.toml > published-Artifacts.toml
+              if cmp -s published-Artifacts.toml release-bundle/Artifacts.toml; then
+                echo "$branch already holds this Artifacts.toml; re-uploading the same binaries."
+                echo "state=published" >> "$GITHUB_OUTPUT"
+              else
+                echo "::error::$branch holds a different Artifacts.toml than this build. Delete the branch and the $RELEASE_REF_NAME release to republish."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "git ls-remote failed with status $status" >&2
+              exit "$status"
+              ;;
+          esac
+
       - name: Create GitHub Release and Upload Binaries
-        if: startsWith(github.ref, 'refs/tags/jl-')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-bundle/binaries/*.tar.gz
@@ -723,19 +743,22 @@ jobs:
           draft: false
           prerelease: ${{ steps.check-prerelease.outputs.is_prerelease }}
           fail_on_unmatched_files: true
+          # The action deletes an existing asset before uploading its
+          # replacement. Once Artifacts.toml is published, keep the assets it
+          # points at and only upload any that are missing.
+          overwrite_files: ${{ steps.artifacts-branch.outputs.state != 'published' }}
 
       - name: Commit Artifacts.toml to branch
-        if: startsWith(github.ref, 'refs/tags/jl-')
+        if: steps.artifacts-branch.outputs.state == 'new'
         env:
           RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
-          # Configure git
+          cp release-bundle/Artifacts.toml julia/PECOS.jl/Artifacts.toml
+
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          # Add and commit the Artifacts.toml
           git add julia/PECOS.jl/Artifacts.toml
-          git commit -m "Add Artifacts.toml for $RELEASE_REF_NAME" || echo "No changes to commit"
+          git diff --cached --quiet || git commit -m "Add Artifacts.toml for $RELEASE_REF_NAME"
 
-          # Push to the tag's branch
-          git push origin "HEAD:${RELEASE_REF_NAME}-artifacts" || echo "Push failed"
+          git push origin "HEAD:refs/heads/${RELEASE_REF_NAME}-artifacts"

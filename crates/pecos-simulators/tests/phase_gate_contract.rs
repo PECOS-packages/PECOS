@@ -262,11 +262,12 @@ fn three_operand_phase_queries_are_conservative() {
             num_qubits: 3,
         };
         assert!(!descriptor.is_clifford());
-        assert_eq!(descriptor.to_gate_type(), None);
+        let named = (gamma == Angle64::HALF_TURN).then_some(GateType::CCZ);
+        assert_eq!(descriptor.to_gate_type(), named);
         assert_eq!(descriptor.try_to_pauli(), None);
         let rep = UnitaryRep::Gate(descriptor, smallvec![0, 1, 2]);
         assert!(!rep.is_clifford());
-        assert_eq!(rep.to_named_gate(), None);
+        assert_eq!(rep.to_named_gate(), named);
         assert_eq!(rep.clone().try_to_pauli(), None);
         assert_eq!(rep.clone().try_to_pauli_string(), None);
         assert!(!rep.is_pauli_equivalent());

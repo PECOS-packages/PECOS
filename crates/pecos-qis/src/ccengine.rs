@@ -4860,6 +4860,7 @@ mod scheduled_completion_tests {
         Feedback,
         Padding,
         FeedbackThenPadding,
+        OversizedV4,
     }
 
     #[derive(Clone, Default)]
@@ -4925,6 +4926,36 @@ mod scheduled_completion_tests {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
                     "drain after shot completion".into(),
                 ));
+            }
+            if matches!(self.output, TerminalOutput::OversizedV4) {
+                use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
+                use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+                if self.stage != 0 {
+                    return Ok(vec![]);
+                }
+                self.stage = 1;
+                // One byte over V4's limit, but below the collection lower bound.
+                let tail = MAX_SCHEDULE_BYTES + 1 - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
+                return Ok((0..256)
+                    .map(|index| ScheduledBatch {
+                        runtime_shot_id: 0,
+                        batch_index: index,
+                        start_time_nanos: 0,
+                        duration_nanos: 0,
+                        operations: vec![Op::Custom {
+                            tag: 1,
+                            data: vec![
+                                0;
+                                if index == 255 {
+                                    tail
+                                } else {
+                                    MAX_BATCH_PAYLOAD
+                                }
+                            ],
+                        }],
+                        measurements: vec![],
+                    })
+                    .collect());
             }
             if matches!(self.output, TerminalOutput::Padding)
                 || (matches!(self.output, TerminalOutput::FeedbackThenPadding) && self.stage >= 3)
@@ -4998,6 +5029,47 @@ mod scheduled_completion_tests {
             }])
         }
     }
+    #[test]
+    fn oversized_v4_drain_fails_at_encode_and_latches() {
+        use crate::scheduled_transport::EventBudget;
+        let mut runtime = FeedbackTail {
+            output: TerminalOutput::OversizedV4,
+            ..Default::default()
+        };
+        let batches = runtime.drain_pending_scheduled_operations().unwrap();
+        let mut budget = EventBudget::default();
+        for batch in &batches {
+            budget
+                .charge(&batch.operations, batch.measurements.len())
+                .unwrap();
+        }
+        drop(batches);
+        runtime.stage = 0;
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine.scheduled_transport = ScheduledTransport::V4;
+        let Err(error) = engine.drain_terminal_commands() else {
+            panic!("oversized V4 encoding must fail");
+        };
+        let error = error.to_string();
+        assert!(
+            error.contains("scheduled drain failed") && error.contains("event transport limit"),
+            "{error}"
+        );
+        // A subsequent runtime drain would be empty: it cannot erase the encode failure.
+        assert_eq!(
+            engine.runtime.drain_pending_scheduled_operations().unwrap(),
+            []
+        );
+        assert_eq!(engine.get_results().unwrap_err().to_string(), error);
+        assert_eq!(
+            engine
+                .finalize_shot_for_certification()
+                .unwrap_err()
+                .to_string(),
+            error
+        );
+    }
+
     #[test]
     fn scheduled_terminal_padding_without_feedback_fails_promptly() {
         for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {

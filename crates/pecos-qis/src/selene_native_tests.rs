@@ -1235,21 +1235,65 @@ mod measurement_followups {
         }
     }
 
-    #[test]
-    fn forced_native_drain_has_aggregate_budget() {
+    fn assert_forced_native_drain_at_v3_bound(extra: usize) {
+        use crate::scheduled_transport::{ScheduledTransport, encode_mode};
+        use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+        let count = (MAX_SCHEDULE_BYTES - 16) / 40;
         with_descriptor(|mut runtime| {
             runtime
                 .lower_scheduled_operations(&[Operation::AllocateQubit { id: 0 }])
                 .unwrap();
-            PAD.set((pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / 80 + 1);
-            let Err(error) = runtime.drain_pending_scheduled_operations() else {
-                panic!("oversized native drain must fail");
+            PAD.set(count + extra);
+            let result = runtime.drain_pending_scheduled_operations();
+            if extra == 0 {
+                let batches = result.unwrap();
+                assert_eq!(batches.len(), count);
+                let (wire, _) = encode_mode(batches, 0, ScheduledTransport::V3).unwrap();
+                assert_eq!(wire.as_bytes().len(), 16 + count * 40);
+            } else {
+                let Err(error) = result else {
+                    panic!("oversized native drain must fail");
+                };
+                let error = error.to_string();
+                assert!(error.contains("event transport limit"), "{error}");
+                assert_eq!(
+                    runtime
+                        .drain_pending_scheduled_operations()
+                        .unwrap_err()
+                        .to_string(),
+                    error
+                );
+            }
+            assert_eq!(PAD.get(), 0, "must reach the V3 boundary");
+        });
+    }
+
+    #[test]
+    fn forced_native_drain_just_under_v3_bound_succeeds() {
+        assert_forced_native_drain_at_v3_bound(0);
+    }
+
+    #[test]
+    fn forced_native_drain_has_aggregate_budget() {
+        assert_forced_native_drain_at_v3_bound(1);
+    }
+
+    #[test]
+    fn barrier_collection_has_aggregate_budget() {
+        with_descriptor(|mut runtime| {
+            runtime
+                .lower_scheduled_operations(&[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            PAD.set((pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / 40 + 1);
+            let Err(error) = runtime.lower_scheduled_operations(&[Operation::Barrier]) else {
+                panic!("unbounded Barrier output must fail");
             };
             let error = error.to_string();
             assert!(error.contains("event transport limit"), "{error}");
+            assert_eq!(PAD.get(), 0);
             assert_eq!(
                 runtime
-                    .drain_pending_scheduled_operations()
+                    .lower_scheduled_operations(&[])
                     .unwrap_err()
                     .to_string(),
                 error

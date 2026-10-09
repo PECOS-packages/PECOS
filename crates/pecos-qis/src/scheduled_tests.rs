@@ -32,7 +32,7 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
     let mut runtime = synthetic();
     // Explicit capture transports opaque events to a downstream consumer.
     let extracted = runtime
-        .collect_scheduled(false, |runtime| {
+        .collect_scheduled(|runtime| {
             runtime.retain_scheduled_batch(batch())?;
             runtime.retain_scheduled_batch(RuntimeOperationBatch {
                 start_time_nanos: 40,
@@ -70,7 +70,7 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
     );
     assert!(runtime.scheduled_output.is_none());
     let next = runtime
-        .collect_scheduled(false, |runtime| {
+        .collect_scheduled(|runtime| {
             runtime.retain_scheduled_batch(batch())?;
             Ok(vec![])
         })
@@ -99,7 +99,7 @@ fn invalid_batches_do_not_escape_and_failures_require_reset() {
             }),
         }
         let error = runtime
-            .collect_scheduled(false, |runtime| {
+            .collect_scheduled(|runtime| {
                 runtime.retain_scheduled_batch(RuntimeOperationBatch::default())?;
                 runtime.retain_scheduled_batch(bad)?;
                 Ok(vec![])
@@ -157,7 +157,7 @@ fn operation_limit_applies_to_one_native_batch() {
     let mut runtime = synthetic();
     assert!(
         runtime
-            .collect_scheduled(false, |runtime| {
+            .collect_scheduled(|runtime| {
                 runtime.retain_scheduled_batch(RuntimeOperationBatch {
                     operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS + 1],
                     ..Default::default()
@@ -196,7 +196,7 @@ fn preflight_rejects_unsupported_inputs_without_loading_plugin() {
 #[test]
 fn mode_and_clone_isolation_prevent_false_live_snapshots() {
     let mut runtime = synthetic();
-    runtime.collect_scheduled(false, |_| Ok(vec![])).unwrap();
+    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
     assert!(runtime.lower_operations(&[]).is_err());
     assert!(runtime.lower_operations_with_metadata(&[]).is_err());
     let mut cloned = runtime.clone();
@@ -223,7 +223,7 @@ fn mode_and_clone_isolation_prevent_false_live_snapshots() {
 fn caught_unwind_drops_output_and_poison_survives_clone() {
     let mut runtime = synthetic();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runtime.collect_scheduled(false, |runtime| {
+        runtime.collect_scheduled(|runtime| {
             runtime.retain_scheduled_batch(batch())?;
             panic!("synthetic panic");
         })
@@ -316,7 +316,7 @@ fn legacy_execution_must_not_bypass_scheduled_mode() {
     let mut interface = OperationCollector::default();
     interface.operations.push(QuantumOp::X(0).into());
     runtime.load_interface(interface).unwrap();
-    runtime.collect_scheduled(false, |_| Ok(vec![])).unwrap();
+    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
     assert!(
         runtime.execute_until_quantum().is_err(),
         "flat legacy execution was allowed inside a scheduled shot"
@@ -337,7 +337,7 @@ fn scheduled_mode_must_not_follow_legacy_execution() {
         Some(vec![QuantumOp::RXY(std::f64::consts::PI, 0.0, 0)])
     );
     assert!(
-        runtime.collect_scheduled(false, |_| Ok(vec![])).is_err(),
+        runtime.collect_scheduled(|_| Ok(vec![])).is_err(),
         "scheduled extraction was allowed after flat legacy execution"
     );
 }
@@ -345,7 +345,7 @@ fn scheduled_mode_must_not_follow_legacy_execution() {
 #[test]
 fn legacy_terminal_drain_cannot_enter_a_scheduled_session() {
     let mut runtime = synthetic();
-    runtime.collect_scheduled(false, |_| Ok(vec![])).unwrap();
+    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
     assert!(
         runtime
             .drain_pending_operations()
@@ -537,10 +537,10 @@ fn inactive_scheduled_extraction_does_not_invoke_custom_handler() {
 #[test]
 fn forced_scheduled_accumulation_uses_transport_byte_budget() {
     // Custom payloads fill the transport quickly without relying on a loop-level cap.
-    let bytes_per_batch = 80 + 24 + MAX_PAYLOAD_BYTES;
+    let bytes_per_batch = 40 + 24 + MAX_PAYLOAD_BYTES;
     let count = (pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / bytes_per_batch;
     let mut runtime = synthetic();
-    let Err(error) = runtime.collect_scheduled(true, |runtime| {
+    let Err(error) = runtime.collect_scheduled(|runtime| {
         for index in 0..=count {
             let result = runtime.retain_scheduled_batch(RuntimeOperationBatch {
                 operations: vec![RuntimeScheduledOp::Custom {

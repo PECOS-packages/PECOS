@@ -952,7 +952,6 @@ impl SeleneRuntime {
 
     fn collect_scheduled(
         &mut self,
-        forced_drain: bool,
         collect: impl FnOnce(&mut Self) -> Result<Vec<QuantumOp>>,
     ) -> Result<Vec<ScheduledBatch>> {
         self.check_batch_failure()?;
@@ -975,10 +974,7 @@ impl SeleneRuntime {
             ));
         }
         self.select_output_mode(true)?;
-        self.scheduled_output = Some(ScheduledOutput {
-            batches: Vec::new(),
-            drain_budget: forced_drain.then(crate::scheduled_transport::EventBudget::default),
-        });
+        self.scheduled_output = Some(ScheduledOutput::default());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| collect(self)));
         let output = self
             .scheduled_output
@@ -1118,11 +1114,10 @@ impl SeleneRuntime {
                 )?;
             }
         }
-        if let Some(budget) = &mut output.drain_budget {
-            budget
-                .charge(&batch.operations, measurements.len())
-                .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
-        }
+        output
+            .budget
+            .charge(&batch.operations, measurements.len())
+            .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
         output
             .batches
             .try_reserve(1)
@@ -3228,7 +3223,7 @@ impl QisRuntime for SeleneRuntime {
                 }
             }
         }
-        self.collect_scheduled(false, |runtime| {
+        self.collect_scheduled(|runtime| {
             if !operations.is_empty() {
                 runtime.scheduled_drained = false;
             }
@@ -3240,13 +3235,13 @@ impl QisRuntime for SeleneRuntime {
     /// Used for mid-shot reads and before shot completion; consume all returned
     /// work. Submissions and feedback invalidate the drain's shot-boundary proof.
     /// This does not execute work or certify a physics consumer. Same per-batch
-    /// budgets as extraction.
+    /// and aggregate transport budgets as extraction.
     ///
     /// # Errors
     /// Fails if a full flush is unsupported or extraction fails. Post-submission
     /// failures remain latched until reset.
     fn drain_pending_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
-        let batches = self.collect_scheduled(true, Self::drain_native_pending_operations)?;
+        let batches = self.collect_scheduled(Self::drain_native_pending_operations)?;
         self.scheduled_drained = true;
         Ok(batches)
     }

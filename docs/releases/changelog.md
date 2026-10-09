@@ -23,6 +23,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- `extract_detection_events_and_observables` now returns declared observable ids
+  rather than positions in the metadata list. Callers using these ids as array
+  indices need a width of maximum observable id plus one, not the entry count.
+- `extract_detection_events_and_observables` now raises
+  `MissingObservableReferenceError` for observable metadata missing `id` or
+  `reference`, or with a reference other than integer 0 or 1. Metadata predating
+  the reference field is no longer accepted; the surface producers
+  `LogicalCircuitBuilder.to_tick_circuit` and `TickCircuitRenderer` (including
+  `build_memory_circuit` and `generate_tick_circuit_from_patch`) emit this field.
+
 - `pecos_rslib.Hugr` and `pecos_rslib.programs.Hugr` have been removed. Use
   `pecos.Hugr`/`pecos.Guppy` or
   `pecos_rslib.Qis(pecos_rslib.hugr_lowering.compile_hugr_to_qis(...))`.

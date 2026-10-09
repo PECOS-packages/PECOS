@@ -10,6 +10,8 @@ and syndrome processing.
 
 from __future__ import annotations
 
+from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+
 import json
 import math
 from importlib import import_module
@@ -628,38 +630,7 @@ def empirical_correlation_table(
             msg,
         )
 
-    det_json = json.loads(tick_circuit.get_meta("detectors"))
-    obs_json_str = tick_circuit.get_meta("observables")
-    obs_json = json.loads(obs_json_str) if obs_json_str else []
-    num_meas = int(tick_circuit.get_meta("num_measurements"))
-    len(det_json)
-
-    # Extract fired detectors and observables per shot
-    fired_per_shot: list[list[int]] = []
-    obs_per_shot: list[list[int]] = []
-    for r in results:
-        meas = list(r)
-        fired: list[int] = []
-        for i, det in enumerate(det_json):
-            val = 0
-            for rec in det["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                fired.append(i)
-        fired_per_shot.append(fired)
-
-        obs_fired: list[int] = []
-        for i, obs in enumerate(obs_json):
-            val = 0
-            for rec in obs["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                obs_fired.append(i)
-        obs_per_shot.append(obs_fired)
+    fired_per_shot, obs_per_shot = extract_detection_events_and_observables(tick_circuit, results)
 
     # Compute detector k-body rates with string labels
     inv_shots = 1.0 / shots

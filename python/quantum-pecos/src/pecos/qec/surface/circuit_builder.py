@@ -22,7 +22,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import pecos._traced_circuit as _traced_circuit
-from pecos.qec._replay import _replay_measurements
+from pecos.qec._replay import _replay_observable_references
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -47,6 +47,7 @@ from pecos.qec.surface._check_plan import (
 from pecos.qec.surface._clifford_deformation import (
     resolve_surface_clifford_frame,
 )
+from pecos.qec.surface._detection_events import _validate_observable_reference
 
 # Stabilizer geometry helpers live in the low-level patch module (single
 # source of truth). Only the two used by the circuit renderer are imported
@@ -1709,6 +1710,9 @@ def _build_observable_descriptors(
     basis: str,
 ) -> list[SurfaceObservableDescriptor]:
     """Build enriched logical observable descriptors from TickCircuit metadata."""
+    for entry_index, obs in enumerate(observables):
+        if "reference" in obs:
+            _validate_observable_reference(obs, entry_index)
     logical = patch.get_logical_descriptor(basis.upper())
     return [
         {
@@ -2742,12 +2746,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
             # Logical observable
             logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
-            reference_measurements = _replay_measurements(circuit, meas_count)
+            references = _replay_observable_references(circuit, meas_count, [logical_rec_offsets])
             observables = [
                 {
                     "id": 0,
                     "records": logical_rec_offsets,
-                    "reference": sum(reference_measurements[rec] for rec in logical_rec_offsets) % 2,
+                    "reference": references[0],
                 },
             ]
 
@@ -3112,7 +3116,11 @@ def get_observable_descriptors_from_tick_circuit(
 
     cached = tick_circuit.get_meta("observable_descriptors")
     if cached:
-        return json.loads(cached)
+        descriptors = json.loads(cached)
+        for entry_index, obs in enumerate(descriptors):
+            if "reference" in obs:
+                _validate_observable_reference(obs, entry_index)
+        return descriptors
 
     observables = json.loads(tick_circuit.get_meta("observables") or "[]")
     basis = tick_circuit.get_meta("basis") or "Z"

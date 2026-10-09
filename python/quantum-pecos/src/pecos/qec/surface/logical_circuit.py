@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE, transform_two_patch_pauli
 
-from pecos.qec._replay import _replay_measurements
+from pecos.qec._replay import _replay_observable_references
 from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
 
@@ -2824,15 +2824,15 @@ class _CircuitGenerator:
             }
             for d in self._det_json
         ]
-        reference_measurements = _replay_measurements(self.tc, total)
+        references = _replay_observable_references(self.tc, total, [o["abs_records"] for o in self._obs_json])
         obs_out = [
             {
                 "id": o["id"],
                 "records": [idx - total for idx in o["abs_records"]],
                 "meas_ids": o["abs_records"],
-                "reference": sum(reference_measurements[idx] for idx in o["abs_records"]) % 2,
+                "reference": reference,
             }
-            for o in self._obs_json
+            for o, reference in zip(self._obs_json, references, strict=True)
         ]
 
         for label in self._injection_ancillas:

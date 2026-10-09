@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from pecos_rslib import SparseStab, is_supported_noop_or_metadata_gate
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pecos_rslib.quantum import TickCircuit
 
 
@@ -57,3 +59,34 @@ def _replay_measurements(tc: TickCircuit, expected_measurements: int, seed: int 
         msg = "Replay measurement count disagrees with circuit metadata"
         raise ValueError(msg)
     return flat
+
+
+class ObservableReferenceDisagreementError(ValueError):
+    """Noiseless replays disagree on an observable's reference bit."""
+
+
+def _replay_observable_references(
+    tc: TickCircuit,
+    expected_measurements: int,
+    observable_records: Sequence[Sequence[int]],
+) -> list[int]:
+    """Compare observable parities from two seeded replays, validating both counts.
+
+    Compare parities, not individual measurements: deterministic observables can
+    contain random measurements. Agreement of two samples is a consistency check,
+    not a proof of determinism.
+    """
+    measurements = _replay_measurements(tc, expected_measurements, seed=0)
+    check_measurements = _replay_measurements(tc, expected_measurements, seed=1)
+    references = []
+    for entry_index, records in enumerate(observable_records):
+        reference = sum(measurements[record] for record in records) % 2
+        check = sum(check_measurements[record] for record in records) % 2
+        if reference != check:
+            msg = (
+                f"observable entry {entry_index} reference disagreement between replay seeds 0 and 1: "
+                f"{reference} != {check}; a non-deterministic observable has no noiseless reference"
+            )
+            raise ObservableReferenceDisagreementError(msg)
+        references.append(reference)
+    return references

@@ -16,6 +16,27 @@ class MissingObservableReferenceError(ValueError):
     """An observable cannot be interpreted as a flip without its noiseless reference."""
 
 
+def _validate_observable_reference(obs: dict[str, object], entry_index: int) -> None:
+    """Require an id and an integer reference bit before interpreting an observable."""
+    entry = f"observable entry {entry_index}"
+    if "id" in obs:
+        entry += f" (id={obs['id']})"
+    if "reference" not in obs:
+        msg = (
+            f"{entry} is missing 'reference'; this metadata predates the reference field. "
+            "Surface producers LogicalCircuitBuilder.to_tick_circuit and TickCircuitRenderer "
+            "(via build_memory_circuit or generate_tick_circuit_from_patch) emit it."
+        )
+        raise MissingObservableReferenceError(msg)
+    if "id" not in obs:
+        msg = f"{entry} is missing 'id'"
+        raise MissingObservableReferenceError(msg)
+    reference = obs["reference"]
+    if isinstance(reference, bool) or not isinstance(reference, int) or reference not in (0, 1):
+        msg = f"{entry} has invalid 'reference' {reference!r}; expected integer 0 or 1"
+        raise MissingObservableReferenceError(msg)
+
+
 class _TickCircuitLike(Protocol):
     def get_meta(self, key: str) -> str | None:
         """Return metadata stored under ``key`` when available."""
@@ -44,7 +65,7 @@ def extract_detection_events_and_observables(
     has no observable flips, even when its signed raw parity is one.
 
     Raises:
-        MissingObservableReferenceError: An observable entry lacks ``reference``.
+        MissingObservableReferenceError: An observable entry lacks ``id`` or an integer ``reference`` bit (0 or 1).
         ValueError: Measurement count metadata is missing or a row has the wrong length.
     """
     detectors_json = tick_circuit.get_meta("detectors")
@@ -54,12 +75,7 @@ def extract_detection_events_and_observables(
     observables = json.loads(observables_json) if observables_json else []
 
     for entry_index, obs in enumerate(observables):
-        if "reference" not in obs:
-            entry = f"observable entry {entry_index}"
-            if "id" in obs:
-                entry += f" (id={obs['id']})"
-            msg = f"{entry} is missing 'reference'"
-            raise MissingObservableReferenceError(msg)
+        _validate_observable_reference(obs, entry_index)
 
     num_meas_meta = tick_circuit.get_meta("num_measurements")
     if num_meas_meta is None or num_meas_meta == "":

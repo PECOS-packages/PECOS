@@ -423,3 +423,37 @@ def test_lowered_guppy_accepts_event_noise_and_rejects_neo_in_either_order(noise
 def test_trace_capture_rejects_event_factory(event_runtime):
     with pytest.raises(TypeError, match="without operation tracing"):
         simulation(event_runtime, lambda _: PhaseAdapter()).capture_operation_trace()
+
+
+def test_repeated_program_result_ids_reach_python_adapter(tmp_path, scheduled_support):
+    library, _ = scheduled_support.build_runtime(tmp_path, 0, events=True, coalesce_queued=True)
+    seen = []
+
+    class RepeatedSlotAdapter:
+        def validate(self, batch):
+            native_ids = [native for _, native, _ in batch.measurements]
+            assert len(native_ids) == len(set(native_ids))
+
+        def translate(self, batch):
+            seen.append([source for _, _, source in batch.measurements])
+            return [op for op in batch.operations if not isinstance(op, tuple)]
+
+    program = """
+    @tag = private constant [6 x i8] c"latest"
+    declare void @print_int_selene(ptr, i64, i64)
+    declare i32 @__quantum__qis__m__body(i64, i64)
+    declare void @__quantum__qis__x__body(i64)
+    declare i1 @___read_future_bool(i64)
+    define i64 @qmain(i64 %shot) {
+        %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+        call void @__quantum__qis__x__body(i64 0)
+        %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+        %read = call i1 @___read_future_bool(i64 7)
+        %value = zext i1 %read to i64
+        call void @print_int_selene(ptr @tag, i64 6, i64 %value)
+        ret i64 0
+    }
+    """
+    result = simulation((library, program), lambda _: RepeatedSlotAdapter()).run(2).to_dict()
+    assert result["latest"] == [1, 1]
+    assert any(ids == [7, 7] for ids in seen)

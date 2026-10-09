@@ -190,7 +190,7 @@ fn independent_c_abi_oracle() {
     assert_eq!(ops.operations[5], QuantumOp::Reset(1).into());
     assert_eq!(ops.operations[7], QuantumOp::Measure(0, 0).into());
     assert_eq!(ops.operations[9], QuantumOp::Measure(1, 1).into());
-    assert_eq!(ops.operations[11], QuantumOp::Measure(0, 2).into());
+    assert_eq!(ops.operations[11], QuantumOp::MeasureLeaked(0, 2).into());
 }
 
 #[cfg(unix)]

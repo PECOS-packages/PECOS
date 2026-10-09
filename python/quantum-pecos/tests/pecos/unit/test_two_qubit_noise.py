@@ -241,3 +241,19 @@ def test_integer_choice_multi_qudit_entry_points(after_gate: bool) -> None:
     actual = [[(symbol, locations) for symbol, locations, _ in circuit.items()] for circuit in (before, after)]
     expected = [("X", {0}), ("Z", {1})]
     assert actual == ([[], expected] if after_gate else [expected, []])
+
+
+@pytest.mark.parametrize("after_gate", [False, True])
+def test_group_errors_respect_emission_slot(after_gate: bool) -> None:
+    """Group configuration forwards the keyword-only before/after selection."""
+    generator = Generator()
+    generator.set_gate_group("two_qubits", {"CNOT", "CZ"})
+    generator.set_group_error("two_qubits", [(pc.Pauli.X, pc.Pauli.Z)], after=after_gate)
+    for gate in ("CNOT", "CZ"):
+        error_func, error_param = generator.error_func_dict[gate]
+        assert error_param == "p"
+        after, before = pc.QuantumCircuit(), pc.QuantumCircuit()
+        error_func(after, before, set(), (0, 1), {})
+        actual = [[(symbol, locations) for symbol, locations, _ in circuit.items()] for circuit in (before, after)]
+        expected = [("X", {0}), ("Z", {1})]
+        assert actual == ([[], expected] if after_gate else [expected, []])

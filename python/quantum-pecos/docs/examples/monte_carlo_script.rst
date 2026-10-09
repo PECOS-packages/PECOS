@@ -110,16 +110,23 @@ When this script is ran, an example output is:
     ]
 
 
-One can then use plotting packages such as Matplotlib to produce plots as appropriate for the data. PECOS provides a
-tool for quickly plotting and evaluating logical vs physical error-rates:
+Plot the sampled logical error-rates against the physical error-rates with Matplotlib. The ``find_pseudo`` function
+in ``pecos.analysis`` estimates the pseudo-threshold from a polynomial fit:
 
 .. code-block:: python
 
-    from pecos.tools import plot_pseudo
+    import matplotlib.pyplot as plt
+    from pecos.analysis.pseudo_threshold_tools import find_pseudo
 
-    plot_pseudo(deg=2, plist=ps, plog=plog)
+    plt.plot(ps, plog, "o-", label="Sampled logical error-rate")
+    plt.plot(ps, ps, "--", label="Physical error-rate")
+    plt.axvline(find_pseudo(ps, plog, deg=2), color="green", label="Estimated pseudo-threshold")
+    plt.xlabel("Physical error-rate")
+    plt.ylabel("Logical error-rate")
+    plt.legend()
+    plt.show()
 
-Running this tool results in the plot:
+An example pseudo-threshold plot is:
 
 
 .. image:: ../images/nonmedial_pseudo_threshold.png

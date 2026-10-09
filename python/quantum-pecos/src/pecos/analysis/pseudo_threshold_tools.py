@@ -34,6 +34,15 @@ from pecos.engines import circuit_runners
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
 
+__all__ = [
+    "find_polyfit",
+    "find_pseudo",
+    "find_uniscalefit",
+    "ns2nsfit",
+    "plot",
+    "pseudo_threshold_code_capacity",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import TypedDict

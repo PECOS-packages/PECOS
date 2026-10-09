@@ -20,10 +20,17 @@ general-purpose functions used throughout the PECOS framework.
 
 from __future__ import annotations
 
+import warnings
 from itertools import combinations, product
 from typing import TYPE_CHECKING
 
 import pecos as pc
+
+__all__ = [
+    "fault_tolerance_check",
+    "form_errors",
+    "gen_pauli_errors",
+]
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -39,7 +46,27 @@ from pecos.simulators import SparseStabPy
 
 
 def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
-    """Checks that the decoder can correct all Pauli errors of weight up to pc.floor(distance/2).
+    """Check logical signs for enumerated input and single-round spacetime errors.
+
+    First enumerate data-qubit Pauli errors of weights one through
+    ``floor((distance - 1) / 2)``. For each, prepare logical zero and plus states,
+    apply the error, run one fault-free extraction round, and decode a nonempty
+    final syndrome. Check logical Z on the zero state and logical X on the plus
+    state, raising on the first negative sign.
+
+    Then enumerate Pauli errors on (tick, qubit) locations across one extraction
+    round, including data and ancillas, with the same weight bound. Errors on
+    measured qubits precede measurement; other errors follow the tick. Collect
+    all measurements under one round coordinate, decode that output once, and
+    check the same logical signs. There is no following fault-free EC round or
+    residual-syndrome check. When the computed bound is zero, the underlying
+    enumerator treats it as unbounded rather than skipping errors.
+
+    This deprecated diagnostic does not establish circuit-level fault tolerance
+    or exRec conditions. Its single-round decoding does not provide temporal
+    syndrome information for circuit faults; even MWPM2D on Surface4444 d=3 can
+    fail the spacetime phase. For circuit-level analysis, see "Fault Tolerance
+    Analysis" in the user guide (``docs/user-guide/fault-tolerance.md``).
 
     Args:
     ----
@@ -48,9 +75,17 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
 
     Raises:
     ------
-        Exception: If a fault that is supposed to be corrected is not.
+        Exception: If an enumerated error leaves a negative checked logical sign.
 
     """
+    warnings.warn(
+        "fault_tolerance_check is deprecated; it checks logical signs for input and "
+        "single-round spacetime Pauli errors with one-round decoding. "
+        "It does not establish circuit-level fault tolerance. For circuit-level analysis, "
+        "see 'Fault Tolerance Analysis' in the user guide (docs/user-guide/fault-tolerance.md).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # The logical circuits:
     # ---------------------
     init_zero = pc.circuits.LogicalCircuit(layout=qecc.layout)

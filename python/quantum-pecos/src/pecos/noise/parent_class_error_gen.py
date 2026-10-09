@@ -202,7 +202,7 @@ class Generator:
             if symbol in self.error_func_dict:
                 logger.warning("Overriding gate error for gate: %s.", symbol)
 
-            self.set_gate_error(symbol, error_func, error_param, after)
+            self.set_gate_error(symbol, error_func, error_param, after=after)
 
     def set_default_error(
         self,

@@ -2419,14 +2419,23 @@ impl<'a> ParserState<'a> {
 
         // Apply operators in reverse order
         for op_pair in ops.into_iter().rev() {
-            let op = match op_pair.as_str() {
-                "try" => UnaryOp::Try,
-                "-" => UnaryOp::Neg,
-                "!" => UnaryOp::Not,
-                "~" => UnaryOp::BitNot,
-                "&" => UnaryOp::AddrOf,
-                "*" => UnaryOp::Deref,
-                _ => continue,
+            let op = if op_pair
+                .clone()
+                .into_inner()
+                .any(|inner| inner.as_rule() == Rule::try_unary)
+            {
+                // The keyword rule can include whitespace/comments before its
+                // lookahead. Identify it by grammar rule, not its source text.
+                UnaryOp::Try
+            } else {
+                match op_pair.as_str() {
+                    "-" => UnaryOp::Neg,
+                    "!" => UnaryOp::Not,
+                    "~" => UnaryOp::BitNot,
+                    "&" => UnaryOp::AddrOf,
+                    "*" => UnaryOp::Deref,
+                    _ => return Err(self.error(&op_pair, "unsupported unary operator")),
+                }
             };
             expr = Expr::Unary(Box::new(UnaryExpr {
                 op,
@@ -4034,6 +4043,29 @@ pub fn parse_file(source: &str, filename: impl Into<String>) -> ParseResult<Prog
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_review_try_operator_preserved() {
+        for expression in [
+            "try missing",
+            "try\n missing",
+            "try /* propagation */ missing",
+        ] {
+            let source = format!("pub fn main() -> unit {{ value := {expression}; }}");
+            let program = parse(&source).unwrap();
+            let TopLevelDecl::Fn(function) = &program.declarations[0] else {
+                panic!("expected function");
+            };
+            let Stmt::Binding(binding) = &function.body.statements[0] else {
+                panic!("expected binding");
+            };
+            assert!(
+                matches!(&binding.value, Some(Expr::Unary(unary)) if matches!(unary.op, UnaryOp::Try)),
+                "try propagation was lost: {:?}",
+                binding.value
+            );
+        }
+    }
 
     #[test]
     fn generated_import_paths_round_trip() {

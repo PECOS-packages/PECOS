@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import pecos_selene_statevec as statevec_module
 import pytest
 from guppylang import guppy
 from guppylang.std.angles import pi
@@ -266,7 +267,6 @@ def test_default_parameters_are_noiseless_in_selene() -> None:
 
 def test_plugin_executes_with_pecos_statevec() -> None:
     """The error model composes with PECOS's in-tree Selene simulator."""
-    statevec_module = pytest.importorskip("pecos_selene_statevec")
 
     @guppy
     def main() -> None:

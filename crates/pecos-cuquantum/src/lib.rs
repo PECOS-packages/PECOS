@@ -6,7 +6,6 @@
 //! # Features
 //!
 //! - **State vector simulation** via [`CuStateVec`]
-//! - **Stabilizer simulation** via [`CuStabilizer`]
 //! - Implements PECOS traits ([`QuantumSimulator`], [`CliffordGateable`], [`ArbitraryRotationGateable`])
 //! - Standard quantum gates (H, X, Y, Z, S, T, RX, RY, RZ, CX, CZ, SWAP)
 //! - Measurement and sampling
@@ -16,7 +15,8 @@
 //! | Simulator | Qubits | Gates | Memory |
 //! |-----------|--------|-------|--------|
 //! | [`CuStateVec`] | ~30 | All | O(2^n) |
-//! | [`CuStabilizer`] | 1000s | Clifford only | O(n^2) |
+//!
+//! No GPU stabilizer simulator is currently provided; `CuFrameSimulator` exposes raw Pauli-frame simulation; see [issue #1068](https://github.com/PECOS-packages/PECOS/issues/1068).
 //!
 //! # Requirements
 //!
@@ -68,7 +68,7 @@ pub use error::{
     CuQuantumError, DensityMatError, Result, StabilizerError, StateVecError, TensorNetError,
     TryClone,
 };
-pub use stabilizer::{CuFrameSimulator, CuStabilizer, FrameSimulationResults};
+pub use stabilizer::{CuFrameSimulator, FrameSimulationResults};
 pub use statevec::CuStateVec;
 pub use tensornet::CuTensorNet;
 
@@ -157,11 +157,6 @@ mod tests {
         _assert_quantum_simulator::<CuStateVec>();
         _assert_clifford_gateable::<CuStateVec>();
         _assert_arbitrary_rotation::<CuStateVec>();
-
-        // CuStabilizer should implement Clifford traits only
-        _assert_quantum_simulator::<CuStabilizer>();
-        _assert_clifford_gateable::<CuStabilizer>();
-        // Note: CuStabilizer does NOT implement ArbitraryRotationGateable
     }
 
     #[test]

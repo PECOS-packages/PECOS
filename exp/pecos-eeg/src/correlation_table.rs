@@ -34,7 +34,7 @@ use crate::noise::NoiseSpec;
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::Gate;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 /// Exact k-body correlation table for detectors and observables.
@@ -64,6 +64,8 @@ pub struct CorrelationTable {
 pub struct CorrelationTableInput<'a> {
     /// Circuit gates.
     pub gates: &'a [Gate],
+    /// Provenance flags parallel to `gates`.
+    pub expansion_gates: &'a [bool],
     /// Noise model used for exact correlation targets.
     pub noise: &'a dyn NoiseSpec,
     /// Detector definitions.
@@ -110,6 +112,9 @@ impl CorrelationTable {
             }
         }
 
+        let observable_ids: BTreeSet<usize> =
+            self.observable_rates.keys().map(|(_, id)| *id).collect();
+
         // Pairwise edges: excess correlation = P(Di,Dj) - P(Di)*P(Dj)
         for (key, &joint_prob) in &self.rates {
             if key.len() != 2 {
@@ -130,7 +135,7 @@ impl CorrelationTable {
             // with this pair? Use P(Di AND Dj AND Lk) if available,
             // otherwise no observable.
             let mut obs_list = Vec::new();
-            for obs_id in 0..self.num_observables {
+            for &obs_id in &observable_ids {
                 let pair_key = (vec![di, dj], obs_id);
                 if let Some(&p_trio) = self.observable_rates.get(&pair_key) {
                     // If the trio rate is significant relative to the pair rate,
@@ -151,9 +156,11 @@ impl CorrelationTable {
         // Boundary edges: P(Di AND Lk) - P(Di)*P(Lk)
         // Approximation: use P(Di AND Lk) directly as boundary edge probability
         // (represents probability Di fires due to a logical error chain)
-        for obs_id in 0..self.num_observables {
-            for di in 0..self.num_detectors {
-                let p_det_obs = det_obs.get(&(di, obs_id)).copied().unwrap_or(0.0);
+        for &obs_id in &observable_ids {
+            for (&(di, entry_obs_id), &p_det_obs) in &det_obs {
+                if entry_obs_id != obs_id {
+                    continue;
+                }
 
                 // Check if this detector has significant correlation with the observable
                 // that isn't already explained by pairwise edges
@@ -179,10 +186,14 @@ impl CorrelationTable {
 ///
 /// Each entry gives the exact joint detection probability for a subset of
 /// detectors, including all coherent interference effects.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 #[must_use]
 pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> CorrelationTable {
     let CorrelationTableInput {
         gates,
+        expansion_gates,
         noise,
         detectors,
         observables,
@@ -191,18 +202,19 @@ pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> Correlatio
         max_order,
         prune_threshold,
     } = input;
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
 
     let n = detectors.len();
     let n_obs = observables.len();
     let has_stochastic = true; // conservative; could check noise params
 
     // Build noise map once, shared across all walks
-    let gate_index = crate::expand::GateIndex::build(gates, num_qubits);
+    let gate_index = crate::expand::GateIndex::build(gates, num_qubits, noise, expansion_gates);
     let noise_map = if has_stochastic {
         Some(crate::heisenberg::build_noise_map(
             gates,
             noise,
-            &gate_index.expansion_gates,
+            expansion_gates,
         ))
     } else {
         None
@@ -392,6 +404,35 @@ fn combination_recurse_idx(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matching_dem_uses_declared_ids() {
+        let table = CorrelationTable {
+            rates: BTreeMap::from([(vec![2], 0.2), (vec![5], 0.1), (vec![2, 5], 0.05)]),
+            observable_rates: BTreeMap::from([((vec![2], 3), 0.12), ((vec![2, 5], 3), 0.02)]),
+            max_order: 2,
+            num_detectors: 2,
+            num_observables: 1,
+            num_walks: 0,
+        };
+        assert_eq!(
+            table.to_matching_dem(),
+            "error(3.000000e-2) D2 D5 L3\nerror(1.200000e-1) D2 L3"
+        );
+    }
+
+    #[test]
+    fn matching_dem_keeps_boundary_without_stored_marginal() {
+        let table = CorrelationTable {
+            rates: BTreeMap::new(),
+            observable_rates: BTreeMap::from([((vec![5], 3), 0.01)]),
+            max_order: 1,
+            num_detectors: 1,
+            num_observables: 1,
+            num_walks: 0,
+        };
+        assert_eq!(table.to_matching_dem(), "error(1.000000e-2) D5 L3");
+    }
 
     #[test]
     fn test_combination_idx() {

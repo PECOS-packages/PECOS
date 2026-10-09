@@ -11,6 +11,7 @@ import math
 
 import numpy as np
 import pytest
+import pytket.circuit as circuit
 from pecos import f64
 
 
@@ -20,7 +21,6 @@ from pecos import f64
 )
 def test_mps_pytket_rxyxy2q_matrix(theta: float, phi: float) -> None:
     """PhasedXX matches every complex entry, including global phase, without CUDA."""
-    circuit = pytest.importorskip("pytket.circuit")
     # Match the MPS binding's radians-to-half-turn conversion exactly.
     gate = circuit.Op.create(circuit.OpType.PhasedXX, [theta / f64.pi, phi / f64.pi])
     actual = gate.get_unitary()

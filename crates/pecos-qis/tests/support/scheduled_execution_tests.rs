@@ -11,6 +11,7 @@ use std::sync::{
 #[derive(Clone, Default)]
 struct Fixture {
     state: ClassicalState,
+    delivered: Arc<std::sync::Mutex<Vec<(usize, u32)>>>,
     batches: VecDeque<Vec<ScheduledBatch>>,
     fail_feedback: bool,
     panic_feedback: bool,
@@ -28,14 +29,18 @@ impl QisRuntime for Fixture {
         self.state.measurements.extend(m);
         Ok(())
     }
-    fn provide_measurement_outcomes(&mut self, m: BTreeMap<usize, u32>) -> RuntimeResult<()> {
+    fn provide_measurement_outcomes(&mut self, m: Vec<(usize, u32)>) -> RuntimeResult<()> {
         assert!(!self.panic_feedback, "synthetic feedback panic");
         if self.fail_feedback {
             return Err(RuntimeError::ExecutionError(
                 "synthetic feedback failure".into(),
             ));
         }
-        self.provide_measurements(m.into_iter().map(|(id, v)| (id, v != 0)).collect())
+        self.delivered.lock().unwrap().extend(m.iter().copied());
+        for (id, value) in m {
+            self.provide_measurements(BTreeMap::from([(id, value != 0)]))?;
+        }
+        Ok(())
     }
     fn get_classical_state(&self) -> &ClassicalState {
         &self.state
@@ -375,7 +380,7 @@ fn independent_owners_do_not_share_state_or_host_context() {
 
 #[test]
 fn measurement_identity_guards_reject_each_malformed_mapping() {
-    for case in 0..4 {
+    for case in 0..3 {
         let mut b = batch(0, vec![]);
         measurement(&mut b, 40);
         b.operations.push(RuntimeScheduledOp::Measure {
@@ -389,15 +394,14 @@ fn measurement_identity_guards_reject_each_malformed_mapping() {
             leakage_aware: false,
         });
         match case {
-            0 => b.measurements[1].program_result = 40,
-            1 => {
+            0 => {
                 b.operations[1] = RuntimeScheduledOp::Measure {
                     qubit_id: 1,
                     result_id: 901,
                 };
                 b.measurements[1].runtime_result = 901;
             }
-            2 => b.measurements[1].runtime_result = 999,
+            1 => b.measurements[1].runtime_result = 999,
             _ => {
                 b.operations[1] = RuntimeScheduledOp::MeasureLeaked {
                     qubit_id: 1,
@@ -919,15 +923,15 @@ fn public_runtimes_zero_timing_preserves_ideal_feedback_across_shots() {
 }
 
 #[test]
-fn per_batch_execution_still_rejects_cross_batch_duplicate_measurement_ids() {
+fn per_batch_execution_accepts_reused_program_slots_but_rejects_duplicate_native_ids() {
     for idle in [false, true] {
         for duplicate_program in [false, true] {
             let mut first = batch(0, vec![pulse()]);
             measurement(&mut first, 40);
-            let mut second = batch(1, vec![]);
+            let mut second = batch(1, vec![pulse()]);
             measurement(&mut second, if duplicate_program { 40 } else { 41 });
             if duplicate_program {
-                second.operations[0] = RuntimeScheduledOp::Measure {
+                second.operations[1] = RuntimeScheduledOp::Measure {
                     qubit_id: 0,
                     result_id: 902,
                 };
@@ -937,6 +941,7 @@ fn per_batch_execution_still_rejects_cross_batch_duplicate_measurement_ids() {
                 batches: VecDeque::from([vec![first, second]]),
                 ..Default::default()
             };
+            let delivered = Arc::clone(&fixture.delivered);
             let mut executor = if idle {
                 ScheduledExecutor::with_idle_z(
                     Box::new(fixture),
@@ -951,6 +956,13 @@ fn per_batch_execution_still_rejects_cross_batch_duplicate_measurement_ids() {
                 ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
             };
             executor.start_shot(context(0), 7, 2).unwrap();
+            if duplicate_program {
+                let result = executor.submit(&[]).unwrap();
+                assert_eq!(*delivered.lock().unwrap(), [(40, 1), (40, 0)]);
+                assert_eq!(result.measurements[&40], 0);
+                assert!(!executor.runtime.get_classical_state().measurements[&40]);
+                continue;
+            }
             assert!(
                 executor
                     .submit(&[])

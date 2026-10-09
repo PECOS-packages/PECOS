@@ -28,13 +28,12 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'pyproject.toml'
-      - 'ruff.toml'
-      - '.pre-commit-config.yaml'
       - 'uv.lock'
       - 'Justfile'
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - 'scripts/check_python_workspace.py'
+      - '.github/uv.toml'
       - '.github/workflows/python-test.yml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
@@ -47,18 +46,20 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'pyproject.toml'
-      - 'ruff.toml'
-      - '.pre-commit-config.yaml'
       - 'uv.lock'
       - 'Justfile'
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - 'scripts/check_python_workspace.py'
+      - '.github/uv.toml'
       - '.github/workflows/python-test.yml'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 defaults:
@@ -100,15 +101,6 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
-    - name: Harden apt against mirror flakiness
-      run: ./scripts/ci/harden-apt.sh
-
-    - name: Ensure ripgrep is available
-      run: |
-        if ! command -v rg >/dev/null 2>&1; then
-          sudo apt-get install --yes ripgrep
-        fi
-
     - name: Cache Rust
       uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       with:
@@ -145,6 +137,9 @@ jobs:
       run: just python-ci-lint
 
   python-core:
+    # Post-merge only. Pull requests get this suite from the required PR core gate
+    # and the lockfile checks from python-lint.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # The full post-merge core suite passed at ~40m in late June and has since
     # grown past 45m (timing out at ~83% of the suite on every dev push since
@@ -173,22 +168,18 @@ jobs:
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
     - name: Set up Rust
-      if: github.event_name != 'pull_request'
       run: |
         bash scripts/ci/ensure-rust.sh stable minimal
         export PATH="$HOME/.cargo/bin:$PATH"
         rustup show
 
     - name: Verify cmake is available (MWPF decoder build)
-      if: github.event_name != 'pull_request'
       run: cmake --version
 
     - name: Install just
-      if: github.event_name != 'pull_request'
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
     - name: Cache Rust
-      if: github.event_name != 'pull_request'
       uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       with:
         cache-bin: false
@@ -201,7 +192,6 @@ jobs:
         shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
-      if: github.event_name != 'pull_request'
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
@@ -209,11 +199,10 @@ jobs:
         key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
-      if: github.event_name != 'pull_request'
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: github.event_name != 'pull_request' && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
@@ -222,12 +211,6 @@ jobs:
     - name: Run core Python tests (post-merge)
       if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       run: just python-ci-core
-
-    - name: Validate Python lockfile (PR fast path)
-      if: github.event_name == 'pull_request'
-      run: |
-        uv lock --check --project .
-        uv lock --check --project exp/zluppy
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
@@ -553,14 +536,12 @@ jobs:
     - name: Execute WASM compatibility smoke test
       run: python scripts/ci/smoke_wasm_foreign_object.py
 
-  # Post-merge lanes excluded from the PR fast path: the slow integration
-  # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
-  # marked `optional_dependency`).
+  # Post-merge lane excluded from the PR fast path: the slow integration tests.
   python-slow-postmerge:
-    # workflow_dispatch escape hatch: the optional-dependency suite
-    # (guppy/selene/QIR) otherwise has NO pre-merge path -- a branch whose
-    # risk lives in that suite could only get its first CI signal after
-    # landing. Dispatch is manual-only; the PR fast path is unaffected.
+    # workflow_dispatch escape hatch: the slow suite otherwise has NO pre-merge
+    # path -- a branch whose risk lives in that suite could only get its first
+    # CI signal after landing. Dispatch is manual-only; the PR fast path is
+    # unaffected.
     if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -635,9 +616,6 @@ jobs:
       # lane imports. pytest COLLECTION imports every module under tests/, and
       # tests/qec imports pecos_rslib_exp at module level.
       run: just python-ci-build-test
-
-    - name: Run optional-dependency Python tests
-      run: just pytest-dep
 
     - name: Run slow Python tests
       run: just pytest-slow

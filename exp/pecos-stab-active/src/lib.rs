@@ -32,13 +32,24 @@ use pecos_core::{Angle64, QubitId};
 use pecos_random::{PecosRng, RngManageable};
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, ForcedMeasurement, MeasurementResult,
-    QuantumSimulator, SparseStabY,
+    QuantumSimulator,
 };
-use pecos_stab_tn::stab_mps::coordinate_tableau::{
-    self, CoordinateDecomposition, CoordinateGate, MeasurementCase,
-};
+#[cfg(test)]
+use pecos_stab_tn::stab_mps::coordinate_tableau::{CoordinateDecomposition, MeasurementCase};
+#[cfg(test)]
 use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
-use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
+pub use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
+
+mod kernels;
+mod structure;
+use structure::{ActiveStructure, MeasurementData};
+
+pub mod heisenberg;
+pub use heisenberg::{
+    AffineSign, CompileError, HeisenbergOp, HeisenbergProgram, PlanError, Sampler, SamplingPlan,
+    ShotResult, VirtualPauli, drop_measured_rotations, fuse_rotations, plan_scheduled,
+    schedule_for_width,
+};
 
 /// A normalized dense vector on an ordered subset of stabilizer coordinates.
 ///
@@ -46,11 +57,9 @@ use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
 /// signed tableau. Global phase is unspecified; relative phases are preserved.
 #[derive(Clone, Debug)]
 pub struct StabActive {
-    tableau: SparseStabY,
-    active: Vec<usize>,
+    structure: ActiveStructure,
     amplitudes: Vec<Complex64>,
     rng: PecosRng,
-    peak_width: usize,
     max_width: usize,
 }
 
@@ -65,11 +74,9 @@ impl StabActive {
     #[must_use]
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
-            tableau: SparseStabY::with_seed(num_qubits, seed).with_destab_sign_tracking(),
-            active: Vec::new(),
+            structure: ActiveStructure::with_seed(num_qubits, seed),
             amplitudes: vec![Complex64::new(1.0, 0.0)],
             rng: PecosRng::seed_from_u64(seed),
-            peak_width: 0,
             max_width: 26,
         }
     }
@@ -86,9 +93,9 @@ impl StabActive {
             "active width limit cannot index a complex vector"
         );
         assert!(
-            self.active.len() <= limit,
+            self.structure.width() <= limit,
             "active width {} exceeds limit {limit}",
-            self.active.len()
+            self.structure.width()
         );
         self.max_width = limit;
         self
@@ -97,227 +104,134 @@ impl StabActive {
     /// Number of bits indexing the current amplitude vector.
     #[must_use]
     pub fn active_width(&self) -> usize {
-        self.active.len()
+        self.structure.width()
     }
 
     /// Largest active width since construction or the most recent reset.
     #[must_use]
     pub fn peak_active_width(&self) -> usize {
-        self.peak_width
+        self.structure.peak_width()
     }
 
+    #[cfg(test)]
     fn parts(&self, pauli: &[(usize, PauliKindForDecomp)]) -> CoordinateDecomposition {
-        coordinate_tableau::decompose(&self.tableau, &self.active, pauli, false)
-    }
-
-    fn normalize(&mut self) {
-        let norm = self
-            .amplitudes
-            .iter()
-            .map(Complex64::norm_sqr)
-            .sum::<f64>()
-            .sqrt();
-        assert!(norm > 0.0, "cannot normalize a zero state");
-        for amplitude in &mut self.amplitudes {
-            *amplitude /= norm;
-        }
-    }
-
-    fn clifford_rotation(&mut self, pauli: &[(usize, PauliKindForDecomp)], turns: usize) {
-        let target = QubitId(pauli[pauli.len() - 1].0);
-        for &(q, kind) in pauli {
-            if kind == PauliKindForDecomp::Y {
-                self.tableau.szdg(&[QubitId(q)]);
-            }
-            if kind != PauliKindForDecomp::Z {
-                self.tableau.h(&[QubitId(q)]);
-            }
-        }
-        for &(q, _) in &pauli[..pauli.len() - 1] {
-            self.tableau.cx(&[(QubitId(q), target)]);
-        }
-        for _ in 0..turns {
-            self.tableau.sz(&[target]);
-        }
-        for &(q, _) in pauli[..pauli.len() - 1].iter().rev() {
-            self.tableau.cx(&[(QubitId(q), target)]);
-        }
-        for &(q, kind) in pauli.iter().rev() {
-            if kind != PauliKindForDecomp::Z {
-                self.tableau.h(&[QubitId(q)]);
-            }
-            if kind == PauliKindForDecomp::Y {
-                self.tableau.sz(&[QubitId(q)]);
-            }
-        }
+        pecos_stab_tn::stab_mps::coordinate_tableau::decompose(
+            self.structure.tableau(),
+            self.structure.active(),
+            pauli,
+            false,
+        )
     }
 
     fn pauli_rotation(&mut self, theta: Angle64, pauli: &[(usize, PauliKindForDecomp)]) {
-        let cliffords = [
-            Angle64::ZERO,
-            Angle64::QUARTER_TURN,
-            Angle64::HALF_TURN,
-            Angle64::THREE_QUARTERS_TURN,
-        ];
-        if let Some(turns) = cliffords.iter().position(|&angle| theta == angle) {
-            self.clifford_rotation(pauli, turns);
-            return;
-        }
-        let mut parts = self.parts(pauli);
-        if !parts.dormant_flips.is_empty() {
-            let width = self.active.len() + 1;
+        self.rotate_pauli(theta, pauli, false);
+    }
+
+    /// Apply `exp(-i (-1)^negative theta P / 2)` for a Hermitian Pauli tensor P.
+    /// Empty support denotes identity; its physically irrelevant global phase is omitted.
+    /// Exact quarter-turn angles update only the signed Clifford tableau.
+    ///
+    /// # Panics
+    /// Panics for repeated or invalid qubits, or if promotion exceeds the width limit.
+    pub fn rotate_pauli(
+        &mut self,
+        theta: Angle64,
+        pauli: &[(usize, PauliKindForDecomp)],
+        negative: bool,
+    ) {
+        let rotation = self.structure.rotation(theta, pauli, negative);
+        if rotation.needs_promotion() {
+            let width = rotation.width() + 1;
             assert!(
                 width <= self.max_width,
                 "active width {width} exceeds limit {}",
                 self.max_width
             );
-            coordinate_tableau::promote(&mut self.tableau, &mut self.active, pauli, false);
-            self.amplitudes
-                .resize(self.amplitudes.len() * 2, Complex64::new(0.0, 0.0));
-            self.peak_width = self.peak_width.max(width);
-            parts = self.parts(pauli);
         }
-        let flip = mask(&parts.active_flips);
-        let sign = mask(&parts.active_signs);
-        // Convert the fixed-point magnitude before restoring the sign: subtracting
-        // two floating-point turns would erase tiny negative rotations near zero.
-        let radians = if theta > Angle64::HALF_TURN {
-            -(-theta).to_radians()
-        } else {
-            theta.to_radians()
+        let Some(work) = rotation.apply_rotation() else {
+            return;
         };
-        let (sine, cosine) = (radians / 2.0).sin_cos();
-        let coefficient = Complex64::new(0.0, -sine) * parts.phase;
-        if flip == 0 {
-            for (index, amplitude) in self.amplitudes.iter_mut().enumerate() {
-                *amplitude *= cosine + coefficient * parity(index & sign);
-            }
-        } else {
-            for index in 0..self.amplitudes.len() {
-                let partner = index ^ flip;
-                if index < partner {
-                    let a = self.amplitudes[index];
-                    let b = self.amplitudes[partner];
-                    self.amplitudes[index] = cosine * a + coefficient * parity(partner & sign) * b;
-                    self.amplitudes[partner] = cosine * b + coefficient * parity(index & sign) * a;
-                }
-            }
+        if work.double {
+            kernels::double(&mut self.amplitudes);
         }
-        self.normalize();
+        let parts = work.parts;
+        kernels::rotate(
+            &mut self.amplitudes,
+            work.theta,
+            kernels::mask(&parts.active_flips),
+            kernels::mask(&parts.active_signs),
+            parts.phase,
+        );
     }
 
-    fn active_expectation(&self, parts: &CoordinateDecomposition) -> Complex64 {
-        let flip = mask(&parts.active_flips);
-        let sign = mask(&parts.active_signs);
-        self.amplitudes
-            .iter()
-            .enumerate()
-            .map(|(index, a)| {
-                self.amplitudes[index ^ flip].conj() * parts.phase * parity(index & sign) * a
-            })
-            .sum()
+    #[cfg(test)]
+    fn active_expectation(amplitudes: &[Complex64], parts: &CoordinateDecomposition) -> Complex64 {
+        kernels::active_expectation(
+            amplitudes,
+            kernels::mask(&parts.active_flips),
+            kernels::mask(&parts.active_signs),
+            parts.phase,
+        )
     }
 
-    /// Return the outcome-one probability used by measurement and the dense oracle.
-    ///
-    /// Active expectations within [`EXPECTATION_ENDPOINT_TOLERANCE`] of either
-    /// endpoint are treated as that exact eigenvalue before computing probability
-    /// or drawing from the RNG. This matches the shared measurement policy and
-    /// prevents a forced projector from amplifying a cancellation residue.
+    fn measurement_probability(amplitudes: &[Complex64], measurement: &MeasurementData) -> f64 {
+        let parts = measurement.parts();
+        kernels::measurement_probability(
+            amplitudes,
+            measurement.case(),
+            kernels::mask(&parts.active_flips),
+            kernels::mask(&parts.active_signs),
+            parts.phase,
+        )
+    }
+
+    #[cfg(test)]
     fn probability_one(&self, parts: &CoordinateDecomposition) -> f64 {
-        match parts.measurement_case() {
-            MeasurementCase::Random => 0.5,
-            MeasurementCase::Deterministic => f64::from(parts.phase.re < 0.0),
-            MeasurementCase::Active => {
-                let expectation = self.active_expectation(parts).re;
-                let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
-                    expectation.signum()
-                } else {
-                    expectation
-                };
-                ((1.0 - expectation) / 2.0).clamp(0.0, 1.0)
-            }
-        }
-    }
-
-    fn coordinate_gate(&mut self, gate: CoordinateGate) {
-        match gate {
-            CoordinateGate::Sdg(bit) => {
-                for (index, amplitude) in self.amplitudes.iter_mut().enumerate() {
-                    if index & (1 << bit) != 0 {
-                        *amplitude *= Complex64::new(0.0, -1.0);
-                    }
-                }
-            }
-            CoordinateGate::H(bit) => {
-                for index in 0..self.amplitudes.len() {
-                    if index & (1 << bit) == 0 {
-                        let partner = index ^ (1 << bit);
-                        let a = self.amplitudes[index];
-                        let b = self.amplitudes[partner];
-                        self.amplitudes[index] = (a + b) * std::f64::consts::FRAC_1_SQRT_2;
-                        self.amplitudes[partner] = (a - b) * std::f64::consts::FRAC_1_SQRT_2;
-                    }
-                }
-            }
-            CoordinateGate::Cx(control, target) => {
-                for index in 0..self.amplitudes.len() {
-                    if index & (1 << control) != 0 && index & (1 << target) == 0 {
-                        self.amplitudes.swap(index, index ^ (1 << target));
-                    }
-                }
-            }
-        }
+        Self::measurement_probability(&self.amplitudes, &MeasurementData::new(parts.clone()))
     }
 
     fn measure(&mut self, qubit: usize, forced: Option<bool>) -> MeasurementResult {
-        let pauli = [(qubit, PauliKindForDecomp::Z)];
-        let parts = self.parts(&pauli);
-        let probability = self.probability_one(&parts);
+        self.measure_pauli_inner(&[(qubit, PauliKindForDecomp::Z)], false, forced)
+    }
+
+    /// Measure `(-1)^negative P`, returning its raw signed outcome (one means -1).
+    /// Empty support denotes the signed identity and has a deterministic outcome.
+    ///
+    /// # Panics
+    /// Panics for repeated or invalid qubits.
+    pub fn measure_pauli(
+        &mut self,
+        pauli: &[(usize, PauliKindForDecomp)],
+        negative: bool,
+    ) -> MeasurementResult {
+        self.measure_pauli_inner(pauli, negative, None)
+    }
+
+    fn measure_pauli_inner(
+        &mut self,
+        pauli: &[(usize, PauliKindForDecomp)],
+        negative: bool,
+        forced: Option<bool>,
+    ) -> MeasurementResult {
+        let measurement = self.structure.measurement(pauli, negative);
+        let probability = Self::measurement_probability(&self.amplitudes, measurement.data());
         let is_deterministic = probability <= 0.0 || probability >= 1.0;
         let outcome = if is_deterministic {
             probability >= 1.0
         } else {
             forced.unwrap_or_else(|| self.rng.random_bool(probability))
         };
-        match parts.measurement_case() {
-            MeasurementCase::Random => {
-                coordinate_tableau::measure_random(
-                    &mut self.tableau,
-                    &self.active,
-                    &pauli,
-                    false,
-                    outcome,
-                );
+        if let Some(active) = measurement.apply_measurement(outcome) {
+            for &gate in active.gates() {
+                kernels::coordinate_gate(&mut self.amplitudes, gate);
             }
-            MeasurementCase::Deterministic => {}
-            MeasurementCase::Active => {
-                let basis = coordinate_tableau::measurement_basis(
-                    &mut self.tableau,
-                    &self.active,
-                    &pauli,
-                    false,
-                );
-                for gate in basis.gates {
-                    self.coordinate_gate(gate);
-                }
-                let value = outcome ^ basis.negative;
-                let bit_mask = 1 << basis.pivot_bit;
-                self.amplitudes = self
-                    .amplitudes
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| (index & bit_mask != 0) == value)
-                    .map(|(_, &a)| a)
-                    .collect();
-                coordinate_tableau::demote(
-                    &mut self.tableau,
-                    &mut self.active,
-                    basis.pivot_bit,
-                    value,
-                );
-                self.normalize();
-            }
+            let projection = active.projection();
+            kernels::project(
+                &mut self.amplitudes,
+                projection.pivot_bit(),
+                projection.value(),
+            );
+            kernels::normalize(&mut self.amplitudes);
         }
         MeasurementResult {
             outcome,
@@ -326,42 +240,29 @@ impl StabActive {
     }
 }
 
-fn mask(bits: &[usize]) -> usize {
-    bits.iter().fold(0, |value, &bit| value | (1 << bit))
-}
-fn parity(value: usize) -> f64 {
-    if value.count_ones().is_multiple_of(2) {
-        1.0
-    } else {
-        -1.0
-    }
-}
-
 impl QuantumSimulator for StabActive {
     fn reset(&mut self) -> &mut Self {
-        self.tableau.reset();
-        self.active.clear();
+        self.structure.reset();
         self.amplitudes.clear();
         self.amplitudes.push(Complex64::new(1.0, 0.0));
-        self.peak_width = 0;
         self
     }
     fn num_qubits(&self) -> usize {
-        self.tableau.num_qubits()
+        self.structure.num_qubits()
     }
 }
 
 impl CliffordGateable for StabActive {
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.tableau.sz(qubits);
+        self.structure.sz(qubits);
         self
     }
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.tableau.h(qubits);
+        self.structure.h(qubits);
         self
     }
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        self.tableau.cx(pairs);
+        self.structure.cx(pairs);
         self
     }
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
@@ -432,3 +333,6 @@ impl RngManageable for StabActive {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod compatibility_tests;

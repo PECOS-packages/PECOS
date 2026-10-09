@@ -433,11 +433,7 @@ def test_fit_fss_threshold_recovers_synthetic_p_th(sweep: ModuleType) -> None:
     Generates noise-free LER values on a grid of ``(p, d)`` points using the exact
     polynomial form the fitter targets, then checks that the returned ``p_th`` and
     ``nu`` match the generator's values within the fit's reported standard error.
-
-    Skipped when ``pecos.analysis`` is not importable (happens in pytest because
-    ``tests/pecos/`` shadows the installed ``pecos`` package).
     """
-    pytest.importorskip("pecos.analysis.threshold_curve", reason="pecos.analysis shadowed by test-tree pecos/")
     true_p_th = 0.010
     true_nu = 1.3
     true_a, true_b, true_c = 0.02, 1.2, 12.0

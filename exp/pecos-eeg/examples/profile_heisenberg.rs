@@ -85,6 +85,7 @@ fn main() {
                 &noise,
                 &stab,
                 0.0,
+                &expanded.expansion_gates,
             );
         }
     }

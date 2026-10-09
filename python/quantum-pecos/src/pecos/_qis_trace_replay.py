@@ -65,29 +65,45 @@ def _replay_qis_trace_into_tick_circuit(
     tick_circuit = TickCircuit()
     active_slots: dict[int, int] = {}
     free_slots: list[int] = []
+    needs_prep: set[int] = set()
+    released_handles: set[int] = set()
     next_slot = 0
 
     def allocate_slot(program_id: int) -> int:
         nonlocal next_slot
         if program_id in active_slots:
-            return active_slots[program_id]
+            msg = f"Traced QIS program qubit {program_id} is already allocated"
+            raise ValueError(msg)
         if free_slots:
             slot = heapq.heappop(free_slots)
         else:
             slot = next_slot
             next_slot += 1
         active_slots[program_id] = slot
+        needs_prep.add(program_id)
+        released_handles.discard(program_id)
         return slot
 
     def release_slot(program_id: int) -> None:
         slot = active_slots.pop(program_id, None)
         if slot is not None:
             heapq.heappush(free_slots, slot)
+            needs_prep.discard(program_id)
+            released_handles.add(program_id)
 
     def mapped_slot(program_id: int, op_name: str) -> int:
         if program_id not in active_slots:
-            msg = f"Traced QIS op {op_name!r} referenced unmapped program qubit {program_id}"
-            raise ValueError(msg)
+            if program_id in released_handles:
+                msg = (
+                    f"Traced QIS op {op_name!r} referenced program qubit {program_id}, "
+                    "which is not currently active; released without re-allocation"
+                )
+                raise ValueError(msg)
+            allocate_slot(program_id)
+        if program_id in needs_prep:
+            needs_prep.remove(program_id)
+            if op_name != "Reset":
+                tick_circuit.tick().pz([active_slots[program_id]])
         return active_slots[program_id]
 
     def scalar_arg(payload: object, op_name: str) -> int:
@@ -105,8 +121,7 @@ def _replay_qis_trace_into_tick_circuit(
     for operation in operations:
         if "AllocateQubit" in operation:
             program_id = int(operation["AllocateQubit"]["id"])
-            slot = allocate_slot(program_id)
-            tick_circuit.tick().pz([slot])
+            allocate_slot(program_id)
             continue
 
         if "ReleaseQubit" in operation:
@@ -122,6 +137,28 @@ def _replay_qis_trace_into_tick_circuit(
             raise ValueError(msg)
 
         op_name, payload = next(iter(quantum.items()))
+        # Materialize all targets and their deferred preps before the program tick.
+        if op_name in {"H", "X", "Y", "Z", "S", "Sdg", "T", "Tdg", "Reset"}:
+            targets = (scalar_arg(payload, op_name),)
+        elif op_name in {"RX", "RY", "RZ", "Idle"}:
+            targets = tuple_args(payload, op_name, 2)[1:]
+        elif op_name == "RXY":
+            targets = tuple_args(payload, op_name, 3)[2:]
+        elif op_name in {"CX", "CY", "CZ", "CH", "ZZ"}:
+            targets = tuple_args(payload, op_name, 2)
+        elif op_name in {"CRZ", "RZZ"}:
+            targets = tuple_args(payload, op_name, 3)[1:]
+        elif op_name == "CCX":
+            targets = tuple_args(payload, op_name, 3)
+        elif op_name == "RXYXY2Q":
+            targets = tuple_args(payload, op_name, 4)[2:]
+        elif op_name in {"Measure", "MeasureLeaked"}:
+            targets = tuple_args(payload, op_name, 2)[:1]
+        else:
+            msg = f"Unsupported traced QIS quantum op {op_name!r}"
+            raise ValueError(msg)
+        for program_id in targets:
+            mapped_slot(int(program_id), op_name)
         tick = tick_circuit.tick()
 
         if op_name == "H":
@@ -466,17 +503,11 @@ def _replay_lowered_qis_trace_into_tick_circuit(
 def _chunk_has_lowerable_op(chunk: dict[str, Any]) -> bool:
     """True if a chunk carries an operation that lowers to a TickCircuit gate.
 
-    A raw ``Quantum`` op (gate / measure / reset) lowers to a gate, and an
-    ``AllocateQubit`` lowers to a prep (``PZ``) -- both appear in
-    ``lowered_quantum_ops`` after Selene lowering, and both are emitted as
-    gates by the raw replay (see :func:`_replay_qis_trace_into_tick_circuit`).
-    ``AllocateResult``, ``RecordOutput``, ``Barrier``, and ``ReleaseQubit``
-    emit no gate and are pass-through bookkeeping, so a chunk containing only
-    those legitimately has no lowered ops.
+    Only raw ``Quantum`` operations lower to gates. Allocation defers its prep
+    until first use; allocation/release-only chunks legitimately emit no gates.
+    Result allocation, output records, metadata and barriers are bookkeeping too.
     """
-    return any(
-        isinstance(op, dict) and ("Quantum" in op or "AllocateQubit" in op) for op in (chunk.get("operations") or [])
-    )
+    return any(isinstance(op, dict) and "Quantum" in op for op in (chunk.get("operations") or []))
 
 
 def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
@@ -485,7 +516,7 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
     The lowered replay consumes a chunk's gates from ``lowered_quantum_ops``
     only (it reads ``operations`` solely for measurement result ids). So once
     *any* chunk is lowered, a chunk that carries a lowerable operation (a raw
-    ``Quantum`` gate/measure/reset, or an ``AllocateQubit`` prep) but an empty
+    ``Quantum`` gate/measure/reset) but an empty
     ``lowered_quantum_ops`` would have those gates silently dropped -- the
     resulting TickCircuit would be missing operations with no error. A dropped
     *measurement* is already caught downstream by the meas-count guard in
@@ -510,7 +541,7 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
         if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
             msg = (
                 f"Traced chunk {idx} carries lowerable operations (a quantum "
-                "gate/measure/reset or an AllocateQubit prep) but no "
+                "gate/measure/reset) but no "
                 "lowered_quantum_ops while other chunks are lowered. This "
                 "mixed/partially-lowered trace would silently drop the chunk's "
                 "gates in the lowered replay; refusing to build from an "

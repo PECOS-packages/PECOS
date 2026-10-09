@@ -18,9 +18,6 @@ from pecos.qec.surface import (
 from pecos.qec.surface._twirl_sites import num_pauli_sites, num_pauli_sites_for_schedule
 from pecos.qec.surface.decode import _extract_pauli_activations_from_results, _extract_pauli_masks_from_results
 
-pytest.importorskip("guppylang")
-pytest.importorskip("selene_sim")
-
 
 @pytest.fixture
 def patch_d3() -> SurfacePatch:

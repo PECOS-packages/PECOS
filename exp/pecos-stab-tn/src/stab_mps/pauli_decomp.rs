@@ -18,7 +18,7 @@
 //! operator P can be written as:
 //!
 //! ```text
-//! P = phase * prod_i S_i^{s_i} * prod_j D_j^{d_j}
+//! P = phase * prod_j D_j^{d_j} * prod_i S_i^{s_i}
 //! ```
 //!
 //! For the STN simulator, we need to decompose `Z_q` (Z on qubit q) in this basis.

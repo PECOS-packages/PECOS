@@ -51,6 +51,7 @@ Unparseable = "Unparseable"
 Pn = "Pn"
 PN = "PN"
 pn = "pn"
+Savin = "Savin" # author surname (GARI transform citation)
 
 [files]
 # Base64-encoded binary test fixtures inevitably contain typo-lookalike
@@ -63,4 +64,5 @@ pn = "pn"
 extend-exclude = [
   "*.b64",
   "crates/pecos-simulators/tests/data/stab_vec_correctness_bits.txt",
+  "crates/pecos-simulators/tests/data/sparse_stab_y_untracked.txt",
 ]

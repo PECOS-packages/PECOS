@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+import pecos_selene_statevec as statevec_module
 import pytest
 from general_noise_conformance import ConformanceExperiment, ExpectedDistribution
 from guppylang import comptime, guppy
@@ -877,7 +878,6 @@ def test_global_measurement_crosstalk_across_repeated_measurements(
 
 def test_conformance_case_runs_with_pecos_statevec() -> None:
     """The framework and native error model are independent of simulator implementation."""
-    statevec_module = pytest.importorskip("pecos_selene_statevec")
     parameters = GeneralNoiseParameters().with_p1(1.0).with_p1_pauli_model({"X": 1.0})
     experiment = ConformanceExperiment(
         runner=build(one_qubit_gate.compile()),

@@ -420,7 +420,7 @@ def invert_data(
         virt_z: Set of Z-type virtual nodes.
 
     Returns:
-        The updated info dictionary with distance graphs and closest virtual nodes.
+        The updated info dictionary with node maps, distance graphs and closest virtual nodes.
     """
     # invert data -> edge and make sure len(edge) = 2
     # Store node mappings for both X and Z
@@ -453,6 +453,8 @@ def invert_data(
             # Optionally store original identifier as attribute for debugging
             # temp_graph.node_attrs(idx)['original_id'] = str(node_id)
 
+        info[check_type]["node_map"] = node_map
+
         for data, edge in edge_dict.items():
             if len(edge) != 2:
                 msg = (
@@ -468,6 +470,11 @@ def invert_data(
             edges[(idx1, idx0)] = data
             # Add edges using node IDs
             temp_graph.add_edge(idx0, idx1)
+
+    shared_ancillas = (node_map_x.keys() - virt_x) & (node_map_z.keys() - virt_z)
+    if shared_ancillas:
+        msg = f"Syndrome labels belong to both check types: {sorted(shared_ancillas, key=str)!r}"
+        raise ValueError(msg)
 
     # Convert virt_x and virt_z to use node IDs
     virt_x_ids = {node_map_x[v] for v in virt_x if v in node_map_x}

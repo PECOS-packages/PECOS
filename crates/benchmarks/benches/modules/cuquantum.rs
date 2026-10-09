@@ -12,7 +12,7 @@
 
 //! Benchmarks for pecos-cuquantum GPU simulators.
 //!
-//! Benchmarks cuQuantum state vector and stabilizer simulation performance.
+//! Benchmarks cuQuantum state vector simulation performance.
 //!
 //! Run with: `cargo bench -p benchmarks --features cuquantum`
 //!
@@ -20,7 +20,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use pecos_core::Angle64;
-use pecos_cuquantum::{CuStabilizer, CuStateVec, QubitId, TryClone, is_cuquantum_available};
+use pecos_cuquantum::{CuStateVec, QubitId, TryClone, is_cuquantum_available};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use std::f64::consts::PI;
 use std::hint::black_box;
@@ -73,55 +73,6 @@ fn bench_statevec_gates(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark stabilizer simulation for large qubit counts
-fn bench_stabilizer_gates(c: &mut Criterion) {
-    if !is_cuquantum_available() {
-        eprintln!("Skipping stabilizer benchmarks: cuQuantum not available");
-        return;
-    }
-
-    let mut group = c.benchmark_group("custabilizer_gates");
-
-    // Stabilizer can handle many more qubits
-    for num_qubits in [100, 200, 500, 1000] {
-        let mut sim = CuStabilizer::new(num_qubits).expect("Failed to create simulator");
-
-        group.throughput(Throughput::Elements(num_qubits as u64));
-
-        // Benchmark H gates
-        group.bench_with_input(
-            BenchmarkId::new("hadamard", num_qubits),
-            &num_qubits,
-            |b, &n| {
-                b.iter(|| {
-                    for i in 0..n {
-                        sim.h(&[QubitId(i)]);
-                    }
-                    black_box(&sim);
-                });
-            },
-        );
-
-        // Benchmark CX chain
-        if num_qubits >= 2 {
-            group.bench_with_input(
-                BenchmarkId::new("cx_chain", num_qubits),
-                &num_qubits,
-                |b, &n| {
-                    b.iter(|| {
-                        for i in 0..n - 1 {
-                            sim.cx(&[(QubitId(i), QubitId(i + 1))]);
-                        }
-                        black_box(&sim);
-                    });
-                },
-            );
-        }
-    }
-
-    group.finish();
-}
-
 /// Benchmark Bell state creation and measurement
 fn bench_bell_state(c: &mut Criterion) {
     if !is_cuquantum_available() {
@@ -146,73 +97,6 @@ fn bench_bell_state(c: &mut Criterion) {
                         sim.cx(&[(QubitId(i), QubitId(i + 1))]);
                     }
                     let qubits: Vec<_> = (0..n).map(QubitId).collect();
-                    let results = sim.mz(&qubits);
-                    black_box(results);
-                });
-            },
-        );
-
-        // Stabilizer benchmark
-        group.bench_with_input(
-            BenchmarkId::new("stabilizer", num_qubits),
-            &num_qubits,
-            |b, &n| {
-                let mut sim = CuStabilizer::new(n).expect("Failed to create simulator");
-                b.iter(|| {
-                    sim.reset();
-                    // Create GHZ state
-                    sim.h(&[QubitId(0)]);
-                    for i in 0..n - 1 {
-                        sim.cx(&[(QubitId(i), QubitId(i + 1))]);
-                    }
-                    let qubits: Vec<_> = (0..n).map(QubitId).collect();
-                    let results = sim.mz(&qubits);
-                    black_box(results);
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-/// Benchmark surface code syndrome extraction
-fn bench_surface_code_syndrome(c: &mut Criterion) {
-    if !is_cuquantum_available() {
-        eprintln!("Skipping surface code benchmarks: cuQuantum not available");
-        return;
-    }
-
-    let mut group = c.benchmark_group("surface_code_syndrome");
-
-    // Distance 3, 5, 7 surface codes
-    for distance in [3, 5, 7] {
-        let num_data_qubits = distance * distance;
-        let num_ancilla = (distance - 1) * distance; // Z stabilizers
-        let total_qubits = num_data_qubits + num_ancilla;
-
-        group.bench_with_input(
-            BenchmarkId::new("stabilizer", format!("d{distance}")),
-            &(total_qubits, num_data_qubits, num_ancilla),
-            |b, &(total, _data, ancilla)| {
-                let mut sim = CuStabilizer::new(total).expect("Failed to create simulator");
-                b.iter(|| {
-                    sim.reset();
-                    // Simplified syndrome extraction - just H and CX gates
-                    for i in 0..ancilla {
-                        sim.h(&[QubitId(i)]);
-                    }
-                    // Some CX gates to simulate stabilizer measurement
-                    for i in 0..ancilla {
-                        if i + ancilla < total {
-                            sim.cx(&[(QubitId(i), QubitId(i + ancilla))]);
-                        }
-                    }
-                    for i in 0..ancilla {
-                        sim.h(&[QubitId(i)]);
-                    }
-                    // Measure ancillas
-                    let qubits: Vec<_> = (0..ancilla).map(QubitId).collect();
                     let results = sim.mz(&qubits);
                     black_box(results);
                 });
@@ -417,30 +301,12 @@ fn bench_clone(c: &mut Criterion) {
         );
     }
 
-    // Stabilizer clone is different (creates new instance, doesn't copy state)
-    for num_qubits in [100, 500, 1000] {
-        let sim = CuStabilizer::new(num_qubits).expect("Failed to create simulator");
-
-        group.bench_with_input(
-            BenchmarkId::new("stabilizer_clone", num_qubits),
-            &num_qubits,
-            |b, _| {
-                b.iter(|| {
-                    let cloned = sim.clone();
-                    black_box(cloned);
-                });
-            },
-        );
-    }
-
     group.finish();
 }
 
 pub fn benchmarks(c: &mut Criterion) {
     bench_statevec_gates(c);
-    bench_stabilizer_gates(c);
     bench_bell_state(c);
-    bench_surface_code_syndrome(c);
     bench_rotation_gates(c);
     bench_two_qubit_rotation_gates(c);
     bench_sampling(c);

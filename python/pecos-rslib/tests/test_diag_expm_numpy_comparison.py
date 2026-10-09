@@ -4,11 +4,9 @@ These tests verify that our Rust implementations produce results that match
 numpy.diag and scipy.linalg.expm within reasonable numerical tolerances.
 """
 
-import pytest
-
-pytest.importorskip("numpy")
-
 import numpy as np
+import pytest
+import scipy.linalg as scipy_linalg
 
 from pecos_rslib import Array, num
 
@@ -111,7 +109,6 @@ class TestExpmScipyComparison:
 
     @pytest.fixture(autouse=True)
     def _import_scipy(self):
-        scipy_linalg = pytest.importorskip("scipy.linalg")
         self.scipy_expm = scipy_linalg.expm
 
     def test_zero_matrix(self) -> None:

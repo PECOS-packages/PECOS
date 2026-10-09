@@ -329,7 +329,7 @@ class TestDetectorObservableMapping:
         tick = tc.tick()
         tick.mz([1])
         tc.set_meta("num_measurements", "2")
-        tc.set_meta("detectors", '[{"records": [-2, -1]}]')
+        tc.set_meta("detectors", '[{"id": 0, "records": [-2, -1]}]')
         tc.set_meta("observables", "[]")
 
         noise = depolarizing().p1(0.01).p2(0).p_meas(0).p_prep(0)
@@ -442,7 +442,7 @@ class TestFaultConfigurations:
         tick = tc.tick()
         tick.mz([0])
         tc.set_meta("num_measurements", "1")
-        tc.set_meta("detectors", '[{"records":[-1]}]')
+        tc.set_meta("detectors", '[{"id": 0, "records":[-1]}]')
         tc.set_meta("observables", "[]")
 
         noise = depolarizing().p1(0.03).p2(0).p_meas(0).p_prep(0)
@@ -513,3 +513,112 @@ class TestFaultConfigurations:
 
         configs = list(catalog.fault_configurations(1))
         assert any(c.tracked_paulis == [0] and c.observables == [] for c in configs)
+
+
+def test_catalog_meas_ids_and_invalid_definitions():
+    """The first readout flips D0; invalid definitions fail at the binding."""
+    tc = build_cx_mz()
+    tc.set_meta("detectors", '[{"id": 0, "meas_ids": [0]}]')
+    catalog = fault_catalog(tc)
+    measurements = [loc for loc in catalog if loc.gate_type == "MZ"]
+    assert [loc.faults[0].detectors for loc in measurements] == [[0], []]
+
+    tc.set_meta("detectors", '[{"id": 0, "meas_ids": [100]}]')
+    with pytest.raises(ValueError, match="100"):
+        fault_catalog(tc)
+    tc.set_meta("detectors", "[]")
+    tc.set_meta("num_measurements", "3")
+    with pytest.raises(ValueError, match="num_measurements"):
+        fault_catalog(tc)
+
+
+def _catalog_probe():
+    tc = TickCircuit()
+    tc.tick().h([0])
+    first = tc.tick().mz([0])
+    second = tc.tick().mz([1])
+    tc.set_meta("num_measurements", "2")
+    return tc, first, second
+
+
+def _measurement_effects(tc):
+    return [
+        (loc.qubits, loc.faults[0].detectors, loc.faults[0].observables)
+        for loc in fault_catalog(tc)
+        if loc.gate_type == "MZ"
+    ]
+
+
+@pytest.mark.parametrize(
+    "definition",
+    ['[{"id":0,"records":[-1]}]', '[{"id":0,"records":[-1],"meas_ids":[1]}]'],
+    ids=["records_only", "both_forms"],
+)
+def test_catalog_rebuild_metadata_forms_are_alternatives(definition):
+    """Both forms name q1 once, so its readout flip fires D0."""
+    tc, _, _ = _catalog_probe()
+    tc.set_meta("detectors", definition)
+    assert _measurement_effects(tc) == [([0], [], []), ([1], [0], [])]
+
+
+def test_catalog_rebuild_preserves_gapped_observable_id():
+    """The first readout's flip fires L2 without synthesizing an L0."""
+    tc, _, _ = _catalog_probe()
+    tc.set_meta("observables", '[{"id":2,"records":[-2]}]')
+    assert _measurement_effects(tc) == [([0], [], [2]), ([1], [], [])]
+
+
+@pytest.mark.parametrize("separate_ticks", [False, True])
+def test_catalog_rebuild_preserves_out_of_order_measurement_ids(separate_ticks):
+    """Stamp 0 belongs to the second emitted measurement, on q1."""
+    tc = TickCircuit()
+    tc.tick().h([0])
+    if separate_ticks:
+        tc.tick().mz_with_ids([0], [1])
+        tc.tick().mz_with_ids([1], [0])
+    else:
+        tc.tick().mz_with_ids([0, 1], [1, 0])
+    tc.set_meta("num_measurements", "2")
+    tc.set_meta("detectors", '[{"id":0,"meas_ids":[0]}]')
+    assert _measurement_effects(tc) == [([0], [], []), ([1], [0], [])]
+
+
+def test_catalog_rebuild_copies_annotation_only_definitions():
+    """Interleaved annotation kinds retain their own numbering and supports."""
+    tc = TickCircuit()
+    first, second = tc.tick().mz_with_ids([0, 1], [17, 9])
+    tc.observable([first], label="logical_first")
+    tc.tracked_pauli(PauliString.from_str("Z"), label="tracked_z")
+    tc.detector([second], label="second")
+    tc.observable([second], label="logical_second")
+    tc.detector([first], label="first")
+    tc.set_meta("num_measurements", "2")
+    assert _measurement_effects(tc) == [([0], [1], [0]), ([1], [0], [1])]
+
+
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+def test_catalog_rebuild_metadata_and_annotations_must_agree(kind):
+    tc, first, _ = _catalog_probe()
+    annotate = tc.detector if kind == "detectors" else tc.observable
+    annotate(first, label="first")
+    tc.set_meta(kind, '[{"id":0,"records":[-2],"label":"first"}]')
+    expected = [([0], [0], []), ([1], [], [])] if kind == "detectors" else [([0], [], [0]), ([1], [], [])]
+    assert _measurement_effects(tc) == expected
+
+    tc.set_meta(kind, '[{"id":0,"records":[-1],"label":"first"}]')
+    with pytest.raises(ValueError, match=r"metadata positions.*differ from annotation positions"):
+        fault_catalog(tc)
+    tc.set_meta(kind, '[{"id":0,"records":[-2],"label":"different"}]')
+    with pytest.raises(ValueError, match="conflicting labels"):
+        fault_catalog(tc)
+
+
+def test_catalog_rebuild_mints_unstamped_ids_after_highest_stamp():
+    """Later unstamped batches allocate 18 then 19, without sorting [17, 9]."""
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([1, 0], [17, 9])
+    tc.tick().add_gate("MZ", [2])
+    tc.tick().add_gate("MZ", [3])
+    tc.set_meta("num_measurements", "4")
+    tc.set_meta("detectors", '[{"id":0,"meas_ids":[18]},{"id":1,"meas_ids":[19]}]')
+    assert _measurement_effects(tc) == [([1], [], []), ([0], [], []), ([2], [0], []), ([3], [1], [])]

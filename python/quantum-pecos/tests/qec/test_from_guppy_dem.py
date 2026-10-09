@@ -15,6 +15,7 @@ from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos._qis_trace_replay import (
     _reject_partially_lowered_trace,
     _replay_lowered_qis_trace_into_tick_circuit,
+    _replay_qis_trace_chunks_into_tick_circuit,
     _replay_qis_trace_into_tick_circuit,
     named_result_traces_from_operation_trace,
 )
@@ -1419,24 +1420,29 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
         _reject_partially_lowered_trace(chunks)
 
 
-def test_reject_partially_lowered_trace_fails_on_unlowered_allocation() -> None:
-    """``AllocateQubit`` lowers to a prep (PZ), so an unlowered chunk that
-    carries only an allocation alongside a lowered chunk would silently drop
-    that prep -- it must fail loud too, not just chunks with raw gate ops."""
+@pytest.mark.parametrize("complete", [False, True])
+@pytest.mark.parametrize(
+    "operations",
+    [
+        [{"AllocateQubit": {"id": 1}}],
+        [{"AllocateQubit": {"id": 1}}, {"ReleaseQubit": {"id": 1}}],
+    ],
+)
+def test_reject_partially_lowered_trace_accepts_unused_allocation(operations, complete) -> None:
+    """Red/green: unused allocations emit no gates, including in a final chunk."""
     chunks = [
         {
             "operations": [{"Quantum": {"H": 0}}],
             "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
             "lowered_quantum_ops_complete": True,
         },
-        {  # allocation present (lowers to PZ) but not lowered -> would be dropped
-            "operations": [{"AllocateQubit": {"id": 1}}],
+        {
+            "operations": operations,
             "lowered_quantum_ops": [],
-            "lowered_quantum_ops_complete": False,
+            "lowered_quantum_ops_complete": complete,
         },
     ]
-    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
-        _reject_partially_lowered_trace(chunks)
+    _reject_partially_lowered_trace(chunks)
 
 
 def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
@@ -1503,6 +1509,97 @@ def test_non_lowered_replay_preserves_idle_ops() -> None:
     tc = _replay_qis_trace_into_tick_circuit(operations)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def _raw_replay_qubit_gates(chunks, qubit=0):
+    circuit = _replay_qis_trace_chunks_into_tick_circuit(chunks, allow_raw_measurement_id_fallback=True)
+    dag = circuit.to_dag_circuit()
+    return [
+        gate.gate_type.name for node in dag.nodes() if (gate := dag.gate(node)) is not None and qubit in gate.qubits
+    ]
+
+
+@pytest.mark.parametrize("first_op", ["Reset", "H"])
+def test_raw_replay_defers_prep_to_first_use(first_op) -> None:
+    """Red/green: prep is deferred across chunks; a first Reset counts as that prep."""
+    allocated = [{"AllocateQubit": {"id": 7}}]
+    assert _raw_replay_qubit_gates(
+        [{"operations": allocated}, {"operations": [{"Quantum": {first_op: 7}}, {"Quantum": {"X": 7}}]}],
+    ) == (["PZ", "X"] if first_op == "Reset" else ["PZ", "H", "X"])
+    assert _raw_replay_qubit_gates([{"operations": allocated}]) == []
+
+
+def test_raw_replay_legacy_multi_qubit_first_use() -> None:
+    """Red/green: every fresh legacy operand receives one prep, then stays prepared."""
+    chunks = [{"operations": [{"Quantum": {"CX": [7, 3]}}, {"Quantum": {"H": 7}}]}]
+    assert _raw_replay_qubit_gates(chunks, 0) == ["PZ", "CX", "H"]
+    assert _raw_replay_qubit_gates(chunks, 1) == ["PZ", "CX"]
+
+
+def test_raw_replay_unused_and_reallocated_lifetimes() -> None:
+    """Red/green: unused lifetimes have no prep; reused slots get one at first use."""
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 7}},
+                {"ReleaseQubit": {"id": 7}},
+                {"AllocateQubit": {"id": 7}},
+                {"Quantum": {"Reset": 7}},
+                {"Quantum": {"X": 7}},
+                {"ReleaseQubit": {"id": 7}},
+                {"AllocateQubit": {"id": 7}},
+                {"Quantum": {"H": 7}},
+                {"Quantum": {"Reset": 7}},
+            ],
+        },
+    ]
+    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "H", "PZ"]
+
+
+def test_raw_replay_unknown_release_preserves_legacy_prep() -> None:
+    """Red/green: releasing an unknown handle cannot suppress its first-use prep."""
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 0}},
+                {"Quantum": {"X": 0}},
+                {"ReleaseQubit": {"id": 0}},
+                {"ReleaseQubit": {"id": 9}},
+                {"Quantum": {"Measure": [9, 0]}},
+            ],
+        },
+    ]
+    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "MZ"]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        [{"AllocateQubit": {"id": 7}}, {"Quantum": {"H": 7}}],
+        [{"Quantum": {"Measure": [7, 0]}}],
+    ],
+)
+def test_raw_replay_rejects_duplicate_live_allocation(prefix) -> None:
+    """Red/green: explicit and legacy live handles cannot be allocated again."""
+    with pytest.raises(ValueError, match="already allocated"):
+        _raw_replay_qubit_gates([{"operations": [*prefix, {"AllocateQubit": {"id": 7}}]}])
+
+
+def test_raw_replay_rejects_use_after_release() -> None:
+    """Compatibility: raw replay still rejects use of an explicitly released handle."""
+    with pytest.raises(ValueError, match="program qubit 7"):
+        _raw_replay_qubit_gates(
+            [
+                {
+                    "operations": [
+                        {"AllocateQubit": {"id": 7}},
+                        {"Quantum": {"X": 7}},
+                        {"ReleaseQubit": {"id": 7}},
+                        {"Quantum": {"Measure": [7, 0]}},
+                    ],
+                },
+            ],
+        )
 
 
 def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:

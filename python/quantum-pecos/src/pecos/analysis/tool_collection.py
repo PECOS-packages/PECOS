@@ -20,10 +20,17 @@ general-purpose functions used throughout the PECOS framework.
 
 from __future__ import annotations
 
+import warnings
 from itertools import combinations, product
 from typing import TYPE_CHECKING
 
 import pecos as pc
+
+__all__ = [
+    "fault_tolerance_check",
+    "form_errors",
+    "gen_pauli_errors",
+]
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -34,11 +41,33 @@ if TYPE_CHECKING:
 
 from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners import Standard
+from pecos.engines.std_output import StdOutput
 from pecos.simulators import SparseStabPy
 
 
 def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
-    """Checks that the decoder can correct all Pauli errors of weight up to pc.floor(distance/2).
+    """Check logical signs for enumerated input and single-round spacetime errors.
+
+    First enumerate data-qubit Pauli errors of weights one through
+    ``floor((distance - 1) / 2)``. For each, prepare logical zero and plus states,
+    apply the error, run one fault-free extraction round, and decode a nonempty
+    final syndrome. Check logical Z on the zero state and logical X on the plus
+    state, raising on the first negative sign.
+
+    Then enumerate Pauli errors on (tick, qubit) locations across one extraction
+    round, including data and ancillas, with the same weight bound. On measured
+    qubits, X components precede measurement and Z components are discarded,
+    regardless of measurement basis. Other errors follow the tick. Collect
+    all measurements under one round coordinate, decode that output once, and
+    check the same logical signs. There is no following fault-free EC round or
+    residual-syndrome check. When the computed bound is zero, the underlying
+    enumerator treats it as unbounded rather than skipping errors.
+
+    This deprecated diagnostic does not establish circuit-level fault tolerance
+    or exRec conditions. Its single-round decoding does not provide temporal
+    syndrome information for circuit faults; even MWPM2D on Surface4444 d=3 can
+    fail the spacetime phase. For circuit-level analysis, see "Fault Tolerance
+    Analysis" in the user guide (``docs/user-guide/fault-tolerance.md``).
 
     Args:
     ----
@@ -47,9 +76,17 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
 
     Raises:
     ------
-        Exception: If a fault that is supposed to be corrected is not.
+        Exception: If an enumerated error leaves a negative checked logical sign.
 
     """
+    warnings.warn(
+        "fault_tolerance_check is deprecated; it checks logical signs for input and "
+        "single-round spacetime Pauli errors with one-round decoding. "
+        "It does not establish circuit-level fault tolerance. For circuit-level analysis, "
+        "see 'Fault Tolerance Analysis' in the user guide (docs/user-guide/fault-tolerance.md).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # The logical circuits:
     # ---------------------
     init_zero = pc.circuits.LogicalCircuit(layout=qecc.layout)
@@ -63,6 +100,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
 
     logical_ops = qecc.instruction("instr_syn_extract").final_logical_ops
     logical_z = logical_ops[0]["Z"]
+    logical_x = logical_ops[0]["X"]
 
     num_qudits = qecc.num_qudits
     data_qudits = qecc.data_qudit_set
@@ -95,11 +133,11 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
         sign = _apply_err(
             state,
             circ_runner,
-            init_zero,
+            init_plus,
             syn_extract,
             err,
             decoder,
-            logical_z,
+            logical_x,
         )
 
         if sign:
@@ -130,21 +168,21 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
         )
 
         if sign:
-            msg = f"Decoder failed to correct error: {spacetime!s}"
+            msg = f"Decoder failed to correct error: {err_dict}"
             raise Exception(msg)
 
         sign = _apply_err_spacetime(
             state,
             circ_runner,
-            init_zero,
+            init_plus,
             err_dict,
             decoder,
-            logical_z,
+            logical_x,
             qecc,
         )
 
         if sign:
-            msg = f"Decoder failed to correct error: {spacetime!s}"
+            msg = f"Decoder failed to correct error: {err_dict}"
             raise Exception(msg)
 
 
@@ -191,10 +229,11 @@ def _apply_err_spacetime(
     syn_circ = qecc.instruction("instr_syn_extract", num_syn_extract=1)
     num_ticks = len(syn_circ.circuit)
 
-    syn = set()
+    measurements = StdOutput()
     for t in range(num_ticks):
-        xerrs = err_dict[t].get("X", set())
-        zerrs = err_dict[t].get("Z", set())
+        tick_errors = err_dict.get(t, {})
+        xerrs = tick_errors.get("X", set()).copy()
+        zerrs = tick_errors.get("Z", set()).copy()
 
         for gate_sym, locations, _ in syn_circ.circuit.items(tick=t):
             if "measure" in gate_sym and t in err_dict:
@@ -208,7 +247,8 @@ def _apply_err_spacetime(
                     zerrs -= before_zerrs
 
             output = state.run_gate(gate_sym, locations)
-            syn.update(output.keys())
+            # Collect the whole extraction round under one measurement coordinate.
+            measurements.record(output, 0)
 
         if xerrs:
             state.run_gate("X", xerrs)
@@ -216,8 +256,8 @@ def _apply_err_spacetime(
         if zerrs:
             state.run_gate("Z", zerrs)
 
-    if syn:
-        recovery = decoder.decode(syn)
+    if measurements:
+        recovery = decoder.decode(measurements)
         circ_runner.run(state, recovery)
 
     return state.logical_sign(logical_op)
@@ -238,7 +278,7 @@ def _apply_err(
     syn = output.simplified(last=True)
 
     if syn:
-        recovery = decoder.decode(syn)
+        recovery = decoder.decode(output)
         circ_runner.run(state, recovery)
 
     return state.logical_sign(logical_op)

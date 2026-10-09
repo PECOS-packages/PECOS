@@ -53,6 +53,9 @@ struct NoiseContribution {
 ///
 /// This gives both correct mechanism structure AND correct coherent
 /// probabilities from a single framework.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -60,11 +63,13 @@ pub fn build_coherent_dem(
     observables: &[Observable],
     expansion_gates: &[bool],
 ) -> Vec<DemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Step 1: Collect all noise sources and their Pauli labels
     let mut noise_sources: Vec<(usize, NoiseContribution)> = Vec::new();
 
     for (gate_idx, gate) in gates.iter().enumerate() {
-        if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
+        if expansion_gates[gate_idx] {
             continue;
         }
         let qubits: SmallVec<[usize; 4]> =
@@ -220,6 +225,9 @@ pub fn build_coherent_dem(
 /// anticommutation separately. This produces `DecomposableDemEntry`s
 /// that know which detectors each component flips, enabling proper
 /// graphlike decomposition for pymatching.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_decomposable(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -227,11 +235,13 @@ pub fn build_coherent_dem_decomposable(
     observables: &[Observable],
     expansion_gates: &[bool],
 ) -> Vec<DecomposableDemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Step 1: Collect noise sources (same as build_coherent_dem)
     let mut noise_sources: Vec<(usize, NoiseContribution)> = Vec::new();
 
     for (gate_idx, gate) in gates.iter().enumerate() {
-        if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
+        if expansion_gates[gate_idx] {
             continue;
         }
         let qubits: SmallVec<[usize; 4]> =
@@ -482,6 +492,9 @@ fn merge_decomposable_dem_entries(
 /// P(Di AND Dj) for detector pairs. When provided, the fit also matches
 /// pairwise correlations, significantly improving 2-body and 3-body accuracy.
 /// Each entry is `((det_i, det_j), joint_probability)`.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -491,6 +504,8 @@ pub fn build_coherent_dem_exact(
     heisenberg_marginals: &[f64],
     heisenberg_pairwise: Option<&[((usize, usize), f64)]>,
 ) -> Vec<DemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Step 1-3: Get mechanism structure (same as approximate version)
     let approx = build_coherent_dem(gates, noise, detectors, observables, expansion_gates);
 
@@ -773,6 +788,9 @@ pub fn build_coherent_dem_exact(
 ///
 /// Combines the approximate fit to exact targets from `build_coherent_dem_exact`
 /// with the X/Z component tracking from `build_coherent_dem_decomposable`.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact_decomposable(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -782,6 +800,8 @@ pub fn build_coherent_dem_exact_decomposable(
     heisenberg_marginals: &[f64],
     heisenberg_pairwise: Option<&[((usize, usize), f64)]>,
 ) -> Vec<DecomposableDemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Get X/Z component structure from decomposable builder
     let decomposable =
         build_coherent_dem_decomposable(gates, noise, detectors, observables, expansion_gates);

@@ -52,10 +52,10 @@ def noise_depolarizing_two_qubit_gates(
             index = int(pc.random.choice(len(error_two_paulis_collection), 1)[0])
             err1, err2 = error_two_paulis_collection[index]
 
-            if err1:
+            if str(err1) != "I":
                 after.append(err1, {loc1})
 
-            if err2:
+            if str(err2) != "I":
                 after.append(err2, {loc2})
 
 
@@ -94,8 +94,8 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(
                 index = int(pc.random.choice(len(error_two_paulis_collection), 1)[0])
                 err1, err2 = error_two_paulis_collection[index]
 
-                if err1:
+                if str(err1) != "I":
                     after.append(err1, {loc1})
 
-                if err2:
+                if str(err2) != "I":
                     after.append(err2, {loc2})

@@ -17,6 +17,7 @@ including tensor network storage and manipulation for low-entanglement quantum c
 
 from __future__ import annotations
 
+from random import Random
 from typing import TYPE_CHECKING
 
 from pytket import Qubit
@@ -80,6 +81,8 @@ class MPS(StateTN):
         # Configure the simulator
         self.config = Config(**mps_params)
         self.dtype = self.config._complex_t
+        seed = mps_params.get("seed")
+        self._seed_rng = Random(seed) if seed is not None else None
 
         # cuTensorNet handle initialization
         mark_cuda_initialized()
@@ -91,6 +94,8 @@ class MPS(StateTN):
     def reset(self) -> StateTN:
         """Reset the quantum state to all 0 for another run."""
         qubits = [Qubit(q) for q in range(self.num_qubits)]
+        if self._seed_rng is not None:
+            self.config.seed = self._seed_rng.getrandbits(64)
         self.mps = MPSxGate(self.libhandle, qubits, self.config)
         self.mps._logger.info("Resetting MPS...")
         return self

@@ -11,7 +11,7 @@ use pecos_eeg::heisenberg::{
     build_noise_map, heisenberg_detection_probability, heisenberg_sparse, heisenberg_with_noise_map,
 };
 use pecos_eeg::stabilizer::StabilizerGroup;
-use pecos_eeg::{Bm, DepolarizingChannel, GateNoise, NoiseInjection, NoiseSpec, UniformNoise};
+use pecos_eeg::{Bm, GateNoise, NoiseInjection, NoiseSpec, UniformNoise};
 
 /// Check every walker against a channel eigenvalue derived analytically.
 /// Comparing walkers with one another would preserve their shared model bug.
@@ -37,12 +37,19 @@ fn assert_walkers(
     num_qubits: usize,
     expected: f64,
 ) {
-    let index = GateIndex::build(gates, num_qubits);
+    let index = GateIndex::build(gates, num_qubits, noise, &vec![false; gates.len()]);
     let noise_map = build_noise_map(gates, noise, &index.expansion_gates);
     let results = [
         (
             "windowed",
-            heisenberg_detection_probability(gates, detector, noise, initial, 0.0),
+            heisenberg_detection_probability(
+                gates,
+                detector,
+                noise,
+                initial,
+                0.0,
+                &vec![false; gates.len()],
+            ),
         ),
         (
             "precomputed",
@@ -286,59 +293,6 @@ fn single_qubit_custom_s_set_on_a_two_qubit_gate_leaves_the_other_qubit() {
     assert_detection_probability(&gates, &Bm::z(1), &noise, 2, 0.0);
 }
 
-/// Reports a channel on qubit 1 after any gate, including gates on qubit 0 only.
-struct ChannelOnQubitOne;
-
-impl NoiseSpec for ChannelOnQubitOne {
-    fn noise_after_gate(&self, _: usize, _: GateType, _: &[usize]) -> Vec<NoiseInjection> {
-        Vec::new()
-    }
-
-    fn exact_noise_after_gate(&self, _: usize, _: GateType, _: &[usize]) -> GateNoise {
-        GateNoise {
-            injections: Vec::new(),
-            depolarizing: vec![DepolarizingChannel::OneQubit {
-                qubit: 1,
-                probability: 0.1,
-            }],
-        }
-    }
-}
-
-#[test]
-#[should_panic(expected = "acts outside gate qubits")]
-fn noise_map_rejects_a_channel_outside_the_gate() {
-    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
-    build_noise_map(&gates, &ChannelOnQubitOne, &[]);
-}
-
-#[test]
-#[should_panic(expected = "acts outside gate qubits")]
-fn walk_rejects_a_channel_outside_the_gate() {
-    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
-    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
-    let detector = Bm::z(0).multiply(&Bm::z(1));
-    heisenberg_detection_probability(&gates, &detector, &ChannelOnQubitOne, &initial, 0.0);
-}
-
-#[test]
-#[should_panic(expected = "acts outside gate qubits")]
-fn sparse_walk_rejects_a_channel_outside_the_gate() {
-    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
-    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
-    let detector = Bm::z(0).multiply(&Bm::z(1));
-    let index = GateIndex::build(&gates, 2);
-    heisenberg_sparse(
-        &gates,
-        &detector,
-        &ChannelOnQubitOne,
-        &initial,
-        0.0,
-        &index,
-        None,
-    );
-}
-
 #[test]
 fn custom_injection_order_is_preserved_in_noise_maps() {
     use pecos_eeg::eeg::EegType;
@@ -350,9 +304,9 @@ fn custom_injection_order_is_preserved_in_noise_maps() {
     ]);
     let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0]), Gate::h(&[0])], 1);
-    // S_X attenuates Y before its RZ adjoint rotates it toward X. Reordering
-    // the injections would leave the resulting X expectation unattenuated.
-    let expected = (1.0 - (1.0 - 2.0 * p) * theta.sin()) / 2.0;
+    // Forward S_X leaves |+> unchanged in both Pauli branches, then RZ(theta)
+    // rotates X toward Y, giving <Y> = sin(theta), independent of p.
+    let expected = (1.0 - theta.sin()) / 2.0;
     assert_walkers(&gates, &Bm::y(0), &noise, &initial, 1, expected);
 }
 
@@ -393,8 +347,8 @@ fn compressed_mechanism_structure_retains_exact_categorical_targets() {
         p1: 0.75,
         ..UniformNoise::coherent_only(0.0)
     };
-    let index = GateIndex::build(&gates, 1);
-    let compressed = compress_noise_to_boundaries(&gates, &noise, &index.expansion_gates);
+    let expansion_gates = vec![false; gates.len()];
+    let compressed = compress_noise_to_boundaries(&gates, &noise, &expansion_gates);
     assert!(compressed.compressed_count < compressed.original_count);
     let structure = CompressedNoiseSpec::from_compressed(&compressed);
     let detectors = [Detector {
@@ -405,6 +359,7 @@ fn compressed_mechanism_structure_retains_exact_categorical_targets() {
     for structure_noise in [None, Some(&structure as &dyn NoiseSpec)] {
         let characterization = NoiseCharacterization::build(NoiseCharacterizationInput {
             gates: &gates,
+            expansion_gates: &expansion_gates,
             noise: &noise,
             structure_noise,
             detectors: &detectors,

@@ -24,7 +24,7 @@ fn dense_pair(template: &StabMps, tableau: &SparseStabY, mps: &Mps) -> Vec<Compl
     let mut snapshot = template.clone();
     snapshot.tableau = tableau.clone();
     snapshot.mps = mps.clone();
-    snapshot.state_vector()
+    snapshot.state_vector_up_to_phase()
 }
 
 fn normalized_projected_dense(
@@ -381,15 +381,8 @@ fn internal_step_diagnostics(
     let mut mps = input_mps.clone();
     if is_mps_trivial(&mps) {
         let previous = dense_pair(template, &tableau, &mps);
-        #[cfg(debug_assertions)]
         let norm_squared = mps.norm_squared();
-        canonicalize_trivial_mps_basis(
-            &mut tableau,
-            &mut mps,
-            None,
-            #[cfg(debug_assertions)]
-            norm_squared,
-        );
+        canonicalize_trivial_mps_basis(&mut tableau, &mut mps, None, norm_squared);
         record_internal(
             &mut records,
             "canonicalize_trivial_mps_basis",
@@ -591,10 +584,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
                 let coefficient = mps.amplitude(&mps_index);
                 let terminal_tableau_phase =
                     phase_tracker.terminal_tableau_basis_phase(tableau, &mps_index, &self.bits);
-                let actual = self.template.global_phase
-                    * phase_tracker.scalar()
-                    * terminal_tableau_phase
-                    * coefficient
+                let actual = phase_tracker.scalar() * terminal_tableau_phase * coefficient
                     / coefficient.norm()
                     * projected_norm;
                 let comparison = compare_up_to_unit_scalar(&[actual], &[expected]);
@@ -694,7 +684,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
         }
     }
 
-    let original = stn.state_vector();
+    let original = stn.state_vector_up_to_phase();
     let mut walker = Walker {
         template: stn,
         original: original.clone(),
@@ -706,7 +696,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
     walker.descend(&stn.tableau, &stn.mps, &original, 0, 1.0, &phase_tracker);
     for (index, &expected) in original.iter().enumerate() {
         let bits = bits_from_index(index, stn.num_qubits);
-        let actual = stn.amplitude_iterative(&bits);
+        let actual = stn.amplitude_iterative_up_to_phase(&bits);
         walker.summary.bitstrings_checked += 1;
         if expected.norm() <= 1e-12 {
             walker.summary.zero_bitstrings += 1;
@@ -719,7 +709,7 @@ fn walk_all_bitstrings_with_internal(stn: &StabMps, collect_internal: bool) -> W
             assert!(
                 comparison.identity_error <= PHASE_TOLERANCE
                     && comparison.vector_error <= VECTOR_TOLERANCE,
-                "end-to-end amplitude did not match state_vector's phase convention: bits={bits:?} comparison={comparison:?}"
+                "end-to-end amplitude did not match state_vector_up_to_phase's gauge: bits={bits:?} comparison={comparison:?}"
             );
         }
     }
@@ -761,15 +751,8 @@ fn trace_forced_step(
     eprintln!("trace q={qubit} outcome={outcome}");
 
     if is_mps_trivial(&mps) {
-        #[cfg(debug_assertions)]
         let norm_squared = mps.norm_squared();
-        canonicalize_trivial_mps_basis(
-            &mut tableau,
-            &mut mps,
-            None,
-            #[cfg(debug_assertions)]
-            norm_squared,
-        );
+        canonicalize_trivial_mps_basis(&mut tableau, &mut mps, None, norm_squared);
         print_comparison(
             "canonicalize_trivial_mps_basis",
             &dense_pair(template, &tableau, &mps),
@@ -1054,9 +1037,9 @@ fn clean_validation_circuit(n: usize, seed: u64) -> StabMps {
 
 /// Harness self-check: this real-Clifford-prefix H/RZ/CX family is known not
 /// to fire #562. Every outer forced-projection step and every final amplitude
-/// must retain phase exactly.
+/// must retain the common read gauge exactly.
 #[test]
-fn clean_h_rz_cx_walk_is_phase_exact() {
+fn clean_h_rz_cx_walk_preserves_read_gauge() {
     let mut step_count = 0usize;
     let mut final_count = 0usize;
     let mut max_phase_error = 0.0f64;
@@ -1163,11 +1146,11 @@ fn trace_one_qubit_h_rz() {
     stn.h(&[QubitId(0)]);
     stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
     stn.flush();
-    eprintln!("state={:?}", stn.state_vector());
+    eprintln!("state={:?}", stn.state_vector_up_to_phase());
     eprintln!(
         "iter0={} iter1={}",
-        stn.amplitude_iterative(&[false]),
-        stn.amplitude_iterative(&[true])
+        stn.amplitude_iterative_up_to_phase(&[false]),
+        stn.amplitude_iterative_up_to_phase(&[true])
     );
     trace_forced_step(&stn, &stn.tableau, &stn.mps, 0, false);
     trace_forced_step(&stn, &stn.tableau, &stn.mps, 0, true);
@@ -1185,13 +1168,13 @@ fn trace_two_qubit_bell_rz() {
     stn.cx(&[(QubitId(0), QubitId(1))]);
     stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(1)]);
     stn.flush();
-    eprintln!("state={:?}", stn.state_vector());
+    eprintln!("state={:?}", stn.state_vector_up_to_phase());
     for index in 0..4 {
         let bits = bits_from_index(index, 2);
         eprintln!(
             "bits={bits:?} dense={} iter={}",
-            stn.amplitude(&bits),
-            stn.amplitude_iterative(&bits)
+            stn.amplitude_up_to_phase(&bits),
+            stn.amplitude_iterative_up_to_phase(&bits)
         );
     }
     trace_forced_step(&stn, &stn.tableau, &stn.mps, 0, false);
@@ -1203,15 +1186,21 @@ fn trace_two_qubit_bell_rz() {
 #[test]
 fn dense_pair_helper_reuses_state_vector_exactly() {
     let stn = random_circuit(3, 7, true);
-    assert_eq!(dense_pair(&stn, &stn.tableau, &stn.mps), stn.state_vector());
+    assert_eq!(
+        dense_pair(&stn, &stn.tableau, &stn.mps),
+        stn.state_vector_up_to_phase()
+    );
     for index in 0..(1usize << stn.num_qubits) {
         let bits = bits_from_index(index, stn.num_qubits);
-        assert_eq!(stn.amplitude(&bits), stn.state_vector()[index]);
+        assert_eq!(
+            stn.amplitude_up_to_phase(&bits),
+            stn.state_vector_up_to_phase()[index]
+        );
     }
 }
 
 /// Exhaustively validate the polynomial canonical-ket amplitude against the
-/// dense projector convention used by `StabMps::state_vector`.
+/// dense projector convention used by `StabMps::state_vector_up_to_phase`.
 #[test]
 fn canonical_ket_amplitude_matches_dense_projector_exhaustively() {
     let mut tableaux_checked = 0usize;
@@ -1279,7 +1268,7 @@ fn canonical_ket_amplitude_matches_dense_projector_exhaustively() {
 
             let mut dense_snapshot = StabMps::new(n);
             dense_snapshot.tableau = tableau.clone();
-            let dense = dense_snapshot.state_vector();
+            let dense = dense_snapshot.state_vector_up_to_phase();
             for (index, expected) in dense.into_iter().enumerate() {
                 let bits = bits_from_index(index, n);
                 let actual =
@@ -1320,8 +1309,8 @@ fn smallest_reproducer_localizes_to_right_compose_h() {
     stn.sz(&[QubitId(0)]);
     stn.flush();
 
-    let dense = stn.amplitude(&[true]);
-    let iterative = stn.amplitude_iterative(&[true]);
+    let dense = stn.amplitude_up_to_phase(&[true]);
+    let iterative = stn.amplitude_iterative_up_to_phase(&[true]);
     let ratio = iterative / dense;
     assert!((ratio - Complex64::new(1.0, 0.0)).norm() <= PHASE_TOLERANCE);
 
@@ -1354,7 +1343,7 @@ fn issue_562_eight_qubit_amplitude_evidence() {
     for seed in 0..6 {
         let mut stn = crate::stab_mps::tests::stability_census_random_circuit(seed);
         stn.flush();
-        let expected = stn.state_vector();
+        let expected = stn.state_vector_up_to_phase();
         cases.push((seed, stn, expected));
     }
 
@@ -1364,7 +1353,7 @@ fn issue_562_eight_qubit_amplitude_evidence() {
     for (seed, stn, expected) in &cases {
         for (index, expected) in expected.iter().enumerate() {
             let bits = bits_from_index(index, 8);
-            let actual = stn.amplitude_iterative(&bits);
+            let actual = stn.amplitude_iterative_up_to_phase(&bits);
             max_delta = max_delta.max((actual - expected).norm());
             checksum += actual * Complex64::new(1.0 + *seed as f64, index as f64 + 1.0);
         }

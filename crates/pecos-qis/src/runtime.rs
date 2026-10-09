@@ -14,6 +14,44 @@ use log::trace;
 use pecos_qis_ffi_types::{LoweredQuantumOp, Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 
+pub(crate) fn for_each_quantum_qubit(qop: &QuantumOp, mut include: impl FnMut(usize)) {
+    match qop {
+        QuantumOp::H(qubit)
+        | QuantumOp::X(qubit)
+        | QuantumOp::Y(qubit)
+        | QuantumOp::Z(qubit)
+        | QuantumOp::S(qubit)
+        | QuantumOp::Sdg(qubit)
+        | QuantumOp::T(qubit)
+        | QuantumOp::Tdg(qubit)
+        | QuantumOp::RX(_, qubit)
+        | QuantumOp::RY(_, qubit)
+        | QuantumOp::RZ(_, qubit)
+        | QuantumOp::RXY(_, _, qubit)
+        | QuantumOp::Idle(_, qubit)
+        | QuantumOp::Reset(qubit) => include(*qubit),
+        QuantumOp::CX(qubit_1, qubit_2)
+        | QuantumOp::CY(qubit_1, qubit_2)
+        | QuantumOp::CZ(qubit_1, qubit_2)
+        | QuantumOp::CH(qubit_1, qubit_2)
+        | QuantumOp::CRZ(_, qubit_1, qubit_2)
+        | QuantumOp::ZZ(qubit_1, qubit_2)
+        | QuantumOp::RZZ(_, qubit_1, qubit_2)
+        | QuantumOp::RXYXY2Q(_, _, qubit_1, qubit_2) => {
+            include(*qubit_1);
+            include(*qubit_2);
+        }
+        QuantumOp::CCX(qubit_1, qubit_2, qubit_3) => {
+            include(*qubit_1);
+            include(*qubit_2);
+            include(*qubit_3);
+        }
+        QuantumOp::Measure(qubit, _) | QuantumOp::MeasureLeaked(qubit, _) => {
+            include(*qubit);
+        }
+    }
+}
+
 /// Result type for runtime operations
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
@@ -146,15 +184,24 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// Returns an error if the measurements cannot be provided.
     fn provide_measurements(&mut self, measurements: BTreeMap<usize, bool>) -> Result<()>;
 
+    /// Runtime identity used in execution diagnostics.
+    fn name(&self) -> &str {
+        std::any::type_name::<Self>()
+    }
+
     /// Provide integer-valued measurement outcomes back to the runtime.
     ///
     /// The default keeps existing Boolean runtimes compatible and rejects a
-    /// leakage outcome instead of silently converting 2 to true.
+    /// leakage outcome instead of silently converting 2 to true. Deliveries are
+    /// ordered and may repeat a program result slot; every delivery is retained.
+    /// After validating all outcomes, the default calls `provide_measurements`
+    /// once per outcome, in order. Delivery is not atomic across the batch:
+    /// an error leaves earlier successful deliveries applied.
     ///
     /// # Errors
     /// Returns an error if any outcome is not 0 or 1, since a Boolean runtime cannot
     /// represent a leakage outcome, or if providing the measurements themselves fails.
-    fn provide_measurement_outcomes(&mut self, outcomes: BTreeMap<usize, u32>) -> Result<()> {
+    fn provide_measurement_outcomes(&mut self, outcomes: Vec<(usize, u32)>) -> Result<()> {
         let measurements = outcomes
             .into_iter()
             .map(|(result_id, value)| match value {
@@ -164,8 +211,11 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
                     "runtime does not support leakage outcome {value} for result {result_id}"
                 ))),
             })
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        self.provide_measurements(measurements)
+            .collect::<Result<Vec<_>>>()?;
+        for measurement in measurements {
+            self.provide_measurements(BTreeMap::from([measurement]))?;
+        }
+        Ok(())
     }
 
     /// Get the current classical state (for debugging/inspection)
@@ -291,15 +341,18 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
-    /// Force terminal release of remaining native scheduled work, without execution.
+    /// Force release of all held native scheduled work, without execution.
+    /// Used when a mid-shot read needs its measurement and before shot completion.
+    /// Consume all returned batches; subsequent submissions or feedback may
+    /// create more pending work and require another drain.
     ///
     /// # Errors
-    /// Defaults to rejection; implementors must guarantee a terminal flush.
+    /// Defaults to rejection; implementors must guarantee a full flush.
     fn drain_pending_scheduled_operations(
         &mut self,
     ) -> Result<Vec<crate::scheduled::ScheduledBatch>> {
         Err(RuntimeError::ExecutionError(
-            "runtime does not support scheduled terminal drain".into(),
+            "runtime does not support scheduled drain".into(),
         ))
     }
 

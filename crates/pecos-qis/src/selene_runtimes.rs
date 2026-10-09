@@ -4,7 +4,7 @@
 //! The runtimes are automatically built when you build this crate if the
 //! Selene repository is found at ../selene (relative to PECOS).
 
-use crate::SeleneRuntime;
+use crate::{RuntimeNativeGateSet, SeleneRuntime};
 use std::path::{Path, PathBuf};
 
 const SIMPLE_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
@@ -176,7 +176,8 @@ pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
             .map(ToString::to_string)
             .collect(),
         Vec::new(),
-    );
+    )
+    .with_native_gate_set(RuntimeNativeGateSet::ALL);
     Ok(runtime)
 }
 
@@ -217,7 +218,8 @@ pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
             .map(ToString::to_string)
             .collect(),
         Vec::new(),
-    ))
+    )
+    .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ))
 }
 
 // Note: We only expose convenience functions for actual Selene runtime plugins.
@@ -405,13 +407,17 @@ pub fn selene_runtime_auto(lib_name: &str) -> Result<SeleneRuntime, RuntimeFetch
         runtime_path,
         init_args.iter().map(ToString::to_string).collect(),
         Vec::new(),
-    ))
+    )
+    .with_native_gate_set(match lib_name {
+        "selene_soft_rz_runtime" => RuntimeNativeGateSet::RXY_RZ_RZZ,
+        _ => RuntimeNativeGateSet::ALL,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_env::{ENV_MUTEX, EnvVarGuard};
+    use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
     use std::time::{Duration, SystemTime};
 
@@ -445,6 +451,16 @@ mod tests {
 
     #[test]
     fn test_find_selene_runtime_in_hashed_env_deps_dir() {
+        // Every runtime lookup reads PECOS_SELENE_DIR, including lookups in tests
+        // that do not hold ENV_MUTEX, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_HASHED_ENV_DEPS_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "selene_runtimes::tests::test_find_selene_runtime_in_hashed_env_deps_dir",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

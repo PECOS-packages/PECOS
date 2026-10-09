@@ -86,7 +86,10 @@ pub(crate) mod sampler;
 mod slice;
 mod types;
 
-pub use builder::{DemBuilder, DemBuilderError, resolve_result_tags};
+pub use builder::{
+    DemBuilder, DemBuilderError, ParsedDetector, ParsedObservable, parse_detectors_json,
+    parse_observables_json, resolve_result_tags,
+};
 pub use dem_sampler::{SamplingEngine, SamplingStatistics};
 pub use equivalence::{
     ComparisonDetails, ComparisonMethod, DemParseError, EffectKey, EquivalenceResult,
@@ -94,9 +97,12 @@ pub use equivalence::{
     compare_dems_statistical, verify_dem_equivalence,
 };
 pub use mem_builder::MemBuilder;
+/// The batch type [`DemSampler::sample_shots`] returns, so it can be named from
+/// this crate without a separate `pecos-decoders` dependency.
+pub use pecos_decoders::batch::SampleBatch;
 pub use sampler::{
     DemSampler, DemSamplerBuilder, DetectorValidationError, DualSampleResult, OutputMode,
-    SamplerLabels,
+    SampleShotsError, SamplerLabels,
 };
 pub use slice::{
     ComposedDem, ComposedDetectorAddress, DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind,
@@ -115,3 +121,6 @@ pub use types::{
     ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,
     omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
 };
+
+#[cfg(test)]
+mod map_only_tests;

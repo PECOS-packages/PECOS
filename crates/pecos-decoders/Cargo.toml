@@ -23,6 +23,7 @@ pecos-tesseract = { workspace = true, optional = true }
 pecos-chromobius = { workspace = true, optional = true }
 pecos-relay-bp = { workspace = true, optional = true }
 pecos-uf-decoder = { workspace = true, optional = true }
+rayon.workspace = true
 
 [features]
 default = []

@@ -599,6 +599,11 @@ impl PyStabVec {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    PyStabVec::new(2, None, None, Some(2048))
-});
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { PyStabVec::new(2, None, None, Some(2048)) },
+    ignored_forcing = (
+        |seed| PyStabVec::new(2, Some(seed), None, Some(2048)),
+        |sim: &mut PyStabVec| sim.inner.state_vector()
+    )
+);

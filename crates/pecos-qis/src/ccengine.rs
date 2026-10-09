@@ -8,13 +8,28 @@
 //! For programs with conditionals that depend on measurement results (dynamic circuits),
 //! the engine runs LLVM execution on a worker thread. When a measurement result is needed:
 //! 1. The worker thread pauses and sends pending operations to the main thread
-//! 2. The main thread returns operations via `generate_commands()`
+//! 2. The main thread returns operations via `ControlEngine::start()` / `continue_processing()`
 //! 3. `continue_processing()` receives measurements and signals the worker to continue
 //! 4. The worker resumes with the measurement results available
+//!
+//! Reset requests cooperative cancellation and reclaims the worker's interface
+//! before resetting runtime/scheduler state. Its ten-second deadline bounds only
+//! the result-channel wait, not host synchronization or a runtime plugin's exit.
+//! Native loops and blocking callbacks that never reach a QIS checkpoint cannot
+//! be cancelled; reset fails and stays latched until a later reset reclaims the
+//! worker. Python `run` and `reset` share a simulation mutex, so Python reset
+//! cannot interrupt a running call. Drop requests cancellation, closes the work
+//! channel, and waits up to ten seconds for the worker to finish before joining
+//! it. If the worker misses that deadline, Drop warns and detaches it; an abort
+//! failure is also reported. Only the thread wait is bounded, not the abort's
+//! sync lock. Recovering the original worker through `Clone` remains unsupported.
+//! Cancellation also transfers through in-process Selene QIS plugin frames that
+//! call PECOS entry points, so plugins must not hold locks or owned resources
+//! across any `selene_*` or QIS entry call.
 
 use crate::program::QisInterfaceBuilder;
-use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, ProgramFormat};
-use crate::runtime::QisRuntime;
+use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat};
+use crate::runtime::{QisRuntime, for_each_quantum_qubit};
 use crate::scheduled_transport::ScheduledTransport;
 use log::{debug, warn};
 use pecos_core::Angle64;
@@ -35,6 +50,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use tests::drop_tests;
+
+const RESET_WORKER_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TRACE_ENGINE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -81,12 +102,75 @@ pub type OperationTraceStore = Arc<Mutex<Vec<OperationTraceChunk>>>;
 /// The error arm also carries the interface back when the worker still holds
 /// it, so one failed shot does not permanently strip the engine of its
 /// interface. `None` means the interface was genuinely lost (worker died).
-type WorkerResult = Result<(OperationList, BoxedInterface), (String, Option<BoxedInterface>)>;
+type WorkerResult =
+    Result<(OperationList, BoxedInterface), (WorkerFailure, Option<BoxedInterface>)>;
+
+/// Preserve execution and teardown failures independently across the worker channel.
+#[derive(Debug)]
+struct WorkerFailure {
+    execution: Option<InterfaceError>,
+    teardown: Option<InterfaceError>,
+}
+
+impl WorkerFailure {
+    fn cancelled(&self) -> bool {
+        matches!(
+            self.execution,
+            Some(InterfaceError::ProgramError(
+                pecos_qis_ffi_types::ProgramError::Cancelled
+            ))
+        ) && self.teardown.is_none()
+    }
+}
+
+impl From<String> for WorkerFailure {
+    fn from(message: String) -> Self {
+        Self {
+            execution: Some(InterfaceError::Other(message)),
+            teardown: None,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkerFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(error) = &self.execution {
+            write!(f, "{error}")?;
+        }
+        if let Some(error) = &self.teardown {
+            write!(
+                f,
+                "; worker teardown (disable_dynamic_mode) failed: {error}"
+            )?;
+        }
+        Ok(())
+    }
+}
 
 /// Simulator commands plus one metadata record per lowered quantum gate.
 struct LoweredCommandBatch {
     commands: ByteMessage,
     gate_metadata: Vec<TraceMetadata>,
+    /// Whether lowering emitted no command batches (including scheduled formats).
+    is_empty: bool,
+    /// Imported measurement credits consumed by this command batch.
+    measurement_credits_consumed: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QubitPrepState {
+    Pending,
+    Prepared,
+    Released,
+}
+
+/// Certification belongs to a shot attempt, including failures before submission.
+#[derive(Debug, PartialEq, Eq)]
+enum ShotLifecycle {
+    Idle,
+    Running,
+    Finalized,
+    Failed(String),
 }
 
 /// State for dynamic circuit execution
@@ -108,6 +192,9 @@ struct DynamicExecutionState {
     /// polling `continue_processing` again after `Complete` must not re-run
     /// the drain / `shot_end` gates or emit a second terminal marker.
     finalized: bool,
+    /// The operation-lowering route gets one final barrier batch before the
+    /// fail-loud drain check. Later emissions must still fail certification.
+    terminal_lowering_flushed: bool,
     /// Sync handle for main thread FFI calls
     /// Uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS consistency across platforms
@@ -128,22 +215,39 @@ struct DynamicWorkItem {
 /// and sends results back via another channel.
 struct PersistentDynamicWorker {
     /// Channel to send work items to the worker
-    work_tx: Sender<DynamicWorkItem>,
+    work_tx: Option<Sender<DynamicWorkItem>>,
     /// Channel to receive results from the worker (wrapped in Mutex for Sync)
     result_rx: Mutex<Receiver<WorkerResult>>,
-    /// Thread handle (joined on drop)
-    _handle: JoinHandle<()>,
+    /// Joined on drop after a bounded wait; detached with a warning on timeout.
+    handle: Option<JoinHandle<()>>,
+    /// Deadline for `Drop`'s thread wait.
+    drop_timeout: Duration,
+    /// Retain cancellation failure for the detach diagnostic.
+    abort_error: Option<InterfaceError>,
+    #[cfg(test)]
+    worker_counts: Arc<drop_tests::WorkerCounts>,
 }
 
 impl PersistentDynamicWorker {
     /// Create a new persistent dynamic worker thread
-    fn new() -> Self {
+    fn new(#[cfg(test)] worker_counts: Arc<drop_tests::WorkerCounts>) -> Self {
         let (work_tx, work_rx) = mpsc::channel::<DynamicWorkItem>();
         let (result_tx, result_rx) = mpsc::channel::<WorkerResult>();
 
+        #[cfg(test)]
+        let exit_guard = drop_tests::WorkerExitGuard::new(Arc::clone(&worker_counts));
+        #[cfg(test)]
+        let thread_counts = Arc::clone(&worker_counts);
         let handle = std::thread::Builder::new()
             .name("pecos-dynamic-worker".to_string())
             .spawn(move || {
+                // Declare first so this witness drops after all worker locals,
+                // including the channels, on normal exit and unwinding.
+                #[cfg(test)]
+                let _exit_guard = exit_guard;
+                #[cfg(test)]
+                let thread_counts = thread_counts;
+                let (work_rx, result_tx) = (work_rx, result_tx);
                 debug!("Persistent dynamic worker started");
                 while let Ok(work_item) = work_rx.recv() {
                     debug!("Persistent worker: received work item, starting collect_operations");
@@ -159,11 +263,13 @@ impl PersistentDynamicWorker {
                     // back with BOTH outcomes so the engine stays usable.
                     let send_result = match (result, teardown) {
                         (Ok(collector), Ok(())) => Ok((collector, interface)),
-                        (Ok(_), Err(e)) => Err((
-                            format!("worker teardown (disable_dynamic_mode) failed: {e}"),
+                        (execution, teardown) => Err((
+                            WorkerFailure {
+                                execution: execution.err(),
+                                teardown: teardown.err(),
+                            },
                             Some(interface),
                         )),
-                        (Err(e), _) => Err((e.to_string(), Some(interface))),
                     };
 
                     if result_tx.send(send_result).is_err() {
@@ -171,33 +277,55 @@ impl PersistentDynamicWorker {
                         debug!("Persistent worker: result channel closed, exiting");
                         break;
                     }
+                    #[cfg(test)]
+                    thread_counts.returned.fetch_add(1, Ordering::SeqCst);
                 }
                 debug!("Persistent dynamic worker exiting");
             })
             .expect("Failed to spawn persistent dynamic worker thread");
 
         Self {
-            work_tx,
+            work_tx: Some(work_tx),
             result_rx: Mutex::new(result_rx),
-            _handle: handle,
+            handle: Some(handle),
+            drop_timeout: RESET_WORKER_TIMEOUT,
+            abort_error: None,
+            #[cfg(test)]
+            worker_counts,
         }
     }
 
     /// Send a work item to the persistent worker
     fn execute(&self, interface: BoxedInterface) -> Result<(), PecosError> {
+        debug!(
+            "Submitting shot to dynamic worker {:?}",
+            self.handle.as_ref().map(|handle| handle.thread().id())
+        );
         self.work_tx
+            .as_ref()
+            .ok_or_else(|| PecosError::Generic("Persistent worker channel closed".to_string()))?
             .send(DynamicWorkItem { interface })
             .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
     }
 
-    /// Receive the result from the persistent worker (blocking)
-    #[allow(dead_code)]
-    fn recv_result(&self) -> Result<WorkerResult, PecosError> {
-        self.result_rx
+    /// Bound only the channel wait, using a monotonic deadline and no helper thread.
+    fn recv_result_until(&self, deadline: Instant) -> Result<WorkerResult, PecosError> {
+        let receiver = self
+            .result_rx
             .lock()
-            .map_err(|_| PecosError::Generic("Result receiver lock poisoned".to_string()))?
-            .recv()
-            .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
+            .map_err(|_| PecosError::Generic("dynamic worker result lock poisoned".to_string()))?;
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|error| {
+                PecosError::Generic(match error {
+                    mpsc::RecvTimeoutError::Timeout => {
+                        "timed out reclaiming dynamic worker interface".to_string()
+                    }
+                    mpsc::RecvTimeoutError::Disconnected => {
+                        "dynamic worker result channel disconnected".to_string()
+                    }
+                })
+            })
     }
 
     /// Try to receive a result without blocking.
@@ -208,7 +336,7 @@ impl PersistentDynamicWorker {
     fn try_recv_result(&self) -> Option<WorkerResult> {
         let Ok(rx) = self.result_rx.lock() else {
             return Some(Err((
-                "dynamic worker result lock poisoned".to_string(),
+                "dynamic worker result lock poisoned".to_string().into(),
                 None,
             )));
         };
@@ -216,11 +344,62 @@ impl PersistentDynamicWorker {
             Ok(result) => Some(result),
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => Some(Err((
-                "dynamic worker thread died before returning a result".to_string(),
+                "dynamic worker thread died before returning a result"
+                    .to_string()
+                    .into(),
                 None,
             ))),
         }
     }
+}
+
+impl Drop for PersistentDynamicWorker {
+    fn drop(&mut self) {
+        // Field destruction happens after this method. Close work explicitly,
+        // but keep result_rx alive for the worker's final interface handoff.
+        drop(self.work_tx.take());
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        let started = Instant::now();
+        while !handle.is_finished() {
+            let remaining = self.drop_timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                if let Some(error) = &self.abort_error {
+                    warn!(
+                        "Dynamic worker did not finish within {:?}; detaching; abort failed: {error}",
+                        self.drop_timeout
+                    );
+                } else {
+                    warn!(
+                        "Dynamic worker did not finish within {:?}; detaching",
+                        self.drop_timeout
+                    );
+                }
+                return;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(1)));
+        }
+        if let Err(panic) = handle.join() {
+            if let Some(message) = panic.downcast_ref::<String>() {
+                warn!("Dynamic worker panicked: {message}");
+            } else if let Some(message) = panic.downcast_ref::<&str>() {
+                warn!("Dynamic worker panicked: {message}");
+            } else {
+                warn!("Dynamic worker panicked with a non-string payload");
+            }
+        }
+        #[cfg(test)]
+        self.worker_counts.joined.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Imported measurements remain outstanding even while the runtime holds them.
+#[derive(Default)]
+struct PendingMeasurements {
+    outstanding: usize,
+    /// Imported measurements not yet present in a returned command batch.
+    unemitted: usize,
 }
 
 /// QIS Control Engine that mediates between interface and runtime
@@ -270,14 +449,30 @@ pub struct QisEngine {
     /// arrives.
     seen_program_qubits: BTreeSet<usize>,
 
+    /// Prep state for source handles, shared by all lowering routes within a shot.
+    qubit_prep_states: BTreeMap<usize, QubitPrepState>,
+
     /// Whether we've started processing
     started: bool,
 
     /// Tracking measurement result IDs for the current batch
     measurement_mapping: Vec<usize>,
 
-    /// Stored measurement results for `get_results()`
+    /// Current measurement outcomes; a later undelivered measurement blocks reuse.
     measurement_results: BTreeMap<usize, u32>,
+
+    /// Per-slot imported measurements awaiting delivery.
+    pending_measurements: BTreeMap<usize, PendingMeasurements>,
+
+    /// A failed `Engine::reset`, held until a reset succeeds. Reset drops the
+    /// per-shot terminal error with the worker state before resetting the
+    /// runtime, so without this a failed runtime reset would let `get_results`
+    /// return the previous, failed shot.
+    reset_failure: Option<String>,
+    shot_lifecycle: ShotLifecycle,
+    /// Terminal scheduled drains require feedback before releasing more work.
+    scheduled_drain_round: usize,
+    scheduled_drain_feedback: bool,
 
     /// RNG for generating per-shot seeds
     rng: PecosRng,
@@ -306,6 +501,10 @@ pub struct QisEngine {
     /// Persistent worker thread for dynamic execution (stays alive across shots)
     /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
     persistent_worker: Option<PersistentDynamicWorker>,
+
+    /// Counts only this engine's workers, including clones used by `MonteCarlo`.
+    #[cfg(test)]
+    worker_counts: Arc<drop_tests::WorkerCounts>,
 
     /// Directory where operation trace chunks are dumped as JSON.
     operation_trace_dir: Option<PathBuf>,
@@ -354,11 +553,27 @@ impl QisEngine {
             .collect())
     }
 
-    fn store_measurement_updates(&mut self, updates: &[(usize, u32)]) {
+    /// Complete each measurement in order, exposing only a slot's last delivery.
+    fn store_measurement_updates(
+        &mut self,
+        updates: &[(usize, u32)],
+    ) -> Result<Vec<(usize, u32)>, PecosError> {
+        let mut current = Vec::new();
         for &(result_id, value) in updates {
-            self.measurement_results.insert(result_id, value);
-            debug!("QisEngine: Stored measurement result_id={result_id}, value={value}");
+            let Some(pending) = self.pending_measurements.get_mut(&result_id) else {
+                return Err(self.latch_terminal_error(format!(
+                    "outcome for result {result_id} has no outstanding measurement"
+                )));
+            };
+            pending.outstanding -= 1;
+            if pending.outstanding == 0 {
+                self.pending_measurements.remove(&result_id);
+                self.measurement_results.insert(result_id, value);
+                current.push((result_id, value));
+                debug!("QisEngine: Stored current result_id={result_id}, value={value}");
+            }
         }
+        Ok(current)
     }
 
     fn provide_measurement_updates_to_runtime(
@@ -368,10 +583,13 @@ impl QisEngine {
         if updates.is_empty() {
             return Ok(());
         }
-        let measurement_map: BTreeMap<usize, u32> = updates.iter().copied().collect();
         self.runtime
-            .provide_measurement_outcomes(measurement_map)
-            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))
+            .provide_measurement_outcomes(updates.to_vec())
+            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))?;
+        if self.scheduled_transport.enabled() {
+            self.scheduled_drain_feedback = true;
+        }
+        Ok(())
     }
 
     /// Create a new engine with the given interface and runtime
@@ -390,9 +608,15 @@ impl QisEngine {
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
+            qubit_prep_states: BTreeMap::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
+            pending_measurements: BTreeMap::new(),
+            reset_failure: None,
+            shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -402,6 +626,8 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            #[cfg(test)]
+            worker_counts: Arc::default(),
             operation_trace_dir: None,
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -484,9 +710,15 @@ impl QisEngine {
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
+            qubit_prep_states: BTreeMap::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
+            pending_measurements: BTreeMap::new(),
+            reset_failure: None,
+            shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -496,6 +728,8 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            #[cfg(test)]
+            worker_counts: Arc::default(),
             operation_trace_dir: None,
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -554,12 +788,15 @@ impl QisEngine {
         self.active_qubit_slots.clear();
         self.free_qubit_slots.clear();
         self.seen_program_qubits.clear();
+        self.qubit_prep_states.clear();
         self.num_physical_slots = 0;
     }
 
     fn allocate_qubit_slot(&mut self, program_id: usize) -> Result<usize, PecosError> {
-        if let Some(&slot) = self.active_qubit_slots.get(&program_id) {
-            return Ok(slot);
+        if self.active_qubit_slots.contains_key(&program_id) {
+            return Err(PecosError::Generic(format!(
+                "QIS program qubit {program_id} is already allocated; release live handles before reallocation"
+            )));
         }
 
         let slot = if let Some(slot) = self.free_qubit_slots.pop_first() {
@@ -631,9 +868,7 @@ impl QisEngine {
                         pending_metadata.extend(metadata.clone());
                     }
                     Operation::AllocateQubit { id } => {
-                        let slot = self.allocate_qubit_slot(*id)?;
-                        builder.pz(&[slot]);
-                        Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
+                        self.allocate_qubit_slot(*id)?;
                     }
                     Operation::ReleaseQubit { id } => {
                         self.release_qubit_slot(*id);
@@ -787,10 +1022,70 @@ impl QisEngine {
 
         let message = result.map(|()| LoweredCommandBatch {
             commands: builder.build(),
+            is_empty: gate_metadata.is_empty(),
             gate_metadata,
+            measurement_credits_consumed: 0,
         });
         self.command_builder = builder;
         message
+    }
+
+    /// Defer each lifetime's prep until its first quantum operation.
+    fn normalize_qubit_preps(&mut self, ops: &[Operation]) -> Vec<Operation> {
+        let mut normalized = Vec::with_capacity(ops.len());
+        let mut pending_trace_metadata = Vec::new();
+        for op in ops {
+            match op {
+                Operation::AllocateQubit { id } => {
+                    self.qubit_prep_states.insert(*id, QubitPrepState::Pending);
+                }
+                Operation::ReleaseQubit { id } => {
+                    if let Some(state) = self.qubit_prep_states.get_mut(id)
+                        && *state != QubitPrepState::Released
+                    {
+                        *state = QubitPrepState::Released;
+                    }
+                }
+                Operation::TraceMetadata { .. } => {
+                    pending_trace_metadata.push(op.clone());
+                    continue;
+                }
+                Operation::Quantum(qop) => {
+                    let mut qubits = Vec::new();
+                    for_each_quantum_qubit(qop, |qubit| {
+                        qubits.push(qubit);
+                        let state = self
+                            .qubit_prep_states
+                            .entry(qubit)
+                            .or_insert(QubitPrepState::Pending);
+                        if *state == QubitPrepState::Pending {
+                            if !matches!(qop, QuantumOp::Reset(_)) {
+                                normalized.push(QuantumOp::Reset(qubit).into());
+                            }
+                            *state = QubitPrepState::Prepared;
+                        }
+                    });
+                    // Hold even nonadjacent scoped metadata until its source op.
+                    // Emitting it after the preps keeps them free of source labels.
+                    pending_trace_metadata.retain(|metadata| {
+                        if let Operation::TraceMetadata { qubit, .. } = metadata
+                            && qubit.is_none_or(|q| qubits.contains(&q))
+                        {
+                            normalized.push(metadata.clone());
+                            return false;
+                        }
+                        true
+                    });
+                }
+                Operation::AllocateResult { .. }
+                | Operation::RecordOutput { .. }
+                | Operation::Barrier => {}
+            }
+            normalized.push(op.clone());
+        }
+        // Leave dangling metadata visible to this chunk's downstream validation.
+        normalized.extend(pending_trace_metadata);
+        normalized
     }
 
     /// Convert freshly collected dynamic operations into a `ByteMessage`.
@@ -802,30 +1097,37 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
-        if self.scheduled_transport.enabled() {
+        self.register_imported_measurements(ops);
+        let normalized = self.normalize_qubit_preps(ops);
+        let ops = normalized.as_slice();
+        let mut lowered = if self.scheduled_transport.enabled() {
             let batches = self
                 .runtime
                 .lower_scheduled_operations(ops)
                 .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let is_empty = batches.is_empty();
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
-            return Ok(LoweredCommandBatch {
+            LoweredCommandBatch {
                 commands,
                 gate_metadata: Vec::new(),
-            });
-        }
-        if self.runtime.supports_operation_lowering() {
+                is_empty,
+                measurement_credits_consumed: 0,
+            }
+        } else if self.runtime.supports_operation_lowering() {
             let lowered_ops = self
                 .runtime
                 .lower_operations_with_metadata(ops)
                 .map_err(|e| PecosError::Generic(format!("Runtime lowering error: {e}")))?;
-            return self.quantum_ops_to_lowered_commands(lowered_ops);
-        }
-
-        self.operations_to_lowered_commands(ops)
+            self.quantum_ops_to_lowered_commands(lowered_ops)?
+        } else {
+            self.operations_to_lowered_commands(ops)?
+        };
+        lowered.measurement_credits_consumed = self.register_emitted_measurements()?;
+        Ok(lowered)
     }
 
     /// Convert already-materialized quantum ops into a `ByteMessage`.
@@ -956,18 +1258,12 @@ impl QisEngine {
 
         let message = result.map(|()| LoweredCommandBatch {
             commands: builder.build(),
+            is_empty: gate_metadata.is_empty(),
             gate_metadata,
+            measurement_credits_consumed: 0,
         });
         self.command_builder = builder;
         message
-    }
-
-    fn quantum_ops_to_bytemessage(
-        &mut self,
-        ops: Vec<QuantumOp>,
-    ) -> Result<ByteMessage, PecosError> {
-        self.quantum_ops_to_lowered_commands(ops.into_iter().map(LoweredQuantumOp::from).collect())
-            .map(|lowered| lowered.commands)
     }
 }
 
@@ -1004,9 +1300,15 @@ impl Clone for QisEngine {
             active_qubit_slots: self.active_qubit_slots.clone(),
             free_qubit_slots: self.free_qubit_slots.clone(),
             seen_program_qubits: self.seen_program_qubits.clone(),
+            qubit_prep_states: self.qubit_prep_states.clone(),
             started: false,                       // Reset started flag for the clone
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
+            pending_measurements: BTreeMap::new(),
+            reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
+            shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
             dynamic_state: None,             // Can't clone thread state
@@ -1020,6 +1322,8 @@ impl Clone for QisEngine {
                 .map(|b| dyn_clone::clone_box(&**b)),
             // Create a new persistent worker for this clone (can't share threads across clones)
             persistent_worker: None,
+            #[cfg(test)]
+            worker_counts: Arc::clone(&self.worker_counts),
             operation_trace_dir: self.operation_trace_dir.clone(),
             operation_trace_collector: self.operation_trace_collector.clone(),
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -1278,6 +1582,8 @@ impl QisEngine {
             Some(&LoweredCommandBatch {
                 commands: ByteMessage::builder().build(),
                 gate_metadata: Vec::new(),
+                is_empty: true,
+                measurement_credits_consumed: 0,
             }),
         );
     }
@@ -1336,7 +1642,10 @@ impl QisEngine {
         // Create persistent worker if it doesn't exist
         if self.persistent_worker.is_none() {
             debug!("Creating new persistent dynamic worker thread");
-            self.persistent_worker = Some(PersistentDynamicWorker::new());
+            self.persistent_worker = Some(PersistentDynamicWorker::new(
+                #[cfg(test)]
+                Arc::clone(&self.worker_counts),
+            ));
         }
 
         // Send work to persistent worker
@@ -1351,6 +1660,7 @@ impl QisEngine {
             execution_complete: false,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         Ok(())
@@ -1376,9 +1686,11 @@ impl QisEngine {
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        handle
-            .set_measurement_outcome(result_id, u64::from(value))
-            .map_err(|e| PecosError::Generic(format!("Failed to set measurement result: {e}")))?;
+        let delivered = handle.set_measurement_outcome(result_id, u64::from(value));
+        // A worker that cannot receive its outcome can never finish this shot.
+        delivered.map_err(|e| {
+            self.latch_terminal_error(format!("Failed to set measurement result: {e}"))
+        })?;
         debug!("Set dynamic result: {result_id} = {value}");
         Ok(())
     }
@@ -1394,9 +1706,11 @@ impl QisEngine {
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        handle
-            .signal_result_ready()
-            .map_err(|e| PecosError::Generic(format!("Failed to signal result ready: {e}")))?;
+        let signalled = handle.signal_result_ready();
+        // A worker that is never woken can never finish this shot.
+        signalled.map_err(|e| {
+            self.latch_terminal_error(format!("Failed to signal result ready: {e}"))
+        })?;
         debug!("Signaled result ready");
         Ok(())
     }
@@ -1405,10 +1719,90 @@ impl QisEngine {
     ///
     /// The worker exports only newly generated operations before each wait, so
     /// this handoff stays proportional to fresh work instead of full history.
-    fn get_dynamic_operations(&mut self) -> Option<Vec<Operation>> {
-        let state = self.dynamic_state.as_ref()?;
-        let handle = state.sync_handle.as_ref()?;
-        handle.get_pending_operations().ok()
+    fn get_dynamic_operations(&mut self) -> Result<Vec<Operation>, PecosError> {
+        let imported = self
+            .dynamic_state
+            .as_ref()
+            .and_then(|state| state.sync_handle.as_ref())
+            .ok_or_else(|| InterfaceError::ExecutionError("No dynamic sync handle".into()))
+            .and_then(|handle| handle.get_pending_operations());
+        imported.map_err(|error| {
+            self.latch_terminal_error(format!("failed to import pending operations: {error}"))
+        })
+    }
+
+    /// Advance a requested read using exported work, cached outcomes, or the
+    /// runtime's existing drain. A request without any producer must fail.
+    fn process_result_request(
+        &mut self,
+        result_id: u64,
+        stage: &str,
+    ) -> Result<Option<ByteMessage>, PecosError> {
+        // Import before consulting the cache: new measurements own their slots.
+        let ops = self.get_dynamic_operations()?;
+        if !ops.is_empty() {
+            self.simulated_op_count += ops.len();
+            let lowered = self.lower_operations_terminal(&ops)?;
+            self.trace_operations_chunk(stage, &ops, Some(result_id), Some(&lowered));
+            if !lowered.is_empty {
+                return Ok(Some(lowered.commands));
+            }
+        }
+        let result_key = usize::try_from(result_id)
+            .map_err(|_| self.latch_terminal_error("result ID exceeds usize".into()))?;
+        if let Some(&value) = self.measurement_results.get(&result_key) {
+            self.set_dynamic_result(result_id, value)?;
+            self.signal_dynamic_result_ready()?;
+            return Ok(None);
+        }
+        // While the worker is blocked, imported credits are finite. Each
+        // progressing drain consumes at least one; feedback may release the
+        // requested measurement, but padding cannot keep a request alive.
+        if let Some((commands, consumed)) = self.drain_commands(false)?
+            && consumed > 0
+        {
+            return Ok(Some(commands));
+        }
+        Err(self.latch_terminal_error(format!(
+            "runtime released no measurement for worker-requested result {result_id}"
+        )))
+    }
+
+    /// Import all producers before lowering, including those a runtime defers.
+    fn register_imported_measurements(&mut self, operations: &[Operation]) {
+        for op in operations {
+            if let Operation::Quantum(
+                QuantumOp::Measure(_, result_id) | QuantumOp::MeasureLeaked(_, result_id),
+            ) = op
+            {
+                let pending = self.pending_measurements.entry(*result_id).or_default();
+                pending.outstanding += 1;
+                pending.unemitted += 1;
+                self.measurement_results.remove(result_id);
+            }
+        }
+    }
+
+    /// Every emission must consume an imported credit. The returned count
+    /// bounds the number of progressing drains while the worker is blocked.
+    fn register_emitted_measurements(&mut self) -> Result<usize, PecosError> {
+        let mut consumed = 0;
+        for index in 0..self.measurement_mapping.len() {
+            let result_id = self.measurement_mapping[index];
+            let Some(pending) = self
+                .pending_measurements
+                .get_mut(&result_id)
+                .filter(|pending| pending.unemitted > 0)
+            else {
+                return Err(self.latch_terminal_error(format!(
+                    "runtime emitted a measurement for result {result_id} that was never imported"
+                )));
+            };
+            pending.unemitted -= 1;
+            consumed += 1;
+            self.measurement_results.remove(&result_id);
+        }
+        Ok(consumed)
     }
 
     /// Check if dynamic execution is complete
@@ -1452,8 +1846,8 @@ impl QisEngine {
                     }
                     if let Some(ref mut state) = self.dynamic_state {
                         state.execution_complete = true;
-                        state.terminal_error = Some(format!("dynamic QIS worker failed: {e}"));
                     }
+                    self.latch_terminal_error(format!("dynamic QIS worker failed: {e}"));
                     return true;
                 }
             }
@@ -1468,42 +1862,113 @@ impl QisEngine {
     /// shot can never certify a partial trace as complete — including on
     /// retried `continue_processing` calls after the failure was reported.
     fn terminal_failure_error(&self) -> Option<PecosError> {
-        self.dynamic_state
+        self.reset_failure
             .as_ref()
-            .and_then(|state| state.terminal_error.as_ref())
+            .or_else(|| {
+                self.dynamic_state
+                    .as_ref()
+                    .and_then(|state| state.terminal_error.as_ref())
+            })
+            .or(match &self.shot_lifecycle {
+                ShotLifecycle::Failed(error) => Some(error),
+                _ => None,
+            })
             .map(|err| PecosError::Generic(err.clone()))
     }
 
     /// Latch a terminal failure for this shot and return it as an error.
     fn latch_terminal_error(&mut self, message: String) -> PecosError {
+        self.shot_lifecycle = ShotLifecycle::Failed(message.clone());
         if let Some(ref mut state) = self.dynamic_state {
             state.terminal_error = Some(message.clone());
         }
         PecosError::Generic(message)
     }
 
-    fn drain_scheduled_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+    fn drain_terminal_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        self.drain_commands(true)
+            .map(|drained| drained.map(|(commands, _)| commands))
+    }
+
+    /// Use the same drain for a stalled read and the final tail. Only the final
+    /// flush is one-shot; reads may need several flushes during a shot.
+    fn drain_commands(
+        &mut self,
+        terminal: bool,
+    ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
+        if self.scheduled_transport.enabled() {
+            return self.drain_scheduled_commands(terminal);
+        }
+        if !self.runtime.supports_operation_lowering() {
+            return Ok(None);
+        }
+        let Some(state) = self.dynamic_state.as_mut() else {
+            return Ok(None);
+        };
+        if state.finalized || (terminal && state.terminal_lowering_flushed) {
+            return Ok(None);
+        }
+        if terminal {
+            state.terminal_lowering_flushed = true;
+        }
+
+        // A drain barrier is ordinary lowering: use the same conversion,
+        // metadata matching, measurement mapping and sticky error path as source
+        // operations. The subsequent certification drain remains only a guard.
+        let ops = [Operation::Barrier];
+        let lowered = self.lower_operations_terminal(&ops)?;
+        if lowered.commands.is_empty()? {
+            return Ok(None);
+        }
+        let stage = if terminal {
+            "terminal_flush"
+        } else {
+            "result_flush"
+        };
+        self.trace_operations_chunk(stage, &ops, None, Some(&lowered));
+        Ok(Some((
+            lowered.commands,
+            lowered.measurement_credits_consumed,
+        )))
+    }
+
+    fn drain_scheduled_commands(
+        &mut self,
+        terminal: bool,
+    ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if !self.scheduled_transport.enabled()
             || self.dynamic_state.as_ref().is_some_and(|s| s.finalized)
         {
             return Ok(None);
         }
+        let permitted =
+            !terminal || self.scheduled_drain_round == 0 || self.scheduled_drain_feedback;
+        if terminal {
+            self.scheduled_drain_round += 1;
+            self.scheduled_drain_feedback = false;
+        }
         let result = (|| {
             let batches = self
                 .runtime
                 .drain_pending_scheduled_operations()
-                .map_err(|e| {
-                    PecosError::Generic(format!("scheduled terminal drain failed: {e}"))
-                })?;
+                .map_err(|e| PecosError::Generic(e.to_string()))?;
             if batches.is_empty() {
                 return Ok(None);
+            }
+            if !permitted {
+                return Err(PecosError::Generic(format!(
+                    "scheduled runtime {} returned work without measurement feedback in terminal drain round {}",
+                    self.runtime.name(),
+                    self.scheduled_drain_round
+                )));
             }
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
-            Ok(Some(commands))
+            let consumed = self.register_emitted_measurements()?;
+            Ok(Some((commands, consumed)))
         })();
         result.map_err(|e: PecosError| {
             self.latch_terminal_error(format!("scheduled drain failed: {e}"))
@@ -1593,6 +2058,12 @@ impl QisEngine {
             return Ok(());
         }
         self.verify_runtime_drained()?;
+        if !self.pending_measurements.is_empty() {
+            let slots: Vec<_> = self.pending_measurements.keys().copied().collect();
+            return Err(self.latch_terminal_error(format!(
+                "runtime dropped imported measurements for result slots {slots:?}"
+            )));
+        }
         if let Err(e) = self.runtime.shot_end() {
             return Err(self.latch_terminal_error(format!("runtime shot_end failed: {e}")));
         }
@@ -1601,19 +2072,126 @@ impl QisEngine {
         if let Some(ref mut state) = self.dynamic_state {
             state.finalized = true;
         }
+        self.shot_lifecycle = ShotLifecycle::Finalized;
         Ok(())
     }
 
-    /// Abort dynamic execution (cleanup)
-    fn abort_dynamic_execution(&mut self) {
-        // Abort execution via sync handle if available
-        if let Some(ref state) = self.dynamic_state
-            && let Some(ref handle) = state.sync_handle
+    /// The one complete reset behind `Engine::reset`, `ClassicalEngine::reset`
+    /// and `ControlEngine::reset`: stop the worker, reset the runtime and the
+    /// interface, and clear per-shot state. A failure is latched in
+    /// `reset_failure` until a later reset succeeds.
+    fn reset_all(&mut self) -> Result<(), PecosError> {
+        self.reset_all_with_timeout(RESET_WORKER_TIMEOUT)
+    }
+
+    fn reset_all_with_timeout(&mut self, timeout: Duration) -> Result<(), PecosError> {
+        debug!("QisEngine: reset() called");
+        let reset = self
+            .abort_dynamic_execution(timeout)
+            .and_then(|()| {
+                self.runtime
+                    .reset()
+                    .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))
+            })
+            .and_then(|()| match self.interface {
+                Some(ref mut interface) => interface
+                    .reset()
+                    .map_err(crate::interface_impl::interface_error_to_pecos),
+                None => Ok(()),
+            });
+        if let Err(error) = reset {
+            self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
+            self.reset_failure = Some(error.to_string());
+            return Err(error);
+        }
+        self.reset_failure = None;
+        self.shot_lifecycle = ShotLifecycle::Idle;
+        self.scheduled_drain_round = 0;
+        self.scheduled_drain_feedback = false;
+        self.current_operations = None;
+        self.started = false;
+        self.measurement_mapping.clear();
+        self.measurement_results.clear();
+        self.pending_measurements.clear();
+        self.current_shot_seed = None;
+        debug!("QisEngine: reset() completed, cleared measurement_results");
+        Ok(())
+    }
+
+    /// Reclaim ownership before discarding any shot state. Pure native loops
+    /// and blocking callbacks cannot be interrupted until their next checkpoint.
+    /// The deadline bounds the receive, not host waits or runtime/plugin reset.
+    fn abort_dynamic_execution(&mut self, timeout: Duration) -> Result<(), PecosError> {
+        if let Some(state) = &self.dynamic_state
+            && !state.execution_complete
         {
-            let _ = handle.abort_execution();
+            let worker = self.persistent_worker.as_ref().ok_or_else(|| {
+                PecosError::Generic("No dynamic worker available to reclaim interface".to_string())
+            })?;
+            // A late result recovers even if cancellation itself is unavailable.
+            let result = if let Some(result) = worker.try_recv_result() {
+                result
+            } else {
+                let handle = state.sync_handle.as_ref().ok_or_else(|| {
+                    PecosError::Generic("No sync handle available to cancel worker".to_string())
+                })?;
+                handle
+                    .abort_execution()
+                    .map_err(crate::interface_impl::interface_error_to_pecos)?;
+                worker.recv_result_until(Instant::now() + timeout)?
+            };
+            let failure = match result {
+                Ok((_, interface)) => {
+                    self.interface = Some(interface);
+                    None
+                }
+                Err((failure, interface)) => {
+                    if let Some(interface) = interface {
+                        self.interface = Some(interface);
+                    }
+                    Some(failure)
+                }
+            };
+            // This receive is one-shot, even when the result reports a failure.
+            if let Some(state) = self.dynamic_state.as_mut() {
+                state.execution_complete = true;
+            }
+            if let Some(failure) = failure
+                && !failure.cancelled()
+            {
+                if failure.teardown.is_some() || self.interface.is_none() {
+                    return Err(PecosError::Generic(format!(
+                        "dynamic QIS worker failed during reset: {failure}"
+                    )));
+                }
+                warn!("Discarding abandoned QIS shot execution failure during reset: {failure}");
+            }
+        }
+        // A shot's interface must come back before its state is discarded; an
+        // engine that never ran a dynamic shot has nothing to reclaim.
+        if self.dynamic_state.is_some() && self.interface.is_none() {
+            return Err(PecosError::Generic(
+                "Reset could not reclaim worker interface".to_string(),
+            ));
         }
         self.dynamic_state = None;
         self.pending_dynamic_ops.clear();
+        Ok(())
+    }
+}
+
+impl Drop for QisEngine {
+    fn drop(&mut self) {
+        if let Some(state) = &self.dynamic_state
+            && !state.execution_complete
+            && let Some(handle) = &state.sync_handle
+            && let Err(error) = handle.abort_execution()
+        {
+            warn!("Failed to abort dynamic execution during engine drop: {error}");
+            if let Some(worker) = &mut self.persistent_worker {
+                worker.abort_error = Some(error);
+            }
+        }
     }
 }
 
@@ -1643,22 +2221,7 @@ impl Engine for QisEngine {
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        debug!("QisEngine: reset() called");
-        self.runtime
-            .reset()
-            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))?;
-        if let Some(ref mut interface) = self.interface {
-            interface
-                .reset()
-                .map_err(crate::interface_impl::interface_error_to_pecos)?;
-        }
-        self.current_operations = None;
-        self.started = false;
-        self.measurement_mapping.clear();
-        self.measurement_results.clear();
-        self.current_shot_seed = None;
-        debug!("QisEngine: reset() completed, cleared measurement_results");
-        Ok(())
+        self.reset_all()
     }
 }
 
@@ -1690,46 +2253,15 @@ impl ClassicalEngine for QisEngine {
         debug!("QisEngine: Set master seed to {seed}");
     }
 
+    // HybridEngine resets its classical engine through this method.
+    fn reset(&mut self) -> Result<(), PecosError> {
+        self.reset_all()
+    }
+
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
-        debug!("QisEngine::generate_commands called");
-
-        // Get next batch of quantum operations from runtime
-        match self.runtime.execute_until_quantum() {
-            Ok(Some(ops)) => {
-                debug!("QisEngine: Runtime returned {} operations", ops.len());
-                for op in &ops {
-                    debug!("QisEngine: Operation: {op:?}");
-                }
-                let quantum_ops: Vec<QuantumOp> = ops;
-                let msg = self.quantum_ops_to_bytemessage(quantum_ops)?;
-                debug!(
-                    "QisEngine: Generated ByteMessage with {} measurement mappings",
-                    self.measurement_mapping.len()
-                );
-
-                // Debug: Print the actual ByteMessage content
-                debug!("QisEngine: Generated ByteMessage:");
-                if let Ok(quantum_ops) = msg.quantum_ops() {
-                    debug!("  Quantum ops: {} total", quantum_ops.len());
-                    for (i, gate) in quantum_ops.iter().enumerate() {
-                        debug!("    Gate {i}: {gate:?}");
-                    }
-                }
-                if let Ok(empty) = msg.is_empty() {
-                    debug!("  Is empty: {empty}");
-                }
-
-                Ok(msg)
-            }
-            Ok(None) => {
-                debug!("QisEngine: Runtime complete, no more operations");
-                Ok(ByteMessage::builder().build())
-            }
-            Err(e) => {
-                debug!("QisEngine: Runtime error: {e}");
-                Err(PecosError::Generic(format!("Runtime error: {e}")))
-            }
-        }
+        Err(PecosError::Generic(
+            "QisEngine must be driven through ControlEngine::start/continue_processing, which apply the qubit lifetime and prep rules".into(),
+        ))
     }
 
     fn get_results(&self) -> Result<Shot, PecosError> {
@@ -1744,6 +2276,15 @@ impl ClassicalEngine for QisEngine {
 
         if let Some(error) = self.terminal_failure_error() {
             return Err(error);
+        }
+
+        match &self.shot_lifecycle {
+            ShotLifecycle::Idle => return Ok(shot),
+            ShotLifecycle::Running => {
+                return Err(PecosError::Generic("shot not finished (Running)".into()));
+            }
+            ShotLifecycle::Failed(error) => return Err(PecosError::Generic(error.clone())),
+            ShotLifecycle::Finalized => {}
         }
 
         // Named outputs preserve the scalar-for-one, vector-otherwise rule.
@@ -1814,7 +2355,7 @@ impl ClassicalEngine for QisEngine {
         );
 
         let updates = self.map_measurements(&measurements)?;
-        self.store_measurement_updates(&updates);
+        let _ = self.store_measurement_updates(&updates)?;
 
         debug!(
             "QisEngine: Final measurement_results: {:?}",
@@ -1852,6 +2393,12 @@ impl ControlEngine for QisEngine {
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         debug!("QisEngine::start called");
 
+        // A latched reset failure is cleared only by a complete reset, which
+        // also resets the interface; starting a shot must not bypass it.
+        if let Some(failure) = &self.reset_failure {
+            return Err(PecosError::Generic(failure.clone()));
+        }
+
         // Verify we have a dynamic-capable interface
         if !self
             .interface
@@ -1871,87 +2418,97 @@ impl ControlEngine for QisEngine {
                 "scheduled transport does not yet support operation tracing".into(),
             ));
         }
-        // Clear previous shot's measurement state
-        self.measurement_results.clear();
-        self.measurement_mapping.clear();
-        self.pending_dynamic_ops.clear();
-        self.simulated_op_count = 0;
-        self.reset_qubit_slots();
-        debug!("QisEngine: Cleared previous measurement results for new shot");
+        self.shot_lifecycle = ShotLifecycle::Running;
+        self.scheduled_drain_round = 0;
+        self.scheduled_drain_feedback = false;
+        let attempt = (|| {
+            // Clear previous shot's measurement state
+            self.measurement_results.clear();
+            self.pending_measurements.clear();
+            self.measurement_mapping.clear();
+            self.pending_dynamic_ops.clear();
+            self.simulated_op_count = 0;
+            self.reset_qubit_slots();
+            debug!("QisEngine: Cleared previous measurement results for new shot");
 
-        // Generate a per-shot seed from our RNG
-        let shot_seed = self.rng.next_u64();
-        debug!("QisEngine: Generated shot seed {shot_seed}");
+            // Generate a per-shot seed from our RNG
+            let shot_seed = self.rng.next_u64();
+            debug!("QisEngine: Generated shot seed {shot_seed}");
 
-        // Store the shot seed for quantum engine access
-        self.current_shot_seed = Some(shot_seed);
-        self.begin_trace_shot();
+            // Store the shot seed for quantum engine access
+            self.current_shot_seed = Some(shot_seed);
+            self.begin_trace_shot();
 
-        // Reset the runtime to ensure clean state for new shot
-        self.runtime
-            .reset()
-            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))?;
+            // Reset the runtime to ensure clean state for new shot. A failure is
+            // latched like a failed `reset_all`, which alone clears the latch.
+            if let Err(e) = self.runtime.reset() {
+                let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
+                self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
+                self.reset_failure = Some(error.to_string());
+                return Err(error);
+            }
 
-        // Start a new shot with the generated seed and a real, monotonically
-        // increasing shot id (a plugin keying state or telemetry on the shot
-        // id must not see every shot as shot 0).
-        let shot_id = u64::try_from(self.trace_shot_index)
-            .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
-        self.runtime
-            .shot_start(shot_id, Some(shot_seed))
-            .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
+            // Start a new shot with the generated seed and a real, monotonically
+            // increasing shot id (a plugin keying state or telemetry on the shot
+            // id must not see every shot as shot 0).
+            let shot_id = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
+            self.runtime
+                .shot_start(shot_id, Some(shot_seed))
+                .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
 
-        self.started = true;
+            self.started = true;
 
-        // Start LLVM program in worker thread
-        self.start_dynamic_worker()?;
+            // Start LLVM program in worker thread
+            self.start_dynamic_worker()?;
 
-        // Wait for the worker to either need a result or complete
-        // Use long timeout as safety net - condvar will wake immediately on signal
-        if let Some(result_id) = self.wait_for_result_needed(30_000) {
-            debug!("Worker needs result for id={result_id}");
-            // Get pending operations
-            if let Some(ops) = self.get_dynamic_operations() {
-                // Track how many operations we're sending for simulation
-                self.simulated_op_count = ops.len();
-                if !ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&ops)?;
-                    self.trace_operations_chunk(
-                        "pending_start",
-                        &ops,
-                        Some(result_id),
-                        Some(&lowered),
-                    );
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
+            // Wait for the worker to either need a result or complete
+            // Use long timeout as safety net - condvar will wake immediately on signal
+            if let Some(result_id) = self.wait_for_result_needed(30_000) {
+                debug!("Worker needs result for id={result_id}");
+                if let Some(commands) = self.process_result_request(result_id, "pending_start")? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
-        }
 
-        // Check if worker completed without needing any results
-        if self.check_worker_complete() {
-            if let Some(err) = self.terminal_failure_error() {
-                return Err(err);
-            }
-            // Worker completed but we still need to process any pending operations
-            // through the quantum engine (e.g., programs without measurement-dependent conditionals)
-            if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
-                if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
+            // Check if worker completed without needing any results
+            if self.check_worker_complete() {
+                if let Some(err) = self.terminal_failure_error() {
+                    return Err(err);
                 }
+                // Worker completed but we still need to process any pending operations
+                // through the quantum engine (e.g., programs without measurement-dependent conditionals)
+                if !self.pending_dynamic_ops.is_empty() {
+                    let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
+                    if !final_ops.is_empty() {
+                        let lowered = self.lower_operations_terminal(&final_ops)?;
+                        self.trace_operations_chunk(
+                            "pending_final",
+                            &final_ops,
+                            None,
+                            Some(&lowered),
+                        );
+                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
+                    }
+                }
+                if let Some(commands) = self.drain_terminal_commands()? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
+                self.finalize_shot_for_certification()?;
+                let shot = self.get_results()?;
+                return Ok(EngineStage::Complete(shot));
             }
-            if let Some(commands) = self.drain_scheduled_commands()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            self.finalize_shot_for_certification()?;
-            let shot = self.get_results()?;
-            return Ok(EngineStage::Complete(shot));
-        }
 
-        // Return empty commands while we wait
-        Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
+            // Return empty commands while we wait
+            Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
+        })();
+        attempt.inspect_err(|error: &PecosError| {
+            // Preserve an error already latched during this attempt. Startup
+            // can also fail before there is a dynamic state to hold the latch.
+            if !matches!(self.shot_lifecycle, ShotLifecycle::Failed(_)) {
+                self.latch_terminal_error(error.to_string());
+            }
+        })
     }
 
     fn continue_processing(
@@ -1959,6 +2516,11 @@ impl ControlEngine for QisEngine {
         input: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         debug!("QisEngine::continue_processing called");
+        if let Some(failure) = &self.reset_failure {
+            return Err(PecosError::Generic(format!(
+                "Cannot continue after failed reset: {failure}"
+            )));
+        }
 
         // Verify dynamic state exists (set by start())
         if self.dynamic_state.is_none() {
@@ -1970,8 +2532,8 @@ impl ControlEngine for QisEngine {
 
         let measurements = Self::parse_measurement_outcomes(&input)?;
         let measurement_updates = self.map_measurements(&measurements)?;
+        let current_updates = self.store_measurement_updates(&measurement_updates)?;
         if !measurement_updates.is_empty() {
-            self.store_measurement_updates(&measurement_updates);
             self.provide_measurements_terminal(&measurement_updates)?;
         }
 
@@ -1991,7 +2553,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            if let Some(commands) = self.drain_scheduled_commands()? {
+            if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
@@ -2000,13 +2562,21 @@ impl ControlEngine for QisEngine {
         }
 
         // Provide new measurement values to the dynamic worker thread.
-        for &(result_id, value) in &measurement_updates {
+        for &(result_id, value) in &current_updates {
             debug!("Stored and providing measurement: result_id={result_id} value={value}");
             self.set_dynamic_result(result_id as u64, value)?;
         }
 
-        // Signal that results are ready
-        if !measurement_updates.is_empty() {
+        // Only the outstanding read's freshly delivered outcome permits ready.
+        // Other measurements leave need_result set so the same request can
+        // process any work the runtime still holds.
+        if !current_updates.is_empty()
+            && self.wait_for_result_needed(0).is_some_and(|requested| {
+                current_updates
+                    .iter()
+                    .any(|&(result_id, _)| result_id as u64 == requested)
+            })
+        {
             self.signal_dynamic_result_ready()?;
         }
 
@@ -2018,32 +2588,8 @@ impl ControlEngine for QisEngine {
         if let Some(result_id) = self.wait_for_result_needed(30_000) {
             debug!("Worker needs result for id={result_id}");
 
-            // Check if we already have this result (from a previous batch)
-            // Note: result_id is u64 but measurement_results uses usize keys
-            // This is safe because result IDs are small sequential integers
-            #[allow(clippy::cast_possible_truncation)]
-            let result_key = result_id as usize;
-            if let Some(&value) = self.measurement_results.get(&result_key) {
-                debug!("Result {result_id} already available, signaling immediately");
-                // Re-set the result in global storage (in case it was cleared)
-                self.set_dynamic_result(result_id, value)?;
-                self.signal_dynamic_result_ready()?;
-                // Continue loop to wait for next result or completion
-            } else {
-                // Get newly exported operations.
-                if let Some(ops) = self.get_dynamic_operations() {
-                    self.simulated_op_count += ops.len();
-                    if !ops.is_empty() {
-                        let lowered = self.lower_operations_terminal(&ops)?;
-                        self.trace_operations_chunk(
-                            "pending_continue",
-                            &ops,
-                            Some(result_id),
-                            Some(&lowered),
-                        );
-                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                    }
-                }
+            if let Some(commands) = self.process_result_request(result_id, "pending_continue")? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
         }
 
@@ -2062,7 +2608,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            if let Some(commands) = self.drain_scheduled_commands()? {
+            if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
@@ -2075,10 +2621,7 @@ impl ControlEngine for QisEngine {
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Abort any dynamic execution in progress
-        self.abort_dynamic_execution();
-        // Reset everything
-        <Self as Engine>::reset(self)
+        self.reset_all()
     }
 }
 
@@ -2087,6 +2630,12 @@ impl ControlEngine for QisEngine {
 
 #[cfg(test)]
 mod tests {
+    pub(super) mod drop_tests {
+        include!("ccengine_drop_tests.rs");
+    }
+    mod reset_tests {
+        include!("ccengine_reset_tests.rs");
+    }
     use super::*;
     use crate::runtime::{ClassicalState, Result as RuntimeResult};
     use tempfile::TempDir;
@@ -2094,6 +2643,37 @@ mod tests {
     #[derive(Clone, Default)]
     struct DummyRuntime {
         state: ClassicalState,
+        delivered: Arc<Mutex<Vec<(usize, bool)>>>,
+    }
+
+    #[test]
+    fn boolean_feedback_preserves_order_duplicates_and_rejects_leakage() {
+        let mut runtime = DummyRuntime::default();
+        runtime
+            .provide_measurement_outcomes(vec![(7, 0), (2, 1), (7, 1)])
+            .unwrap();
+        assert_eq!(
+            *runtime.delivered.lock().unwrap(),
+            [(7, false), (2, true), (7, true)]
+        );
+        runtime.delivered.lock().unwrap().clear();
+        assert!(
+            runtime
+                .provide_measurement_outcomes(vec![(7, 1), (7, 2)])
+                .is_err()
+        );
+        assert_eq!(*runtime.delivered.lock().unwrap(), []);
+    }
+
+    #[test]
+    fn host_feedback_preserves_repeated_program_slots() {
+        let runtime = DummyRuntime::default();
+        let delivered = Arc::clone(&runtime.delivered);
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine
+            .provide_measurement_updates_to_runtime(&[(7, 0), (7, 1)])
+            .unwrap();
+        assert_eq!(*delivered.lock().unwrap(), [(7, false), (7, true)]);
     }
 
     impl QisRuntime for DummyRuntime {
@@ -2107,8 +2687,9 @@ mod tests {
 
         fn provide_measurements(
             &mut self,
-            _measurements: BTreeMap<usize, bool>,
+            measurements: BTreeMap<usize, bool>,
         ) -> RuntimeResult<()> {
+            self.delivered.lock().unwrap().extend(measurements);
             Ok(())
         }
 
@@ -2129,6 +2710,77 @@ mod tests {
         }
     }
 
+    struct PoisonedImport {
+        imports: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::qis_interface::DynamicSyncHandle for PoisonedImport {
+        fn wait_for_need_result(&self, _: u64) -> Option<u64> {
+            Some(7)
+        }
+        fn set_measurement_result(&self, _: u64, _: bool) -> Result<(), InterfaceError> {
+            panic!("an import failure cannot supply a result")
+        }
+        fn signal_result_ready(&self) -> Result<(), InterfaceError> {
+            panic!("an import failure cannot signal readiness")
+        }
+        fn get_pending_operations(&self) -> Result<Vec<Operation>, InterfaceError> {
+            self.imports
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(InterfaceError::ExecutionError(
+                "poisoned pending-operations lock".into(),
+            ))
+        }
+        fn abort_execution(&self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn get_named_results(
+            &self,
+        ) -> Result<BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError> {
+            Ok(BTreeMap::new())
+        }
+        fn get_named_result_traces(&self) -> Result<Vec<NamedResultTrace>, InterfaceError> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn pending_operations_import_error_is_terminal_and_sticky() {
+        let imports = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: Some(Box::new(PoisonedImport {
+                imports: imports.clone(),
+            })),
+            execution_complete: false,
+            terminal_error: None,
+            finalized: false,
+            terminal_lowering_flushed: false,
+        });
+        let error = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .err()
+            .expect("import must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to import pending operations"),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("poisoned pending-operations lock"),
+            "{error}"
+        );
+        let retry = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .err()
+            .expect("import must fail");
+        assert_eq!(retry.to_string(), error.to_string());
+        assert_eq!(imports.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn measurement_count_mismatches_fail_before_storing_outcomes() {
         for dynamic in [false, true] {
@@ -2145,6 +2797,7 @@ mod tests {
                     execution_complete: true,
                     terminal_error: None,
                     finalized: false,
+                    terminal_lowering_flushed: false,
                 });
                 let input = ByteMessage::builder().add_outcomes(&outcomes).build();
                 let error = if dynamic {
@@ -2171,6 +2824,705 @@ mod tests {
     }
 
     #[test]
+    fn generate_commands_requires_control_engine() {
+        let mut engine: Box<dyn ClassicalEngine> =
+            Box::new(QisEngine::with_runtime(Box::new(DummyRuntime::default())));
+        let error = engine
+            .generate_commands()
+            .err()
+            .expect("unsupported entry point")
+            .to_string();
+        assert!(error.contains("QisEngine"), "{error}");
+        assert!(
+            error.contains("ControlEngine::start/continue_processing"),
+            "{error}"
+        );
+        assert!(error.contains("lifetime and prep rules"), "{error}");
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    fn delayed_metadata_engine() -> QisEngine {
+        let mut engine = QisEngine::with_runtime(Box::new(
+            crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
+        ));
+        engine.set_num_qubits_hint(2);
+        engine.runtime.shot_start(0, None).unwrap();
+        engine
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn delayed_inserted_prep_does_not_take_later_reset_metadata() {
+        use pecos_core::gate_type::GateType::{MZ, PZ};
+        let mut engine = delayed_metadata_engine();
+        let first = engine
+            .lower_operations_to_commands(&[
+                QuantumOp::Measure(0, 0).into(),
+                QuantumOp::RZ(0.5, 1).into(),
+            ])
+            .unwrap();
+        assert_eq!(
+            first
+                .commands
+                .quantum_ops()
+                .unwrap()
+                .iter()
+                .map(|gate| gate.gate_type)
+                .collect::<Vec<_>>(),
+            [PZ, MZ]
+        );
+        let metadata = TraceMetadata::from([("source_label".into(), "program reset".into())]);
+        let second = engine
+            .lower_operations_to_commands(&[
+                Operation::TraceMetadata {
+                    metadata: metadata.clone(),
+                    qubit: Some(1),
+                },
+                QuantumOp::Reset(1).into(),
+                QuantumOp::Measure(1, 1).into(),
+            ])
+            .unwrap();
+        assert_eq!(
+            second
+                .commands
+                .quantum_ops()
+                .unwrap()
+                .iter()
+                .map(|gate| gate.gate_type)
+                .collect::<Vec<_>>(),
+            [PZ, PZ, MZ]
+        );
+        assert_eq!(
+            second.gate_metadata,
+            [TraceMetadata::new(), metadata, TraceMetadata::new()]
+        );
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn delayed_labelled_operation_keeps_metadata_across_chunks() {
+        for op in [QuantumOp::Reset(1), QuantumOp::RXY(0.25, 0.0, 1)] {
+            let mut engine = delayed_metadata_engine();
+            let metadata = TraceMetadata::from([
+                ("source_label".into(), "delayed operation".into()),
+                ("source_lowering_required".into(), "true".into()),
+            ]);
+            let expected_gate = if matches!(op, QuantumOp::Reset(_)) {
+                "PZ"
+            } else {
+                "RXY1Q"
+            };
+            let first = engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::Measure(0, 0).into(),
+                    QuantumOp::RZ(0.5, 1).into(),
+                    Operation::TraceMetadata {
+                        metadata: metadata.clone(),
+                        qubit: Some(1),
+                    },
+                    op.into(),
+                ])
+                .unwrap();
+            // #1027's label-start barrier emits the queued inserted prep in A.
+            // The labelled operation itself remains queued until B.
+            assert_eq!(first.gate_metadata, vec![TraceMetadata::new(); 3]);
+            assert_eq!(
+                first
+                    .commands
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .map(|gate| gate.gate_type.to_string())
+                    .collect::<Vec<_>>(),
+                ["PZ", "MZ", "PZ"]
+            );
+            let second = engine
+                .lower_operations_to_commands(&[QuantumOp::Measure(1, 1).into()])
+                .unwrap();
+            assert_eq!(
+                second
+                    .commands
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .map(|gate| gate.gate_type.to_string())
+                    .collect::<Vec<_>>(),
+                [expected_gate, "MZ"]
+            );
+            assert_eq!(second.gate_metadata, [metadata, TraceMetadata::new()]);
+        }
+    }
+
+    fn prep_test_engine(selene: bool) -> QisEngine {
+        let mut engine = if selene {
+            #[cfg(feature = "selene-runtimes")]
+            {
+                QisEngine::with_runtime(Box::new(
+                    crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                ))
+            }
+            #[cfg(not(feature = "selene-runtimes"))]
+            panic!("Selene tests require selene-runtimes");
+        } else {
+            QisEngine::with_runtime(Box::new(DummyRuntime::default()))
+        };
+        engine.set_num_qubits_hint(3);
+        engine.runtime.shot_start(0, None).unwrap();
+        engine
+    }
+
+    fn prep_test_gates(
+        engine: &mut QisEngine,
+        ops: &[Operation],
+    ) -> Vec<pecos_core::gate_type::GateType> {
+        engine
+            .lower_operations_to_commands(ops)
+            .unwrap()
+            .commands
+            .quantum_ops()
+            .unwrap()
+            .iter()
+            .map(|gate| gate.gate_type)
+            .collect()
+    }
+
+    // Red/green: the direct allocation used to add a second prep.
+    #[test]
+    fn prep_direct_first_reset_is_the_only_prep() {
+        use pecos_core::gate_type::GateType::{H, PZ};
+        let mut engine = prep_test_engine(false);
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 71 },
+                QuantumOp::Reset(71).into(),
+                QuantumOp::H(71).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [PZ, H]
+        );
+        assert!(
+            gates
+                .iter()
+                .all(|gate| gate.qubits.as_slice() == [0.into()])
+        );
+    }
+
+    // Compatibility: direct allocation followed by H already had one prep.
+    #[test]
+    fn prep_direct_allocation_before_h() {
+        use pecos_core::gate_type::GateType::{H, PZ};
+        assert_eq!(
+            prep_test_gates(
+                &mut prep_test_engine(false),
+                &[Operation::AllocateQubit { id: 0 }, QuantumOp::H(0).into(),]
+            ),
+            [PZ, H]
+        );
+    }
+
+    // Red/green: Selene previously received no prep for this allocation.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_selene_allocation_before_h() {
+        use pecos_core::gate_type::GateType::{PZ, RXY1Q, RZ};
+        assert_eq!(
+            prep_test_gates(
+                &mut prep_test_engine(true),
+                &[Operation::AllocateQubit { id: 0 }, QuantumOp::H(0).into(),]
+            ),
+            [PZ, RXY1Q, RZ]
+        );
+    }
+
+    // Red/green: legacy first use lacked a prep; later uses must not repeat it.
+    #[test]
+    fn prep_legacy_first_use_and_shot_boundary() {
+        use pecos_core::gate_type::GateType::{H, PZ, X};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::H(7).into()]),
+            [PZ, H]
+        );
+        assert_eq!(prep_test_gates(&mut engine, &[QuantumOp::X(7).into()]), [X]);
+        engine.reset_qubit_slots();
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::H(7).into()]),
+            [PZ, H]
+        );
+    }
+
+    // Red/green: the prep belongs to the first-use chunk, including after feedback.
+    #[test]
+    fn prep_deferred_across_feedback() {
+        use pecos_core::gate_type::GateType::{H, MZ, PZ, X};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(&mut engine, &[Operation::AllocateQubit { id: 71 }]),
+            vec![]
+        );
+        assert_eq!(
+            prep_test_gates(
+                &mut engine,
+                &[QuantumOp::H(71).into(), QuantumOp::Measure(71, 9).into(),]
+            ),
+            [PZ, H, MZ]
+        );
+        engine
+            .handle_measurements(ByteMessage::builder().add_outcomes(&[0]).build())
+            .unwrap();
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::X(71).into()]),
+            [X]
+        );
+    }
+
+    // Red/green: a re-allocation defers its own prep until the next use.
+    #[test]
+    fn prep_reallocation_starts_new_lifetime() {
+        use pecos_core::gate_type::GateType::{H, PZ, X};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(
+                &mut engine,
+                &[
+                    Operation::AllocateQubit { id: 7 },
+                    QuantumOp::X(7).into(),
+                    Operation::ReleaseQubit { id: 7 },
+                    Operation::AllocateQubit { id: 7 },
+                ]
+            ),
+            [PZ, X]
+        );
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::H(7).into()]),
+            [PZ, H]
+        );
+    }
+
+    // Red/green: unused lifetimes must not produce a prep.
+    #[test]
+    fn prep_unused_allocation_emits_nothing() {
+        assert_eq!(
+            prep_test_gates(
+                &mut prep_test_engine(false),
+                &[
+                    Operation::AllocateQubit { id: 7 },
+                    Operation::ReleaseQubit { id: 7 },
+                ]
+            ),
+            vec![]
+        );
+    }
+
+    // Red/green: every fresh target needs a prep, in source operand order.
+    #[test]
+    fn prep_multi_qubit_first_use() {
+        use pecos_core::gate_type::GateType::{CX, PZ};
+        let mut engine = prep_test_engine(false);
+        let lowered = engine
+            .lower_operations_to_commands(&[QuantumOp::CX(7, 3).into()])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [PZ, PZ, CX]
+        );
+        assert_eq!(gates[0].qubits.as_slice(), [0.into()]);
+        assert_eq!(gates[1].qubits.as_slice(), [1.into()]);
+        assert_eq!(gates[2].qubits.as_slice(), [0.into(), 1.into()]);
+    }
+
+    // Compatibility: program-written preps remain normal PZ gates throughout a lifetime.
+    #[test]
+    fn prep_program_mid_circuit_reset_is_preserved() {
+        use pecos_core::gate_type::GateType::{H, PZ};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(
+                &mut engine,
+                &[
+                    QuantumOp::Reset(0).into(),
+                    QuantumOp::H(0).into(),
+                    QuantumOp::Reset(0).into(),
+                ]
+            ),
+            [PZ, H, PZ]
+        );
+    }
+
+    // Compatibility: normalization must leave the original use-after-release error intact.
+    #[test]
+    fn prep_released_handle_is_not_a_legacy_first_use() {
+        let mut engine = prep_test_engine(false);
+        let error = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 7 },
+                QuantumOp::Reset(7).into(),
+                Operation::ReleaseQubit { id: 7 },
+                QuantumOp::H(7).into(),
+            ])
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("emitted H(7)"));
+        assert!(error.to_string().contains("not currently active"));
+    }
+
+    fn check_prep_metadata(selene: bool) {
+        let mut engine = prep_test_engine(selene);
+        let global = TraceMetadata::from([("global".into(), "h".into())]);
+        let scoped = TraceMetadata::from([("scoped".into(), "x".into())]);
+        let ops = [
+            Operation::TraceMetadata {
+                metadata: scoped.clone(),
+                qubit: Some(7),
+            },
+            Operation::TraceMetadata {
+                metadata: global.clone(),
+                qubit: None,
+            },
+            Operation::AllocateQubit { id: 3 },
+            QuantumOp::H(3).into(),
+            Operation::Barrier,
+            QuantumOp::X(7).into(),
+        ];
+        let lowered = engine.lower_operations_to_commands(&ops).unwrap();
+        assert_eq!(
+            lowered.gate_metadata,
+            if selene {
+                vec![
+                    TraceMetadata::new(),
+                    global,
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    scoped,
+                ]
+            } else {
+                vec![TraceMetadata::new(), global, TraceMetadata::new(), scoped]
+            }
+        );
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates
+                .iter()
+                .map(|gate| gate.gate_type.to_string())
+                .collect::<Vec<_>>(),
+            if selene {
+                vec!["PZ", "RXY1Q", "RZ", "PZ", "RXY1Q"]
+            } else {
+                vec!["PZ", "H", "PZ", "X"]
+            }
+        );
+        let store = Arc::new(Mutex::new(Vec::new()));
+        engine.set_operation_trace_collector(store.clone());
+        engine.simulated_op_count = ops.len();
+        engine.trace_operations_chunk("prep_test", &ops, None, Some(&lowered));
+        let traces = store.lock().unwrap();
+        assert_eq!(traces[0].operations, ops);
+        assert_eq!(traces[0].num_operations, ops.len());
+        assert_eq!(traces[0].simulated_op_count, ops.len());
+        assert!(traces[0].lowered_quantum_ops_complete);
+        assert_eq!(
+            traces[0].lowered_quantum_ops.len(),
+            if selene { 5 } else { 4 }
+        );
+    }
+
+    // Red/green: global and scoped labels must stay on source ops, across allocations/barriers.
+    #[test]
+    fn prep_metadata_direct() {
+        check_prep_metadata(false);
+    }
+
+    // Red/green: exercise Selene's source-to-lowered metadata matching with inserted preps.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_metadata_selene() {
+        check_prep_metadata(true);
+    }
+
+    // Compatibility: the direct route drops dangling metadata at the chunk boundary.
+    #[test]
+    fn prep_metadata_across_chunks() {
+        for qubit in [None, Some(7)] {
+            let mut engine = prep_test_engine(false);
+            engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::Reset(7).into(),
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "h".into())]),
+                        qubit,
+                    },
+                ])
+                .unwrap();
+            let lowered = engine
+                .lower_operations_to_commands(&[QuantumOp::H(7).into()])
+                .unwrap();
+            assert_eq!(lowered.gate_metadata, [TraceMetadata::new()]);
+        }
+    }
+
+    // Compatibility: Selene rejects dangling global and qubit-scoped metadata in its chunk.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_metadata_dangling_selene() {
+        for (qubit, message) in [
+            (
+                None,
+                "trace metadata was not followed by a quantum operation",
+            ),
+            (
+                Some(7),
+                "qubit-scoped trace metadata was not followed by a compatible quantum operation",
+            ),
+        ] {
+            let mut engine = prep_test_engine(true);
+            let error = engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::Reset(7).into(),
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "h".into())]),
+                        qubit,
+                    },
+                ])
+                .err()
+                .expect("dangling metadata must fail in its own chunk");
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
+
+    fn check_prep_nonadjacent_metadata(selene: bool) {
+        let mut engine = prep_test_engine(selene);
+        let metadata = TraceMetadata::from([("source_label".into(), "x".into())]);
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::TraceMetadata {
+                    metadata: metadata.clone(),
+                    qubit: Some(1),
+                },
+                QuantumOp::H(0).into(),
+                QuantumOp::X(1).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates
+                .iter()
+                .map(|gate| gate.gate_type.to_string())
+                .collect::<Vec<_>>(),
+            if selene {
+                vec!["PZ", "RXY1Q", "RZ", "PZ", "RXY1Q"]
+            } else {
+                vec!["PZ", "H", "PZ", "X"]
+            }
+        );
+        assert_eq!(
+            lowered.gate_metadata,
+            if selene {
+                vec![
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    metadata,
+                ]
+            } else {
+                vec![
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    metadata,
+                ]
+            }
+        );
+    }
+
+    // Red/green: both fresh legacy handles get preps without consuming the scoped label.
+    #[test]
+    fn prep_metadata_nonadjacent_direct() {
+        check_prep_nonadjacent_metadata(false);
+    }
+
+    // Red/green: Selene keeps the scoped label on X after both inserted preps.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_metadata_nonadjacent_selene() {
+        check_prep_nonadjacent_metadata(true);
+    }
+
+    // Red/green: unlabelled native occurrences must consume their own lowered gates.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_native_metadata_does_not_label_inserted_reset() {
+        for qubit in [None, Some(0)] {
+            let mut engine = prep_test_engine(true);
+            let metadata = TraceMetadata::from([("source_label".into(), "program prep".into())]);
+            let lowered = engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::RZ(0.5, 0).into(),
+                    Operation::TraceMetadata {
+                        metadata: metadata.clone(),
+                        qubit,
+                    },
+                    QuantumOp::Reset(0).into(),
+                ])
+                .unwrap();
+            assert_eq!(
+                lowered
+                    .commands
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .map(|gate| gate.gate_type.to_string())
+                    .collect::<Vec<_>>(),
+                ["PZ", "RZ", "PZ"]
+            );
+            assert_eq!(
+                lowered.gate_metadata,
+                [TraceMetadata::new(), TraceMetadata::new(), metadata]
+            );
+        }
+    }
+
+    // Red/green: repeated program-native ops match metadata by occurrence too.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_native_metadata_repeated_program_ops() {
+        for op in [
+            QuantumOp::Reset(0),
+            QuantumOp::RZ(0.5, 0),
+            QuantumOp::RXY(0.5, 0.25, 0),
+            QuantumOp::RZZ(0.5, 0, 1),
+        ] {
+            for qubit in [None, Some(0)] {
+                let mut engine = prep_test_engine(true);
+                let metadata =
+                    TraceMetadata::from([("source_label".into(), "second occurrence".into())]);
+                let lowered = engine
+                    .lower_operations_to_commands(&[
+                        op.clone().into(),
+                        Operation::TraceMetadata {
+                            metadata: metadata.clone(),
+                            qubit,
+                        },
+                        op.clone().into(),
+                    ])
+                    .unwrap();
+                assert_eq!(lowered.gate_metadata.last(), Some(&metadata), "{op:?}");
+                assert!(
+                    lowered.gate_metadata[..lowered.gate_metadata.len() - 1]
+                        .iter()
+                        .all(TraceMetadata::is_empty),
+                    "{op:?}"
+                );
+            }
+        }
+    }
+
+    fn check_prep_unknown_release(selene: bool) {
+        let mut engine = prep_test_engine(selene);
+        engine.set_num_qubits_hint(1);
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 0 },
+                QuantumOp::X(0).into(),
+                Operation::ReleaseQubit { id: 0 },
+                Operation::ReleaseQubit { id: 9 },
+                QuantumOp::Measure(9, 0).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates
+                .iter()
+                .map(|gate| gate.gate_type.to_string())
+                .collect::<Vec<_>>(),
+            if selene {
+                ["PZ", "RXY1Q", "PZ", "MZ"]
+            } else {
+                ["PZ", "X", "PZ", "MZ"]
+            }
+        );
+        assert!(
+            gates
+                .iter()
+                .all(|gate| gate.qubits.as_slice() == [0.into()])
+        );
+    }
+
+    // Red/green: releasing an unknown handle must not suppress its first-use prep.
+    #[test]
+    fn prep_unknown_release_direct() {
+        check_prep_unknown_release(false);
+    }
+
+    // Red/green: native slot reuse after an unknown release still receives a prep.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_unknown_release_selene() {
+        check_prep_unknown_release(true);
+    }
+
+    // Red/green: a second explicit allocation cannot restart a live lifetime.
+    #[test]
+    fn prep_duplicate_live_allocation_direct() {
+        for prefix in [
+            vec![Operation::AllocateQubit { id: 7 }, QuantumOp::H(7).into()],
+            vec![QuantumOp::Measure(7, 0).into()],
+            vec![Operation::AllocateQubit { id: 7 }],
+        ] {
+            for split in [false, true] {
+                let mut engine = prep_test_engine(false);
+                let mut ops = if split {
+                    engine.lower_operations_to_commands(&prefix).unwrap();
+                    Vec::new()
+                } else {
+                    prefix.clone()
+                };
+                ops.extend([Operation::AllocateQubit { id: 7 }, QuantumOp::X(7).into()]);
+                let error = engine
+                    .lower_operations_to_commands(&ops)
+                    .err()
+                    .expect("duplicate live allocation must fail");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("program qubit 7 is already allocated"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    // Red/green: the scheduled route also receives the deferred prep exactly once.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_scheduled_first_use() {
+        use pecos_core::gate_type::GateType::{PZ, RZ};
+        use pecos_engines::scheduled_events::{ScheduledEventOp, decode_event_batches};
+        let mut engine = prep_test_engine(true);
+        engine.scheduled_transport = ScheduledTransport::V4;
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 7 },
+                QuantumOp::RZ(0.5, 7).into(),
+            ])
+            .unwrap();
+        let gates = decode_event_batches(&lowered.commands)
+            .unwrap()
+            .into_iter()
+            .flat_map(|batch| batch.operations)
+            .map(|op| match op {
+                ScheduledEventOp::Gate(gate) => gate.gate_type,
+                ScheduledEventOp::Custom { .. } => panic!("expected gate"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(gates, [PZ, RZ]);
+    }
+
+    #[test]
     fn test_operation_trace_chunk_writes_json() {
         let temp_dir = TempDir::new().expect("tempdir");
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
@@ -2187,7 +3539,7 @@ mod tests {
             QuantumOp::Measure(0, 7).into(),
         ];
         let lowered = engine
-            .operations_to_lowered_commands(&ops)
+            .lower_operations_to_commands(&ops)
             .expect("convert ops to lowered commands");
         engine.trace_operations_chunk("unit_test", &ops, Some(7), Some(&lowered));
 
@@ -2278,10 +3630,10 @@ mod tests {
             QuantumOp::H(1).into(),
         ];
         let lowered = engine
-            .operations_to_lowered_commands(&ops)
+            .lower_operations_to_commands(&ops)
             .expect("lower annotated CRZ");
         let gates = lowered.commands.quantum_ops().unwrap();
-        // Allocations emit two PZ commands before the three CRZ legs and H.
+        // First use emits two PZ commands before the three CRZ legs and H.
         assert_eq!(gates.len(), 6);
         assert_eq!(gates[2].gate_type, pecos_core::gate_type::GateType::Z);
         assert!(
@@ -2460,6 +3812,33 @@ mod tests {
         assert_eq!(result.outcomes().expect("parse outcome"), vec![2]);
     }
 
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn selene_native_commands_use_only_runtime_gates() {
+        use pecos_core::gate_type::GateType;
+        let runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 0 },
+                Operation::AllocateQubit { id: 1 },
+                Operation::AllocateQubit { id: 2 },
+                QuantumOp::Reset(0).into(),
+                QuantumOp::H(0).into(),
+                QuantumOp::CX(0, 1).into(),
+                QuantumOp::CCX(0, 1, 2).into(),
+                QuantumOp::Measure(2, 0).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::RXY1Q));
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::RZZ));
+        assert!(gates.iter().all(|gate| matches!(
+            gate.gate_type,
+            GateType::RXY1Q | GateType::RZ | GateType::RZZ | GateType::PZ | GateType::MZ
+        )));
+    }
+
     #[test]
     fn test_direct_lowering_attaches_trace_metadata_to_next_gate() {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
@@ -2574,7 +3953,7 @@ mod tests {
         engine.set_operation_trace_collector(collector.clone());
         engine.begin_trace_shot();
 
-        let ops = vec![QuantumOp::H(0).into()];
+        let ops = vec![QuantumOp::H(0).into(), QuantumOp::Measure(0, 17).into()];
         let lowered = engine
             .lower_operations_to_commands(&ops)
             .expect("runtime lower ops to commands");
@@ -2650,7 +4029,7 @@ mod tests {
         ];
 
         let lowered_commands = engine
-            .operations_to_lowered_commands(&ops)
+            .lower_operations_to_commands(&ops)
             .expect("sparse handles should map onto live physical slots");
 
         let lowered = lowered_commands
@@ -2678,6 +4057,7 @@ mod tests {
             execution_complete: true,
             terminal_error: Some("dynamic QIS worker failed: interface crashed".to_string()),
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2824,6 +4204,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2893,6 +4274,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2921,6 +4303,235 @@ mod tests {
                     .contains("trace_complete")
             });
         assert!(!wrote_terminal_marker);
+    }
+
+    /// Runtime whose `shot_end` fails and whose `reset` fails while
+    /// `fail_reset` is set, for a reset after a failed shot.
+    #[derive(Clone, Default)]
+    struct ShotEndAndResetFailRuntime {
+        state: ClassicalState,
+        fail_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl QisRuntime for ShotEndAndResetFailRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
+            Err(crate::runtime::RuntimeError::ExecutionError(
+                "invalid final schedule".to_string(),
+            ))
+        }
+
+        fn reset(&mut self) -> RuntimeResult<()> {
+            if self.fail_reset.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "exit failed".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    /// Interface whose `reset` fails while `fail_reset` is set.
+    #[derive(Clone, Default)]
+    struct FlakyResetInterface {
+        fail_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        dynamic: bool,
+    }
+
+    impl crate::QisInterface for FlakyResetInterface {
+        fn load_program(
+            &mut self,
+            _: &[u8],
+            _: crate::ProgramFormat,
+        ) -> Result<(), crate::InterfaceError> {
+            Ok(())
+        }
+        fn collect_operations(&mut self) -> Result<OperationList, crate::InterfaceError> {
+            Ok(OperationList::new())
+        }
+        fn execute_with_measurements(
+            &mut self,
+            _: BTreeMap<usize, bool>,
+        ) -> Result<OperationList, crate::InterfaceError> {
+            Ok(OperationList::new())
+        }
+        fn name(&self) -> &'static str {
+            "flaky-reset"
+        }
+        fn reset(&mut self) -> Result<(), crate::InterfaceError> {
+            if self.fail_reset.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::InterfaceError::Other(
+                    "interface reset failed".into(),
+                ));
+            }
+            Ok(())
+        }
+        fn supports_dynamic(&self) -> bool {
+            self.dynamic
+        }
+    }
+
+    // #1040: a failed reset after a failed shot must not let `get_results`
+    // certify that shot, through every reset entry point; a successful reset
+    // through the same entry point recovers fully.
+    #[test]
+    fn failed_reset_after_failed_shot_never_certifies_results() {
+        use std::sync::atomic::Ordering;
+        type ResetFn = fn(&mut QisEngine) -> Result<(), PecosError>;
+        let resets: [(&str, ResetFn); 3] = [
+            ("ControlEngine", |engine| ControlEngine::reset(engine)),
+            ("Engine", |engine| Engine::reset(engine)),
+            ("ClassicalEngine", |engine| ClassicalEngine::reset(engine)),
+        ];
+        for (name, reset) in resets {
+            let runtime = ShotEndAndResetFailRuntime::default();
+            let fail_reset = std::sync::Arc::clone(&runtime.fail_reset);
+            fail_reset.store(true, Ordering::SeqCst);
+            let mut engine =
+                QisEngine::new(Box::new(FlakyResetInterface::default()), Box::new(runtime));
+            engine.measurement_results.insert(0, 1);
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+
+            assert!(
+                engine
+                    .continue_processing(ByteMessage::builder().build())
+                    .is_err()
+            );
+            assert!(engine.get_results().is_err());
+
+            let Err(reset_error) = reset(&mut engine) else {
+                panic!("{name}: the runtime reset must fail");
+            };
+            assert!(
+                reset_error.to_string().contains("exit failed"),
+                "{name}: {reset_error}"
+            );
+            let Err(results_error) = engine.get_results() else {
+                panic!("{name}: a failed reset must not certify the failed shot's results");
+            };
+            assert!(
+                results_error.to_string().contains("exit failed"),
+                "{name}: {results_error}"
+            );
+            assert!(engine.clone().get_results().is_err(), "{name}");
+
+            fail_reset.store(false, Ordering::SeqCst);
+            reset(&mut engine).unwrap();
+            let shot = engine.get_results().unwrap();
+            assert!(shot.data.is_empty(), "{name}: {shot:?}");
+        }
+    }
+
+    // An interface reset failure stays latched through `start()`, which resets
+    // only the runtime, until a complete reset succeeds.
+    #[test]
+    fn interface_reset_failure_blocks_start_until_reset_succeeds() {
+        use std::sync::atomic::Ordering;
+        let interface = FlakyResetInterface::default();
+        let fail_reset = std::sync::Arc::clone(&interface.fail_reset);
+        fail_reset.store(true, Ordering::SeqCst);
+        let mut engine = QisEngine::new(
+            Box::new(interface),
+            Box::new(ShotEndAndResetFailRuntime::default()),
+        );
+
+        let Err(reset_error) = ClassicalEngine::reset(&mut engine) else {
+            panic!("the interface reset must fail");
+        };
+        assert!(
+            reset_error.to_string().contains("interface reset failed"),
+            "{reset_error}"
+        );
+        let Err(start_error) = engine.start(()) else {
+            panic!("start must refuse while a reset failure is latched");
+        };
+        assert!(
+            start_error.to_string().contains("interface reset failed"),
+            "{start_error}"
+        );
+        assert!(engine.get_results().is_err());
+
+        fail_reset.store(false, Ordering::SeqCst);
+        ControlEngine::reset(&mut engine).unwrap();
+        assert!(engine.get_results().unwrap().data.is_empty());
+        // Unlatched, start proceeds to its own checks again.
+        let Err(start_error) = engine.start(()) else {
+            panic!("this test interface cannot run a shot");
+        };
+        assert!(
+            start_error.to_string().contains("dynamic-capable"),
+            "{start_error}"
+        );
+    }
+
+    // A failed runtime reset inside `start()` is latched, and `start()` itself
+    // never clears the latch; a complete reset does.
+    #[test]
+    fn start_runtime_reset_failure_is_latched() {
+        use std::sync::atomic::Ordering;
+        let runtime = ShotEndAndResetFailRuntime::default();
+        let fail_reset = std::sync::Arc::clone(&runtime.fail_reset);
+        fail_reset.store(true, Ordering::SeqCst);
+        let mut engine = QisEngine::new(
+            Box::new(FlakyResetInterface {
+                dynamic: true,
+                ..FlakyResetInterface::default()
+            }),
+            Box::new(runtime),
+        );
+        engine.measurement_results.insert(0, 1);
+
+        let Err(first) = engine.start(()) else {
+            panic!("start's runtime reset must fail");
+        };
+        assert!(first.to_string().contains("exit failed"), "{first}");
+        assert!(engine.get_results().is_err());
+
+        // The runtime is healthy again, but start alone must not unlatch.
+        fail_reset.store(false, Ordering::SeqCst);
+        let Err(second) = engine.start(()) else {
+            panic!("start must refuse while a reset failure is latched");
+        };
+        assert!(second.to_string().contains("exit failed"), "{second}");
+
+        Engine::reset(&mut engine).unwrap();
+        assert!(engine.get_results().unwrap().data.is_empty());
     }
 
     /// Counts `shot_end` invocations to pin one-shot finalization.
@@ -2988,6 +4599,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         // First completion certifies the shot; a redundant poll must neither
@@ -3084,6 +4696,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
         engine.pending_dynamic_ops = vec![QuantumOp::H(0).into()];
 
@@ -3133,6 +4746,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -3245,12 +4859,23 @@ mod scheduled_completion_tests {
         }
     }
     #[derive(Clone, Default)]
+    enum TerminalOutput {
+        #[default]
+        Feedback,
+        Padding,
+        FeedbackThenPadding,
+        OversizedV4,
+    }
+
+    #[derive(Clone, Default)]
     struct FeedbackTail {
         state: ClassicalState,
         stage: usize,
         fail_tail: bool,
+        output: TerminalOutput,
         with_event: bool,
         ended: bool,
+        shot_id: u64,
     }
     impl QisRuntime for FeedbackTail {
         fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
@@ -3263,7 +4888,7 @@ mod scheduled_completion_tests {
             if self.with_event {
                 assert_eq!(values.get(&0), Some(&true));
             }
-            self.stage = 2;
+            self.stage = 3;
             Ok(())
         }
         fn get_classical_state(&self) -> &ClassicalState {
@@ -3278,6 +4903,12 @@ mod scheduled_completion_tests {
         fn num_qubits(&self) -> usize {
             1
         }
+        fn shot_start(&mut self, shot_id: u64, _: Option<u64>) -> RuntimeResult<()> {
+            self.shot_id = shot_id;
+            self.stage = 3;
+            self.ended = false;
+            Ok(())
+        }
         fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
             if std::mem::replace(&mut self.ended, true) {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
@@ -3286,15 +4917,70 @@ mod scheduled_completion_tests {
             }
             Ok(crate::runtime::Shot::default())
         }
+        fn lower_scheduled_operations(
+            &mut self,
+            operations: &[Operation],
+        ) -> RuntimeResult<Vec<ScheduledBatch>> {
+            assert!(operations.contains(&QuantumOp::Measure(0, 0).into()));
+            self.stage = 1;
+            Ok(vec![])
+        }
         fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
             if self.ended {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
                     "drain after shot completion".into(),
                 ));
             }
+            if matches!(self.output, TerminalOutput::OversizedV4) {
+                use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
+                use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+                if self.stage != 0 {
+                    return Ok(vec![]);
+                }
+                self.stage = 1;
+                // One byte over V4's limit, but below the collection lower bound.
+                let tail = MAX_SCHEDULE_BYTES + 1 - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
+                return Ok((0..256)
+                    .map(|index| ScheduledBatch {
+                        runtime_shot_id: 0,
+                        batch_index: index,
+                        start_time_nanos: 0,
+                        duration_nanos: 0,
+                        operations: vec![Op::Custom {
+                            tag: 1,
+                            data: vec![
+                                0;
+                                if index == 255 {
+                                    tail
+                                } else {
+                                    MAX_BATCH_PAYLOAD
+                                }
+                            ],
+                        }],
+                        measurements: vec![],
+                    })
+                    .collect());
+            }
+            if matches!(self.output, TerminalOutput::Padding)
+                || (matches!(self.output, TerminalOutput::FeedbackThenPadding) && self.stage >= 3)
+            {
+                let index = self.stage;
+                self.stage += 1;
+                return Ok(vec![ScheduledBatch {
+                    runtime_shot_id: self.shot_id,
+                    batch_index: index,
+                    start_time_nanos: index as u64,
+                    duration_nanos: 0,
+                    operations: vec![Op::Rz {
+                        qubit_id: 0,
+                        theta: 0.0,
+                    }],
+                    measurements: vec![],
+                }]);
+            }
             let (mut ops, mut measurements, index) = match self.stage {
-                0 => {
-                    self.stage = 1;
+                1 => {
+                    self.stage = 2;
                     (
                         vec![Op::Measure {
                             qubit_id: 0,
@@ -3309,13 +4995,13 @@ mod scheduled_completion_tests {
                         0,
                     )
                 }
-                2 => {
+                3 => {
                     if self.fail_tail {
                         return Err(crate::runtime::RuntimeError::ExecutionError(
                             "tail drain failed".into(),
                         ));
                     }
-                    self.stage = 3;
+                    self.stage = 4;
                     (
                         vec![Op::Rz {
                             qubit_id: 0,
@@ -3338,7 +5024,7 @@ mod scheduled_completion_tests {
                 measurements[0].operation_index = 1;
             }
             Ok(vec![ScheduledBatch {
-                runtime_shot_id: 0,
+                runtime_shot_id: self.shot_id,
                 batch_index: index,
                 start_time_nanos: 0,
                 duration_nanos: 0,
@@ -3347,6 +5033,258 @@ mod scheduled_completion_tests {
             }])
         }
     }
+    #[test]
+    fn oversized_v4_drain_fails_at_encode_and_latches() {
+        use crate::scheduled_transport::EventBudget;
+        let mut runtime = FeedbackTail {
+            output: TerminalOutput::OversizedV4,
+            ..Default::default()
+        };
+        let batches = runtime.drain_pending_scheduled_operations().unwrap();
+        let mut budget = EventBudget::default();
+        for batch in &batches {
+            budget
+                .charge(&batch.operations, batch.measurements.len())
+                .unwrap();
+        }
+        drop(batches);
+        runtime.stage = 0;
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine.scheduled_transport = ScheduledTransport::V4;
+        let Err(error) = engine.drain_terminal_commands() else {
+            panic!("oversized V4 encoding must fail");
+        };
+        let error = error.to_string();
+        assert!(
+            error.contains("scheduled drain failed") && error.contains("event transport limit"),
+            "{error}"
+        );
+        // A subsequent runtime drain would be empty: it cannot erase the encode failure.
+        assert_eq!(
+            engine.runtime.drain_pending_scheduled_operations().unwrap(),
+            []
+        );
+        assert_eq!(engine.get_results().unwrap_err().to_string(), error);
+        assert_eq!(
+            engine
+                .finalize_shot_for_certification()
+                .unwrap_err()
+                .to_string(),
+            error
+        );
+    }
+
+    #[test]
+    fn scheduled_terminal_padding_without_feedback_fails_promptly() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                output: TerminalOutput::Padding,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.interface = Some(Box::new(TerminalInterface));
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            engine.provide_measurements_terminal(&[]).unwrap();
+            let error = engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .expect("padding must fail on round two")
+                .to_string();
+            assert!(
+                error.contains("without measurement feedback") && error.contains("round 2"),
+                "{error}"
+            );
+            assert!(engine.get_results().is_err());
+            engine.reset_all().unwrap();
+            assert_eq!(engine.scheduled_drain_round, 0);
+        }
+    }
+
+    #[test]
+    fn scheduled_feedback_permits_only_one_more_terminal_drain() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                output: TerminalOutput::FeedbackThenPadding,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().add_outcomes(&[0]).build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            let error = engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .expect("one delivery cannot permit repeated padding")
+                .to_string();
+            assert!(
+                error.contains("without measurement feedback") && error.contains("round 3"),
+                "{error}"
+            );
+        }
+    }
+
+    #[derive(Clone)]
+    struct GatedTerminalInterface(Arc<std::sync::Barrier>);
+    impl crate::QisInterface for GatedTerminalInterface {
+        fn load_program(&mut self, _: &[u8], _: ProgramFormat) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn collect_operations(&mut self) -> Result<OperationList, InterfaceError> {
+            self.0.wait();
+            Ok(OperationList::new())
+        }
+        fn execute_with_measurements(
+            &mut self,
+            _: BTreeMap<usize, bool>,
+        ) -> Result<OperationList, InterfaceError> {
+            self.collect_operations()
+        }
+        fn name(&self) -> &'static str {
+            "gated-terminal"
+        }
+        fn reset(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn supports_dynamic(&self) -> bool {
+            true
+        }
+        fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+    }
+
+    fn assert_scheduled_drain_progress_cleared(reset: bool) {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let mut engine = QisEngine::new(
+                Box::new(GatedTerminalInterface(Arc::clone(&gate))),
+                Box::new(FeedbackTail::default()),
+            );
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            assert!(engine.drain_terminal_commands().unwrap().is_some());
+            // Pause the first shot after validated feedback, before its next drain.
+            let updates = engine.map_measurements(&[0]).unwrap();
+            engine.store_measurement_updates(&updates).unwrap();
+            engine.provide_measurements_terminal(&updates).unwrap();
+            assert_eq!(engine.scheduled_drain_round, 1);
+            assert!(engine.scheduled_drain_feedback);
+            if reset {
+                engine.reset_all().unwrap();
+                assert_eq!(engine.scheduled_drain_round, 0);
+                assert!(!engine.scheduled_drain_feedback);
+            }
+            // The next shot's worker cannot finish until we've inspected start's
+            // reset. Its first drain must not hide a stale feedback flag.
+            let stage = engine.start(());
+            let progress = (
+                engine.scheduled_drain_round,
+                engine.scheduled_drain_feedback,
+            );
+            gate.wait();
+            assert_eq!(progress, (0, false));
+            let mut stage = stage.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while matches!(stage, EngineStage::NeedsProcessing(_)) {
+                assert!(
+                    Instant::now() < deadline,
+                    "gate-only second shot did not complete"
+                );
+                stage = engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap();
+            }
+            assert_eq!(engine.scheduled_drain_round, 2);
+            assert!(engine.get_results().is_ok());
+        }
+    }
+
+    #[test]
+    fn scheduled_new_shot_clears_drain_progress() {
+        assert_scheduled_drain_progress_cleared(false);
+    }
+
+    #[test]
+    fn scheduled_reset_clears_set_drain_progress() {
+        assert_scheduled_drain_progress_cleared(true);
+    }
+
+    #[test]
+    fn scheduled_gate_only_final_tail_completes_without_feedback() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                stage: 3,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            assert_eq!(engine.scheduled_drain_round, 1);
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::Complete(_)
+            ));
+            assert_eq!(engine.scheduled_drain_round, 2);
+            assert!(engine.get_results().is_ok());
+        }
+    }
+
     #[test]
     fn terminal_feedback_must_drain_newly_ready_tail() {
         use pecos_engines::noise::IntoNoiseModel;
@@ -3360,7 +5298,11 @@ mod scheduled_completion_tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
+        engine
+            .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
         // Execute the terminal measurement and feedback-triggered tail in a real owner.
         let mut quantum = QuantumSystem::new(
             ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
@@ -3381,6 +5323,8 @@ mod scheduled_completion_tests {
         else {
             panic!("terminal drain must emit its measurement");
         };
+        assert_eq!(engine.pending_measurements[&0].outstanding, 1);
+        assert_eq!(engine.pending_measurements[&0].unemitted, 0);
         let measured = quantum.process(initial).unwrap();
         assert_eq!(measured.outcomes().unwrap(), vec![0]);
         let EngineStage::NeedsProcessing(commands) = engine.continue_processing(measured).unwrap()
@@ -3392,6 +5336,7 @@ mod scheduled_completion_tests {
             engine.continue_processing(reply).unwrap(),
             EngineStage::Complete(_)
         ));
+        assert_eq!(engine.pending_measurements.len(), 0);
         // A repeated completion poll must not touch an already-ended runtime.
         assert!(matches!(
             engine
@@ -3460,7 +5405,11 @@ mod scheduled_completion_tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
+        engine
+            .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
         let mut quantum = QuantumSystem::new(
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
                 Ok(Box::new(Flip))
@@ -3511,7 +5460,11 @@ mod scheduled_completion_tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
+        engine
+            .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
         engine
             .continue_processing(ByteMessage::outcomes_builder().build())
             .unwrap();
@@ -3528,3 +5481,11 @@ mod scheduled_completion_tests {
         assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
     }
 }
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_terminal_tests.rs"]
+mod terminal_lowering_tests;
+
+#[cfg(test)]
+#[path = "ccengine_lifecycle_tests.rs"]
+mod lifecycle_tests;

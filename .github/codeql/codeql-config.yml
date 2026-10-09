@@ -11,3 +11,14 @@ paths-ignore:
   - scripts/native_bench
   # Fuzz targets.
   - exp/zlup/fuzz
+
+query-filters:
+  # rust/cleartext-logging flags values whose names look sensitive reaching a
+  # log, panic or assert message. PECOS handles no passwords, tokens or keys, and
+  # all 23 alerts it raised (2026-08-27 to 2026-10-08) were naming accidents:
+  # the distance-search outcomes' `Certified` variants ("cert") and PyO3's
+  # extract_pyclass_ref_trusted flowing into panic/assert messages that print
+  # indices, probabilities and distances. Re-enable it if PECOS starts handling credentials (for example,
+  # API tokens for remote backends).
+  - exclude:
+      id: rust/cleartext-logging

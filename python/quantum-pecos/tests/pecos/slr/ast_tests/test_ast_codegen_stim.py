@@ -12,13 +12,12 @@
 """Tests for AST to Stim code generator."""
 
 import pytest
-
-stim = pytest.importorskip("stim")
-
-from pecos.slr import Barrier, CReg, If, Main, QReg, Repeat  # noqa: E402
-from pecos.slr.ast import slr_to_ast  # noqa: E402
-from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str  # noqa: E402
-from pecos.slr.qeclib import qubit as qb  # noqa: E402
+import stim
+from pecos.slr import Barrier, CReg, If, Main, Permute, QReg, Repeat
+from pecos.slr.ast import slr_to_ast
+from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str
+from pecos.slr.gen_codes import StimGenerator
+from pecos.slr.qeclib import qubit as qb
 
 
 class TestAstToStimBasic:
@@ -107,24 +106,15 @@ class TestAstToStimGates:
         assert "S_DAG 0" in code
 
     def test_t_gates(self) -> None:
-        """T gate handles gracefully (may be unsupported in Stim)."""
-        # Note: T gates are non-Clifford and Stim uses them for noise modeling
-        # The Stim gate is called "T" not "T_DAG" for the adjoint
+        """Stim rejects the non-Clifford T gate."""
         prog = Main(
             q := QReg("q", 1),
             qb.T(q[0]),
         )
         ast = slr_to_ast(prog)
 
-        # T gate may not be directly supported - check the generator handles it
-        # If T isn't supported, it should skip or the test should be adjusted
-        try:
-            code = ast_to_stim_str(ast)
-            # If T is supported, it should appear in output
-            assert "T" in code or len(code) == 0  # May be skipped if unsupported
-        except (IndexError, ValueError):
-            # T gate not supported in Stim - this is expected
-            pass
+        with pytest.raises(IndexError, match="Gate not found: 'T'"):
+            ast_to_stim_str(ast)
 
     def test_two_qubit_cx_gate(self) -> None:
         """CX gate generates CX instruction with correct qubits."""
@@ -247,22 +237,322 @@ class TestAstToStimControlFlow:
         assert "REPEAT 3" in code
         assert "H 0" in code
 
-    def test_if_statement_adds_tick(self) -> None:
-        """If statement adds TICK marker (conditionals unsupported in Stim)."""
+
+def _sample(prog: Main, shots: int = 256) -> list[list[int]]:
+    """Sample the measurement record of the Stim circuit compiled from `prog`."""
+    circuit = ast_to_stim(slr_to_ast(prog))
+    return [[int(bit) for bit in row] for row in circuit.compile_sampler(seed=1234).sample(shots)]
+
+
+class TestAstToStimConditionals:
+    """Measurement-conditioned If lowering (issue #978).
+
+    Each program measures a random bit and conditionally corrects a second
+    qubit; Stim's own sampler checks that the correction fires exactly on
+    the shots the condition selects.
+    """
+
+    @pytest.mark.parametrize(
+        ("make_condition", "fires_when_one"),
+        [
+            (lambda c: c[0], True),
+            (lambda c: c[0] == 1, True),
+            (lambda c: c[0] != 0, True),
+            (lambda c: c[0] == 0, False),
+            (lambda c: c[0] != 1, False),
+        ],
+    )
+    @pytest.mark.parametrize("pauli", [qb.X, qb.Y])
+    def test_bit_flip_correction_fires_only_when_selected(self, make_condition, fires_when_one, pauli) -> None:
+        """An X or Y correction flips the target exactly when the condition holds."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.H(q[0]),
+            qb.Measure(q[0]) > c[0],
+            If(make_condition(c)).Then(pauli(q[1])),
+            qb.Measure(q[1]) > c[1],
+        )
+
+        rows = _sample(prog)
+
+        assert {row[0] for row in rows} == {0, 1}, "the conditioning bit must vary"
+        for m_condition, m_target in rows:
+            assert m_target == (m_condition if fires_when_one else 1 - m_condition)
+
+    def test_phase_flip_correction_fires_only_when_selected(self) -> None:
+        """A Z correction on |+> is observed as a flip in the X basis."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.H(q[0]),
+            qb.Measure(q[0]) > c[0],
+            qb.H(q[1]),
+            If(c[0] == 1).Then(qb.Z(q[1])),
+            qb.H(q[1]),
+            qb.Measure(q[1]) > c[1],
+        )
+
+        rows = _sample(prog)
+
+        assert all(m_target == m_condition for m_condition, m_target in rows)
+
+    def test_condition_reads_the_most_recent_measurement_of_the_bit(self) -> None:
+        """Re-measuring into a bit retargets the condition to the newer record."""
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 2),
+            qb.H(q[0]),
+            qb.Measure(q[0]) > c[0],
+            qb.H(q[1]),
+            qb.Measure(q[1]) > c[0],
+            If(c[0] == 1).Then(qb.X(q[2])),
+            qb.Measure(q[2]) > c[1],
+        )
+
+        rows = _sample(prog)
+
+        assert all(row[2] == row[1] for row in rows)
+
+    def test_condition_inside_repeat_reads_the_current_iteration(self) -> None:
+        """A condition on a bit measured earlier in the same REPEAT body."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            Repeat(cond=3).block(
+                qb.PZ(q[0]),
+                qb.PZ(q[1]),
+                qb.H(q[0]),
+                qb.Measure(q[0]) > c[0],
+                If(c[0] == 1).Then(qb.X(q[1])),
+                qb.Measure(q[1]) > c[1],
+            ),
+        )
+
+        rows = _sample(prog)
+
+        assert all(len(row) == 6 and row[1::2] == row[0::2] for row in rows)
+
+    def test_condition_after_repeat_reads_the_last_iteration(self) -> None:
+        """A bit written inside a REPEAT holds its last iteration's measurement."""
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 3),
+            Repeat(cond=3).block(
+                qb.PZ(q[0]),
+                qb.H(q[0]),
+                qb.Measure(q[0]) > c[0],
+                qb.Measure(q[1]) > c[1],
+            ),
+            If(c[0] == 1).Then(qb.X(q[2])),
+            qb.Measure(q[2]) > c[2],
+        )
+
+        rows = _sample(prog)
+
+        assert all(len(row) == 7 and row[6] == row[4] for row in rows)
+
+    def test_condition_reads_an_older_record(self) -> None:
+        """Later measurements push the conditioning record past rec[-1]."""
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 3),
+            qb.H(q[0]),
+            qb.H(q[1]),
+            qb.Measure(q[0]) > c[0],
+            qb.Measure(q[1]) > c[1],
+            If(c[0] == 1).Then(qb.X(q[2])),
+            qb.Measure(q[2]) > c[2],
+        )
+
+        rows = _sample(prog)
+
+        assert any(row[0] != row[1] for row in rows), "the two records must differ on some shots"
+        assert all(row[2] == row[0] for row in rows)
+
+    def test_condition_inside_repeat_reads_an_older_record(self) -> None:
+        """A lookback past rec[-1] inside a REPEAT body."""
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 3),
+            Repeat(cond=2).block(
+                qb.PZ(q[0]),
+                qb.PZ(q[1]),
+                qb.PZ(q[2]),
+                qb.H(q[0]),
+                qb.H(q[1]),
+                qb.Measure(q[0], q[1]) > (c[0], c[1]),
+                If(c[0] == 1).Then(qb.X(q[2])),
+                qb.Measure(q[2]) > c[2],
+            ),
+        )
+
+        rows = _sample(prog)
+
+        assert any(row[0] != row[1] for row in rows), "the two records must differ on some shots"
+        assert all(len(row) == 6 and row[2] == row[0] and row[5] == row[3] for row in rows)
+
+    def test_permuted_bit_is_rejected(self) -> None:
+        """A permuted classical bit no longer has a tracked measurement record."""
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 2),
+            qb.Measure(q[0]) > c[0],
+            qb.Measure(q[1]) > c[1],
+            Permute([c[0], c[1]], [c[1], c[0]]),
+            If(c[0] == 1).Then(qb.X(q[2])),
+        )
+
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_bit_permuted_inside_repeat_is_rejected_after_it(self) -> None:
+        """A Permute inside a REPEAT invalidates the record taken before it."""
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 2),
+            qb.Measure(q[0]) > c[0],
+            Repeat(cond=2).block(
+                Permute([c[0], c[1]], [c[1], c[0]]),
+            ),
+            If(c[0] == 1).Then(qb.X(q[2])),
+        )
+
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_qubit_permute_still_applies_when_a_creg_shares_the_name(self) -> None:
+        """SLR allows a QReg and a CReg with one name; the qubit swap must still happen."""
+        q = QReg("same", 2)
+        c = CReg("same", 2)
+        prog = Main(
+            q,
+            c,
+            out := CReg("out", 2),
+            qb.X(q[0]),
+            Permute([q[0], q[1]], [q[1], q[0]]),
+            qb.Measure(q) > out,
+        )
+
+        rows = _sample(prog, shots=4)
+
+        assert all(row == [0, 1] for row in rows)
+
+    def test_else_body_is_rejected(self) -> None:
+        """Stim has no else branch for a record-controlled Pauli."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.Measure(q[0]) > c[0],
+            If(c[0] == 1).Then(qb.X(q[1])).Else(qb.Z(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="else-body"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_non_pauli_body_is_rejected(self) -> None:
+        """A conditional Hadamard cannot be expressed as a record-controlled Pauli."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.Measure(q[0]) > c[0],
+            If(c[0] == 1).Then(qb.H(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="If body contains H"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_register_condition_is_rejected(self) -> None:
+        """A whole-register comparison is not a single record target."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.Measure(q[0]) > c[0],
+            If(c == 1).Then(qb.X(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="unsupported If condition"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_unmeasured_bit_is_rejected(self) -> None:
+        """A bit that never received a measurement has no record target."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            If(c[0] == 1).Then(
-                qb.H(q[0]),
+            If(c[0] == 1).Then(qb.X(q[0])),
+        )
+
+        with pytest.raises(NotImplementedError, match="holds no measurement result"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_bit_measured_before_repeat_is_rejected_inside_it(self) -> None:
+        """The record offset of an outer measurement changes every iteration."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.Measure(q[0]) > c[0],
+            Repeat(cond=2).block(
+                If(c[0] == 1).Then(qb.X(q[1])),
+                qb.Measure(q[1]) > c[1],
             ),
         )
-        ast = slr_to_ast(prog)
 
-        code = ast_to_stim_str(ast)
+        with pytest.raises(NotImplementedError, match="holds no measurement result"):
+            ast_to_stim(slr_to_ast(prog))
 
-        # Conditionals add TICK markers since Stim doesn't support conditionals
-        assert "TICK" in code
-        assert "H 0" in code
+    def test_assigned_undeclared_register_is_rejected(self) -> None:
+        """Whole-register assignment invalidates bits even without a register declaration."""
+        q = QReg("q", 2)
+        c = CReg("inline", 1)
+        prog = Main(
+            q,
+            qb.Measure(q[0]) > c[0],
+            c.set(1),
+            If(c[0] == 1).Then(qb.X(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_assigned_bit_is_rejected(self) -> None:
+        """A classical assignment replaces the measured value Stim could condition on."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.Measure(q[0]) > c[0],
+            c[0].set(1),
+            If(c[0] == 1).Then(qb.X(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_register_assigned_inside_repeat_is_rejected_after_it(self) -> None:
+        """An assignment inside a REPEAT invalidates the outer measurement record."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.Measure(q[0]) > c[0],
+            Repeat(cond=2).block(
+                c.set(0),
+            ),
+            If(c[0] == 1).Then(qb.X(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="no longer comes from a tracked measurement"):
+            ast_to_stim(slr_to_ast(prog))
+
+    def test_legacy_generator_rejects_if(self) -> None:
+        """The deprecated StimGenerator fails loud instead of dropping the condition."""
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.Measure(q[0]) > c[0],
+            If(c[0] == 1).Then(qb.X(q[1])),
+        )
+
+        with pytest.raises(NotImplementedError, match="StimGenerator does not support If"):
+            StimGenerator(_internal=True).generate_block(prog)
 
 
 class TestAstToStimQEC:

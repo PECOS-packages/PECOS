@@ -1,6 +1,7 @@
-"""Quantum declarations retain upstream schema validation and Python semantics."""
+"""PHIR-JSON declaration shape and program-wide name uniqueness."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pecos
@@ -9,6 +10,7 @@ from pecos.circuits.qc2phir import to_phir_dict
 from pecos.classical_interpreters.phir_classical_interpreter import PhirClassicalInterpreter
 from pecos.reps.pyphir import PyPHIR
 from pecos.typing import PhirModel
+from pecos_rslib import PhirJsonEngine, RustPhirClassicalInterpreter
 
 
 @pytest.mark.parametrize("explicit_type", [False, True])
@@ -61,7 +63,7 @@ def test_quantum_size_schema_remains_enforced(fields: dict) -> None:
 
 @pytest.mark.parametrize("size", [2, 3])
 def test_duplicate_quantum_declarations(size: int) -> None:
-    """Python preserves its reference behavior of overwriting the name mapping."""
+    """Identical and different-sized quantum redeclarations are invalid."""
     program = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
@@ -70,10 +72,12 @@ def test_duplicate_quantum_declarations(size: int) -> None:
             {"data": "qvar_define", "variable": "q", "size": size},
         ],
     }
-    parsed = PyPHIR.from_phir(program)
-    assert parsed.num_qubits == 2 + size
-    assert parsed.qvar_meta["q"].qubit_ids == list(range(2, 2 + size))
-    assert PhirClassicalInterpreter().init(program) == 2 + size
+    for reader in [PyPHIR.from_phir, PhirClassicalInterpreter().init]:
+        with pytest.raises(
+            ValueError,
+            match="Variable 'q' is already declared as quantum; cannot redeclare as quantum",
+        ):
+            reader(program)
 
 
 def test_classical_type_remains_required() -> None:
@@ -110,3 +114,70 @@ def test_empty_registers_do_not_remove_nonempty_registers() -> None:
     assert [op["variable"] for op in generated["ops"]] == ["q", "c"]
     PhirModel.model_validate(generated)
     assert PhirClassicalInterpreter().init(generated) == 2
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("quantum", "quantum"), ("classical", "classical"), ("quantum", "classical"), ("classical", "quantum")],
+)
+@pytest.mark.parametrize(
+    "reader",
+    [
+        PyPHIR.from_phir,
+        PhirClassicalInterpreter().init,
+        RustPhirClassicalInterpreter().init,
+        lambda program: PhirJsonEngine(json.dumps(program)),
+        lambda program: PhirJsonEngine.create_with_validation_disabled(json.dumps(program)),
+        PhirModel.model_validate,
+        lambda program: PhirModel.model_validate_json(json.dumps(program)),
+    ],
+)
+def test_redeclaration_matrix(first: str, second: str, reader: Callable[[dict], object]) -> None:
+    """All entry points reject every shape with the name and both declaration kinds."""
+
+    def declaration(kind: str) -> dict:
+        return {
+            "data": "qvar_define" if kind == "quantum" else "cvar_define",
+            "data_type": "qubits" if kind == "quantum" else "u32",
+            "variable": "a",
+            "size": 1,
+        }
+
+    program = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration(first), declaration(second)]}
+    with pytest.raises(ValueError, match=f"Variable 'a' is already declared as {first}; cannot redeclare as {second}"):
+        reader(program)
+
+
+@pytest.mark.parametrize("quantum_name", ["q", "__q0__"])
+@pytest.mark.parametrize("interpreter", [PhirClassicalInterpreter(), RustPhirClassicalInterpreter()])
+def test_distinct_declarations_and_repeated_references(
+    interpreter: PhirClassicalInterpreter | RustPhirClassicalInterpreter,
+    quantum_name: str,
+) -> None:
+    """Several quantum and classical names execute identically through both interpreters."""
+    from pecos.engines.hybrid_engine import HybridEngine
+
+    fixture = (
+        Path(__file__).resolve().parents[5] / "crates/pecos-phir-json/tests/fixtures/unique_declarations.phir.json"
+    )
+    program = json.loads(fixture.read_text().replace('"q"', json.dumps(quantum_name)))
+    result = HybridEngine(cinterp=interpreter).run(program, shots=2, seed=42, return_int=True)
+    assert result == {"a": [7, 7], "b": [2, 2], "m": [1, 1]}
+
+
+def test_unreachable_redeclaration() -> None:
+    """Control flow does not create another declaration namespace."""
+    program = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "variable": "a", "size": 1},
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [{"data": "cvar_define", "data_type": "u32", "variable": "a", "size": 1}],
+            },
+        ],
+    }
+    with pytest.raises(ValueError, match="Variable 'a' is already declared as quantum; cannot redeclare as classical"):
+        PyPHIR.from_phir(program)

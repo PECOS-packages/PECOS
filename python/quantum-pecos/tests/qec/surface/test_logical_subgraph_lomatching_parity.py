@@ -29,10 +29,9 @@ the full lomatching decoder stack (numba/galois/ldpc/pymatching) is not required
 from __future__ import annotations
 
 import pytest
+import stim
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos_rslib.qec import LogicalSubgraphDecoder
-
-stim = pytest.importorskip("stim", reason="stim is the differential-test oracle dependency")
 
 
 def _lomatching_reference_membership(dem_str: str, stab_coords) -> list[list[int]]:

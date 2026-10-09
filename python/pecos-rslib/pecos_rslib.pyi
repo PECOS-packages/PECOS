@@ -1121,7 +1121,8 @@ class QisEngineBuilder:
         self,
         runtime_name: str | None = None,
         *,
-        custom_event_policy: str = "capture",
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
     ) -> QisEngineBuilder: ...
     def selene_runtime_plugin(
         self,
@@ -1129,7 +1130,8 @@ class QisEngineBuilder:
         init_args: list[str] | None = None,
         library_search_dirs: list[str] | None = None,
         *,
-        custom_event_policy: str = "capture",
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
     ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:
@@ -3933,7 +3935,9 @@ class ScheduledEventBatch:
     @property
     def operations(self) -> list[Gate | tuple[int, bytes]]: ...
     @property
-    def measurements(self) -> list[tuple[int, int, int]]: ...
+    def measurements(self) -> list[tuple[int, int, int]]:
+        """(operation position, native ID, program ID); program IDs may repeat."""
+        ...
 
 class _ScheduledBatchAdapter(Protocol):
     """Structural callback protocol; not a runtime extension class."""

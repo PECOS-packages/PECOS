@@ -45,10 +45,31 @@ use std::fmt;
 mod stratified;
 pub use stratified::{FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate};
 
+use super::circuit_definitions::{
+    CircuitDefinitions, DefinitionError, definitions_from_tick_circuit,
+};
+
 pub use super::propagator::UnsupportedGateError;
 use super::propagator::{
     UnsupportedGateLocation, is_supported_noop_or_metadata_gate, is_supported_prep_gate,
 };
+
+/// Failure to build a fault catalog from circuit gates or definitions.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum FaultCatalogError {
+    /// A gate cannot be propagated by the catalog.
+    #[error(transparent)]
+    UnsupportedGate(#[from] UnsupportedGateError),
+    /// Detector or observable definitions are invalid.
+    #[error(transparent)]
+    Definition(#[from] Box<DefinitionError>),
+}
+
+impl From<DefinitionError> for FaultCatalogError {
+    fn from(error: DefinitionError) -> Self {
+        Self::Definition(Box::new(error))
+    }
+}
 
 /// Standard single-qubit Clifford gates supported by `CliffordGateable`.
 pub const STANDARD_1Q_CLIFFORD_GATES: &[GateType] = &[
@@ -193,12 +214,11 @@ pub(crate) enum PauliType {
 ///
 /// # Errors
 ///
-/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-/// the supported Clifford/prep/measurement/metadata set.
+/// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
 pub fn build_fault_table(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
-) -> Result<Vec<FaultMechanism>, UnsupportedGateError> {
+) -> Result<Vec<FaultMechanism>, FaultCatalogError> {
     let mut catalog = FaultCatalog::from_circuit(tc)?;
     catalog.with_noise(noise);
     Ok(catalog.to_mechanisms())
@@ -677,9 +697,8 @@ impl FaultCatalog {
     ///
     /// # Errors
     ///
-    /// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-    /// the supported Clifford/prep/measurement/metadata set.
-    pub fn from_circuit(tc: &TickCircuit) -> Result<Self, UnsupportedGateError> {
+    /// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
+    pub fn from_circuit(tc: &TickCircuit) -> Result<Self, FaultCatalogError> {
         build_structural_fault_catalog(tc)
     }
 
@@ -1008,41 +1027,31 @@ impl Iterator for OwnedFaultConfigIter {
 /// Returns per-location, per-alternative fault data including Pauli labels,
 /// affected detectors, observables, tracked Paulis, and probability fields.
 ///
-/// Reads detector/observable metadata and tracked-Pauli annotations
-/// from the circuit when present.
+/// Reads detector/observable metadata and annotations through the shared
+/// definition reader. Tracked-Pauli annotations use their separate propagation path.
 ///
 /// # Errors
 ///
-/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-/// the supported Clifford/prep/measurement/metadata set.
+/// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
 pub fn build_fault_catalog(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
-) -> Result<FaultCatalog, UnsupportedGateError> {
+) -> Result<FaultCatalog, FaultCatalogError> {
     let mut catalog = FaultCatalog::from_circuit(tc)?;
     catalog.with_noise(noise);
     Ok(catalog)
 }
 
-fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, UnsupportedGateError> {
+fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, FaultCatalogError> {
     validate_tick_circuit(tc)?;
     let (gates, meas_positions) = flatten_tick_circuit(tc);
 
-    // Parse detector/DEM-output records for measurement→detector/op mapping
-    let det_records = parse_detector_records(tc);
-    let obs_records = parse_observable_records(tc);
+    let definitions = definitions_from_tick_circuit(tc)?;
+    // Validated record-consuming gates have arity one. Both walks visit ticks,
+    // batches and instances in storage order, so these are the same positions.
+    assert_eq!(meas_positions.len(), definitions.num_measurements);
     let tracked_pauli_annotations = parse_tracked_pauli_annotations(tc);
-    let num_meas = tc
-        .get_meta("num_measurements")
-        .and_then(|a| {
-            if let pecos_quantum::Attribute::String(s) = a {
-                s.parse::<usize>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(meas_positions.len());
-    let record_effect_index = RecordEffectIndex::new(&det_records, &obs_records, num_meas);
+    let record_effect_index = RecordEffectIndex::new(&definitions);
 
     let mut locations = Vec::new();
 
@@ -1314,21 +1323,6 @@ fn pauli_pair_to_string(p1: PauliType, q1: usize, p2: PauliType, q2: usize) -> P
     )
 }
 
-fn parse_records_from_meta(tc: &TickCircuit, key: &str) -> Vec<Vec<i32>> {
-    let Some(pecos_quantum::Attribute::String(json)) = tc.get_meta(key) else {
-        return Vec::new();
-    };
-    parse_records_array_list(json)
-}
-
-fn parse_detector_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
-    parse_records_from_meta(tc, "detectors")
-}
-
-fn parse_observable_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
-    parse_records_from_meta(tc, "observables")
-}
-
 fn parse_tracked_pauli_annotations(tc: &TickCircuit) -> Vec<PauliString> {
     tc.annotations()
         .iter()
@@ -1364,53 +1358,28 @@ fn tracked_paulis_flipped_by(
         .collect()
 }
 
-/// Simple parser for `[{"records": [...]}, ...]` JSON without `serde_json`.
-fn parse_records_array_list(json: &str) -> Vec<Vec<i32>> {
-    let json = json.trim();
-    if json.is_empty() || json == "[]" {
-        return Vec::new();
-    }
-    let mut results = Vec::new();
-    // Find each "records": [...] within the JSON
-    let mut search_from = 0;
-    while let Some(pos) = json[search_from..].find("\"records\"") {
-        let pos = search_from + pos;
-        let rest = &json[pos..];
-        if let Some(arr_start) = rest.find('[') {
-            if let Some(arr_end) = rest[arr_start..].find(']') {
-                let arr_str = &rest[arr_start + 1..arr_start + arr_end];
-                let nums: Vec<i32> = arr_str
-                    .split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect();
-                results.push(nums);
-                search_from = pos + arr_start + arr_end + 1;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    results
-}
-
-fn record_absolute_index(num_meas: usize, rec: i32) -> Option<usize> {
-    let base = i64::try_from(num_meas).ok()?;
-    let abs_idx = base.checked_add(i64::from(rec))?;
-    usize::try_from(abs_idx).ok()
-}
-
 struct RecordEffectIndex {
     detectors_by_measurement: Vec<Vec<usize>>,
     observables_by_measurement: Vec<Vec<usize>>,
 }
 
 impl RecordEffectIndex {
-    fn new(det_records: &[Vec<i32>], obs_records: &[Vec<i32>], num_meas: usize) -> Self {
+    fn new(definitions: &CircuitDefinitions) -> Self {
         Self {
-            detectors_by_measurement: records_by_measurement(det_records, num_meas),
-            observables_by_measurement: records_by_measurement(obs_records, num_meas),
+            detectors_by_measurement: records_by_measurement(
+                definitions
+                    .detectors
+                    .iter()
+                    .map(|def| (def.id, def.measurements.as_slice())),
+                definitions.num_measurements,
+            ),
+            observables_by_measurement: records_by_measurement(
+                definitions
+                    .observables
+                    .iter()
+                    .map(|def| (def.id, def.measurements.as_slice())),
+                definitions.num_measurements,
+            ),
         }
     }
 
@@ -1435,15 +1404,14 @@ fn catalog_effect_parts(
     (affected, dets, obs, effect.affected_tracked_paulis)
 }
 
-fn records_by_measurement(records_by_output: &[Vec<i32>], num_meas: usize) -> Vec<Vec<usize>> {
+fn records_by_measurement<'a>(
+    records_by_output: impl Iterator<Item = (u32, &'a [usize])>,
+    num_meas: usize,
+) -> Vec<Vec<usize>> {
     let mut by_measurement = vec![Vec::new(); num_meas];
-    for (output_idx, records) in records_by_output.iter().enumerate() {
-        for &rec in records {
-            if let Some(meas_idx) = record_absolute_index(num_meas, rec)
-                && meas_idx < num_meas
-            {
-                by_measurement[meas_idx].push(output_idx);
-            }
+    for (id, records) in records_by_output {
+        for &position in records {
+            by_measurement[position].push(id as usize);
         }
     }
     by_measurement
@@ -1999,9 +1967,22 @@ mod tests {
 
     #[test]
     fn test_record_effect_index_maps_measurement_effects_by_xor() {
-        let det_records = vec![vec![-1], vec![-2, -1], vec![-1, -1], vec![-4], vec![1]];
-        let obs_records = vec![vec![-2], vec![-1, -2]];
-        let index = RecordEffectIndex::new(&det_records, &obs_records, 3);
+        let mut tc = TickCircuit::new();
+        tc.tick().mz(&[0, 1, 2]);
+        tc.set_meta(
+            "detectors",
+            pecos_quantum::Attribute::String(
+                r#"[{"id":0,"records":[2]},{"id":1,"records":[1,2]},{"id":2,"records":[2,2]}]"#
+                    .into(),
+            ),
+        );
+        tc.set_meta(
+            "observables",
+            pecos_quantum::Attribute::String(
+                r#"[{"id":0,"records":[1]},{"id":1,"records":[2,1]}]"#.into(),
+            ),
+        );
+        let index = RecordEffectIndex::new(&definitions_from_tick_circuit(&tc).unwrap());
 
         assert_eq!(index.detectors_for_measurements(&[2]), vec![0, 1]);
         assert_eq!(index.detectors_for_measurements(&[1, 2]), vec![0]);
@@ -2524,7 +2505,9 @@ mod tests {
         };
         let result = build_fault_table(&tc, &noise);
         assert!(result.is_err(), "T should be rejected");
-        let err = result.unwrap_err();
+        let FaultCatalogError::UnsupportedGate(err) = result.unwrap_err() else {
+            panic!("expected unsupported gate");
+        };
         assert_eq!(err.gate_type, GateType::T);
         assert_eq!(
             err.location,
@@ -3937,11 +3920,11 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         tc.set_meta(
             "observables",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
 
         let noise = StochasticNoiseParams {
@@ -4237,7 +4220,7 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records": [-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         tc.set_meta(
             "observables",
@@ -4551,7 +4534,7 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.into()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
         );
         tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
 

@@ -128,7 +128,8 @@ pub trait CliffordGateable: QuantumSimulator {
     /// The default is a no-op, which is correct for representations where global
     /// phase is unobservable, such as density matrices, measurement-only mocks,
     /// foreign interfaces without a global-phase operation, and compile-only
-    /// resource analyzers. Amplitude-exposing simulators must override this hook.
+    /// resource analyzers. Simulators exposing exact amplitudes must override
+    /// this hook; projective backends with `*_up_to_phase` reads keep the no-op.
     ///
     /// # Parameters
     /// - `phase`: The phase angle for one scalar application.

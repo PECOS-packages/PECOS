@@ -2667,6 +2667,7 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "pytket" },
     { name = "qir-qis" },
     { name = "stim" },
 ]
@@ -2723,6 +2724,7 @@ test = [
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "pytket", specifier = "==2.18.1" },
     { name = "qir-qis", specifier = "==0.1.8" },
     { name = "stim", specifier = "==1.15.0" },
 ]

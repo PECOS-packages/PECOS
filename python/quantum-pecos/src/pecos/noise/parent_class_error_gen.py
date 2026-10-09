@@ -202,7 +202,7 @@ class Generator:
             if symbol in self.error_func_dict:
                 logger.warning("Overriding gate error for gate: %s.", symbol)
 
-            self.set_gate_error(symbol, error_func, error_param, after)
+            self.set_gate_error(symbol, error_func, error_param, after=after)
 
     def set_default_error(
         self,
@@ -417,16 +417,16 @@ class Generator:
 
             if isinstance(error_symbols, tuple | pc.Array) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location, strict=False):
-                    if sym != "I":
+                    if str(sym) != "I":
                         after.update(sym, {loc}, emptyappend=True)
 
             elif isinstance(error_symbols, str):
-                if error_symbols != "I":
+                if str(error_symbols) != "I":
                     after.update(error_symbols, {location}, emptyappend=True)
 
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
-                if error_symbols != "I":
+                if str(error_symbols) != "I":
                     after.update(error_symbols, {location}, emptyappend=True)
             else:
                 msg = "Only tuples and strings are currently accepted"
@@ -444,17 +444,17 @@ class Generator:
             index = int(pc.random.choice(len(self.data), 1)[0])
             error_symbols = self.data[index]
 
-            if isinstance(error_symbols, pc.Array) and len(error_symbols) > 1:
+            if isinstance(error_symbols, tuple | pc.Array) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location, strict=False):
-                    if sym != "I":
+                    if str(sym) != "I":
                         before.update(sym, {loc}, emptyappend=True)
             elif isinstance(error_symbols, str):
-                if error_symbols != "I":
+                if str(error_symbols) != "I":
                     before.update(error_symbols, {location}, emptyappend=True)
 
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
-                if error_symbols != "I":
+                if str(error_symbols) != "I":
                     before.update(error_symbols, {location}, emptyappend=True)
             else:
                 msg = "Only tuples and strings are currently accepted"

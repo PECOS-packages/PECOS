@@ -77,7 +77,7 @@ pub struct ScheduledMeasurement {
     pub operation_index: usize,
     /// Future allocated by the native runtime.
     pub runtime_result: u64,
-    /// Result expected by the source program.
+    /// Result expected by the source program; may repeat when a slot is re-measured.
     pub program_result: usize,
     /// Source measurement requires a leakage-aware result, even if the ABI
     /// emitted an ordinary measurement operation.
@@ -102,7 +102,7 @@ pub struct ScheduledBatch {
 }
 
 // Bounds on each indivisible native callback batch, not the entire drain.
-// Returned output has no aggregate cap; callers own it after extraction.
+// Every collection also has a transport-derived limit, including empty batches.
 #[cfg(feature = "selene")]
 pub(crate) const MAX_OPERATIONS: usize = 4096;
 #[cfg(feature = "selene")]
@@ -112,4 +112,5 @@ pub(crate) const MAX_PAYLOAD_BYTES: usize = 262_144;
 #[derive(Default)]
 pub(crate) struct ScheduledOutput {
     pub batches: Vec<ScheduledBatch>,
+    pub budget: crate::scheduled_transport::EventBudget,
 }

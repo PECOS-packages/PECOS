@@ -36,7 +36,6 @@
 
 use crate::errors::MpsError;
 use crate::mps::{Mps, MpsConfig};
-use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_random::PecosRng;
 use pecos_simulators::{
@@ -146,7 +145,6 @@ pub struct Mast {
     projection_records: Vec<ProjectionRecord>,
     /// Peak bond dimension observed before or after a deferred projection.
     projection_peak_bond: usize,
-    global_phase: Complex64,
     disent_flags: Vec<Option<super::SiteEigenstate>>,
     numerical_flag_redetection: bool,
     gf2_matrix: super::ofd::Gf2FlipMatrix,
@@ -154,6 +152,7 @@ pub struct Mast {
     /// Runtime counters for non-Clifford decomposition paths.
     pub stats: super::StabMpsStats,
     /// Pending non-Clifford RZ angle per qubit when `merge_rz` is on.
+    /// Merging is exact up to a global phase.
     /// Flushed when any other gate touches the qubit (except RZ-same-qubit
     /// merges, Z/S/Sdg/CZ commutes). Mirror of `StabMps`'s field.
     pending_rz: Vec<Option<Angle64>>,
@@ -189,7 +188,6 @@ impl Mast {
             projection_order: ProjectionOrder::default(),
             projection_records: Vec::new(),
             projection_peak_bond: 0,
-            global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
             numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
@@ -229,7 +227,6 @@ impl Mast {
             projection_order: ProjectionOrder::default(),
             projection_records: Vec::new(),
             projection_peak_bond: 0,
-            global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
             numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
@@ -303,19 +300,14 @@ impl Mast {
         }
         let qid = QubitId(q);
         if theta == Angle64::HALF_TURN {
-            self.global_phase *= Complex64::new(0.0, -1.0);
             self.tableau.z(&[qid]);
             return;
         }
         if theta == Angle64::QUARTER_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
             self.tableau.sz(&[qid]);
             return;
         }
         if theta == Angle64::THREE_QUARTERS_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
             self.tableau.szdg(&[qid]);
             return;
         }
@@ -323,8 +315,7 @@ impl Mast {
     }
 
     /// Apply RZ through the full tableau-to-MPS Pauli decomposition, including
-    /// at Clifford angles. This retains the state-dependent scalar required
-    /// when the rotation is part of a phase-fixed gate.
+    /// at Clifford angles, without allocating injection ancillas.
     fn rz_apply_decomposed(&mut self, theta: Angle64, q: usize) {
         if theta == Angle64::ZERO {
             return;
@@ -351,9 +342,9 @@ impl Mast {
         );
     }
 
-    /// Flush a merged RZ and apply a new one without projective Clifford
-    /// shortcuts. This is the exact rotation primitive used by phase-fixed U.
-    fn rz_apply_phase_exact(&mut self, theta: Angle64, q: usize) {
+    /// Flush a merged RZ and apply a new one by direct decomposition.
+    /// U uses this path to avoid allocating injection ancillas.
+    fn rz_apply_unmerged_decomposed(&mut self, theta: Angle64, q: usize) {
         if self.merge_rz
             && let Some(pending) = self.pending_rz[q].take()
         {
@@ -551,16 +542,11 @@ impl Mast {
             // No correction needed.
         } else if correction_angle == Angle64::HALF_TURN {
             // RZ(pi) = -iZ.
-            self.global_phase *= Complex64::new(0.0, -1.0);
             self.tableau.z(&[tgt]);
         } else if correction_angle == Angle64::QUARTER_TURN {
             // RZ(pi/2) = e^{-i*pi/4} S -- the T-gate correction.
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
             self.tableau.sz(&[tgt]);
         } else if correction_angle == Angle64::THREE_QUARTERS_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
             self.tableau.szdg(&[tgt]);
         } else {
             // Non-Clifford correction: apply via the STN protocol.
@@ -751,7 +737,6 @@ impl QuantumSimulator for Mast {
         self.deferred.clear();
         self.projection_records.clear();
         self.projection_peak_bond = 0;
-        self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(super::SiteEigenstate::Z(false)); self.total_qubits];
         self.gf2_matrix.reset();
         self.stats = super::StabMpsStats::default();
@@ -767,14 +752,6 @@ impl QuantumSimulator for Mast {
 }
 
 impl CliffordGateable for Mast {
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let scalar = Complex64::from_polar(1.0, phase.to_radians_signed());
-        for _ in qubits {
-            self.global_phase *= scalar;
-        }
-        self
-    }
-
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.tableau.sz(qubits);
         self
@@ -787,77 +764,6 @@ impl CliffordGateable for Mast {
         }
         self.tableau.h(qubits);
         self
-    }
-
-    // The tableau primitives are not phase-canonical: several differ from
-    // `Clifford::to_matrix()` by a global phase (issue #666). The shared
-    // `CliffordGateable` defaults add the residue that makes a canonical word
-    // equal the canonical matrix, which double-counts on top of these
-    // primitives, so the composite Cliffords use the residue-free words here.
-    // Delete these overrides once the primitives are canonical. The phase
-    // hook itself stays live for the arbitrary-rotation decompositions.
-    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.z(qubits).x(qubits)
-    }
-
-    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.z(qubits).h(qubits)
-    }
-
-    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.h(qubits).z(qubits)
-    }
-
-    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sy(qubits).z(qubits)
-    }
-
-    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).y(qubits)
-    }
-
-    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).x(qubits)
-    }
-
-    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).z(qubits)
-    }
-
-    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).y(qubits)
-    }
-
-    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).sz(qubits)
-    }
-
-    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sxdg(qubits)
-    }
-
-    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sy(qubits)
-    }
-
-    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sydg(qubits).sx(qubits)
-    }
-
-    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sz(qubits)
-    }
-
-    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sx(qubits)
-    }
-
-    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).sx(qubits)
-    }
-
-    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).szdg(qubits)
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
@@ -945,23 +851,21 @@ impl ArbitraryRotationGateable for Mast {
         qubits: &[QubitId],
     ) -> &mut Self {
         for &q in qubits {
-            self.rz_apply_phase_exact(lambda, q.index());
+            self.rz_apply_unmerged_decomposed(lambda, q.index());
         }
 
         self.szdg(qubits);
         self.h(qubits);
         for &q in qubits {
-            self.rz_apply_phase_exact(theta, q.index());
+            self.rz_apply_unmerged_decomposed(theta, q.index());
         }
         self.h(qubits);
         self.sz(qubits);
 
         for &q in qubits {
-            self.rz_apply_phase_exact(phi, q.index());
+            self.rz_apply_unmerged_decomposed(phi, q.index());
         }
-        let phase =
-            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
-        self.apply_global_phase(phase, qubits)
+        self
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
@@ -979,7 +883,9 @@ mod tests {
     use super::*;
     use crate::stab_mps::StabMps;
     use approx::assert_relative_eq;
+    use num_complex::Complex64;
     use pecos_core::Clifford;
+    use pecos_simulators::DenseStateVec;
 
     #[cfg(not(debug_assertions))]
     #[derive(Debug, PartialEq)]
@@ -1015,13 +921,85 @@ mod tests {
         super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
     }
 
+    fn assert_equal_up_to_phase(a: &[Complex64], b: &[Complex64], label: &str) {
+        assert_eq!(a.len(), b.len(), "{label}: state dimensions");
+        let overlap: Complex64 = a.iter().zip(b).map(|(x, y)| x * y.conj()).sum();
+        assert!(overlap.norm() > 1e-12, "{label}: orthogonal states");
+        let phase = overlap / overlap.norm();
+        for (index, (x, y)) in a.iter().zip(b).enumerate() {
+            assert!(
+                (*x - phase * y).norm() < 1e-12,
+                "{label}: amplitude {index}: {x} vs {y}, phase {phase}"
+            );
+        }
+    }
+
+    fn mast_data_state_vector(mast: &Mast) -> Vec<Complex64> {
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        let full = view.state_vector_up_to_phase();
+        let data_dimension = 1_usize << mast.num_data_qubits;
+        let mut best = Vec::new();
+        let mut best_norm = 0.0;
+        let mut total_norm = 0.0;
+        for block in full.chunks_exact(data_dimension) {
+            let norm = block
+                .iter()
+                .map(num_complex::Complex::norm_sqr)
+                .sum::<f64>();
+            total_norm += norm;
+            if norm > best_norm {
+                best_norm = norm;
+                best = block.to_vec();
+            }
+        }
+        // The dense tableau projector used only by this test becomes
+        // mildly ill-conditioned on the exact-mz continuation circuit.
+        assert!(best_norm > 0.99, "ancillas did not factor: {best_norm}");
+        assert!((total_norm - 1.0).abs() < 1e-8);
+        let scale = best_norm.sqrt().recip();
+        for amplitude in &mut best {
+            *amplitude *= scale;
+        }
+        best
+    }
+
     fn mast_state_vector_without_ancillas(mast: &Mast) -> Vec<Complex64> {
         assert_eq!(mast.total_qubits, mast.num_data_qubits);
         let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
         view.tableau = mast.tableau.clone();
         view.mps = mast.mps.clone();
-        view.global_phase = mast.global_phase;
-        view.state_vector()
+        view.state_vector_up_to_phase()
+    }
+
+    #[test]
+    fn scaled_mast_data_measurement_matches_normalized_state() {
+        use crate::stab_mps::trivial_measurement_tests::assert_pair_close;
+
+        for probability_one in [0.0_f64, 0.37, 1.0] {
+            for seed in 0..8 {
+                let mut normalized = Mast::with_seed(2, 2, seed);
+                normalized.mps.tensors_mut()[0][(0, 0)] =
+                    Complex64::new((1.0 - probability_one).sqrt(), 0.0);
+                normalized.mps.tensors_mut()[0][(0, 1)] =
+                    Complex64::new(probability_one.sqrt(), 0.0);
+                let mut scaled = Mast::with_seed(2, 2, seed);
+                scaled.mps = normalized.mps.clone();
+                scaled.mps.scale(Complex64::new(1e-7, 0.0));
+                let actual = scaled.mz(&[QubitId(0)]);
+                let expected = normalized.mz(&[QubitId(0)]);
+                assert_eq!(actual[0].outcome, expected[0].outcome);
+                assert_eq!(actual[0].is_deterministic, expected[0].is_deterministic);
+                assert_pair_close(
+                    &scaled.tableau,
+                    &scaled.mps,
+                    &normalized.tableau,
+                    &normalized.mps,
+                );
+                assert_eq!(scaled.disent_flags, normalized.disent_flags);
+            }
+        }
     }
 
     #[test]
@@ -1061,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn u_phase_family_is_exact() {
+    fn u_phase_family_up_to_phase() {
         for (lambda, expected_high, label) in [
             (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),
             (
@@ -1075,27 +1053,13 @@ mod tests {
             (Angle64::QUARTER_TURN, Complex64::new(0.0, 1.0), "SZ"),
             (Angle64::HALF_TURN, Complex64::new(-1.0, 0.0), "Z"),
         ] {
-            for basis in 0..=1 {
-                let mut sim = Mast::new(1, 0);
-                if basis == 1 {
-                    sim.x(&[QubitId(0)]);
-                }
-                sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
-                let actual = mast_state_vector_without_ancillas(&sim);
-                let expected = if basis == 0 {
-                    [Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]
-                } else {
-                    [Complex64::new(0.0, 0.0), expected_high]
-                };
-                for row in 0..2 {
-                    assert!(
-                        (actual[row] - expected[row]).norm() < 1e-12,
-                        "U phase-family {label}, column={basis}, row={row}: expected {}, got {}",
-                        expected[row],
-                        actual[row]
-                    );
-                }
-            }
+            let mut sim = Mast::new(1, 0);
+            sim.h(&[QubitId(0)]);
+            sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+            let actual = mast_state_vector_without_ancillas(&sim);
+            let scale = std::f64::consts::FRAC_1_SQRT_2;
+            let expected = [Complex64::new(scale, 0.0), expected_high * scale];
+            assert_equal_up_to_phase(&actual, &expected, label);
         }
     }
 
@@ -1109,29 +1073,50 @@ mod tests {
         let lambda_rad = lambda.to_radians_signed();
         let c = (theta_rad / 2.0).cos();
         let s = (theta_rad / 2.0).sin();
-        let expected_columns = [
-            [Complex64::new(c, 0.0), Complex64::from_polar(s, phi_rad)],
-            [
-                -Complex64::from_polar(s, lambda_rad),
-                Complex64::from_polar(c, lambda_rad + phi_rad),
-            ],
+        let scale = std::f64::consts::FRAC_1_SQRT_2;
+        // U acts on q0, so each q1 block is one matrix column / sqrt(2).
+        let expected = [
+            Complex64::new(c, 0.0) * scale,
+            Complex64::from_polar(s, phi_rad) * scale,
+            -Complex64::from_polar(s, lambda_rad) * scale,
+            Complex64::from_polar(c, lambda_rad + phi_rad) * scale,
         ];
 
-        for (basis, expected) in expected_columns.iter().enumerate() {
-            let mut sim = Mast::new(1, 0).with_merge_rz(true);
-            if basis == 1 {
-                sim.x(&[QubitId(0)]);
-            }
+        for merge_rz in [false, true] {
+            let mut sim = Mast::new(2, 0).with_merge_rz(merge_rz);
+            sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
             sim.u(theta, phi, lambda, &[QubitId(0)]);
+            sim.flush();
             let actual = mast_state_vector_without_ancillas(&sim);
-            for (row, &expected_amplitude) in expected.iter().enumerate() {
-                assert!(
-                    (actual[row] - expected_amplitude).norm() < 1e-10,
-                    "column={basis}, row={row}: expected {expected_amplitude}, got {}",
-                    actual[row]
-                );
-            }
+            assert_equal_up_to_phase(&actual, &expected, &format!("U Choi, merge_rz={merge_rz}"));
         }
+    }
+
+    #[test]
+    fn pending_rz_before_u_matches_dense_without_injection() {
+        let mut mast = Mast::with_seed(2, 2, 952).with_merge_rz(true);
+        let mut dense = DenseStateVec::new(2);
+        let pending = Angle64::from_radians(0.37);
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        mast.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+        dense.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+        mast.rz(pending, &[QubitId(0)]);
+        dense.rz(pending, &[QubitId(0)]);
+        assert_eq!(mast.pending_rz[0], Some(pending));
+        mast.u(theta, phi, lambda, &[QubitId(0)]);
+        dense.u(theta, phi, lambda, &[QubitId(0)]);
+        mast.flush();
+        mast.project_all();
+        assert_equal_up_to_phase(
+            &mast_data_state_vector(&mast),
+            &dense_state(&mut dense, 2),
+            "pending RZ before U",
+        );
+        // U must consume the pending angle by direct decomposition, before H
+        // could flush it through magic-state injection.
+        assert_eq!(mast.num_ancillas_used(), 0);
     }
 
     fn project_next_and_assert(mast: &mut Mast, context: &str) {
@@ -1173,40 +1158,36 @@ mod tests {
         assert_eq!(measurements.len(), qubits.len());
     }
 
-    #[test]
-    fn test_global_phase_hook_accumulates_once_per_target() {
-        let mut mast = Mast::new(2, 0);
-        mast.apply_global_phase(Angle64::QUARTER_TURN / 4u64, &[QubitId(0), QubitId(1)]);
-        let expected = Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
-        assert!((mast.global_phase - expected).norm() < 1e-12);
-    }
-
-    fn apply_single_qubit_clifford(mast: &mut Mast, gate: Clifford, qubits: &[QubitId]) {
+    fn apply_single_qubit_clifford<S: CliffordGateable>(
+        sim: &mut S,
+        gate: Clifford,
+        qubits: &[QubitId],
+    ) {
         match gate {
-            Clifford::I => mast.identity(qubits),
-            Clifford::X => mast.x(qubits),
-            Clifford::Y => mast.y(qubits),
-            Clifford::Z => mast.z(qubits),
-            Clifford::H => mast.h(qubits),
-            Clifford::H2 => mast.h2(qubits),
-            Clifford::H3 => mast.h3(qubits),
-            Clifford::H4 => mast.h4(qubits),
-            Clifford::H5 => mast.h5(qubits),
-            Clifford::H6 => mast.h6(qubits),
-            Clifford::SX => mast.sx(qubits),
-            Clifford::SXdg => mast.sxdg(qubits),
-            Clifford::SY => mast.sy(qubits),
-            Clifford::SYdg => mast.sydg(qubits),
-            Clifford::SZ => mast.sz(qubits),
-            Clifford::SZdg => mast.szdg(qubits),
-            Clifford::F => mast.f(qubits),
-            Clifford::Fdg => mast.fdg(qubits),
-            Clifford::F2 => mast.f2(qubits),
-            Clifford::F2dg => mast.f2dg(qubits),
-            Clifford::F3 => mast.f3(qubits),
-            Clifford::F3dg => mast.f3dg(qubits),
-            Clifford::F4 => mast.f4(qubits),
-            Clifford::F4dg => mast.f4dg(qubits),
+            Clifford::I => sim.identity(qubits),
+            Clifford::X => sim.x(qubits),
+            Clifford::Y => sim.y(qubits),
+            Clifford::Z => sim.z(qubits),
+            Clifford::H => sim.h(qubits),
+            Clifford::H2 => sim.h2(qubits),
+            Clifford::H3 => sim.h3(qubits),
+            Clifford::H4 => sim.h4(qubits),
+            Clifford::H5 => sim.h5(qubits),
+            Clifford::H6 => sim.h6(qubits),
+            Clifford::SX => sim.sx(qubits),
+            Clifford::SXdg => sim.sxdg(qubits),
+            Clifford::SY => sim.sy(qubits),
+            Clifford::SYdg => sim.sydg(qubits),
+            Clifford::SZ => sim.sz(qubits),
+            Clifford::SZdg => sim.szdg(qubits),
+            Clifford::F => sim.f(qubits),
+            Clifford::Fdg => sim.fdg(qubits),
+            Clifford::F2 => sim.f2(qubits),
+            Clifford::F2dg => sim.f2dg(qubits),
+            Clifford::F3 => sim.f3(qubits),
+            Clifford::F3dg => sim.f3dg(qubits),
+            Clifford::F4 => sim.f4(qubits),
+            Clifford::F4dg => sim.f4dg(qubits),
             _ => panic!("expected a single-qubit Clifford, got {gate}"),
         };
     }
@@ -1222,17 +1203,75 @@ mod tests {
         panic!("single-qubit Clifford {gate} has order greater than four");
     }
 
+    fn apply_two_qubit_clifford(
+        sim: &mut impl CliffordGateable,
+        gate: Clifford,
+        pairs: &[(QubitId, QubitId)],
+    ) {
+        match gate {
+            Clifford::CX => sim.cx(pairs),
+            Clifford::CY => sim.cy(pairs),
+            Clifford::CZ => sim.cz(pairs),
+            Clifford::SXX => sim.sxx(pairs),
+            Clifford::SXXdg => sim.sxxdg(pairs),
+            Clifford::SYY => sim.syy(pairs),
+            Clifford::SYYdg => sim.syydg(pairs),
+            Clifford::SZZ => sim.szz(pairs),
+            Clifford::SZZdg => sim.szzdg(pairs),
+            Clifford::SWAP => sim.swap(pairs),
+            Clifford::ISWAP => sim.iswap(pairs),
+            Clifford::ISWAPdg => sim.iswapdg(pairs),
+            Clifford::G => sim.g(pairs),
+            Clifford::Gdg => sim.gdg(pairs),
+            _ => panic!("expected a two-qubit Clifford, got {gate}"),
+        };
+    }
+
+    fn prepare_entangled_pair(sim: &mut impl CliffordGateable) {
+        sim.h(&[QubitId(0)])
+            .sz(&[QubitId(0)])
+            .cx(&[(QubitId(0), QubitId(1))])
+            .h(&[QubitId(1)]);
+    }
+
+    fn prepare_entangled_partners(sim: &mut impl CliffordGateable) {
+        sim.h(&[QubitId(0), QubitId(1)])
+            .cx(&[(QubitId(0), QubitId(2)), (QubitId(1), QubitId(3))])
+            .sz(&[QubitId(0)])
+            .h(&[QubitId(1)])
+            .sz(&[QubitId(1)]);
+    }
+
+    fn apply_rotation(
+        sim: &mut impl ArbitraryRotationGateable,
+        gate: &str,
+        angle: Angle64,
+        q: usize,
+    ) {
+        let qubits = &[QubitId(q)];
+        match gate {
+            "rz" => sim.rz(angle, qubits),
+            "rx" => sim.rx(angle, qubits),
+            "ry" => sim.ry(angle, qubits),
+            "rzz" => sim.rzz(angle, &[(QubitId(q), QubitId(1 - q))]),
+            "u" => sim.u(angle, angle, angle, qubits),
+            _ => panic!("unknown rotation {gate}"),
+        };
+    }
+
+    fn dense_state(sim: &mut DenseStateVec, n: usize) -> Vec<Complex64> {
+        (0..1 << n).map(|index| sim.get_amplitude(index)).collect()
+    }
+
     fn mast_state_vector(mast: &Mast) -> Vec<Complex64> {
         let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
         view.tableau = mast.tableau.clone();
         view.mps = mast.mps.clone();
-        view.global_phase = mast.global_phase;
-        view.state_vector()
+        view.state_vector_up_to_phase()
     }
 
     #[test]
-    fn test_mast_clifford_powers_restore_observable_state_phase_exactly() {
-        let mut failures = Vec::new();
+    fn test_mast_clifford_powers_restore_observable_state_up_to_phase() {
         for &gate in Clifford::all_1q() {
             let mut mast = Mast::new(2, 0);
             mast.h(&[QubitId(0)])
@@ -1243,20 +1282,100 @@ mod tests {
                 apply_single_qubit_clifford(&mut mast, gate, &[QubitId(0)]);
             }
             let actual = mast_state_vector(&mast);
-            let error = actual
-                .iter()
-                .zip(&expected)
-                .map(|(actual, expected)| (actual - expected).norm())
-                .fold(0.0, f64::max);
-            if error > 1e-10 {
-                failures.push((gate, error));
+            assert_equal_up_to_phase(&actual, &expected, &format!("{gate:?} power"));
+        }
+    }
+
+    #[test]
+    fn single_qubit_cliffords_match_dense_and_have_group_order() {
+        for &gate in Clifford::all_1q() {
+            for q in 0..2 {
+                let mut sim = Mast::new(2, 0);
+                let mut dense = DenseStateVec::new(2);
+                prepare_entangled_pair(&mut sim);
+                prepare_entangled_pair(&mut dense);
+                let start = mast_state_vector_without_ancillas(&sim);
+                apply_single_qubit_clifford(&mut sim, gate, &[QubitId(q)]);
+                apply_single_qubit_clifford(&mut dense, gate, &[QubitId(q)]);
+                assert_equal_up_to_phase(
+                    &mast_state_vector_without_ancillas(&sim),
+                    &dense_state(&mut dense, 2),
+                    &format!("{gate:?} q={q}"),
+                );
+                for _ in 1..single_qubit_clifford_order(gate) {
+                    apply_single_qubit_clifford(&mut sim, gate, &[QubitId(q)]);
+                }
+                assert_equal_up_to_phase(
+                    &mast_state_vector_without_ancillas(&sim),
+                    &start,
+                    &format!("{gate:?} power q={q}"),
+                );
             }
         }
-        eprintln!(
-            "Mast: {}/24 exact; failures={failures:?}",
-            24 - failures.len()
-        );
-        assert!(failures.is_empty(), "Mast phase failures: {failures:?}");
+    }
+
+    #[test]
+    fn two_qubit_cliffords_match_dense_in_both_orders() {
+        for &gate in Clifford::all_2q() {
+            for (a, b) in [(0, 1), (1, 0)] {
+                let mut sim = Mast::new(4, 0);
+                let mut dense = DenseStateVec::new(4);
+                prepare_entangled_partners(&mut sim);
+                prepare_entangled_partners(&mut dense);
+                let pairs = &[(QubitId(a), QubitId(b))];
+                apply_two_qubit_clifford(&mut sim, gate, pairs);
+                apply_two_qubit_clifford(&mut dense, gate, pairs);
+                assert_equal_up_to_phase(
+                    &mast_state_vector_without_ancillas(&sim),
+                    &dense_state(&mut dense, 4),
+                    &format!("{gate:?} ({a},{b})"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rotations_match_dense_with_and_without_merging() {
+        for merge in [false, true] {
+            for gate in ["rz", "rx", "ry", "rzz", "u"] {
+                for angle in [
+                    Angle64::ZERO,
+                    Angle64::QUARTER_TURN,
+                    Angle64::HALF_TURN,
+                    Angle64::THREE_QUARTERS_TURN,
+                    Angle64::from_radians(0.37),
+                ] {
+                    for q in 0..2 {
+                        for repetitions in [1, 2] {
+                            let mut sim = Mast::with_seed(4, 2, 952)
+                                .with_merge_rz(merge)
+                                .with_mps_config(MpsConfig {
+                                    svd_cutoff: 0.0,
+                                    max_truncation_error: Some(0.0),
+                                    ..MpsConfig::default()
+                                });
+                            let mut dense = DenseStateVec::new(4);
+                            prepare_entangled_partners(&mut sim);
+                            prepare_entangled_partners(&mut dense);
+                            // Repetition exercises the merge buffer, including angle wraparound.
+                            for _ in 0..repetitions {
+                                apply_rotation(&mut sim, gate, angle, q);
+                                apply_rotation(&mut dense, gate, angle, q);
+                            }
+                            sim.flush();
+                            sim.project_all();
+                            assert_equal_up_to_phase(
+                                &mast_data_state_vector(&sim),
+                                &dense_state(&mut dense, 4),
+                                &format!(
+                                    "{gate} {angle:?}, q={q}, merge={merge}, repetitions={repetitions}"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1301,7 +1420,6 @@ mod tests {
     #[test]
     #[ignore = "dense 8-site MAST reconstruction regression; run explicitly with --release"]
     fn test_mast_disent_flag_projection_continuation_matches_dense() {
-        use crate::stab_mps::StabMps;
         use pecos_simulators::DenseStateVec;
 
         #[derive(Clone, Copy, Debug)]
@@ -1386,38 +1504,6 @@ mod tests {
                     }
                 })
                 .collect()
-        }
-
-        fn mast_data_state_vector(mast: &Mast) -> Vec<Complex64> {
-            let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
-            view.tableau = mast.tableau.clone();
-            view.mps = mast.mps.clone();
-            view.global_phase = mast.global_phase;
-            let full = view.state_vector();
-            let data_dimension = 1_usize << mast.num_data_qubits;
-            let mut best = Vec::new();
-            let mut best_norm = 0.0;
-            let mut total_norm = 0.0;
-            for block in full.chunks_exact(data_dimension) {
-                let norm = block
-                    .iter()
-                    .map(num_complex::Complex::norm_sqr)
-                    .sum::<f64>();
-                total_norm += norm;
-                if norm > best_norm {
-                    best_norm = norm;
-                    best = block.to_vec();
-                }
-            }
-            // The dense tableau projector used only by this test becomes
-            // mildly ill-conditioned on the exact-mz continuation circuit.
-            assert!(best_norm > 0.99, "ancillas did not factor: {best_norm}");
-            assert!((total_norm - 1.0).abs() < 1e-8);
-            let scale = best_norm.sqrt().recip();
-            for amplitude in &mut best {
-                *amplitude *= scale;
-            }
-            best
         }
 
         fn exact_config() -> MpsConfig {
@@ -1787,7 +1873,6 @@ mod tests {
     /// probabilities between MAST and STN.
     #[test]
     fn test_mast_vs_stn_multi_qubit() {
-        use crate::stab_mps::StabMps;
         let num_trials = 1000;
         let n = 4;
         // Circuit: H on all, CX(0,1), T(0), CX(1,2), T(1), CX(2,3), T(2)
@@ -1857,12 +1942,11 @@ mod tests {
     #[test]
     fn test_mast_vs_stn_single_qubit() {
         // Compare MAST and STN state vectors for H, T on single qubit
-        use crate::stab_mps::StabMps;
 
         let mut stn = StabMps::new(1);
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
-        let _stn_sv = stn.state_vector();
+        let _stn_sv = stn.state_vector_up_to_phase();
 
         // MAST: the state vector includes ancilla qubits, so we can't
         // directly compare. But the data qubit probabilities should match.
@@ -1898,7 +1982,6 @@ mod tests {
     #[test]
     fn test_stn_3qubit_measurement_correlation() {
         // Test that STN gives same results as plain SparseStabY for pure Clifford.
-        use crate::stab_mps::StabMps;
 
         let mut stn_corr = 0;
         let mut tab_corr = 0;
@@ -1981,7 +2064,6 @@ mod tests {
     fn test_manual_mast_with_stn_clifford() {
         // Manual MAST with S (Clifford) instead of T.
         // This should work because the MPS stays trivial.
-        use crate::stab_mps::StabMps;
 
         let mut correlated = 0;
         let num_trials = 100;
@@ -2013,7 +2095,6 @@ mod tests {
     #[test]
     fn test_z2_expectation_value() {
         // Verify the Z_2 expectation value matches between STN and direct computation.
-        use crate::stab_mps::StabMps;
         use nalgebra::DMatrix;
         use pecos_simulators::StabVec;
 
@@ -2093,7 +2174,6 @@ mod tests {
     #[test]
     fn test_stn_state_before_ancilla_measurement() {
         // Check that the STN state vector before ancilla measurement is correct.
-        use crate::stab_mps::StabMps;
         use pecos_simulators::StabVec;
 
         let mut stn = StabMps::new(3);
@@ -2110,7 +2190,7 @@ mod tests {
         crz.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(2)]);
         crz.cx(&[(QubitId(0), QubitId(2))]);
 
-        let stn_sv = stn.state_vector();
+        let stn_sv = stn.state_vector_up_to_phase();
         let crz_sv = crz.state_vector();
 
         // Check overlap
@@ -2137,7 +2217,6 @@ mod tests {
     fn test_manual_mast_with_stn_nonclifford() {
         // Manual MAST with T (non-Clifford).
         // This tests whether the STN measurement handles the ancilla correctly.
-        use crate::stab_mps::StabMps;
 
         let mut correlated = 0;
         let num_trials = 100;

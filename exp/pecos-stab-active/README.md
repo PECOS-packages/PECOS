@@ -75,3 +75,33 @@ all standard measurement/rotation/stabilizer conformance suites. The reference
 uses `StateVec` to form physical gate matrices and keeps a plain dense vector
 for synchronized forced projections. Layer 0 additionally checks complete dense
 matrices at up to five qubits.
+
+`HeisenbergProgram::compile(&TickCircuit)` validates the complete input, replays
+its Cliffords once, and retains only ordered virtual Pauli rotations and
+measurements. `program.run(seed)` starts a fresh zero state and returns visible
+records, detector and observable XORs, and peak active width. There is no
+scheduler, rotation fusion, or reordering. Each shot uses one continuous RNG
+stream for joint Pauli-noise alternatives and quantum measurements.
+
+The accepted gates are named Cliffords, exact fixed-axis RX/RY/RZ/RXX/RYY/RZZ
+rotations at any angle, Pauli channels, MZ/MX/MPZ/PZ/PX, and I/Idle/TrackedPauliMeta.
+Other gates produce errors with their tick, batch index, type, and support.
+Quarter-turn multiples take the Clifford path using exact `Angle64` equality.
+Pauli channel expressions preserve all positive alternative weights, including
+those below the cleanup tolerance of `PauliChannel`. Symbolic Pauli products,
+adjoints, tensor products, and channel compositions are supported; non-Pauli
+unitaries and channels are rejected.
+
+For `C† P C = phi X^F Z^G`, the virtual Hermitian body is
+`H = i^|F intersect G| X^F Z^G`. Its real sign is therefore
+`phi i^(-|F intersect G|)`. Each operation carries that constant XOR earlier
+noise bits XOR earlier measurement symbols selected by anticommutation.
+A reset's hidden measurement is a symbol; its conditional correction contributes
+to later signs. Measurements are never flattened into noise dependencies.
+Stable measurement IDs are mapped to record ordinals for annotations.
+
+`StabActive::rotate_pauli(angle, factors, negative)` and
+`StabActive::measure_pauli(factors, negative)` expose arbitrary Hermitian Pauli
+tensors, where factors are distinct `(usize, PauliKindForDecomp)` pairs and
+`negative` specifies an overall minus sign. Empty support is the signed identity;
+rotation omits its global phase. Existing simulator traits retain their behavior.

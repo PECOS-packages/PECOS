@@ -12,6 +12,8 @@ crates/pecos-llvm
 crates/pecos-pymatching
 crates/pecos-qis
 crates/pecos-qis-ffi
+# Test-only descriptor accessor moved from test-time compilation into a Cargo fixture.
+crates/pecos-qis/tests/fixtures/runtime-descriptor
 crates/pecos-simulators
 crates/pecos-tesseract
 exp/pecos-experimental

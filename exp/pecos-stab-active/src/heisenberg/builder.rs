@@ -1,9 +1,7 @@
 // Copyright 2026 The PECOS Developers
 // Licensed under the Apache License, Version 2.0.
 
-use super::{
-    AffineSign, HeisenbergOp, HeisenbergProgram, NoiseChannel, VirtualPauli, dispatch, noise,
-};
+use super::{AffineSign, HeisenbergOp, HeisenbergProgram, NoiseChannel, VirtualPauli, dispatch};
 use crate::PauliKindForDecomp;
 use crate::structure::{clifford_turns, rotate_tableau};
 use num_complex::Complex64;
@@ -103,7 +101,8 @@ fn validate_gate(gate: Batch<'_>, tick: usize) -> Result<(), CompileError> {
                 .channel
                 .as_ref()
                 .ok_or_else(|| error(gate, tick, "missing channel expression"))?;
-            noise::alternatives(channel).map_err(|e| error(gate, tick, e))?;
+            pecos_quantum::channel::pauli_mixture(channel)
+                .map_err(|e| error(gate, tick, e.to_string()))?;
             let support: Vec<_> = channel.qubits().into_iter().collect();
             let stored: BTreeSet<_> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
             if support.into_iter().collect::<BTreeSet<_>>() != stored
@@ -242,7 +241,7 @@ impl Builder {
                 self.program.num_noise_symbols += 1;
             }
         }
-        let alternatives = noise::alternatives(expression)
+        let alternatives = pecos_quantum::channel::pauli_mixture(expression)
             .expect("validated channel")
             .into_iter()
             .map(|(p, pauli)| {

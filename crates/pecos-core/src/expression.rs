@@ -101,19 +101,18 @@ fn widen_pair(a: ExprValue, b: ExprValue) -> (BitUInt, BitUInt) {
     (widen_to(a, target), widen_to(b, target))
 }
 
-fn negative(value: &BitUInt) -> bool {
+pub(crate) fn negative(value: &BitUInt) -> bool {
     value.get_bit(value.size() - 1)
 }
 
-fn negate(value: &BitUInt) -> BitUInt {
+pub(crate) fn negate(value: &BitUInt) -> BitUInt {
     &BitUInt::zero(value.size()) - value
 }
 
-fn signed_cmp(a: &BitUInt, b: &BitUInt) -> Ordering {
+pub(crate) fn signed_cmp(a: &BitUInt, b: &BitUInt) -> Ordering {
     // Both helpers read each operand's own top bit as its sign, so unequal
     // widths would compare different bit positions and return quiet nonsense.
-    // Every caller passes a pair straight from `widen_pair`, which returns two
-    // operands of the same width.
+    // Callers normalize operands to the same width before calling these helpers.
     debug_assert_eq!(a.size(), b.size(), "signed comparison needs equal widths");
     match (negative(a), negative(b)) {
         (true, false) => Ordering::Less,
@@ -125,7 +124,7 @@ fn signed_cmp(a: &BitUInt, b: &BitUInt) -> Ordering {
 // Divide magnitudes and restore the sign at the original width. Negating the
 // signed minimum wraps to itself, whose unsigned pattern is its magnitude;
 // minimum / -1 consequently wraps to minimum, with remainder zero.
-fn signed_div_rem(a: &BitUInt, b: &BitUInt, remainder: bool) -> BitUInt {
+pub(crate) fn signed_div_rem(a: &BitUInt, b: &BitUInt, remainder: bool) -> BitUInt {
     debug_assert_eq!(a.size(), b.size(), "signed division needs equal widths");
     let a_negative = negative(a);
     let b_negative = negative(b);

@@ -1035,7 +1035,7 @@ pub extern "C" fn pecos_is_worker_complete() -> bool {
 
 /// Signal result readiness on the calling thread's TLS context.
 ///
-/// If no execution context is registered, this is a no-op and logs a warning.
+/// If no execution context is registered, this is a no-op.
 ///
 /// # Safety
 /// This function is safe to call from any thread.

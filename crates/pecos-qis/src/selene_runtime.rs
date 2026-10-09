@@ -1057,10 +1057,6 @@ impl SeleneRuntime {
                         .ok_or_else(|| fail("unmapped scheduled measurement result"))?;
                     let leakage_aware =
                         source_leaked || matches!(op, RuntimeScheduledOp::MeasureLeaked { .. });
-                    self.emitted_measurements
-                        .entry(program_result)
-                        .or_default()
-                        .push_back((*result_id, leakage_aware));
                     measurements.push(ScheduledMeasurement {
                         operation_index,
                         runtime_result: *result_id,
@@ -1095,6 +1091,18 @@ impl SeleneRuntime {
             .scheduled_output
             .as_mut()
             .ok_or_else(|| fail("no scheduled extraction active"))?;
+        // Admit the batch against the collection budget before it has any
+        // effect: no feedback record or custom-event delivery for a rejected batch.
+        output
+            .budget
+            .charge(&batch.operations, measurements.len())
+            .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
+        for measurement in &measurements {
+            self.emitted_measurements
+                .entry(measurement.program_result)
+                .or_default()
+                .push_back((measurement.runtime_result, measurement.leakage_aware));
+        }
         for (operation_index, op) in batch.operations.iter().enumerate() {
             if let RuntimeScheduledOp::Custom { tag, data } = op {
                 let event = RuntimeCustomEvent {
@@ -1114,10 +1122,6 @@ impl SeleneRuntime {
                 )?;
             }
         }
-        output
-            .budget
-            .charge(&batch.operations, measurements.len())
-            .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
         output
             .batches
             .try_reserve(1)
@@ -3152,8 +3156,9 @@ impl QisRuntime for SeleneRuntime {
     /// measurements, allocation/release and barriers are accepted; Idle and source
     /// trace metadata are rejected rather than silently lost. Flat and scheduled lowering cannot
     /// be mixed within a shot. Each native batch admits at most 4096 operations
-    /// and 256 KiB of opaque payload. Returned batch counts are not capped;
-    /// aggregate memory grows with the native schedule. No history is kept after return.
+    /// and 256 KiB of opaque payload. Each collection is capped at the cheapest
+    /// size any scheduled transport could encode, so it cannot grow without
+    /// bound. No history is kept after return.
     ///
     /// # Errors
     /// Rejects unsupported inputs before submission. Extraction failures after

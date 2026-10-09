@@ -97,13 +97,13 @@ pub use equivalence::{
     compare_dems_statistical, verify_dem_equivalence,
 };
 pub use mem_builder::MemBuilder;
+/// The batch type [`DemSampler::sample_shots`] returns, so it can be named from
+/// this crate without a separate `pecos-decoders` dependency.
+pub use pecos_decoders::batch::SampleBatch;
 pub use sampler::{
     DemSampler, DemSamplerBuilder, DetectorValidationError, DualSampleResult, OutputMode,
     SampleShotsError, SamplerLabels,
 };
-/// The batch type [`DemSampler::sample_shots`] returns, so it can be named from
-/// this crate without a separate `pecos-decoders` dependency.
-pub use pecos_decoders::batch::SampleBatch;
 pub use slice::{
     ComposedDem, ComposedDetectorAddress, DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind,
     DemComposeDiagnostics, DemDetectorPlacement, DemSlice, DemSliceComposeError,

@@ -48,8 +48,11 @@ For `py-*`, PyPI publication is manual. Run
 before publishing. PyYAML comes from the dev group; fetch the tag locally before
 running the check. Missing, unfinished, skipped, or failed workflows count as red.
 The check expects every validation workflow in either the tag or this checkout.
+A workflow that exists only in this checkout never ran on an older tag and stays
+MISSING; for such tags, run the check from a checkout of the tagged commit.
 
 For `jl-*`, GitHub-release publication is automatic on the tag push, as soon as
 the Julia workflow's own jobs pass. Validate the commit before tagging: require
-green post-merge runs for that SHA and a green nightly that tested it. Run the same status
+the latest scheduled run of every validation workflow tested this SHA (or a
+manual dispatch of each on `dev` while `dev` is at this SHA). Run the same status
 command afterwards to check the full validation matrix.

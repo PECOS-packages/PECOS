@@ -87,12 +87,13 @@ def gh_api(*args: str) -> str:
     if gh is None:
         message = "gh is required; install it and authenticate before checking release status"
         raise FileNotFoundError(message)
-    return subprocess.run([gh, "api", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+    # Run from this checkout so {owner}/{repo} names the repository the git reads use.
+    return subprocess.run([gh, "api", *args], check=True, stdout=subprocess.PIPE, text=True, cwd=REPOSITORY).stdout
 
 
 def github_tag_commit(tag: str) -> str:
     """Require the local workflow inventory to describe GitHub's tag commit."""
-    sha = gh_api(f"repos/{{owner}}/{{repo}}/commits/{quote(tag, safe='')}", "--jq", ".sha").strip()
+    sha = gh_api(f"repos/{{owner}}/{{repo}}/commits/tags/{quote(tag, safe='')}", "--jq", ".sha").strip()
     if sha != local_tag_commit(tag):
         message = f"Local tag {tag!r} differs from GitHub; refresh the local tag before running this check"
         raise ValueError(message)

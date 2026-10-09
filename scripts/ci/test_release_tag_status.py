@@ -83,7 +83,15 @@ def assert_validation_structure(directory: Path) -> None:
             problems.append(f"{filename}: expected exactly one daily cron")
         else:
             fields = schedules[0]["cron"].split()
-            if len(fields) != 5 or fields[2:] != ["*", "*", "*"]:
+            daily = (
+                len(fields) == 5
+                and fields[2:] == ["*", "*", "*"]
+                and fields[0].isdigit()
+                and int(fields[0]) < 60
+                and fields[1].isdigit()
+                and int(fields[1]) < 24
+            )
+            if not daily:
                 problems.append(f"{filename}: cron must be daily")
     assert not problems, "\n".join(problems)
 
@@ -123,6 +131,8 @@ def test_real_validation_workflows_admit_release_tags_and_one_daily_cron() -> No
         (None, [], "push does not admit"),
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [], "exactly one daily cron"),
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "7 19 * * 1"}], "cron must be daily"),
+        ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "*/5 * * * *"}], "cron must be daily"),
+        ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "0 * * * *"}], "cron must be daily"),
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "7 19 * * *"}] * 2, "exactly one daily cron"),
     ],
 )
@@ -274,6 +284,10 @@ def test_newest_run_must_match_current_tag_sha(monkeypatch: pytest.MonkeyPatch) 
     assert release_tag_status.newest_tag_run("python-test.yml", "py-1", "current-sha")["id"] == 2
     assert release_tag_status.newest_tag_run("python-test.yml", "py-1", "missing-sha") is None
     for args in calls:
+        assert args[0] == "repos/{owner}/{repo}/actions/workflows/python-test.yml/runs"
+        assert args[args.index("--method") + 1] == "GET"
+        assert "--paginate" in args
+        assert "--slurp" in args
         assert args[args.index("branch=py-1") - 1] == "-f"
         assert args[args.index("event=push") - 1] == "-f"
 

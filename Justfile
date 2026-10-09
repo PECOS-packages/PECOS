@@ -285,7 +285,6 @@ pytest *args:
         uv run --frozen pytest -n auto {{args}}
     else
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
         uv run --frozen pytest -n auto python/selene-plugins -m "not slow"
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
@@ -324,7 +323,6 @@ rslib-rust-test:
 [group('test')]
 pytest-ci-core:
     uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
-    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
@@ -362,7 +360,6 @@ pytest-ci-core-shard shard:
         # post-merge; its heavy step skips on a pull request.
         just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
         ;;

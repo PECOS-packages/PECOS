@@ -128,6 +128,10 @@ pub enum PecosError {
     /// Signals that there are no more commands to generate
     #[error("No more commands to generate")]
     EmptyCommands,
+
+    /// Failed to find a logical failure
+    #[error("Failed to find a logical failure")]
+    LogicalFailureNotFound,
 }
 
 impl PecosError {

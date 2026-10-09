@@ -4,3 +4,5 @@
 //! library root allows the standalone examples to build while that work proceeds.
 
 pub mod flipper;
+pub mod utils;
+pub mod brute_force;

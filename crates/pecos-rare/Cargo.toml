@@ -12,11 +12,15 @@ categories.workspace = true
 description = "Rare event sampling algorithms for PECOS"
 
 [dependencies]
+indicatif = "0.18"
+serde_json.workspace = true
 pecos-core.workspace = true
+pecos-decoder-core.workspace = true
 pecos-engines.workspace = true
 pecos-random.workspace = true
 pecos-fusion-blossom.workspace = true
 pecos-qec.workspace = true
+pecos-quantum.workspace = true
 
 [lib]
 name = "pecos_rare"

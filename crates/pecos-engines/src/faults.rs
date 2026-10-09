@@ -486,6 +486,19 @@ impl FaultHistory {
             Self::Depolarizing(history) => history.get(index).cloned().map(Into::into),
         }
     }
+
+    /// Returns the number of non-identity operations on qubits caused by this fault history
+    pub fn weight(&self) -> usize {
+        match self {
+            Self::Depolarizing(history) => {
+                let mut weight = 0;
+                for fault in history {
+                    weight += fault.weight();
+                }
+                weight
+            },
+        }
+    }
 }
 
 // Promotion of depolarizing instances of fault classes

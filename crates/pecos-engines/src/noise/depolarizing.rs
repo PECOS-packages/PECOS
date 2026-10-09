@@ -81,6 +81,19 @@ pub struct DepolarizingSampledFault {
     pub outcome_label: &'static str,
 }
 
+impl DepolarizingSampledFault {
+    pub fn weight(&self) -> usize {
+        let mut weight = 0;
+        // Loop over outcome label, any non-identity elements do not count towards weight
+        for c in self.outcome_label.chars() {
+            if c != 'I' {
+                weight += 1;
+            }
+        }
+        weight
+    }
+}
+
 /// Per-shot sampled-fault history for depolarizing runs.
 pub type DepolarizingFaultHistory = Vec<DepolarizingSampledFault>;
 

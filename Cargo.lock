@@ -4670,11 +4670,15 @@ dependencies = [
 name = "pecos-rare"
 version = "0.2.0-dev.0"
 dependencies = [
+ "indicatif",
  "pecos-core",
+ "pecos-decoder-core",
  "pecos-engines",
  "pecos-fusion-blossom",
  "pecos-qec",
+ "pecos-quantum",
  "pecos-random",
+ "serde_json",
 ]
 
 [[package]]

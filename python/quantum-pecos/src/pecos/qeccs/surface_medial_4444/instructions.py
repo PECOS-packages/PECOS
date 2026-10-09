@@ -662,10 +662,10 @@ class InstrInitPlus(DefaultLogicalInstruction):
             for row in rows:
                 self._stabs_destabs[name].append(set(row))
 
-        # |0> -> logical Z is a stabilizer
+        # |+> -> logical X is a stabilizer
         self._stabs_destabs["stabs_x"].append(set(self.qecc.sides["left"]))
         self._stabs_destabs["stabs_z"].append(set())
         self._stabs_destabs["destabs_z"].append(set(self.qecc.sides["top"]))
-        self._stabs_destabs["stabs_x"].append(set())
+        self._stabs_destabs["destabs_x"].append(set())
 
         return self._stabs_destabs

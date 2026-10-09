@@ -64,6 +64,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
 
     logical_ops = qecc.instruction("instr_syn_extract").final_logical_ops
     logical_z = logical_ops[0]["Z"]
+    logical_x = logical_ops[0]["X"]
 
     num_qudits = qecc.num_qudits
     data_qudits = qecc.data_qudit_set
@@ -96,11 +97,11 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
         sign = _apply_err(
             state,
             circ_runner,
-            init_zero,
+            init_plus,
             syn_extract,
             err,
             decoder,
-            logical_z,
+            logical_x,
         )
 
         if sign:
@@ -131,21 +132,21 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
         )
 
         if sign:
-            msg = f"Decoder failed to correct error: {spacetime!s}"
+            msg = f"Decoder failed to correct error: {err_dict}"
             raise Exception(msg)
 
         sign = _apply_err_spacetime(
             state,
             circ_runner,
-            init_zero,
+            init_plus,
             err_dict,
             decoder,
-            logical_z,
+            logical_x,
             qecc,
         )
 
         if sign:
-            msg = f"Decoder failed to correct error: {spacetime!s}"
+            msg = f"Decoder failed to correct error: {err_dict}"
             raise Exception(msg)
 
 

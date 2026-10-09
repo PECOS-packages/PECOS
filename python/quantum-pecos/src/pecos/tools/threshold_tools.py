@@ -114,7 +114,7 @@ def threshold_code_capacity(
         p0: Initial parameters for the threshold fitting function.
         func: The functional form to use for threshold fitting.
         circuit_runner: The circuit runner to use for simulations.
-        basis: The basis for logical measurements (e.g., 'X' or 'Z').
+        basis: "None", "zero", or "plus"; mode 1 also accepts "both".
 
     """
     if circuit_runner is None:
@@ -147,10 +147,15 @@ def threshold_code_capacity(
     elif mode == 1 and basis == "both":
         determine_rate = codecapacity_logical_rate2
     elif mode == 2:
+        if basis == "both":
+            msg = 'Mode 2 requires basis "None", "zero", or "plus"!'
+            raise ValueError(msg)
         determine_rate = codecapacity_logical_rate3
     else:
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
+
+    rate_params = {} if determine_rate is codecapacity_logical_rate2 else {"basis": basis}
 
     plist = pc.array(ps * len(ds))
 
@@ -177,7 +182,7 @@ def threshold_code_capacity(
                 decoder=decoder,
                 verbose=verbose,
                 circuit_runner=circuit_runner,
-                basis=basis,
+                **rate_params,
             )
             if verbose:
                 if time:
@@ -425,7 +430,6 @@ def codecapacity_logical_rate2(
     *,
     verbose: bool = True,
     circuit_runner: Standard | None = None,
-    _basis: str | None = None,
 ) -> tuple[float, float]:
     """A tool for determining the code-capacity logical-error rate for syndrome extraction.
 
@@ -445,7 +449,6 @@ def codecapacity_logical_rate2(
         state_sim: The simulator class to use (defaults to SparseStabPy).
         verbose: If True, prints detailed progress and results.
         circuit_runner: The circuit runner to use for simulations.
-        basis: The basis for logical measurements (e.g., 'X' or 'Z').
 
     """
     p = error_params["p"]
@@ -544,8 +547,8 @@ def codecapacity_logical_rate3(
     error_params: ErrorParams,
     decoder: Decoder,
     seed: int | None = None,
-    state_sim: SimulatorProtocol | None = None,
-    max_syn_extract: float = 1e7,
+    state_sim: type[SimulatorProtocol] | None = None,
+    max_syn_extract: int = 10_000_000,
     circuit_runner: Standard | None = None,
     *,
     verbose: bool = True,
@@ -586,7 +589,11 @@ def codecapacity_logical_rate3(
     if circuit_runner is None:
         circuit_runner = circuit_runners.TimingRunner(seed=seed)
 
-    if init_circuit is None:
+    if state_sim is None:
+        state_sim = SparseStabPy
+
+    default_init = init_circuit is None
+    if default_init:
         # init circuit
         init_circuit = pc.circuits.LogicalCircuit(suppress_warning=True)
 
@@ -603,11 +610,7 @@ def codecapacity_logical_rate3(
         init_circuit.append(gate)
 
     if init_logical_ops is None:
-        if init_circuit is None:
-            gate = qecc.gate(f"ideal init {basis}")
-
-            # if len(gate.final_logical_stabs()) != 1:
-
+        if default_init:
             logical_circ_dict = gate.final_instr().final_logical_ops
             logical_ops_sym = gate.final_instr().logical_stabilizers
 
@@ -637,7 +640,7 @@ def codecapacity_logical_rate3(
         with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
 
-        for _duration in range(max_syn_extract):
+        for duration in range(max_syn_extract):
             # Run syndrome extraction
             output, _ = circuit_runner.run(
                 state,
@@ -660,15 +663,12 @@ def codecapacity_logical_rate3(
             sign = state.logical_sign(logical_ops)
 
             if sign:
+                run_durations.append(duration + 1)
                 break
 
         else:
             msg = f"Max syndrome extraction ({max_syn_extract}) met."
             raise Exception(msg)
-
-        run_durations.append(
-            max_syn_extract,
-        )  # duration + 1 == number of syndrome extractions.
 
     if verbose:
         print(f"\nTotal number of runs: {sum(run_durations)}")

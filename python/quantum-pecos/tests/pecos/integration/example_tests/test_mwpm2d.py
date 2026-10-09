@@ -1,7 +1,10 @@
 """MWPM2D must correct physical errors using measured ancilla labels."""
 
+from itertools import chain
+
 import pecos as pc
 import pytest
+from pecos.analysis.tool_collection import gen_pauli_errors
 from pecos.decoders.mwpm2d import precomputing
 from pecos.engines.std_output import StdOutput
 
@@ -126,3 +129,53 @@ def test_ancilla_in_both_check_types() -> None:
             {"vx"},
             {"vz"},
         )
+
+
+@pytest.mark.parametrize("include_real", [False, True])
+def test_virtual_syndrome_labels(qecc, include_real) -> None:
+    """Virtual boundary labels are invalid measurement labels, even in mixed input."""
+    decoder = pc.decoders.MWPM2D(qecc)
+    labels = {"v1"}
+    if include_real:
+        labels.add(min(qecc.ancilla_qudit_set))
+    measurements = StdOutput()
+    measurements.record(dict.fromkeys(labels, 1), 0)
+    with pytest.raises(ValueError, match=r"Unknown syndrome labels: \['v1'\]"):
+        decoder.decode(measurements)
+    assert not decoder.recorded_recovery
+
+
+def _syndrome(checks, xs, zs):
+    """Compute check parity directly from physical Pauli supports."""
+    return {ancilla for symbol, ancilla, support in checks if len(support & (zs if symbol == "X check" else xs)) % 2}
+
+
+@pytest.mark.parametrize("code_class", [pc.qeccs.Surface4444, pc.qeccs.SurfaceMedial4444])
+def test_all_weight_two_data_errors(code_class) -> None:
+    """Correct every Pauli of weight <= 2 using an oracle independent of decoder graphs."""
+    code = code_class(distance=5)
+    instruction = code.instruction("instr_syn_extract")
+    checks = [
+        (symbol, params["ancillas"], set(params["datas"])) for symbol, _, params in instruction.abstract_circuit.items()
+    ]
+    logical_checks = [
+        (f"{symbol} check", name, locations)
+        for name, logical in instruction.final_logical_ops[0].items()
+        for symbol, locations, _ in logical.items()
+    ]
+    decoder = pc.decoders.MWPM2D(code)
+    errors = chain([(set(), set())], gen_pauli_errors(sorted(code.data_qudit_set), max_errors=2))
+    for xs, zs in errors:
+        context = (code.name, xs, zs)
+        measurements = StdOutput()
+        measurements.record(dict.fromkeys(_syndrome(checks, xs, zs), 1), 0)
+        recovery = decoder.decode(measurements)
+        residual_x, residual_z = xs.copy(), zs.copy()
+        for symbol, locations, _ in recovery.items():
+            assert locations <= code.data_qudit_set, context
+            if symbol in {"X", "Y"}:
+                residual_x ^= locations
+            if symbol in {"Z", "Y"}:
+                residual_z ^= locations
+        assert not _syndrome(checks, residual_x, residual_z), context
+        assert not _syndrome(logical_checks, residual_x, residual_z), context

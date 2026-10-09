@@ -82,6 +82,9 @@ These operations deal with data/variable handling such as data definition and ex
 information flow in the program. In the future, the `"data"` type may be utilized to create and manipulate data
 types/structures such as arrays, data de-allocation, scoping, etc.
 
+A declared name must be unique across all declarations in a program, regardless of whether the variable is classical or
+quantum; redeclaring a name is invalid.
+
 ### Defining Classical Variables
 
 In the current implementation, classical variables are defined as globally accessible, meaning they exist in the
@@ -633,7 +636,7 @@ include "hqslib1.inc";
 
 qreg q[2];
 qreg w[3];
-qreg d[5];
+qreg qd[5];
 creg m[2];
 creg a[32];
 creg b[32];
@@ -664,8 +667,8 @@ if(a > 2) CX w[1], w[2];
 if(a > 2) measure w[1] -> g[0];
 if(a > 2) measure w[2] -> g[1];
 
-if(a[3]==1) h d;
-measure d -> f;
+if(a[3]==1) h qd;
+measure qd -> f;
 ```
 
 Here is an equivalent version of the program using PHIR.
@@ -684,7 +687,7 @@ Here is an equivalent version of the program using PHIR.
   "ops": [
     {"//": "qreg q[2];"},
     {"//": "qreg w[3];"},
-    {"//": "qreg d[5];"},
+    {"//": "qreg qd[5];"},
     {
       "data": "qvar_define",
       "data_type": "qubits",
@@ -700,7 +703,7 @@ Here is an equivalent version of the program using PHIR.
     {
       "data": "qvar_define",
       "data_type": "qubits",
-      "variable": "d",
+      "variable": "qd",
       "size": 5
     },
 
@@ -861,22 +864,22 @@ Here is an equivalent version of the program using PHIR.
     },
 
 
-    {"//": "if(a[3]==1) h d;"},
+    {"//": "if(a[3]==1) h qd;"},
     {
       "block": "if",
       "condition": {"cop": "==", "args": [ ["a", 3], 1]},
       "true_branch": [
         {
           "qop": "H",
-          "args": [ ["d", 0], ["d", 1], ["d", 2], ["d", 3], ["d", 4] ]
+          "args": [ ["qd", 0], ["qd", 1], ["qd", 2], ["qd", 3], ["qd", 4] ]
         }
       ]
     },
 
-    {"//": "measure d -> f;"},
+    {"//": "measure qd -> f;"},
     {
       "qop": "Measure",
-      "args": [ ["d", 0], ["d", 1], ["d", 2], ["d", 3], ["d", 4] ],
+      "args": [ ["qd", 0], ["qd", 1], ["qd", 2], ["qd", 3], ["qd", 4] ],
       "returns": [ ["f", 0], ["f", 1], ["f", 2], ["f", 3], ["f", 4] ]
     },
 

@@ -5286,6 +5286,12 @@ impl fmt::Display for TerminalDecompositionError {
 impl std::error::Error for TerminalDecompositionError {}
 
 impl DetectorErrorModel {
+    /// Build a detector-event sampler, preserving observable and tracked-Pauli metadata.
+    #[must_use]
+    pub fn to_sampler(&self) -> super::sampler::DemSampler {
+        super::sampler::DemSampler::from_detector_error_model(self)
+    }
+
     /// Creates a new empty DEM.
     #[must_use]
     pub fn new() -> Self {

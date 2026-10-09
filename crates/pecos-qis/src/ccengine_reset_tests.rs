@@ -2,18 +2,35 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[derive(Clone, Copy)]
+enum DeliveryFailure {
+    Outcome,
+    Ready,
+}
+
 struct SyncHandle {
+    delivery_failure: Option<DeliveryFailure>,
     fail: Arc<AtomicBool>,
     calls: Arc<AtomicU64>,
 }
 impl DynamicSyncHandle for SyncHandle {
     fn wait_for_need_result(&self, _: u64) -> Option<u64> {
-        None
+        self.delivery_failure.map(|_| 7)
     }
     fn set_measurement_result(&self, _: u64, _: bool) -> Result<(), InterfaceError> {
         Ok(())
     }
+    fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
+        assert_eq!((result_id, value), (7, 1));
+        if matches!(self.delivery_failure, Some(DeliveryFailure::Outcome)) {
+            return Err(InterfaceError::Other("outcome delivery failed".into()));
+        }
+        Ok(())
+    }
     fn signal_result_ready(&self) -> Result<(), InterfaceError> {
+        if matches!(self.delivery_failure, Some(DeliveryFailure::Ready)) {
+            return Err(InterfaceError::Other("ready delivery failed".into()));
+        }
         Ok(())
     }
     fn get_pending_operations(&self) -> Result<Vec<Operation>, InterfaceError> {
@@ -68,6 +85,7 @@ pub(super) fn running() -> (
         finalized: false,
         terminal_lowering_flushed: false,
         sync_handle: Some(Box::new(SyncHandle {
+            delivery_failure: None,
             fail: Arc::clone(&fail),
             calls: Arc::clone(&calls),
         })),
@@ -250,4 +268,60 @@ fn reset_without_interface_or_shot_succeeds() {
     ControlEngine::reset(&mut engine).unwrap();
     Engine::reset(&mut engine).unwrap();
     ClassicalEngine::reset(&mut engine).unwrap();
+}
+
+fn assert_delivery_failure_is_latched(failure: DeliveryFailure, cached: bool) {
+    let (mut engine, _sender, fail, calls) = running();
+    engine.shot_lifecycle = ShotLifecycle::Running;
+    engine.dynamic_state.as_mut().unwrap().sync_handle = Some(Box::new(SyncHandle {
+        delivery_failure: Some(failure),
+        fail,
+        calls,
+    }));
+    let input = if cached {
+        // The worker requests a previously delivered value, with no new operations.
+        engine.measurement_results.insert(7, 1);
+        ByteMessage::outcomes_builder().build()
+    } else {
+        engine.register_imported_measurements(&[QuantumOp::Measure(0, 7).into()]);
+        engine.measurement_mapping.push(7);
+        ByteMessage::outcomes_builder().add_outcomes(&[1]).build()
+    };
+    let error = engine.continue_processing(input).err().unwrap().to_string();
+    let expected = match failure {
+        DeliveryFailure::Outcome => "outcome delivery failed",
+        DeliveryFailure::Ready => "ready delivery failed",
+    };
+    assert!(error.contains(expected), "{error}");
+    assert_eq!(engine.get_results().unwrap_err().to_string(), error);
+    for _ in 0..2 {
+        assert_eq!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .unwrap()
+                .to_string(),
+            error
+        );
+    }
+}
+
+#[test]
+fn continue_outcome_delivery_failure_is_latched() {
+    assert_delivery_failure_is_latched(DeliveryFailure::Outcome, false);
+}
+
+#[test]
+fn continue_ready_delivery_failure_is_latched() {
+    assert_delivery_failure_is_latched(DeliveryFailure::Ready, false);
+}
+
+#[test]
+fn cached_outcome_delivery_failure_is_latched() {
+    assert_delivery_failure_is_latched(DeliveryFailure::Outcome, true);
+}
+
+#[test]
+fn cached_ready_delivery_failure_is_latched() {
+    assert_delivery_failure_is_latched(DeliveryFailure::Ready, true);
 }

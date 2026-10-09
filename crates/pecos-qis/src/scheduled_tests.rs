@@ -569,3 +569,43 @@ fn forced_scheduled_accumulation_uses_transport_byte_budget() {
         error
     );
 }
+
+#[test]
+fn budget_rejected_batch_has_no_measurement_or_custom_effects() {
+    use std::sync::{Arc, Mutex};
+
+    let mut runtime = synthetic();
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let handler_delivered = Arc::clone(&delivered);
+    runtime.set_custom_event_handler(move |event| {
+        handler_delivered.lock().unwrap().push(event.tag);
+        Ok(RuntimeCustomEventDisposition::MetadataOnly)
+    });
+    let bytes_per_batch = 40 + 24 + MAX_PAYLOAD_BYTES;
+    let accepted = (pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / bytes_per_batch;
+    let error = runtime
+        .collect_scheduled(|runtime| {
+            for _ in 0..accepted {
+                runtime.retain_scheduled_batch(RuntimeOperationBatch {
+                    operations: vec![RuntimeScheduledOp::Custom {
+                        tag: 0,
+                        data: vec![0; MAX_PAYLOAD_BYTES],
+                    }],
+                    ..Default::default()
+                })?;
+            }
+            let mut rejected = batch();
+            for operation in &mut rejected.operations {
+                if let RuntimeScheduledOp::Custom { data, .. } = operation {
+                    *data = vec![0; MAX_PAYLOAD_BYTES];
+                }
+            }
+            runtime.retain_scheduled_batch(rejected)?;
+            Ok(vec![])
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("event transport limit"), "{error}");
+    assert!(runtime.emitted_measurements.is_empty());
+    assert_eq!(*delivered.lock().unwrap(), vec![0; accepted]);
+}

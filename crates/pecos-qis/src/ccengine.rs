@@ -1686,9 +1686,11 @@ impl QisEngine {
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        handle
-            .set_measurement_outcome(result_id, u64::from(value))
-            .map_err(|e| PecosError::Generic(format!("Failed to set measurement result: {e}")))?;
+        let delivered = handle.set_measurement_outcome(result_id, u64::from(value));
+        // A worker that cannot receive its outcome can never finish this shot.
+        delivered.map_err(|e| {
+            self.latch_terminal_error(format!("Failed to set measurement result: {e}"))
+        })?;
         debug!("Set dynamic result: {result_id} = {value}");
         Ok(())
     }
@@ -1704,9 +1706,11 @@ impl QisEngine {
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        handle
-            .signal_result_ready()
-            .map_err(|e| PecosError::Generic(format!("Failed to signal result ready: {e}")))?;
+        let signalled = handle.signal_result_ready();
+        // A worker that is never woken can never finish this shot.
+        signalled.map_err(|e| {
+            self.latch_terminal_error(format!("Failed to signal result ready: {e}"))
+        })?;
         debug!("Signaled result ready");
         Ok(())
     }

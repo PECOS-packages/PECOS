@@ -27,7 +27,7 @@ touches. When the check is white on a qubit, the check acts as :math:`Z.`  When 
 We now use ``VerifyStabilizers`` to represent the checks given in the previous figure:
 
 >>> import pecos as pc
->>> qecc = pc.tools.VerifyStabilizers()
+>>> qecc = pc.analysis.VerifyStabilizers()
 >>> qecc.check("X", (3, 4, 7, 8))
 >>> qecc.check("X", (5, 6, 7, 9))
 >>> qecc.check("Z", (2, 4, 5, 7))
@@ -63,7 +63,7 @@ address the issue as seen in:
 Re-specifying the generators according to the figure above, we run ``compile`` again and see that we have solved the
 commutation problem:
 
->>> qecc = pc.tools.VerifyStabilizers()
+>>> qecc = pc.analysis.VerifyStabilizers()
 >>> qecc.check("X", (3, 4, 7, 8))
 >>> qecc.check("X", (5, 6, 7, 9))
 >>> qecc.check("Z", (2, 4, 5, 7))
@@ -163,7 +163,7 @@ Evaluating the distance of this new version of the code:
 
 .. code-block:: python
 
-   >>> qecc = pc.tools.VerifyStabilizers()
+   >>> qecc = pc.analysis.VerifyStabilizers()
    >>> qecc.check("Z", (2, 4, 5, 7))
    >>> # qecc.check('Z', (7, 8, 9))
    >>> qecc.check("X", (3, 4, 7, 8))

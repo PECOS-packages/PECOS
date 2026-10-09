@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import itertools as it
+import warnings
 from itertools import combinations, product
 from typing import TYPE_CHECKING, TypeVar
 
@@ -50,34 +51,33 @@ def t_errors_check(
     syn_extract: QuantumCircuit | LogicalCircuit | None = None,
     decoder: Decoder | None = None,
     t_weight: int | None = None,
-    error_set: Iterable[tuple[set[int], set[int]]] | None = None,
+    error_set: Iterable[str] | None = None,
     *,
     verbose: bool = True,
     data_errors: bool = True,
     ancilla_errors: bool = False,
 ) -> tuple[bool, int]:
-    """Check exRec conditions for fault-free error correction or logical gate.
+    """Check input Pauli errors using logical signs and, for EC, a residual syndrome.
 
-    This checks that the exRec conditions for a fault-free error correction (EC) or logical gate (Ga) as described in
-    arXiv:quant-ph/0504218.
+    Enumerate errors of weight zero through ``t_weight`` on the selected data
+    and/or ancilla qubits of freshly prepared logical zero and plus states.
+    Apply each error before the supplied logical gate or fault-free syndrome
+    extraction (one round by default). If the zero-state run has a nonempty
+    final syndrome, decode its output and apply the same recovery to both
+    states. Check the original logical Z and X signs, respectively.
 
-    For fault-free EC, weight <= t errors in produce no errors out.
+    Without ``logical_gate``, also run the extraction again on the zero state
+    and require an empty final syndrome; the plus-state syndrome is not checked.
+    With ``logical_gate``, check signs immediately after the gate and any recovery
+    from its own output, without a following fault-free EC round. Thus even an
+    identity gate can fail on a correctable input error; this does not test an
+    output-error weight bound or account for a gate's intended logical action.
 
-    For fault-free Ga, weight <= t errors in produce weight <= errors out.
-
-
-    Fault-free EC:
-                     ------------------
-    error wt <= t -> |EC (fault free) | -> no errors => No syndrome in subsequent fault-free EC (+ no logical faults)
-                     ------------------
-
-
-    Fault-free Ga:
-                     ------------------
-    error wt <= t -> |Ga (fault free) | ->error wt <= t   => A following fault-free EC + Recovery will result in a state
-                     ------------------
-    with no logical fault.
-
+    No faults are inserted inside the circuit. Input ancilla errors may be
+    erased by extraction resets. This deprecated diagnostic does not establish
+    circuit-level fault tolerance or exRec conditions. For circuit-level
+    analysis, see "Fault Tolerance Analysis" in the user guide
+    (``docs/user-guide/fault-tolerance.md``).
 
     Args:
     ----
@@ -86,7 +86,7 @@ def t_errors_check(
         syn_extract(QuantumCircuit): The syndrome extraction circuit to use.
         decoder: The decoder instance for error correction.
         t_weight: The maximum weight of errors to check (typically pc.floor((distance-1)/2)).
-        error_set: Custom set of errors to check (if None, all Pauli errors are checked).
+        error_set: Single-qubit error symbols to enumerate (defaults to X, Y, Z).
         verbose: If True, prints detailed information about failures.
         data_errors: If True, includes errors on data qubits.
         ancilla_errors: If True, includes errors on ancilla qubits.
@@ -94,9 +94,17 @@ def t_errors_check(
     Returns:
     -------
         tuple (bool, int): The bool is whether the check is passed. The int is the weight of error last checked. If the
-        bool is True then int == t_weight. If bool == False, int == weight of error that caused a logical error.
+        bool is True then int == t_weight. Otherwise the int is the input-error weight at the first failed check.
 
     """
+    warnings.warn(
+        "t_errors_check is deprecated; it checks "
+        "input Pauli errors via logical signs and a zero-state residual syndrome for EC. "
+        "It does not establish circuit-level fault tolerance. For circuit-level analysis, "
+        "see 'Fault Tolerance Analysis' in the user guide (docs/user-guide/fault-tolerance.md).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     qudit_set = set()
 
     if data_errors:
@@ -195,34 +203,31 @@ def fault_check(
     logical_gate: QuantumCircuit | LogicalCircuit | None = None,
     decoder: Decoder | None = None,
     t_weight: int | None = None,
-    error_set: Iterable[tuple[set[int], set[int]]] | None = None,
+    error_set: Iterable[str] | None = None,
     *,
     verbose: bool = True,
     data_errors: bool = True,
     ancilla_errors: bool = False,
 ) -> tuple[bool, int]:
-    """Check exRec conditions for faulty error correction or logical gate.
+    """Check logical signs after input Pauli errors and one circuit execution.
 
-    This checks that the exRec conditions for a faulty error correction (EC) or logical gate (Ga) as described in
-    arXiv:quant-ph/0504218.
+    Enumerate errors of weight zero through ``t_weight`` on the selected data
+    and/or ancilla qubits of freshly prepared logical zero and plus states.
+    Apply each error before one fault-free syndrome-extraction round, or before
+    ``logical_gate`` when supplied. If the zero-state run has a nonempty final
+    syndrome, decode its output and apply the same recovery to both states.
+    Require the original logical Z and X signs, respectively, to remain positive.
 
-    For fault-free EC, weight <= t errors in produce no errors out.
+    There is no subsequent syndrome check or fault-free EC round, including
+    after ``logical_gate``. A correctable input error can therefore make even
+    an identity gate fail. The check neither bounds output-error weight nor
+    accounts for a gate's intended logical action.
 
-    For fault-free Ga, weight <= t errors in produce weight <= errors out.
-
-
-    Fault-free EC:
-                     ------------------
-    error wt <= t -> |EC (fault free) | -> no errors => No syndrome in subsequent fault-free EC (+ no logical faults)
-                     ------------------
-
-
-    Fault-free Ga:
-                     ------------------
-    error wt <= t -> |Ga (fault free) | ->error wt <= t   => A following fault-free EC + Recovery will result in a state
-                     ------------------
-    with no logical fault.
-
+    No faults are inserted inside the circuit. Input ancilla errors may be
+    erased by extraction resets. This deprecated diagnostic does not establish
+    circuit-level fault tolerance or exRec conditions. For circuit-level
+    analysis, see "Fault Tolerance Analysis" in the user guide
+    (``docs/user-guide/fault-tolerance.md``).
 
     Args:
     ----
@@ -230,7 +235,7 @@ def fault_check(
         logical_gate(QuantumCircuit): The logical gate circuit to test (None for error correction only).
         decoder: The decoder instance for error correction.
         t_weight: The maximum weight of errors to check (typically pc.floor((distance-1)/2)).
-        error_set: Custom set of errors to check (if None, all Pauli errors are checked).
+        error_set: Single-qubit error symbols to enumerate (defaults to X, Y, Z).
         verbose: If True, prints detailed information about failures.
         data_errors: If True, includes errors on data qubits.
         ancilla_errors: If True, includes errors on ancilla qubits.
@@ -238,9 +243,17 @@ def fault_check(
     Returns:
     -------
         tuple (bool, int): The bool is whether the check is passed. The int is the weight of error last checked. If the
-        bool is True then int == t_weight. If bool == False, int == weight of error that caused a logical error.
+        bool is True then int == t_weight. Otherwise the int is the input-error weight at the first failed check.
 
     """
+    warnings.warn(
+        "fault_check is deprecated; it checks "
+        "input Pauli errors via logical signs after one circuit execution. "
+        "It does not establish circuit-level fault tolerance. For circuit-level analysis, "
+        "see 'Fault Tolerance Analysis' in the user guide (docs/user-guide/fault-tolerance.md).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     qudit_set = set()
 
     if data_errors:

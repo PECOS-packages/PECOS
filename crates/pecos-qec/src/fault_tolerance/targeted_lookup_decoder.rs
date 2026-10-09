@@ -300,11 +300,11 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records": [-2, -1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-2,-1],"id":0}]"#.to_string()),
         );
         tc.set_meta(
             "observables",
-            pecos_quantum::Attribute::String(r#"[{"records": [-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         tc
     }
@@ -498,7 +498,9 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-2]},{"records":[-1]}]"#.into()),
+            pecos_quantum::Attribute::String(
+                r#"[{"records":[-2],"id":0},{"records":[-1],"id":1}]"#.into(),
+            ),
         );
         tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
 
@@ -579,12 +581,13 @@ mod tests {
         tc.set_meta(
             "detectors",
             pecos_quantum::Attribute::String(
-                r#"[{"records":[-2]},{"records":[-1]},{"records":[-2,-1]}]"#.into(),
+                r#"[{"records":[-2],"id":0},{"records":[-1],"id":1},{"records":[-2,-1],"id":2}]"#
+                    .into(),
             ),
         );
         tc.set_meta(
             "observables",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.into()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
         );
 
         let noise = StochasticNoiseParams {
@@ -646,7 +649,7 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.into()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
         );
         tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
 
@@ -689,7 +692,9 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-2]},{"records":[-1]}]"#.into()),
+            pecos_quantum::Attribute::String(
+                r#"[{"records":[-2],"id":0},{"records":[-1],"id":1}]"#.into(),
+            ),
         );
         tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
 

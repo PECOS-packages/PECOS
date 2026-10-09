@@ -20,6 +20,7 @@ use pecos_phir::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+use super::declarations::{DeclarationKind, Declarations};
 use super::environment::Environment;
 
 /// Information about a bit-indexed write
@@ -111,6 +112,7 @@ pub fn phir_json_to_module(json_str: &str) -> Result<Module, PecosError> {
 
 struct ImprovedConverter {
     environment: Environment,
+    declarations: Declarations,
     next_ssa_id: u32,
     variable_map: BTreeMap<String, u32>,
     variable_types: BTreeMap<String, Type>,
@@ -121,6 +123,7 @@ impl ImprovedConverter {
     fn new() -> Self {
         Self {
             environment: Environment::new(),
+            declarations: Declarations::default(),
             next_ssa_id: 0,
             variable_map: BTreeMap::new(),
             variable_types: BTreeMap::new(),
@@ -147,6 +150,7 @@ impl ImprovedConverter {
     }
 
     fn convert_operations(&mut self, ops: &[Value]) -> Result<Vec<Instruction>, PecosError> {
+        super::declarations::validate_json_operations(ops)?;
         // Register definitions own the global qubit numbering, as in PyPHIR.
         // Reserve those IDs before allocating SSA IDs for registers and values.
         for op in ops {
@@ -398,6 +402,12 @@ impl ImprovedConverter {
                 let var_define_op =
                     VarDefineOp::new(variable.to_string(), data_type.to_string(), size);
 
+                let kind = if data == "qvar_define" {
+                    DeclarationKind::Quantum
+                } else {
+                    DeclarationKind::Classical
+                };
+                self.declarations.register(variable, kind)?;
                 let var_id = self.get_ssa_id(variable)?;
 
                 let result_type = match data {
@@ -693,6 +703,116 @@ impl ImprovedConverter {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn declaration_ssa_aliasing_regression() {
+        use serde_json::json;
+        for (first, second) in [
+            ("qvar_define", "qvar_define"),
+            ("cvar_define", "cvar_define"),
+            ("qvar_define", "cvar_define"),
+            ("cvar_define", "qvar_define"),
+        ] {
+            let declaration = |data: &str, name: &str| {
+                json!({
+                    "data":data, "variable":name, "size":1,
+                    "data_type":if data == "qvar_define" {"qubits"} else {"u32"},
+                })
+            };
+            let mut converter = ImprovedConverter::new();
+            let a = converter
+                .convert_operation(&declaration(first, "a"))
+                .unwrap()
+                .unwrap();
+            let b = converter
+                .convert_operation(&declaration(second, "b"))
+                .unwrap()
+                .unwrap();
+            assert_ne!(
+                a.results[0], b.results[0],
+                "distinct declared names must have distinct SSA identities"
+            );
+            let before = (
+                converter.next_ssa_id,
+                converter.variable_map.clone(),
+                converter.variable_types.clone(),
+            );
+            let error = converter
+                .convert_operation(&declaration(second, "a"))
+                .unwrap_err();
+            let first_kind = if first == "qvar_define" {
+                "quantum"
+            } else {
+                "classical"
+            };
+            let second_kind = if second == "qvar_define" {
+                "quantum"
+            } else {
+                "classical"
+            };
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Input error: Variable 'a' is already declared as {first_kind}; cannot redeclare as {second_kind}"
+                )
+            );
+            assert_eq!(
+                (
+                    converter.next_ssa_id,
+                    converter.variable_map.clone(),
+                    converter.variable_types.clone()
+                ),
+                before,
+                "rejection must preserve SSA allocation and type state"
+            );
+            // References still resolve to the first declaration's identity.
+            assert_eq!(converter.get_ssa_id("a").unwrap(), a.results[0].id);
+        }
+    }
+
+    #[test]
+    fn redeclaration_precedes_ssa_lookup() {
+        use serde_json::json;
+        let mut converter = ImprovedConverter::new();
+        converter
+            .convert_operation(&json!({"data":"qvar_define", "variable":"a", "size":1}))
+            .unwrap();
+        // A reference mapping can change independently of the declaration registry.
+        // Force the lookup to allocate, making its ordering observable even though
+        // a normal duplicate lookup would return an existing id without side effects.
+        converter.variable_map.remove("a");
+        converter.next_ssa_id = u32::MAX;
+        let error = converter
+            .convert_operation(
+                &json!({"data":"cvar_define", "data_type":"u32", "variable":"a", "size":1}),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Input error: Variable 'a' is already declared as quantum; cannot redeclare as classical"
+        );
+    }
+
+    #[test]
+    fn program_redeclaration_precedes_qubit_and_ssa_reservation() {
+        use serde_json::json;
+        let mut converter = ImprovedConverter::new();
+        let error = converter
+            .convert_operations(&[
+                json!({"data":"qvar_define", "variable":"a", "size":1}),
+                json!({"data":"cvar_define", "data_type":"u32", "variable":"a", "size":1}),
+            ])
+            .unwrap_err();
+        assert!(error.to_string().contains("cannot redeclare as classical"));
+        assert_eq!(
+            (
+                converter.environment.count_qubits(),
+                converter.next_ssa_id,
+                converter.variable_map.len()
+            ),
+            (0, 0, 0)
+        );
+    }
     use super::*;
 
     #[test]

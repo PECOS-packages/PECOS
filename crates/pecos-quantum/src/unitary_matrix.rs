@@ -868,11 +868,13 @@ fn extract_rotation_angle(
     })
 }
 
-const NAMED_GATE_2Q: [GateType; 11] = [
+const NAMED_GATE_2Q: [GateType; 13] = [
     GateType::CX,
     GateType::CY,
     GateType::CZ,
     GateType::CH,
+    GateType::CS,
+    GateType::CSdg,
     GateType::SWAP,
     GateType::SXX,
     GateType::SXXdg,
@@ -882,7 +884,7 @@ const NAMED_GATE_2Q: [GateType; 11] = [
     GateType::SZZdg,
 ];
 
-const NAMED_GATE_3Q: [GateType; 1] = [GateType::CCX];
+const NAMED_GATE_3Q: [GateType; 2] = [GateType::CCX, GateType::CCZ];
 
 /// Builds a cached lookup table mapping `Unitary::named(gate)` to its canonical matrix.
 fn build_unitary_table(
@@ -1883,6 +1885,9 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             let gate = canonical_two_qubit_matrix(gate_type);
             embed_two_qubit_gate(&gate, qubits[0], qubits[1], num_qubits)
         }
+        GateType::CS => phase_to_matrix(Angle64::QUARTER_TURN, 2, qubits, num_qubits),
+        GateType::CSdg => phase_to_matrix(-Angle64::QUARTER_TURN, 2, qubits, num_qubits),
+        GateType::CCZ => phase_to_matrix(Angle64::HALF_TURN, 3, qubits, num_qubits),
         GateType::CCX => {
             // Toffoli: flip target when both controls are |1>
             let dim = 1 << num_qubits;

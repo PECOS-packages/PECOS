@@ -466,6 +466,19 @@ mod tests {
     use pecos_simulators::SymbolicSparseStab;
 
     #[test]
+    fn diagonal_non_clifford_gates_are_rejected() {
+        for gate_type in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let mut circuit = DagCircuit::new();
+            let qubits: Vec<_> = (0..gate_type.quantum_arity()).map(QubitId).collect();
+            circuit.add_gate(Gate::simple(gate_type, qubits));
+            let result = execute_circuit_symbolic(&mut SymbolicSparseStab::new(3), &circuit);
+            assert!(
+                matches!(result, Err(SymbolicExecutionError::UnsupportedGate { gate_type: rejected, .. }) if rejected == gate_type)
+            );
+        }
+    }
+
+    #[test]
     fn test_bell_state_circuit() {
         // Build Bell state circuit using DagCircuit builder interface
         let mut circuit = DagCircuit::new();

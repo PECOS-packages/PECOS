@@ -413,6 +413,11 @@ fn resolve_simple_two_qubit_gate(
 /// Walks the circuit in topological order and emits QASM statements,
 /// including register declarations, gate operations, measurements with
 /// classical targets, and conditional operations.
+/// Some emitted gate names are not defined by the included qelib1 file or
+/// accepted by this crate's importer, so not every output can be read back.
+///
+/// # Panics
+/// Panics when a gate type is not covered by this exporter's mapping.
 #[must_use]
 pub fn dag_to_qasm(dag: &DagCircuit) -> String {
     let mut lines = Vec::new();
@@ -494,6 +499,32 @@ fn format_gate_stmt(
         return format!("{measure}{resets}");
     }
 
+    // Exact qelib1 boundary spellings; repeat a classical condition on every leg.
+    if matches!(
+        gate.gate_type,
+        GateType::CCZ | GateType::CS | GateType::CSdg
+    ) {
+        let mut statements = Vec::new();
+        for operands in gate.qubits.chunks_exact(gate.gate_type.quantum_arity()) {
+            let a = operands[0].index();
+            let b = operands[1].index();
+            if gate.gate_type == GateType::CCZ {
+                let c = operands[2].index();
+                statements.push(format!(
+                    "{prefix}h q[{c}];\n{prefix}ccx q[{a}], q[{b}], q[{c}];\n{prefix}h q[{c}];"
+                ));
+            } else {
+                let angle = if gate.gate_type == GateType::CS {
+                    "pi/2"
+                } else {
+                    "-pi/2"
+                };
+                statements.push(format!("{prefix}cu1({angle}) q[{a}], q[{b}];"));
+            }
+        }
+        return statements.join("\n");
+    }
+
     let name = gate_type_to_qasm_name(gate.gate_type);
 
     // Format parameters
@@ -556,7 +587,7 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::QAlloc => "qalloc",
         GateType::QFree => "qfree",
         GateType::Idle => "idle",
-        _ => "unknown",
+        unsupported => panic!("QASM export does not support gate {unsupported}"),
     }
 }
 
@@ -564,6 +595,50 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
 mod tests {
     use super::*;
     use crate::QASMParser;
+
+    #[test]
+    fn diagonal_export_roundtrips_exactly() {
+        use pecos_engines::{ByteMessage, DenseStateVecEngine, Engine};
+        fn run(dag: &DagCircuit) -> Vec<num_complex::Complex64> {
+            let mut message = ByteMessage::quantum_operations_builder();
+            for (_, gate) in dag.iter_gates_topo() {
+                message.add_gate_command(gate);
+            }
+            let mut engine = DenseStateVecEngine::new(3);
+            engine.process(message.build()).unwrap();
+            engine.simulator_mut().state().clone()
+        }
+        for input in 0..=8 {
+            let mut dag = DagCircuit::new();
+            if input == 8 {
+                dag.h(&[0, 1, 2]);
+            } else {
+                for q in 0..3 {
+                    if input & (1 << q) != 0 {
+                        dag.x(&[q]);
+                    }
+                }
+            }
+            dag.ccz(2, 0, 1).cs(&[(2, 0)]).csdg(&[(1, 2)]);
+            let text = dag_to_qasm(&dag);
+            assert!(text.contains("cu1(pi/2)"));
+            assert!(text.contains("cu1(-pi/2)"));
+            assert!(!text.contains("unknown"));
+            let parsed = crate::parser::QASMParser::parse_str(&text).unwrap();
+            let imported = qasm_to_dag(&parsed).unwrap();
+            for (a, b) in run(&dag).iter().zip(run(&imported)) {
+                assert!((*a - b).norm() < 1e-12, "input {input}: {a} != {b}");
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "QASM export does not support gate")]
+    fn unsupported_export_is_loud() {
+        let mut dag = DagCircuit::new();
+        dag.add_gate_auto_wire(Gate::simple(GateType::Custom, vec![QubitId(0)]));
+        let _ = dag_to_qasm(&dag);
+    }
 
     #[test]
     fn test_bell_state_dag_to_qasm() {

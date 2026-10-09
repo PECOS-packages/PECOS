@@ -476,7 +476,10 @@ impl Unitary {
                 (1, Angle64::THREE_QUARTERS_TURN) => Some(GateType::SZdg),
                 (1, angle) if angle == Angle64::HALF_TURN / 4 => Some(GateType::T),
                 (1, angle) if angle == negate_angle(Angle64::HALF_TURN / 4) => Some(GateType::Tdg),
+                (2, Angle64::QUARTER_TURN) => Some(GateType::CS),
                 (2, Angle64::HALF_TURN) => Some(GateType::CZ),
+                (2, Angle64::THREE_QUARTERS_TURN) => Some(GateType::CSdg),
+                (3, Angle64::HALF_TURN) => Some(GateType::CCZ),
                 _ => None,
             },
             Self::RXXRYYRZZ { .. } => Some(GateType::RXXRYYRZZ),
@@ -1106,7 +1109,7 @@ impl FromStr for UnitaryRep {
         match upper.as_str() {
             // Single-qubit fixed gates
             "H" | "F" | "FDG" | "SX" | "SXDG" | "SY" | "SYDG" | "S" | "SZ" | "SDG" | "SZDG"
-            | "T" | "TDG" | "CH" => {
+            | "T" | "TDG" | "CH" | "CS" | "CSDG" => {
                 let gate_type = match upper.as_str() {
                     "H" => GateType::H,
                     "F" => GateType::F,
@@ -1120,9 +1123,11 @@ impl FromStr for UnitaryRep {
                     "T" => GateType::T,
                     "TDG" => GateType::Tdg,
                     "CH" => GateType::CH,
+                    "CS" => GateType::CS,
+                    "CSDG" => GateType::CSdg,
                     _ => unreachable!(),
                 };
-                let expected = if upper == "CH" { 2 } else { 1 };
+                let expected = gate_type.quantum_arity();
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != expected {
                     return Err(ParseUnitaryRepError {
@@ -1181,7 +1186,7 @@ impl FromStr for UnitaryRep {
             }
 
             // Three-qubit gates
-            "CCX" | "TOFFOLI" => {
+            "CCX" | "TOFFOLI" | "CCZ" => {
                 let qubits = parse_qubits(&qubit_tokens)?;
                 if qubits.len() != 3 {
                     return Err(ParseUnitaryRepError {
@@ -1189,7 +1194,14 @@ impl FromStr for UnitaryRep {
                     });
                 }
                 require_distinct_parsed_qubits(gate_name, &qubits)?;
-                Ok(UnitaryRep::gate(GateType::CCX, SmallVec::from_vec(qubits)))
+                Ok(UnitaryRep::gate(
+                    if upper == "CCZ" {
+                        GateType::CCZ
+                    } else {
+                        GateType::CCX
+                    },
+                    SmallVec::from_vec(qubits),
+                ))
             }
 
             // Not a recognized gate name -> try Pauli parsing.
@@ -2123,18 +2135,7 @@ impl UnitaryRep {
         // For structural comparison, we check known Hermitian operators
         match self {
             Self::Pauli(_) => true, // All Paulis are Hermitian
-            Self::Gate(Unitary::Named(NamedGate(gate_type)), _) => matches!(
-                gate_type,
-                GateType::I
-                    | GateType::X
-                    | GateType::Y
-                    | GateType::Z
-                    | GateType::H
-                    | GateType::CX
-                    | GateType::CY
-                    | GateType::CZ
-                    | GateType::SWAP
-            ),
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), _) => gate_type.is_self_adjoint(),
             Self::Gate(Unitary::Rotation { angle, .. }, _) => {
                 // Rotations are Hermitian only at angle 0 or π
                 *angle == Angle64::ZERO || *angle == Angle64::HALF_TURN
@@ -2434,12 +2435,10 @@ impl UnitaryRep {
                 // Decompose inner, reverse, and adjoint each gate
                 let mut gates = inner.try_decompose()?;
                 gates.reverse();
+                let mut needs_phase = false;
                 for gate in &mut gates {
-                    // Negate angles for rotation gates
-                    for angle in &mut gate.angles {
-                        *angle = Angle64::ZERO - *angle;
-                    }
-                    // Some gates need special handling
+                    // Each gate must decide its inverse explicitly. In particular,
+                    // axis angles are not rotation angles, and U3/KAK factors reverse.
                     gate.gate_type = match gate.gate_type {
                         GateType::SX => GateType::SXdg,
                         GateType::SXdg => GateType::SX,
@@ -2449,14 +2448,98 @@ impl UnitaryRep {
                         GateType::SZdg => GateType::SZ,
                         GateType::T => GateType::Tdg,
                         GateType::Tdg => GateType::T,
+                        GateType::F => GateType::Fdg,
+                        GateType::Fdg => GateType::F,
+                        GateType::CS => GateType::CSdg,
+                        GateType::CSdg => GateType::CS,
                         GateType::SXX => GateType::SXXdg,
                         GateType::SXXdg => GateType::SXX,
                         GateType::SYY => GateType::SYYdg,
                         GateType::SYYdg => GateType::SYY,
                         GateType::SZZ => GateType::SZZdg,
                         GateType::SZZdg => GateType::SZZ,
-                        other => other, // Self-adjoint gates unchanged
+                        GateType::I
+                        | GateType::X
+                        | GateType::Y
+                        | GateType::Z
+                        | GateType::H
+                        | GateType::CX
+                        | GateType::CY
+                        | GateType::CZ
+                        | GateType::CH
+                        | GateType::SWAP
+                        | GateType::CCX
+                        | GateType::CCZ => gate.gate_type,
+                        GateType::RX
+                        | GateType::RY
+                        | GateType::RZ
+                        | GateType::RXX
+                        | GateType::RYY
+                        | GateType::RZZ
+                        | GateType::RXXRYYRZZ => {
+                            needs_phase ^=
+                                rotation_angles_need_adjoint_phase(gate.angles.iter().copied());
+                            for angle in &mut gate.angles {
+                                *angle = -*angle;
+                            }
+                            gate.gate_type
+                        }
+                        GateType::RXY1Q | GateType::RXYXY2Q => {
+                            needs_phase ^= rotation_angles_need_adjoint_phase([gate.angles[0]]);
+                            gate.angles[0] = -gate.angles[0];
+                            gate.gate_type
+                        }
+                        GateType::U => {
+                            needs_phase ^= rotation_angles_need_adjoint_phase([gate.angles[0]]);
+                            for angle in &mut gate.angles {
+                                *angle = -*angle;
+                            }
+                            gate.angles.swap(1, 2);
+                            GateType::U
+                        }
+                        GateType::U2q => {
+                            needs_phase ^= rotation_angles_need_adjoint_phase(
+                                [0, 3, 6, 7, 8, 9, 12].map(|slot| gate.angles[slot]),
+                            );
+                            for angle in &mut gate.angles {
+                                *angle = -*angle;
+                            }
+                            for offset in [0, 3, 9, 12] {
+                                gate.angles.swap(offset + 1, offset + 2);
+                            }
+                            for offset in 0..6 {
+                                gate.angles.swap(offset, offset + 9);
+                            }
+                            GateType::U2q
+                        }
+                        GateType::MX
+                        | GateType::MZ
+                        | GateType::MeasureLeaked
+                        | GateType::MeasureFree
+                        | GateType::MPZ
+                        | GateType::PX
+                        | GateType::PZ
+                        | GateType::QAlloc
+                        | GateType::QFree
+                        | GateType::Idle
+                        | GateType::TrackedPauliMeta
+                        | GateType::MeasCrosstalkGlobalPayload
+                        | GateType::MeasCrosstalkLocalPayload
+                        | GateType::Channel
+                        | GateType::Custom => {
+                            unreachable!(
+                                "non-unitary gate in a unitary decomposition: {:?}",
+                                gate.gate_type
+                            )
+                        }
                     };
+                }
+                // Scalar signs commute, so account for the whole decomposition:
+                // even parity cancels, while an odd sign needs a phase carrier.
+                if needs_phase {
+                    return Err(PhaseGateError::UnrepresentableGlobalPhase {
+                        phase: Angle64::HALF_TURN,
+                    });
                 }
                 gates
             }
@@ -3114,6 +3197,8 @@ fn try_merge_rotations(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PhaseFixedRootFamily {
+    Cs,
+    Ccz,
     SX,
     SY,
     Sxx,
@@ -3126,6 +3211,9 @@ enum PhaseFixedRootFamily {
 
 fn phase_fixed_root_power(gate: GateType) -> Option<(PhaseFixedRootFamily, u8, u8)> {
     match gate {
+        GateType::CS => Some((PhaseFixedRootFamily::Cs, 1, 4)),
+        GateType::CSdg => Some((PhaseFixedRootFamily::Cs, 3, 4)),
+        GateType::CCZ => Some((PhaseFixedRootFamily::Ccz, 1, 2)),
         GateType::SX => Some((PhaseFixedRootFamily::SX, 1, 4)),
         GateType::SXdg => Some((PhaseFixedRootFamily::SX, 3, 4)),
         GateType::X => Some((PhaseFixedRootFamily::SX, 2, 4)),
@@ -3194,7 +3282,11 @@ fn phase_fixed_root(
     };
     if matches!(
         family,
-        PhaseFixedRootFamily::Sxx | PhaseFixedRootFamily::Syy | PhaseFixedRootFamily::Szz
+        PhaseFixedRootFamily::Sxx
+            | PhaseFixedRootFamily::Syy
+            | PhaseFixedRootFamily::Szz
+            | PhaseFixedRootFamily::Cs
+            | PhaseFixedRootFamily::Ccz
     ) {
         qubits.sort_unstable();
     }
@@ -3203,6 +3295,8 @@ fn phase_fixed_root(
 
 fn phase_fixed_named_adjoint(gate: GateType) -> Option<GateType> {
     match gate {
+        GateType::CS => Some(GateType::CSdg),
+        GateType::CSdg => Some(GateType::CS),
         GateType::SX => Some(GateType::SXdg),
         GateType::SXdg => Some(GateType::SX),
         GateType::SY => Some(GateType::SYdg),
@@ -3262,6 +3356,10 @@ fn try_merge_phase_fixed_named_gates(a: &UnitaryRep, b: &UnitaryRep) -> Option<U
         return Some(pauli_product);
     }
     let gate = match (family_a, power) {
+        (PhaseFixedRootFamily::Cs, 1) => GateType::CS,
+        (PhaseFixedRootFamily::Cs, 2) => GateType::CZ,
+        (PhaseFixedRootFamily::Cs, 3) => GateType::CSdg,
+        (PhaseFixedRootFamily::Ccz, 1) => GateType::CCZ,
         (PhaseFixedRootFamily::SX, 1) => GateType::SX,
         (PhaseFixedRootFamily::SX, 2) => GateType::X,
         (PhaseFixedRootFamily::SX, 3) => GateType::SXdg,
@@ -3407,8 +3505,11 @@ impl GateTypeExt for GateType {
     }
 
     fn is_self_adjoint(&self) -> bool {
-        use GateType::{CCX, CX, CY, CZ, H, I, SWAP, X, Y, Z};
-        matches!(self, I | X | Y | Z | H | CX | CY | CZ | SWAP | CCX)
+        use GateType::{CCX, CCZ, CH, CX, CY, CZ, H, I, SWAP, X, Y, Z};
+        matches!(
+            self,
+            I | X | Y | Z | H | CX | CY | CZ | CH | SWAP | CCX | CCZ
+        )
     }
 
     fn is_fixed_unitary(&self) -> bool {
@@ -3420,6 +3521,9 @@ impl GateTypeExt for GateType {
                     | GateType::CY
                     | GateType::CZ
                     | GateType::CH
+                    | GateType::CS
+                    | GateType::CSdg
+                    | GateType::CCZ
                     | GateType::SWAP
                     | GateType::CCX
             )
@@ -3448,25 +3552,35 @@ pub fn rotation_sum_wraps(a: Angle64, b: Angle64) -> bool {
 }
 
 fn rotation_adjoint_needs_phase(unitary: &Unitary) -> bool {
-    let is_half = |angle: Angle64| angle == Angle64::HALF_TURN;
     match unitary {
-        Unitary::Rotation { angle, .. } => is_half(*angle),
-        Unitary::RXY1Q { theta, .. } | Unitary::U3 { theta, .. } => is_half(*theta),
+        Unitary::Rotation { angle, .. } => rotation_angles_need_adjoint_phase([*angle]),
+        Unitary::RXY1Q { theta, .. } | Unitary::U3 { theta, .. } => {
+            rotation_angles_need_adjoint_phase([*theta])
+        }
         Unitary::RXXRYYRZZ { alpha, beta, gamma } => {
-            is_half(*alpha) ^ is_half(*beta) ^ is_half(*gamma)
+            rotation_angles_need_adjoint_phase([*alpha, *beta, *gamma])
         }
         Unitary::U2q {
             before,
             interaction,
             after,
-        } => before
-            .iter()
-            .chain(after.iter())
-            .map(|u3| u3[0])
-            .chain(interaction.iter().copied())
-            .fold(false, |parity, angle| parity ^ is_half(angle)),
+        } => rotation_angles_need_adjoint_phase(
+            before
+                .iter()
+                .chain(after.iter())
+                .map(|u3| u3[0])
+                .chain(interaction.iter().copied()),
+        ),
         Unitary::Named(_) | Unitary::Phase { .. } => false,
     }
+}
+
+// Rotation slots have period 4pi. Angle64 negation fixes pi instead of
+// representing -pi, dropping one scalar -1 for each such slot.
+fn rotation_angles_need_adjoint_phase(angles: impl IntoIterator<Item = Angle64>) -> bool {
+    angles.into_iter().fold(false, |parity, angle| {
+        parity ^ (angle == Angle64::HALF_TURN)
+    })
 }
 
 // --- Angle64 helpers ---
@@ -4074,6 +4188,9 @@ fn gate_type_color(gt: GateType) -> CellColor {
         | GateType::RZ
         | GateType::T
         | GateType::Tdg
+        | GateType::CS
+        | GateType::CSdg
+        | GateType::CCZ
         | GateType::RZZ
         | GateType::MZ
         | GateType::PZ
@@ -4298,10 +4415,15 @@ impl UnitaryRep {
                     diagram.add_labeled_connector(top, bottom, format!("{gate_type:?}"));
                 }
                 _ => {
-                    if qubits.len() == 1 {
-                        let family = gate_type_family(*gate_type);
-                        let color = gate_type_color(*gate_type);
-                        diagram.add_gate(qubits[0], &format!("{gate_type:?}"), color, family);
+                    let family = gate_type_family(*gate_type);
+                    let color = gate_type_color(*gate_type);
+                    let mut ordered = qubits.clone();
+                    ordered.sort_unstable();
+                    for &qubit in &ordered {
+                        diagram.add_gate(qubit, &format!("{gate_type:?}"), color, family);
+                    }
+                    for pair in ordered.windows(2) {
+                        diagram.connect_vertical(pair[0], pair[1], CellColor::None);
                     }
                 }
             },
@@ -4408,7 +4530,9 @@ mod tests {
             for num_qubits in 3..=256 {
                 let descriptor = Unitary::Phase { gamma, num_qubits };
                 assert!(!descriptor.is_clifford());
-                assert_eq!(descriptor.to_gate_type(), None);
+                let named =
+                    (num_qubits == 3 && gamma == Angle64::HALF_TURN).then_some(GateType::CCZ);
+                assert_eq!(descriptor.to_gate_type(), named);
                 assert_eq!(descriptor.try_to_pauli(), None);
             }
             // Validate the descriptor/operand-list pair at the representation layer.

@@ -427,6 +427,73 @@ pub fn pauli_string_to_bitmask(
     Ok(out)
 }
 
+/// Decompose an exact symbolic Pauli channel into ordered probability alternatives.
+///
+/// Accepts unitary Paulis, mixed unitaries, tensors and compositions recursively.
+/// Preserves zero and arbitrarily small probabilities, duplicate alternatives,
+/// and Cartesian-product order; global Pauli phases have no channel effect.
+/// Unlike [`PauliChannel::from_channel_expr`], this performs no tolerance cleanup.
+/// Each mixed-unitary node must sum to one within `1e-12`; weights are not
+/// renormalized. Empty tensors and compositions represent the identity channel.
+///
+/// # Errors
+/// Returns [`ChannelError::UnsupportedChannelExpr`] for non-Pauli expressions,
+/// [`ChannelError::InvalidProbability`] for nonfinite or negative weights, and
+/// [`ChannelError::ProbabilitySum`] for empty or unnormalized mixed unitaries.
+/// Propagates any [`ChannelError::QubitOutOfRange`] from Pauli conversion.
+pub fn pauli_mixture(channel: &ChannelExpr) -> Result<Vec<(f64, PauliBitmaskSmall)>, ChannelError> {
+    match channel {
+        ChannelExpr::Unitary(unitary) => {
+            let width = channel_num_qubits(channel);
+            let pauli = unitary.clone().try_to_pauli_string().ok_or_else(|| {
+                ChannelError::UnsupportedChannelExpr {
+                    reason: "unitary is not an exact symbolic Pauli".to_string(),
+                }
+            })?;
+            let bits = pauli_string_to_bitmask(width, &pauli)?;
+            Ok(vec![(1.0, bits)])
+        }
+        ChannelExpr::MixedUnitary(ops) => {
+            let mut out = Vec::with_capacity(ops.len());
+            let mut total = 0.0;
+            for (weight, unitary) in ops {
+                if !weight.is_finite() || *weight < 0.0 {
+                    return Err(ChannelError::InvalidProbability {
+                        value: *weight,
+                        tolerance: 0.0,
+                    });
+                }
+                // Convert a deterministic operator, not the weighted mixture:
+                // PauliChannel's default cleanup would erase probabilities <=1e-12.
+                let converted = pauli_mixture(&ChannelExpr::Unitary(unitary.clone()))?;
+                out.push((*weight, converted[0].1.clone()));
+                total += weight;
+            }
+            if out.is_empty() || (total - 1.0).abs() > DEFAULT_TOLERANCE {
+                return Err(ChannelError::ProbabilitySum {
+                    sum: total,
+                    tolerance: DEFAULT_TOLERANCE,
+                });
+            }
+            Ok(out)
+        }
+        ChannelExpr::Tensor(parts) | ChannelExpr::Compose(parts) => {
+            let mut out = vec![(1.0, PauliBitmaskSmall::identity())];
+            for part in parts {
+                let next = pauli_mixture(part)?;
+                out = out
+                    .iter()
+                    .flat_map(|(a, p)| next.iter().map(move |(b, q)| (a * b, p.multiply(q))))
+                    .collect();
+            }
+            Ok(out)
+        }
+        _ => Err(ChannelError::UnsupportedChannelExpr {
+            reason: "channel is not a mixture of Pauli unitaries".to_string(),
+        }),
+    }
+}
+
 /// Sparse complex sum of Pauli operators.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PauliSum {
@@ -3274,6 +3341,157 @@ mod tests {
     use pecos_core::unitary;
     use pecos_core::{Op, QuarterPhase};
     use pecos_random::PecosRng;
+
+    #[test]
+    fn exact_pauli_mixture_alternatives() {
+        let bits = |u: UnitaryRep| {
+            pauli_string_to_bitmask(130, &u.try_to_pauli_string().unwrap()).unwrap()
+        };
+        let x = bits(unitary::X(129));
+        assert_eq!(
+            pauli_mixture(&ChannelExpr::Unitary(unitary::X(129))).unwrap(),
+            vec![(1.0, x.clone())]
+        );
+        let identity = PauliBitmaskSmall::identity();
+        let mixed = ChannelExpr::MixedUnitary(vec![
+            (0.25, unitary::I(129)),
+            (0.5, unitary::X(129)),
+            (0.25, unitary::X(129)),
+            (0.0, unitary::Z(129)),
+        ]);
+        assert_eq!(
+            pauli_mixture(&mixed).unwrap(),
+            vec![
+                (0.25, identity.clone()),
+                (0.5, x.clone()),
+                (0.25, x.clone()),
+                (0.0, bits(unitary::Z(129))),
+            ]
+        );
+        let second = ChannelExpr::MixedUnitary(vec![(0.75, unitary::I(0)), (0.25, unitary::Y(0))]);
+        let expected: Vec<_> = pauli_mixture(&mixed)
+            .unwrap()
+            .into_iter()
+            .flat_map(|(p, a)| {
+                [
+                    (0.75 * p, a.clone()),
+                    (0.25 * p, a.multiply(&bits(unitary::Y(0)))),
+                ]
+            })
+            .collect();
+        for combined in [
+            ChannelExpr::Tensor(vec![mixed.clone(), second.clone()]),
+            ChannelExpr::Compose(vec![mixed, second]),
+        ] {
+            assert_eq!(pauli_mixture(&combined).unwrap(), expected);
+        }
+        let composed = ChannelExpr::Compose(vec![
+            ChannelExpr::Unitary(unitary::X(129)),
+            ChannelExpr::Unitary(unitary::Y(129)),
+        ]);
+        assert_eq!(
+            pauli_mixture(&composed).unwrap(),
+            vec![(1.0, x.multiply(&bits(unitary::Y(129))))]
+        );
+        for empty in [ChannelExpr::Tensor(vec![]), ChannelExpr::Compose(vec![])] {
+            assert_eq!(
+                pauli_mixture(&empty).unwrap(),
+                vec![(1.0, identity.clone())]
+            );
+        }
+    }
+
+    #[test]
+    fn exact_pauli_mixture_preserves_tiny_probabilities() {
+        let tiny = pecos_core::channel::Dephasing(1e-15, 0);
+        let alternatives = pauli_mixture(&tiny).unwrap();
+        assert_eq!(alternatives.len(), 2);
+        assert_eq!(alternatives[0].0.to_bits(), (1.0 - 1e-15_f64).to_bits());
+        assert_eq!(alternatives[1].0.to_bits(), 1e-15_f64.to_bits());
+        assert!(alternatives[1].1.has_z(0));
+    }
+
+    #[test]
+    fn exact_pauli_mixture_rejections() {
+        for (channel, expected_reason) in [
+            (
+                ChannelExpr::Unitary(unitary::H(0)),
+                "unitary is not an exact symbolic Pauli",
+            ),
+            (
+                pecos_core::channel::AmplitudeDamping(0.1, 0),
+                "channel is not a mixture of Pauli unitaries",
+            ),
+        ] {
+            assert_eq!(
+                pauli_mixture(&channel),
+                Err(ChannelError::UnsupportedChannelExpr {
+                    reason: expected_reason.to_string(),
+                })
+            );
+        }
+        for p in [-0.1, -1e-15, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let error =
+                pauli_mixture(&ChannelExpr::MixedUnitary(vec![(p, unitary::X(0))])).unwrap_err();
+            let ChannelError::InvalidProbability { value, tolerance } = error else {
+                panic!("expected InvalidProbability, got {error:?}");
+            };
+            assert_eq!(value.to_bits(), p.to_bits());
+            assert_eq!(tolerance.to_bits(), 0.0_f64.to_bits());
+        }
+        for p in [0.0, 0.5, 1.1, 1.0 - 2e-12, 1.0 + 2e-12] {
+            assert_eq!(
+                pauli_mixture(&ChannelExpr::MixedUnitary(vec![(p, unitary::X(0))])),
+                Err(ChannelError::ProbabilitySum {
+                    sum: p,
+                    tolerance: DEFAULT_TOLERANCE
+                })
+            );
+        }
+        assert_eq!(
+            pauli_mixture(&ChannelExpr::MixedUnitary(vec![])),
+            Err(ChannelError::ProbabilitySum {
+                sum: 0.0,
+                tolerance: DEFAULT_TOLERANCE
+            })
+        );
+        assert_eq!(
+            pauli_mixture(&ChannelExpr::MixedUnitary(vec![
+                (f64::MAX, unitary::X(0)),
+                (f64::MAX, unitary::X(0)),
+            ])),
+            Err(ChannelError::ProbabilitySum {
+                sum: f64::INFINITY,
+                tolerance: DEFAULT_TOLERANCE
+            })
+        );
+        // Even zero-weight operators must be exact Paulis, and each nested
+        // mixture must be normalized rather than only the final product.
+        assert_eq!(
+            pauli_mixture(&ChannelExpr::MixedUnitary(vec![
+                (1.0, unitary::X(0)),
+                (0.0, unitary::H(0)),
+            ])),
+            Err(ChannelError::UnsupportedChannelExpr {
+                reason: "unitary is not an exact symbolic Pauli".to_string(),
+            })
+        );
+        assert_eq!(
+            pauli_mixture(&ChannelExpr::Compose(vec![
+                ChannelExpr::MixedUnitary(vec![(0.5, unitary::X(0))]),
+                ChannelExpr::MixedUnitary(vec![(2.0, unitary::X(0))]),
+            ])),
+            Err(ChannelError::ProbabilitySum {
+                sum: 0.5,
+                tolerance: DEFAULT_TOLERANCE
+            })
+        );
+        for p in [1.0 - 5e-13, 1.0 + 5e-13] {
+            let alternatives =
+                pauli_mixture(&ChannelExpr::MixedUnitary(vec![(p, unitary::X(0))])).unwrap();
+            assert_eq!(alternatives[0].0.to_bits(), p.to_bits());
+        }
+    }
 
     fn assert_close(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-10, "{a} != {b}");

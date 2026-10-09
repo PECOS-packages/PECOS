@@ -196,6 +196,19 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_gates_are_rejected_by_stabilizer() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            assert!(
+                std::panic::catch_unwind(|| StabilizerGroup::from_circuit(
+                    &[gate(gt, &(0..gt.quantum_arity()).collect::<Vec<_>>())],
+                    3
+                ))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn test_identity_circuit() {
         let stabs = StabilizerGroup::from_circuit(&[], 1);
         assert_eq!(stabs.is_stabilizer(&Bm::z(0)), Some(true));

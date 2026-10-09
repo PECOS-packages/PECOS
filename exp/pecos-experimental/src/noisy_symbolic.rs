@@ -1872,6 +1872,26 @@ mod tests {
     }
 
     #[test]
+    fn builder_returns_unsupported_gate_for_diagonal_non_clifford_gates() {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        for gate_type in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let mut circuit = DagCircuit::new();
+            let qubits: Vec<_> = (0..gate_type.quantum_arity()).map(QubitId).collect();
+            let gate_index = circuit.add_gate(Gate::simple(gate_type, qubits));
+            let result = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(DepolarizingNoiseModel::uniform(0.01))
+                .build_from_circuit(&circuit, &MeasurementHistory::new());
+            assert!(
+                matches!(result, Err(SymbolicExecutionError::UnsupportedGate {
+                gate_type: rejected, gate_index: index,
+            }) if rejected == gate_type && index == gate_index)
+            );
+        }
+    }
+
+    #[test]
     fn builder_returns_unsupported_gate_for_non_clifford_rz() {
         use pecos_core::{Angle64, Gate};
         use pecos_quantum::DagCircuit;

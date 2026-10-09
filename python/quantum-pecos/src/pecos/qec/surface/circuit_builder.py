@@ -147,6 +147,8 @@ class OpType(Enum):
     SZDG = auto()  # sqrt Z dagger
     X = auto()  # Pauli X
     Z = auto()  # Pauli Z
+    T = auto()  # diag(1, exp(i*pi/4)); raw magic-state injection
+    TDG = auto()  # T dagger
 
     # Two-qubit gates
     CX = auto()  # CNOT
@@ -1771,6 +1773,9 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
+        if any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
+            msg = "Stim cannot represent non-Clifford T/TDG injection; use Guppy or TickCircuit"
+            raise ValueError(msg)
         if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
             msg = (
                 "StimRenderer: detector annotation is unsupported for step lists with CZ "
@@ -2003,6 +2008,9 @@ class GuppyRenderer(CircuitRenderer):
         from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
 
+        if any(op.op_type in {OpType.T, OpType.TDG} for op in _ops):
+            msg = "GuppyRenderer generates memory modules; use render_gadget_function for a magic injection seed"
+            raise ValueError(msg)
         ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
         if len(set(ancillas)) < len(ancillas):
             msg = "GuppyRenderer cannot honour ancilla_budget; use render_surface_gadget_module with ancilla_budget"
@@ -2068,6 +2076,9 @@ class DagCircuitRenderer(CircuitRenderer):
 
             elif op.op_type == OpType.Z:
                 circuit.z([op.qubits[0]])
+
+            elif op.op_type in {OpType.T, OpType.TDG}:
+                circuit.add_gate(Gate(GateType.T if op.op_type == OpType.T else GateType.Tdg, qubits=op.qubits))
 
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
@@ -2170,6 +2181,9 @@ class TickCircuitRenderer(CircuitRenderer):
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
+        if self.add_detectors and any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
+            msg = "TickCircuitRenderer: memory detector annotations are invalid for magic-state injection"
+            raise ValueError(msg)
         if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
             msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal SZ)"
             raise ValueError(msg)
@@ -2420,6 +2434,13 @@ class TickCircuitRenderer(CircuitRenderer):
                 if op.label:
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type in {OpType.T, OpType.TDG}:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q])
+                tick = tick.t([q]) if op.op_type == OpType.T else tick.tdg([q])
+                mark_qubits_used([q])
+                apply_gate_metadata(tick, get_ancilla_gate_metadata(q, op.label) or None)
 
             elif op.op_type == OpType.F:
                 q = op.qubits[0]

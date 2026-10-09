@@ -273,17 +273,23 @@ fn measure_qubit_exact_transactional(
     q_idx: usize,
     operation: &str,
 ) -> Result<measure::LiveMeasurementResult, MpsError> {
-    let use_trivial_path = measure::is_mps_trivial(mps)
-        && (measure::trivial_mps_norm_squared(mps) - 1.0).abs()
-            < measure::TRIVIAL_MPS_NORMALIZATION_TOLERANCE;
+    let trivial_norm_squared =
+        measure::is_mps_trivial(mps).then(|| measure::trivial_mps_norm_squared(mps));
+    let use_trivial_path = trivial_norm_squared
+        .is_some_and(|norm| (norm - 1.0).abs() < measure::TRIVIAL_MPS_NORMALIZATION_TOLERANCE);
     #[cfg(test)]
     let use_trivial_path = use_trivial_path && !DISABLE_TRIVIAL_EXACT_MEASUREMENT.get();
     if use_trivial_path {
         return Ok(measure::measure_trivial_mps_exact_with_update(
-            tableau, mps, rng, q_idx,
+            tableau,
+            mps,
+            rng,
+            q_idx,
+            trivial_norm_squared.expect("trivial path has a norm"),
         ));
     }
-    let properties = measure::ZMeasurementProperties::new(tableau, mps, q_idx, operation);
+    let properties = measure::ZMeasurementProperties::new(tableau, mps, q_idx, operation)
+        .normalized(tableau, mps, q_idx);
     let probability_one = properties.probability(true);
     let is_probability_zero = probability_one <= 0.0;
     let is_probability_one = probability_one >= 1.0;

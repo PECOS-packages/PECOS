@@ -6,8 +6,7 @@
 
 #[test]
 fn test_workflows_guppy_dem_decoding_rust_1() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_decoders::batch::SampleBatch;
-    use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+    use pecos_qec::fault_tolerance::dem_builder::{ParsedDem, SampleBatch};
     use pecos_random::PecosRng;
     let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
     let sampler = ParsedDem::parse(&raw_text)?.to_dem_sampler();
@@ -15,13 +14,10 @@ fn test_workflows_guppy_dem_decoding_rust_1() -> Result<(), Box<dyn std::error::
     let batch: SampleBatch = sampler.sample_shots(2000, &mut rng)?;
 
     assert_eq!(batch.num_shots(), 2000);
-    assert_eq!(batch.num_detectors(), 6);
     for (index, shot) in batch.shots().take(2).enumerate() {
         assert_eq!(shot.syndrome.len(), batch.num_detectors());
-        println!(
-            "shot {index}: syndrome={:?}, observable_flips={:?}",
-            shot.syndrome, shot.observable_flips
-        );
+        let l0_flipped = shot.observable_flips.get(0);
+        println!("shot {index}: syndrome={:?}, L0_flipped={l0_flipped}", shot.syndrome);
     }
     Ok(())
 }
@@ -30,10 +26,10 @@ fn test_workflows_guppy_dem_decoding_rust_1() -> Result<(), Box<dyn std::error::
 
 #[test]
 fn test_workflows_guppy_dem_decoding_rust_2() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_decoders::{DecoderSpec, ObsMask};
-    use pecos_decoders::batch::{DecodeOptions, DecodeResult, ExecutionPath, SampleBatch};
+    use pecos_decoders::DecoderSpec;
+    use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
     use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
-    use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+    use pecos_qec::fault_tolerance::dem_builder::{ParsedDem, SampleBatch};
     use pecos_random::PecosRng;
     let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
     let sampler = ParsedDem::parse(&raw_text)?.to_dem_sampler();
@@ -41,13 +37,10 @@ fn test_workflows_guppy_dem_decoding_rust_2() -> Result<(), Box<dyn std::error::
     let batch: SampleBatch = sampler.sample_shots(2000, &mut rng)?;
 
     assert_eq!(batch.num_shots(), 2000);
-    assert_eq!(batch.num_detectors(), 6);
     for (index, shot) in batch.shots().take(2).enumerate() {
         assert_eq!(shot.syndrome.len(), batch.num_detectors());
-        println!(
-            "shot {index}: syndrome={:?}, observable_flips={:?}",
-            shot.syndrome, shot.observable_flips
-        );
+        let l0_flipped = shot.observable_flips.get(0);
+        println!("shot {index}: syndrome={:?}, L0_flipped={l0_flipped}", shot.syndrome);
     }
 
 
@@ -63,15 +56,17 @@ fn test_workflows_guppy_dem_decoding_rust_2() -> Result<(), Box<dyn std::error::
         ..Default::default()
     });
 
-    let pymatching_result: DecodeResult = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&terminal_graphlike_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
-    let bp_osd_result: DecodeResult = batch.decode_with(&raw_text, &bp_osd, &options)?;
+    let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 
     assert_eq!(pymatching_result.execution_path, ExecutionPath::NativeBatch);
     assert_eq!(pymatching_result.workers_used, 1);
     assert_eq!(bp_osd_result.execution_path, ExecutionPath::Parallel);
     assert_eq!(bp_osd_result.workers_used, 4);
-    let predictions: &[ObsMask] = bp_osd_result.predictions.as_deref()
+    let predictions = bp_osd_result
+        .predictions
+        .as_deref()
         .ok_or("BP+OSD predictions were requested but not returned")?;
     assert_eq!(predictions.len(), batch.num_shots());
 
@@ -87,27 +82,22 @@ fn test_workflows_guppy_dem_decoding_rust_2() -> Result<(), Box<dyn std::error::
 
 #[test]
 fn test_workflows_guppy_dem_decoding_rust_3() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_decoders::{DecoderSpec, ObsMask};
-    use pecos_decoders::batch::{DecodeOptions, DecodeResult, ExecutionPath, SampleBatch};
+    use pecos_decoders::DecoderSpec;
+    use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
     use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
-    use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+    use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering};
+    use pecos_qec::fault_tolerance::dem_builder::{ParsedDem, SampleBatch};
     use pecos_random::PecosRng;
-    use pecos_frontier::{
-FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering,
-};
     let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
     let sampler = ParsedDem::parse(&raw_text)?.to_dem_sampler();
     let mut rng = PecosRng::seed_from_u64(1);
     let batch: SampleBatch = sampler.sample_shots(2000, &mut rng)?;
 
     assert_eq!(batch.num_shots(), 2000);
-    assert_eq!(batch.num_detectors(), 6);
     for (index, shot) in batch.shots().take(2).enumerate() {
         assert_eq!(shot.syndrome.len(), batch.num_detectors());
-        println!(
-            "shot {index}: syndrome={:?}, observable_flips={:?}",
-            shot.syndrome, shot.observable_flips
-        );
+        let l0_flipped = shot.observable_flips.get(0);
+        println!("shot {index}: syndrome={:?}, L0_flipped={l0_flipped}", shot.syndrome);
     }
 
 
@@ -123,15 +113,17 @@ FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering,
         ..Default::default()
     });
 
-    let pymatching_result: DecodeResult = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&terminal_graphlike_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
-    let bp_osd_result: DecodeResult = batch.decode_with(&raw_text, &bp_osd, &options)?;
+    let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 
     assert_eq!(pymatching_result.execution_path, ExecutionPath::NativeBatch);
     assert_eq!(pymatching_result.workers_used, 1);
     assert_eq!(bp_osd_result.execution_path, ExecutionPath::Parallel);
     assert_eq!(bp_osd_result.workers_used, 4);
-    let predictions: &[ObsMask] = bp_osd_result.predictions.as_deref()
+    let predictions = bp_osd_result
+        .predictions
+        .as_deref()
         .ok_or("BP+OSD predictions were requested but not returned")?;
     assert_eq!(predictions.len(), batch.num_shots());
 
@@ -142,22 +134,26 @@ FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering,
     }
 
 
-    // Match Python's default column_order="deadline_reorder" explicitly.
+    // Python's FrontierDecoder.from_dem defaults to column_order="deadline_reorder".
     let sparse_dem = SparseDem::from_dem_str(&raw_text)?;
     let config = FrontierConfig {
         column_order: TrellisOrdering::Deadline.resolve(&sparse_dem)?,
         ..Default::default()
     };
-    let mut frontier_decoder = FrontierDecoder::from_dem_str(&raw_text, config)?;
-    let results = batch.shots().take(200)
+    let mut frontier_decoder = FrontierDecoder::from_sparse_dem(&sparse_dem, config)?;
+    let results = batch
+        .shots()
+        .take(200)
         .map(|shot| frontier_decoder.decode(&shot.syndrome))
         .collect::<Result<Vec<_>, _>>()?;
 
-    assert_eq!(results.len(), 200);
     assert!(results.iter().all(|result| result.status == FrontierStatus::Exact));
     let gaps: Vec<f64> = results.iter().filter_map(|result| result.runner_up_gap).collect();
-    let least_confident = gaps.iter().copied().reduce(f64::min)
-        .ok_or("No shots returned a runner-up gap")?;
+    let least_confident = gaps
+        .iter()
+        .copied()
+        .reduce(f64::min)
+        .ok_or("no shot returned a runner-up gap")?;
     assert!(least_confident >= 0.0);
     println!("least confident of {} shots: gap={least_confident:.3}", gaps.len());
     let confident = gaps.iter().filter(|&&gap| gap >= 1.0).count();

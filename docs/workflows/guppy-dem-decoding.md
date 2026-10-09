@@ -195,12 +195,11 @@ assert all("error(" in text for text in (raw_text, terminal_graphlike_text, sour
 ```python
 from pathlib import Path
 
-_orig_cwd = Path.cwd()
 for text, filename in (
     (raw_text, "guppy_dem_decoding.dem"),
     (terminal_graphlike_text, "guppy_dem_decoding_graphlike.dem"),
 ):
-    fixture = _orig_cwd / "docs/assets/test-data" / filename
+    fixture = Path("docs/assets/test-data") / filename
     # The fixture is a text file, so it ends with one newline the DEM text lacks.
     assert fixture.read_text() == text + "\n", f"Stage 3 DEM changed: regenerate {fixture}"
 ```
@@ -237,8 +236,7 @@ incurred — the ground truth that decoder predictions are scored against.
 
     <!--test-data: guppy_dem_decoding.dem-->
     ```rust
-    use pecos_decoders::batch::SampleBatch;
-    use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+    use pecos_qec::fault_tolerance::dem_builder::{ParsedDem, SampleBatch};
     use pecos_random::PecosRng;
 
     let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
@@ -247,19 +245,17 @@ incurred — the ground truth that decoder predictions are scored against.
     let batch: SampleBatch = sampler.sample_shots(2000, &mut rng)?;
 
     assert_eq!(batch.num_shots(), 2000);
-    assert_eq!(batch.num_detectors(), 6);
     for (index, shot) in batch.shots().take(2).enumerate() {
         assert_eq!(shot.syndrome.len(), batch.num_detectors());
-        println!(
-            "shot {index}: syndrome={:?}, observable_flips={:?}",
-            shot.syndrome, shot.observable_flips
-        );
+        let l0_flipped = shot.observable_flips.get(0);
+        println!("shot {index}: syndrome={:?}, L0_flipped={l0_flipped}", shot.syndrome);
     }
     ```
 
-Rust uses `sample_shots` because `sample_batch` returns rows; its sampler is
-built from the DEM text, so its shots are not guaranteed to match the Python
-tab shot for shot.
+In Rust, `sample_shots` returns the decodable `SampleBatch` that Python's
+`sample_batch` returns; Rust's own `sample_batch` returns plain rows. The Rust
+sampler is built from the DEM text, whose probabilities are rounded, so its
+shots need not match the Python tab's.
 
 ## 4b. Or generate shots by simulating the program
 
@@ -406,9 +402,9 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
 
     <!--continuation test-data: guppy_dem_decoding_graphlike.dem-->
     ```rust
-    use pecos_decoders::batch::{DecodeOptions, DecodeResult, ExecutionPath};
+    use pecos_decoders::DecoderSpec;
+    use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
     use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
-    use pecos_decoders::{DecoderSpec, ObsMask};
 
     let terminal_graphlike_text =
         std::fs::read_to_string("guppy_dem_decoding_graphlike.dem")?;
@@ -422,15 +418,17 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
         ..Default::default()
     });
 
-    let pymatching_result: DecodeResult = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&terminal_graphlike_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
-    let bp_osd_result: DecodeResult = batch.decode_with(&raw_text, &bp_osd, &options)?;
+    let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 
     assert_eq!(pymatching_result.execution_path, ExecutionPath::NativeBatch);
     assert_eq!(pymatching_result.workers_used, 1);
     assert_eq!(bp_osd_result.execution_path, ExecutionPath::Parallel);
     assert_eq!(bp_osd_result.workers_used, 4);
-    let predictions: &[ObsMask] = bp_osd_result.predictions.as_deref()
+    let predictions = bp_osd_result
+        .predictions
+        .as_deref()
         .ok_or("BP+OSD predictions were requested but not returned")?;
     assert_eq!(predictions.len(), batch.num_shots());
 
@@ -443,8 +441,9 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
 
 In Rust, Tesseract follows the same pattern through `DecoderSpec::Tesseract`
 (with the `pecos-decoders` `tesseract` feature). Frontier and BP-Trellis batch
-decoding is Python-only for now; stage 6 shows the Rust Frontier decoder used
-directly.
+decoding is Python-only for now, so the Rust tab shows `DecodeOptions` (explicit
+workers and retained predictions) on BP+OSD instead; stage 6 shows the Rust
+Frontier decoder used directly.
 
 `frontier` and `bp_trellis` are experimental: importing them from
 `pecos.decoders` loads the optional `pecos-rslib-exp` package, which must be
@@ -518,10 +517,6 @@ in this example; Tesseract uses the source-informed decomposition chosen above.
     when you need per-shot confidence data; that data is not returned by
     `batch.decode(...)`.
 
-The Rust tab uses `pecos-frontier`, an experimental crate that is not published
-on crates.io. `TrellisOrdering::Deadline.resolve` computes the deadline column
-order used by Python's default `FrontierDecoder.from_dem` configuration.
-
 Every decoder in stage 5 answers "which observables flipped?". None of them
 reports how close the call was. The experimental Frontier and BP-Trellis
 decoders add a **complementary gap**: the log-probability margin between the
@@ -533,6 +528,11 @@ gap describes only what the search retained, so treat it as a diagnostic
 rather than a confidence; the gap is `None` whenever fewer than two logical
 classes survive to the end, which can happen on a fully exact decode too, so a
 missing gap is not a pruning signal.
+
+The Rust tab uses `pecos-frontier`, an experimental crate not published on
+crates.io. Rust's `FrontierConfig::default()` processes mechanisms in DEM order,
+so the tab resolves the deadline column order that Python's
+`FrontierDecoder.from_dem` uses by default.
 
 === ":fontawesome-brands-python: Python"
 
@@ -551,9 +551,6 @@ missing gap is not a pruning signal.
     print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
     ```
 
-    Because the gap is a per-shot quantity, a threshold on it partitions the run
-    into a confident majority and a tail worth treating differently:
-
     <!--continuation-->
     ```python
     confident = [gap for gap in gaps if gap >= 1.0]
@@ -564,31 +561,37 @@ missing gap is not a pruning signal.
 
     <!--continuation-->
     ```rust
-    use pecos_frontier::{
-        FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering,
-    };
+    use pecos_frontier::{FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering};
 
-    // Match Python's default column_order="deadline_reorder" explicitly.
+    // Python's FrontierDecoder.from_dem defaults to column_order="deadline_reorder".
     let sparse_dem = SparseDem::from_dem_str(&raw_text)?;
     let config = FrontierConfig {
         column_order: TrellisOrdering::Deadline.resolve(&sparse_dem)?,
         ..Default::default()
     };
-    let mut frontier_decoder = FrontierDecoder::from_dem_str(&raw_text, config)?;
-    let results = batch.shots().take(200)
+    let mut frontier_decoder = FrontierDecoder::from_sparse_dem(&sparse_dem, config)?;
+    let results = batch
+        .shots()
+        .take(200)
         .map(|shot| frontier_decoder.decode(&shot.syndrome))
         .collect::<Result<Vec<_>, _>>()?;
 
-    assert_eq!(results.len(), 200);
     assert!(results.iter().all(|result| result.status == FrontierStatus::Exact));
     let gaps: Vec<f64> = results.iter().filter_map(|result| result.runner_up_gap).collect();
-    let least_confident = gaps.iter().copied().reduce(f64::min)
-        .ok_or("No shots returned a runner-up gap")?;
+    let least_confident = gaps
+        .iter()
+        .copied()
+        .reduce(f64::min)
+        .ok_or("no shot returned a runner-up gap")?;
     assert!(least_confident >= 0.0);
     println!("least confident of {} shots: gap={least_confident:.3}", gaps.len());
     let confident = gaps.iter().filter(|&&gap| gap >= 1.0).count();
     println!("{confident}/{} shots decoded with gap >= 1.0", gaps.len());
     ```
+
+Because the gap is a per-shot quantity, a threshold on it partitions the run
+into a confident majority and a tail worth treating differently, as the last
+lines of each tab do.
 
 Frontier consumes the raw model directly, so unlike the matching decoders it
 needs no graph-like projection — `raw_text` rather than

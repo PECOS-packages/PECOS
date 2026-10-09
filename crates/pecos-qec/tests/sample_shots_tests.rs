@@ -3,12 +3,12 @@
 
 //! Rust batch sampling contracts, including the frozen Python geometric stream.
 use pecos_core::pauli::X;
-use pecos_decoders::batch::{DecoderFactory, SampleBatch};
+use pecos_decoders::batch::DecoderFactory;
 use pecos_decoders::{DecodeModel, DecoderError, ExecutionTraits, ObsMask, ObservableDecoder};
 use pecos_qec::fault_tolerance::InfluenceBuilder;
 use pecos_qec::fault_tolerance::dem_builder::{
     DemOutput, DemSampler, DemSamplerBuilder, DetectorDef, DetectorErrorModel, FaultMechanism,
-    ParsedDem, SampleShotsError, SamplingEngine,
+    ParsedDem, SampleBatch, SampleShotsError, SamplingEngine,
 };
 use pecos_quantum::DagCircuit;
 use pecos_random::PecosRng;

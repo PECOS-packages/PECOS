@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("pecos_rslib")
-
-from pecos_rslib import TickCircuit  # noqa: E402
-from pecos_rslib.decoders import mwpf, pymatching, relay_bp, tesseract  # noqa: E402
-from pecos_rslib.qec import DagFaultAnalyzer, DemSampler  # noqa: E402
+from pecos_rslib import TickCircuit
+from pecos_rslib.decoders import mwpf, pymatching, relay_bp, tesseract
+from pecos_rslib.qec import DagFaultAnalyzer, DemSampler
 
 DEM = "error(0.25) D0 L0\nerror(0.1) D0\n"
 
@@ -132,12 +130,7 @@ def test_history_and_wall_clock_traits_reuse_batch_planner_contracts() -> None:
     with pytest.raises(ValueError, match=r"worker count 4"):
         sampler.decode(DEM, 32, relay_bp(), seed=3, workers=4)
 
-    try:
-        timed = sampler.decode(DEM, 32, mwpf(timeout=0.5), seed=3, workers=4)
-    except ValueError as error:
-        if "MWPF decoder is not available" in str(error):
-            pytest.skip("MWPF feature is absent from this build")
-        raise
+    timed = sampler.decode(DEM, 32, mwpf(timeout=0.5), seed=3, workers=4)
     assert timed.execution_path == "parallel"
     assert timed.reproducibility_warnings
 

@@ -6,13 +6,9 @@ produce statistically equivalent results to numpy's implementations.
 """
 
 import time
-import pytest
-
-# Skip entire module if scipy/numpy not available
-pytest.importorskip("scipy")
-pytest.importorskip("numpy")
 
 import numpy as np
+import pytest
 from scipy import stats
 
 import pecos as pc

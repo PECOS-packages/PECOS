@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
-pytest.importorskip("guppylang")
-
 from pecos.guppy_gen.surface import (
     _guppy_module_cache_key,
     generate_guppy_source,

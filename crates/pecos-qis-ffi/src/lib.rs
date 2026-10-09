@@ -31,6 +31,16 @@ use std::sync::{Condvar, Mutex};
 
 pub mod ffi;
 mod random;
+mod selene;
+
+#[cfg(test)]
+mod test_env;
+
+#[cfg(test)]
+mod cancellation_tests;
+
+#[cfg(test)]
+mod dynamic_read_tests;
 
 #[cfg(test)]
 mod named_results_tests;
@@ -40,9 +50,19 @@ mod random_tests;
 
 // --- Per-Execution Context for Parallel Execution Support ---
 
+/// Cancellation is terminal for an execution context.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum CancellationState {
+    #[default]
+    Running,
+    Requested,
+}
+
 /// State for dynamic circuit synchronization
 #[derive(Debug, Default)]
 pub struct DynamicSyncState {
+    /// Cancellation belongs to this context and participates in the wait predicate.
+    pub cancellation: CancellationState,
     /// Set to true when a measurement result is available
     pub result_ready: bool,
     /// Set to true when `___read_future_bool` needs a result
@@ -62,6 +82,8 @@ pub struct DynamicSyncState {
 /// Nested execution wrappers and re-entrant FFI calls while a context mutex is
 /// held are unsupported: each thread has one jump buffer and non-reentrant mutexes.
 pub struct ExecutionContext {
+    /// Cheap checkpoint mirror of the guarded cancellation state. Never reset.
+    pub cancel_requested: AtomicBool,
     /// Flag indicating dynamic execution mode is active
     pub dynamic_mode_active: AtomicBool,
     /// The result ID that is being waited for
@@ -76,6 +98,8 @@ pub struct ExecutionContext {
     ///
     /// Ordinary measurements use 0/1. Leakage-aware measurements may also use 2.
     pub measurement_results: Mutex<Vec<Option<u64>>>,
+    /// Result slots with a measurement queued or completed in this shot.
+    measured_results: Mutex<BTreeSet<usize>>,
     /// Typed storage for named results from all `print_*` entry points.
     pub named_results: Mutex<BTreeMap<String, NamedResult>>,
     /// Runtime provenance for bool outputs and scalar integer 0/1 calls.
@@ -130,12 +154,14 @@ impl ExecutionContext {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            cancel_requested: AtomicBool::new(false),
             dynamic_mode_active: AtomicBool::new(false),
             waiting_for_result: AtomicU64::new(u64::MAX),
             sync_state: Mutex::new(DynamicSyncState::default()),
             sync_condvar: Condvar::new(),
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(Vec::new()),
+            measured_results: Mutex::new(BTreeSet::new()),
             named_results: Mutex::new(BTreeMap::new()),
             named_result_traces: Mutex::new(Vec::new()),
             pending_result_reads: Mutex::new(Vec::new()),
@@ -156,17 +182,20 @@ impl ExecutionContext {
             state.need_result = false;
             state.worker_complete = false;
         }
-        if let Ok(mut results) = self.measurement_results.lock() {
-            results.clear();
-        }
         if let Ok(mut ops) = self.pending_ops.lock() {
             ops.clear();
         }
     }
 
-    /// Reset per-program output without changing dynamic synchronization state.
+    /// Reset per-shot measurement slots and output without changing dynamic synchronization.
     pub fn reset_outputs(&self) {
         self.clear_program_error();
+        if let Ok(mut measured) = self.measured_results.lock() {
+            measured.clear();
+        }
+        if let Ok(mut results) = self.measurement_results.lock() {
+            results.clear();
+        }
         self.reset_program_rng();
         self.release_program_allocations();
         if let Ok(mut named) = self.named_results.lock() {
@@ -438,7 +467,10 @@ pub extern "C" fn pecos_program_exited() -> bool {
 /// Destroy an execution context
 ///
 /// # Safety
-/// The pointer must have been created by `pecos_create_execution_context`.
+/// The pointer must have been created by `pecos_create_execution_context` and
+/// have no remaining users. Registrations on other threads must already have
+/// been cleared or replaced. Only a matching registration on this thread is
+/// cleared; neither another thread's TLS nor a replacement context is touched.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_destroy_execution_context(ctx: *mut ExecutionContext) {
     // Drop may run during TLS teardown. Do not initialize TLS or log here.
@@ -618,6 +650,32 @@ pub extern "C" fn pecos_enable_dynamic_mode() {
     }
 }
 
+/// Request cooperative cancellation on an explicit execution context.
+///
+/// Returns 0 on success, 1 for a null context, and 2 when the synchronization
+/// state is poisoned. A poisoned state is still cancelled and its waiters woken,
+/// so a reader with no timeout can always be reached; the error only reports it.
+///
+/// # Safety
+/// A non-null context must remain live for this call. It need not be registered
+/// on the calling thread. Cancellation lasts for the entire context lifetime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_abort_dynamic_execution(ctx: *mut ExecutionContext) -> i32 {
+    // SAFETY: The caller keeps a non-null context alive for this call.
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    let (mut state, status) = match ctx.sync_state.lock() {
+        Ok(state) => (state, 0),
+        Err(poisoned) => (poisoned.into_inner(), 2),
+    };
+    state.cancellation = CancellationState::Requested;
+    ctx.cancel_requested.store(true, Ordering::Release);
+    drop(state);
+    ctx.sync_condvar.notify_all();
+    status
+}
+
 /// Disable dynamic execution mode (called via FFI from executor)
 ///
 /// This also signals completion so the main thread wakes up.
@@ -762,71 +820,162 @@ pub extern "C" fn pecos_signal_result_ready() {
     }
 }
 
-/// Wait for a result to be ready (called by worker thread inside `___read_future_bool`)
-///
-/// Returns true if result is ready, false on timeout or if no context is registered.
+/// Why the worker's unbounded measurement wait ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ResultWaitOutcome {
+    Ready,
+    Cancelled,
+    WorkerComplete,
+    Failed(&'static str),
+}
+
+/// Wait for host readiness, cancellation, completion, or a synchronization failure.
+/// There is no deadline: slow simulation does not invalidate a measurement.
 #[must_use]
-pub fn wait_for_result_ready(result_id: u64, timeout_ms: u64) -> bool {
-    use std::time::Duration;
-
-    log::debug!("wait_for_result_ready: result_id={result_id}, timeout={timeout_ms}ms");
-
+pub fn wait_for_result_ready(result_id: u64) -> ResultWaitOutcome {
     let Some(ctx) = get_execution_context() else {
-        log::warn!("wait_for_result_ready: no execution context registered");
-        return false;
+        return ResultWaitOutcome::Failed("no execution context");
     };
-
-    // SAFETY: Context is valid for duration of execution
+    // SAFETY: The registered context is live throughout execution.
     let ctx = unsafe { &*ctx };
-
-    // Move all operations accumulated since the previous handoff into the
-    // shared pending buffer. In dynamic mode the thread-local operations vec
-    // is treated as an unsent queue, so this avoids cloning the fresh segment.
-    INTERFACE.with(|interface| {
-        let mut iface = interface.borrow_mut();
-        if let Ok(mut pending) = ctx.pending_ops.lock() {
-            if pending.is_empty() {
-                std::mem::swap(&mut *pending, &mut iface.operations);
-            } else if !iface.operations.is_empty() {
-                pending.append(&mut iface.operations);
-            }
-            log::debug!(
-                "wait_for_result_ready: exported {} pending operations",
-                pending.len()
-            );
-        }
-    });
-
-    // Signal that we need a result
-    ctx.waiting_for_result.store(result_id, Ordering::SeqCst);
-    if let Ok(mut state) = ctx.sync_state.lock() {
-        state.need_result = true;
-        state.result_ready = false;
+    let Ok(mut state) = ctx.sync_state.lock() else {
+        return ResultWaitOutcome::Failed("poisoned synchronization state");
+    };
+    if state.cancellation == CancellationState::Requested {
+        return ResultWaitOutcome::Cancelled;
     }
+    if state.worker_complete {
+        return ResultWaitOutcome::WorkerComplete;
+    }
+
+    // Export must succeed before publishing a request the host could act on.
+    let exported = INTERFACE.with(|interface| {
+        let mut iface = interface.borrow_mut();
+        let Ok(mut pending) = ctx.pending_ops.lock() else {
+            return false;
+        };
+        if pending.is_empty() {
+            std::mem::swap(&mut *pending, &mut iface.operations);
+        } else {
+            pending.append(&mut iface.operations);
+        }
+        true
+    });
+    if !exported {
+        return ResultWaitOutcome::Failed("poisoned pending operations");
+    }
+    ctx.waiting_for_result.store(result_id, Ordering::SeqCst);
+    state.need_result = true;
+    state.result_ready = false;
     ctx.sync_condvar.notify_all();
 
-    // Wait for result to be ready. Condition variables may wake spuriously, so
-    // keep waiting until the predicate changes or the timeout expires.
-    let timeout = Duration::from_millis(timeout_ms);
-    let Ok(state) = ctx.sync_state.lock() else {
-        return false;
+    let Ok(state) = ctx.sync_condvar.wait_while(state, |state| {
+        !state.result_ready
+            && !state.worker_complete
+            && state.cancellation == CancellationState::Running
+    }) else {
+        return ResultWaitOutcome::Failed("poisoned synchronization state");
     };
-
-    let result = ctx
-        .sync_condvar
-        .wait_timeout_while(state, timeout, |state| {
-            !state.result_ready && !state.worker_complete
-        });
-    let Ok((state, timed_out)) = result else {
-        return false;
-    };
-
-    if timed_out.timed_out() && !state.result_ready {
-        log::debug!("wait_for_result_ready: timeout");
+    // Cancellation wins even if an outcome was published at the same time.
+    if state.cancellation == CancellationState::Requested {
+        ResultWaitOutcome::Cancelled
+    } else if state.worker_complete {
+        ResultWaitOutcome::WorkerComplete
+    } else {
+        ResultWaitOutcome::Ready
     }
+}
 
-    log::debug!("wait_for_result_ready: result_ready={}", state.result_ready);
-    state.result_ready
+/// Queue a result-producing operation and invalidate the worker-owned slot.
+/// All measurement entry points use this boundary, including Selene wrappers.
+fn queue_measurement(qubit: usize, result_id: usize, leaked: bool) {
+    if is_dynamic_mode_active()
+        && let Some(ctx) = get_execution_context()
+    {
+        // SAFETY: The registered context is live throughout execution.
+        let ctx = unsafe { &*ctx };
+        if let Ok(mut measured) = ctx.measured_results.lock() {
+            measured.insert(result_id);
+        }
+        if let Ok(mut results) = ctx.measurement_results.lock()
+            && let Some(result) = results.get_mut(result_id)
+        {
+            *result = None;
+        }
+    }
+    with_interface(|iface| {
+        let op = if leaked {
+            QuantumOp::MeasureLeaked(qubit, result_id)
+        } else {
+            QuantumOp::Measure(qubit, result_id)
+        };
+        iface.queue_operation(op.into());
+    });
+}
+
+/// Typed lookup for the dynamic path; absence and lock failure are distinct.
+fn lookup_measurement_outcome(result_id: u64) -> Result<Option<u64>, &'static str> {
+    let ctx = get_execution_context().ok_or("no execution context")?;
+    let index = usize::try_from(result_id).map_err(|_| "result ID does not fit in usize")?;
+    // SAFETY: The registered context is live throughout execution.
+    let ctx = unsafe { &*ctx };
+    let measured = ctx
+        .measured_results
+        .lock()
+        .map_err(|_| "poisoned measured result slots")?;
+    if !measured.contains(&index) {
+        return Err("never measured");
+    }
+    drop(measured);
+    let results = ctx
+        .measurement_results
+        .lock()
+        .map_err(|_| "poisoned measurement outcomes")?;
+    Ok(results.get(index).copied().flatten())
+}
+
+/// Read once through the dynamic protocol, recording any owned error before
+/// returning to a destructor-free FFI frame that can transfer to the guard.
+fn read_dynamic_result(result_id: u64, boolean: bool) -> Option<u64> {
+    let read = || -> Result<Option<u64>, &'static str> {
+        let mut outcome = lookup_measurement_outcome(result_id)?;
+        if outcome.is_none() {
+            match wait_for_result_ready(result_id) {
+                ResultWaitOutcome::Ready => {
+                    outcome = lookup_measurement_outcome(result_id)?;
+                    if outcome.is_none() {
+                        return Err("ready without a stored outcome");
+                    }
+                }
+                ResultWaitOutcome::Cancelled => return Ok(None),
+                ResultWaitOutcome::WorkerComplete => return Err("worker complete before outcome"),
+                ResultWaitOutcome::Failed(reason) => return Err(reason),
+            }
+        }
+        if boolean && outcome.is_some_and(|value| value > 1) {
+            return Err("outcome is not representable as bool");
+        }
+        Ok(outcome)
+    };
+    match read() {
+        Ok(outcome) => outcome,
+        Err(reason) => {
+            if let Some(ctx) = get_execution_context() {
+                // SAFETY: The registered context is live throughout execution.
+                let ctx = unsafe { &*ctx };
+                let error = if ctx.cancel_requested.load(Ordering::Acquire) {
+                    ProgramError::Cancelled
+                } else {
+                    ProgramError::ResultUnavailable {
+                        result_id,
+                        reason: reason.to_owned(),
+                    }
+                };
+                ctx.record_program_error(error);
+            }
+            None
+        }
+    }
 }
 
 /// Check if dynamic mode is active
@@ -936,7 +1085,8 @@ pub extern "C" fn pecos_clear_pending_operations() {
 ///
 /// Returns a pointer to a newly allocated `OperationCollector` with the pending operations.
 /// The caller is responsible for freeing this via `pecos_free_operations`.
-/// Returns null if no operations are available or no context is registered.
+/// Returns an allocated empty collector when no operations are pending.
+/// Returns null when no context is registered or the pending-operations lock is poisoned.
 ///
 /// # Safety
 /// This function is safe to call from any thread. The returned pointer must be freed.
@@ -958,10 +1108,8 @@ pub extern "C" fn pecos_get_pending_operations() -> *mut OperationCollector {
         Err(_) => return std::ptr::null_mut(),
     };
 
-    if ops.is_empty() {
-        return std::ptr::null_mut();
-    }
-
+    // An allocated empty collector is a successful import. Null is reserved
+    // for a missing context or a poisoned pending-operations mutex.
     let mut collector = OperationCollector::new();
     collector.operations = ops;
     Box::into_raw(Box::new(collector))
@@ -1104,7 +1252,7 @@ pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_cha
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
     use std::thread;
 
     const TEST_SYNC_TIMEOUT_MS: u64 = 5_000;
@@ -1380,6 +1528,9 @@ mod tests {
 
     #[test]
     fn test_pending_operations_storage() {
+        if !crate::test_env::run_test_in_child("tests::test_pending_operations_storage") {
+            return;
+        }
         let ctx = setup_context();
 
         let context = unsafe { &*ctx };
@@ -1404,18 +1555,25 @@ mod tests {
 
         // Second read should be empty because the handoff drains pending ops.
         let ptr = pecos_get_pending_operations();
-        assert!(ptr.is_null());
+        assert!(!ptr.is_null());
+        assert_eq!(unsafe { &*ptr }.operations, []);
+        unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);
     }
 
     #[test]
     fn test_pending_operations_empty() {
+        if !crate::test_env::run_test_in_child("tests::test_pending_operations_empty") {
+            return;
+        }
         let ctx = setup_context();
 
-        // When no operations, should return null
+        // Successful empty imports are distinct from unavailable imports.
         let ptr = pecos_get_pending_operations();
-        assert!(ptr.is_null());
+        assert!(!ptr.is_null());
+        assert_eq!(unsafe { &*ptr }.operations, []);
+        unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);
     }
@@ -1523,27 +1681,37 @@ mod tests {
 
     #[test]
     fn test_wait_for_result_ready_no_context() {
-        // Without a context, should return false immediately
-        let result = wait_for_result_ready(0, 10);
-        assert!(!result);
+        if !crate::test_env::run_test_in_child("tests::test_wait_for_result_ready_no_context") {
+            return;
+        }
+        // Without a context, report the failure immediately
+        let result = wait_for_result_ready(0);
+        assert_eq!(result, ResultWaitOutcome::Failed("no execution context"));
     }
 
     #[test]
-    fn test_wait_for_result_ready_timeout() {
+    fn test_wait_for_result_ready_worker_complete() {
+        if !crate::test_env::run_test_in_child("tests::test_wait_for_result_ready_worker_complete")
+        {
+            return;
+        }
         let ctx = setup_context();
 
         pecos_enable_dynamic_mode();
 
-        // No one will signal result_ready, so this should timeout
-        let result = wait_for_result_ready(0, 10);
-        assert!(!result);
+        unsafe { &*ctx }.sync_state.lock().unwrap().worker_complete = true;
+        assert_eq!(wait_for_result_ready(0), ResultWaitOutcome::WorkerComplete);
 
         teardown_context(ctx);
     }
 
     #[test]
     fn test_wait_for_result_ready_exports_operations() {
-        use std::sync::Barrier;
+        if !crate::test_env::run_test_in_child(
+            "tests::test_wait_for_result_ready_exports_operations",
+        ) {
+            return;
+        }
 
         // Create context that will be shared between threads
         let ctx = pecos_create_execution_context();
@@ -1580,8 +1748,8 @@ mod tests {
         barrier.wait();
 
         // Wait for result - this should export operations to context storage
-        let result = wait_for_result_ready(5, TEST_SYNC_TIMEOUT_MS);
-        assert!(result);
+        let result = wait_for_result_ready(5);
+        assert_eq!(result, ResultWaitOutcome::Ready);
 
         // Verify operations were exported to context storage
         let context = unsafe { &*ctx };
@@ -1599,7 +1767,9 @@ mod tests {
 
     #[test]
     fn test_wait_for_result_ready_signals_need() {
-        use std::sync::Barrier;
+        if !crate::test_env::run_test_in_child("tests::test_wait_for_result_ready_signals_need") {
+            return;
+        }
 
         // Create context that will be shared between threads
         let ctx = pecos_create_execution_context();
@@ -1618,7 +1788,7 @@ mod tests {
 
             worker_barrier.wait();
 
-            let result = wait_for_result_ready(42, TEST_SYNC_TIMEOUT_MS);
+            let result = wait_for_result_ready(42);
 
             unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
             result
@@ -1634,7 +1804,7 @@ mod tests {
         pecos_signal_result_ready();
 
         let result = worker.join().unwrap();
-        assert!(result);
+        assert_eq!(result, ResultWaitOutcome::Ready);
 
         unsafe {
             pecos_register_execution_context(std::ptr::null_mut());
@@ -1644,7 +1814,9 @@ mod tests {
 
     #[test]
     fn test_wait_for_result_ready_full_cycle() {
-        use std::sync::Barrier;
+        if !crate::test_env::run_test_in_child("tests::test_wait_for_result_ready_full_cycle") {
+            return;
+        }
 
         // Create context that will be shared between threads
         let ctx = pecos_create_execution_context();
@@ -1669,7 +1841,7 @@ mod tests {
             worker_barrier.wait();
 
             // This will export ops and wait for result
-            let result = if wait_for_result_ready(0, TEST_SYNC_TIMEOUT_MS) {
+            let result = if wait_for_result_ready(0) == ResultWaitOutcome::Ready {
                 get_measurement_result(0)
             } else {
                 None
@@ -1708,7 +1880,11 @@ mod tests {
 
     #[test]
     fn test_wait_for_result_ready_exports_only_new_operations() {
-        use std::sync::Barrier;
+        if !crate::test_env::run_test_in_child(
+            "tests::test_wait_for_result_ready_exports_only_new_operations",
+        ) {
+            return;
+        }
 
         let ctx = pecos_create_execution_context();
         let ctx_ptr = ctx as usize;
@@ -1729,7 +1905,7 @@ mod tests {
 
             worker_barrier.wait();
 
-            assert!(wait_for_result_ready(0, TEST_SYNC_TIMEOUT_MS));
+            assert_eq!(wait_for_result_ready(0), ResultWaitOutcome::Ready);
 
             with_interface(|iface| {
                 assert_eq!(iface.operations, []);
@@ -1739,7 +1915,7 @@ mod tests {
                 iface.queue_operation(Operation::Quantum(QuantumOp::H(0)));
             });
 
-            assert!(wait_for_result_ready(1, TEST_SYNC_TIMEOUT_MS));
+            assert_eq!(wait_for_result_ready(1), ResultWaitOutcome::Ready);
 
             with_interface(|iface| {
                 assert_eq!(iface.operations, []);

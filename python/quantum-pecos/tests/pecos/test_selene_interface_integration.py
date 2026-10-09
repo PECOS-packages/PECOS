@@ -10,123 +10,6 @@ from pathlib import Path
 import pytest
 
 
-def test_runtime_library_finding() -> None:
-    """Test the runtime library finder functionality."""
-    import ctypes
-    import os
-    from pathlib import Path
-
-    # Determine the library extension based on platform
-    system = platform.system()
-    if system == "Windows":
-        lib_extensions = ["selene_simple_runtime.dll"]
-    elif system == "Darwin":  # macOS
-        lib_extensions = [
-            "libselene_simple_runtime.dylib",
-            "libselene_simple_runtime.so",
-        ]
-    else:  # Linux and others
-        lib_extensions = ["libselene_simple_runtime.so"]
-
-    # This test should ideally test a library finder function/class
-    # For now, we'll test that if we find a library, it's actually loadable
-
-    # Try to import the actual library finder if it exists
-    try:
-        from pecos.engines.selene_runtime import find_selene_runtime_library
-
-        library_path = find_selene_runtime_library()
-
-        # Test that the found library is actually loadable
-        try:
-            lib = ctypes.CDLL(str(library_path))
-            # Could check for specific symbols here
-            assert lib is not None, "Library should be loadable"
-        except OSError as e:
-            pytest.fail(f"Found library at {library_path} but couldn't load it: {e}")
-
-    except ImportError:
-        # The library finder doesn't exist yet, so test the manual search
-        # This is more of a diagnostic than a test
-        possible_paths = []
-
-        # Add platform-specific paths
-        if system == "Windows":
-            # Windows cache location
-            cache_dir = Path.home() / ".cache/pecos-decoders/selene"
-            possible_paths.extend(cache_dir / ext for ext in lib_extensions)
-        else:
-            # Unix-like systems
-            possible_paths.extend(
-                path
-                for ext in lib_extensions
-                for path in [
-                    Path.home() / ".cache/pecos-decoders/selene" / ext,
-                    Path("/usr/local/lib") / ext,
-                ]
-            )
-
-        # Add venv paths
-        venv = os.environ.get("VIRTUAL_ENV")
-        if venv:
-            venv_path = Path(venv)
-            if system == "Windows":
-                # On Windows, check the specific plugin location
-                plugin_path = (
-                    venv_path
-                    / "Lib"
-                    / "site-packages"
-                    / "selene_simple_runtime_plugin"
-                    / "_dist"
-                    / "lib"
-                    / "selene_simple_runtime.dll"
-                )
-                if plugin_path.exists():
-                    possible_paths.append(plugin_path)
-
-                # Also search more broadly
-                site_packages_dirs = [
-                    venv_path / "Scripts",
-                    venv_path / "Lib" / "site-packages",
-                ]
-            else:
-                # On Unix-like systems, search for the plugin in site-packages
-                # The exact Python version directory can vary, so use rglob
-                lib_dir = venv_path / "lib"
-                if lib_dir.exists():
-                    for ext in lib_extensions:
-                        plugin_pattern = f"**/selene_simple_runtime_plugin/_dist/lib/{ext}"
-                        possible_paths.extend(lib_dir.glob(plugin_pattern))
-
-                site_packages_dirs = [venv_path / "lib"]
-
-            for site_packages in site_packages_dirs:
-                if site_packages.exists():
-                    # Search for the library in site-packages
-                    for ext in lib_extensions:
-                        possible_paths.extend(site_packages.rglob(ext))
-
-        # Check if any library is actually loadable (not just exists)
-        loadable_libraries = []
-        for path in possible_paths:
-            if path.exists():
-                try:
-                    # Actually try to load the library
-                    lib = ctypes.CDLL(str(path))
-                    loadable_libraries.append(path)
-                except OSError:
-                    # File exists but can't be loaded (might be stub or wrong arch)
-                    continue
-
-        if not loadable_libraries:
-            pytest.skip(
-                "No loadable Selene runtime library found - this is expected in test environments",
-            )
-
-        # If we found loadable libraries, that's good enough for this diagnostic
-        assert len(loadable_libraries) > 0, f"Found {len(loadable_libraries)} loadable Selene runtime libraries"
-
-
 def test_selene_engine_python_exports() -> None:
     """Test that the Selene engine convenience exports exist and are usable."""
     import pecos
@@ -174,6 +57,7 @@ def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> 
         def __init__(self) -> None:
             self.builder = pecos_rslib.qis_engine()
             self.plugin_call: tuple[str, list[str], list[str]] | None = None
+            self.native_gates: list[str] | None = None
 
         def selene_runtime(self, *, custom_event_policy: str) -> object:
             assert custom_event_policy == policy
@@ -187,14 +71,17 @@ def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> 
             library_search_dirs: list[str],
             *,
             custom_event_policy: str,
+            native_gates: list[str] | None = None,
         ) -> object:
             assert custom_event_policy == policy
             self.plugin_call = (library_file, init_args, library_search_dirs)
+            self.native_gates = native_gates
             return self.builder.selene_runtime_plugin(
                 library_file,
                 init_args,
                 library_search_dirs,
                 custom_event_policy=custom_event_policy,
+                native_gates=native_gates,
             )
 
     builder = FailingCargoRuntimeBuilder()
@@ -202,6 +89,7 @@ def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> 
 
     assert builder.plugin_call is not None
     assert Path(builder.plugin_call[0]) == SimpleRuntimePlugin().library_file
+    assert builder.native_gates == ["rxy", "rz", "rzz", "rpp"]
 
 
 @pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])
@@ -520,11 +408,11 @@ def event_runtime_proxy(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("selector_kind", ["path", "plugin"])
-@pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])
+@pytest.mark.parametrize("policy", [None, "capture", "reject_unhandled"])
 def test_custom_event_policy_reaches_sim_execution(
     event_runtime_proxy: Path,
     selector_kind: str,
-    policy: str,
+    policy: str | None,
 ) -> None:
     import pecos
     from guppylang import guppy
@@ -541,6 +429,8 @@ def test_custom_event_policy_reaches_sim_execution(
     def prepare_zero() -> bool:
         return measure(qubit()).read()
 
+    policy_kwargs = {} if policy is None else {"custom_event_policy": policy}
+
     # The direct path route supplies the public runtime's required init args
     # through the native builder, while the plugin route uses the Python adapter.
     if selector_kind == "path":
@@ -549,15 +439,137 @@ def test_custom_event_policy_reaches_sim_execution(
         builder = pecos_rslib.qis_engine().selene_runtime_plugin(
             str(event_runtime_proxy),
             SimpleRuntimePlugin().get_init_args(),
-            custom_event_policy=policy,
+            **policy_kwargs,
         )
         builder = builder.interface(pecos_rslib.qis_helios_interface())
     else:
-        builder = pecos.selene_engine(EventPlugin(), custom_event_policy=policy)
+        builder = pecos.selene_engine(EventPlugin(), **policy_kwargs)
     simulation = pecos.sim(pecos.Guppy(prepare_zero)).classical(builder).qubits(1).seed(42).workers(1)
-    if policy == "reject_unhandled":
+    if policy in (None, "reject_unhandled"):
         with pytest.raises(RuntimeError, match="unsupported runtime custom event tag 424242"):
             simulation.run(2)
     else:
         data = simulation.run(2).to_dict()
         assert data["measurement_0"] == [0, 0]
+
+
+@pytest.mark.parametrize("explicit", [None, [], ["rpp"]])
+def test_custom_runtime_native_gate_declaration_is_forwarded(explicit: list[str] | None) -> None:
+    """Plugin declarations reach the Rust binding; explicit sets take precedence."""
+    from types import SimpleNamespace
+
+    from pecos._engine_builders import _configure_selene_runtime
+
+    class RecordingBuilder:
+        native_gates: list[str] | None = None
+
+        def selene_runtime_plugin(self, *_args: object, **kwargs: object) -> object:
+            self.native_gates = kwargs["native_gates"]
+            return self
+
+    builder = RecordingBuilder()
+    plugin = SimpleNamespace(library_file="custom.so", native_gates=["rxy", "rz", "rzz"])
+    _configure_selene_runtime(builder, plugin, native_gates=explicit)
+    assert builder.native_gates == (plugin.native_gates if explicit is None else explicit)
+
+
+def test_named_soft_rz_package_retains_native_gate_declaration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installed-package lookup preserves the named soft-RZ declaration."""
+    from types import SimpleNamespace
+
+    from pecos import _engine_builders
+    from pecos._engine_builders import _configure_selene_runtime
+
+    class RecordingBuilder:
+        native_gates: list[str] | None = None
+
+        def selene_runtime(self, *_args: object, **_kwargs: object) -> object:
+            message = "forced Cargo discovery failure"
+            raise RuntimeError(message)
+
+        def selene_runtime_plugin(self, *_args: object, **kwargs: object) -> object:
+            self.native_gates = kwargs["native_gates"]
+            return self
+
+    monkeypatch.setattr(_engine_builders, "import_module", lambda _name: SimpleNamespace(library_file="soft.so"))
+    builder = RecordingBuilder()
+    _configure_selene_runtime(builder, "selene_soft_rz_runtime")
+    assert builder.native_gates == ["rxy", "rz", "rzz"]
+
+
+def test_custom_runtime_rejects_unknown_native_gate_name() -> None:
+    """Reject misspelled declarations before a plugin is loaded."""
+    import pecos_rslib
+
+    with pytest.raises(ValueError, match=r"unknown Selene native gate.*expected rxy, rz, rzz or rpp"):
+        pecos_rslib.qis_engine().selene_runtime_plugin("custom.so", native_gates=["rxz"])
+
+
+@pytest.mark.parametrize("runtime_name", ["selene_simple_runtime", "selene_soft_rz_runtime"])
+def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: str) -> None:
+    """Queued work after the last measurement reaches the final lowered batch."""
+    import pecos
+    import pecos_rslib as pr
+
+    program = """
+        define i64 @qmain(i64 %shot) #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            call void @__quantum__qis__x__body(i64 1)
+            call void @__quantum__qis__rz__body(double 0.3, i64 1)
+            ret i64 0
+        }
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare void @__quantum__qis__rz__body(double, i64)
+        attributes #0 = { "EntryPoint" }
+    """
+    shots = 10
+    classical = pr.qis_engine().selene_runtime(runtime_name).interface(pr.qis_helios_interface())
+    results = (
+        pecos.sim(pecos.Qis(program))
+        .classical(classical)
+        .qubits(2)
+        .quantum(pr.state_vector())
+        .seed(42)
+        .workers(1)
+        .run(shots)
+        .to_dict()
+    )
+    assert results["measurement_0"] == [1] * shots
+
+
+def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
+    """Selene's own soft-RZ plugin object carries soft-RZ's gate set, so rpp is decomposed."""
+    import pecos
+    import pecos_rslib as pr
+
+    # Ships with selene-sim, a required dependency: a missing package must fail.
+    import selene_soft_rz_runtime_plugin as plugin_package
+
+    program = """
+        define i64 @qmain(i64 %shot) #0 {
+            call void @___rpp(i64 0, i64 1, double 3.141592653589793, double 0.0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+            ret i64 0
+        }
+        declare void @___rpp(i64, i64, double, double)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        attributes #0 = { "EntryPoint" }
+    """
+    shots = 5
+    classical = pecos.selene_engine(plugin_package.SoftRZRuntimePlugin()).interface(pr.qis_helios_interface())
+    results = (
+        pecos.sim(pecos.Qis(program))
+        .classical(classical)
+        .qubits(2)
+        .quantum(pr.state_vector())
+        .seed(42)
+        .workers(1)
+        .run(shots)
+        .to_dict()
+    )
+    # rpp(pi, 0) is XX up to global phase, so |00> becomes |11>.
+    assert results["measurement_0"] == [1] * shots
+    assert results["measurement_1"] == [1] * shots

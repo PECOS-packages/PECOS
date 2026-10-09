@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners import Standard
+from pecos.engines.std_output import StdOutput
 from pecos.simulators import SparseStabPy
 
 
@@ -63,6 +64,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
 
     logical_ops = qecc.instruction("instr_syn_extract").final_logical_ops
     logical_z = logical_ops[0]["Z"]
+    logical_x = logical_ops[0]["X"]
 
     num_qudits = qecc.num_qudits
     data_qudits = qecc.data_qudit_set
@@ -95,11 +97,11 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
         sign = _apply_err(
             state,
             circ_runner,
-            init_zero,
+            init_plus,
             syn_extract,
             err,
             decoder,
-            logical_z,
+            logical_x,
         )
 
         if sign:
@@ -130,21 +132,21 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
         )
 
         if sign:
-            msg = f"Decoder failed to correct error: {spacetime!s}"
+            msg = f"Decoder failed to correct error: {err_dict}"
             raise Exception(msg)
 
         sign = _apply_err_spacetime(
             state,
             circ_runner,
-            init_zero,
+            init_plus,
             err_dict,
             decoder,
-            logical_z,
+            logical_x,
             qecc,
         )
 
         if sign:
-            msg = f"Decoder failed to correct error: {spacetime!s}"
+            msg = f"Decoder failed to correct error: {err_dict}"
             raise Exception(msg)
 
 
@@ -191,10 +193,11 @@ def _apply_err_spacetime(
     syn_circ = qecc.instruction("instr_syn_extract", num_syn_extract=1)
     num_ticks = len(syn_circ.circuit)
 
-    syn = set()
+    measurements = StdOutput()
     for t in range(num_ticks):
-        xerrs = err_dict[t].get("X", set())
-        zerrs = err_dict[t].get("Z", set())
+        tick_errors = err_dict.get(t, {})
+        xerrs = tick_errors.get("X", set()).copy()
+        zerrs = tick_errors.get("Z", set()).copy()
 
         for gate_sym, locations, _ in syn_circ.circuit.items(tick=t):
             if "measure" in gate_sym and t in err_dict:
@@ -208,7 +211,8 @@ def _apply_err_spacetime(
                     zerrs -= before_zerrs
 
             output = state.run_gate(gate_sym, locations)
-            syn.update(output.keys())
+            # Collect the whole extraction round under one measurement coordinate.
+            measurements.record(output, 0)
 
         if xerrs:
             state.run_gate("X", xerrs)
@@ -216,8 +220,8 @@ def _apply_err_spacetime(
         if zerrs:
             state.run_gate("Z", zerrs)
 
-    if syn:
-        recovery = decoder.decode(syn)
+    if measurements:
+        recovery = decoder.decode(measurements)
         circ_runner.run(state, recovery)
 
     return state.logical_sign(logical_op)
@@ -238,7 +242,7 @@ def _apply_err(
     syn = output.simplified(last=True)
 
     if syn:
-        recovery = decoder.decode(syn)
+        recovery = decoder.decode(output)
         circ_runner.run(state, recovery)
 
     return state.logical_sign(logical_op)

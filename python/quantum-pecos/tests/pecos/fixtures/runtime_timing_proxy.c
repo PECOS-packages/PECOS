@@ -11,12 +11,23 @@ static SeleneRuntimePluginDescriptorV1 proxy;
 static _Thread_local unsigned rxy_count;
 static _Thread_local RuntimeGetOperationHandle forwarding;
 static _Thread_local bool has_batch;
+#ifdef PREP_GAP_NANOS
+static _Thread_local bool prep_emitted;
+static void reset(SeleneRuntimeGetOperationInstance instance, uint64_t q) {
+    (void)instance;
+    prep_emitted = true;
+    forwarding.interface.reset_fn(forwarding.instance, q);
+}
+#endif
 static void time_batch(SeleneRuntimeGetOperationInstance instance, uint64_t start, uint64_t duration) {
     (void)instance; (void)start; (void)duration;
     has_batch = true;
 }
 static SeleneErrno start(RuntimeInstance instance, uint64_t shot, uint64_t seed) {
     rxy_count = 0;
+#ifdef PREP_GAP_NANOS
+    prep_emitted = false;
+#endif
     return original.shot_start_fn(instance, shot, seed);
 }
 static void rxy(SeleneRuntimeGetOperationInstance instance, uint64_t q, double theta, double phi) {
@@ -36,12 +47,20 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
     RuntimeGetOperationHandle wrapped = ops;
     wrapped.interface.rxy_fn = rxy;
     wrapped.interface.set_batch_time_fn = time_batch;
+#ifdef PREP_GAP_NANOS
+    /* The program starts with a prep; isolate it before coalescing readouts. */
+    bool prep_batch = !prep_emitted;
+    wrapped.interface.reset_fn = reset;
+#endif
     SeleneErrno rc;
     bool any_batch = false;
     do {
         has_batch = false;
         rc = original.get_next_operations_fn(instance, wrapped);
         any_batch = any_batch || has_batch;
+#ifdef PREP_GAP_NANOS
+        if (prep_batch && prep_emitted) break;
+#endif
 #ifndef COALESCE_QUEUED
         break;
 #endif
@@ -49,7 +68,11 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
          * waiting on a measurement remains suspended until PECOS returns it.
          * This deliberately invents one zero-duration batch, not runtime timing. */
     } while (rc == 0 && has_batch);
+#ifdef PREP_GAP_NANOS
+    if (rc == 0 && any_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (prep_batch ? 0 : PREP_GAP_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0)), 0);
+#else
     if (rc == 0 && any_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0), 0);
+#endif
     return rc;
 }
 

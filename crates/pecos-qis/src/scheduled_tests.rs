@@ -2,6 +2,7 @@ use super::*;
 
 fn synthetic() -> SeleneRuntime {
     let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+    runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
     runtime.set_num_qubits(4);
     runtime.shot_start(17, Some(41)).unwrap();
     runtime.runtime_to_program_results.insert(901, 7);
@@ -30,8 +31,7 @@ fn batch() -> RuntimeOperationBatch {
 #[test]
 fn native_callbacks_preserve_original_batch_and_result_namespaces() {
     let mut runtime = synthetic();
-    runtime.set_custom_event_policy(RuntimeCustomEventPolicy::RejectUnhandled);
-    runtime.set_custom_event_handler(|_| panic!("extraction must not call metadata handlers"));
+    // Explicit capture transports opaque events to a downstream consumer.
     let extracted = runtime
         .collect_scheduled(|runtime| {
             runtime.retain_scheduled_batch(batch())?;
@@ -172,7 +172,13 @@ fn operation_limit_applies_to_one_native_batch() {
 #[test]
 fn preflight_rejects_unsupported_inputs_without_loading_plugin() {
     for op in [
-        QuantumOp::H(0).into(),
+        QuantumOp::Idle(1e-9, 0).into(),
+        QuantumOp::H(usize::MAX).into(),
+        QuantumOp::CX(0, usize::MAX).into(),
+        QuantumOp::CCX(0, 1, usize::MAX).into(),
+        QuantumOp::RX(f64::NAN, 0).into(),
+        QuantumOp::RY(f64::INFINITY, 0).into(),
+        QuantumOp::CRZ(f64::NEG_INFINITY, 0, 1).into(),
         QuantumOp::RZ(f64::NAN, 0).into(),
         Operation::AllocateResult { id: usize::MAX },
         Operation::TraceMetadata {
@@ -318,15 +324,18 @@ fn legacy_execution_must_not_bypass_scheduled_mode() {
     );
 }
 
+#[cfg(feature = "selene-runtimes")]
 #[test]
 fn scheduled_mode_must_not_follow_legacy_execution() {
-    let mut runtime = synthetic();
+    let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+    runtime.set_num_qubits(4);
+    runtime.shot_start(17, Some(41)).unwrap();
     let mut interface = OperationCollector::default();
     interface.operations.push(QuantumOp::X(0).into());
     runtime.load_interface(interface).unwrap();
     assert_eq!(
         runtime.execute_until_quantum().unwrap(),
-        Some(vec![QuantumOp::X(0)])
+        Some(vec![QuantumOp::RXY(std::f64::consts::PI, 0.0, 0)])
     );
     assert!(
         runtime.collect_scheduled(|_| Ok(vec![])).is_err(),
@@ -504,4 +513,26 @@ fn measurement_feedback_invalidates_terminal_drain() {
         .provide_measurement_outcomes(BTreeMap::new())
         .unwrap();
     runtime.shot_end().unwrap();
+}
+
+#[test]
+fn inactive_scheduled_extraction_does_not_invoke_custom_handler() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let mut runtime = synthetic();
+    let invoked = Arc::new(AtomicBool::new(false));
+    let handler_invoked = Arc::clone(&invoked);
+    runtime.set_custom_event_handler(move |_| {
+        handler_invoked.store(true, Ordering::SeqCst);
+        Ok(RuntimeCustomEventDisposition::MetadataOnly)
+    });
+    let error = runtime
+        .retain_scheduled_batch(batch())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("no scheduled extraction active"), "{error}");
+    assert!(!invoked.load(Ordering::SeqCst));
+    assert_eq!(runtime.runtime_batch_index, 0);
 }

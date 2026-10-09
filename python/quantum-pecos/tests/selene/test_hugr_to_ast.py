@@ -14,43 +14,24 @@
 from __future__ import annotations
 
 import pytest
-
-# Check if guppylang is available
-try:
-    from guppylang import guppy
-    from guppylang.std.angles import pi
-    from guppylang.std.quantum import cx, cz, h, measure, qubit, rz, s, t, x, y, z
-
-    HAS_GUPPYLANG = True
-except ImportError:
-    HAS_GUPPYLANG = False
-
-# Check if hugr_to_ast is available
-try:
-    from pecos.circuit_converters.hugr_to_ast import (
-        UnsupportedHugrStructureError,
-        guppy_to_ast,
-        hugr_to_ast,
-    )
-    from pecos.slr.ast.nodes import (
-        AllocatorDecl,
-        GateKind,
-        GateOp,
-        IfStmt,
-        LiteralExpr,
-        MeasureOp,
-        PrepareOp,
-        Program,
-        RegisterDecl,
-    )
-
-    HAS_HUGR_TO_AST = True
-except ImportError:
-    HAS_HUGR_TO_AST = False
-
-pytestmark = pytest.mark.skipif(
-    not (HAS_GUPPYLANG and HAS_HUGR_TO_AST),
-    reason="guppylang or hugr_to_ast not available",
+from guppylang import guppy
+from guppylang.std.angles import pi
+from guppylang.std.quantum import cx, cz, h, measure, qubit, rz, s, t, x, y, z
+from pecos.circuit_converters.hugr_to_ast import (
+    UnsupportedHugrStructureError,
+    guppy_to_ast,
+    hugr_to_ast,
+)
+from pecos.slr.ast.nodes import (
+    AllocatorDecl,
+    GateKind,
+    GateOp,
+    IfStmt,
+    LiteralExpr,
+    MeasureOp,
+    PrepareOp,
+    Program,
+    RegisterDecl,
 )
 
 

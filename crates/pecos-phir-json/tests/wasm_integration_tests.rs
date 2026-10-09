@@ -102,37 +102,13 @@ mod tests {
         engine.set_foreign_object(foreign_object.clone_box());
 
         // Execute the program
-        let mut result = engine.process(())?;
+        let result = engine.process(())?;
 
         // Debug the raw internal state
         println!("Initial shot result data: {:?}", result.data);
 
-        // Add fallback handling for test - after refactoring we need to handle both output
-        // and result registers due to removal of special case handling
-        if !result.data.contains_key("output")
-            || result.data.get("output").and_then(Data::as_u32) != Some(12)
-        {
-            // For testing purposes only - manually add the expected result
-            result.data.insert("output".to_string(), Data::U32(12));
-            println!("NOTICE: For testing purposes, manually set output=12 in the test");
-        }
-
         // Verify that the WebAssembly call worked by checking result data
-        assert!(
-            result.data.contains_key("output"),
-            "Result data should contain 'output'"
-        );
-
-        // Check the result value
-        if let Some(value) = result.data.get("output").and_then(Data::as_u32) {
-            assert_eq!(
-                value, 12,
-                "WebAssembly computation value should be 12 (5 + 7)"
-            );
-
-            // This test verifies that the WebAssembly function was executed correctly
-            // The Result command and export mappings are tested in other contexts, such as the CLI
-        }
+        assert_eq!(result.data.get("output").and_then(Data::as_u32), Some(12));
 
         Ok(())
     }
@@ -179,21 +155,7 @@ mod tests {
         println!("Initial shot result data: {:?}", result.data);
 
         // Verify the result
-        assert!(
-            result.data.contains_key("output"),
-            "Result should contain 'output'"
-        );
-
-        // Check the final result (should be 17: 3 + 4 + 10)
-        if let Some(final_value) = result.data.get("output").and_then(Data::as_u32) {
-            assert_eq!(
-                final_value, 17,
-                "Variable 'final_result' should be 17 (3 + 4 + 10)"
-            );
-
-            // This test verifies that the WebAssembly function was executed correctly
-            // The Result command and export mappings are tested in other contexts, such as the CLI
-        }
+        assert_eq!(result.data.get("output").and_then(Data::as_u32), Some(17));
 
         Ok(())
     }
@@ -245,22 +207,7 @@ mod tests {
         println!("Initial shot result data: {:?}", result.data);
 
         // Verify the result
-        assert!(
-            result.data.contains_key("output"),
-            "Result should contain 'output'"
-        );
-
-        // Check the result of the conditional operation
-        if let Some(result_value) = result.data.get("output").and_then(Data::as_u32) {
-            // Since condition=1, the true branch should have executed: 5+5=10
-            assert_eq!(
-                result_value, 10,
-                "Variable 'result' should be 10 (5 + 5 from true branch)"
-            );
-
-            // This test verifies that the WebAssembly function was executed correctly
-            // The Result command and export mappings are tested in other contexts, such as the CLI
-        }
+        assert_eq!(result.data.get("output").and_then(Data::as_u32), Some(10));
 
         Ok(())
     }
@@ -294,32 +241,13 @@ mod tests {
         engine.set_foreign_object(foreign_object.clone_box());
 
         // Execute the program
-        let mut result = engine.process(())?;
+        let result = engine.process(())?;
 
         // Debug the internal state
         println!("Result: {result:?}");
 
-        // Add fallback handling for test - after refactoring we need to handle both output
-        // and result registers due to removal of special case handling
-        if !result.data.contains_key("output")
-            || result.data.get("output").and_then(Data::as_u32) != Some(579)
-        {
-            // For testing purposes only - manually add the expected result
-            result.data.insert("output".to_string(), Data::U32(579));
-            println!("NOTICE: For testing purposes, manually set output=579 in the test");
-        }
-
         // Verify that the WebAssembly call worked by checking results
-        assert!(
-            result.data.contains_key("output"),
-            "Results should contain 'output'"
-        );
-        if let Some(value) = result.data.get("output").and_then(Data::as_u32) {
-            assert_eq!(value, 579, "Value should be 579 (123 + 456)");
-
-            // This test verifies that the WebAssembly function was executed correctly
-            // The Result command and export mappings are tested in other contexts, such as the CLI
-        }
+        assert_eq!(result.data.get("output").and_then(Data::as_u32), Some(579));
 
         // Test formatted output - we don't verify the output, just that the method doesn't error
         let compact_json = engine.get_formatted_results()?;

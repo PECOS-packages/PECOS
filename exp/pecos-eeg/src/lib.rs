@@ -63,4 +63,7 @@ pub type Bm = pecos_core::PauliBitmaskSmall;
 
 // Re-export key types for convenience
 pub use dem_mapping::{BchOrder, EegConfig, HFormula};
-pub use noise::{NoiseInjection, NoiseSpec, UniformNoise};
+pub use noise::{DepolarizingChannel, GateNoise, NoiseInjection, NoiseSpec, UniformNoise};
+
+#[cfg(test)]
+mod szz_family_tests;

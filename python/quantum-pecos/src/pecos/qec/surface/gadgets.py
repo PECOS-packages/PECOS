@@ -45,6 +45,7 @@ class Gadget:
     basis: str | None
     x_z_swapped: bool = False
     fold: Literal["SZ", "SZdg"] | None = None
+    injection_seed: bool = False
 
 
 def default_allocation(

@@ -139,6 +139,7 @@ def state_injection(
         (allocation,),
         (patch.dx, patch.dz),
         state,
+        injection_seed=True,
     )
     return StateInjection(
         seed,

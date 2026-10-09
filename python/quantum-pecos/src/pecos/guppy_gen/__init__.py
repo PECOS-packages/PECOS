@@ -39,14 +39,12 @@ from pecos.guppy_gen.surface import (
     get_surface_code_module,
     make_surface_code,
 )
-from pecos.guppy_gen.surface_hook_injection import (
-    load_surface_hook_injection_module,
-    make_surface_hook_injection,
-    render_surface_hook_injection_module,
-)
 from pecos.guppy_gen.surface_teleportation import (
+    load_surface_hook_injection_module,
     load_surface_t_teleportation_module,
+    make_surface_hook_injection,
     make_surface_t_teleportation,
+    render_surface_hook_injection_module,
     render_surface_t_teleportation_module,
 )
 from pecos.guppy_gen.transversal import (

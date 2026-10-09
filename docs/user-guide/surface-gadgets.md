@@ -1138,7 +1138,7 @@ X and Y expectations are both `1/sqrt(2)`; T-dagger reverses the Y sign.
 
 Use a non-Clifford simulator such as `pecos.stab_vec()`. For example:
 
-<!--mark.slow-->
+<!--mark.slow continuation-->
 ```python
 import pecos_rslib as prs
 from pecos import sim, stab_vec
@@ -1204,6 +1204,13 @@ performed.
   using raw parity. This convenience function assumes noiseless measurements
   and canonical input code states.
 
+Raw injection, hook injection, and T teleportation are rendered by
+`pecos.guppy_gen.surface_teleportation`; all public factories remain available
+from `pecos.guppy_gen`. In standalone and protocol modules, signed X/Y/Z input
+preparations and data rounds emit `data:` measurement sidebands; T/TDG resource
+preparations and resource rounds emit `anc:` sidebands. Fold corrections and
+Y readout use the data scope. State and readout-basis strings accept either case.
+
 The experiment records syndrome results but supplies no noisy decoder. The
 preparation corrections resolve ideal random projection signs; they are not
 minimum-weight error recovery. A noisy fault-tolerant implementation also needs
@@ -1226,8 +1233,9 @@ are necessary for the intended fault-detection behavior.
 
 The returned `HookInjection` contains `seed`, `injection`, and `verification`
 gadgets. Execute the first two once, then verification at least once. Its
-`accepts(records)` method takes a tuple of `(x_outcomes, z_outcomes)` boolean
-tuples per round. Only predictable first-round checks must be zero; random
+`accepts(records)` method takes `(x_outcomes, z_outcomes)` boolean sequences
+per round; lists and tuples with the same values are equivalent. Only predictable
+first-round checks must be zero; random
 first-round signs establish the baseline. Any later change rejects the attempt.
 On acceptance, `correction_gadget(records[0])` removes both X- and Z-check signs
 while preserving the logical X and Z observables. These are ideal encoding
@@ -1261,6 +1269,9 @@ assert teleport.compile() is not None
 ```
 
 `verification_rounds` counts rounds **after** injection and must be positive.
+For `make_surface_t_teleportation`, `verification_rounds=None` uses the hook
+renderer's default when `resource_preparation="hook"`; an explicit value with
+`resource_preparation="raw"` raises `ValueError`.
 The abstract construction supports square rotated distances >= 2. The Guppy
 module includes the fold-SZ consumer and Y readout, so it requires odd square
 distances >= 3. Supported resource states are T, TDG, X, -X, Y, and -Y.
@@ -1274,6 +1285,9 @@ schema consistent, `final_data` and downstream records contain **invalid zero
 placeholders on rejected shots**. Always filter with `hook_accepted` before
 computing readout statistics. `teleportation_performed` records whether the
 consumer ran. There is no automatic retry loop.
+Hook injection and verification retain their `hook:` measurement sidebands on
+every shot. Shared teleportation helpers omit scalar sidebands in this module
+because rejected attempts skip those helpers; aggregate records remain present.
 
 `load_surface_hook_injection_module(patch, verification_rounds=2)` exposes
 `attempt_hook_t()` and `attempt_hook_tdg()`, returning `(resource, accepted)`

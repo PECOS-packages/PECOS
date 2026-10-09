@@ -39,8 +39,9 @@ workflows=(
   selene-plugins.yml
   test-docs-examples.yml
 )
-# These artifact workflows still cancel a superseded trunk run by design, so a
-# cancelled run there says nothing about the branch.
+# These artifact workflows finish running trunk builds, but a newer pending
+# run still replaces an older pending run with conclusion cancelled. That
+# cancellation says nothing about the branch, so keep the exemption.
 superseded_ok=(julia-release.yml python-release.yml)
 
 status=0

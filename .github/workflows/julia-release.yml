@@ -47,9 +47,13 @@ on:
         type: string
 
 concurrency:
+  # Pull requests cancel superseded runs. Elsewhere a started build finishes
+  # (cancelling it on each merge threw away the macOS builds) and a newer push
+  # replaces only an older pending one; a manual dispatch gets its own group so
+  # a merge cannot drop it while it waits.
   # Unrelated label events must not cancel an active run.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:

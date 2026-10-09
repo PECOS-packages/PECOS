@@ -184,23 +184,13 @@ jobs:
   build-wheels:
     needs: test
     runs-on: ${{ matrix.os }}
+    # Six sequential builds need headroom on the slower Intel macOS runner:
+    # one plugin's Intel build alone has taken up to 338 s.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
-        plugin:
-          - name: pecos-selene-general-noise
-            package: pecos_selene_general_noise
-          - name: pecos-selene-stabilizer
-            package: pecos_selene_stabilizer
-          - name: pecos-selene-statevec
-            package: pecos_selene_statevec
-          - name: pecos-selene-stab-vec
-            package: pecos_selene_stab_vec
-          - name: pecos-selene-stab-mps
-            package: pecos_selene_stab_mps
-          - name: pecos-selene-mast
-            package: pecos_selene_mast
 
     steps:
       - name: Harden the runner (egress audit)
@@ -237,64 +227,68 @@ jobs:
           prefix-key: v1-rust-no-bin
           save-if: false
 
-      - name: Build Rust library (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          cargo build --locked --release -p ${{ matrix.plugin.name }}
-
-      - name: Build Rust library (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo build --locked --release -p ${{ matrix.plugin.name }}
-
-      - name: Copy library to Python package (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            EXT="dylib"
-          else
-            EXT="so"
-          fi
-          PLUGIN_DIR="python/selene-plugins/${{ matrix.plugin.name }}"
-          mkdir -p "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib"
-          cp "target/release/lib${{ matrix.plugin.package }}.$EXT" "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib/"
-
-      - name: Copy library to Python package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $pluginDir = "python/selene-plugins/${{ matrix.plugin.name }}"
-          New-Item -ItemType Directory -Force -Path "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib"
-          Copy-Item "target/release/${{ matrix.plugin.package }}.dll" "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib/"
-
-      - name: Build wheel
-        run: |
-          cd python/selene-plugins/${{ matrix.plugin.name }}
-          uv build --wheel --out-dir dist
-
-      # The test job runs against editable installs; this checks the wheel that
-      # ships: installed into a clean environment, outside the source tree, its
-      # Selene component must build and its bundled library must load.
-      - name: Smoke-test the built wheel
+      # Build separately to avoid unifying features across shipped libraries.
+      # The test job uses editable installs; smoke-test each shipped wheel in
+      # its own clean environment outside the checkout.
+      - name: Build and smoke-test all plugin wheels
         shell: bash
-        env:
-          PLUGIN: ${{ matrix.plugin.name }}
-          PACKAGE: ${{ matrix.plugin.package }}
         run: |
           uv export --frozen --no-hashes --all-packages --no-emit-workspace -o "$RUNNER_TEMP/uv-constraints.txt"
-          uv venv "$RUNNER_TEMP/wheel-venv" --python 3.12
-          uv pip install --python "$RUNNER_TEMP/wheel-venv" -c "$RUNNER_TEMP/uv-constraints.txt" python/selene-plugins/"$PLUGIN"/dist/*.whl
-          venv_python="$RUNNER_TEMP/wheel-venv/bin/python"
-          if [ "$RUNNER_OS" = "Windows" ]; then venv_python="$RUNNER_TEMP/wheel-venv/Scripts/python.exe"; fi
-          cd "$RUNNER_TEMP"
-          "$venv_python" "$GITHUB_WORKSPACE/scripts/ci/smoke_selene_wheel.py" "$PACKAGE"
+          case "$RUNNER_OS" in
+            Linux) prefix=lib; extension=so ;;
+            macOS) prefix=lib; extension=dylib ;;
+            Windows) prefix=; extension=dll ;;
+            *) echo "::error::Unsupported runner OS: $RUNNER_OS"; exit 1 ;;
+          esac
+
+          build_plugin() {
+            stage=build
+            cargo build --locked --release -p "$plugin" || return
+            stage=copy
+            destination="$directory/python/$package/_dist/lib"
+            mkdir -p "$destination" || return
+            cp "target/release/$prefix$package.$extension" "$destination/" || return
+            stage=wheel
+            (cd "$directory" && uv build --wheel --out-dir "$RUNNER_TEMP/selene-wheels") || return
+            stage=smoke
+            venv="$(mktemp -d "$RUNNER_TEMP/wheel-$plugin.XXXXXX")" || return
+            uv venv "$venv" --python 3.12 || return
+            uv pip install --python "$venv" -c "$RUNNER_TEMP/uv-constraints.txt" "$RUNNER_TEMP/selene-wheels/$package"-*.whl || return
+            venv_python="$venv/bin/python"
+            if [ "$RUNNER_OS" = "Windows" ]; then venv_python="$venv/Scripts/python.exe"; fi
+            (cd "$RUNNER_TEMP" && "$venv_python" "$GITHUB_WORKSPACE/scripts/ci/smoke_selene_wheel.py" "$package") || return
+          }
+
+          shopt -s nullglob
+          directories=(python/selene-plugins/pecos-selene-*/)
+          if [ "${#directories[@]}" -eq 0 ]; then
+            echo "::error::No Selene plugins discovered"
+            exit 1
+          fi
+          failures=()
+          for directory in "${directories[@]}"; do
+            plugin="$(basename "$directory")"
+            package="${plugin//-/_}"
+            echo "::group::$plugin"
+            # Conditional functions do not inherit errexit: every stage above
+            # explicitly returns on error so later plugins still get attempted.
+            if build_plugin; then
+              echo "$plugin: wheel and smoke test passed"
+            else
+              failures+=("$plugin ($stage)")
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failures[@]}" -gt 0 ]; then
+            printf '::error::Failed plugin: %s\n' "${failures[@]}"
+            exit 1
+          fi
 
       - name: Upload wheel
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: wheel-${{ matrix.plugin.name }}-${{ matrix.os }}
-          path: python/selene-plugins/${{ matrix.plugin.name }}/dist/*.whl
+          name: wheel-${{ matrix.os }}
+          path: ${{ runner.temp }}/selene-wheels/*.whl
           if-no-files-found: error
 
   # Collect all wheels into a single artifact
@@ -307,12 +301,19 @@ jobs:
         with:
           egress-policy: audit
 
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
       - name: Download all wheel artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: wheels/
           pattern: wheel-*
           merge-multiple: true
+
+      - name: Assert complete wheel set
+        run: python3 scripts/ci/check_selene_wheels.py wheels/
 
       - name: List wheels
         run: |

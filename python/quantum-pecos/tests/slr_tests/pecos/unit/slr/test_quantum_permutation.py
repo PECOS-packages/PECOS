@@ -83,7 +83,6 @@ def _q(name: str, qir: str) -> list[int]:
     return [_idx(m) for m in re.findall(rf"call void @__quantum__qis__{name}__body\({_QARG}\)", qir)]
 
 
-@pytest.mark.optional_dependency
 def test_quantum_permutation_qir(quantum_permutation_program: tuple) -> None:
     """Element-wise QReg Permute is realized (a[0] <-> b[0])."""
     prog, _, _ = quantum_permutation_program
@@ -102,7 +101,6 @@ def test_quantum_permutation_qir(quantum_permutation_program: tuple) -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_permutation_with_bell_circuit_qir() -> None:
     """Element-wise QReg + CReg Permute is realized in a Bell circuit."""
     a = QReg("a", 2)
@@ -138,7 +136,6 @@ def test_permutation_with_bell_circuit_qir() -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_comprehensive_qir_verification() -> None:
     """Two element-wise QReg Permutes are realized across many gates.
 
@@ -191,7 +188,6 @@ def test_comprehensive_qir_verification() -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_rotation_gates_with_permutation() -> None:
     """Element-wise QReg Permute is realized across rotation gates."""
     a = QReg("a", 2)
@@ -225,7 +221,6 @@ def test_rotation_gates_with_permutation() -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_whole_register_qreg_permutation_realized_qir() -> None:
     """Whole-register *qubit*-register Permute IS realized in QIR.
 
@@ -258,7 +253,6 @@ def test_whole_register_qreg_permutation_realized_qir() -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_non_bijective_permute_fails_loud() -> None:
     """A non-bijective Permute must fail loud, not silently miscompile.
 
@@ -317,7 +311,6 @@ def test_permute_realized_quantum_circuit() -> None:
         SlrConverter(Main(a, b, Permute([a[0], a[0]], [b[0], a[0]]), qubit.H(a[0]))).quantum_circuit()
 
 
-@pytest.mark.optional_dependency
 def test_permute_realized_stim() -> None:
     """Element-wise + whole-register Permute is realized in the
     Stim codegen (was a silent no-op -- same class as the QIR Permute bug).

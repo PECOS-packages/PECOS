@@ -94,7 +94,6 @@ def _mz_then_store(qir: str) -> list[tuple[int, str, int]]:
     return out
 
 
-@pytest.mark.optional_dependency
 def test_individual_measurement_permutation_qir(
     individual_measurement_program: tuple,
 ) -> None:
@@ -112,7 +111,6 @@ def test_individual_measurement_permutation_qir(
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_register_measurement_permutation_qir(
     register_measurement_program: tuple,
 ) -> None:

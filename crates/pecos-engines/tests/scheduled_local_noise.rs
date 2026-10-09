@@ -275,10 +275,12 @@ fn leakage_readout_precedes_later_noisy_preparation() {
         let leaked = || Gate::simple(GateType::MeasureLeaked, vec![0.into()]);
         let b = [
             batch(0, 0, 0, vec![Gate::pz(&[0])]),
-            batch(1, 1_000_000_000, 0, vec![leaked()]),
-            batch(2, 1_000_000_000, 0, vec![Gate::mz(&[0])]),
-            batch(3, 1_000_000_000, 0, vec![Gate::pz(&[0])]),
-            batch(4, 1_000_000_000, 0, vec![leaked()]),
+            batch(
+                1,
+                1_000_000_000,
+                0,
+                vec![leaked(), Gate::mz(&[0]), Gate::pz(&[0]), leaked()],
+            ),
         ];
         // Ternary leakage bypasses readout flips. Binary leaked=1 is flipped;
         // the reset clears leakage, then prep makes 1 and readout flips it to 0.
@@ -286,25 +288,54 @@ fn leakage_readout_precedes_later_noisy_preparation() {
     }
 }
 #[test]
-fn post_measurement_use_rejects_whole_input_before_mutation() {
-    let p = profile(0.0, 0.0, 1.0, 0.0, 0.0);
-    let mut sim = system(p.clone(), false, 42);
-    let rng = sim.controller().rng().clone().next_u64();
-    for gate in [
+fn same_batch_reuse_preserves_gate_order_readout_and_rng() {
+    // The legacy model is a valid oracle here because these faults cannot leak.
+    // Comparing the RNG catches an accidental split into multiple lifecycles.
+    let gates = vec![
         Gate::pz(&[0]),
         Gate::mz(&[0]),
-        Gate::rzz(Angle64::ZERO, &[(0, 1)]),
-    ] {
-        let invalid = [
-            batch(0, 0, 0, vec![Gate::pz(&[0])]),
-            batch(1, 0, 0, vec![Gate::mz(&[0]), gate]),
-        ];
-        assert!(sim.process(message(&invalid, false)).is_err());
-        assert_eq!(sim.controller().rng().clone().next_u64(), rng);
+        Gate::mz(&[0]),
+        Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0]),
+        Gate::rzz(Angle64::from_radians(-0.3), &[(0, 1)]),
+        Gate::mz(&[1]),
+        Gate::pz(&[0]),
+        Gate::measure_leaked(&[0]),
+    ];
+    for events in [false, true] {
+        for seed in 0..32 {
+            let mut actual = system(profile(0.8, 0.7, 0.3, 0.4, 0.2), events, seed);
+            let mut expected = QuantumSystem::new(
+                Box::new(
+                    GeneralNoiseModelBuilder::new()
+                        .with_p1(0.8)
+                        .with_p2(0.7)
+                        .with_p_prep(0.3)
+                        .with_p_meas_0(0.4)
+                        .with_p_meas_1(0.2)
+                        .build(),
+                ),
+                Box::new(StateVecEngine::new(2)),
+            );
+            expected.set_seed(seed);
+            let want = expected
+                .process(
+                    ByteMessage::quantum_operations_builder()
+                        .add_gate_commands(&gates)
+                        .build(),
+                )
+                .unwrap();
+            assert_eq!(
+                run(&mut actual, &[batch(0, 0, 0, gates.clone())], events),
+                want.outcomes().unwrap()
+            );
+            assert_eq!(
+                actual.controller().rng().clone().next_u64(),
+                expected.controller().rng().clone().next_u64()
+            );
+        }
     }
-    let valid = [batch(0, 0, 0, vec![Gate::mz(&[0])])];
-    assert_eq!(run(&mut sim, &valid, false), vec![0]);
 }
+
 #[test]
 fn oversized_batch_rejected_before_execution() {
     let mut sim = system(profile(1.0, 1.0, 1.0, 1.0, 1.0), false, 0);
@@ -317,9 +348,9 @@ fn oversized_batch_rejected_before_execution() {
 }
 
 #[test]
-fn normalized_measurement_violation_poison_clone_and_reset() {
-    struct AppendReset;
-    impl ScheduledBatchAdapter for AppendReset {
+fn normalized_capacity_violation_poison_clone_and_reset() {
+    struct AppendOutsideCapacity;
+    impl ScheduledBatchAdapter for AppendOutsideCapacity {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
             Ok(())
         }
@@ -333,14 +364,16 @@ fn normalized_measurement_violation_poison_clone_and_reset() {
                     out.push(*g.clone())?;
                 }
             }
-            if b.batch_index == 0 {
-                out.push(Gate::pz(&[0]))?;
+            if b.batch_index == 0
+                && matches!(&b.operations[0], ScheduledEventOp::Gate(g) if g.gate_type == GateType::MZ)
+            {
+                out.push(Gate::pz(&[2]))?;
             }
             Ok(())
         }
     }
     let noise = ScheduledEventIdleNoise::new(profile(0.0, 0.0, 1.0, 0.0, 0.0), |_| {
-        Ok(Box::new(AppendReset))
+        Ok(Box::new(AppendOutsideCapacity))
     });
     let mut sim = QuantumSystem::new(noise.into_noise_model(), Box::new(StateVecEngine::new(2)));
     sim.begin_shot(context(0)).unwrap();

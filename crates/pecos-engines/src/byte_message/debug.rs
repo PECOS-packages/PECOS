@@ -5,7 +5,7 @@
 
 use crate::byte_message::message::ByteMessage;
 use crate::byte_message::protocol::{
-    BATCH_MAGIC, BatchHeader, GateHeader, MessageHeader, calc_padding,
+    BATCH_MAGIC, BatchHeader, GateHeader, MessageHeader, MessageType, calc_padding,
 };
 use bytemuck;
 use std::fmt::Write;
@@ -23,58 +23,60 @@ pub fn dump_batch(data: &[u8]) -> String {
     let message = ByteMessage::new(data);
     output.push_str("=== Structured ByteMessage Debug ===\n");
 
-    // Determine message type
     match message.message_type() {
         Ok(msg_type) => {
             writeln!(output, "Message Type: {msg_type:?}").unwrap();
+            match msg_type {
+                MessageType::Gate => match message.quantum_ops() {
+                    Ok(operations) => {
+                        writeln!(output, "Quantum Operations ({} total):", operations.len())
+                            .unwrap();
+                        for (i, op) in operations.iter().enumerate() {
+                            writeln!(
+                                output,
+                                "  {i}: {} on qubits {:?} with params {:?}",
+                                op.gate_type, op.qubits, op.params
+                            )
+                            .unwrap();
+                            writeln!(
+                                output,
+                                "      Classical arity: {}, Quantum arity: {}",
+                                op.classical_arity(),
+                                op.quantum_arity()
+                            )
+                            .unwrap();
+                        }
+                    }
+                    Err(e) => {
+                        writeln!(output, "No quantum operations (or error): {e}").unwrap();
+                    }
+                },
+                MessageType::Outcome => match message.outcomes() {
+                    Ok(measurements) => {
+                        if !measurements.is_empty() {
+                            writeln!(
+                                output,
+                                "Measurement Results ({} total):",
+                                measurements.len()
+                            )
+                            .unwrap();
+                            for (i, result) in measurements.iter().enumerate() {
+                                writeln!(output, "  {i}: {result}").unwrap();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        writeln!(output, "No measurements (or error): {e}").unwrap();
+                    }
+                },
+                MessageType::ReturnValue => match message.return_value() {
+                    Ok(value) => writeln!(output, "Return Value: {value:?}").unwrap(),
+                    Err(e) => writeln!(output, "No return value (or error): {e}").unwrap(),
+                },
+            }
         }
         Err(e) => {
             writeln!(output, "Error determining message type: {e}").unwrap();
-        }
-    }
-
-    // Try to parse quantum operations
-    match message.quantum_ops() {
-        Ok(operations) => {
-            writeln!(output, "Quantum Operations ({} total):", operations.len()).unwrap();
-            for (i, op) in operations.iter().enumerate() {
-                writeln!(
-                    output,
-                    "  {i}: {} on qubits {:?} with params {:?}",
-                    op.gate_type, op.qubits, op.params
-                )
-                .unwrap();
-                writeln!(
-                    output,
-                    "      Classical arity: {}, Quantum arity: {}",
-                    op.classical_arity(),
-                    op.quantum_arity()
-                )
-                .unwrap();
-            }
-        }
-        Err(e) => {
-            writeln!(output, "No quantum operations (or error): {e}").unwrap();
-        }
-    }
-
-    // Try to parse measurements
-    match message.outcomes() {
-        Ok(measurements) => {
-            if !measurements.is_empty() {
-                writeln!(
-                    output,
-                    "Measurement Results ({} total):",
-                    measurements.len()
-                )
-                .unwrap();
-                for (i, result) in measurements.iter().enumerate() {
-                    writeln!(output, "  {i}: {result}").unwrap();
-                }
-            }
-        }
-        Err(e) => {
-            writeln!(output, "No measurements (or error): {e}").unwrap();
         }
     }
 
@@ -319,6 +321,63 @@ mod tests {
     use crate::Gate;
     use crate::byte_message::ByteMessage;
     use pecos_core::Angle64;
+
+    #[test]
+    fn strict_debug_reader_errors() {
+        for (message, label) in [
+            (
+                ByteMessage::builder().h(&[0]).build(),
+                "No quantum operations (or error):",
+            ),
+            (
+                ByteMessage::builder().add_outcomes(&[1]).build(),
+                "No measurements (or error):",
+            ),
+            (
+                ByteMessage::builder().add_return_value(42).build(),
+                "No return value (or error):",
+            ),
+        ] {
+            let mut bytes = message.into_bytes();
+            let payload_size = u32::try_from(bytes.len() - 24 + 1).unwrap();
+            bytes[20..24].copy_from_slice(&payload_size.to_le_bytes());
+            let dump = dump_batch(&bytes);
+            let structured = dump.split("=== Raw Byte Analysis ===").next().unwrap();
+            assert!(structured.contains(label), "{structured}");
+            assert!(structured.contains("Message 0: payload extends beyond buffer"));
+        }
+    }
+
+    #[test]
+    fn strict_debug_dispatch() {
+        let gate = ByteMessage::builder().h(&[0]).build();
+        let outcome = ByteMessage::builder().add_outcomes(&[1]).build();
+        let value = ByteMessage::builder().add_return_value(42).build();
+        for (message, expected) in [
+            (&gate, "Quantum Operations (1 total):"),
+            (&outcome, "Measurement Results (1 total):"),
+            (&value, "Return Value: Some(42)"),
+        ] {
+            let dump = dump_message(message);
+            let structured = dump.split("=== Raw Byte Analysis ===").next().unwrap();
+            assert!(structured.contains(expected), "{structured}");
+            assert!(!structured.contains("(or error)"), "{structured}");
+        }
+        for message in [ByteMessage::create_empty(), ByteMessage::new(&[])] {
+            let dump = dump_message(&message);
+            let structured = dump.split("=== Raw Byte Analysis ===").next().unwrap();
+            assert!(structured.contains("Error determining message type:"));
+            assert!(!structured.contains("Quantum Operations"));
+            assert!(!structured.contains("(or error)"));
+        }
+        let mut bytes = gate.into_bytes();
+        bytes.extend_from_slice(&[0; 4]);
+        let len = u32::try_from(bytes.len()).unwrap();
+        bytes[12..16].copy_from_slice(&len.to_le_bytes());
+        let dump = dump_batch(&bytes);
+        assert!(dump.contains("No quantum operations (or error):"));
+        assert!(dump.contains("Message 0: trailing bytes after final payload padding"));
+    }
 
     #[test]
     fn test_bytemap_dump() {

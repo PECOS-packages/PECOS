@@ -28,7 +28,10 @@ on:
       - '.github/workflows/cuda-build-check.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:

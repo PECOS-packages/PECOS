@@ -31,6 +31,7 @@ workspace = true
 optional = true
 
 [dev-dependencies]
+tempfile.workspace = true
 pecos-neo = { workspace = true }
 
 [lints]

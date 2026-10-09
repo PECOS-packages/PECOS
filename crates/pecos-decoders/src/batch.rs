@@ -1,4 +1,14 @@
-//! Deterministic planning and canonical-sampling primitives for batch decoding.
+//! Batch storage and execution, deterministic planning, and canonical-sampling primitives.
+
+mod execution;
+mod sample;
+mod scoring;
+
+pub use execution::{
+    BatchDecodeError, DecodeOptions, DecodeResult, DecoderFactory, logical_error_rate,
+};
+pub use sample::{SampleBatch, SampleBatchError, Shot};
+pub use scoring::{DecodeRangeResult, ShotDecodeError, decode_and_score_range};
 
 use std::fmt;
 use std::ops::Range;

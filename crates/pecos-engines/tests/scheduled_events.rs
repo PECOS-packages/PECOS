@@ -661,8 +661,7 @@ fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preser
             b: &ScheduledEventBatch,
             out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
-            // Expansion must precede readout: a reset after readout is no
-            // longer admitted by any scheduled profile.
+            // Fill the normalized batch while preserving its original readout.
             for _ in 1..self.0 {
                 out.push(Gate::pz(&[0]))?;
             }

@@ -38,8 +38,10 @@ def build_timed_runtime(
     *,
     events: bool = False,
     initial_nanos: int = 0,
+    coalesce_queued: bool = False,
+    prep_gap_nanos: int | None = None,
 ) -> tuple[Path, int]:
-    """Compile the public timing proxy, optionally emitting an invented event."""
+    """Compile synthetic timing, optionally isolating an initial prep before an idle gap."""
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
     if platform.system() == "Windows":
@@ -70,6 +72,10 @@ def build_timed_runtime(
         "-o",
         str(library),
     ]
+    if coalesce_queued:
+        args.append("-DCOALESCE_QUEUED")
+    if prep_gap_nanos is not None:
+        args.append(f"-DPREP_GAP_NANOS={prep_gap_nanos}ULL")
     if events:
         args.append("-DSYNTHETIC_EVENT")
     if platform.system() != "Darwin":

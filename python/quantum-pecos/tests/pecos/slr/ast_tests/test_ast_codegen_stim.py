@@ -12,14 +12,12 @@
 """Tests for AST to Stim code generator."""
 
 import pytest
-
-stim = pytest.importorskip("stim")
-
-from pecos.slr import Barrier, CReg, If, Main, Permute, QReg, Repeat  # noqa: E402
-from pecos.slr.ast import slr_to_ast  # noqa: E402
-from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str  # noqa: E402
-from pecos.slr.gen_codes import StimGenerator  # noqa: E402
-from pecos.slr.qeclib import qubit as qb  # noqa: E402
+import stim
+from pecos.slr import Barrier, CReg, If, Main, Permute, QReg, Repeat
+from pecos.slr.ast import slr_to_ast
+from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str
+from pecos.slr.gen_codes import StimGenerator
+from pecos.slr.qeclib import qubit as qb
 
 
 class TestAstToStimBasic:
@@ -108,24 +106,15 @@ class TestAstToStimGates:
         assert "S_DAG 0" in code
 
     def test_t_gates(self) -> None:
-        """T gate handles gracefully (may be unsupported in Stim)."""
-        # Note: T gates are non-Clifford and Stim uses them for noise modeling
-        # The Stim gate is called "T" not "T_DAG" for the adjoint
+        """Stim rejects the non-Clifford T gate."""
         prog = Main(
             q := QReg("q", 1),
             qb.T(q[0]),
         )
         ast = slr_to_ast(prog)
 
-        # T gate may not be directly supported - check the generator handles it
-        # If T isn't supported, it should skip or the test should be adjusted
-        try:
-            code = ast_to_stim_str(ast)
-            # If T is supported, it should appear in output
-            assert "T" in code or len(code) == 0  # May be skipped if unsupported
-        except (IndexError, ValueError):
-            # T gate not supported in Stim - this is expected
-            pass
+        with pytest.raises(IndexError, match="Gate not found: 'T'"):
+            ast_to_stim_str(ast)
 
     def test_two_qubit_cx_gate(self) -> None:
         """CX gate generates CX instruction with correct qubits."""

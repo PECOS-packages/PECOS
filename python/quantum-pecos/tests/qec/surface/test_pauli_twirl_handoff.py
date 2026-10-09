@@ -546,9 +546,6 @@ def test_gate_local_tracked_pauli_label_order_matches_gate_operand_cols() -> Non
 
 
 def test_raw_twirled_guppy_trace_result_provenance_ignores_sideband_tags() -> None:
-    pytest.importorskip("guppylang")
-    pytest.importorskip("selene_sim")
-
     from pecos.guppy_gen import get_num_qubits
     from pecos.guppy_gen.surface import generate_memory_experiment
     from pecos.qec.surface.decode import (

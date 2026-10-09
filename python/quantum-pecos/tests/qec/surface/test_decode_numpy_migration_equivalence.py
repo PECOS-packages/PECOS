@@ -381,7 +381,8 @@ def test_native_decoder_path_does_not_import_stim(monkeypatch: pytest.MonkeyPatc
 
 def test_stim_extra_interoperability_boundaries() -> None:
     """Exercise both lazy Stim helpers and an outbound PECOS Array target buffer."""
-    stim = pytest.importorskip("stim")
+    import stim
+
     patch = SurfacePatch.create(distance=3)
     for basis in ("X", "Z"):
         generated = generate_circuit_level_dem(3, 3, _NOISE, basis)

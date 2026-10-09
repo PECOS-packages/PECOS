@@ -14,12 +14,13 @@ enabling GPU-accelerated quantum simulation from Python.
 ## Simulators
 
 - `CuStateVec`: GPU-accelerated state vector simulation (~30 qubits)
-- `CuStabilizer`: GPU-accelerated stabilizer simulation (1000s of qubits)
+
+No GPU stabilizer simulator is currently provided; the Rust crate `pecos-cuquantum` exposes raw Pauli-frame simulation as `CuFrameSimulator` (not available from Python); see [issue #1068](https://github.com/PECOS-packages/PECOS/issues/1068).
 
 ## Usage
 
 ```python
-from pecos_rslib_cuda import CuStateVec, CuStabilizer, is_cuquantum_available
+from pecos_rslib_cuda import CuStateVec, is_cuquantum_available
 
 if is_cuquantum_available():
     # State vector simulation
@@ -27,9 +28,4 @@ if is_cuquantum_available():
     sim.h([0])
     sim.cx([0, 1])
     results = sim.mz([0, 1])
-
-    # Stabilizer simulation (Clifford gates only)
-    stab = CuStabilizer(100)
-    stab.h([0])
-    stab.cx([0, 1])
 ```

@@ -25,7 +25,7 @@ def simulation(runtime, factory, program=None):
         .selene_runtime_plugin(
             str(library),
             SimpleRuntimePlugin().get_init_args(),
-            custom_event_policy="reject_unhandled",
+            custom_event_policy="capture",
         )
         .scheduled_event_batches()
         .interface(pr.qis_helios_interface())

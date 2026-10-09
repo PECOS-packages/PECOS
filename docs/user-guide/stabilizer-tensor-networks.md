@@ -8,6 +8,10 @@ The experimental `pecos_rslib_exp` package exposes three related tools:
 
 All public bitstrings use qubit-index order: `bits[q]` is the bit for qubit `q`. Python bitstring inputs must contain actual `bool` items; integers such as `0` and `1` are rejected. Dense state-vector indices are little-endian, so a row maps to `sum(int(bits[q]) << q for q in range(len(bits)))`. Gate rotation angles are in radians.
 
+`StabMps` and `Mast` represent states up to one overall phase. `StabMps` exposes this explicitly through `state_vector_up_to_phase()`, `amplitude_up_to_phase(bits)`, and `amplitude_iterative_up_to_phase(bits)`. These reads share the canonical gauge in which the first supported basis word of the stabilizer reference ket is real positive. Relative phases are exact; the overall phase is a convention, not the circuit's phase. The dense reads are limited to 14 qubits; the iterative read avoids dense materialization. Python returns amplitudes as `(real, imag)` pairs.
+
+`overlap_magnitude_with_stabilizer(...)` returns a floating-point magnitude of the Monte Carlo overlap estimate. The complex overlap phase depends on both states' gauges, so it is not returned. Square the magnitude for a fidelity estimate. RZ merging is exact up to a global phase.
+
 ## `StabMps` quickstart
 
 `sample_bitstrings` is the `StabMps` sampler. It shares each distinct measurement-prefix projection between shots and is always exact by construction, independent of the single-measurement policy. When each shot must follow the configured measurement mode, create a fresh simulator for that shot and explicitly loop over MZ.
@@ -64,6 +68,8 @@ The accuracy fields answer different questions:
 - `bond_cap_hits` counts SVDs at which `max_bond_dim` was binding.
 
 Python state reads automatically flush lazy operations and merged rotations. When Pauli-frame tracking is enabled, call `flush_pauli_frame_to_state()` before a read that must include the physical frame.
+
+Enable the classical Pauli frame with `pauli_frame_tracking=True` in Python or `StabMpsBuilder::pauli_frame_tracking(true)` in Rust. The frame stores X/Z bits; gates propagate them, rotations negate their angle when the frame anticommutes with the rotation axis, and Z measurements XOR the X-bit into the outcome. Frame injection and bit reads require tracking: Rust panics when it is disabled, while Python raises `ValueError` before validating qubit indices (`IndexError`). This also applies to empty bulk injections. Noise channels use physical gates when tracking is disabled. Reset clears the bits while retaining the setting. With tracking disabled, `flush_pauli_frame_to_state()` only flushes pending operations.
 
 `StabMps` defaults `merge_rz` to true for throughput. `Mast` defaults it to false so each RZ immediately exposes its injection and ancilla-capacity cost. Numerical flag redetection is opt-in. In `StabMps` it self-disables while lazy deferred operations are pending, because the stored tensors then differ from the effective MPS-frame state.
 

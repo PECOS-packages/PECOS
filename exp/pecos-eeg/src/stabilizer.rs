@@ -18,17 +18,36 @@ pub struct StabilizerGroup {
     sim: SparseStab,
 }
 
+/// The (first, second) operand pairs of a batched two-qubit gate.
+///
+/// # Panics
+///
+/// Panics if the qubit count is odd.
+fn operand_pairs(gate_type: GateType, qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
+    assert!(
+        qubits.len().is_multiple_of(2),
+        "EEG: {gate_type:?} acts on {} qubits, not a multiple of its arity 2",
+        qubits.len()
+    );
+    qubits
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[first, second]| (first, second))
+        .collect()
+}
+
 impl StabilizerGroup {
-    /// Run the noiseless circuit on SparseStab.
+    /// Run the Clifford skeleton of the noiseless circuit on SparseStab.
+    ///
+    /// # Panics
+    /// Panics for unsupported gate types or an odd two-qubit operand count.
     #[must_use]
     pub fn from_circuit(gates: &[Gate], num_qubits: usize) -> Self {
         let mut sim = SparseStab::with_seed(num_qubits, 0);
 
         for gate in gates {
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            if qubits.is_empty() {
-                continue;
-            }
 
             match gate.gate_type {
                 GateType::PZ | GateType::QAlloc => {
@@ -66,22 +85,46 @@ impl StabilizerGroup {
                 GateType::Z => {
                     sim.z(&qubits);
                 }
-                GateType::CX if qubits.len() >= 2 => {
-                    sim.cx(&[(qubits[0], qubits[1])]);
+                // A batched two-qubit gate acts on every (disjoint) pair.
+                GateType::CX => {
+                    sim.cx(&operand_pairs(gate.gate_type, &qubits));
                 }
-                GateType::CY if qubits.len() >= 2 => {
-                    sim.cy(&[(qubits[0], qubits[1])]);
+                GateType::CY => {
+                    sim.cy(&operand_pairs(gate.gate_type, &qubits));
                 }
-                GateType::CZ if qubits.len() >= 2 => {
-                    sim.cz(&[(qubits[0], qubits[1])]);
+                GateType::CZ => {
+                    sim.cz(&operand_pairs(gate.gate_type, &qubits));
                 }
-                GateType::SWAP if qubits.len() >= 2 => {
-                    sim.swap(&[(qubits[0], qubits[1])]);
+                GateType::SWAP => {
+                    sim.swap(&operand_pairs(gate.gate_type, &qubits));
                 }
                 GateType::MZ => {
                     sim.mz(&qubits);
                 }
-                _ => {}
+                GateType::SZZ => {
+                    sim.szz(&operand_pairs(gate.gate_type, &qubits));
+                }
+                GateType::SZZdg => {
+                    sim.szzdg(&operand_pairs(gate.gate_type, &qubits));
+                }
+                GateType::SXX => {
+                    sim.sxx(&operand_pairs(gate.gate_type, &qubits));
+                }
+                GateType::SXXdg => {
+                    sim.sxxdg(&operand_pairs(gate.gate_type, &qubits));
+                }
+                GateType::SYY => {
+                    sim.syy(&operand_pairs(gate.gate_type, &qubits));
+                }
+                GateType::SYYdg => {
+                    sim.syydg(&operand_pairs(gate.gate_type, &qubits));
+                }
+                // The reference state is the Clifford skeleton; analyze_with_noise
+                // models small-angle RZ separately as a coherent generator.
+                GateType::I | GateType::Idle | GateType::QFree | GateType::RZ => {}
+                // Meta gates (`GateType::is_meta`) do not affect the state.
+                meta if meta.is_meta() => {}
+                other => panic!("EEG stabilizer: unsupported gate type {other:?}"),
             }
         }
 

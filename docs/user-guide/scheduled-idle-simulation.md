@@ -13,6 +13,13 @@ dynamically: runtime batches enter the noise model and simulator, and measuremen
 results return to the program to drive feedback and branches. Validation buffers
 the current input; simulation does not require a precomputed whole-shot trace.
 
+For allocation lifetimes, capacity inference, cloning and error recovery on all
+routes, see [Selene runtime execution](selene-runtime-execution.md). Scheduled
+extraction requires an explicit nonzero capacity. Once collection begins, any
+error—including capacity or duplicate-allocation admission—requires reset even
+when native state was not changed. Initial source-shape validation happens before
+collection; it does not by itself poison the runtime.
+
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python
 import pecos
@@ -43,6 +50,12 @@ messages; the canonical empty host-wait message is the only legacy exception.
 Operation tracing is currently incompatible with this opt-in route.
 
 ## Timing and noise contract
+
+Every scheduled consumer uses the runtime's batch start times and durations to
+calculate idle exposure. Consumers must not reschedule operations or replace those
+timestamps with a reconstructed timeline. Explicit source barriers and terminal
+draining still apply. For release ordering, see
+[native scheduling across release](scheduled-event-adapters.md#native-scheduling-across-release).
 
 Batch start and duration remain integer nanoseconds. For each physical qubit,
 its idle interval runs from the end of its previous touching batch to the start
@@ -173,18 +186,19 @@ idle and local factories retain their distinct profile classes.
 
 ## Shared scheduled admission and execution limits
 
-Every scheduled profile admits at most 4096 gates per batch. A qubit cannot be used
-again after a measurement within that batch, including repeated measurement.
-This prevents later leakage bookkeeping from changing an earlier readout. Put
-such operations in their original distinct native batches; adapters cannot split
-or retime batches to force admission. This restriction applies even when all rates
-are zero, to both original and normalized v4 gates and to idle-only profiles.
+Every scheduled profile admits at most 4096 gates per batch. Same-qubit
+measurement, reset and reuse (including repeated measurement) execute in the
+runtime's original operation order. Each measurement captures the leakage state
+at its own position, so a later reset cannot change an earlier readout. This
+applies to both original v3 and normalized v4 gates, including idle-only profiles.
+Adapters cannot split or retime native batches.
 
-This tightens idle-only admission: older versions accepted measurement followed
-by reset in one batch, allowing the reset's leakage bookkeeping to corrupt the
-earlier readout. Such inputs now fail explicitly before quantum execution.
-Same-qubit repeated measurements within a batch also reject conservatively;
-measurements on distinct qubits and measurement feedback across batches remain supported.
+Readout faults retain the general model's batch-level sampling order: gate and
+idle faults are sampled first, then readout faults in measurement order. Capturing
+leakage consumes no randomness. The general controller also records leakage per
+measurement on legacy inputs. Scheduled profiles remain bounded and exclude
+measurement-conditioned crosstalk, emission and seepage. Measurement results still
+return to the live runtime to resume program feedback.
 
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared

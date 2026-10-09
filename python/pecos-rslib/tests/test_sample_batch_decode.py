@@ -230,12 +230,7 @@ def test_explicit_workers_are_bounded_by_the_shot_count() -> None:
 def test_wall_clock_limited_mwpf_requires_explicit_parallel_opt_in() -> None:
     spec = mwpf(timeout=0.5)
     batch = _batch()
-    try:
-        automatic = batch.decode(DEM, spec)
-    except ValueError as error:
-        if "MWPF decoder is not available" in str(error):
-            pytest.skip("MWPF feature is absent from this build")
-        raise
+    automatic = batch.decode(DEM, spec)
     assert automatic.execution_path == "sequential"
     parallel = batch.decode(DEM, spec, workers=4)
     assert parallel.execution_path == "parallel"

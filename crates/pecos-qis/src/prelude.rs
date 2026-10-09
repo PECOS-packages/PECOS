@@ -18,7 +18,7 @@ pub use crate::engine_builder::{QisEngineBuilder, qis_engine};
 
 // Program types
 pub use crate::program::{
-    InterfaceChoice, IntoQisInterface, ProgramType, QisEngineProgram, QisInterfaceBuilder,
+    InterfaceChoice, IntoQisInterface, QisEngineProgram, QisInterfaceBuilder,
 };
 
 // Convenience functions

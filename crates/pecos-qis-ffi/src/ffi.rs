@@ -29,7 +29,7 @@ pub struct QubitPair {
 // After MAX_COLLECTION_READS, `___read_future_bool` returns true to break out of
 // loops like "repeat_until_one" (while not result: ... result = measure(q)).
 thread_local! {
-    static COLLECTION_MODE_READ_COUNT: Cell<u32> = const { Cell::new(0) };
+    pub(super) static COLLECTION_MODE_READ_COUNT: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Maximum number of measurement reads in collection mode before returning true.
@@ -127,6 +127,43 @@ unsafe fn read_direct_string_arg<'a>(
     }
 }
 
+/// Check only at destructor-free FFI boundaries, outside collector/callback borrows.
+///
+/// # Safety
+/// All frames between this checkpoint and the execution guard must be free of
+/// live Rust destructors. Without a guard the caller must return a default.
+unsafe fn cancellation_checkpoint() -> bool {
+    let cancelled = crate::get_execution_context().is_some_and(|ctx| {
+        // SAFETY: The registered context is live throughout program execution.
+        let ctx = unsafe { &*ctx };
+        if !ctx
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return false;
+        }
+        ctx.record_program_error(crate::ProgramError::Cancelled);
+        true
+    });
+    // The TLS borrow and error-recording lock have both been released.
+    if cancelled && let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
+        // SAFETY: The installed handler targets this thread's live guard; the
+        // caller guarantees that no skipped frame owns a destructor.
+        unsafe { transfer() };
+    }
+    cancelled
+}
+
+macro_rules! checkpoint {
+    ($($default:expr)?) => {
+        // SAFETY: Used only in outer FFI frames before owned data or borrows,
+        // or after a wait/callback has returned and released its resources.
+        if unsafe { cancellation_checkpoint() } {
+            return $($default)?;
+        }
+    };
+}
+
 // --- Gate FFI Macros ---
 //
 // These macros generate the boilerplate for FFI gate functions.
@@ -139,6 +176,7 @@ macro_rules! ffi_gate_1q {
         /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
         #[unsafe(no_mangle)]
         pub unsafe extern "C-unwind" fn $name(qubit: i64) {
+            checkpoint!();
             let qubit_id = checked_ffi_id!(stringify!($name), qubit, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(qubit_id).into());
@@ -154,6 +192,7 @@ macro_rules! ffi_gate_2q {
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
         pub unsafe extern "C-unwind" fn $name(q1: i64, q2: i64) {
+            checkpoint!();
             let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
             let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             with_interface(|interface| {
@@ -170,6 +209,7 @@ macro_rules! ffi_gate_3q {
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
         pub unsafe extern "C-unwind" fn $name(q1: i64, q2: i64, q3: i64) {
+            checkpoint!();
             let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
             let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             let q3_id = checked_ffi_id!(stringify!($name), q3, usize);
@@ -187,6 +227,7 @@ macro_rules! ffi_gate_rot_1q {
         /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
         #[unsafe(no_mangle)]
         pub unsafe extern "C-unwind" fn $name(theta: f64, qubit: i64) {
+            checkpoint!();
             let qubit_id = checked_ffi_id!(stringify!($name), qubit, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(theta, qubit_id).into());
@@ -202,6 +243,7 @@ macro_rules! ffi_gate_rot_2q {
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
         pub unsafe extern "C-unwind" fn $name(theta: f64, q1: i64, q2: i64) {
+            checkpoint!();
             let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
             let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             with_interface(|interface| {
@@ -220,6 +262,7 @@ macro_rules! ffi_gate_rot_2q {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__qis__h__body(qubit: i64) {
+    checkpoint!();
     debug!("[FFI] __quantum__qis__h__body called with qubit={qubit}");
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__h__body), qubit, usize);
     with_interface(|interface| {
@@ -240,6 +283,7 @@ pub unsafe extern "C-unwind" fn __quantum__qis__h__body(qubit: i64) {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__qis__x__body(qubit: i64) {
+    checkpoint!();
     debug!("[FFI] __quantum__qis__x__body called with qubit={qubit}");
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__x__body), qubit, usize);
     with_interface(|interface| {
@@ -282,6 +326,7 @@ ffi_gate_rot_2q!(__quantum__qis__rzz__body, RZZ);
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__qis__r1xy__body(theta: f64, phi: f64, qubit: i64) {
+    checkpoint!();
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__r1xy__body), qubit, usize);
     with_interface(|interface| {
         interface.queue_operation(QuantumOp::RXY(theta, phi, qubit_id).into());
@@ -300,18 +345,20 @@ ffi_gate_2q!(__quantum__qis__zz__body, ZZ);
 
 // --- Measurement and Reset ---
 
-/// Measure a qubit and store result
+/// Queue a qubit measurement into a result slot.
+///
+/// The i32 return is a placeholder, not a read. Read the result separately so
+/// measurement batches can remain asynchronous.
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit and result parameters must be valid
 /// non-negative IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__qis__m__body(qubit: i64, result: i64) -> i32 {
+    checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), qubit, usize);
     let result_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), result, usize);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Measure(qubit_id, result_id).into());
-    });
+    crate::queue_measurement(qubit_id, result_id, false);
     // Return 0 for now - actual result will be available after runtime execution
     0
 }
@@ -326,6 +373,7 @@ ffi_gate_1q!(__quantum__qis__reset__body, Reset);
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__rt__qubit_allocate() -> i64 {
+    checkpoint!(0);
     let allocated_id = with_interface(|interface| {
         let id = interface.allocate_qubit();
         interface.queue_operation(Operation::AllocateQubit { id });
@@ -341,6 +389,7 @@ pub unsafe extern "C-unwind" fn __quantum__rt__qubit_allocate() -> i64 {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__rt__qubit_release(qubit: i64) {
+    checkpoint!();
     let qubit_id = checked_ffi_id!(stringify!(__quantum__rt__qubit_release), qubit, usize);
     with_interface(|interface| {
         interface.queue_operation(Operation::ReleaseQubit { id: qubit_id });
@@ -353,6 +402,7 @@ pub unsafe extern "C-unwind" fn __quantum__rt__qubit_release(qubit: i64) {
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__rt__result_allocate() -> i64 {
+    checkpoint!(0);
     let allocated_id = with_interface(|interface| {
         let id = interface.allocate_result();
         interface.queue_operation(Operation::AllocateResult { id });
@@ -370,6 +420,23 @@ fn record_result_read(result_id: usize) {
     }
 }
 
+/// Transfer only after the shared read helper has released all owned data.
+/// The caller and all skipped frames must obey the checkpoint discipline.
+unsafe fn dynamic_read(result_id: usize, boolean: bool) -> u64 {
+    let Some(outcome) = crate::read_dynamic_result(result_id as u64, boolean) else {
+        checkpoint!(0);
+        if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
+            // SAFETY: No guards, borrows or owned error reasons remain live.
+            unsafe { transfer() };
+        }
+        // No execution guard: the error is already recorded; return the ABI default.
+        return 0;
+    };
+    checkpoint!(0);
+    record_result_read(result_id);
+    outcome
+}
+
 /// Get measurement result (returns 1 if result is One, 0 otherwise)
 ///
 /// This function supports dynamic circuits: if the result is not yet available and
@@ -381,8 +448,15 @@ fn record_result_read(result_id: usize) {
 /// non-negative result ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i32 {
+    checkpoint!(0);
     log::debug!("__quantum__rt__result_get_one called with result={result}");
     let result_id = checked_ffi_id!(stringify!(__quantum__rt__result_get_one), result, usize);
+
+    let has_executor = crate::EXECUTOR.with(|executor| executor.borrow().is_some());
+    if crate::is_dynamic_mode_active() && !has_executor {
+        // SAFETY: This FFI frame owns only scalar values.
+        return i32::from(unsafe { dynamic_read(result_id, true) } == 1);
+    }
 
     // First check if result is already available
     let existing_result = with_interface(|interface| interface.get_result(result_id));
@@ -394,7 +468,9 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i3
 
     // Result not available - try to execute pending operations
     // This enables dynamic circuits where conditionals depend on measurements
-    if crate::execute_pending_and_get_results() {
+    let executed = crate::execute_pending_and_get_results();
+    checkpoint!(0);
+    if executed {
         log::debug!("Executed pending operations, checking result again");
         // Execution happened, try to get the result again
         with_interface(|interface| {
@@ -633,6 +709,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_qubit_hugr(
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
+    checkpoint!(qubit);
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubit_hugr),
         qubit,
@@ -657,6 +734,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubits2_hugr(
     first: i64,
     second: i64,
 ) -> QubitPair {
+    checkpoint!(QubitPair { first, second });
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubits2_hugr),
         first,
@@ -676,7 +754,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubits2_hugr(
 /// Attach source/runtime metadata to the next lowerable quantum operation.
 ///
 /// This variant uses direct string data pointers instead of the tket2 string
-/// struct layout. It is useful for runtime shims that already carry plain
+/// struct layout. It is useful for Selene adapters that already carry plain
 /// pointer/length pairs.
 ///
 /// # Safety
@@ -759,6 +837,7 @@ pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
 /// Called from C/LLVM code. Qubits must be valid non-negative IDs that fit in usize.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rpp(qubit1: i64, qubit2: i64, theta: f64, phi: f64) {
+    checkpoint!();
     let q1 = checked_ffi_id!("___rpp", qubit1, usize);
     let q2 = checked_ffi_id!("___rpp", qubit2, usize);
     with_interface(|interface| {
@@ -813,17 +892,17 @@ ffi_gate_2q!(___cx, CX);
 /// Returns the allocated result ID as i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
+    checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure), qubit, usize);
     let allocated_id = with_interface(|interface| {
         // Allocate a result ID for this measurement
         let result_id = interface.allocate_result();
         // Queue the allocation operation
         interface.queue_operation(Operation::AllocateResult { id: result_id });
-        // Queue the measurement operation
-        interface.queue_operation(QuantumOp::Measure(qubit_id, result_id).into());
         // Return the result ID
         result_id
     });
+    crate::queue_measurement(qubit_id, allocated_id, false);
     checked_ffi_id!("___lazy_measure", allocated_id, i64)
 }
 
@@ -833,13 +912,14 @@ pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
 /// The same requirements as [`___lazy_measure`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
+    checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure_leaked), qubit, usize);
     let allocated_id = with_interface(|interface| {
         let result_id = interface.allocate_result();
         interface.queue_operation(Operation::AllocateResult { id: result_id });
-        interface.queue_operation(QuantumOp::MeasureLeaked(qubit_id, result_id).into());
         result_id
     });
+    crate::queue_measurement(qubit_id, allocated_id, true);
     checked_ffi_id!("___lazy_measure_leaked", allocated_id, i64)
 }
 
@@ -862,47 +942,17 @@ pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
 /// Returns the boolean measurement result (true = 1, false = 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
+    checkpoint!(false);
     log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_bool), future_id, usize);
 
-    // Check if result is already available in thread-local storage
-    let existing_result = with_interface(|interface| interface.get_result(result_id));
-    log::debug!("___read_future_bool: existing_result={existing_result:?}");
-
-    if let Some(result) = existing_result {
+    if crate::is_dynamic_mode_active() {
+        // SAFETY: This FFI frame owns only scalar values.
+        return unsafe { dynamic_read(result_id, true) } == 1;
+    }
+    if let Some(result) = with_interface(|interface| interface.get_result(result_id)) {
         record_result_read(result_id);
         return result;
-    }
-
-    // Check if dynamic mode is active (requires execution context)
-    if crate::is_dynamic_mode_active() {
-        // First check if result is already available in execution context
-        // This can happen when multiple measurements are batched together
-        if let Some(result) = crate::get_measurement_result(result_id as u64) {
-            log::debug!(
-                "___read_future_bool: result already in context for result_id={result_id}: {result}"
-            );
-            record_result_read(result_id);
-            return result;
-        }
-
-        log::debug!(
-            "___read_future_bool: dynamic mode active, signaling need for result_id={result_id}"
-        );
-
-        // Wait for the main thread to provide the result
-        // This uses the per-execution context for synchronization
-        if crate::wait_for_result_ready(result_id as u64, 30000) {
-            // Result should now be available in the execution context
-            // The main thread stores results there to cross the thread boundary
-            let result = crate::get_measurement_result(result_id as u64);
-            log::debug!("___read_future_bool: got result after waiting: {result:?}");
-            if result.is_some() {
-                record_result_read(result_id);
-            }
-            return result.unwrap_or(false);
-        }
-        log::debug!("___read_future_bool: timeout waiting for result");
     }
 
     // Collection mode (non-dynamic): track read count to prevent infinite loops.
@@ -938,21 +988,14 @@ pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
 /// The same requirements as [`___read_future_bool`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
+    checkpoint!(0);
     log::debug!("___read_future_uint called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_uint), future_id, usize);
 
     if crate::is_dynamic_mode_active() {
-        if let Some(result) = crate::get_measurement_outcome(result_id as u64) {
-            record_result_read(result_id);
-            return result;
-        }
-        if crate::wait_for_result_ready(result_id as u64, 30_000) {
-            let result = crate::get_measurement_outcome(result_id as u64);
-            if result.is_some() {
-                record_result_read(result_id);
-            }
-            return result.unwrap_or(0);
-        }
+        // SAFETY: This FFI frame owns only scalar values. With no handler,
+        // an unavailable read has already recorded the error and returns zero.
+        return unsafe { dynamic_read(result_id, false) };
     }
 
     // Static collection cannot synthesize a leak. Reuse the Boolean collection
@@ -1006,13 +1049,13 @@ pub unsafe extern "C" fn teardown() -> i64 {
 }
 
 thread_local! {
-    // Installed only while this thread is inside the C shim's setjmp wrapper.
-    static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C-unwind" fn()>> = const {
+    // Installed only while this thread is inside the C execution guard.
+    pub(super) static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C-unwind" fn()>> = const {
         std::cell::Cell::new(None)
     };
 }
 
-/// Register the shim's C longjmp function, or clear it after leaving the guard.
+/// Register the guard's C longjmp function, or clear it after leaving the guard.
 ///
 /// # Safety
 /// A non-null handler must be safe to invoke on this thread and remain valid
@@ -1071,7 +1114,7 @@ fn checked_slice_len<T>(len: u64) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Record a panic with plain string data, also used by the Selene shim.
+/// Record a panic with plain string data, also used by the Selene adapters.
 ///
 /// # Safety
 /// `message` must be null or reference `len` readable bytes.
@@ -1120,7 +1163,7 @@ pub unsafe extern "C-unwind" fn pecos_record_program_panic(
 /// Panic function called on program errors, with tket's length-prefixed message.
 ///
 /// Guppylang emits calls to this direct symbol, rather than routing through the
-/// Selene shim. For division by zero its LLVM IR contains:
+/// Selene adapters. For division by zero its LLVM IR contains:
 /// ```llvm
 /// @"e_Attempted .0BD5FABD.0" = private constant [33 x i8] c" EXIT:INT:Attempted division by 0"
 /// tail call void @panic(i32 1002, ptr nonnull @"e_Attempted .0BD5FABD.0")
@@ -1135,7 +1178,7 @@ pub unsafe extern "C-unwind" fn pecos_record_program_panic(
 ///
 /// # Safety
 /// `message` must be null or point to a length byte followed by that many bytes.
-/// Program execution must take place inside the shim's setjmp wrapper.
+/// Program execution must take place inside the runtime's setjmp wrapper.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn panic(code: i32, message: *const std::ffi::c_char) {
     if message.is_null() {
@@ -2244,6 +2287,11 @@ mod tests {
 
     #[test]
     fn test_read_future_uint_preserves_leakage_outcome() {
+        if !crate::test_env::run_test_in_child(
+            "ffi::tests::test_read_future_uint_preserves_leakage_outcome",
+        ) {
+            return;
+        }
         setup_test();
         let ctx = crate::pecos_create_execution_context();
         let context = unsafe { &*ctx };
@@ -2251,6 +2299,7 @@ mod tests {
             .dynamic_mode_active
             .store(true, std::sync::atomic::Ordering::SeqCst);
         unsafe { crate::pecos_register_execution_context(ctx) };
+        crate::queue_measurement(0, 4, true);
         crate::pecos_set_measurement_outcome(4, 2);
 
         assert_eq!(unsafe { ___read_future_uint(4) }, 2);

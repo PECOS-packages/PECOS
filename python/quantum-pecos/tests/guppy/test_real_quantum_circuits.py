@@ -8,8 +8,6 @@ from guppylang.std.quantum import cx, h, measure, qubit, ry, rz, x, z
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
-pytestmark = pytest.mark.optional_dependency
-
 
 def test_bell_state_preparation() -> None:
     """Test Bell state preparation and measurement."""

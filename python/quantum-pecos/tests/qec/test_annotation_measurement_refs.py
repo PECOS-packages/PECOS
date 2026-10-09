@@ -55,11 +55,54 @@ def test_observable_over_two_measurements_uses_both() -> None:
     )
 
 
-# Detector annotations are deliberately not covered here: `build_dem_from_circuit`
-# takes detectors from the `detectors` metadata JSON, and
-# `InfluenceBuilder::with_circuit_annotations` routes detector annotations to the
-# sampler path instead. The binding fix corrects that path too, but exercising it
-# needs a sampler-level test.
+def test_detector_annotation_matches_record_metadata() -> None:
+    from pecos.qec import DetectorErrorModel
+    from pecos.quantum import TickCircuit
+
+    texts = []
+    for annotation in (False, True):
+        circuit = TickCircuit()
+        circuit.tick().pz([0])
+        circuit.tick().h([0])
+        circuit.tick().h([0])
+        measurements = circuit.tick().mz([0])
+        if annotation:
+            circuit.detector(measurements)
+        else:
+            circuit.add_detector([-1])
+        dem = DetectorErrorModel.from_circuit(circuit, p1=0.1, p2=0.0, p_meas=0.0, p_prep=0.0)
+        assert dem.num_detectors == 1
+        # Each H flips readout with 2p/3 = 1/15; odd parity is 28/225.
+        assert "error(0.124444) D0" in dem.to_string()
+        texts.append(dem.to_string())
+    assert texts[0] == texts[1]
+
+
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_surface_metadata_and_typed_annotations_give_equal_dems(basis: str) -> None:
+    from pecos.qec import DetectorErrorModel
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import TickCircuitRenderer
+    from pecos.qec.surface.gadgets import default_allocation, memory_gadgets
+
+    patch = SurfacePatch.create(distance=3)
+    allocation = default_allocation(patch)
+    gadgets = memory_gadgets(patch, 2, basis, allocation=allocation)
+    steps = [step for gadget in gadgets for step in gadget.steps]
+    texts = []
+    for typed_annotations in (False, True):
+        circuit = TickCircuitRenderer(add_typed_annotations=typed_annotations).render(
+            steps,
+            allocation,
+            patch,
+            2,
+            basis,
+        )
+        dem = DetectorErrorModel.from_circuit(circuit, p1=0.001, p2=0.005, p_meas=0.005, p_prep=0.005)
+        # These are the same physical circuit and definitions; typed annotations
+        # add a second agreeing source, so the standard DEMs must be equal.
+        texts.append(dem.to_string())
+    assert texts[0] == texts[1]
 
 
 def test_measurement_ref_from_another_circuit_is_rejected() -> None:

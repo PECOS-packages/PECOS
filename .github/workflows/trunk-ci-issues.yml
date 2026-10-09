@@ -1,0 +1,50 @@
+name: Trunk CI issues
+
+# Opens an issue when a workflow is red on a main branch, or when dev has open
+# high-severity code scanning alerts, and closes it once that clears
+# (scripts/ci/trunk-ci-issues.sh). It polls on a schedule instead of reacting
+# to other workflows' completion events, a privileged trigger that the
+# dependency integrity check rejects.
+
+permissions:
+  contents: read
+
+on:
+  # GitHub delays and drops scheduled runs under load (one of the first thirteen
+  # hourly runs fired), so every merge also runs the tracker. It reads the
+  # latest completed runs, so a merge reports what earlier merges left red.
+  push:
+    branches: [ "main", "master", "development", "dev" ]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  # One run at a time; a burst of merges collapses into one pending run.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      security-events: read
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Open, update or close trunk CI issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/ci/trunk-ci-issues.sh

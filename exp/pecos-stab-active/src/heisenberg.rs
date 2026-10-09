@@ -1,13 +1,16 @@
 // Copyright 2026 The PECOS Developers
 // Licensed under the Apache License, Version 2.0.
 
-//! Unscheduled Heisenberg programs in the virtual basis of the initial `|0^n>`.
+//! Heisenberg programs in the virtual basis of the initial `|0^n>`.
 //! Cliffords are replayed only at compilation. Pauli faults and reset corrections
 //! enter affine signs through symplectic anticommutation with later operations.
 
 mod builder;
 mod dispatch;
 mod noise;
+mod passes;
+mod plan;
+mod schedule;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -15,8 +18,11 @@ mod validation;
 use crate::{ActiveStructure, PauliKindForDecomp, StabActive};
 pub use builder::CompileError;
 pub use noise::NoiseChannel;
+pub use passes::{drop_measured_rotations, fuse_rotations};
 use pecos_core::{Angle64, PauliBitmaskVec};
 use pecos_quantum::TickCircuit;
+pub use plan::{PlanError, Sampler, SamplingPlan};
+pub use schedule::{plan_scheduled, schedule_for_width};
 pub(crate) use validation::ProgramError;
 
 /// A constant XOR noise symbols XOR measurement symbols (including hidden resets).
@@ -32,9 +38,29 @@ pub struct AffineSign {
 }
 
 impl AffineSign {
+    /// Canonical XOR, including inputs with unsorted or repeated symbols.
+    #[must_use]
+    pub fn xor(&self, other: &Self) -> Self {
+        fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
+            let mut terms = std::collections::BTreeSet::new();
+            for &term in a.iter().chain(b) {
+                if !terms.insert(term) {
+                    terms.remove(&term);
+                }
+            }
+            terms.into_iter().collect()
+        }
+        Self {
+            constant: self.constant ^ other.constant,
+            noise: symmetric_difference(&self.noise, &other.noise),
+            measurements: symmetric_difference(&self.measurements, &other.measurements),
+        }
+    }
+
     /// Evaluate `constant XOR noise XOR measurements`.
-    /// The measurement slice is indexed by symbol, which equals execution
-    /// position in compiled order.
+    /// The measurement slice is indexed by symbol. In compiled programs, symbols
+    /// equal measurement execution positions; reordered programs still index
+    /// outcomes by symbol, regardless of execution position.
     ///
     /// # Panics
     /// Panics if a referenced symbol has no entry in the supplied slices.
@@ -171,16 +197,7 @@ impl HeisenbergProgram {
         self.operations
             .iter()
             .map(|operation| {
-                match operation {
-                    HeisenbergOp::Rotation { pauli, angle, .. } => {
-                        let rotation = structure.rotation(*angle, pauli.factors(), false);
-                        let _ = rotation.apply_rotation();
-                    }
-                    HeisenbergOp::Measurement { pauli, .. } => {
-                        let measurement = structure.measurement(pauli.factors(), false);
-                        let _ = measurement.apply_measurement(false);
-                    }
-                }
+                replay_width_operation(&mut structure, operation);
                 structure.width()
             })
             .collect()
@@ -288,5 +305,22 @@ impl HeisenbergProgram {
             peak_active_width: state.peak_active_width(),
         };
         (shot, measurements)
+    }
+}
+
+// Reference replay shared by the width probe and scheduler. Signs are positive
+// and raw outcomes zero; Active projection still includes the basis sign.
+fn replay_width_operation(structure: &mut ActiveStructure, operation: &HeisenbergOp) {
+    match operation {
+        HeisenbergOp::Rotation { pauli, angle, .. } => {
+            let _ = structure
+                .rotation(*angle, pauli.factors(), false)
+                .apply_rotation();
+        }
+        HeisenbergOp::Measurement { pauli, .. } => {
+            let _ = structure
+                .measurement(pauli.factors(), false)
+                .apply_measurement(false);
+        }
     }
 }

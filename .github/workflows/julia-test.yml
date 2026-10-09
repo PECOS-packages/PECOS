@@ -20,26 +20,23 @@ env:
   RUST_BACKTRACE: 1
 
 on:
+  # Merges into the main branches always run Julia CI, whatever they touch.
   push:
     branches: [ "main", "master", "development", "dev" ]
-    paths:
-      - 'julia/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/ci/**'
+  # No `paths:` filter: GitHub applies it to label events too, so adding
+  # ci:julia could never start a run on a PR that leaves julia/ alone. The
+  # julia-changes job decides instead (scripts/ci/pr-lane-should-run.sh).
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
-    paths:
-      - 'julia/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/ci/**'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  # Unrelated label events must not cancel an active run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -47,7 +44,43 @@ defaults:
     shell: bash
 
 jobs:
+  julia-changes:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Decide whether to run Julia CI
+      id: detect
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # Assign on its own line so a git failure aborts the step (fail closed).
+      run: |
+        run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*' Cargo.toml Cargo.lock)"
+        case "$run" in
+          true|false) ;;
+          *)
+            echo "unexpected pr-lane-should-run output: <$run>" >&2
+            exit 1
+            ;;
+        esac
+        printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+
   julia-test:
+    needs: julia-changes
+    if: needs.julia-changes.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

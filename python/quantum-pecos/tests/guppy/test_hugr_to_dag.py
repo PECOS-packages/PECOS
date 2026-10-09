@@ -15,34 +15,15 @@ from __future__ import annotations
 
 import math
 
-import pytest
-from pecos.simulators import StateVec
-
-# Check if guppylang is available
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import crz, cx, cz, h, measure, pi, qubit, s, t, x, y, z
-
-    HAS_GUPPYLANG = True
-except ImportError:
-    HAS_GUPPYLANG = False
-
-# Check if hugr_to_dag is available (requires hugr)
-try:
-    from pecos.circuit_converters.hugr_to_dag import (
-        UnsupportedHugrStructureError,
-        dag_to_gate_sequence,
-        guppy_to_dag,
-        hugr_to_dag,
-    )
-
-    HAS_HUGR_TO_DAG = True
-except ImportError:
-    HAS_HUGR_TO_DAG = False
-pytestmark = pytest.mark.skipif(
-    not (HAS_GUPPYLANG and HAS_HUGR_TO_DAG),
-    reason="guppylang or hugr not available",
+from guppylang import guppy
+from guppylang.std.quantum import crz, cx, cz, h, measure, pi, qubit, s, t, x, y, z
+from pecos.circuit_converters.hugr_to_dag import (
+    UnsupportedHugrStructureError,
+    dag_to_gate_sequence,
+    guppy_to_dag,
+    hugr_to_dag,
 )
+from pecos.simulators import StateVec
 
 
 class TestBasicConversion:

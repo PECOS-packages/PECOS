@@ -13,7 +13,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array
 from guppylang.std.builtins import result as record_result
-from guppylang.std.quantum import cx, h, measure, qubit, x
+from guppylang.std.quantum import collect_measurements, cx, discard_array, h, measure, measure_array, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import (
     biased_depolarizing_noise,
@@ -22,30 +22,6 @@ from pecos_rslib import (
     sparse_stab,
     state_vector,
 )
-
-# Try to import optional functions that might not be available
-try:
-    from guppylang.std.quantum import collect_measurements, discard_array, measure_array
-except ImportError:
-    measure_array = None
-    discard_array = None
-
-try:
-    from guppylang.std.quantum_functional import project_z
-except ImportError:
-    project_z = None
-
-try:
-    from guppylang.std.builtins import owned, panic
-except ImportError:
-    owned = None
-    panic = None
-
-# Try to import array type for quantum operations
-try:
-    from guppylang.std.quantum import array as qubit_array
-except ImportError:
-    qubit_array = None
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -210,8 +186,6 @@ class TestArrayOperations:
 
     def test_discard_array(self) -> None:
         """Test discarding an array of qubits."""
-        # First check if discard_array is available
-        assert discard_array is not None, "discard_array not available in this guppy version"
 
         @guppy
         def discard_array_test() -> bool:
@@ -237,7 +211,6 @@ class TestArrayOperations:
 
     def test_array_indexing_and_loops(self) -> None:
         """Test array indexing within loops."""
-        assert measure_array is not None, "measure_array not available in this guppy version"
 
         @guppy
         def array_loop_test() -> int:

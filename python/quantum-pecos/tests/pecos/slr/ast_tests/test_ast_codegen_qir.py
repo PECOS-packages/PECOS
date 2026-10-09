@@ -12,10 +12,6 @@
 """Tests for AST to QIR code generator."""
 
 import pytest
-
-# QIR requires pecos_rslib.llvm which may not be available in all environments
-pytest.importorskip("pecos_rslib.llvm")
-
 from pecos.slr import Barrier, CReg, If, Main, QReg, Repeat
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import AstToQir, ast_to_qir
@@ -149,7 +145,7 @@ class TestAstToQirPrepMeasure:
     """PZ and measure code generation tests."""
 
     def test_measurement(self) -> None:
-        """Measurement generates mz_to_creg_bit call."""
+        """Measurement generates an mz call whose result is read into the CReg."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -159,8 +155,8 @@ class TestAstToQirPrepMeasure:
 
         llvm_ir = ast_to_qir(ast)
 
-        # Measurement uses mz_to_creg_bit
-        assert "mz_to_creg_bit" in llvm_ir
+        assert "call void @__quantum__qis__mz__body" in llvm_ir
+        assert "call i1 @__quantum__rt__read_result" in llvm_ir
 
     def test_prep_reset(self) -> None:
         """PZ generates reset_body call."""
@@ -216,7 +212,7 @@ class TestAstToQirClassicalRegisters:
     """Classical register tests."""
 
     def test_creg_creation(self) -> None:
-        """CReg generates create_creg call."""
+        """CReg generates static [N x i1] storage."""
         prog = Main(
             _q := QReg("q", 1),
             _c := CReg("c", 4),
@@ -225,8 +221,7 @@ class TestAstToQirClassicalRegisters:
 
         llvm_ir = ast_to_qir(ast)
 
-        # Should call create_creg
-        assert "create_creg" in llvm_ir
+        assert "%c = alloca [4 x i1]" in llvm_ir
 
     def test_results_output(self) -> None:
         """Result CReg generates int_record_output call."""
@@ -263,7 +258,7 @@ class TestAstToQirQEC:
         # Two CNOT gate calls
         assert llvm_ir.count("call void @__quantum__qis__cnot__body") == 2
         # One measurement
-        assert "mz_to_creg_bit" in llvm_ir
+        assert llvm_ir.count("call void @__quantum__qis__mz__body") == 1
 
 
 class TestAstToQirGenerator:

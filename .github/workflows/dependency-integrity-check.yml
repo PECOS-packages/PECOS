@@ -13,7 +13,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 defaults:
@@ -57,8 +60,8 @@ jobs:
       - name: Set up Rust
         run: rustup show
 
-      - name: Test the cache-gate parser the integrity check relies on
-        run: uv run --frozen pytest -q scripts/ci/test_cache_guard.py
+      - name: Test the workflow parsers the integrity check relies on
+        run: uv run --frozen pytest -q scripts/ci/test_cache_guard.py scripts/ci/test_workflow_permissions.py
 
       - name: Run dependency integrity checks
         run: ./scripts/dependency-integrity-check.sh

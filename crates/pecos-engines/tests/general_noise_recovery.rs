@@ -121,3 +121,48 @@ fn resetting_clone_does_not_clear_original_pending_results() {
     assert_eq!(result.outcomes().unwrap(), [0]);
     assert!(cloned.start(program("M")).is_ok());
 }
+
+#[test]
+fn malformed_measurement_reply_propagates_input_error() {
+    let mut model = GeneralNoiseModel::builder().build();
+    model.start(program("M")).unwrap();
+    let mut bytes = ByteMessage::outcomes_builder()
+        .add_outcomes(&[0])
+        .build()
+        .into_bytes();
+    bytes[20..24].copy_from_slice(&3_u32.to_le_bytes());
+    bytes.pop();
+    let len = u32::try_from(bytes.len()).unwrap();
+    bytes[12..16].copy_from_slice(&len.to_le_bytes());
+    match model.continue_processing(ByteMessage::new(&bytes)) {
+        Err(PecosError::Input(message)) => assert_eq!(
+            message,
+            "Message 0: Outcome payload size must be 4, found 3"
+        ),
+        _ => panic!("malformed reply must propagate the outcome parse error"),
+    }
+}
+
+#[test]
+fn measurement_reply_empty_and_nonempty() {
+    let mut model = GeneralNoiseModel::builder().build();
+    assert!(
+        model
+            .apply_noise_on_continue_processing(ByteMessage::create_empty())
+            .unwrap()
+            .is_empty()
+            .unwrap()
+    );
+    model.start(program("M")).unwrap();
+    match model.continue_processing(ByteMessage::create_empty()) {
+        Err(PecosError::Processing(message)) => {
+            assert_eq!(message, "missing pending measurement outcomes");
+        }
+        _ => panic!("empty reply must report pending outcomes"),
+    }
+    let outcome = ByteMessage::outcomes_builder().add_outcomes(&[1]).build();
+    let EngineStage::Complete(result) = model.continue_processing(outcome).unwrap() else {
+        panic!("expected measurement completion");
+    };
+    assert_eq!(result.outcomes().unwrap(), [1]);
+}

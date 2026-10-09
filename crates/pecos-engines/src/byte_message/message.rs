@@ -163,12 +163,6 @@ impl ByteMessage {
 
     // Private helper methods
 
-    // Helper function to check if the message has no data.
-    // Returns true if either the byte length is 0 or the data vector is empty.
-    fn has_no_data(&self) -> bool {
-        self.byte_len == 0 || self.data.is_empty()
-    }
-
     /// Parse and validate the batch header
     fn parse_batch_header(&self) -> Result<BatchHeader, PecosError> {
         if self.byte_len < size_of::<BatchHeader>() {
@@ -205,71 +199,60 @@ impl ByteMessage {
         Ok((msg_header, offset + size_of::<MessageHeader>()))
     }
 
-    /// Process a single message from the buffer, returning a gate
+    /// Check whether this message has zero bytes or a structurally valid zero-message batch.
     ///
-    /// This is a helper method used by `quantum_ops` to process gate messages.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - The offset in the buffer to start processing from
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple of:
-    /// - The new offset after processing this message
-    /// - An Option containing a Gate operation if one was found
+    /// Payload contents and types do not determine emptiness.
     ///
     /// # Errors
     ///
-    /// Returns an error if the message is malformed.
-    fn process_gate_message(&self, offset: usize) -> Result<(usize, Option<Gate>), PecosError> {
-        let trace_enabled = log::log_enabled!(Level::Trace);
-        // Parse message header
-        let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
-            // If we can't parse the header, just return the current offset with no gate
-            return Ok((offset, None));
-        };
-        let offset = new_offset;
-
-        // Get message type
-        let Ok(msg_type) = msg_header.get_type() else {
-            // Skip invalid message types
-            if trace_enabled {
-                trace!("Skipping message with invalid type");
-            }
-
-            // Calculate the new offset after this message
-            let payload_size = msg_header.payload_size as usize;
-            let payload_end = offset + payload_size;
-            let padding = calc_padding(payload_size, 4);
-            let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
-
-            return Ok((new_offset, None));
-        };
-
-        // Check payload bounds
-        let payload_size = msg_header.payload_size as usize;
-        let payload_end = offset + payload_size;
-
-        // Make sure the payload fits within the buffer
-        if payload_end > self.byte_len {
-            return Err(PecosError::Input(format!(
-                "Message payload extends beyond message bounds: offset={}, size={}, total_len={}",
-                offset, payload_size, self.byte_len
-            )));
+    /// Returns an error for invalid batch framing, without decoding payloads.
+    pub fn is_empty(&self) -> Result<bool, PecosError> {
+        if self.byte_len == 0 {
+            return Ok(true);
         }
+        let walker = MessageWalker::new(self)?;
+        let empty = walker.msg_count() == 0;
+        for message in walker {
+            message?;
+        }
+        Ok(empty)
+    }
 
-        // Extract the payload
-        let payload = &self.as_bytes()[offset..payload_end];
+    /// Parse every message as a quantum operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed batches, non-Gate messages, or invalid gates.
+    pub fn quantum_ops(&self) -> Result<Vec<Gate>, PecosError> {
+        let mut commands = Vec::new();
+        self.quantum_ops_into(&mut commands)?;
+        Ok(commands)
+    }
 
-        // Process based on message type - we only care about Gate messages here
-        let result = if msg_type == MessageType::Gate {
+    /// Parse every message as a quantum operation into an existing vector.
+    ///
+    /// This lets hot callers reuse vector capacity across repeated parses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed batches, non-Gate messages, or invalid gates.
+    pub fn quantum_ops_into(&self, commands: &mut Vec<Gate>) -> Result<(), PecosError> {
+        let walker = MessageWalker::new(self)?;
+        let trace_enabled = log::log_enabled!(Level::Trace);
+        if trace_enabled {
+            trace!("quantum_ops: Processing {} messages", walker.msg_count());
+        }
+        commands.clear();
+        commands.reserve(walker.msg_count() as usize);
+        for message in walker {
+            let (index, msg_type, payload) = message?;
+            Self::require_type(index, msg_type, MessageType::Gate)?;
             // Debug: dump payload bytes for RZ gates
             if trace_enabled && payload.len() >= size_of::<GateHeader>() {
                 let header =
                     *bytemuck::from_bytes::<GateHeader>(&payload[0..size_of::<GateHeader>()]);
                 if header.gate_type == GateType::RZ as u8 {
-                    trace!("process_gate_message: RZ gate payload dump:");
+                    trace!("quantum_ops: RZ gate payload dump:");
                     trace!("  Total payload size: {} bytes", payload.len());
                     trace!(
                         "  Header: gate_type={}, num_qubits={}, has_params={}",
@@ -288,303 +271,84 @@ impl ByteMessage {
                 }
             }
 
-            Some(Self::parse_gate_command(payload)?)
-        } else {
-            None
-        };
-
-        // Calculate the new offset after this message
-        let padding = calc_padding(payload_size, 4);
-        let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
-
-        Ok((new_offset, result))
-    }
-
-    /// Process a single message from the buffer, returning an outcome value
-    ///
-    /// This is a helper method used by outcomes to process outcome messages.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - The offset in the buffer to start processing from
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple of:
-    /// - The new offset after processing this message
-    /// - An Option containing a measurement outcome if one was found
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the message is malformed.
-    fn process_outcome_message(&self, offset: usize) -> Result<(usize, Option<u32>), PecosError> {
-        let trace_enabled = log::log_enabled!(Level::Trace);
-        // Parse message header
-        let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
-            // If we can't parse the header, just return the current offset with no outcome
-            return Ok((offset, None));
-        };
-        let offset = new_offset;
-
-        // Get message type
-        let Ok(msg_type) = msg_header.get_type() else {
-            // Skip invalid message types
+            let gate = Self::parse_gate_command(payload)?;
             if trace_enabled {
-                trace!("Skipping message with invalid type");
+                trace!("quantum_ops: Message {index} parsed as gate: {gate:?}");
             }
-
-            // Calculate the new offset after this message
-            let payload_size = msg_header.payload_size as usize;
-            let payload_end = offset + payload_size;
-            let padding = calc_padding(payload_size, 4);
-            let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
-
-            return Ok((new_offset, None));
-        };
-
-        // Check payload bounds
-        let payload_size = msg_header.payload_size as usize;
-        let payload_end = offset + payload_size;
-
-        // Make sure the payload fits within the buffer
-        if payload_end > self.byte_len {
-            return Err(PecosError::Input(format!(
-                "Message payload extends beyond message bounds: offset={}, size={}, total_len={}",
-                offset, payload_size, self.byte_len
-            )));
+            commands.push(gate);
         }
-
-        // Extract the payload
-        let payload = &self.as_bytes()[offset..payload_end];
-
-        // Process based on message type - we only care about Outcome messages here
-        let result = if msg_type == MessageType::Outcome {
-            if payload.len() >= size_of::<OutcomeHeader>() {
-                // OutcomeHeader at aligned payload start
-                let result_header =
-                    *bytemuck::from_bytes::<OutcomeHeader>(&payload[0..size_of::<OutcomeHeader>()]);
-                Some(result_header.outcome)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Calculate the new offset after this message
-        let padding = calc_padding(payload_size, 4);
-        let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
-
-        Ok((new_offset, result))
-    }
-
-    /// Check if this message is empty (contains no operations).
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(true)` if the message is empty, `Ok(false)` if it contains operations.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PecosError` if there was an error parsing the message structure.
-    pub fn is_empty(&self) -> Result<bool, PecosError> {
-        // First check if this is an empty message with no data
-        if self.has_no_data() {
-            return Ok(true);
-        }
-
-        // Parse and validate the batch header
-        let batch_header = self.parse_batch_header()?;
-
-        // Message is empty if it has no messages
-        if batch_header.msg_count == 0 {
-            return Ok(true);
-        }
-
-        // Otherwise, check if there are any actual operations
-        let commands = self.quantum_ops()?;
-        Ok(commands.is_empty())
-    }
-
-    /// Parse quantum operations from this message
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the message is malformed or contains invalid quantum operations.
-    pub fn quantum_ops(&self) -> Result<Vec<Gate>, PecosError> {
-        let mut commands = Vec::new();
-        self.quantum_ops_into(&mut commands)?;
-        Ok(commands)
-    }
-
-    /// Parse quantum operations from this message into an existing vector.
-    ///
-    /// This lets hot callers reuse vector capacity across repeated parses.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the message is malformed or contains invalid quantum operations.
-    pub fn quantum_ops_into(&self, commands: &mut Vec<Gate>) -> Result<(), PecosError> {
-        // Parse and validate the batch header
-        let batch_header = self.parse_batch_header()?;
-        let trace_enabled = log::log_enabled!(Level::Trace);
-
-        if trace_enabled {
-            trace!(
-                "quantum_ops: Processing {} messages",
-                batch_header.msg_count
-            );
-        }
-
-        commands.clear();
-        commands.reserve(batch_header.msg_count as usize);
-        let mut offset = size_of::<BatchHeader>();
-
-        // Process each message
-        for msg_idx in 0..batch_header.msg_count {
-            // Try to process this message
-            let (new_offset, maybe_gate) = self.process_gate_message(offset)?;
-            offset = new_offset;
-
-            // Add any gate we found to our commands list
-            if let Some(gate) = maybe_gate {
-                if trace_enabled {
-                    trace!("quantum_ops: Message {msg_idx} parsed as gate: {gate:?}");
-                }
-                commands.push(gate);
-            } else if trace_enabled {
-                trace!("quantum_ops: Message {msg_idx} did not yield a gate");
-            }
-        }
-
         if trace_enabled {
             trace!("quantum_ops: Total gates parsed: {}", commands.len());
         }
-
         Ok(())
     }
 
-    /// Parse measurement outcomes from this message
+    /// Parse every message as a measurement outcome.
     ///
     /// # Errors
     ///
-    /// Returns an error if the message is malformed or contains invalid outcome data.
+    /// Returns an error for malformed batches, non-Outcome messages, or invalid payload sizes.
     pub fn outcomes(&self) -> Result<Vec<u32>, PecosError> {
-        // Parse and validate the batch header
-        let batch_header = self.parse_batch_header()?;
-
+        let walker = MessageWalker::new(self)?;
         let mut measurements = Vec::new();
-        let mut offset = size_of::<BatchHeader>();
-
-        // Process each message
-        for _ in 0..batch_header.msg_count {
-            // Try to process this message directly for outcomes
-            let (new_offset, maybe_outcome) = self.process_outcome_message(offset)?;
-            offset = new_offset;
-
-            // Add any outcome we found to our measurements list
-            if let Some(outcome) = maybe_outcome {
-                measurements.push(outcome);
-            }
+        for message in walker {
+            let (index, msg_type, payload) = message?;
+            Self::require_type(index, msg_type, MessageType::Outcome)?;
+            let header = Self::read_payload_header::<OutcomeHeader>(index, payload, msg_type)?;
+            measurements.push(header.outcome);
         }
-
         Ok(measurements)
     }
 
-    /// Extract return value from the message.
-    ///
-    /// # Returns
-    ///
-    /// Returns the return value if found, or None if no return value is present.
+    /// Read a return value, or `None` for a zero-message batch.
     ///
     /// # Errors
     ///
-    /// Returns an error if the message is malformed.
+    /// Returns an error for malformed batches, non-ReturnValue messages, invalid payload
+    /// sizes, or more than one return value.
     pub fn return_value(&self) -> Result<Option<i64>, PecosError> {
-        // Parse and validate the batch header
-        let batch_header = self.parse_batch_header()?;
-
-        let mut offset = size_of::<BatchHeader>();
-
-        // Process each message
-        for _ in 0..batch_header.msg_count {
-            // Try to process this message for return value
-            let (new_offset, maybe_value) = self.process_return_value_message(offset)?;
-            offset = new_offset;
-
-            // If we found a return value, return it immediately
-            if let Some(value) = maybe_value {
-                return Ok(Some(value));
+        let walker = MessageWalker::new(self)?;
+        let mut value = None;
+        for message in walker {
+            let (index, msg_type, payload) = message?;
+            Self::require_type(index, msg_type, MessageType::ReturnValue)?;
+            let header = Self::read_payload_header::<ReturnValueHeader>(index, payload, msg_type)?;
+            if value.is_some() {
+                return Err(PecosError::Input(format!(
+                    "Message {index}: expected at most one ReturnValue message"
+                )));
             }
+            value = Some(header.value);
         }
-
-        Ok(None)
+        Ok(value)
     }
 
-    /// Process a single message to extract return value if it's a `ReturnValue` message
-    fn process_return_value_message(
-        &self,
-        offset: usize,
-    ) -> Result<(usize, Option<i64>), PecosError> {
-        let trace_enabled = log::log_enabled!(Level::Trace);
-        // Parse message header
-        let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
-            // If we can't parse the header, just return the current offset with no value
-            return Ok((offset, None));
-        };
-        let offset = new_offset;
-
-        // Get message type
-        let Ok(msg_type) = msg_header.get_type() else {
-            // Skip invalid message types
-            if trace_enabled {
-                trace!("Skipping message with invalid type");
-            }
-
-            // Calculate the new offset after this message
-            let payload_size = msg_header.payload_size as usize;
-            let payload_end = offset + payload_size;
-            let padding = calc_padding(payload_size, 4);
-            let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
-
-            return Ok((new_offset, None));
-        };
-
-        // Check payload bounds
-        let payload_size = msg_header.payload_size as usize;
-        let payload_end = offset + payload_size;
-
-        // Make sure the payload fits within the buffer
-        if payload_end > self.byte_len {
+    fn require_type(
+        index: u32,
+        found: MessageType,
+        expected: MessageType,
+    ) -> Result<(), PecosError> {
+        if found != expected {
             return Err(PecosError::Input(format!(
-                "Message payload extends beyond message bounds: offset={}, size={}, total_len={}",
-                offset, payload_size, self.byte_len
+                "Message {index}: expected {expected:?}, found {found:?}"
             )));
         }
+        Ok(())
+    }
 
-        // Extract the payload
-        let payload = &self.as_bytes()[offset..payload_end];
-
-        // Process based on message type - we only care about ReturnValue messages here
-        let result = if msg_type == MessageType::ReturnValue {
-            if payload.len() >= size_of::<ReturnValueHeader>() {
-                // ReturnValueHeader at aligned payload start
-                let return_header = *bytemuck::from_bytes::<ReturnValueHeader>(
-                    &payload[0..size_of::<ReturnValueHeader>()],
-                );
-                Some(return_header.value)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Calculate the new offset after this message
-        let padding = calc_padding(payload_size, 4);
-        let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
-
-        Ok((new_offset, result))
+    fn read_payload_header<T: bytemuck::Pod>(
+        index: u32,
+        payload: &[u8],
+        msg_type: MessageType,
+    ) -> Result<T, PecosError> {
+        let expected = size_of::<T>();
+        if payload.len() != expected {
+            return Err(PecosError::Input(format!(
+                "Message {index}: {msg_type:?} payload size must be {expected}, found {}",
+                payload.len()
+            )));
+        }
+        Ok(bytemuck::pod_read_unaligned::<T>(payload))
     }
 
     /// Validate if the payload has enough bytes for the gate header
@@ -797,6 +561,96 @@ impl ByteMessage {
     // All measurements are now handled as regular gates through parse_gate_command.
 }
 
+/// Walk batch framing without interpreting message payloads.
+struct MessageWalker<'a> {
+    bytes: &'a [u8],
+    msg_count: u32,
+    index: u32,
+    offset: usize,
+}
+
+impl<'a> MessageWalker<'a> {
+    fn new(message: &'a ByteMessage) -> Result<Self, PecosError> {
+        let header = message.parse_batch_header()?;
+        let bytes = message.as_bytes();
+        if header.total_size as usize != bytes.len() {
+            return Err(PecosError::Input(format!(
+                "Batch: total_size {} does not match byte length {}",
+                header.total_size,
+                bytes.len()
+            )));
+        }
+        let max_count = (bytes.len() - size_of::<BatchHeader>()) / size_of::<MessageHeader>();
+        if header.msg_count as usize > max_count {
+            return Err(PecosError::Input(format!(
+                "Batch: msg_count {} exceeds capacity {max_count}",
+                header.msg_count
+            )));
+        }
+        if header.msg_count == 0 && bytes.len() != size_of::<BatchHeader>() {
+            return Err(PecosError::Input(
+                "Batch: trailing bytes after zero-count batch".into(),
+            ));
+        }
+        Ok(Self {
+            bytes,
+            msg_count: header.msg_count,
+            index: 0,
+            offset: size_of::<BatchHeader>(),
+        })
+    }
+
+    fn msg_count(&self) -> u32 {
+        self.msg_count
+    }
+
+    fn read_message(&mut self) -> Result<(u32, MessageType, &'a [u8]), PecosError> {
+        let index = self.index;
+        let error = |condition| PecosError::Input(format!("Message {index}: {condition}"));
+        let payload_start = self
+            .offset
+            .checked_add(size_of::<MessageHeader>())
+            .ok_or_else(|| error("message header offset overflow"))?;
+        if payload_start > self.bytes.len() {
+            return Err(error("message header extends beyond buffer"));
+        }
+        let header =
+            bytemuck::pod_read_unaligned::<MessageHeader>(&self.bytes[self.offset..payload_start]);
+        let msg_type = header.get_type().map_err(error)?;
+        let payload_end = payload_start
+            .checked_add(header.payload_size as usize)
+            .ok_or_else(|| error("payload offset overflow"))?;
+        if payload_end > self.bytes.len() {
+            return Err(error("payload extends beyond buffer"));
+        }
+        let next_offset = payload_end
+            .checked_add(calc_padding(payload_end, 4))
+            .ok_or_else(|| error("padded offset overflow"))?;
+        if index == self.msg_count - 1 && self.bytes.len() > next_offset {
+            return Err(error("trailing bytes after final payload padding"));
+        }
+        self.offset = next_offset;
+        Ok((index, msg_type, &self.bytes[payload_start..payload_end]))
+    }
+}
+
+impl<'a> Iterator for MessageWalker<'a> {
+    type Item = Result<(u32, MessageType, &'a [u8]), PecosError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.msg_count {
+            return None;
+        }
+        let result = self.read_message();
+        if result.is_err() {
+            self.index = self.msg_count;
+        } else {
+            self.index += 1;
+        }
+        Some(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,6 +658,325 @@ mod tests {
     use crate::byte_message::protocol::MessageFlags;
     use crate::quantum::StateVecEngine;
     use pecos_core::QubitId;
+
+    fn patch_word(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn patched_message(mut bytes: Vec<u8>) -> ByteMessage {
+        let len = u32::try_from(bytes.len()).unwrap();
+        patch_word(&mut bytes, 12, len);
+        ByteMessage::new(&bytes)
+    }
+
+    fn assert_input<T: std::fmt::Debug>(result: Result<T, PecosError>, expected: &str) {
+        match result {
+            Err(PecosError::Input(message)) => assert_eq!(message, expected),
+            other => panic!("expected Input({expected:?}), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_unaligned_payload_headers() {
+        let mut storage = [0_u64; 2];
+        let bytes = bytemuck::cast_slice_mut::<u64, u8>(&mut storage);
+        bytes[4..12].copy_from_slice(&(-42_i64).to_le_bytes());
+        let value = ByteMessage::read_payload_header::<ReturnValueHeader>(
+            0,
+            &bytes[4..12],
+            MessageType::ReturnValue,
+        )
+        .unwrap();
+        assert_eq!(value.value, -42);
+        bytes[1..5].copy_from_slice(&1_u32.to_le_bytes());
+        let outcome = ByteMessage::read_payload_header::<OutcomeHeader>(
+            0,
+            &bytes[1..5],
+            MessageType::Outcome,
+        )
+        .unwrap();
+        assert_eq!(outcome.outcome, 1);
+    }
+
+    #[test]
+    fn strict_batch_header() {
+        let mut short = ByteMessage::create_empty().into_bytes();
+        patch_word(&mut short, 12, 15);
+        short.truncate(15);
+        assert_input(
+            ByteMessage::new(&short).quantum_ops(),
+            "Message too small for batch header",
+        );
+        let mut bytes = ByteMessage::create_empty().into_bytes();
+        bytes[0] = 0;
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Invalid batch header",
+        );
+        bytes = ByteMessage::create_empty().into_bytes();
+        bytes[4] = 255;
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Invalid batch header",
+        );
+    }
+
+    #[test]
+    fn strict_total_size() {
+        let mut bytes = ByteMessage::create_empty().into_bytes();
+        patch_word(&mut bytes, 12, 17);
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Batch: total_size 17 does not match byte length 16",
+        );
+    }
+
+    #[test]
+    fn strict_count_before_reserve() {
+        let mut bytes = ByteMessage::create_empty().into_bytes();
+        patch_word(&mut bytes, 8, u32::MAX);
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Batch: msg_count 4294967295 exceeds capacity 0",
+        );
+    }
+
+    #[test]
+    fn strict_later_header() {
+        let mut bytes = ByteMessage::builder().h(&[0]).x(&[1]).build().into_bytes();
+        bytes.truncate(36);
+        let message = patched_message(bytes);
+        assert_input(
+            message.quantum_ops(),
+            "Message 1: message header extends beyond buffer",
+        );
+    }
+
+    #[test]
+    fn strict_unknown_type() {
+        let mut bytes = ByteMessage::builder().h(&[0]).build().into_bytes();
+        bytes[16] = 255;
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Message 0: Unknown message type",
+        );
+    }
+
+    #[test]
+    fn strict_payload_bounds() {
+        let mut bytes = ByteMessage::builder().h(&[0]).build().into_bytes();
+        patch_word(&mut bytes, 20, 9);
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Message 0: payload extends beyond buffer",
+        );
+    }
+
+    #[test]
+    fn strict_final_trailing_bytes() {
+        let mut bytes = ByteMessage::builder()
+            .add_return_value(42)
+            .build()
+            .into_bytes();
+        bytes.push(0);
+        let message = patched_message(bytes);
+        let mut walker = MessageWalker::new(&message).unwrap();
+        assert_input(
+            walker.next().unwrap(),
+            "Message 0: trailing bytes after final payload padding",
+        );
+        assert_input(
+            message.return_value(),
+            "Message 0: trailing bytes after final payload padding",
+        );
+    }
+
+    #[test]
+    fn strict_zero_count_trailing_bytes() {
+        let mut bytes = ByteMessage::create_empty().into_bytes();
+        bytes.push(0);
+        let message = patched_message(bytes);
+        assert_input(
+            MessageWalker::new(&message).map(|walker| walker.msg_count()),
+            "Batch: trailing bytes after zero-count batch",
+        );
+        assert_input(
+            message.is_empty(),
+            "Batch: trailing bytes after zero-count batch",
+        );
+    }
+
+    #[test]
+    fn strict_fixed_payload_sizes() {
+        for (kind, expected) in [(MessageType::Outcome, 4), (MessageType::ReturnValue, 8)] {
+            for size in [expected - 1, expected + 1] {
+                let mut builder = ByteMessage::builder();
+                match kind {
+                    MessageType::Outcome => {
+                        builder.add_outcomes(&[1]);
+                    }
+                    MessageType::ReturnValue => {
+                        builder.add_return_value(42);
+                    }
+                    MessageType::Gate => unreachable!(),
+                }
+                let mut bytes = builder.build().into_bytes();
+                bytes.resize(24 + size, 0);
+                patch_word(&mut bytes, 20, u32::try_from(size).unwrap());
+                let message = patched_message(bytes);
+                let error =
+                    format!("Message 0: {kind:?} payload size must be {expected}, found {size}");
+                match kind {
+                    MessageType::Outcome => assert_input(message.outcomes(), &error),
+                    MessageType::ReturnValue => assert_input(message.return_value(), &error),
+                    MessageType::Gate => unreachable!(),
+                }
+                assert!(!message.is_empty().unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn strict_wrong_types() {
+        let gate = ByteMessage::builder().h(&[0]).build();
+        let outcome = ByteMessage::builder().add_outcomes(&[1]).build();
+        let value = ByteMessage::builder().add_return_value(42).build();
+        assert_input(
+            outcome.quantum_ops(),
+            "Message 0: expected Gate, found Outcome",
+        );
+        assert_input(
+            value.quantum_ops(),
+            "Message 0: expected Gate, found ReturnValue",
+        );
+        assert_input(gate.outcomes(), "Message 0: expected Outcome, found Gate");
+        assert_input(
+            value.outcomes(),
+            "Message 0: expected Outcome, found ReturnValue",
+        );
+        assert_input(
+            gate.return_value(),
+            "Message 0: expected ReturnValue, found Gate",
+        );
+        assert_input(
+            outcome.return_value(),
+            "Message 0: expected ReturnValue, found Outcome",
+        );
+    }
+
+    fn mixed_batch(first: &ByteMessage, second: &ByteMessage) -> ByteMessage {
+        let mut bytes = first.as_bytes().to_vec();
+        bytes.extend_from_slice(&second.as_bytes()[16..]);
+        patch_word(&mut bytes, 8, 2);
+        patched_message(bytes)
+    }
+
+    #[test]
+    fn strict_mixed_types() {
+        let gate = ByteMessage::builder().h(&[0]).build();
+        let outcome = ByteMessage::builder().add_outcomes(&[1]).build();
+        let value = ByteMessage::builder().add_return_value(42).build();
+        assert_input(
+            mixed_batch(&gate, &outcome).quantum_ops(),
+            "Message 1: expected Gate, found Outcome",
+        );
+        assert_input(
+            mixed_batch(&outcome, &gate).outcomes(),
+            "Message 1: expected Outcome, found Gate",
+        );
+        assert_input(
+            mixed_batch(&value, &gate).return_value(),
+            "Message 1: expected ReturnValue, found Gate",
+        );
+        assert!(!mixed_batch(&gate, &outcome).is_empty().unwrap());
+    }
+
+    #[test]
+    fn strict_return_value_count_and_whole_batch() {
+        assert_eq!(ByteMessage::create_empty().return_value().unwrap(), None);
+        let value = ByteMessage::builder().add_return_value(-42).build();
+        assert_eq!(value.return_value().unwrap(), Some(-42));
+        let two = mixed_batch(&value, &value);
+        assert_input(
+            two.return_value(),
+            "Message 1: expected at most one ReturnValue message",
+        );
+        let mut bytes = two.into_bytes();
+        bytes[32] = 255;
+        assert_input(
+            ByteMessage::new(&bytes).return_value(),
+            "Message 1: Unknown message type",
+        );
+    }
+
+    #[test]
+    fn strict_is_empty_checks_only_framing() {
+        assert!(ByteMessage::new(&[]).is_empty().unwrap());
+        let empty = ByteMessage::create_empty();
+        assert!(empty.is_empty().unwrap());
+        assert_eq!(empty.quantum_ops().unwrap(), [] as [Gate; 0]);
+        assert_eq!(empty.outcomes().unwrap(), [] as [u32; 0]);
+        let gate = ByteMessage::builder().h(&[0]).build();
+        assert!(!gate.is_empty().unwrap());
+        assert!(
+            !ByteMessage::builder()
+                .add_outcomes(&[1])
+                .build()
+                .is_empty()
+                .unwrap()
+        );
+        let mut bytes = gate.into_bytes();
+        bytes[24] = 255; // Gate decoding is deliberately outside is_empty's contract.
+        assert!(!ByteMessage::new(&bytes).is_empty().unwrap());
+        bytes[16] = 255;
+        assert_input(
+            ByteMessage::new(&bytes).is_empty(),
+            "Message 0: Unknown message type",
+        );
+    }
+
+    #[test]
+    fn strict_padding_boundaries() {
+        let outcome = ByteMessage::builder().add_outcomes(&[1, 0]).build();
+        let mut bytes = outcome.into_bytes();
+        patch_word(&mut bytes, 20, 3); // Next header remains at the rounded-up offset, 28.
+        let message = ByteMessage::new(&bytes);
+        let records = MessageWalker::new(&message)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].2.len(), 3);
+        assert_eq!(records[1].2, [0, 0, 0, 0]);
+        bytes.truncate(27);
+        patch_word(&mut bytes, 8, 1);
+        for padding in 0..=1 {
+            let mut padded = bytes.clone();
+            padded.resize(27 + padding, 0);
+            assert!(!patched_message(padded).is_empty().unwrap());
+        }
+        bytes.resize(29, 0);
+        assert_input(
+            patched_message(bytes).is_empty(),
+            "Message 0: trailing bytes after final payload padding",
+        );
+    }
+
+    #[test]
+    fn strict_quantum_ops_reuses_capacity() {
+        let message = ByteMessage::builder().h(&[0]).build();
+        let mut commands = Vec::with_capacity(8);
+        commands.push(Gate::x(&[1]));
+        let capacity = commands.capacity();
+        message.quantum_ops_into(&mut commands).unwrap();
+        assert_eq!(commands, [Gate::h(&[0])]);
+        assert_eq!(commands.capacity(), capacity);
+        ByteMessage::create_empty()
+            .quantum_ops_into(&mut commands)
+            .unwrap();
+        assert_eq!(commands, [] as [Gate; 0]);
+        assert_eq!(commands.capacity(), capacity);
+    }
 
     #[test]
     fn quantum_ops_rejects_surplus_gate_parameter_bytes() {

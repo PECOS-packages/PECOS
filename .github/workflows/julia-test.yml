@@ -32,8 +32,11 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
   # Unrelated label events must not cancel an active run.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -65,7 +68,7 @@ jobs:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       # Assign on its own line so a git failure aborts the step (fail closed).
       run: |
-        run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*')"
+        run="$(bash scripts/ci/pr-lane-should-run.sh ci:julia julia/ '.github/workflows/julia-*' Cargo.toml Cargo.lock)"
         case "$run" in
           true|false) ;;
           *)

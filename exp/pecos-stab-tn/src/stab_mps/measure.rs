@@ -133,13 +133,21 @@ pub(super) struct LiveMeasurementResult {
     pub(super) update: ProjectionUpdate,
 }
 
-/// Block-norm tolerance for the coefficient-MPS computational-basis fast path.
+/// Relative block-weight tolerance for the coefficient-MPS basis fast path.
 ///
-/// A bond-one site with either physical block below this threshold is treated
-/// as a basis state. Its physical measurement probability is consequently
+/// A bond-one site with either physical block below this fraction of its total
+/// squared weight is treated as a basis state. The value preserves the previous
+/// `1e-12` cutoff for unit-norm sites, independently of the tensor gauge or scale.
+/// Its physical measurement probability is consequently
 /// quantized to the stabilizer values `{0, 1/2, 1}` before both sampling and
 /// projection; this tolerance is intentionally distinct from the Pauli
 /// endpoint snap below.
+///
+/// Classification depends on the physical state, not reciprocal scalar gauges
+/// on neighbouring tensors. Within this tolerance band, a site in an
+/// unnormalized gauge may now take the trivial path even when its absolute
+/// block weight previously exceeded `1e-12`. Its quantized probability can
+/// therefore eliminate an RNG draw even when the global MPS norm is one.
 pub(super) const TRIVIAL_MPS_BLOCK_NORM_TOLERANCE: f64 = 1e-12;
 
 /// Normalization precondition for reading coefficient-basis probabilities from the tableau.
@@ -156,21 +164,64 @@ pub(super) fn trivial_mps_norm_squared(mps: &Mps) -> f64 {
         .product()
 }
 
+/// Classify a bond-one site by relative physical-block weight.
+///
+/// Rescale components before squaring so even subnormal amplitudes and large
+/// tensor gauges do not underflow/overflow the local weight calculation.
+/// An all-zero site is not a basis state: cancellation, truncation followed by
+/// underflow, or a caller's tensor edits can produce one. Measurement rejects
+/// its zero global norm; a vanished projection is handled by its survival check.
+fn trivial_site_basis(tensor: &DMatrix<Complex64>) -> Option<bool> {
+    debug_assert_eq!(tensor.shape(), (1, 2));
+    let scale = tensor
+        .iter()
+        .flat_map(|value| [value.re.abs(), value.im.abs()])
+        .fold(0.0_f64, f64::max);
+    if scale == 0.0 || !scale.is_finite() {
+        return None;
+    }
+    let weights = [0, 1].map(|physical| {
+        let value = tensor[(0, physical)];
+        Complex64::new(value.re / scale, value.im / scale).norm_sqr()
+    });
+    let total = weights[0] + weights[1];
+    if weights[0] / total < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE {
+        Some(true)
+    } else if weights[1] / total < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Check if the MPS is trivial (all sites in a computational basis state).
 pub(super) fn is_mps_trivial(mps: &Mps) -> bool {
     #[cfg(test)]
     TRIVIAL_MPS_EVALUATIONS.set(TRIVIAL_MPS_EVALUATIONS.get() + 1);
     mps.max_bond_dim() == 1
-        && mps.tensors().iter().all(|t| {
-            let chi_r = t.ncols() / 2;
-            let b0_norm: f64 = (0..t.nrows())
-                .flat_map(|i| (0..chi_r).map(move |j| t[(i, j)].norm_sqr()))
-                .sum();
-            let b1_norm: f64 = (0..t.nrows())
-                .flat_map(|i| (0..chi_r).map(move |j| t[(i, chi_r + j)].norm_sqr()))
-                .sum();
-            b0_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE || b1_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE
-        })
+        && mps
+            .tensors()
+            .iter()
+            .all(|tensor| trivial_site_basis(tensor).is_some())
+}
+
+/// Establish unit scale before measurement and projection.
+/// Leave already-normalized tensors untouched, including their rounding bits.
+fn normalize_measurement_input(mps: &mut Mps, norm_squared: f64) -> f64 {
+    assert!(
+        norm_squared.is_finite() && norm_squared > 0.0,
+        "cannot measure an MPS with non-finite or zero norm"
+    );
+    if (norm_squared - 1.0).abs() < TRIVIAL_MPS_NORMALIZATION_TOLERANCE {
+        return norm_squared;
+    }
+    mps.normalize();
+    let normalized_norm = mps.norm_squared();
+    assert!(
+        (normalized_norm - 1.0).abs() < TRIVIAL_MPS_NORMALIZATION_TOLERANCE,
+        "measurement normalization failed, got norm²={normalized_norm}"
+    );
+    normalized_norm
 }
 
 /// Put a computational-basis product coefficient MPS into `|0...0>` while
@@ -184,7 +235,7 @@ fn canonicalize_trivial_mps_basis(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
-    #[cfg(debug_assertions)] norm_squared: f64,
+    norm_squared: f64,
 ) -> Vec<usize> {
     #[cfg(all(test, debug_assertions))]
     let norm_squared = if RECOMPUTE_Z_PROPERTIES.get() {
@@ -192,12 +243,11 @@ fn canonicalize_trivial_mps_basis(
     } else {
         norm_squared
     };
-    #[cfg(debug_assertions)]
+    let norm_squared = normalize_measurement_input(mps, norm_squared);
     debug_assert!(
         norm_squared.is_finite() && norm_squared > 0.0,
         "trivial-basis canonicalization requires a finite nonzero MPS norm"
     );
-    #[cfg(debug_assertions)]
     debug_assert!(
         (norm_squared - 1.0).abs() < TRIVIAL_MPS_NORMALIZATION_TOLERANCE,
         "trivial-basis canonicalization requires a normalized MPS, got norm²={norm_squared}"
@@ -214,13 +264,9 @@ fn canonicalize_trivial_mps_basis(
     );
     let mut modified_sites = Vec::new();
     for site in 0..mps.num_sites() {
-        let chi_r = mps.bond_dim(site + 1);
-        let block_0 = crate::mps::tensor::phys_block(&mps.tensors()[site], 0, chi_r);
-        let block_0_norm: f64 = block_0.iter().map(num_complex::Complex::norm_sqr).sum();
-        // Every project_forced_z entry path normalizes before this helper can
-        // be reached again, so the block weight has unit-state scale and this
-        // absolute zero threshold is intentional.
-        if block_0_norm < TRIVIAL_MPS_BLOCK_NORM_TOLERANCE {
+        let basis_one = trivial_site_basis(&mps.tensors()[site])
+            .expect("trivial-basis canonicalization requires a nonzero basis site");
+        if basis_one {
             // C|...1...> = (C X_site)(X_site|...1...>).
             let before = phase_accumulator.as_ref().map(|_| tableau.clone());
             crate::stab_mps::tableau_compose::right_compose_x(tableau, site);
@@ -247,15 +293,8 @@ fn measure_trivial_mps_with_update(
     q_idx: usize,
 ) -> LiveMeasurementResult {
     debug_assert!(is_mps_trivial(mps));
-    #[cfg(debug_assertions)]
     let norm_squared = mps.norm_squared();
-    let modified_sites = canonicalize_trivial_mps_basis(
-        tableau,
-        mps,
-        None,
-        #[cfg(debug_assertions)]
-        norm_squared,
-    );
+    let modified_sites = canonicalize_trivial_mps_basis(tableau, mps, None, norm_squared);
     let measurement = tableau
         .mz(&[pecos_core::QubitId(q_idx)])
         .into_iter()
@@ -431,6 +470,24 @@ impl ZMeasurementProperties {
             "forced Z projection received a non-finite pre-projection norm"
         );
         assert!(norm_squared > 0.0, "cannot project a zero-norm MPS");
+    }
+
+    /// Normalize before sampling or projection, and refresh properties only
+    /// when tensors changed. Cached properties still describe the original
+    /// state until this owning measurement boundary is reached.
+    pub(super) fn normalized(self, tableau: &SparseStabY, mps: &mut Mps, q_idx: usize) -> Self {
+        let norm_squared = normalize_measurement_input(mps, self.norm_squared);
+        if norm_squared.to_bits() == self.norm_squared.to_bits() {
+            self
+        } else {
+            Self::with_norm(
+                tableau,
+                mps,
+                q_idx,
+                norm_squared,
+                "normalized Z measurement",
+            )
+        }
     }
 
     /// Keep the stabilizer quantization identical for sampling and projection.
@@ -1444,17 +1501,11 @@ fn prepare_trivial_z_projection(
     q_idx: usize,
     phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
     telemetry: &mut Option<&mut super::QueryDepthTelemetry>,
-    #[cfg(debug_assertions)] norm_squared: f64,
+    norm_squared: f64,
 ) -> (f64, Vec<usize>) {
     let modified_sites =
         profile_query_phase(mps, telemetry, super::QueryPhase::PreReduction, |mps| {
-            canonicalize_trivial_mps_basis(
-                tableau,
-                mps,
-                phase_accumulator,
-                #[cfg(debug_assertions)]
-                norm_squared,
-            )
+            canonicalize_trivial_mps_basis(tableau, mps, phase_accumulator, norm_squared)
         });
     let decomp = profile_query_phase(mps, telemetry, super::QueryPhase::Decomposition, |_| {
         decompose_z(tableau.stabs(), tableau.destabs(), q_idx)
@@ -1496,18 +1547,12 @@ pub(super) fn measure_trivial_mps_exact_with_update(
     mps: &mut Mps,
     rng: &mut PecosRng,
     q_idx: usize,
+    norm_squared: f64,
 ) -> LiveMeasurementResult {
     #[cfg(debug_assertions)]
-    let norm_squared = mps.norm_squared();
-    let (probability_one, modified_sites) = prepare_trivial_z_projection(
-        tableau,
-        mps,
-        q_idx,
-        None,
-        &mut None,
-        #[cfg(debug_assertions)]
-        norm_squared,
-    );
+    debug_assert!((norm_squared - mps.norm_squared()).abs() < TRIVIAL_MPS_NORMALIZATION_TOLERANCE);
+    let (probability_one, modified_sites) =
+        prepare_trivial_z_projection(tableau, mps, q_idx, None, &mut None, norm_squared);
     let is_probability_zero = probability_one <= 0.0;
     let is_probability_one = probability_one >= 1.0;
     let outcome = if is_probability_zero {
@@ -1550,7 +1595,7 @@ fn project_forced_z_with_update_impl(
     let projection_locality_active = telemetry
         .as_deref()
         .is_some_and(super::QueryDepthTelemetry::projection_locality_active);
-    let (properties, probability) =
+    let properties =
         profile_query_phase(mps, &mut telemetry, super::QueryPhase::Expectation, |mps| {
             #[cfg(debug_assertions)]
             if let Some(supplied) = properties {
@@ -1572,15 +1617,17 @@ fn project_forced_z_with_update_impl(
             }
             #[cfg(test)]
             if RECOMPUTE_Z_PROPERTIES.get() {
-                let properties =
-                    ZMeasurementProperties::recompute_for_projection(tableau, mps, q_idx);
-                return (properties, properties.probability(outcome));
+                return ZMeasurementProperties::recompute_for_projection(tableau, mps, q_idx)
+                    .normalized(tableau, mps, q_idx);
             }
             let properties = properties
                 .unwrap_or_else(|| ZMeasurementProperties::for_projection(tableau, mps, q_idx));
             ZMeasurementProperties::assert_projection_norm(properties.norm_squared);
-            (properties, properties.probability(outcome))
+            // Establish unit scale before compensated pre-reduction and
+            // projection, including the trivial-basis canonicalization path.
+            properties.normalized(tableau, mps, q_idx)
         });
+    let probability = properties.probability(outcome);
     let pre_projection_norm_squared = properties.norm_squared;
     let is_trivial =
         profile_query_phase(mps, &mut telemetry, super::QueryPhase::Bookkeeping, |_| {
@@ -1593,7 +1640,6 @@ fn project_forced_z_with_update_impl(
             q_idx,
             phase_accumulator.as_deref_mut(),
             &mut telemetry,
-            #[cfg(debug_assertions)]
             pre_projection_norm_squared,
         );
         let tableau_probability = if outcome {
@@ -2019,6 +2065,7 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
     q_idx: usize,
     deferred: &mut Vec<DeferredOp>,
 ) -> Result<LiveMeasurementResult, MpsError> {
+    normalize_measurement_input(mps, mps.norm_squared());
     if is_mps_trivial(mps) {
         // A tableau-only read requires both a zero coefficient-basis word and
         // an identity virtual frame. Materialize a pending frame first: it can
@@ -2026,6 +2073,7 @@ pub(super) fn measure_qubit_stab_mps_lazy_with_update(
         // state, in which case the general Lazy projection must handle it.
         if !deferred.is_empty() {
             flush_deferred_ops(mps, deferred)?;
+            normalize_measurement_input(mps, mps.norm_squared());
         }
         if is_mps_trivial(mps) {
             return Ok(measure_trivial_mps_with_update(tableau, mps, q_idx));
@@ -2277,6 +2325,7 @@ pub(super) fn measure_qubit_stab_mps_with_update(
     rng: &mut PecosRng,
     q_idx: usize,
 ) -> Result<LiveMeasurementResult, MpsError> {
+    normalize_measurement_input(mps, mps.norm_squared());
     if is_mps_trivial(mps) {
         return Ok(measure_trivial_mps_with_update(tableau, mps, q_idx));
     }

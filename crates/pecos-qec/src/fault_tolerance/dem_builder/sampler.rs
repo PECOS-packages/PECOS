@@ -46,9 +46,20 @@ use pecos_num::z2_linalg::z2_rank_from_records;
 use pecos_random::RngProbabilityExt;
 use rand_core::Rng;
 
+/// Errors when sampling detector events into a decoder batch.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SampleShotsError {
+    /// Raw measurements cannot be represented as detector events.
+    #[error("sample_shots requires detector-event mode, not raw measurements")]
+    RawMeasurements,
+}
+
 /// Errors from detector definition validation.
 #[derive(Debug, Clone)]
 pub enum DetectorValidationError {
+    /// Invalid circuit definitions from the shared reader or DEM conversion.
+    Definition(Box<crate::fault_tolerance::circuit_definitions::DefinitionError>),
     /// Circuit gate whose action Pauli propagation cannot represent.
     UnsupportedGate(crate::fault_tolerance::propagator::UnsupportedGateError),
     /// A detector definition references a non-deterministic measurement.
@@ -96,6 +107,7 @@ impl From<crate::fault_tolerance::influence_builder::InfluenceBuildError>
 impl std::fmt::Display for DetectorValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Definition(error) => write!(f, "Invalid detector/observable metadata: {error}"),
             Self::UnsupportedGate(error) => write!(f, "DEM sampler {error}"),
             Self::NonDeterministicReference {
                 detector_id,
@@ -146,7 +158,15 @@ impl std::fmt::Display for DetectorValidationError {
     }
 }
 
-impl std::error::Error for DetectorValidationError {}
+impl std::error::Error for DetectorValidationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Definition(error) => Some(error.as_ref()),
+            Self::UnsupportedGate(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for DetectorValidationError {
     fn from(error: crate::fault_tolerance::propagator::UnsupportedGateError) -> Self {
@@ -157,6 +177,7 @@ impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for Detector
 impl From<super::DemBuilderError> for DetectorValidationError {
     fn from(error: super::DemBuilderError) -> Self {
         match error {
+            super::DemBuilderError::Definition(error) => Self::Definition(error),
             super::DemBuilderError::UnsupportedGate(error) => Self::UnsupportedGate(error),
             super::DemBuilderError::ParseError(message) => Self::InvalidMetadata { message },
             super::DemBuilderError::ConfigurationError(message) => {
@@ -484,8 +505,9 @@ impl DemSampler {
     /// # Errors
     ///
     /// Returns [`DetectorValidationError::UnsupportedGate`] for unsupported circuit
-    /// gates, [`DetectorValidationError::InvalidMetadata`] for malformed metadata
-    /// or unsupported measurement batches, and
+    /// gates, [`DetectorValidationError::Definition`] for invalid circuit
+    /// definitions, [`DetectorValidationError::InvalidMetadata`] for unsupported
+    /// measurement batches, and
     /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
@@ -497,6 +519,9 @@ impl DemSampler {
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 
+        let definitions =
+            crate::fault_tolerance::circuit_definitions::definitions_from_dag_circuit(circuit)
+                .map_err(super::DemBuilderError::from)?;
         let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(DetectorValidationError::UnsupportedGate(error.clone()));
@@ -510,70 +535,9 @@ impl DemSampler {
             .map_err(DetectorValidationError::from)?;
         influence_map.merge_dem_outputs_from(&annotation_map);
 
-        // Extract metadata before building (avoids ownership issues with builder methods)
-        let det_json = {
-            use pecos_num::graph::Attribute;
-            circuit.get_attr("detectors").and_then(|a| {
-                if let Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-        };
-        let observables_json = {
-            use pecos_num::graph::Attribute;
-            circuit.get_attr("observables").and_then(|a| {
-                if let Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-        };
-        let num_meas = {
-            use pecos_num::graph::Attribute;
-            circuit.get_attr("num_measurements").and_then(|a| {
-                if let Attribute::String(s) = a {
-                    s.parse::<usize>().ok()
-                } else {
-                    None
-                }
-            })
-        };
-
-        // Build DemBuilder, applying detector/DEM-output JSON if available.
-        // with_detectors_json/with_observables_json consume self, so we
-        // chain them carefully.
-        let builder = DemBuilder::new(&influence_map).with_noise_config(noise.clone());
-
-        let builder = if let Some(ref dj) = det_json {
-            builder.with_detectors_json(dj).map_err(|err| {
-                DetectorValidationError::InvalidMetadata {
-                    message: err.to_string(),
-                }
-            })?
-        } else {
-            builder
-        };
-
-        let builder = if let Some(ref oj) = observables_json {
-            builder.with_observables_json(oj).map_err(|err| {
-                DetectorValidationError::InvalidMetadata {
-                    message: err.to_string(),
-                }
-            })?
-        } else {
-            builder
-        };
-
-        // `try_build` enforces num_measurements == influence-map count, so a
-        // metadata override that disagrees with the circuit is rejected there.
-        let builder = if let Some(n) = num_meas {
-            builder.with_num_measurements(n)
-        } else {
-            builder
-        };
+        let builder = DemBuilder::new(&influence_map)
+            .with_noise_config(noise.clone())
+            .with_circuit_definitions(definitions)?;
 
         let dem = builder.try_build()?;
         Ok(Self::from_detector_error_model(&dem))
@@ -904,7 +868,11 @@ impl DemSampler {
         (outputs, dem_outputs)
     }
 
-    /// Sample multiple shots.
+    /// Sample multiple shots as shot-major rows of detector and observable flips.
+    ///
+    /// To decode the shots, use [`Self::sample_shots`], which returns a
+    /// [`SampleBatch`](pecos_decoders::batch::SampleBatch) ready for
+    /// `pecos_decoders::batch` decoding.
     #[must_use]
     pub fn sample_batch<R: Rng>(
         &self,
@@ -925,6 +893,43 @@ impl DemSampler {
         (all_outputs, all_dem_outputs)
     }
 
+    /// Sample detector events and all standard `L<n>` observables into a decoder batch.
+    ///
+    /// Uses the same geometric, column-packed draw as [`Self::sample_batch_geometric`],
+    /// preserving observable IDs and excluding tracked Paulis. With zero shots,
+    /// retains detector and observable widths as empty columns without consuming RNG.
+    /// This is named `sample_shots` because [`Self::sample_batch`] returns shot-major rows.
+    ///
+    /// # Errors
+    ///
+    /// Raw-measurement mode returns [`SampleShotsError::RawMeasurements`] for every
+    /// shot count, including zero, before consuming RNG. A batch carries detector
+    /// events and has no raw-measurement flag.
+    ///
+    /// # Panics
+    ///
+    /// Like [`Self::sample_batch_geometric`], panics if the sampler was built
+    /// with [`SamplingEngine::from_mechanisms`] from mechanism indices outside
+    /// its declared widths. The geometric columns always satisfy the batch's
+    /// validation, so building the batch itself does not panic.
+    pub fn sample_shots<R: Rng>(
+        &self,
+        num_shots: usize,
+        rng: &mut R,
+    ) -> Result<pecos_decoders::batch::SampleBatch, SampleShotsError> {
+        if self.mode == OutputMode::RawMeasurements {
+            return Err(SampleShotsError::RawMeasurements);
+        }
+        let (det_columns, obs_columns) = self.sample_batch_geometric(num_shots, rng);
+        // The geometric sampler sizes every column to num_shots.div_ceil(64)
+        // words and sets bits only for shots below num_shots, which is exactly
+        // what the batch validates.
+        Ok(
+            pecos_decoders::batch::SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+                .expect("geometric sampler columns are canonical for the shot count"),
+        )
+    }
+
     /// Batch sample using geometric skip — O(fired) instead of O(all mechanisms).
     ///
     /// Returns columnar bit-packed data:
@@ -933,6 +938,8 @@ impl DemSampler {
     ///
     /// Much faster than `sample_batch` at low error rates where few mechanisms fire.
     /// Only available in detector-event mode (not raw measurement mode).
+    /// [`Self::sample_shots`] draws the same columns and wraps them in a
+    /// [`SampleBatch`](pecos_decoders::batch::SampleBatch) for decoding.
     ///
     /// # Panics
     ///
@@ -1037,6 +1044,9 @@ pub struct DemSamplerBuilder<'a> {
     detector_records: Option<Vec<Vec<i32>>>,
     observable_records: Option<Vec<Vec<i32>>>,
     measurement_order: Option<Vec<usize>>,
+    detectors_json: Option<String>,
+    observables_json: Option<String>,
+    observable_records_in_map_order: bool,
     detector_records_abs: Option<Vec<Vec<usize>>>,
     labels: SamplerLabels,
 }
@@ -1053,6 +1063,9 @@ impl<'a> DemSamplerBuilder<'a> {
             detector_records: None,
             observable_records: None,
             measurement_order: None,
+            detectors_json: None,
+            observables_json: None,
+            observable_records_in_map_order: false,
             detector_records_abs: None,
             labels: SamplerLabels::default(),
         }
@@ -1107,6 +1120,9 @@ impl<'a> DemSamplerBuilder<'a> {
         self.output_mode = OutputMode::RawMeasurements;
         self.detector_records = None;
         self.observable_records = None;
+        self.detectors_json = None;
+        self.observables_json = None;
+        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1123,6 +1139,9 @@ impl<'a> DemSamplerBuilder<'a> {
         self.output_mode = OutputMode::DetectorEvents;
         self.detector_records = Some(detector_records);
         self.observable_records = Some(observable_records);
+        self.detectors_json = None;
+        self.observables_json = None;
+        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1131,6 +1150,7 @@ impl<'a> DemSamplerBuilder<'a> {
     pub fn with_detector_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.output_mode = OutputMode::DetectorEvents;
         self.detector_records = Some(records);
+        self.detectors_json = None;
         if self.observable_records.is_none() {
             self.observable_records = Some(Vec::new());
         }
@@ -1141,6 +1161,8 @@ impl<'a> DemSamplerBuilder<'a> {
     #[must_use]
     pub fn with_observable_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.observable_records = Some(records);
+        self.observables_json = None;
+        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1149,11 +1171,15 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed.
-    pub fn with_detectors_json(self, json: &str) -> Result<Self, String> {
-        let records = super::builder::parse_detector_record_vectors(json, self.influence_map)
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using the final measurement order.
+    pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
+        super::builder::validate_sampler_json(json, self.influence_map, true)
             .map_err(|err| err.to_string())?;
-        Ok(self.with_detector_records(records))
+        self.detectors_json = Some(json.to_string());
+        self.output_mode = OutputMode::DetectorEvents;
+        Ok(self)
     }
 
     /// Set observable definitions from JSON.
@@ -1161,12 +1187,15 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed, fails schema validation, or
-    /// references measurements out of range for the circuit.
-    pub fn with_observables_json(self, json: &str) -> Result<Self, String> {
-        let records = super::builder::parse_observable_record_vectors(json, self.influence_map)
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using the final measurement order.
+    pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
+        super::builder::validate_sampler_json(json, self.influence_map, false)
             .map_err(|err| err.to_string())?;
-        Ok(self.with_observable_records(records))
+        self.observables_json = Some(json.to_string());
+        self.observable_records_in_map_order = false;
+        Ok(self)
     }
 
     /// Enable dual output (raw measurements + detector events from same sample).
@@ -1260,7 +1289,10 @@ impl<'a> DemSamplerBuilder<'a> {
             self.detector_records_abs = Some(det_records_abs);
         }
 
-        if !observables.is_empty() && self.observable_records.is_none() {
+        if !observables.is_empty()
+            && self.observable_records.is_none()
+            && self.observables_json.is_none()
+        {
             let num_measurements =
                 i32::try_from(self.influence_map.measurements.len()).map_err(|_| {
                     DetectorValidationError::InvalidMetadata {
@@ -1293,6 +1325,7 @@ impl<'a> DemSamplerBuilder<'a> {
             }
             let records = records;
             self.observable_records = Some(records);
+            self.observable_records_in_map_order = true;
         }
 
         let observable_labels: Vec<Option<String>> =
@@ -1331,48 +1364,84 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Returns an error if detector definitions reference non-deterministic
     /// measurements or are not linearly independent over `Z_2`, or
     /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
-    pub fn build(self) -> Result<DemSampler, DetectorValidationError> {
-        // A supplied measurement order must cover every measurement, otherwise
-        // detector/observable record offsets validated against the circuit's
-        // measurement count would resolve in a different (shorter/longer) frame
-        // at sample time and silently misbind. (See sampler-JSON validation.)
-        if let Some(ref order) = self.measurement_order {
-            // A supplied order feeds the qubit-occurrence heuristic, which
-            // needs per-qubit chronology on both sides. Minted (positional)
-            // ids keep it; external non-positional ids can reorder a qubit's
-            // measurements in the map, and the caller's record order is then
-            // not recoverable.
-            let n = self.influence_map.meas_ids.len();
-            let mut seen = vec![false; n];
-            let positional = self
-                .influence_map
-                .meas_ids
-                .iter()
-                .all(|mid| seen.get_mut(mid.index()).map(|slot| *slot = true).is_some())
-                && seen.into_iter().all(|s| s);
-            if !positional {
-                return Err(DetectorValidationError::InvalidMetadata {
-                    message: "measurement_order cannot be combined with a circuit \
-                              whose stable MeasIds are non-positional; the \
-                              caller's record order is not recoverable"
-                        .to_string(),
-                });
+    /// Invalid record ranges and incomplete measurement orders are errors.
+    /// On an empty map, record bounds and order coverage are not checked;
+    /// detector independence and other configuration checks still apply.
+    pub fn build(mut self) -> Result<DemSampler, DetectorValidationError> {
+        let im_to_tc = super::builder::sampler_measurement_mapping(
+            self.influence_map,
+            self.measurement_order.as_deref(),
+        )
+        .map_err(|error| match error {
+            super::DemBuilderError::ParseError(message)
+            | super::DemBuilderError::ConfigurationError(message) => {
+                DetectorValidationError::InvalidMetadata { message }
             }
-            let expected = self.influence_map.measurements.len();
-            if order.len() != expected {
-                return Err(DetectorValidationError::InvalidMetadata {
-                    message: format!(
-                        "measurement_order has {} entries but the circuit performs \
-                         {expected} measurement(s); a measurement order must cover \
-                         every measurement so record offsets resolve in the same frame",
-                        order.len()
-                    ),
-                });
+            other => other.into(),
+        })?;
+        if let Some(json) = &self.detectors_json {
+            self.detector_records = Some(super::builder::parse_detector_record_vectors(
+                json,
+                self.influence_map,
+                im_to_tc.as_deref(),
+            )?);
+        }
+        if let Some(json) = &self.observables_json {
+            self.observable_records = Some(super::builder::parse_observable_record_vectors(
+                json,
+                self.influence_map,
+                im_to_tc.as_deref(),
+            )?);
+        }
+        let num_measurements = self.influence_map.measurements.len();
+        if self.observable_records_in_map_order
+            && let Some(mapping) = &im_to_tc
+        {
+            for records in self.observable_records.iter_mut().flatten() {
+                for record in records {
+                    let im =
+                        super::types::record_offset_to_absolute_index(num_measurements, *record)
+                            .and_then(|index| mapping.get(index))
+                            .ok_or_else(|| DetectorValidationError::InvalidMetadata {
+                                message: format!("record offset {record} is out of range"),
+                            })?;
+                    *record = i32::try_from(*im).map_err(|_| {
+                        DetectorValidationError::InvalidMetadata {
+                            message: format!("resolved measurement index {im} exceeds i32 range"),
+                        }
+                    })?;
+                }
             }
         }
+        super::builder::validate_sampler_records(
+            "Detector",
+            self.detector_records.as_deref().unwrap_or_default(),
+            num_measurements,
+        )?;
+        super::builder::validate_sampler_records(
+            "Observable",
+            self.observable_records.as_deref().unwrap_or_default(),
+            num_measurements,
+        )?;
+        if num_measurements != 0
+            && let Some(records) = &self.detector_records_abs
+        {
+            for (id, records) in records.iter().enumerate() {
+                for &index in records {
+                    if index >= num_measurements {
+                        return Err(DetectorValidationError::InvalidMetadata {
+                            message: format!(
+                                "Detector {id} references record offset {index}, which is out of range for a circuit with {num_measurements} measurement(s)"
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
         match self.output_mode {
             OutputMode::RawMeasurements => self.build_raw(),
-            OutputMode::DetectorEvents => self.build_detector(),
+            OutputMode::DetectorEvents => self.build_detector(im_to_tc.as_deref()),
         }
     }
 
@@ -1447,13 +1516,22 @@ impl<'a> DemSamplerBuilder<'a> {
     ///
     /// Validates detector definitions, then uses `DemSamplerBuilder` to build
     /// the mechanism table in detector coordinates.
-    fn build_detector(self) -> Result<DemSampler, DetectorValidationError> {
+    fn build_detector(
+        self,
+        im_to_tc: Option<&[usize]>,
+    ) -> Result<DemSampler, DetectorValidationError> {
         use super::dem_sampler::SamplingEngineBuilder;
 
         let num_measurements = self.influence_map.measurements.len();
 
         // Validate: check which measurements are deterministic (before partial move)
-        let deterministic = self.compute_deterministic_mask();
+        let mut deterministic = self.compute_deterministic_mask();
+        if let Some(mapping) = im_to_tc {
+            let map_mask = deterministic.clone();
+            for (im, &tc) in mapping.iter().enumerate() {
+                deterministic[tc] = map_mask[im];
+            }
+        }
 
         let detector_records = self.detector_records.unwrap_or_default();
         let observable_records = self.observable_records.unwrap_or_default();
@@ -1562,7 +1640,10 @@ impl<'a> DemSamplerBuilder<'a> {
 /// Compute per-location total error probabilities from noise config.
 ///
 /// For T1/T2 idle noise, returns the sum of biased Pauli probabilities.
-/// For all other gates, returns the gate-type probability.
+/// For all other supported gates, returns the gate-type probability.
+///
+/// # Panics
+/// Panics for unsupported controlled non-Clifford gate locations.
 pub(crate) fn compute_location_probs_from_noise(
     locations: &[super::super::propagator::dag::DagSpacetimeLocation],
     noise: &NoiseConfig,
@@ -1572,6 +1653,13 @@ pub(crate) fn compute_location_probs_from_noise(
         .map(|loc| {
             #[allow(clippy::match_same_arms)]
             match loc.gate_type {
+                GateType::CCZ | GateType::CS | GateType::CSdg | GateType::CCX => {
+                    panic!(
+                        "DEM location probabilities do not support {:?}",
+                        loc.gate_type
+                    )
+                }
+
                 gate_type if is_supported_prep_gate(gate_type) => noise.p_prep,
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
                 gate_type if is_two_qubit_noise_gate(gate_type) => {
@@ -1607,6 +1695,27 @@ pub(crate) fn gate_location_prob_from_locations(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagonal_gates_cannot_reach_location_probability_defaults() {
+        use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = pecos_core::Gate::simple(
+                gt,
+                (0..gt.quantum_arity())
+                    .map(pecos_core::QubitId)
+                    .collect::<Vec<_>>(),
+            );
+            let loc = DagSpacetimeLocation::new(0, gate.qubits.to_vec(), false, &gate);
+            assert!(
+                std::panic::catch_unwind(|| compute_location_probs_from_noise(
+                    &[loc],
+                    &NoiseConfig::uniform(0.1)
+                ))
+                .is_err()
+            );
+        }
+    }
+
     /// The reviewer's happy-path witness for the rewritten detector mapping:
     /// `detector_records_abs` must hold absolute raw-measurement indices, so a
     /// single-measurement detector's event equals that measurement's flip on

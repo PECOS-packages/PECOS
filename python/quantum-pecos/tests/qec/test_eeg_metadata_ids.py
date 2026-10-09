@@ -111,15 +111,15 @@ def test_meas_ids_resolve_like_records(stamped):
         ("[1]", "{kind} entry must be an object"),
         ('[{"records":[-1]}]', "missing {kind} id"),
         ('[{"id":3}]', "{kind} entry has neither 'records' nor 'meas_ids'"),
-        ('[{"id":3,"records":[-1]},{"id":3,"records":[-2]}]', "duplicate {key} id 3"),
+        ('[{"id":3,"records":[-1]},{"id":3,"records":[-2]}]', "{kind} id 3 is repeated in metadata"),
         (
             '[{"id":3,"records":[-2],"meas_ids":[1]}]',
-            "{kind} 3 has records and meas_ids that reference different auxiliary qubits",
+            "{kind} id 3: records resolve to [0], meas_ids to [1]",
         ),
         ([{"id": 3, "records": [-1]}], "{key} metadata must be a JSON string; pass a JSON string"),
         ('[{"id":3,"kind":"tracked_pauli","records":[-1]}]', '{kind} entry uses kind="tracked_pauli"'),
         ('[{"id":3,"records":[1.5]}]', "{kind} record offsets must be integers"),
-        ('[{"id":3,"meas_ids":[99]}]', "annotation references MeasId(99), which the expansion never recorded"),
+        ('[{"id":3,"meas_ids":[99]}]', "{kind} id 3: meas_id 99 is not present in the circuit's measurements"),
     ],
 )
 @pytest.mark.parametrize("entrypoint", [noise_characterization, exact_correlation_table])
@@ -233,7 +233,7 @@ def test_agreeing_reference_forms_are_resolved_once(key, records):
 def test_reference_multiplicity_disagreement_raises(key, records, meas_ids):
     circuit = _circuit()
     circuit.set_meta(key, json.dumps([{"id": 1, "records": records, "meas_ids": meas_ids}]))
-    message = f"{key[:-1]} 1 has records and meas_ids that reference different auxiliary qubits"
+    message = f"{key[:-1]} id 1: records resolve to {[r + 2 for r in records]}, meas_ids to {meas_ids}"
     with pytest.raises(ValueError, match=re.escape(message)):
         exact_correlation_table(circuit, p1=0.05, prune=0.0)
 
@@ -315,3 +315,144 @@ def test_unresolvable_records_raise(key):
     circuit.set_meta(key, '[{"id":3,"records":[-3]}]')
     with pytest.raises(ValueError, match="record offset -3"):
         exact_correlation_table(circuit, p1=0.05, prune=0.0)
+
+
+def _annotation_circuit():
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().h([0])
+    circuit.tick().h([0])
+    m = circuit.tick().mz([0])
+    circuit.detector(m)
+    return circuit
+
+
+# MUST FAIL BEFORE: annotation-only detectors were ignored.
+def test_annotation_detector_matches_metadata():
+    annotated = _annotation_circuit()
+    metadata = TickCircuit()
+    metadata.tick().pz([0])
+    metadata.tick().h([0])
+    metadata.tick().h([0])
+    metadata.tick().mz([0])
+    metadata.add_detector([-1])
+    expected = dict(exact_detection_rates(metadata, p1=0.1))
+    assert expected[0] == pytest.approx((1 - (1 - 4 * 0.1 / 3) ** 2) / 2)
+    assert dict(exact_detection_rates(annotated, p1=0.1)) == pytest.approx(expected)
+
+
+# MUST FAIL BEFORE: empty metadata must retain nonempty annotation definitions.
+@pytest.mark.parametrize("metadata", ["[]", "", '[{"id":0,"records":[-1]}]'])
+def test_annotations_with_empty_or_agreeing_metadata(metadata):
+    circuit = _annotation_circuit()
+    circuit.set_meta("detectors", metadata)
+    expected = dict(exact_detection_rates(_annotation_circuit(), p1=0.1))
+    assert expected
+    assert dict(exact_detection_rates(circuit, p1=0.1)) == pytest.approx(expected)
+
+
+# MUST FAIL BEFORE: disagreeing metadata and annotations were accepted.
+def test_annotations_disagree_with_metadata():
+    circuit = _annotation_circuit()
+    circuit.tick().mz([0])
+    circuit.set_meta("detectors", '[{"id":0,"records":[-1]}]')
+    with pytest.raises(ValueError, match=r"metadata positions.*differ from annotation positions"):
+        exact_detection_rates(circuit)
+
+
+# MUST FAIL BEFORE: the declared measurement count was not checked.
+@pytest.mark.parametrize("count", ["2", 1])
+def test_measurement_count_is_validated(count):
+    circuit = _annotation_circuit()
+    circuit.set_meta("num_measurements", count)
+    with pytest.raises(ValueError, match="num_measurements"):
+        exact_detection_rates(circuit)
+
+
+# MUST FAIL BEFORE: malformed annotations were never read.
+@pytest.mark.parametrize("annotations", [[{}], [{"kind": "bad"}], [{"kind": "detector"}], [1]])
+def test_malformed_annotations_raise(annotations):
+    class Malformed(_MetadataProxy):
+        def annotations(self):
+            return annotations
+
+    with pytest.raises((ValueError, TypeError)):
+        exact_detection_rates(Malformed(_circuit()))
+
+
+# MUST FAIL BEFORE: an absent annotations method was ignored.
+def test_missing_annotations_method_raises():
+    class Missing(_MetadataProxy):
+        def __getattr__(self, name):
+            if name == "annotations":
+                raise AttributeError(name)
+            return super().__getattr__(name)
+
+    with pytest.raises(AttributeError, match="annotations"):
+        exact_detection_rates(Missing(_circuit()))
+
+
+# MUST FAIL BEFORE: exports retained only the original reference form.
+@pytest.mark.parametrize("refs", ["records", "meas_ids"])
+def test_noise_exports_resolved_references(refs):
+    data, _, _ = noise_characterization(_circuit(refs=refs, stamped=(17, 9)))
+    definitions = json.loads(data)["definitions"]
+    assert [(d["id"], d["records"], d["meas_ids"]) for d in definitions] == [
+        (2, [-1], [9]),
+        (5, [-2], [17]),
+        (3, [-1], [9]),
+    ]
+
+
+# MUST FAIL BEFORE: unknown ids were exported as an empty list.
+def test_noise_omits_ids_for_idless_references():
+    class GateProxy:
+        def __init__(self, gate):
+            self.gate = gate
+            self.meas_ids = []
+
+        def __getattr__(self, name):
+            return getattr(self.gate, name)
+
+    class TickProxy:
+        def __init__(self, tick):
+            self.tick = tick
+
+        def gate_batches(self):
+            return [GateProxy(gate) for gate in self.tick.gate_batches()]
+
+    class Idless(_MetadataProxy):
+        def get_tick(self, index):
+            return TickProxy(self.circuit.get_tick(index))
+
+    data, _, _ = noise_characterization(Idless(_circuit()))
+    definitions = json.loads(data)["definitions"]
+    assert all("meas_ids" not in definition for definition in definitions)
+    assert [definition["records"] for definition in definitions] == [[-1], [-2], [-1]]
+
+
+# MUST FAIL BEFORE: annotation kinds and duplicate references were ignored.
+def test_annotation_kinds_and_duplicate_parity():
+    circuit = _circuit((0, 1, 0), stamped=(17, 9))
+
+    class Annotated(_MetadataProxy):
+        def annotations(self):
+            return [
+                {"kind": "tracked_pauli", "label": None},
+                {"kind": "observable", "measurement_ids": [9], "label": None},
+                {"kind": "detector", "measurement_ids": [17, 9, 9], "label": None},
+                {"kind": "detector", "measurement_ids": [9], "label": None},
+            ]
+
+    circuit.set_meta("detectors", "[]")
+    actual = {tuple(nodes): p for nodes, p in exact_correlation_table(Annotated(circuit), p1=0.05)}
+    expected = {tuple(nodes): p for nodes, p in exact_correlation_table(_circuit((0, 1, 0)), p1=0.05)}
+    assert actual == pytest.approx(expected)
+
+
+# MUST FAIL BEFORE: a count string was incorrectly described as JSON.
+def test_non_string_measurement_count_requests_decimal_string():
+    circuit = _annotation_circuit()
+    circuit.set_meta("num_measurements", 1)
+    with pytest.raises(ValueError, match="num_measurements metadata must be a decimal count string"):
+        exact_detection_rates(circuit)

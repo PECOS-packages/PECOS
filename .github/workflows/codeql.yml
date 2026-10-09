@@ -15,7 +15,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -27,15 +30,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: actions
-            build-mode: ""
-          - language: c-cpp
-            build-mode: none
-          - language: python
-            build-mode: ""
-          - language: rust
-            build-mode: none
+        # Rust analysis takes about 25 minutes, the longest required check on a
+        # pull request, so it runs on pushes to the main branches, on the weekly
+        # schedule and on dispatch, not on pull requests.
+        include: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+          && '[{"language":"actions","build-mode":""},{"language":"c-cpp","build-mode":"none"},{"language":"python","build-mode":""}]'
+          || '[{"language":"actions","build-mode":""},{"language":"c-cpp","build-mode":"none"},{"language":"python","build-mode":""},{"language":"rust","build-mode":"none"}]') }}
 
     steps:
       - name: Harden the runner (egress audit)

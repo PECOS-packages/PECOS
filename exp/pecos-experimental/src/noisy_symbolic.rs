@@ -616,6 +616,10 @@ impl NoisyMeasurementHistoryBuilder {
     ///
     /// # Returns
     /// A `NoisyMeasurementHistory` with fault events based on the noise model.
+    ///
+    /// # Panics
+    /// Panics for CS, `CSdg`, or CCZ when constructing or propagating faults.
+    /// The noiseless shortcut copies the supplied measurement history.
     #[must_use]
     pub fn build_from_circuit<C: Circuit>(
         &self,
@@ -822,6 +826,10 @@ impl NoisyMeasurementHistoryBuilder {
                 }
             }
 
+            GateType::CS | GateType::CSdg | GateType::CCZ => panic!(
+                "Noisy symbolic analysis does not support {:?}",
+                location.gate_type
+            ),
             // Other gates: no noise applied
             _ => {}
         }
@@ -851,6 +859,10 @@ impl NoisyMeasurementHistoryBuilder {
         // Propagate through subsequent gates
         for (loc_idx, location) in all_gates.iter().enumerate().skip(start_loc) {
             match location.gate_type {
+                GateType::CS | GateType::CSdg | GateType::CCZ => panic!(
+                    "Noisy symbolic propagation does not support {:?}",
+                    location.gate_type
+                ),
                 // Single-qubit Clifford gates
                 // Note: X, Y, Z gates don't change the X/Z basis of Paulis for propagation purposes
                 // (sign changes don't affect measurement flips), so they fall through to _ => {}
@@ -932,6 +944,10 @@ impl NoisyMeasurementHistoryBuilder {
         // Propagate through subsequent gates (same logic as single-qubit)
         for (loc_idx, location) in all_gates.iter().enumerate().skip(start_loc) {
             match location.gate_type {
+                GateType::CS | GateType::CSdg | GateType::CCZ => panic!(
+                    "Noisy symbolic propagation does not support {:?}",
+                    location.gate_type
+                ),
                 GateType::H if !location.qubits.is_empty() => {
                     prop.h(&[QubitId(location.qubits[0])]);
                 }
@@ -1343,6 +1359,55 @@ impl std::fmt::Display for NoisyMeasurementHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagonal_gates_are_rejected_by_noise_and_both_fault_walks() {
+        for gate_type in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let locations = vec![GateLocation {
+                gate_type,
+                qubits: (0..gate_type.quantum_arity()).collect(),
+            }];
+            let positions = std::collections::HashMap::new();
+            assert!(
+                std::panic::catch_unwind(|| {
+                    NoisyMeasurementHistoryBuilder::new().add_faults_for_gate(
+                        &mut NoisyMeasurementHistory::new(),
+                        &locations[0],
+                        0,
+                        &locations,
+                        &positions,
+                    );
+                })
+                .is_err()
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    NoisyMeasurementHistoryBuilder::propagate_fault(
+                        Pauli::X,
+                        0,
+                        0,
+                        &locations,
+                        &positions,
+                    );
+                })
+                .is_err()
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    NoisyMeasurementHistoryBuilder::propagate_two_qubit_fault(
+                        Pauli::X,
+                        0,
+                        Pauli::Z,
+                        1,
+                        0,
+                        &locations,
+                        &positions,
+                    );
+                })
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn test_noise_model_default() {

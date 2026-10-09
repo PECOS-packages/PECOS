@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.noise.class_errors_circuit import ErrorCircuits
 from pecos.noise.parent_class_error_gen import ParentErrorModel
+from pecos.quantum import Pauli
 
 if TYPE_CHECKING:
     from pecos.typing import ErrorParams, GateParams
@@ -46,15 +47,15 @@ class XZModel(ParentErrorModel):
     inits_x: ClassVar[set[str]] = {"init |+>", "init |->"}
     inits_y: ClassVar[set[str]] = {"init |+i>", "init |-i>"}
 
-    error_two_paulis_collection: ClassVar[list[tuple[str, str]]] = [
-        ("I", "X"),
-        ("I", "Z"),
-        ("X", "I"),
-        ("X", "X"),
-        ("X", "Z"),
-        ("Z", "I"),
-        ("Z", "X"),
-        ("Z", "Z"),
+    error_two_paulis_collection: ClassVar[list[tuple[Pauli, Pauli]]] = [
+        (Pauli.I, Pauli.X),
+        (Pauli.I, Pauli.Z),
+        (Pauli.X, Pauli.I),
+        (Pauli.X, Pauli.X),
+        (Pauli.X, Pauli.Z),
+        (Pauli.Z, Pauli.I),
+        (Pauli.Z, Pauli.X),
+        (Pauli.Z, Pauli.Z),
     ]
 
     def __init__(
@@ -82,12 +83,12 @@ class XZModel(ParentErrorModel):
         self.gen.set_gate_group("preps", self.inits)
         self.gen.set_gate_group("two_qubits", self.two_qubits)
 
-        xerror = self.gen.ErrorStaticSymbol("X")
-        zerror = self.gen.ErrorStaticSymbol("Z")
-        xerror_before = self.gen.ErrorStaticSymbol("X", after=False)
-        zerror_before = self.gen.ErrorStaticSymbol("Z", after=False)
-        pauli_errors = self.gen.ErrorSet({"X", "Z"})
-        pauli_errors_before = self.gen.ErrorSet({"X", "Z"}, after=False)
+        xerror = self.gen.ErrorStaticSymbol(Pauli.X)
+        zerror = self.gen.ErrorStaticSymbol(Pauli.Z)
+        xerror_before = self.gen.ErrorStaticSymbol(Pauli.X, after=False)
+        zerror_before = self.gen.ErrorStaticSymbol(Pauli.Z, after=False)
+        pauli_errors = self.gen.ErrorSet([Pauli.X, Pauli.Z])
+        pauli_errors_before = self.gen.ErrorSet([Pauli.X, Pauli.Z], after=False)
         two_pauli_errors = self.gen.ErrorSetTwoQuditTensorProduct(
             self.error_two_paulis_collection,
         )
@@ -108,7 +109,7 @@ class XZModel(ParentErrorModel):
             self.has_meas_errors = True
 
             # Generate data errors
-            self.gen.set_default_error("data", pauli_errors.error_func)
+            self.gen.set_gate_error("data", pauli_errors.error_func)
 
             # Generate measurement errors
             self.gen.set_group_error("measurements", pauli_errors_before.error_func)

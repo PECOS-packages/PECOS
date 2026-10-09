@@ -287,10 +287,10 @@ fn machine_commands_and_barriers_validate_registers() {
 }
 
 #[test]
-fn interpreter_uses_global_ids_and_preserves_classical_namespace() {
+fn interpreter_uses_global_ids_with_distinct_classical_names() {
     let input = program(
         &[("z", 1), ("y", 3), ("x", 2)],
-        vec![json!({"data":"cvar_define", "data_type":"u32", "variable":"x", "size":2})],
+        vec![json!({"data":"cvar_define", "data_type":"u32", "variable":"c", "size":2})],
     );
     let mut interpreter = PhirClassicalInterpreter::new();
     assert_eq!(interpreter.init(&input.to_string(), None).unwrap(), 6);
@@ -319,7 +319,7 @@ fn offsets_survive_redefinitions_clone_and_reset() {
         json!({"data":"cvar_define", "data_type":"u32", "variable":"c", "size":7}),
     );
     let (mut processor, _) = processor(&input);
-    processor.add_quantum_variable("a", 3).unwrap();
+    processor.add_quantum_variable("a", 3).unwrap_err();
     processor.add_classical_variable("m", "u32", 3).unwrap();
     assert!(processor.add_quantum_variable("a", 4).is_err());
     let mut environment = processor.environment.clone();
@@ -448,13 +448,13 @@ fn converter_requires_quantum_variable_and_size() {
 }
 
 #[test]
-fn quantum_declaration_compatibility_differences_are_explicit() {
+fn quantum_declaration_errors_are_explicit() {
     let duplicate = program(&[("q", 1), ("q", 1)], vec![]);
     assert!(
         phir_json_to_module(&duplicate.to_string())
             .unwrap_err()
             .to_string()
-            .contains("already exists")
+            .contains("already declared as quantum; cannot redeclare as quantum")
     );
     let mut interpreter = PhirClassicalInterpreter::new();
     assert!(
@@ -462,9 +462,11 @@ fn quantum_declaration_compatibility_differences_are_explicit() {
             .init(&duplicate.to_string(), None)
             .unwrap_err()
             .to_string()
-            .contains("already exists")
+            .contains("already declared as quantum; cannot redeclare as quantum")
     );
-    let (processor, _) = processor(&duplicate);
+    let mut processor = OperationProcessor::new();
+    processor.add_quantum_variable("q", 1).unwrap();
+    processor.add_quantum_variable("q", 1).unwrap_err();
     assert_eq!(processor.environment.count_qubits(), 1);
 
     let mut missing_size = program(&[("q", 0)], vec![]);

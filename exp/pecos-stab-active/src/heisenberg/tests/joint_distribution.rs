@@ -48,10 +48,27 @@ pub(super) fn assert_joint(actual: &JointDistribution, expected: &JointDistribut
     assert_distribution(&actual.records, &expected.records);
 }
 
+type Force<'a> = dyn FnMut(f64, usize, Option<usize>) -> Option<bool> + 'a;
+
+fn forced_shot(
+    program: &HeisenbergProgram,
+    noise: &[bool],
+    force: &mut Force<'_>,
+) -> (ShotResult, Vec<bool>) {
+    program.execute_with_outcomes(
+        StabActive::with_seed(program.num_qubits, 0),
+        noise,
+        |state, pauli, negative, symbol, record| {
+            force(conditional(state, pauli, negative).0, symbol, record)
+        },
+    )
+}
+
 fn enumerate_measurements(
     program: &HeisenbergProgram,
     noise: &[bool],
     branches: &mut usize,
+    run: &mut impl for<'a> FnMut(&[bool], &'a mut Force<'a>) -> (ShotResult, Vec<bool>),
 ) -> JointDistribution {
     assert_eq!(noise.len(), program.num_noise_symbols);
     let mut distribution = JointDistribution::default();
@@ -64,30 +81,25 @@ fn enumerate_measurements(
         );
         let mut choices = Vec::new();
         let mut probability = 1.0;
-        let (shot, outcomes) = program.execute_with_outcomes(
-            StabActive::with_seed(program.num_qubits, 0),
-            noise,
-            |state, pauli, negative, _, _| {
-                let (p, _) = conditional(state, pauli, negative);
-                assert!(p.is_finite() && (0.0..=1.0).contains(&p));
-                // Forcing an impossible deterministic result is ignored by the
-                // executor, so it must not create a second branch here.
-                if p <= 0.0 || p >= 1.0 {
-                    return Some(p >= 1.0);
-                }
-                let outcome = if let Some(&outcome) = prefix.get(choices.len()) {
-                    outcome
-                } else {
-                    let mut alternative = choices.clone();
-                    alternative.push(true);
-                    pending.push(alternative);
-                    false
-                };
-                choices.push(outcome);
-                probability *= if outcome { p } else { 1.0 - p };
-                Some(outcome)
-            },
-        );
+        let (shot, outcomes) = run(noise, &mut |p, _, _| {
+            assert!(p.is_finite() && (0.0..=1.0).contains(&p));
+            // Forcing an impossible deterministic result is ignored by the
+            // executor, so it must not create a second branch here.
+            if p <= 0.0 || p >= 1.0 {
+                return Some(p >= 1.0);
+            }
+            let outcome = if let Some(&outcome) = prefix.get(choices.len()) {
+                outcome
+            } else {
+                let mut alternative = choices.clone();
+                alternative.push(true);
+                pending.push(alternative);
+                false
+            };
+            choices.push(outcome);
+            probability *= if outcome { p } else { 1.0 - p };
+            Some(outcome)
+        });
         assert!(probability.is_finite() && probability >= 0.0);
         *distribution.symbols.entry(outcomes).or_default() += probability;
         *distribution.records.entry(shot.records).or_default() += probability;
@@ -98,10 +110,47 @@ fn enumerate_measurements(
 }
 
 pub(super) fn fixed_noise(program: &HeisenbergProgram, noise: &[bool]) -> JointDistribution {
-    enumerate_measurements(program, noise, &mut 0)
+    fixed_noise_by(program, noise, |noise, force| {
+        forced_shot(program, noise, force)
+    })
+}
+
+pub(super) fn fixed_noise_by(
+    program: &HeisenbergProgram,
+    noise: &[bool],
+    mut run: impl for<'a> FnMut(&[bool], &'a mut Force<'a>) -> (ShotResult, Vec<bool>),
+) -> JointDistribution {
+    enumerate_measurements(program, noise, &mut 0, &mut run)
 }
 
 pub(super) fn with_noise(program: &HeisenbergProgram) -> JointDistribution {
+    with_noise_by(program, |noise, force| forced_shot(program, noise, force))
+}
+
+pub(super) fn with_noise_by(
+    program: &HeisenbergProgram,
+    mut run: impl for<'a> FnMut(&[bool], &'a mut Force<'a>) -> (ShotResult, Vec<bool>),
+) -> JointDistribution {
+    let alternatives = noise_alternatives(program);
+    let mut distribution = JointDistribution::default();
+    let mut branches = 0;
+    for (weight, bits) in alternatives {
+        let fixed = enumerate_measurements(program, &bits, &mut branches, &mut run);
+        for (key, p) in fixed.symbols {
+            let probability = weight * p;
+            assert!(probability.is_finite() && probability >= 0.0);
+            *distribution.symbols.entry(key).or_default() += probability;
+        }
+        for (key, p) in fixed.records {
+            *distribution.records.entry(key).or_default() += weight * p;
+        }
+    }
+    check_mass(&distribution.symbols);
+    check_mass(&distribution.records);
+    distribution
+}
+
+pub(super) fn noise_alternatives(program: &HeisenbergProgram) -> Vec<(f64, Vec<bool>)> {
     let mut alternatives = vec![(1.0, vec![false; program.num_noise_symbols])];
     for channel in &program.noise_channels {
         let total: f64 = channel.alternatives.iter().map(|(p, _)| p).sum();
@@ -125,20 +174,5 @@ pub(super) fn with_noise(program: &HeisenbergProgram) -> JointDistribution {
         }
         alternatives = next;
     }
-    let mut distribution = JointDistribution::default();
-    let mut branches = 0;
-    for (weight, bits) in alternatives {
-        let fixed = enumerate_measurements(program, &bits, &mut branches);
-        for (key, p) in fixed.symbols {
-            let probability = weight * p;
-            assert!(probability.is_finite() && probability >= 0.0);
-            *distribution.symbols.entry(key).or_default() += probability;
-        }
-        for (key, p) in fixed.records {
-            *distribution.records.entry(key).or_default() += weight * p;
-        }
-    }
-    check_mass(&distribution.symbols);
-    check_mass(&distribution.records);
-    distribution
+    alternatives
 }

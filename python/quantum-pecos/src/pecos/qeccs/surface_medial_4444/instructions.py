@@ -516,7 +516,7 @@ class InstrInitZero(DefaultLogicalInstruction):
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -614,7 +614,7 @@ class InstrInitPlus(DefaultLogicalInstruction):
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -662,10 +662,10 @@ class InstrInitPlus(DefaultLogicalInstruction):
             for row in rows:
                 self._stabs_destabs[name].append(set(row))
 
-        # |0> -> logical Z is a stabilizer
+        # |+> -> logical X is a stabilizer
         self._stabs_destabs["stabs_x"].append(set(self.qecc.sides["left"]))
         self._stabs_destabs["stabs_z"].append(set())
         self._stabs_destabs["destabs_z"].append(set(self.qecc.sides["top"]))
-        self._stabs_destabs["stabs_x"].append(set())
+        self._stabs_destabs["destabs_x"].append(set())
 
         return self._stabs_destabs

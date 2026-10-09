@@ -49,21 +49,49 @@ pub(crate) fn encode_mode(
         ScheduledTransport::V4 => encode_v4(batches, shot),
     }
 }
-fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
-    use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
-    // Before conversion allocations, including for custom QisRuntime implementations.
-    let mut size = 16usize;
-    for batch in batches {
-        if batch.operations.len() > MAX_BATCH_OPERATIONS
-            || batch.measurements.len() > batch.operations.len()
-        {
+/// Collection uses a lower bound across transports; V4 admission uses its exact layout.
+#[derive(Clone, Copy)]
+pub(crate) enum BudgetLayout {
+    Minimum,
+    V4,
+}
+
+/// Incremental accounting shared by scheduled collection and transport admission.
+pub(crate) struct EventBudget {
+    size: usize,
+    layout: BudgetLayout,
+}
+impl Default for EventBudget {
+    fn default() -> Self {
+        Self::new(BudgetLayout::Minimum)
+    }
+}
+impl EventBudget {
+    pub(crate) fn new(layout: BudgetLayout) -> Self {
+        Self { size: 16, layout }
+    }
+
+    pub(crate) fn charge(
+        &mut self,
+        operations: &[Op],
+        measurements: usize,
+    ) -> Result<(), PecosError> {
+        use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
+        if operations.len() > MAX_BATCH_OPERATIONS || measurements > operations.len() {
             return Err(error("scheduled event operation count limit"));
         }
         let mut payload = 0usize;
-        size = size
-            .checked_add(80 + batch.measurements.len() * 24)
+        // V3 carries only batch framing and gates. Custom records have only a
+        // V4 representation; including their cost still gives a lower bound.
+        let framing = match self.layout {
+            BudgetLayout::Minimum => 40,
+            BudgetLayout::V4 => 80 + measurements * 24,
+        };
+        self.size = self
+            .size
+            .checked_add(framing)
             .ok_or_else(|| error("event transport overflow"))?;
-        for op in &batch.operations {
+        for op in operations {
             let bytes = if let Op::Custom { data, .. } = op {
                 payload = payload
                     .checked_add(data.len())
@@ -75,13 +103,22 @@ fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
             } else {
                 40
             };
-            size = size
+            self.size = self
+                .size
                 .checked_add(bytes)
                 .ok_or_else(|| error("event transport overflow"))?;
         }
-        if size > pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES {
+        if self.size > pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES {
             return Err(error("event transport limit"));
         }
+        Ok(())
+    }
+}
+fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
+    // Before conversion allocations, including for custom QisRuntime implementations.
+    let mut budget = EventBudget::new(BudgetLayout::V4);
+    for batch in batches {
+        budget.charge(&batch.operations, batch.measurements.len())?;
     }
     Ok(())
 }
@@ -89,7 +126,6 @@ fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
 struct MeasurementAdmission {
     ids: Vec<usize>,
     native: BTreeSet<u64>,
-    source: BTreeSet<usize>,
 }
 fn measurement_mappings(
     batch: &ScheduledBatch,
@@ -151,7 +187,6 @@ impl MeasurementAdmission {
                     .ok_or_else(|| error("missing scheduled measurement mapping"))?;
                 if m.runtime_result != *result_id
                     || !self.native.insert(*result_id)
-                    || !self.source.insert(m.program_result)
                     || (matches!(op, Op::MeasureLeaked { .. }) && !m.leakage_aware)
                 {
                     return Err(error("invalid or duplicate scheduled measurement identity"));
@@ -246,6 +281,74 @@ fn encode_v4(
 mod tests {
     use super::*;
     use crate::scheduled::ScheduledMeasurement;
+
+    #[test]
+    fn budget_layouts_match_transport_encodings() {
+        let mut batch = measured();
+        let mut minimum = EventBudget::default();
+        minimum
+            .charge(&batch.operations, batch.measurements.len())
+            .unwrap();
+        let (v3, _) = encode_v3(vec![batch.clone()], 7).unwrap();
+        assert_eq!(minimum.size, v3.as_bytes().len());
+        assert_eq!(minimum.size, 16 + 40 + 40);
+
+        batch.operations.push(Op::Custom {
+            tag: 1,
+            data: vec![0; 3],
+        });
+        let mut minimum = EventBudget::default();
+        minimum
+            .charge(&batch.operations, batch.measurements.len())
+            .unwrap();
+        assert_eq!(minimum.size, 16 + 40 + 40 + 24 + 3);
+        let mut exact = EventBudget::new(BudgetLayout::V4);
+        exact
+            .charge(&batch.operations, batch.measurements.len())
+            .unwrap();
+        let (v4, _) = encode_v4(vec![batch], 7).unwrap();
+        assert_eq!(exact.size, v4.as_bytes().len());
+        assert_eq!(exact.size, minimum.size + 40 + 24);
+    }
+
+    #[test]
+    fn minimum_budget_accepts_exact_transport_bound() {
+        use pecos_engines::scheduled_events::MAX_BATCH_OPERATIONS;
+        use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+        let operations = vec![
+            Op::Measure {
+                qubit_id: 0,
+                result_id: 0
+            };
+            MAX_BATCH_OPERATIONS
+        ];
+        let bytes_per_batch = 40 + 40 * operations.len();
+        let count = (MAX_SCHEDULE_BYTES - 16) / bytes_per_batch;
+        let mut budget = EventBudget::default();
+        for _ in 0..count {
+            budget.charge(&operations, operations.len()).unwrap();
+        }
+        assert_eq!(budget.size, 16 + count * bytes_per_batch);
+        // A custom payload can use the final bytes exactly, with no alignment padding.
+        let payload = MAX_SCHEDULE_BYTES - budget.size - 40 - 24;
+        budget
+            .charge(
+                &[Op::Custom {
+                    tag: 1,
+                    data: vec![0; payload],
+                }],
+                0,
+            )
+            .unwrap();
+        assert_eq!(budget.size, MAX_SCHEDULE_BYTES);
+        assert!(
+            budget
+                .charge(&[], 0)
+                .unwrap_err()
+                .to_string()
+                .contains("event transport limit")
+        );
+    }
 
     #[test]
     fn scheduled_v4_rejects_measurement_mapping_on_custom_event() {
@@ -482,7 +585,7 @@ mod tests {
             result_id: 24,
         };
         b.measurements[0].runtime_result = 24;
-        assert!(encode(vec![a, b], 7).is_err());
+        assert_eq!(encode(vec![a, b], 7).unwrap().1, [91, 91]);
     }
     #[test]
     fn rejects_opaque_events_wrong_shots_and_nonfinite_angles() {

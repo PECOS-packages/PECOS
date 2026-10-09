@@ -750,9 +750,9 @@ class LogicalOp:
     # Teleportation consumes the target as a correction readout, separate
     # from deterministic observables on the data.
     teleportation: bool = False
-    # Type of magic state injection: "T" for T-gate, "SZ" for SZ, or None.
+    # Gate implemented by resource consumption: "T", "SZ", or None.
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
-    injection_type: str | None = None
+    teleportation_type: str | None = None
     # Phase variant of a one-round fold segment; absent on every other operation.
     fold: Literal["SZ", "SZdg"] | None = None
 
@@ -1054,7 +1054,7 @@ class LogicalCircuitBuilder:
         """Initialize an empty logical circuit builder."""
         self._patches: dict[str, PatchState] = {}
         self._operations: list[LogicalOp] = []
-        self._consumed_injection_ancillas: set[str] = set()
+        self._consumed_teleportation_ancillas: set[str] = set()
 
     def add_patch(
         self,
@@ -1138,7 +1138,7 @@ class LogicalCircuitBuilder:
                 Product-Y preparation has an encoded sign given by the parity of a solved subset
                 of first-round check records XOR a reference from the logical representatives.
                 SZ teleportation exposes that subset as ``resource_sign_records`` and the reference
-                as ``resource_sign_reference`` in injection metadata; the sign is a distance-1 quantity.
+                as ``resource_sign_reference`` in teleportation metadata; the sign is a distance-1 quantity.
                 Y-readout folds create hyperedges that build_decoder's matching route
                 (LogicalSubgraphDecoder) skips; see add_logical_sz and use a hypergraph decoder.
         """
@@ -1173,8 +1173,8 @@ class LogicalCircuitBuilder:
         if label not in self._patches:
             msg = f"Unknown patch '{label}'"
             raise ValueError(msg)
-        if label in self._consumed_injection_ancillas:
-            msg = f"Injection ancilla '{label}' has been consumed"
+        if label in self._consumed_teleportation_ancillas:
+            msg = f"Teleportation ancilla '{label}' has been consumed"
             raise ValueError(msg)
 
     def _require_square(self, patch_label: str, gate_name: str) -> None:
@@ -1302,11 +1302,11 @@ class LogicalCircuitBuilder:
         of the selected round-0 check records in ``resource_sign_records`` from
         the ancilla's first projection segment XOR ``resource_sign_reference``
         (a 0/1 bit from the logical representatives).
-        ``injection_readouts`` exposes these as ``resource_sign_meas_ids``
+        ``teleportation_readouts`` exposes these as ``resource_sign_meas_ids``
         (absolute measurement IDs) and ``resource_sign_records`` (relative
         records), alongside the logical readout's ``meas_ids`` and ``records``.
         The ancilla must have odd dx and dz for encoded logical-Y content.
-        ``injection_readouts`` is emitted for a future consumer; no decoder
+        ``teleportation_readouts`` is emitted for a future consumer; no decoder
         applies the correction today.
 
         Note: The |+Y> injection is non-fault-tolerant (distance-1).
@@ -1322,10 +1322,10 @@ class LogicalCircuitBuilder:
         if rounds_before < 1:
             msg = "SZ teleportation requires rounds_before >= 1 to record the resource sign before CX"
             raise ValueError(msg)
-        self._require_fresh_injection_ancilla(data_label, ancilla_label)
+        self._require_fresh_teleportation_ancilla(data_label, ancilla_label)
         ancilla = self._patches[ancilla_label].patch
         if ancilla.dx % 2 == 0 or ancilla.dz % 2 == 0:
-            msg = f"Injection ancilla '{ancilla_label}' requires odd dx and dz for encoded logical-Y content"
+            msg = f"Teleportation ancilla '{ancilla_label}' requires odd dx and dz for encoded logical-Y content"
             raise ValueError(msg)
         # Step 1: Init both patches — data continues in Z, ancilla in |+Y>.
         # Per-patch basis lets us do this in a single parallel segment.
@@ -1342,13 +1342,13 @@ class LogicalCircuitBuilder:
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
                 patches=[data_label, ancilla_label],
                 teleportation=True,
-                injection_type="SZ",
+                teleportation_type="SZ",
             ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis at final round.
         # A Z correction is needed when logical readout and resource sign parities disagree.
         self.add_memory([data_label, ancilla_label], rounds=rounds_after, basis="Z")
-        self._consumed_injection_ancillas.add(ancilla_label)
+        self._consumed_teleportation_ancillas.add(ancilla_label)
 
     def add_t_via_injection(
         self,
@@ -1357,12 +1357,33 @@ class LogicalCircuitBuilder:
         rounds_before: int = 3,
         rounds_after: int = 3,
     ) -> None:
-        """Emit a Clifford stand-in for T injection using a fresh |+> ancilla.
+        """Reject the legacy name for T-gate teleportation; static circuits cannot feed forward.
+
+        Use pecos.guppy_gen.make_surface_t_teleportation for a real adaptive T
+        experiment, or add_t_teleportation_placeholder for the old Clifford model.
+        Rejection happens before modifying the builder.
+        """
+        msg = (
+            "A logical T requires a magic resource and measurement-dependent S correction; "
+            "LogicalCircuitBuilder cannot represent that adaptive non-Clifford program. "
+            "Use pecos.guppy_gen.make_surface_t_teleportation, or explicitly request "
+            "add_t_teleportation_placeholder for the former Clifford-only experiment."
+        )
+        raise NotImplementedError(msg)
+
+    def add_t_teleportation_placeholder(
+        self,
+        data_label: str,
+        ancilla_label: str,
+        rounds_before: int = 3,
+        rounds_after: int = 3,
+    ) -> None:
+        """Emit a Clifford stand-in for T-gate teleportation using a fresh |+> ancilla.
 
         H on every ancilla data qubit precedes syndrome projection, transversal
         CX, and Z readout. No T gate or conditional S correction is emitted.
-        The feed-forward decision point is descriptor-only; real T injection
-        needs a later gadget with its own layout. ``injection_readouts`` is
+        The feed-forward decision point is descriptor-only; real T-gate teleportation
+        needs a later gadget with its own layout. ``teleportation_readouts`` is
         emitted for a future consumer; no decoder applies the correction today.
 
         Args:
@@ -1371,7 +1392,7 @@ class LogicalCircuitBuilder:
             rounds_before: Syndrome rounds before CX.
             rounds_after: Syndrome rounds after CX.
         """
-        self._require_fresh_injection_ancilla(data_label, ancilla_label)
+        self._require_fresh_teleportation_ancilla(data_label, ancilla_label)
         self.add_memory(
             [data_label, ancilla_label],
             rounds=rounds_before,
@@ -1383,7 +1404,7 @@ class LogicalCircuitBuilder:
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
                 patches=[data_label, ancilla_label],
                 teleportation=True,
-                injection_type="T",
+                teleportation_type="T",
             ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis.
@@ -1394,7 +1415,7 @@ class LogicalCircuitBuilder:
             rounds=rounds_after,
             basis="Z",
         )
-        self._consumed_injection_ancillas.add(ancilla_label)
+        self._consumed_teleportation_ancillas.add(ancilla_label)
 
     def add_transversal_cx(self, control_label: str, target_label: str) -> None:
         """Add a transversal CNOT between two patches.
@@ -1425,10 +1446,10 @@ class LogicalCircuitBuilder:
             msg = "Transversal CX requires the same static geometry"
             raise ValueError(msg)
 
-    def _require_fresh_injection_ancilla(self, data_label: str, ancilla_label: str) -> None:
+    def _require_fresh_teleportation_ancilla(self, data_label: str, ancilla_label: str) -> None:
         self._require_cx_geometry(data_label, ancilla_label)
         if any(op.gate_type == LogicalGateType.MEMORY and ancilla_label in op.patches for op in self._operations):
-            msg = f"Injection ancilla '{ancilla_label}' must be fresh (already appears in memory)"
+            msg = f"Teleportation ancilla '{ancilla_label}' must be fresh (already appears in memory)"
             raise ValueError(msg)
 
     def _snapshot_and_reset(self) -> PatchSnapshot:
@@ -1553,7 +1574,7 @@ class LogicalCircuitBuilder:
                 for label in operation.patches:
                     last_memory_index[label] = operation_index
 
-        injection_ancillas = {operation.patches[1] for operation in operations if operation.teleportation}
+        teleportation_ancillas = {operation.patches[1] for operation in operations if operation.teleportation}
 
         output_ids = []
         next_output = 0
@@ -1567,7 +1588,7 @@ class LogicalCircuitBuilder:
                 for label in operation.patches:
                     if last_memory_index.get(label) != operation_index:
                         continue
-                    if label in injection_ancillas:
+                    if label in teleportation_ancillas:
                         continue
                     basis = operation.per_patch_basis.get(label, operation.basis)
                     deterministic, _crossed_folds = _logical_readout_flow(
@@ -1993,7 +2014,7 @@ class LogicalCircuitBuilder:
                 gate.gate_type == LogicalGateType.TRANSVERSAL_CX
                 and gate.patches == patch_order
                 and not gate.teleportation
-                and gate.injection_type is None
+                and gate.teleportation_type is None
             ):
                 gate_names.append("cx")
             else:
@@ -2121,7 +2142,7 @@ class LogicalCircuitBuilder:
             gate.gate_type != LogicalGateType.TRANSVERSAL_CX
             or gate.patches != patch_order
             or gate.teleportation
-            or gate.injection_type is not None
+            or gate.teleportation_type is not None
             for gate in gates
         ):
             return None
@@ -2346,7 +2367,7 @@ class LogicalCircuitBuilder:
             Dict with keys: segments, boundary_gates, num_observables,
             num_frame_slots, full_dem. ``num_observables`` is the full DEM's
             declared observable count; ``num_frame_slots`` is two per patch
-            (X then Z). ``injection_readouts`` carries ancilla logical readout
+            (X then Z). ``teleportation_readouts`` carries ancilla logical readout
             records and, for SZ, resource sign records, each with absolute
             measurement IDs, separately from deterministic observables and frame slots.
             The SZ resource sign is the parity of its records XOR
@@ -2460,7 +2481,7 @@ class LogicalCircuitBuilder:
                 ctrl_label, tgt_label = op.patches[0], op.patches[1]
                 ctrl_idx = patch_labels.index(ctrl_label)
                 tgt_idx = patch_labels.index(tgt_label)
-                if op.injection_type == "T":
+                if op.teleportation_type == "T":
                     pending_gates.append(
                         {
                             "type": "TGateInjection",
@@ -2567,8 +2588,8 @@ class LogicalCircuitBuilder:
         from pecos_rslib.qec import ParsedDem
 
         num_observables = ParsedDem.from_string(full_dem).num_observables
-        injection_readouts = json.loads(self.to_tick_circuit().get_meta("injection_readouts"))
-        for readout in injection_readouts:
+        teleportation_readouts = json.loads(self.to_tick_circuit().get_meta("teleportation_readouts"))
+        for readout in teleportation_readouts:
             readout["data_z_frame_slot"] = self._z_frame_slot(readout["data_patch"])
             readout["ancilla_z_frame_slot"] = self._z_frame_slot(readout["ancilla_patch"])
 
@@ -2586,7 +2607,7 @@ class LogicalCircuitBuilder:
             "boundary_gates": boundary_gates,
             "num_observables": num_observables,
             "num_frame_slots": num_patches * 2,
-            "injection_readouts": injection_readouts,
+            "teleportation_readouts": teleportation_readouts,
             "full_dem": full_dem,
             "distance": distance,
         }
@@ -2725,9 +2746,9 @@ class _CircuitGenerator:
         self._boundary_terms: dict[tuple[str, str, int], list[tuple[str, str, int]] | None] = {}
         self._propagation_context = _PropagationContext.from_operations(operations)
         self.data_meas: dict[tuple[str, int], int] = {}
-        self._injection_ops = [op for op in operations if op.teleportation]
-        self._injection_ancillas = {op.patches[1] for op in self._injection_ops}
-        self._injection_readouts: dict[str, dict] = {}
+        self._teleportation_ops = [op for op in operations if op.teleportation]
+        self._teleportation_ancillas = {op.patches[1] for op in self._teleportation_ops}
+        self._teleportation_readouts: dict[str, dict] = {}
 
         self._prepared: set[str] = set()
         self.segment_idx = 0
@@ -2830,17 +2851,17 @@ class _CircuitGenerator:
             for o in self._obs_json
         ]
 
-        for label in self._injection_ancillas:
-            if label not in self._injection_readouts:
-                msg = f"Injection ancilla '{label}' has no logical operator for its readout"
+        for label in self._teleportation_ancillas:
+            if label not in self._teleportation_readouts:
+                msg = f"Teleportation ancilla '{label}' has no logical operator for its readout"
                 raise ValueError(msg)
 
-        for op in self._injection_ops:
-            if op.injection_type == "SZ":
+        for op in self._teleportation_ops:
+            if op.teleportation_type == "SZ":
                 label = op.patches[1]
                 ps = self.patches[label]
                 if ps.x_z_swapped:
-                    msg = f"Resource sign for injection ancilla '{label}' requires an unswapped patch state"
+                    msg = f"Resource sign for teleportation ancilla '{label}' requires an unswapped patch state"
                     raise ValueError(msg)
                 checks, reference = _resource_sign_checks(ps.patch)
                 meas_ids = []
@@ -2848,7 +2869,7 @@ class _CircuitGenerator:
                     # Freshness and the pre-CX round guard make this the resource projection.
                     segment = min(key[3] for key in self.stab_meas if key[0] == label)
                     meas_ids = [self.stab_meas[label, family, index, segment, 0] for family, index in checks]
-                self._injection_readouts[label].update(
+                self._teleportation_readouts[label].update(
                     resource_sign_meas_ids=meas_ids,
                     resource_sign_records=[idx - total for idx in meas_ids],
                     resource_sign_reference=reference,
@@ -2869,17 +2890,17 @@ class _CircuitGenerator:
             ),
         )
         self.tc.set_meta(
-            "injection_readouts",
+            "teleportation_readouts",
             json.dumps(
                 [
                     {
                         "data_patch": op.patches[0],
                         "ancilla_patch": op.patches[1],
-                        "injection_type": op.injection_type,
-                        **self._injection_readouts[op.patches[1]],
-                        "records": [idx - total for idx in self._injection_readouts[op.patches[1]]["meas_ids"]],
+                        "teleportation_type": op.teleportation_type,
+                        **self._teleportation_readouts[op.patches[1]],
+                        "records": [idx - total for idx in self._teleportation_readouts[op.patches[1]]["meas_ids"]],
                     }
-                    for op in self._injection_ops
+                    for op in self._teleportation_ops
                 ],
             ),
         )
@@ -3331,7 +3352,7 @@ class _CircuitGenerator:
             logical_op = geom.logical_x if meas_basis == "X" else geom.logical_z
 
         if logical_op is None:
-            role = "Injection ancilla" if patch_label in self._injection_ancillas else "Patch"
+            role = "Teleportation ancilla" if patch_label in self._teleportation_ancillas else "Patch"
             msg = f"{role} '{patch_label}' has no logical operator for {meas_basis} readout"
             raise ValueError(msg)
 
@@ -3366,10 +3387,10 @@ class _CircuitGenerator:
                 )
 
         obs_indices = [self.data_meas[(patch_label, q)] for q in logical_op.data_qubits]
-        if patch_label in self._injection_ancillas:
+        if patch_label in self._teleportation_ancillas:
             # A consumed ancilla's random logical readout controls a
             # correction; it is not a deterministic DEM observable.
-            self._injection_readouts[patch_label] = {"basis": meas_basis, "meas_ids": obs_indices}
+            self._teleportation_readouts[patch_label] = {"basis": meas_basis, "meas_ids": obs_indices}
             return
         deterministic, crossed_folds = _logical_readout_flow(
             self.operations,

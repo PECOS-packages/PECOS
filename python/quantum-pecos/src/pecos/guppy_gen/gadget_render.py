@@ -137,8 +137,11 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     if kind == GadgetKind.PREP:
         argument = ""
         result = surface
-        state = {"X": "+", "Y": "+i", "Z": "0"}[basis]
-        doc = f"Prepare logical |{state}_L> state."
+        if gadget.name.startswith("prep_injection_"):
+            doc = f"Prepare the raw {basis} injection seed; syndrome projection and sign correction must follow."
+        else:
+            state = {"X": "+", "Y": "+i", "Z": "0"}[basis]
+            doc = f"Prepare logical |{state}_L> state."
     elif kind == GadgetKind.INIT_SYNDROME:
         family = "Z" if basis == "X" else "X"
         labels = x_labels if family == "X" else z_labels
@@ -239,7 +242,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
         elif op == OpType.ALLOC:
             names[step.qubits[0]] = epoch_names[index]
             lines.append(f"    {names[step.qubits[0]]} = qubit()")
-        elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.CZ, OpType.SZ, OpType.SZDG}:
+        elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.CZ, OpType.SZ, OpType.SZDG, OpType.T, OpType.TDG}:
             operands = ", ".join(live_name(q) for q in step.qubits)
             gate = {OpType.SZ: "s", OpType.SZDG: "sdg"}.get(op, op.name.lower())
             lines.append(f"    {gate}({operands})")

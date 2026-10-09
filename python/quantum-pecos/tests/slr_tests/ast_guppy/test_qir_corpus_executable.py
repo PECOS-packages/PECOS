@@ -277,7 +277,6 @@ def _qis_ok_labels() -> list[str]:
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 def test_qir_corpus_manifest_covers_qis_ok() -> None:
     """Drift guard: every live QIS_OK label has a manifest class.
 
@@ -307,7 +306,6 @@ _NON_CLIFFORD_UNEXECUTABLE_ON_STIM: frozenset[str] = frozenset({"docs.rotation_r
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 @pytest.mark.parametrize("label", _qis_ok_labels())
 def test_qir_corpus_executable(label: str) -> None:
     """Execute the lowered QIS and assert the manifest class.
@@ -357,7 +355,6 @@ def test_qir_corpus_executable(label: str) -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 def test_sqrt_clifford_gates_executable() -> None:
     """The SX/SXdg/SY/SYdg QIR lowering EXECUTES correctly.
 
@@ -391,7 +388,6 @@ def test_sqrt_clifford_gates_executable() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 def test_face_clifford_gates_executable() -> None:
     """The F/Fdg/F4/F4dg QIR lowering EXECUTES correctly.
 
@@ -429,7 +425,6 @@ def test_face_clifford_gates_executable() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 def test_sqrt_pauli_2q_gates_executable() -> None:
     """SZZ/SZZdg/SXX/SXXdg/SYY/SYYdg/CY EXECUTE correctly.
 
@@ -499,7 +494,6 @@ def test_sqrt_pauli_2q_gates_executable() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 def test_ch_executable() -> None:
     """CH (controlled-Hadamard) EXECUTES correctly.
 
@@ -568,7 +562,6 @@ def test_ch_executable() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.optional_dependency
 def test_controlled_rotations_executable() -> None:
     """CRX(theta) / CRY(theta) / CRZ(theta) EXECUTE correctly.
 

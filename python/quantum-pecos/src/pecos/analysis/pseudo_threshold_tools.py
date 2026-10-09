@@ -34,6 +34,15 @@ from pecos.engines import circuit_runners
 from pecos.noise import XModel
 from pecos.qeccs import Surface4444
 
+__all__ = [
+    "find_polyfit",
+    "find_pseudo",
+    "find_uniscalefit",
+    "ns2nsfit",
+    "plot",
+    "pseudo_threshold_code_capacity",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import TypedDict
@@ -107,6 +116,8 @@ def pseudo_threshold_code_capacity(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
+    rate_params = {} if determine_rate is codecapacity_logical_rate2 else {"basis": basis}
+
     ps = pc.array(ps)
 
     plog = []
@@ -124,7 +135,7 @@ def pseudo_threshold_code_capacity(
             decoder=decoder,
             verbose=verbose,
             circuit_runner=circuit_runner,
-            basis=basis,
+            **rate_params,
         )
         if verbose and time:
             print(f"Runtime: {time} s")
@@ -325,6 +336,9 @@ def plot(
     """
     import matplotlib.pyplot as plt  # noqa: PLC0415
 
+    plist = list(plist)
+    plog = list(plog)
+
     if p_start is None:
         p_start = min(plog) * 0.9
 
@@ -343,10 +357,10 @@ def plot(
     axis_start = p_start
     axis_end = p_end
 
-    x = pc.linspace(axis_start, axis_end, 1000)
+    x = list(pc.linspace(axis_start, axis_end, 1000))
 
     poly = pc.Poly1d(popt)
-    yi = poly(x)
+    yi = [poly(value) for value in x]
 
     # Do the plotting:
     fg, ax = plt.subplots(1, 1, figsize=figsize)

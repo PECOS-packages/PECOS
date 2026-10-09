@@ -1997,14 +1997,13 @@ fn converted_source_metadata<'a>(
 /// Converts a DEM measurement-record offset to an absolute measurement index.
 ///
 /// Negative offsets count backward from the end of the measurement record
-/// (`-1` is the last measurement). Positive offsets are treated as absolute
+/// (`-1` is the last measurement). Non-negative offsets are treated as absolute
 /// indices.
 ///
-/// Returns `None` whenever the resulting index would land outside
-/// `0..num_measurements`. Callers should treat a `None` as a malformed input
-/// (parser/user-supplied offset was too large or too negative); it is never
-/// produced by internally-generated offsets, so silently dropping such a
-/// contribution rather than panicking is the intended behavior.
+/// Returns `None` if a negative offset precedes the start of the record or
+/// the conversion cannot be represented. Non-negative offsets are converted
+/// directly, without checking `num_measurements`. Callers that validate references
+/// must also check that the returned index is below `num_measurements`.
 #[must_use]
 pub fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> Option<usize> {
     if offset < 0 {
@@ -5239,6 +5238,12 @@ pub type MechanismTuple = (f64, Vec<u32>, Vec<u32>);
 pub type DetectorCoordinateTuple = (u32, Vec<f64>);
 
 impl DetectorErrorModel {
+    /// Build a detector-event sampler, preserving observable and tracked-Pauli metadata.
+    #[must_use]
+    pub fn to_sampler(&self) -> super::sampler::DemSampler {
+        super::sampler::DemSampler::from_detector_error_model(self)
+    }
+
     /// Creates a new empty DEM.
     #[must_use]
     pub fn new() -> Self {
@@ -7769,6 +7774,8 @@ mod tests {
                 GateType::SZZdg,
                 GateType::SWAP,
                 GateType::CH,
+                GateType::CS,
+                GateType::CSdg,
                 GateType::RXX,
                 GateType::RYY,
                 GateType::RZZ,

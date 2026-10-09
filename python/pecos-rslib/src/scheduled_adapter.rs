@@ -78,6 +78,7 @@ impl PyScheduledEventBatch {
             .collect()
     }
     /// (original operation position, native result ID, program result ID).
+    /// Native IDs are unique; program IDs may repeat when a slot is re-measured.
     #[getter]
     fn measurements(&self) -> Vec<(usize, u64, u64)> {
         self.inner

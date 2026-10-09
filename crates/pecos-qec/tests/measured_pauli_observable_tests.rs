@@ -10,62 +10,22 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! An annotated observable on an MX readout is sensitive to the faults that
-//! flip an X measurement, not to those that flip a Z measurement.
+//! X- and Z-basis memory DEMs contain no detector-silent logical faults.
 //!
-//! Observable annotations used to be propagated as Z on every referenced
-//! qubit. For an X-basis memory that made faults which are physically
-//! harmless (an X error just before MX) look like detector-silent logical
-//! errors. The memory tests compare against direct stabilizer simulation of
-//! every single-location Pauli fault, which shares no code with the DEM
-//! builder's propagation.
+//! Observable annotations on MX readouts used to be propagated as Z, which
+//! made physically harmless faults (an X error just before MX) look like
+//! undetected logical errors in X-basis memory. The one-qubit case is pinned
+//! in `circuit_dem_definitions_tests.rs`; these tests check whole memory
+//! circuits against direct stabilizer simulation of every single-location
+//! Pauli fault, which shares no code with the DEM builder's propagation.
 
 use pecos_qec::fault_tolerance::dem_builder::{DemBuilder, DemSampler, NoiseConfig};
 use pecos_qec::{
     BbMemoryBasis, MemoryBasis, ParityCheckMatrix, bb_memory_circuit, coloration_memory_circuit,
 };
-use pecos_quantum::{AnnotationKind, Attribute, GateType, TickCircuit};
+use pecos_quantum::{AnnotationKind, GateType, TickCircuit};
 use pecos_random::PecosRng;
 use pecos_simulators::{CircuitExecutor, SparseStab};
-
-#[test]
-fn mx_observable_flips_with_z_faults_not_x_faults() {
-    // |+>, noisy X gate, MX. Detector and observable are both the readout.
-    // Only Z and Y faults on the X gate flip it, and each flips the detector
-    // together with the observable.
-    let mut circuit = TickCircuit::new();
-    circuit.tick().px(&[0]);
-    circuit.tick().x(&[0]);
-    let readout = circuit.tick().mx(&[0]);
-    circuit.observable(&[readout[0]]).unwrap();
-    // The tick-circuit DEM path reads detectors from metadata, as the memory
-    // builders write it; the observable comes from the annotation under test.
-    circuit.set_meta(
-        "detectors",
-        Attribute::String(format!(
-            r#"[{{"id":0,"meas_ids":[{}]}}]"#,
-            readout[0].meas_id.index()
-        )),
-    );
-    let mut sim = SparseStab::new(1);
-    let outcomes = CircuitExecutor::new(&circuit).run(&mut sim).unwrap();
-    assert!(
-        outcomes.iter().all(|m| m.is_deterministic && !m.outcome),
-        "the noiseless readout must be a deterministic 0"
-    );
-
-    let dem = DemBuilder::try_from_tick_circuit(&circuit, 0.03, 0.0, 0.0, 0.0).unwrap();
-    assert_eq!((dem.num_detectors(), dem.num_observables()), (1, 1));
-    let (mechanisms, _) = dem.to_mechanisms();
-    assert!(!mechanisms.is_empty(), "the noisy X gate must contribute");
-    for (probability, detectors, observables) in &mechanisms {
-        assert_eq!(
-            (detectors.as_slice(), observables.as_slice()),
-            ([0].as_slice(), [0].as_slice()),
-            "mechanism with probability {probability} has the wrong signature"
-        );
-    }
-}
 
 /// Detector and observable parities of one noiseless run.
 fn annotation_parities(circuit: &TickCircuit, num_qubits: usize) -> (Vec<bool>, Vec<bool>) {

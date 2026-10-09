@@ -110,7 +110,9 @@ pub(crate) enum ParameterMode {
     Angle,
     Angles2,
     Angles3,
+    /// Required on forcing simulators; accepted without effect by PauliProp.
     ForcedOutcome,
+    /// Optional on every supporting simulator; only forcing simulators use it.
     OptionalForcedOutcome,
 }
 
@@ -201,35 +203,53 @@ macro_rules! supports_exact {
 pub(crate) use supports_exact;
 
 #[cfg(test)]
+pub(crate) fn surface_test_params<'py>(py: Python<'py>, entry: &SymbolEntry) -> Bound<'py, PyDict> {
+    let params = pyo3::types::PyDict::new(py);
+    match entry.parameter_mode {
+        ParameterMode::None => {}
+        ParameterMode::Angle => {
+            params
+                .set_item("angle", std::f64::consts::FRAC_PI_2)
+                .unwrap();
+        }
+        ParameterMode::Angles2 => {
+            params
+                .set_item("angles", (std::f64::consts::FRAC_PI_2, 0.0))
+                .unwrap();
+        }
+        ParameterMode::Angles3 => {
+            params.set_item("angles", (0.0, 0.0, 0.0)).unwrap();
+        }
+        ParameterMode::ForcedOutcome | ParameterMode::OptionalForcedOutcome => {
+            params.set_item("forced_outcome", 1).unwrap();
+        }
+    }
+    params
+}
+
+/// Batched dispatch omits measured zeros; per-location dispatch may include them.
+#[cfg(test)]
+pub(crate) fn surface_test_measurement(output: &Bound<'_, PyDict>) -> u8 {
+    output
+        .get_item(0)
+        .unwrap()
+        .map_or(0, |value| value.extract().unwrap())
+}
+
+#[cfg(test)]
 macro_rules! direct_surface_test {
-    ($name:ident, $simulator:expr) => {
+    ($name:ident, $simulator:expr, ignored_forcing = ($seeded:expr, $snapshot:expr)) => {
+        $crate::simulator_utils::direct_surface_test!($name, $simulator, supports_forcing = false);
+        $crate::simulator_utils::ignored_forced_surface_test!($seeded, $snapshot);
+    };
+    ($name:ident, $simulator:expr, supports_forcing = $supports_forcing:literal) => {
         #[test]
         fn $name() {
             pyo3::Python::initialize();
             pyo3::Python::attach(|py| {
                 for entry in $crate::simulator_utils::SYMBOL_ENTRIES {
                     let mut simulator = $simulator;
-                    let params = pyo3::types::PyDict::new(py);
-                    match entry.parameter_mode {
-                        $crate::simulator_utils::ParameterMode::None => {}
-                        $crate::simulator_utils::ParameterMode::Angle => {
-                            params
-                                .set_item("angle", std::f64::consts::FRAC_PI_2)
-                                .unwrap();
-                        }
-                        $crate::simulator_utils::ParameterMode::Angles2 => {
-                            params
-                                .set_item("angles", (std::f64::consts::FRAC_PI_2, 0.0))
-                                .unwrap();
-                        }
-                        $crate::simulator_utils::ParameterMode::Angles3 => {
-                            params.set_item("angles", (0.0, 0.0, 0.0)).unwrap();
-                        }
-                        $crate::simulator_utils::ParameterMode::ForcedOutcome
-                        | $crate::simulator_utils::ParameterMode::OptionalForcedOutcome => {
-                            params.set_item("forced_outcome", 1).unwrap();
-                        }
-                    }
+                    let params = $crate::simulator_utils::surface_test_params(py, entry);
                     let params = (!params.is_empty()).then_some(&params);
                     let accepted = if entry.qubit_count() == 1 {
                         simulator.run_1q_gate(entry.spelling, 0, params).is_ok()
@@ -271,11 +291,438 @@ macro_rules! direct_surface_test {
                 assert!(output.bind(py).is_empty());
             });
         }
+
+        #[test]
+        fn forced_parameter_modes_match_surface() {
+            use $crate::simulator_utils::ParameterMode;
+            pyo3::Python::initialize();
+            pyo3::Python::attach(|py| {
+                for entry in $crate::simulator_utils::SYMBOL_ENTRIES {
+                    if !supports(entry)
+                        || !matches!(
+                            entry.parameter_mode,
+                            ParameterMode::ForcedOutcome | ParameterMode::OptionalForcedOutcome
+                        )
+                    {
+                        continue;
+                    }
+                    for forced in [None, Some(0), Some(1)] {
+                        let mut simulator = $simulator;
+                        simulator.run_1q_gate("H", 0, None).unwrap();
+                        let pair = pyo3::types::PyTuple::new(py, [0, 1]).unwrap();
+                        simulator.run_2q_gate("CX", &pair, None).unwrap();
+                        let params = pyo3::types::PyDict::new(py);
+                        if let Some(forced) = forced {
+                            params.set_item("forced_outcome", forced).unwrap();
+                        }
+                        let result = simulator.run_1q_gate(
+                            entry.spelling,
+                            0,
+                            (!params.is_empty()).then_some(&params),
+                        );
+                        if $supports_forcing
+                            && entry.parameter_mode == ParameterMode::ForcedOutcome
+                            && forced.is_none()
+                        {
+                            let error = result.unwrap_err();
+                            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+                            assert!(error.to_string().contains("requires"));
+                            assert!(error.to_string().contains(entry.spelling));
+                        } else {
+                            let outcome = result.unwrap();
+                            if $supports_forcing && let Some(forced) = forced {
+                                assert_eq!(
+                                    outcome,
+                                    if entry.is_measurement() {
+                                        Some(forced)
+                                    } else {
+                                        None
+                                    },
+                                    "{}",
+                                    entry.spelling
+                                );
+                                assert_eq!(
+                                    simulator.run_1q_gate("MZ", 0, None).unwrap(),
+                                    Some(if entry.is_measurement() { forced } else { 0 }),
+                                    "{}",
+                                    entry.spelling
+                                );
+                                assert_eq!(
+                                    simulator.run_1q_gate("MZ", 1, None).unwrap(),
+                                    Some(forced),
+                                    "{}",
+                                    entry.spelling
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+        }
     };
 }
 
 #[cfg(test)]
 pub(crate) use direct_surface_test;
+
+/// Compare canonical Z gates with their existing forced spellings, including state.
+#[cfg(test)]
+macro_rules! forced_z_surface_test {
+    ($name:ident, $simulator:expr, $canonical:literal, $aliases:expr, $measurement:literal) => {
+        #[test]
+        fn $name() {
+            pyo3::Python::initialize();
+            pyo3::Python::attach(|py| {
+                for seed in 0..16 {
+                    for forced in [0_u8, 1] {
+                        for entangled in [false, true] {
+                            for highlevel in [false, true] {
+                                for alias in $aliases {
+                                    let mut canonical = ($simulator)(seed);
+                                    let mut reference = ($simulator)(seed);
+                                    for sim in [&mut canonical, &mut reference] {
+                                        sim.run_1q_gate("H", 0, None).unwrap();
+                                        if entangled {
+                                            let pair =
+                                                pyo3::types::PyTuple::new(py, [0, 1]).unwrap();
+                                            sim.run_2q_gate("CX", &pair, None).unwrap();
+                                        }
+                                    }
+                                    let params = pyo3::types::PyDict::new(py);
+                                    params.set_item("forced_outcome", forced).unwrap();
+                                    let mut outcomes = Vec::new();
+                                    for (sim, spelling) in
+                                        [(&mut canonical, $canonical), (&mut reference, *alias)]
+                                    {
+                                        let outcome = if highlevel {
+                                            let locations =
+                                                pyo3::types::PySet::new(py, [0]).unwrap();
+                                            let output = sim
+                                                .run_gate_highlevel(
+                                                    spelling,
+                                                    locations.as_any(),
+                                                    Some(&params),
+                                                    py,
+                                                )
+                                                .unwrap();
+                                            if $measurement {
+                                                Some(
+                                                    output
+                                                        .bind(py)
+                                                        .get_item(0)
+                                                        .unwrap()
+                                                        .map_or(0, |value| {
+                                                            value.extract::<u8>().unwrap()
+                                                        }),
+                                                )
+                                            } else {
+                                                assert!(output.bind(py).is_empty());
+                                                None
+                                            }
+                                        } else {
+                                            sim.run_1q_gate(spelling, 0, Some(&params)).unwrap()
+                                        };
+                                        outcomes.push(outcome);
+                                    }
+                                    let context = format!(
+                                        "{} vs {alias}, seed={seed}, forced={forced}, \
+                                         entangled={entangled}, highlevel={highlevel}",
+                                        $canonical
+                                    );
+                                    assert_eq!(outcomes[0], outcomes[1], "{context}");
+                                    assert_eq!(
+                                        outcomes[0],
+                                        if $measurement { Some(forced) } else { None },
+                                        "{context}"
+                                    );
+                                    assert_eq!(
+                                        canonical.stab_tableau(),
+                                        reference.stab_tableau(),
+                                        "{context}"
+                                    );
+                                    assert_eq!(
+                                        canonical.destab_tableau(),
+                                        reference.destab_tableau(),
+                                        "{context}"
+                                    );
+                                    assert_eq!(
+                                        canonical.run_1q_gate("MZ", 0, None).unwrap(),
+                                        Some(if $measurement { forced } else { 0 }),
+                                        "{context}"
+                                    );
+                                    if entangled {
+                                        assert_eq!(
+                                            canonical.run_1q_gate("MZ", 1, None).unwrap(),
+                                            Some(forced),
+                                            "{context}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use forced_z_surface_test;
+
+/// Exercise each Z spelling against the random path with an identical RNG stream.
+#[cfg(test)]
+macro_rules! random_z_surface_test {
+    ($name:ident, $simulator:expr, $measurement:literal) => {
+        #[test]
+        fn $name() {
+            use $crate::simulator_utils::{ParameterMode, SYMBOL_ENTRIES};
+            pyo3::Python::initialize();
+            pyo3::Python::attach(|py| {
+                for entry in SYMBOL_ENTRIES.iter().filter(|entry| {
+                    supports(entry)
+                        && entry.is_measurement() == $measurement
+                        && matches!(
+                            entry.parameter_mode,
+                            ParameterMode::ForcedOutcome | ParameterMode::OptionalForcedOutcome
+                        )
+                }) {
+                    for seed in 0..16 {
+                        for highlevel in [false, true] {
+                            let mut actual = ($simulator)(seed);
+                            let mut expected = ($simulator)(seed);
+                            let pair = pyo3::types::PyTuple::new(py, [0, 1]).unwrap();
+                            for sim in [&mut actual, &mut expected] {
+                                sim.run_1q_gate("H", 0, None).unwrap();
+                                sim.run_2q_gate("CX", &pair, None).unwrap();
+                            }
+                            let params = pyo3::types::PyDict::new(py);
+                            params.set_item("forced_outcome", -1).unwrap();
+                            let reference = if $measurement { "MZ" } else { "PZ" };
+                            let context =
+                                format!("{}, seed={seed}, highlevel={highlevel}", entry.spelling);
+                            if highlevel {
+                                let locations = pyo3::types::PySet::new(py, [0]).unwrap();
+                                let output = actual
+                                    .run_gate_highlevel(
+                                        entry.spelling,
+                                        locations.as_any(),
+                                        Some(&params),
+                                        py,
+                                    )
+                                    .unwrap();
+                                let baseline = expected
+                                    .run_gate_highlevel(reference, locations.as_any(), None, py)
+                                    .unwrap();
+                                if $measurement {
+                                    assert_eq!(
+                                        $crate::simulator_utils::surface_test_measurement(
+                                            output.bind(py)
+                                        ),
+                                        $crate::simulator_utils::surface_test_measurement(
+                                            baseline.bind(py)
+                                        ),
+                                        "{context}"
+                                    );
+                                } else {
+                                    assert!(
+                                        output.bind(py).is_empty() && baseline.bind(py).is_empty()
+                                    );
+                                }
+                            } else {
+                                assert_eq!(
+                                    actual
+                                        .run_1q_gate(entry.spelling, 0, Some(&params))
+                                        .unwrap(),
+                                    expected.run_1q_gate(reference, 0, None).unwrap(),
+                                    "{context}"
+                                );
+                            }
+                            assert_eq!(actual.stab_tableau(), expected.stab_tableau(), "{context}");
+                            assert_eq!(
+                                actual.destab_tableau(),
+                                expected.destab_tableau(),
+                                "{context}"
+                            );
+                            // The sentinel must consume randomness exactly like an unforced call.
+                            for _ in 0..4 {
+                                actual.run_1q_gate("H", 0, None).unwrap();
+                                expected.run_1q_gate("H", 0, None).unwrap();
+                                assert_eq!(
+                                    actual.run_1q_gate("MZ", 0, None).unwrap(),
+                                    expected.run_1q_gate("MZ", 0, None).unwrap(),
+                                    "{context}"
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use random_z_surface_test;
+
+#[cfg(test)]
+macro_rules! invalid_forced_z_surface_test {
+    ($simulator:expr) => {
+        #[test]
+        fn invalid_forced_z_values_are_rejected() {
+            use $crate::simulator_utils::{ParameterMode, SYMBOL_ENTRIES};
+            pyo3::Python::initialize();
+            pyo3::Python::attach(|py| {
+                for entry in SYMBOL_ENTRIES.iter().filter(|entry| {
+                    supports(entry)
+                        && matches!(
+                            entry.parameter_mode,
+                            ParameterMode::ForcedOutcome | ParameterMode::OptionalForcedOutcome
+                        )
+                }) {
+                    for value in [-2_i64, 2, i64::MAX] {
+                        for highlevel in [false, true] {
+                            let mut sim = $simulator;
+                            sim.run_1q_gate("H", 0, None).unwrap();
+                            let before = (sim.stab_tableau(), sim.destab_tableau());
+                            let params = pyo3::types::PyDict::new(py);
+                            params.set_item("forced_outcome", value).unwrap();
+                            let error = if highlevel {
+                                let locations = pyo3::types::PySet::new(py, [0]).unwrap();
+                                sim.run_gate_highlevel(
+                                    entry.spelling,
+                                    locations.as_any(),
+                                    Some(&params),
+                                    py,
+                                )
+                                .unwrap_err()
+                            } else {
+                                sim.run_1q_gate(entry.spelling, 0, Some(&params))
+                                    .unwrap_err()
+                            };
+                            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+                            assert!(error.to_string().contains(entry.spelling));
+                            assert!(error.to_string().contains("forced_outcome"));
+                            assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+                        }
+                    }
+                }
+            });
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use invalid_forced_z_surface_test;
+
+/// Verify ignored parameters for the entire supported surface, including state.
+#[cfg(test)]
+macro_rules! ignored_forced_surface_test {
+    ($simulator:expr, $snapshot:expr) => {
+        #[test]
+        fn forced_outcome_is_ignored() {
+            pyo3::Python::initialize();
+            pyo3::Python::attach(|py| {
+                for entry in $crate::simulator_utils::SYMBOL_ENTRIES
+                    .iter()
+                    .filter(|entry| supports(entry))
+                {
+                    for seed in 0..8 {
+                        for forced in [-1, 0, 1, 2] {
+                            for highlevel in [false, true] {
+                                let mut actual = ($simulator)(seed);
+                                let mut expected = ($simulator)(seed);
+                                let pair = pyo3::types::PyTuple::new(py, [0, 1]).unwrap();
+                                for sim in [&mut actual, &mut expected] {
+                                    sim.run_1q_gate("H", 0, None).unwrap();
+                                    sim.run_2q_gate("CX", &pair, None).unwrap();
+                                }
+                                let baseline =
+                                    $crate::simulator_utils::surface_test_params(py, entry);
+                                if baseline.contains("forced_outcome").unwrap() {
+                                    baseline.del_item("forced_outcome").unwrap();
+                                }
+                                let params = baseline.copy().unwrap();
+                                params.set_item("forced_outcome", forced).unwrap();
+                                let context = format!(
+                                    "{}, seed={seed}, forced={forced}, highlevel={highlevel}",
+                                    entry.spelling
+                                );
+                                if highlevel {
+                                    let locations = if entry.qubit_count() == 1 {
+                                        pyo3::types::PySet::new(py, [0]).unwrap()
+                                    } else {
+                                        pyo3::types::PySet::new(py, [&pair]).unwrap()
+                                    };
+                                    let output = actual
+                                        .run_gate_highlevel(
+                                            entry.spelling,
+                                            locations.as_any(),
+                                            Some(&params),
+                                            py,
+                                        )
+                                        .unwrap();
+                                    let reference = expected
+                                        .run_gate_highlevel(
+                                            entry.spelling,
+                                            locations.as_any(),
+                                            (!baseline.is_empty()).then_some(&baseline),
+                                            py,
+                                        )
+                                        .unwrap();
+                                    if entry.is_measurement() {
+                                        assert_eq!(
+                                            $crate::simulator_utils::surface_test_measurement(
+                                                output.bind(py)
+                                            ),
+                                            $crate::simulator_utils::surface_test_measurement(
+                                                reference.bind(py)
+                                            ),
+                                            "{context}"
+                                        );
+                                    } else {
+                                        assert!(
+                                            output.bind(py).is_empty()
+                                                && reference.bind(py).is_empty()
+                                        );
+                                    }
+                                } else {
+                                    let output = if entry.qubit_count() == 1 {
+                                        actual
+                                            .run_1q_gate(entry.spelling, 0, Some(&params))
+                                            .unwrap()
+                                    } else {
+                                        actual
+                                            .run_2q_gate(entry.spelling, &pair, Some(&params))
+                                            .unwrap()
+                                    };
+                                    let reference = if entry.qubit_count() == 1 {
+                                        expected
+                                            .run_1q_gate(entry.spelling, 0, Some(&baseline))
+                                            .unwrap()
+                                    } else {
+                                        expected
+                                            .run_2q_gate(entry.spelling, &pair, Some(&baseline))
+                                            .unwrap()
+                                    };
+                                    assert_eq!(output, reference, "{context}");
+                                }
+                                assert_eq!(
+                                    ($snapshot)(&mut actual),
+                                    ($snapshot)(&mut expected),
+                                    "{context}"
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use ignored_forced_surface_test;
 
 /// Exact gate spellings accepted by at least one Rust-backed simulator.
 pub(crate) const SYMBOL_ENTRIES: &[SymbolEntry] = symbol_entries! {
@@ -305,7 +752,7 @@ pub(crate) const SYMBOL_ENTRIES: &[SymbolEntry] = symbol_entries! {
     Szdg, None, ["Sd", "SZdg", "SqrtZd", "SqrtZdg"];
     T, None, ["T"];
     Tdg, None, ["Tdg"];
-    Pz, None, ["PZ"];
+    Pz, OptionalForcedOutcome, ["PZ"];
     PzForced, ForcedOutcome, ["PZForced"];
     Pnz, None, ["PNZ"];
     Px, None, ["PX"];
@@ -319,7 +766,7 @@ pub(crate) const SYMBOL_ENTRIES: &[SymbolEntry] = symbol_entries! {
     InitNx, None, ["Init -X", "init |->"];
     InitY, None, ["Init +Y", "init |+i>"];
     InitNy, None, ["Init -Y", "init |-i>"];
-    Mz, None, ["MZ"];
+    Mz, OptionalForcedOutcome, ["MZ"];
     MzForced, ForcedOutcome, ["MZForced"];
     MeasureZ, OptionalForcedOutcome, ["Measure", "measure Z", "Measure +Z"];
     Mx, None, ["MX", "Measure +X", "measure X"];
@@ -628,6 +1075,39 @@ pub fn extract_single_qubit(location: &Bound<'_, PyAny>) -> PyResult<usize> {
         "Expected int or 1-tuple for single-qubit location, got {:?}",
         location.get_type().name()?
     )))
+}
+
+/// Parse the shared Z measurement/preparation contract: -1 is random, 0/1 force a branch.
+/// Required spellings still need the parameter, even when its value is the random sentinel.
+pub(crate) fn extract_forced_outcome(
+    params: Option<&Bound<'_, PyDict>>,
+    gate_name: &str,
+    required: bool,
+) -> PyResult<Option<bool>> {
+    let value = params
+        .map(|params| params.get_item("forced_outcome"))
+        .transpose()?
+        .flatten();
+    let Some(value) = value else {
+        return if required {
+            Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{gate_name} requires a 'forced_outcome' parameter"
+            )))
+        } else {
+            Ok(None)
+        };
+    };
+    let invalid_value = || {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate_name} requires 'forced_outcome' to be -1 (random), 0, or 1"
+        ))
+    };
+    match value.extract::<i32>().map_err(|_| invalid_value())? {
+        -1 => Ok(None),
+        0 => Ok(Some(false)),
+        1 => Ok(Some(true)),
+        _ => Err(invalid_value()),
+    }
 }
 
 /// Extract one angle from the `"angle"` parameter.

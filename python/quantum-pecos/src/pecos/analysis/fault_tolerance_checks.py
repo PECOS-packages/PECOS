@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import itertools as it
+import warnings
 from itertools import combinations, product
 from typing import TYPE_CHECKING, TypeVar
 
@@ -23,7 +24,6 @@ from pecos.analysis.stabilizer_funcs import circ2set, find_stab, op_commutes, re
 from pecos.circuits import LogicalCircuit, QuantumCircuit
 from pecos.decoders import MWPM2D
 from pecos.engines.circuit_runners import Standard
-from pecos.noise.parent_class_error_gen import ErrorCircuits
 from pecos.simulators import SparseStabPy
 
 if TYPE_CHECKING:
@@ -51,34 +51,33 @@ def t_errors_check(
     syn_extract: QuantumCircuit | LogicalCircuit | None = None,
     decoder: Decoder | None = None,
     t_weight: int | None = None,
-    error_set: Iterable[tuple[set[int], set[int]]] | None = None,
+    error_set: Iterable[str] | None = None,
     *,
     verbose: bool = True,
     data_errors: bool = True,
     ancilla_errors: bool = False,
 ) -> tuple[bool, int]:
-    """Check exRec conditions for fault-free error correction or logical gate.
+    """Check input Pauli errors using logical signs and, for EC, a residual syndrome.
 
-    This checks that the exRec conditions for a fault-free error correction (EC) or logical gate (Ga) as described in
-    arXiv:quant-ph/0504218.
+    Enumerate errors of weight zero through ``t_weight`` on the selected data
+    and/or ancilla qubits of freshly prepared logical zero and plus states.
+    Apply each error before the supplied logical gate or fault-free syndrome
+    extraction (one round by default). If the zero-state run has a nonempty
+    final syndrome, decode its output and apply the same recovery to both
+    states. Check the original logical Z and X signs, respectively.
 
-    For fault-free EC, weight <= t errors in produce no errors out.
+    Without ``logical_gate``, also run the extraction again on the zero state
+    and require an empty final syndrome; the plus-state syndrome is not checked.
+    With ``logical_gate``, check signs immediately after the gate and any recovery
+    from its own output, without a following fault-free EC round. Thus even an
+    identity gate can fail on a correctable input error; this does not test an
+    output-error weight bound or account for a gate's intended logical action.
 
-    For fault-free Ga, weight <= t errors in produce weight <= errors out.
-
-
-    Fault-free EC:
-                     ------------------
-    error wt <= t -> |EC (fault free) | -> no errors => No syndrome in subsequent fault-free EC (+ no logical faults)
-                     ------------------
-
-
-    Fault-free Ga:
-                     ------------------
-    error wt <= t -> |Ga (fault free) | ->error wt <= t   => A following fault-free EC + Recovery will result in a state
-                     ------------------
-    with no logical fault.
-
+    No faults are inserted inside the circuit. Input ancilla errors may be
+    erased by extraction resets. This deprecated diagnostic does not establish
+    circuit-level fault tolerance or exRec conditions. For circuit-level
+    analysis, see "Fault Tolerance Analysis" in the user guide
+    (``docs/user-guide/fault-tolerance.md``).
 
     Args:
     ----
@@ -87,7 +86,7 @@ def t_errors_check(
         syn_extract(QuantumCircuit): The syndrome extraction circuit to use.
         decoder: The decoder instance for error correction.
         t_weight: The maximum weight of errors to check (typically pc.floor((distance-1)/2)).
-        error_set: Custom set of errors to check (if None, all Pauli errors are checked).
+        error_set: Single-qubit error symbols to enumerate (defaults to X, Y, Z).
         verbose: If True, prints detailed information about failures.
         data_errors: If True, includes errors on data qubits.
         ancilla_errors: If True, includes errors on ancilla qubits.
@@ -95,9 +94,17 @@ def t_errors_check(
     Returns:
     -------
         tuple (bool, int): The bool is whether the check is passed. The int is the weight of error last checked. If the
-        bool is True then int == t_weight. If bool == False, int == weight of error that caused a logical error.
+        bool is True then int == t_weight. Otherwise the int is the input-error weight at the first failed check.
 
     """
+    warnings.warn(
+        "t_errors_check is deprecated; it checks "
+        "input Pauli errors via logical signs and a zero-state residual syndrome for EC. "
+        "It does not establish circuit-level fault tolerance. For circuit-level analysis, "
+        "see 'Fault Tolerance Analysis' in the user guide (docs/user-guide/fault-tolerance.md).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     qudit_set = set()
 
     if data_errors:
@@ -133,8 +140,8 @@ def t_errors_check(
 
     logic = syn_extract if logical_gate is None else logical_gate
 
-    logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]
-    logical_ops_plus = qecc.instruction("instr_init_plus").logical_stabs[0]
+    logical_ops_zero = qecc.instruction("instr_init_zero").final_logical_ops[0]["Z"]
+    logical_ops_plus = qecc.instruction("instr_init_plus").final_logical_ops[0]["X"]
 
     if decoder is None:
         decoder = MWPM2D(qecc)
@@ -147,10 +154,6 @@ def t_errors_check(
 
         for error_comb in error_combinations:
             error_circ = QuantumCircuit(1)
-            errors = ErrorCircuits()
-
-            errors.simple_add(0, 0, 0, before_errors=error_circ)
-
             for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
@@ -160,23 +163,25 @@ def t_errors_check(
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
 
-            output, _ = circ_sim.run(state_zero, logic, error_circuits=errors)
-            circ_sim.run(state_plus, logic, error_circuits=errors)
+            circ_sim.run(state_zero, error_circ)
+            circ_sim.run(state_plus, error_circ)
+            output, _ = circ_sim.run(state_zero, logic)
+            circ_sim.run(state_plus, logic)
 
             syn = output.simplified(last=True)
 
             if syn:
                 # Recovery operation
-                recovery = decoder.decode(syn)
+                recovery = decoder.decode(output)
                 circ_sim.run(state_zero, recovery)
                 circ_sim.run(state_plus, recovery)
 
-            sign_zero = state_zero.logical_sign(*logical_ops_zero)
-            sign_plus = state_plus.logical_sign(*logical_ops_plus)
+            sign_zero = state_zero.logical_sign(logical_ops_zero)
+            sign_plus = state_plus.logical_sign(logical_ops_plus)
 
             if sign_zero or sign_plus:
                 if verbose:
-                    print(errors)
+                    print(error_circ)
                 return False, len(error_comb)
 
             if logical_gate is None:  # The following is only required for EC.
@@ -187,7 +192,7 @@ def t_errors_check(
                 if syn:
                     if verbose:
                         print(f"syndromes = {syn}")
-                        print(errors)
+                        print(error_circ)
                     return False, len(error_comb)
 
     return True, int(t_weight)
@@ -198,34 +203,31 @@ def fault_check(
     logical_gate: QuantumCircuit | LogicalCircuit | None = None,
     decoder: Decoder | None = None,
     t_weight: int | None = None,
-    error_set: Iterable[tuple[set[int], set[int]]] | None = None,
+    error_set: Iterable[str] | None = None,
     *,
     verbose: bool = True,
     data_errors: bool = True,
     ancilla_errors: bool = False,
 ) -> tuple[bool, int]:
-    """Check exRec conditions for faulty error correction or logical gate.
+    """Check logical signs after input Pauli errors and one circuit execution.
 
-    This checks that the exRec conditions for a faulty error correction (EC) or logical gate (Ga) as described in
-    arXiv:quant-ph/0504218.
+    Enumerate errors of weight zero through ``t_weight`` on the selected data
+    and/or ancilla qubits of freshly prepared logical zero and plus states.
+    Apply each error before one fault-free syndrome-extraction round, or before
+    ``logical_gate`` when supplied. If the zero-state run has a nonempty final
+    syndrome, decode its output and apply the same recovery to both states.
+    Require the original logical Z and X signs, respectively, to remain positive.
 
-    For fault-free EC, weight <= t errors in produce no errors out.
+    There is no subsequent syndrome check or fault-free EC round, including
+    after ``logical_gate``. A correctable input error can therefore make even
+    an identity gate fail. The check neither bounds output-error weight nor
+    accounts for a gate's intended logical action.
 
-    For fault-free Ga, weight <= t errors in produce weight <= errors out.
-
-
-    Fault-free EC:
-                     ------------------
-    error wt <= t -> |EC (fault free) | -> no errors => No syndrome in subsequent fault-free EC (+ no logical faults)
-                     ------------------
-
-
-    Fault-free Ga:
-                     ------------------
-    error wt <= t -> |Ga (fault free) | ->error wt <= t   => A following fault-free EC + Recovery will result in a state
-                     ------------------
-    with no logical fault.
-
+    No faults are inserted inside the circuit. Input ancilla errors may be
+    erased by extraction resets. This deprecated diagnostic does not establish
+    circuit-level fault tolerance or exRec conditions. For circuit-level
+    analysis, see "Fault Tolerance Analysis" in the user guide
+    (``docs/user-guide/fault-tolerance.md``).
 
     Args:
     ----
@@ -233,7 +235,7 @@ def fault_check(
         logical_gate(QuantumCircuit): The logical gate circuit to test (None for error correction only).
         decoder: The decoder instance for error correction.
         t_weight: The maximum weight of errors to check (typically pc.floor((distance-1)/2)).
-        error_set: Custom set of errors to check (if None, all Pauli errors are checked).
+        error_set: Single-qubit error symbols to enumerate (defaults to X, Y, Z).
         verbose: If True, prints detailed information about failures.
         data_errors: If True, includes errors on data qubits.
         ancilla_errors: If True, includes errors on ancilla qubits.
@@ -241,9 +243,17 @@ def fault_check(
     Returns:
     -------
         tuple (bool, int): The bool is whether the check is passed. The int is the weight of error last checked. If the
-        bool is True then int == t_weight. If bool == False, int == weight of error that caused a logical error.
+        bool is True then int == t_weight. Otherwise the int is the input-error weight at the first failed check.
 
     """
+    warnings.warn(
+        "fault_check is deprecated; it checks "
+        "input Pauli errors via logical signs after one circuit execution. "
+        "It does not establish circuit-level fault tolerance. For circuit-level analysis, "
+        "see 'Fault Tolerance Analysis' in the user guide (docs/user-guide/fault-tolerance.md).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     qudit_set = set()
 
     if data_errors:
@@ -276,8 +286,8 @@ def fault_check(
     else:
         logic = logical_gate
 
-    logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]
-    logical_ops_plus = qecc.instruction("instr_init_plus").logical_stabs[0]
+    logical_ops_zero = qecc.instruction("instr_init_zero").final_logical_ops[0]["Z"]
+    logical_ops_plus = qecc.instruction("instr_init_plus").final_logical_ops[0]["X"]
 
     if decoder is None:
         decoder = MWPM2D(qecc)
@@ -290,10 +300,6 @@ def fault_check(
 
         for error_comb in error_combinations:
             error_circ = QuantumCircuit(1)
-            errors = ErrorCircuits()
-
-            errors.simple_add(0, 0, 0, before_errors=error_circ)
-
             for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
@@ -303,23 +309,25 @@ def fault_check(
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
 
-            output, _ = circ_sim.run(state_zero, logic, error_circuits=errors)
-            circ_sim.run(state_plus, logic, error_circuits=errors)
+            circ_sim.run(state_zero, error_circ)
+            circ_sim.run(state_plus, error_circ)
+            output, _ = circ_sim.run(state_zero, logic)
+            circ_sim.run(state_plus, logic)
 
             syn = output.simplified(last=True)
 
             if syn:
                 # Recovery operation
-                recovery = decoder.decode(syn)
+                recovery = decoder.decode(output)
                 circ_sim.run(state_zero, recovery)
                 circ_sim.run(state_plus, recovery)
 
-            sign_zero = state_zero.logical_sign(*logical_ops_zero)
-            sign_plus = state_plus.logical_sign(*logical_ops_plus)
+            sign_zero = state_zero.logical_sign(logical_ops_zero)
+            sign_plus = state_plus.logical_sign(logical_ops_plus)
 
             if sign_zero or sign_plus:
                 if verbose:
-                    print(errors)
+                    print(error_circ)
                 return False, len(error_comb)
 
     return True, int(t_weight)
@@ -329,7 +337,7 @@ def distance_check(
     qecc: QECCProtocol,
     mode: str | None = None,
     dist_mode: str | None = None,
-) -> int:
+) -> str | bool:
     """Determines the distance of the code by looking for the smallest logical errors.
 
     Args:
@@ -340,8 +348,8 @@ def distance_check(
 
     Returns:
     -------
-        Tuple (bool, int). The bool is whether the check is passed. The int is the weight of error last checked. If the
-        bool is True then int == t_weight. If bool == False, int == weight of error that caused a logical error.
+        A description of the first logical error found, or False if none is found.
+        The default mode searches in increasing error size.
 
     """
     qudit_set = qecc.data_qudit_set
@@ -354,10 +362,11 @@ def distance_check(
 
     circ_sim.run(state, ideal_initlogic)
 
-    logical_op, delogical_op = qecc.instruction("instr_init_zero").logical_stabs[0]
+    logical_ops = qecc.instruction("instr_init_zero").final_logical_ops[0]
+    logical_op, delogical_op = logical_ops["Z"], logical_ops["X"]
 
-    destab_xs, destab_zs = circ2set(delogical_op.items(params=False))
-    stab_xs, stab_zs = circ2set(logical_op.items(params=False))
+    destab_xs, destab_zs = circ2set((symbol, locations) for symbol, locations, _ in delogical_op.items())
+    stab_xs, stab_zs = circ2set((symbol, locations) for symbol, locations, _ in logical_op.items())
 
     remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs)
 

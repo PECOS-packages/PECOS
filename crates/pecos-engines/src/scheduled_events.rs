@@ -28,6 +28,7 @@ pub enum ScheduledEventOp {
     Custom { tag: u64, payload: Vec<u8> },
 }
 /// Both measurement namespaces, associated with an original operation position.
+/// Native result IDs are unique; program result IDs may repeat when a slot is re-measured.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduledResult {
     pub operation_index: usize,
@@ -107,11 +108,10 @@ fn validate_batch(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
 }
 fn validate_batches(batches: &[ScheduledEventBatch]) -> Result<(), PecosError> {
     let mut native = BTreeSet::new();
-    let mut source = BTreeSet::new();
     for b in batches {
         validate_batch(b)?;
         for m in &b.measurements {
-            if !native.insert(m.runtime_result) || !source.insert(m.program_result) {
+            if !native.insert(m.runtime_result) {
                 return Err(error("duplicate scheduled event measurement identity"));
             }
         }

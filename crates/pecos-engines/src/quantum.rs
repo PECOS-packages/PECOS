@@ -354,6 +354,27 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     Ok(builder.build())
 }
 
+/// Apply diag(1, 1, 1, +/-i) exactly, including the control phase.
+fn apply_controlled_s<S: CliffordGateable + ArbitraryRotationGateable>(
+    sim: &mut S,
+    a: QubitId,
+    b: QubitId,
+    dagger: bool,
+) {
+    if dagger {
+        sim.tdg(&[a, b]);
+    } else {
+        sim.t(&[a, b]);
+    }
+    sim.cx(&[(a, b)]);
+    if dagger {
+        sim.t(&[b]);
+    } else {
+        sim.tdg(&[b]);
+    }
+    sim.cx(&[(a, b)]);
+}
+
 /// Process a `ByteMessage` against any simulator supporting full gate set.
 ///
 /// Shared gate dispatch for `StabVecEngine`, `DensityMatrixEngine`, etc.
@@ -489,11 +510,19 @@ fn process_general_message<
                     );
                 }
             }
-            GateType::CCX => {
+            GateType::CS | GateType::CSdg => {
+                for &[a, b] in cmd.qubits.as_chunks::<2>().0 {
+                    apply_controlled_s(sim, a, b, cmd.gate_type == GateType::CSdg);
+                }
+            }
+            GateType::CCX | GateType::CCZ => {
                 for qubits in cmd.qubits.as_chunks::<3>().0 {
                     let c0 = qubits[0];
                     let c1 = qubits[1];
                     let target = qubits[2];
+                    if cmd.gate_type == GateType::CCZ {
+                        sim.h(&[target]);
+                    }
                     sim.h(&[target]);
                     sim.cx(&[(c1, target)]);
                     sim.tdg(&[target]);
@@ -509,6 +538,9 @@ fn process_general_message<
                     sim.t(&[c0]);
                     sim.tdg(&[c1]);
                     sim.cx(&[(c0, c1)]);
+                    if cmd.gate_type == GateType::CCZ {
+                        sim.h(&[target]);
+                    }
                 }
             }
 
@@ -1066,7 +1098,17 @@ where
                     let pairs = flat_to_pairs(&cmd.qubits);
                     self.simulator.swap(&pairs);
                 }
-                GateType::CCX => {
+                GateType::CS | GateType::CSdg => {
+                    for &[a, b] in cmd.qubits.as_chunks::<2>().0 {
+                        apply_controlled_s(
+                            &mut self.simulator,
+                            a,
+                            b,
+                            cmd.gate_type == GateType::CSdg,
+                        );
+                    }
+                }
+                GateType::CCX | GateType::CCZ => {
                     if cmd.qubits.len() % 3 != 0 {
                         return Err(quantum_error(format!(
                             "CCX gate requires a multiple of 3 qubits, got {}",
@@ -1083,6 +1125,9 @@ where
                         let c1 = qubits[1];
                         let target = qubits[2];
                         // Standard decomposition (15 gates)
+                        if cmd.gate_type == GateType::CCZ {
+                            self.simulator.h(&[target]);
+                        }
                         self.simulator.h(&[target]);
                         self.simulator.cx(&[(c1, target)]);
                         self.simulator.tdg(&[target]);
@@ -1098,6 +1143,9 @@ where
                         self.simulator.t(&[c0]);
                         self.simulator.tdg(&[c1]);
                         self.simulator.cx(&[(c0, c1)]);
+                        if cmd.gate_type == GateType::CCZ {
+                            self.simulator.h(&[target]);
+                        }
                     }
                 }
                 GateType::RX => {
@@ -1840,6 +1888,50 @@ mod tests {
     use super::*;
     use crate::byte_message::ByteMessageBuilder;
     use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn diagonal_gates_are_exact_in_both_engine_dispatchers() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let n = gt.quantum_arity();
+            let qubits: Vec<_> = (0..n).map(QubitId).collect();
+            for input in 0..=(1 << n) {
+                let mut prep = ByteMessage::quantum_operations_builder();
+                if input == 1 << n {
+                    prep.h(&(0..n).collect::<Vec<_>>());
+                } else {
+                    for &q in &qubits {
+                        if input & (1 << q.index()) != 0 {
+                            prep.x(&[q.index()]);
+                        }
+                    }
+                }
+                let prep = prep.build();
+                let mut engine = DenseStateVecEngine::new(n);
+                engine.process(prep.clone()).unwrap();
+                let mut expected = engine.simulator.state().clone();
+                let last = &mut expected[(1 << n) - 1];
+                let (re, im) = (last.re, last.im);
+                (last.re, last.im) = match gt {
+                    GateType::CS => (-im, re),
+                    GateType::CSdg => (im, -re),
+                    _ => (-re, -im),
+                };
+                let mut message = ByteMessage::quantum_operations_builder();
+                message.add_gate_command(&Gate::simple(gt, qubits.clone()));
+                let message = message.build();
+                engine.process(message.clone()).unwrap();
+                let mut general = StabVec::new(n);
+                process_general_message(&mut general, &prep).unwrap();
+                process_general_message(&mut general, &message).unwrap();
+                for state in [engine.simulator.state().clone(), general.state_vector()] {
+                    for (a, b) in state.iter().zip(&expected) {
+                        assert!((*a - *b).norm() < 1e-13, "{gt}, input {input}: {a} != {b}");
+                    }
+                }
+                assert!(SparseStabEngine::new(n).process(message).is_err());
+            }
+        }
+    }
 
     #[test]
     fn dispatch_validation_uses_exact_core_angle_arity() {

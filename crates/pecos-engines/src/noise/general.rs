@@ -1790,6 +1790,43 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_gates_follow_general_noise_arity_policy() {
+        for seed in 0..16 {
+            for gt in [GateType::CS, GateType::CSdg] {
+                let mut model = GeneralNoiseModel::new(0.0, 0.0, 0.0, 0.0, 1.0);
+                model.set_seed(seed);
+                let mut reference = model.clone();
+                let mut input = ByteMessage::quantum_operations_builder();
+                input.add_gate_command(&Gate::simple(gt, vec![0.into(), 1.into()]));
+                let mut expected = ByteMessage::quantum_operations_builder();
+                expected.cz(&[(0, 1)]);
+                let actual = model
+                    .apply_noise_on_start(&input.build())
+                    .unwrap()
+                    .quantum_ops()
+                    .unwrap();
+                let expected = reference
+                    .apply_noise_on_start(&expected.build())
+                    .unwrap()
+                    .quantum_ops()
+                    .unwrap();
+                assert_eq!(actual[1..], expected[1..]);
+            }
+        }
+        for gt in [GateType::CCX, GateType::CCZ] {
+            let mut input = ByteMessage::quantum_operations_builder();
+            input.add_gate_command(&Gate::simple(gt, vec![0.into(), 1.into(), 2.into()]));
+            assert!(
+                GeneralNoiseModel::default()
+                    .apply_noise_on_start(&input.build())
+                    .err()
+                    .expect("three-qubit gates are rejected")
+                    .contains("Unhandled gate type")
+            );
+        }
+    }
+
+    #[test]
     fn scheduled_measurement_snapshots_clear_on_completion_and_reset() {
         let mut noise = GeneralNoiseModel::builder().build();
         let gates = ByteMessage::quantum_operations_builder()

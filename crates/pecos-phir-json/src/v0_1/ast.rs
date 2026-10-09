@@ -10,7 +10,16 @@ pub struct PHIRProgram {
     pub version: String,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
+    #[serde(deserialize_with = "deserialize_program_operations")]
     pub ops: Vec<Operation>,
+}
+
+fn deserialize_program_operations<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Operation>, D::Error> {
+    let ops = Vec::<Operation>::deserialize(deserializer)?;
+    super::declarations::validate_operations(&ops).map_err(serde::de::Error::custom)?;
+    Ok(ops)
 }
 
 impl PHIRProgram {
@@ -421,9 +430,7 @@ pub enum Expression {
 pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
 /// Validate a v0.1 quantum declaration: the type is optional and size must be positive.
-/// Duplicate handling belongs to callers: converter/interpreter reject duplicates;
-/// the processor accepts identical declarations because the engine visits them both
-/// while loading the header and during execution, but rejects conflicting ones.
+/// Declaration registration enforces the program-wide unique-name rule separately.
 ///
 /// # Errors
 /// Returns an input error for a non-qubit type, missing or zero size, or size overflow.

@@ -1294,7 +1294,8 @@ pub struct TickCircuit {
 /// an annotated circuit with explicit channel operations interleaved after the
 /// ideal gates that triggered them.
 pub trait GateNoiseModel {
-    /// Returns channel operations that should be placed after `gate`.
+    /// Returns channel operations that should be placed after `gate`, in
+    /// application order: channels sharing a qubit are applied first to last.
     fn channels_after(&self, gate: &Gate) -> Vec<ChannelExpr>;
 }
 
@@ -1307,19 +1308,21 @@ where
     }
 }
 
+/// Places `gate` in the first noise tick after every tick already holding a
+/// channel on one of its qubits, so channels sharing a qubit keep the order in
+/// which the noise model returned them.
 fn schedule_channel_gate(noise_ticks: &mut Vec<Tick>, gate: Gate) {
-    let mut pending = Some(gate);
-    for tick in noise_ticks.iter_mut() {
-        let gate_ref = pending.as_ref().expect("pending gate is present");
-        if tick.find_conflicts(&gate_ref.qubits).is_empty() {
-            tick.add_gate(pending.take().expect("pending gate is present"));
-            return;
-        }
+    let earliest = noise_ticks
+        .iter()
+        .rposition(|tick| !tick.find_conflicts(&gate.qubits).is_empty())
+        .map_or(0, |last_conflict| last_conflict + 1);
+    if let Some(tick) = noise_ticks.get_mut(earliest) {
+        tick.add_gate(gate);
+    } else {
+        let mut tick = Tick::new();
+        tick.add_gate(gate);
+        noise_ticks.push(tick);
     }
-
-    let mut tick = Tick::new();
-    tick.add_gate(pending.expect("pending gate is present"));
-    noise_ticks.push(tick);
 }
 
 /// Handle to a specific tick for adding gates.
@@ -1903,7 +1906,8 @@ impl TickCircuit {
     /// The original gates are preserved. For each source tick, channel
     /// operations returned by `noise.channels_after(gate)` are scheduled into
     /// one or more immediately following ticks while respecting qubit
-    /// conflicts. This produces a concrete inline representation useful for
+    /// conflicts. Channels that share a qubit keep the order in which the noise
+    /// model returned them, across all gates of the source tick. This produces a concrete inline representation useful for
     /// inspection, visualization, and simulators that consume interleaved
     /// channel operations directly.
     ///
@@ -7003,6 +7007,46 @@ mod tests {
         let channel = &noisy.get_tick(1).unwrap().gate_batches()[0];
         assert!(channel.is_channel());
         assert_eq!(channel.qubits.as_slice(), &[QubitId::from(0)]);
+    }
+
+    #[test]
+    fn test_with_noise_keeps_list_order_for_channels_sharing_a_qubit() {
+        // Issue #1014: the third channel (on q1) fits the first noise tick,
+        // but the second channel already acts on q1 and must run before it.
+        let mut tc = TickCircuit::new();
+        tc.tick().cx(&[(0, 1)]);
+
+        let noisy = tc.with_noise(&|gate: &Gate| {
+            if gate.gate_type == GateType::CX {
+                vec![
+                    pecos_core::channel::AmplitudeDamping(0.1, 0),
+                    pecos_core::channel::Depolarizing2(0.1, 0, 1),
+                    pecos_core::channel::AmplitudeDamping(0.2, 1),
+                ]
+            } else {
+                Vec::new()
+            }
+        });
+
+        let tick_qubits: Vec<Vec<Vec<QubitId>>> = (1..noisy.num_ticks())
+            .map(|i| {
+                noisy
+                    .get_tick(i)
+                    .unwrap()
+                    .gate_batches()
+                    .iter()
+                    .map(|gate| gate.qubits.to_vec())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            tick_qubits,
+            vec![
+                vec![vec![QubitId::from(0)]],
+                vec![vec![QubitId::from(0), QubitId::from(1)]],
+                vec![vec![QubitId::from(1)]],
+            ]
+        );
     }
 
     #[test]

@@ -219,8 +219,8 @@ class InstrInitZero(DefaultLogicalInstruction):
         # list of tuples of logical check and delogical stabilizer for each logical qudit.
         self.final_logical_ops = [
             {
-                "X": QuantumCircuit([{"Z": set(qecc.sides["bottom"])}]),
-                "Z": QuantumCircuit([{"X": set(qecc.sides["bottom"])}]),
+                "X": QuantumCircuit([{"X": set(qecc.sides["bottom"])}]),
+                "Z": QuantumCircuit([{"Z": set(qecc.sides["bottom"])}]),
             },
         ]
 

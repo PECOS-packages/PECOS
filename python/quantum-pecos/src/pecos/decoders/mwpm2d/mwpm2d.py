@@ -65,6 +65,13 @@ class MWPM2D:
 
         self.precomputed_data = precomputed_data
 
+        # Real check labels only: virtual boundary nodes have no virtual-edge data.
+        self.syndrome_maps = {
+            check_type: {label: node for label, node in data["node_map"].items() if node in data["virtual_edge_data"]}
+            for check_type, data in precomputed_data.items()
+        }
+        self.syndrome_labels = self.syndrome_maps["X"].keys() | self.syndrome_maps["Z"].keys()
+
     def decode(
         self,
         measurements: StdOutput,
@@ -75,12 +82,12 @@ class MWPM2D:
         logic_range identifies over what part of self.logic we are decoding over.
 
         Raises:
-            ValueError: If a syndrome label is absent from both precomputed node maps.
+            ValueError: If a syndrome label is not a real check known to the precomputed data.
         """
         syndromes = set(measurements.simplified(last=True))
 
         decode_data = self.precomputed_data
-        unknown = syndromes - decode_data["X"]["node_map"].keys() - decode_data["Z"]["node_map"].keys()
+        unknown = syndromes - self.syndrome_labels
         if unknown:
             msg = f"Unknown syndrome labels: {sorted(unknown, key=str)!r}"
             raise ValueError(msg)
@@ -104,7 +111,7 @@ class MWPM2D:
             distance_graph = check_type_decode["dist_graph"]
             virtual_edge_data = check_type_decode["virtual_edge_data"]
 
-            node_map = check_type_decode["node_map"]
+            node_map = self.syndrome_maps[check_type]
             active_syn = {node_map[label] for label in syndromes if label in node_map}
 
             # Build a new graph instead of using subgraph (which renumbers nodes)

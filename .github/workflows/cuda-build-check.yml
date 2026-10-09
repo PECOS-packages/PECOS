@@ -176,14 +176,16 @@ jobs:
       - name: Build pecos-rslib-cuda without the CUDA SDK
         run: uv run --frozen --package pecos-rslib-cuda maturin develop --uv --locked --manifest-path python/pecos-rslib-cuda/Cargo.toml
 
-      - name: Report what the stub build exposes
+      - name: Require the stub build
+        # If the SDK ever appeared on this runner, the tests below would take the
+        # available-SDK branch and skip; fail instead so the lane keeps testing the stub.
         run: |
           uv run --frozen python - <<'PY'
           import pecos_rslib_cuda as cuda
-          for name in sorted(n for n in dir(cuda) if n.startswith("is_")):
-              print(name, getattr(cuda, name)())
-          from pecos.simulators import CudaStateVec
-          print("pecos.simulators.CudaStateVec:", CudaStateVec)
+          probes = {name: getattr(cuda, name)() for name in dir(cuda) if name.startswith("is_")}
+          print(probes)
+          if any(probes.values()):
+              raise SystemExit(f"expected a stub build with no cuQuantum SDK, got {probes}")
           PY
 
       - name: Run the CUDA import-level tests

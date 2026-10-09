@@ -176,6 +176,9 @@ def gate_is_trusted_push(value: str) -> bool:
 
 
 def main(argv: list[str]) -> int:
+    # The integrity check compares --value output in bash; Windows text mode
+    # would otherwise append CR to it.
+    sys.stdout.reconfigure(newline="\n")
     if len(argv) not in (4, 5) or (len(argv) == 5 and argv[4] != "--value"):
         print(__doc__, file=sys.stderr)
         return 1

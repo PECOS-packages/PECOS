@@ -3920,7 +3920,9 @@ class ScheduledEventBatch:
     @property
     def operations(self) -> list[Gate | tuple[int, bytes]]: ...
     @property
-    def measurements(self) -> list[tuple[int, int, int]]: ...
+    def measurements(self) -> list[tuple[int, int, int]]:
+        """(operation position, native ID, program ID); program IDs may repeat."""
+        ...
 
 class _ScheduledBatchAdapter(Protocol):
     """Structural callback protocol; not a runtime extension class."""

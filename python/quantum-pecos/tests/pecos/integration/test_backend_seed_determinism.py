@@ -14,6 +14,9 @@
 Regression test for issue #89 (https://github.com/PECOS-packages/PECOS/issues/89).
 """
 
+import importlib
+from math import sqrt
+
 import pytest
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.noise.generic_error_model import GenericErrorModel
@@ -141,19 +144,19 @@ def test_determinism_with_same_seed(backend: str) -> None:
     engine1 = HybridEngine(qsim=backend, error_model=ERROR_MODEL)
     engine1.use_seed(seed)
     results1 = engine1.run(PHIR_BELL_STATE, shots=shots)
-    count_11_run1 = sum(1 for x in results1["c"] if x == "11")
+    count_11_run1 = sum(1 for x in results1["c"] if int(x, 2) == 3)
 
     # Second run with seed=7
     engine2 = HybridEngine(qsim=backend, error_model=ERROR_MODEL)
     engine2.use_seed(seed)
     results2 = engine2.run(PHIR_BELL_STATE, shots=shots)
-    count_11_run2 = sum(1 for x in results2["c"] if x == "11")
+    count_11_run2 = sum(1 for x in results2["c"] if int(x, 2) == 3)
 
     # Third run with seed=7
     engine3 = HybridEngine(qsim=backend, error_model=ERROR_MODEL)
     engine3.use_seed(seed)
     results3 = engine3.run(PHIR_BELL_STATE, shots=shots)
-    count_11_run3 = sum(1 for x in results3["c"] if x == "11")
+    count_11_run3 = sum(1 for x in results3["c"] if int(x, 2) == 3)
 
     # All three runs should produce IDENTICAL results
     assert results1["c"] == results2["c"], (
@@ -166,13 +169,25 @@ def test_determinism_with_same_seed(backend: str) -> None:
     )
 
 
-@pytest.mark.parametrize("backend", CORE_BACKENDS)
+@pytest.mark.parametrize("backend", [*CORE_BACKENDS, "MPS", "CuStateVec", "CudaStateVec"])
 def test_different_seeds_produce_different_results(backend: str) -> None:
     """Test that different seeds produce different results.
 
     This verifies that the seed actually affects the RNG and isn't just
     being ignored.
     """
+    if backend == "MPS":
+        _require_mps()
+    elif backend == "CuStateVec":
+        from pecos.simulators.custatevec._cuquantum_compat import custatevec_available
+
+        if not custatevec_available():
+            pytest.skip("CuStateVec unavailable (requires CuPy + cuQuantum >= 25.03)")
+    elif backend == "CudaStateVec":
+        cuda = pytest.importorskip("pecos_rslib_cuda")
+        if not cuda.is_custatevec_usable():
+            pytest.skip("CudaStateVec runtime is not usable on this machine")
+
     shots = 100
 
     # Run with seed=7
@@ -238,8 +253,8 @@ def test_error_pattern_reproducibility(backend: str) -> None:
     assert results1["c"] == results2["c"], f"{backend}: Error patterns should be exactly reproducible with same seed"
 
     # Verify that we're actually getting some errors (not perfect Bell state)
-    count_00 = sum(1 for x in results1["c"] if x == "00")
-    count_11 = sum(1 for x in results1["c"] if x == "11")
+    count_00 = sum(1 for x in results1["c"] if int(x, 2) == 0)
+    count_11 = sum(1 for x in results1["c"] if int(x, 2) == 3)
     errors = shots - count_00 - count_11
 
     # With 20% error rates, we should see some errors
@@ -268,15 +283,33 @@ def test_custatevec_determinism() -> None:
     assert results1["c"] == results2["c"], "CuStateVec: Same seed should produce identical results"
 
 
+def _require_mps() -> None:
+    """Use the MPS dependency check for optional integration tests."""
+    try:
+        importlib.import_module("pecos.simulators.mps_pytket")
+    except ModuleNotFoundError as error:
+        if not error.name or error.name.split(".")[0] not in {"pytket", "cupy", "cuquantum"}:
+            raise
+        pytest.skip(f"MPS requires {error.name}")
+
+
+def test_mps_bell_statistics() -> None:
+    """Bell shots take fresh draws and the full stream is controlled by the seed."""
+    _require_mps()
+    shots = 200
+    first = HybridEngine(qsim="MPS").run(PHIR_BELL_STATE, shots=shots, seed=7)["c"]
+    outcomes = [int(x, 2) for x in first]
+    assert len(outcomes) == shots
+    assert set(outcomes) <= {0, 3}
+    for outcome in (0, 3):
+        assert outcomes.count(outcome) >= shots / 2 - 2 * sqrt(shots)
+    assert first == HybridEngine(qsim="MPS").run(PHIR_BELL_STATE, shots=shots, seed=7)["c"]
+    assert first != HybridEngine(qsim="MPS").run(PHIR_BELL_STATE, shots=shots, seed=42)["c"]
+
+
 def test_mps_determinism() -> None:
     """Test seed determinism for MPS simulator."""
-    try:
-        from pecos.simulators import MPS
-
-        if MPS is None:
-            pytest.skip("MPS not available")
-    except ImportError:
-        pytest.skip("MPS requires pytket")
+    _require_mps()
 
     seed = 7
     shots = 100

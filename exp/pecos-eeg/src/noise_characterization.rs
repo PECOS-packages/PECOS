@@ -144,12 +144,10 @@ impl NoiseCharacterization {
         });
 
         // DEM with fitted probabilities (uses mechanism noise for structure)
-        let num_dets = detectors.len();
+        let num_dets = detectors.iter().map(|det| det.id + 1).max().unwrap_or(0);
         let mut marginals = vec![0.0_f64; num_dets];
         for det in detectors {
-            if let Some(&p) = table.rates.get(&vec![det.id])
-                && det.id < num_dets
-            {
+            if let Some(&p) = table.rates.get(&vec![det.id]) {
                 marginals[det.id] = p;
             }
         }
@@ -343,5 +341,79 @@ impl NoiseCharacterization {
 
         j.push('}');
         j
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dem_mapping::{Detector, Observable};
+    use crate::expand::{expand_circuit, make_gate};
+    use crate::noise::UniformNoise;
+    use crate::stabilizer::StabilizerGroup;
+    use pecos_core::gate_type::GateType;
+    use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
+
+    #[test]
+    fn sparse_detector_ids_keep_exact_marginal_targets() {
+        let gates = [
+            make_gate(GateType::PZ, &[0, 1]),
+            make_gate(GateType::H, &[0, 1]),
+            make_gate(GateType::H, &[0, 1]),
+            make_gate(GateType::H, &[1]),
+            make_gate(GateType::H, &[1]),
+            make_gate(GateType::MZ, &[0]),
+            make_gate(GateType::MZ, &[1]),
+        ];
+        let expanded = expand_circuit(&gates).unwrap();
+        let detectors: Vec<Detector> = [(2, 1), (5, 0)]
+            .into_iter()
+            .map(|(id, record)| {
+                let mut stabilizer = crate::Bm::default();
+                stabilizer
+                    .z_bits
+                    .xor_bit(expanded.aux_qubit_for_record(record).unwrap());
+                Detector { id, stabilizer }
+            })
+            .collect();
+        let observables = [Observable {
+            id: 3,
+            pauli: detectors[0].stabilizer.clone(),
+        }];
+        let noise = UniformNoise {
+            p1: 0.05,
+            ..UniformNoise::coherent_only(0.0)
+        };
+        let initial_stab =
+            StabilizerGroup::from_circuit(&[make_gate(GateType::PZ, &[0, 1])], expanded.num_qubits);
+        let characterization = NoiseCharacterization::build(NoiseCharacterizationInput {
+            gates: &expanded.gates,
+            expansion_gates: &expanded.expansion_gates,
+            noise: &noise,
+            structure_noise: None,
+            detectors: &detectors,
+            observables: &observables,
+            initial_stab: &initial_stab,
+            num_qubits: expanded.num_qubits,
+            max_order: 2,
+            prune_threshold: 0.0,
+            detector_meas_ids: &[],
+            observable_meas_ids: &[],
+        });
+        for (id, hadamards) in [(5, 2), (2, 4)] {
+            let expected = (1.0 - (1.0 - 4.0 * noise.p1 / 3.0).powi(hadamards)) / 2.0;
+            let label = format!("D{id}");
+            let product: f64 = characterization
+                .mechanisms
+                .iter()
+                .filter(|mechanism| mechanism.detectors.contains(&label))
+                .map(|mechanism| 1.0 - 2.0 * mechanism.probability)
+                .product();
+            let marginal = (1.0 - product) / 2.0;
+            assert!(
+                (marginal - expected).abs() < 1e-5,
+                "{label}: {marginal} != {expected}"
+            );
+        }
     }
 }

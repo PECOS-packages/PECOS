@@ -15,6 +15,7 @@ from pecos_rslib.qec import (
     DagFaultAnalyzer,
     DemBuilder,
     DemSampler,
+    DemSamplerBuilder,
     DetectorErrorModel,
 )
 from pecos_rslib.quantum import Gate, GateType
@@ -429,3 +430,116 @@ def test_duplicate_ids_across_calls_fail_at_dag_conversion() -> None:
     tc.tick().mz_with_ids([1], [7])
     with pytest.raises(ValueError, match=r"reuses MeasId\(7\)"):
         tc.to_dag_circuit()
+
+
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+@pytest.mark.parametrize("record", [-3, 2, 5])
+def test_map_only_record_bounds(kind: str, record: int) -> None:
+    """Two measurements admit positions 0 and 1, never N or N+3."""
+    dag = DagCircuit()
+    dag.pz([0, 1])
+    dag.mz([0, 1])
+    im = DagFaultAnalyzer(dag).build_influence_map()
+    for builder_type in (DemBuilder, DemSamplerBuilder):
+        builder = builder_type(im)
+        getattr(builder, f"with_{kind}_json")(f'[{{"id":0,"records":[{record}]}}]')
+        with pytest.raises(ValueError, match=rf"record offset {record}.*out of range"):
+            builder.build()
+
+
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+@pytest.mark.parametrize(
+    ("references", "accepted"),
+    [
+        ('"records":[0]', True),
+        ('"records":[-2]', True),
+        ('"meas_ids":[17]', True),
+        ('"records":[0],"meas_ids":[17]', True),
+        ('"records":[0,1,0],"meas_ids":[17,17,9]', True),
+        ('"records":[0],"meas_ids":[9]', False),
+        ('"records":[0,0,1],"meas_ids":[17,9,9]', False),
+    ],
+)
+def test_map_only_stamped_reference_positions(kind: str, references: str, *, accepted: bool) -> None:
+    """Map position 0 has stamp 17; redundant forms compare multisets."""
+    from pecos.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().mz_with_ids([0, 1], [17, 9])
+    im = DagFaultAnalyzer(circuit.to_dag_circuit()).build_influence_map()
+    builder = DemBuilder(im)
+    getattr(builder, f"with_{kind}_json")(f'[{{"id":0,{references}}}]')
+    if accepted:
+        builder.build()
+    else:
+        with pytest.raises(
+            ValueError,
+            match="has both 'records' and 'meas_ids' but they reference different measurements",
+        ):
+            builder.build()
+
+
+def _two_measurement_map():
+    dag = DagCircuit()
+    dag.pz([0, 1])
+    dag.x([0])  # p1 noise only affects measurement 0.
+    dag.mz([0, 1])
+    return DagFaultAnalyzer(dag).build_influence_map()
+
+
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+@pytest.mark.parametrize(
+    ("ids", "message"),
+    [([0, 0], "duplicate.*id 0"), ([0, 2], r"ids \[0, 2\]"), ([1], r"ids \[1\]")],
+)
+def test_sampler_json_requires_dense_unique_ids(kind: str, ids: list[int], message: str) -> None:
+    import json
+
+    builder = DemSamplerBuilder(_two_measurement_map())
+    getattr(builder, f"with_{kind}_json")(json.dumps([{"id": idx, "records": [0]} for idx in ids]))
+    with pytest.raises(ValueError, match=message):
+        builder.build()
+
+
+def test_sampler_json_output_indices_are_declared_ids() -> None:
+    definitions = '[{"id":1,"records":[0]},{"id":0,"records":[1]}]'
+    sampler = (
+        DemSamplerBuilder(_two_measurement_map())
+        .with_noise(p1=0.3, p2=0.0, p_meas=0.0, p_prep=0.0)
+        .with_detectors_json(definitions)
+        .with_observables_json(definitions)
+        .build()
+    )
+    text = sampler.to_detector_error_model().to_string()
+    assert "D1 L1" in text
+    assert "D0" not in text
+    assert "L0" not in text
+    empty = DemSamplerBuilder(_two_measurement_map()).with_detectors_json("[]").with_observables_json("[]").build()
+    assert empty.num_detectors == 0
+
+
+@pytest.mark.parametrize("order", [[0], [0, 0]])
+def test_map_only_incomplete_measurement_order_is_rejected(order: list[int]) -> None:
+    for builder_type in (DemBuilder, DemSamplerBuilder):
+        builder = (
+            builder_type(_two_measurement_map())
+            .with_measurement_order(order)
+            .with_detectors_json('[{"id":0,"records":[-1]}]')
+        )
+        with pytest.raises(ValueError, match=r"1 of 2 measurement\(s\) uncovered"):
+            builder.build()
+
+
+@pytest.mark.parametrize("references", ['"meas_ids":[0]', '"records":[1],"meas_ids":[0]'])
+def test_sampler_json_resolves_stamps_after_measurement_order(references: str) -> None:
+    definitions = f'[{{"id":0,{references}}}]'
+    sampler = (
+        DemSamplerBuilder(_two_measurement_map())
+        .with_noise(p1=0.3, p2=0.0, p_meas=0.0, p_prep=0.0)
+        .with_detectors_json(definitions)
+        .with_observables_json(definitions)
+        .with_measurement_order([1, 0])
+        .build()
+    )
+    assert "D0 L0" in sampler.to_detector_error_model().to_string()

@@ -1,15 +1,10 @@
 """Test to understand HUGR 0.13 structure from guppylang."""
 
-import pytest
-
 
 def test_hugr_json_structure() -> None:
     """Examine HUGR structure from guppylang."""
-    try:
-        from guppylang import guppy
-        from guppylang.std.quantum import h, measure, qubit
-    except ImportError:
-        pytest.skip("guppylang not available")
+    from guppylang import guppy
+    from guppylang.std.quantum import h, measure, qubit
 
     @guppy
     def simple_circuit() -> bool:

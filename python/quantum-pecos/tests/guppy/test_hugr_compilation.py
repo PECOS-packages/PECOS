@@ -23,16 +23,11 @@ def _find_llvm_as() -> str | None:
     if "llvm_as" in _llvm_as_cache:
         return _llvm_as_cache["llvm_as"]
 
-    try:
-        from pecos_rslib import find_llvm_tool
+    from pecos_rslib import find_llvm_tool
 
-        llvm_as_path = find_llvm_tool("llvm-as")
-        _llvm_as_cache["llvm_as"] = llvm_as_path
-        return llvm_as_path
-    except ImportError:
-        # Fallback if pecos_rslib not available (shouldn't happen in normal tests)
-        _llvm_as_cache["llvm_as"] = None
-        return None
+    llvm_as_path = find_llvm_tool("llvm-as")
+    _llvm_as_cache["llvm_as"] = llvm_as_path
+    return llvm_as_path
 
 
 class TestHUGRCompilation:
@@ -141,10 +136,7 @@ attributes #0 = { "EntryPoint" }
 
     def test_python_api_availability(self) -> None:
         """Test Python API for HUGR compilation is available."""
-        try:
-            from pecos import get_guppy_backends
-        except ImportError as e:
-            pytest.skip(f"Python API not available: {e}")
+        from pecos import get_guppy_backends
 
         backends = get_guppy_backends()
 
@@ -162,12 +154,9 @@ attributes #0 = { "EntryPoint" }
 
     def test_compile_guppy_to_hugr_api(self) -> None:
         """Test the compile_guppy_to_hugr function."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.quantum import h, measure, qubit
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError as e:
-            pytest.skip(f"Required modules not available: {e}")
+        from guppylang import guppy
+        from guppylang.std.quantum import h, measure, qubit
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         @guppy
         def simple_circuit() -> bool:

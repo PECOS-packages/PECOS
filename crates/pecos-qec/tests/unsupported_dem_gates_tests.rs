@@ -1788,7 +1788,9 @@ fn rxyxy2q_non_clifford_dem_preflight_is_structured() {
 
 #[test]
 fn diagonal_gates_rejected_by_all_dem_families_and_fault_catalogs() {
-    use pecos_qec::fault_tolerance::fault_sampler::{FaultCatalog, symbolic_measurement_history};
+    use pecos_qec::fault_tolerance::fault_sampler::{
+        FaultCatalog, FaultCatalogError, symbolic_measurement_history,
+    };
     for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
         let gate = Gate::simple(
             gt,
@@ -1807,7 +1809,12 @@ fn diagonal_gates_rejected_by_all_dem_families_and_fault_catalogs() {
         );
         let mut tick = TickCircuit::new();
         tick.tick().try_add_gate(gate).unwrap();
-        assert_eq!(FaultCatalog::from_circuit(&tick).unwrap_err().gate_type, gt);
+        let FaultCatalogError::UnsupportedGate(err) =
+            FaultCatalog::from_circuit(&tick).unwrap_err()
+        else {
+            panic!("expected an unsupported-gate error for {gt:?}");
+        };
+        assert_eq!(err.gate_type, gt);
         assert!(symbolic_measurement_history(&tick).is_err());
     }
 }

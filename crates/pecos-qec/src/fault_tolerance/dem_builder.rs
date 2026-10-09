@@ -99,7 +99,7 @@ pub use equivalence::{
 pub use mem_builder::MemBuilder;
 pub use sampler::{
     DemSampler, DemSamplerBuilder, DetectorValidationError, DualSampleResult, OutputMode,
-    SamplerLabels,
+    SampleShotsError, SamplerLabels,
 };
 pub use slice::{
     ComposedDem, ComposedDetectorAddress, DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind,

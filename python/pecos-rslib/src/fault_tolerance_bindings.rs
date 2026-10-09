@@ -2775,9 +2775,7 @@ impl PyDetectorErrorModel {
 
     /// Build a `DemSampler` directly from this DEM — no string round-trip.
     fn to_sampler(&self) -> PyResult<PyDemSampler> {
-        use pecos_qec::fault_tolerance::dem_builder::DemSampler;
-
-        let inner = DemSampler::from_detector_error_model(&self.inner);
+        let inner = self.inner.to_sampler();
         Ok(PyDemSampler { inner })
     }
 
@@ -3302,9 +3300,17 @@ impl PySampleBatch {
         num_shots: usize,
         seed: Option<u64>,
     ) -> Self {
-        Self {
-            samples: SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+        Self::from_samples(
+            SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
                 .expect("sampler columns match the shot count"),
+            seed,
+        )
+    }
+
+    /// Wrap validated detector events with their resolved sampling seed.
+    fn from_samples(samples: SampleBatch, seed: Option<u64>) -> Self {
+        Self {
+            samples,
             raw_measurements: false,
             seed,
             dem: None,
@@ -4289,8 +4295,11 @@ impl PyDemSampler {
                 Some(actual_seed),
             );
         }
-        let (det_columns, obs_columns) = self.inner.sample_batch_geometric(num_shots, &mut rng);
-        PySampleBatch::from_columnar(det_columns, obs_columns, num_shots, Some(actual_seed))
+        let samples = self
+            .inner
+            .sample_shots(num_shots, &mut rng)
+            .expect("raw-measurement mode returned above, so detector sampling cannot fail");
+        PySampleBatch::from_samples(samples, Some(actual_seed))
     }
 
     /// Sample multiple shots and XOR a known Pauli-frame mask into the outputs.

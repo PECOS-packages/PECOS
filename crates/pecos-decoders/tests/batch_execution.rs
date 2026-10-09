@@ -11,7 +11,7 @@
 // the License.
 
 //! Backend-independent contracts for the public batch executor.
-use pecos_decoder_core::obs_mask::ObsMask;
+use pecos_decoders::ObsMask;
 use pecos_decoders::batch::{
     BatchDecodeError, DecodeOptions, DecoderFactory, ExecutionPath, SampleBatch,
 };
@@ -555,6 +555,15 @@ fn syndrome_rejects_every_out_of_range_shot() {
 }
 
 #[test]
+fn row_constructor_accepts_borrowed_row_slices() {
+    // Callers holding borrowed rows must not have to allocate owned vectors.
+    let rows: [&[u8]; 2] = [&[1, 0], &[0, 3]];
+    let batch = SampleBatch::from_row_major(&rows, &[ObsMask::new(), ObsMask::new()], 0).unwrap();
+    let syndromes: Vec<_> = batch.shots().map(|shot| shot.syndrome).collect();
+    assert_eq!(syndromes, vec![vec![1, 0], vec![0, 1]]);
+}
+
+#[test]
 fn syndrome_rejects_a_short_buffer_even_without_set_detectors() {
     // All detectors are clear, so a missing length check would index nothing
     // out of bounds and silently return a truncated syndrome.
@@ -567,7 +576,7 @@ fn syndrome_rejects_a_short_buffer_even_without_set_detectors() {
         .or_else(|| panic.downcast_ref::<&str>().copied());
     assert_eq!(
         message,
-        Some("syndrome buffer has 1 bytes but the batch has 3 detectors")
+        Some("syndrome buffer length 1 is smaller than the detector count 3")
     );
 }
 

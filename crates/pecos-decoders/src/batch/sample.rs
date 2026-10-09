@@ -183,7 +183,7 @@ impl SampleBatch {
         );
         assert!(
             buf.len() >= self.num_detectors(),
-            "syndrome buffer has {} bytes but the batch has {} detectors",
+            "syndrome buffer length {} is smaller than the detector count {}",
             buf.len(),
             self.num_detectors()
         );

@@ -145,4 +145,4 @@ See the [Development Guide](docs/development/DEVELOPMENT.md) to get started cont
 
 ---
 
-[![Quantinuum](./images/Quantinuum_(word_trademark).svg)](https://www.quantinuum.com/)
+[![Quantinuum](<./images/Quantinuum_(word_trademark).svg>)](https://www.quantinuum.com/)

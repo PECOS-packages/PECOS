@@ -480,7 +480,7 @@ hyperedges such as bp_osd or tesseract.
 ```
 
 Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
+`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- alternatively, supply a
 decomposed projection (a model written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,

@@ -14,7 +14,7 @@ The stages are:
 5. Decode the samples and compute logical error rates
 
 Each stage builds on the previous one; the code blocks form a single script when
-read in order.
+read in order within each language.
 
 ## 1. Define the code in Guppy
 
@@ -189,6 +189,28 @@ source_graphlike_text = dem.to_string_source_graphlike_decomposed()
 assert all("error(" in text for text in (raw_text, terminal_graphlike_text, source_graphlike_text))
 ```
 
+<div hidden>
+
+<!--continuation-->
+```python
+from pathlib import Path
+
+_orig_cwd = Path.cwd()
+for text, filename in (
+    (raw_text, "guppy_dem_decoding.dem"),
+    (terminal_graphlike_text, "guppy_dem_decoding_graphlike.dem"),
+):
+    fixture = _orig_cwd / "docs/assets/test-data" / filename
+    # The fixture is a text file, so it ends with one newline the DEM text lacks.
+    assert fixture.read_text() == text + "\n", f"Stage 3 DEM changed: regenerate {fixture}"
+```
+
+</div>
+
+The program-to-DEM steps (stages 1–3) and program simulation (stage 4b) are
+Python-only for now. The Rust tabs start from the DEM text stage 3 produces,
+shipped with this page as `docs/assets/test-data/guppy_dem_decoding.dem`.
+
 ## 4a. Sample the DEM
 
 `to_sampler()` draws detector events and observable flips directly from the
@@ -196,18 +218,48 @@ error model, without simulating the circuit. `get_syndrome()` returns one shot's
 detector bits and `get_observable_flips()` the actual logical flips that shot
 incurred — the ground truth that decoder predictions are scored against.
 
-<!--continuation-->
-```python
-sampler = dem.to_sampler()
-batch = sampler.sample_batch(2000, seed=1)
+=== ":fontawesome-brands-python: Python"
 
-assert batch.num_shots == 2000
-for shot in range(2):
-    syndrome = batch.get_syndrome(shot)
-    observable_mask = batch.get_observable_flips(shot).mask
-    assert len(syndrome) == dem.num_detectors
-    print(f"shot {shot}: syndrome={syndrome}, observable_mask={observable_mask}")
-```
+    <!--continuation-->
+    ```python
+    sampler = dem.to_sampler()
+    batch = sampler.sample_batch(2000, seed=1)
+
+    assert batch.num_shots == 2000
+    for shot in range(2):
+        syndrome = batch.get_syndrome(shot)
+        observable_mask = batch.get_observable_flips(shot).mask
+        assert len(syndrome) == dem.num_detectors
+        print(f"shot {shot}: syndrome={syndrome}, observable_mask={observable_mask}")
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--test-data: guppy_dem_decoding.dem-->
+    ```rust
+    use pecos_decoders::batch::SampleBatch;
+    use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
+    use pecos_random::PecosRng;
+
+    let raw_text = std::fs::read_to_string("guppy_dem_decoding.dem")?;
+    let sampler = ParsedDem::parse(&raw_text)?.to_dem_sampler();
+    let mut rng = PecosRng::seed_from_u64(1);
+    let batch: SampleBatch = sampler.sample_shots(2000, &mut rng)?;
+
+    assert_eq!(batch.num_shots(), 2000);
+    assert_eq!(batch.num_detectors(), 6);
+    for (index, shot) in batch.shots().take(2).enumerate() {
+        assert_eq!(shot.syndrome.len(), batch.num_detectors());
+        println!(
+            "shot {index}: syndrome={:?}, observable_flips={:?}",
+            shot.syndrome, shot.observable_flips
+        );
+    }
+    ```
+
+Rust uses `sample_shots` because `sample_batch` returns rows; its sampler is
+built from the DEM text, so its shots are not guaranteed to match the Python
+tab shot for shot.
 
 ## 4b. Or generate shots by simulating the program
 
@@ -298,55 +350,101 @@ decoders. A shot counts as a logical error when the predicted observable flip
 disagrees with the flip the sample actually carried. The
 returned `DecodeResult` supplies the aggregate count and rate directly.
 
-<!--continuation-->
-```python
-from pecos.decoders import bp_osd, bp_trellis, frontier, pymatching, tesseract
+=== ":fontawesome-brands-python: Python"
 
-pymatching_result = batch.decode(
-    terminal_graphlike_text,
-    pymatching(correlated=True),
-)
-tesseract_result = batch.decode(
-    source_graphlike_text,
-    tesseract(preset="fast", pqlimit=50_000),
-    workers=None,
-)
-bp_osd_result = batch.decode(
-    raw_text,
-    bp_osd(max_iter=10, osd_order=1),
-    workers=None,
-)
-frontier_result = batch.decode(
-    raw_text,
-    frontier(k=64),
-    workers=4,
-    predictions=True,
-)
-bp_trellis_result = batch.decode(
-    raw_text,
-    bp_trellis(k=8, escalation=[(64, 100.0)]),
-    workers=4,
-    predictions=True,
-)
+    <!--continuation-->
+    ```python
+    from pecos.decoders import bp_osd, bp_trellis, frontier, pymatching, tesseract
 
-assert frontier_result.execution_path == bp_trellis_result.execution_path == "parallel"
-assert frontier_result.workers_used == bp_trellis_result.workers_used == 4
-assert len(frontier_result.predictions) == len(bp_trellis_result.predictions) == batch.num_shots
+    pymatching_result = batch.decode(
+        terminal_graphlike_text,
+        pymatching(correlated=True),
+    )
+    tesseract_result = batch.decode(
+        source_graphlike_text,
+        tesseract(preset="fast", pqlimit=50_000),
+        workers=None,
+    )
+    bp_osd_result = batch.decode(
+        raw_text,
+        bp_osd(max_iter=10, osd_order=1),
+        workers=None,
+    )
+    frontier_result = batch.decode(
+        raw_text,
+        frontier(k=64),
+        workers=4,
+        predictions=True,
+    )
+    bp_trellis_result = batch.decode(
+        raw_text,
+        bp_trellis(k=8, escalation=[(64, 100.0)]),
+        workers=4,
+        predictions=True,
+    )
 
-decoder_results = {
-    "pymatching": pymatching_result,
-    "tesseract": tesseract_result,
-    "bp_osd": bp_osd_result,
-    "frontier": frontier_result,
-    "bp_trellis": bp_trellis_result,
-}
+    assert frontier_result.execution_path == bp_trellis_result.execution_path == "parallel"
+    assert frontier_result.workers_used == bp_trellis_result.workers_used == 4
+    assert len(frontier_result.predictions) == len(bp_trellis_result.predictions) == batch.num_shots
 
-print("DEM-sampled shots")
-for name, result in decoder_results.items():
-    assert 0 < result.num_errors < batch.num_shots
-    print(f"{name:11} {result.num_errors:5}   {result.logical_error_rate:.4%}")
-    print(f"{name} execution path: {result.execution_path}")
-```
+    decoder_results = {
+        "pymatching": pymatching_result,
+        "tesseract": tesseract_result,
+        "bp_osd": bp_osd_result,
+        "frontier": frontier_result,
+        "bp_trellis": bp_trellis_result,
+    }
+
+    print("DEM-sampled shots")
+    for name, result in decoder_results.items():
+        assert 0 < result.num_errors < batch.num_shots
+        print(f"{name:11} {result.num_errors:5}   {result.logical_error_rate:.4%}")
+        print(f"{name} execution path: {result.execution_path}")
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--continuation test-data: guppy_dem_decoding_graphlike.dem-->
+    ```rust
+    use pecos_decoders::batch::{DecodeOptions, DecodeResult, ExecutionPath};
+    use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
+    use pecos_decoders::{DecoderSpec, ObsMask};
+
+    let terminal_graphlike_text =
+        std::fs::read_to_string("guppy_dem_decoding_graphlike.dem")?;
+    let pymatching = DecoderSpec::PyMatching(PyMatchingConfig {
+        correlated: true,
+        ..Default::default()
+    });
+    let bp_osd = DecoderSpec::BpOsd(BpOsdConfig {
+        max_iter: 10,
+        osd_order: 1,
+        ..Default::default()
+    });
+
+    let pymatching_result: DecodeResult = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let options = DecodeOptions::default().workers(4).predictions(true);
+    let bp_osd_result: DecodeResult = batch.decode_with(&raw_text, &bp_osd, &options)?;
+
+    assert_eq!(pymatching_result.execution_path, ExecutionPath::NativeBatch);
+    assert_eq!(pymatching_result.workers_used, 1);
+    assert_eq!(bp_osd_result.execution_path, ExecutionPath::Parallel);
+    assert_eq!(bp_osd_result.workers_used, 4);
+    let predictions: &[ObsMask] = bp_osd_result.predictions.as_deref()
+        .ok_or("BP+OSD predictions were requested but not returned")?;
+    assert_eq!(predictions.len(), batch.num_shots());
+
+    for (name, result) in [("pymatching", &pymatching_result), ("bp_osd", &bp_osd_result)] {
+        assert_eq!(result.num_shots, batch.num_shots());
+        assert!(0 < result.num_errors && result.num_errors < result.num_shots);
+        println!("{name:11} {:5}   {:.4}%", result.num_errors, 100.0 * result.logical_error_rate());
+    }
+    ```
+
+In Rust, Tesseract follows the same pattern through `DecoderSpec::Tesseract`
+(with the `pecos-decoders` `tesseract` feature). Frontier and BP-Trellis batch
+decoding is Python-only for now; stage 6 shows the Rust Frontier decoder used
+directly.
 
 `frontier` and `bp_trellis` are experimental: importing them from
 `pecos.decoders` loads the optional `pecos-rslib-exp` package, which must be
@@ -420,6 +518,10 @@ in this example; Tesseract uses the source-informed decomposition chosen above.
     when you need per-shot confidence data; that data is not returned by
     `batch.decode(...)`.
 
+The Rust tab uses `pecos-frontier`, an experimental crate that is not published
+on crates.io. `TrellisOrdering::Deadline.resolve` computes the deadline column
+order used by Python's default `FrontierDecoder.from_dem` configuration.
+
 Every decoder in stage 5 answers "which observables flipped?". None of them
 reports how close the call was. The experimental Frontier and BP-Trellis
 decoders add a **complementary gap**: the log-probability margin between the
@@ -432,29 +534,61 @@ rather than a confidence; the gap is `None` whenever fewer than two logical
 classes survive to the end, which can happen on a fully exact decode too, so a
 missing gap is not a pruning signal.
 
-<!--continuation-->
-```python
-from pecos_rslib_exp import FrontierDecoder
+=== ":fontawesome-brands-python: Python"
 
-frontier_decoder = FrontierDecoder.from_dem(raw_text)
-results = [frontier_decoder.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
+    <!--continuation-->
+    ```python
+    from pecos_rslib_exp import FrontierDecoder
 
-assert all(result.status == "exact" for result in results)
-gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]
+    frontier_decoder = FrontierDecoder.from_dem(raw_text)
+    results = [frontier_decoder.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
 
-least_confident = min(gaps)
-assert least_confident >= 0.0
-print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
-```
+    assert all(result.status == "exact" for result in results)
+    gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]
 
-Because the gap is a per-shot quantity, a threshold on it partitions the run
-into a confident majority and a tail worth treating differently:
+    least_confident = min(gaps)
+    assert least_confident >= 0.0
+    print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
+    ```
 
-<!--continuation-->
-```python
-confident = [gap for gap in gaps if gap >= 1.0]
-print(f"{len(confident)}/{len(gaps)} shots decoded with gap >= 1.0")
-```
+    Because the gap is a per-shot quantity, a threshold on it partitions the run
+    into a confident majority and a tail worth treating differently:
+
+    <!--continuation-->
+    ```python
+    confident = [gap for gap in gaps if gap >= 1.0]
+    print(f"{len(confident)}/{len(gaps)} shots decoded with gap >= 1.0")
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    <!--continuation-->
+    ```rust
+    use pecos_frontier::{
+        FrontierConfig, FrontierDecoder, FrontierStatus, SparseDem, TrellisOrdering,
+    };
+
+    // Match Python's default column_order="deadline_reorder" explicitly.
+    let sparse_dem = SparseDem::from_dem_str(&raw_text)?;
+    let config = FrontierConfig {
+        column_order: TrellisOrdering::Deadline.resolve(&sparse_dem)?,
+        ..Default::default()
+    };
+    let mut frontier_decoder = FrontierDecoder::from_dem_str(&raw_text, config)?;
+    let results = batch.shots().take(200)
+        .map(|shot| frontier_decoder.decode(&shot.syndrome))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    assert_eq!(results.len(), 200);
+    assert!(results.iter().all(|result| result.status == FrontierStatus::Exact));
+    let gaps: Vec<f64> = results.iter().filter_map(|result| result.runner_up_gap).collect();
+    let least_confident = gaps.iter().copied().reduce(f64::min)
+        .ok_or("No shots returned a runner-up gap")?;
+    assert!(least_confident >= 0.0);
+    println!("least confident of {} shots: gap={least_confident:.3}", gaps.len());
+    let confident = gaps.iter().filter(|&&gap| gap >= 1.0).count();
+    println!("{confident}/{} shots decoded with gap >= 1.0", gaps.len());
+    ```
 
 Frontier consumes the raw model directly, so unlike the matching decoders it
 needs no graph-like projection — `raw_text` rather than

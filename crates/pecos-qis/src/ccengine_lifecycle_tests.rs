@@ -241,5 +241,34 @@ fn certified_results_repeat_and_successful_reset_returns_idle() {
     engine.reset_all().unwrap();
     assert_eq!(engine.shot_lifecycle, ShotLifecycle::Idle);
     assert!(engine.get_results().unwrap().data.is_empty());
-    assert_eq!(engine.clone().shot_lifecycle, ShotLifecycle::Idle);
+}
+
+#[test]
+fn clones_of_finalized_and_failed_engines_start_idle() {
+    let runtime = StartupRuntime::default();
+    let fail = Arc::clone(&runtime.fail);
+    let mut engine = QisEngine::new(Box::new(StartupInterface::default()), Box::new(runtime));
+    finish_empty_shot(&mut engine);
+    engine.measurement_results.insert(7, 1);
+    let finalized_clone = engine.clone();
+    assert_eq!(finalized_clone.shot_lifecycle, ShotLifecycle::Idle);
+    assert!(finalized_clone.get_results().unwrap().data.is_empty());
+
+    fail.store(true, Ordering::SeqCst);
+    assert!(engine.start(()).is_err());
+    assert!(matches!(engine.shot_lifecycle, ShotLifecycle::Failed(_)));
+    let failed_clone = engine.clone();
+    assert_eq!(failed_clone.shot_lifecycle, ShotLifecycle::Idle);
+    assert!(failed_clone.get_results().unwrap().data.is_empty());
+
+    engine.reset_failure = Some("latched reset failure".into());
+    let reset_failed_clone = engine.clone();
+    assert_eq!(reset_failed_clone.shot_lifecycle, ShotLifecycle::Idle);
+    assert!(
+        reset_failed_clone
+            .get_results()
+            .unwrap_err()
+            .to_string()
+            .contains("latched reset failure")
+    );
 }

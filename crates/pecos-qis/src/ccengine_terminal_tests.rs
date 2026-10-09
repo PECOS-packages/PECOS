@@ -1980,3 +1980,39 @@ fn scheduled_remeasured_slot_reads_and_records_latest_outcome() {
         }
     }
 }
+
+#[test]
+fn soft_rz_large_scheduled_gate_only_tail_completes() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = br"
+        declare void @__quantum__qis__x__body(i64)
+        define i64 @qmain(i64 %shot) {
+        entry:
+            br label %loop
+        loop:
+            %i = phi i64 [0, %entry], [%next, %loop]
+            call void @__quantum__qis__x__body(i64 0)
+            %next = add i64 %i, 1
+            %more = icmp ult i64 %next, 8192
+            br i1 %more, label %loop, label %done
+        done:
+            ret i64 0
+        }
+    ";
+    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(crate::selene_soft_rz_runtime().unwrap()),
+        );
+        engine.set_num_qubits_hint(2);
+        engine.scheduled_transport = mode;
+        engine
+            .load_program(source, ProgramFormat::LlvmIrText)
+            .unwrap();
+        let mut quantum = deferred_read_quantum(mode);
+        let stage = engine.start(()).unwrap();
+        finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
+        assert_eq!(engine.scheduled_drain_round, 2);
+        assert!(engine.get_results().is_ok());
+    }
+}

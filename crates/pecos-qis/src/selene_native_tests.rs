@@ -1241,15 +1241,12 @@ mod measurement_followups {
             runtime
                 .lower_scheduled_operations(&[Operation::AllocateQubit { id: 0 }])
                 .unwrap();
-            PAD.set(crate::scheduled::MAX_DRAIN_BATCHES + 1);
-            let error = runtime
-                .drain_pending_scheduled_operations()
-                .unwrap_err()
-                .to_string();
-            assert!(
-                error.contains("aggregate batch/operation budget exceeded"),
-                "{error}"
-            );
+            PAD.set((pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / 80 + 1);
+            let Err(error) = runtime.drain_pending_scheduled_operations() else {
+                panic!("oversized native drain must fail");
+            };
+            let error = error.to_string();
+            assert!(error.contains("event transport limit"), "{error}");
             assert_eq!(
                 runtime
                     .drain_pending_scheduled_operations()
@@ -1258,5 +1255,53 @@ mod measurement_followups {
                 error
             );
         });
+    }
+}
+
+#[test]
+fn shot_end_rejects_undelivered_native_measurements() {
+    for route in Route::ALL {
+        let mut runtime = start(crate::selene_runtimes::selene_simple_runtime().unwrap(), 1);
+        let ops = route.lower(&mut runtime, &[QuantumOp::Measure(0, 7).into()]);
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, QuantumOp::Measure(..)))
+                .count(),
+            1
+        );
+        match route {
+            Route::Scheduled => {
+                runtime.drain_pending_scheduled_operations().unwrap();
+            }
+            _ => {
+                runtime.drain_pending_operations().unwrap();
+            }
+        }
+        let error = runtime.shot_end().unwrap_err().to_string();
+        assert!(
+            error.contains("native measurements awaiting outcomes"),
+            "{error}"
+        );
+        assert_eq!(runtime.shot_end().unwrap_err().to_string(), error);
+        assert_eq!(
+            runtime
+                .provide_measurement_outcomes(vec![(7, 0)])
+                .unwrap_err()
+                .to_string(),
+            error
+        );
+        runtime.reset().unwrap();
+        runtime.shot_start(1, Some(7)).unwrap();
+        route.lower(&mut runtime, &[QuantumOp::Measure(0, 7).into()]);
+        runtime.provide_measurement_outcomes(vec![(7, 1)]).unwrap();
+        match route {
+            Route::Scheduled => {
+                runtime.drain_pending_scheduled_operations().unwrap();
+            }
+            _ => {
+                runtime.drain_pending_operations().unwrap();
+            }
+        }
+        assert!(runtime.shot_end().unwrap().measurements[&7]);
     }
 }

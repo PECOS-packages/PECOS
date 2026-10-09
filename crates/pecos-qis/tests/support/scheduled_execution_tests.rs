@@ -11,6 +11,7 @@ use std::sync::{
 #[derive(Clone, Default)]
 struct Fixture {
     state: ClassicalState,
+    delivered: Arc<std::sync::Mutex<Vec<(usize, u32)>>>,
     batches: VecDeque<Vec<ScheduledBatch>>,
     fail_feedback: bool,
     panic_feedback: bool,
@@ -35,6 +36,7 @@ impl QisRuntime for Fixture {
                 "synthetic feedback failure".into(),
             ));
         }
+        self.delivered.lock().unwrap().extend(m.iter().copied());
         for (id, value) in m {
             self.provide_measurements(BTreeMap::from([(id, value != 0)]))?;
         }
@@ -926,10 +928,10 @@ fn per_batch_execution_accepts_reused_program_slots_but_rejects_duplicate_native
         for duplicate_program in [false, true] {
             let mut first = batch(0, vec![pulse()]);
             measurement(&mut first, 40);
-            let mut second = batch(1, vec![]);
+            let mut second = batch(1, vec![pulse()]);
             measurement(&mut second, if duplicate_program { 40 } else { 41 });
             if duplicate_program {
-                second.operations[0] = RuntimeScheduledOp::Measure {
+                second.operations[1] = RuntimeScheduledOp::Measure {
                     qubit_id: 0,
                     result_id: 902,
                 };
@@ -939,6 +941,7 @@ fn per_batch_execution_accepts_reused_program_slots_but_rejects_duplicate_native
                 batches: VecDeque::from([vec![first, second]]),
                 ..Default::default()
             };
+            let delivered = Arc::clone(&fixture.delivered);
             let mut executor = if idle {
                 ScheduledExecutor::with_idle_z(
                     Box::new(fixture),
@@ -954,7 +957,10 @@ fn per_batch_execution_accepts_reused_program_slots_but_rejects_duplicate_native
             };
             executor.start_shot(context(0), 7, 2).unwrap();
             if duplicate_program {
-                assert!(executor.submit(&[]).unwrap().measurements.contains_key(&40));
+                let result = executor.submit(&[]).unwrap();
+                assert_eq!(*delivered.lock().unwrap(), [(40, 1), (40, 0)]);
+                assert_eq!(result.measurements[&40], 0);
+                assert!(!executor.runtime.get_classical_state().measurements[&40]);
                 continue;
             }
             assert!(

@@ -618,12 +618,11 @@ pub fn execute_pending_and_get_results() -> bool {
 
 /// Enable dynamic mode on an explicit context.
 ///
-/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call.
+/// No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_enable_dynamic_mode_with_context(ctx: *mut ExecutionContext) -> i32 {
     // SAFETY: The caller keeps the context alive.
@@ -650,12 +649,11 @@ pub unsafe extern "C" fn pecos_enable_dynamic_mode_with_context(ctx: *mut Execut
 
 /// Disable dynamic mode on an explicit context.
 ///
-/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call.
+/// No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_disable_dynamic_mode_with_context(
     ctx: *mut ExecutionContext,
@@ -677,12 +675,11 @@ pub unsafe extern "C" fn pecos_disable_dynamic_mode_with_context(
 
 /// Signal result ready on an explicit context.
 ///
-/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call.
+/// No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_signal_result_ready_with_context(ctx: *mut ExecutionContext) -> i32 {
     // SAFETY: The caller keeps the context alive.
@@ -702,11 +699,11 @@ pub unsafe extern "C" fn pecos_signal_result_ready_with_context(ctx: *mut Execut
 /// Set measurement result on an explicit context.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure.
+/// and 3 for an unrepresentable result ID.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call.
+/// No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_set_measurement_result_with_context(
     ctx: *mut ExecutionContext,
@@ -720,11 +717,11 @@ pub unsafe extern "C" fn pecos_set_measurement_result_with_context(
 /// Set measurement outcome on an explicit context.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure.
+/// and 3 for an unrepresentable result ID or an outcome greater than 2.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call.
+/// No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_set_measurement_outcome_with_context(
     ctx: *mut ExecutionContext,
@@ -756,12 +753,12 @@ pub unsafe extern "C" fn pecos_set_measurement_outcome_with_context(
 
 /// Wait for need result on an explicit context.
 ///
-/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure. Output is `u64::MAX` on timeout or completion.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
+/// Output is `u64::MAX` on timeout or completion.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call. The output pointer
+/// must be non-null, valid and writable. No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_wait_for_need_result_with_context(
     ctx: *mut ExecutionContext,
@@ -804,13 +801,13 @@ pub unsafe extern "C" fn pecos_wait_for_need_result_with_context(
 
 /// Get pending operations on an explicit context.
 ///
-/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure. An empty queue returns an allocated empty collector.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
+/// An empty queue returns an allocated empty collector.
 /// Free the output with `pecos_free_operations`.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call. The output pointer
+/// must be non-null, valid and writable. No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_get_pending_operations_with_context(
     ctx: *mut ExecutionContext,
@@ -843,8 +840,8 @@ pub unsafe extern "C" fn pecos_get_pending_operations_with_context(
 /// Free the output with `pecos_free_named_results_json`.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call. The output pointer
+/// must be non-null, valid and writable. No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_get_named_results_json_with_context(
     ctx: *mut ExecutionContext,
@@ -884,8 +881,8 @@ pub unsafe extern "C" fn pecos_get_named_results_json_with_context(
 /// Free the output with `pecos_free_named_results_json`.
 ///
 /// # Safety
-/// A non-null context must remain live throughout the call. Any output pointer
-/// must be valid and writable. No thread-local registration is consulted.
+/// A non-null context must remain live throughout the call. The output pointer
+/// must be non-null, valid and writable. No thread-local registration is consulted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_get_named_result_traces_json_with_context(
     ctx: *mut ExecutionContext,
@@ -974,7 +971,10 @@ pub extern "C" fn pecos_disable_dynamic_mode() {
     unsafe { pecos_disable_dynamic_mode_with_context(ctx) };
 }
 
-/// Check if a result is needed (called by main thread to check if worker is waiting)
+/// Query the calling thread's registered context for a pending result request.
+///
+/// Legacy TLS query. Hosts use `pecos_wait_for_need_result_with_context`;
+/// `QisEngine` hosts do not register a context in TLS.
 ///
 /// Returns the result ID being waited for, or `u64::MAX` if no result is needed
 /// or no execution context is registered.
@@ -995,7 +995,7 @@ pub extern "C" fn pecos_check_need_result() -> u64 {
     u64::MAX
 }
 
-/// Wait for a result to be needed or worker to complete (called by main thread)
+/// Wait for a result request or completion on the calling thread's TLS context.
 ///
 /// Blocks until the worker thread needs a measurement result OR completes.
 /// Returns the result ID that is needed, or `u64::MAX` if worker completed,
@@ -1012,7 +1012,10 @@ pub extern "C" fn pecos_wait_for_need_result(timeout_ms: u64) -> u64 {
     result
 }
 
-/// Check if worker has completed
+/// Query worker completion on the calling thread's registered context.
+///
+/// Legacy TLS query. `QisEngine` hosts track completion through their worker
+/// channel and do not register a context in TLS.
 ///
 /// Returns false if no execution context is registered.
 ///
@@ -1030,7 +1033,7 @@ pub extern "C" fn pecos_is_worker_complete() -> bool {
     false
 }
 
-/// Signal that a measurement result is ready (called by main thread after simulation)
+/// Signal result readiness on the calling thread's TLS context.
 ///
 /// If no execution context is registered, this is a no-op and logs a warning.
 ///
@@ -1251,7 +1254,7 @@ pub fn get_measurement_result(result_id: u64) -> Option<bool> {
     }
 }
 
-/// Set a measurement result via FFI (called by main thread after simulation)
+/// Set a measurement result on the calling thread's TLS context.
 ///
 /// This stores in the execution context so worker thread can access it.
 /// If no execution context is registered, this is a no-op.

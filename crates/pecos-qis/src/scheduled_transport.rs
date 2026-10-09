@@ -49,21 +49,32 @@ pub(crate) fn encode_mode(
         ScheduledTransport::V4 => encode_v4(batches, shot),
     }
 }
-fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
-    use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
-    // Before conversion allocations, including for custom QisRuntime implementations.
-    let mut size = 16usize;
-    for batch in batches {
-        if batch.operations.len() > MAX_BATCH_OPERATIONS
-            || batch.measurements.len() > batch.operations.len()
-        {
+/// Incremental accounting shared by transport admission and forced native drains.
+/// Includes framing, operation records, measurement triples, and custom payloads.
+pub(crate) struct EventBudget {
+    size: usize,
+}
+impl Default for EventBudget {
+    fn default() -> Self {
+        Self { size: 16 }
+    }
+}
+impl EventBudget {
+    pub(crate) fn charge(
+        &mut self,
+        operations: &[Op],
+        measurements: usize,
+    ) -> Result<(), PecosError> {
+        use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
+        if operations.len() > MAX_BATCH_OPERATIONS || measurements > operations.len() {
             return Err(error("scheduled event operation count limit"));
         }
         let mut payload = 0usize;
-        size = size
-            .checked_add(80 + batch.measurements.len() * 24)
+        self.size = self
+            .size
+            .checked_add(80 + measurements * 24)
             .ok_or_else(|| error("event transport overflow"))?;
-        for op in &batch.operations {
+        for op in operations {
             let bytes = if let Op::Custom { data, .. } = op {
                 payload = payload
                     .checked_add(data.len())
@@ -75,13 +86,22 @@ fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
             } else {
                 40
             };
-            size = size
+            self.size = self
+                .size
                 .checked_add(bytes)
                 .ok_or_else(|| error("event transport overflow"))?;
         }
-        if size > pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES {
+        if self.size > pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES {
             return Err(error("event transport limit"));
         }
+        Ok(())
+    }
+}
+fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
+    // Before conversion allocations, including for custom QisRuntime implementations.
+    let mut budget = EventBudget::default();
+    for batch in batches {
+        budget.charge(&batch.operations, batch.measurements.len())?;
     }
     Ok(())
 }

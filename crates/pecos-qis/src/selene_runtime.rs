@@ -7,8 +7,8 @@ use crate::runtime::{
     ClassicalState, QisRuntime, Result, RuntimeError, Shot, for_each_quantum_qubit,
 };
 use crate::scheduled::{
-    DrainBudget, MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch,
-    ScheduledMeasurement, ScheduledOutput,
+    MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch, ScheduledMeasurement,
+    ScheduledOutput,
 };
 use crate::selene_native::{NativeOp, RuntimeInput, classify};
 pub use crate::selene_native::{RuntimeNativeGate, RuntimeNativeGateSet};
@@ -390,8 +390,8 @@ pub struct SeleneRuntime {
     /// Program qubit handles mapped onto runtime qubit handles returned by qalloc.
     program_to_runtime_qubits: BTreeMap<usize, u64>,
 
-    /// Program result IDs mapped onto runtime future IDs returned by measure.
-    program_to_runtime_results: BTreeMap<usize, u64>,
+    /// Program slots allocated by native measurement, including delivered slots.
+    native_result_slots: BTreeSet<usize>,
 
     /// Native future to program slot and source leakage kind, retained through scheduling.
     runtime_to_program_results: BTreeMap<u64, (usize, bool)>,
@@ -525,7 +525,7 @@ impl SeleneRuntime {
             needs_reexecution: false,
             pending_measurements: Vec::new(),
             program_to_runtime_qubits: BTreeMap::new(),
-            program_to_runtime_results: BTreeMap::new(),
+            native_result_slots: BTreeSet::new(),
             runtime_to_program_results: BTreeMap::new(),
             emitted_measurements: BTreeMap::new(),
             last_gate_time_end_nanos: Vec::new(),
@@ -800,7 +800,7 @@ impl SeleneRuntime {
                 self.state.measurements.insert(*result_id, *value == 1);
             }
 
-            if self.program_to_runtime_results.contains_key(result_id)
+            if self.native_result_slots.contains(result_id)
                 || self.emitted_measurements.contains_key(result_id)
             {
                 let (runtime_result_id, leakage_aware) = self
@@ -977,7 +977,7 @@ impl SeleneRuntime {
         self.select_output_mode(true)?;
         self.scheduled_output = Some(ScheduledOutput {
             batches: Vec::new(),
-            drain_budget: forced_drain.then(DrainBudget::default),
+            drain_budget: forced_drain.then(crate::scheduled_transport::EventBudget::default),
         });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| collect(self)));
         let output = self
@@ -1119,7 +1119,9 @@ impl SeleneRuntime {
             }
         }
         if let Some(budget) = &mut output.drain_budget {
-            budget.charge(batch.operations.len())?;
+            budget
+                .charge(&batch.operations, measurements.len())
+                .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
         }
         output
             .batches
@@ -1419,7 +1421,7 @@ impl SeleneRuntime {
         self.program_to_runtime_qubits.clear();
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
-        self.program_to_runtime_results.clear();
+        self.native_result_slots.clear();
         self.runtime_to_program_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
@@ -1755,8 +1757,7 @@ impl SeleneRuntime {
             runtime_result
         };
 
-        self.program_to_runtime_results
-            .insert(program_result, runtime_result);
+        self.native_result_slots.insert(program_result);
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, false));
         self.force_runtime_result(runtime_result)
@@ -1787,8 +1788,7 @@ impl SeleneRuntime {
             runtime_result
         };
 
-        self.program_to_runtime_results
-            .insert(program_result, runtime_result);
+        self.native_result_slots.insert(program_result);
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, true));
         // Soft-RZ's force_result only matches Measure, not MeasureLeaked.
@@ -2145,11 +2145,6 @@ impl SeleneRuntime {
             return Ok(Vec::new());
         }
         let mut lowered_ops = Vec::new();
-        let mut budget = self
-            .scheduled_output
-            .as_ref()
-            .filter(|output| output.drain_budget.is_some())
-            .map(|_| DrainBudget::default());
 
         loop {
             if self.scheduled_mode == Some(true) && self.scheduled_output.is_none() {
@@ -2196,11 +2191,6 @@ impl SeleneRuntime {
                 break;
             }
 
-            if let Some(budget) = &mut budget {
-                budget
-                    .charge(batch.operations.len())
-                    .map_err(|error| self.latch_batch_failure(error))?;
-            }
             if self.scheduled_output.is_some() {
                 if let Err(error) = self.retain_scheduled_batch(batch) {
                     return Err(self.latch_batch_failure(error));
@@ -2935,7 +2925,7 @@ impl Clone for SeleneRuntime {
             needs_reexecution: self.needs_reexecution,
             pending_measurements: self.pending_measurements.clone(),
             program_to_runtime_qubits: self.program_to_runtime_qubits.clone(),
-            program_to_runtime_results: self.program_to_runtime_results.clone(),
+            native_result_slots: self.native_result_slots.clone(),
             runtime_to_program_results: self.runtime_to_program_results.clone(),
             emitted_measurements: self.emitted_measurements.clone(),
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
@@ -3352,7 +3342,7 @@ impl QisRuntime for SeleneRuntime {
         self.program_to_runtime_qubits.clear();
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
-        self.program_to_runtime_results.clear();
+        self.native_result_slots.clear();
         self.runtime_to_program_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
@@ -3371,6 +3361,15 @@ impl QisRuntime for SeleneRuntime {
 
     fn shot_end(&mut self) -> Result<Shot> {
         self.check_batch_failure()?;
+        if self
+            .emitted_measurements
+            .values()
+            .any(|pending| !pending.is_empty())
+        {
+            return Err(self.latch_batch_failure(RuntimeError::ExecutionError(
+                "shot ended with native measurements awaiting outcomes".into(),
+            )));
+        }
         if self.scheduled_mode == Some(true) && !self.scheduled_drained {
             return Err(RuntimeError::ExecutionError(
                 "scheduled shot requires a successful drain before shot_end".into(),
@@ -3434,7 +3433,7 @@ impl QisRuntime for SeleneRuntime {
         self.program_to_runtime_qubits.clear();
         self.explicit_qubit_handles.clear();
         self.released_qubit_handles.clear();
-        self.program_to_runtime_results.clear();
+        self.native_result_slots.clear();
         self.runtime_to_program_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
@@ -3903,13 +3902,13 @@ mod tests {
     #[test]
     fn custom_capture_lifecycle_and_cloned_configuration() {
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
-        runtime.runtime_to_program_results.insert(901, (7, false));
         runtime.set_custom_event_policy(RuntimeCustomEventPolicy::RejectUnhandled);
         runtime.set_custom_event_handler(|_| Ok(RuntimeCustomEventDisposition::MetadataOnly));
         runtime.last_gate_time_end_nanos.clear();
-        runtime
-            .convert_runtime_batch(synthetic_custom_batch(7301))
-            .unwrap();
+        // This synthetic lifecycle fixture has no native plugin to receive feedback.
+        let mut batch = synthetic_custom_batch(7301);
+        batch.operations.pop(); // Keep only the gate and custom event.
+        runtime.convert_runtime_batch(batch).unwrap();
         runtime.shot_end().unwrap();
         assert_eq!(runtime.custom_events().len(), 1);
         let mut cloned = runtime.clone();
@@ -4117,7 +4116,7 @@ mod tests {
                 assert!(error.to_string().contains("before submission"), "{error}");
                 assert_eq!(runtime.instance, instance);
                 assert_eq!(runtime.program_to_runtime_qubits, handles);
-                assert!(runtime.program_to_runtime_results.is_empty());
+                assert!(runtime.native_result_slots.is_empty());
                 runtime.reset().unwrap();
                 runtime.shot_start(1, None).unwrap();
                 mode.lower(

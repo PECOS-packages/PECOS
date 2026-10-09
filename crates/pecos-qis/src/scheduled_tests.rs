@@ -535,43 +535,37 @@ fn inactive_scheduled_extraction_does_not_invoke_custom_handler() {
 }
 
 #[test]
-fn forced_scheduled_accumulation_limits_batches_and_operations() {
-    for (operations, count) in [
-        (0, crate::scheduled::MAX_DRAIN_BATCHES + 1),
-        (
-            MAX_OPERATIONS,
-            crate::scheduled::MAX_DRAIN_OPERATIONS / MAX_OPERATIONS + 1,
-        ),
-    ] {
-        let mut runtime = synthetic();
-        let error = runtime
-            .collect_scheduled(true, |runtime| {
-                for _ in 0..count {
-                    runtime.retain_scheduled_batch(RuntimeOperationBatch {
-                        operations: vec![
-                            RuntimeScheduledOp::Rz {
-                                qubit_id: 0,
-                                theta: 0.0
-                            };
-                            operations
-                        ],
-                        ..Default::default()
-                    })?;
-                }
-                Ok(vec![])
-            })
+fn forced_scheduled_accumulation_uses_transport_byte_budget() {
+    // Custom payloads fill the transport quickly without relying on a loop-level cap.
+    let bytes_per_batch = 80 + 24 + MAX_PAYLOAD_BYTES;
+    let count = (pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES - 16) / bytes_per_batch;
+    let mut runtime = synthetic();
+    let Err(error) = runtime.collect_scheduled(true, |runtime| {
+        for index in 0..=count {
+            let result = runtime.retain_scheduled_batch(RuntimeOperationBatch {
+                operations: vec![RuntimeScheduledOp::Custom {
+                    tag: 0,
+                    data: vec![0; MAX_PAYLOAD_BYTES],
+                }],
+                ..Default::default()
+            });
+            if index < count {
+                result.expect("encodable output must fit the forced drain");
+            } else {
+                result?;
+            }
+        }
+        Ok(vec![])
+    }) else {
+        panic!("oversized scheduled output must fail");
+    };
+    let error = error.to_string();
+    assert!(error.contains("event transport limit"), "{error}");
+    assert_eq!(
+        runtime
+            .drain_pending_scheduled_operations()
             .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("aggregate batch/operation budget exceeded"),
-            "{error}"
-        );
-        assert_eq!(
-            runtime
-                .drain_pending_scheduled_operations()
-                .unwrap_err()
-                .to_string(),
-            error
-        );
-    }
+            .to_string(),
+        error
+    );
 }

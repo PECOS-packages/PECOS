@@ -335,13 +335,12 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
         let lib = Self::get_lib()?;
-        // Use pecos_get_pending_operations which reads from the execution context
-        // (not pecos_qis_get_operations which reads thread-local storage)
+        // Read the owned context queue through pecos_get_pending_operations_with_context.
         let get_ops_fn: Symbol<GetPendingOperationsFn> = unsafe {
             lib.get(b"pecos_get_pending_operations_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_get_pending_operations: {e}"
+                        "Failed to find pecos_get_pending_operations_with_context: {e}"
                     ))
                 })?
         };
@@ -351,11 +350,7 @@ impl DynamicSyncHandle for HeliosSyncHandle {
                 get_ops_fn(self.execution_context.0, &raw mut ptr),
                 "pending operations unavailable",
             )?;
-            if ptr.is_null() {
-                return Err(InterfaceError::ExecutionError(
-                    "pending operations unavailable: missing context or poisoned pending-operations lock".into(),
-                ));
-            }
+            // Success always returns an allocated collector, even for an empty queue.
             Box::from_raw(ptr)
         };
         Ok(collector.operations)
@@ -2353,7 +2348,8 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn reset(&mut self) -> Result<(), InterfaceError> {
-        // Reset is not needed for this interface - it happens at the start of execute_program
+        // Subsequent collection must use a fresh context, including after cancellation.
+        self.dynamic_mode = false;
         Ok(())
     }
 
@@ -2625,6 +2621,15 @@ ret i64 %status
 
     #[test]
     fn static_collection_after_aborted_dynamic_shot_uses_fresh_context() {
+        assert_static_collection_after_abort(false);
+    }
+
+    #[test]
+    fn reset_after_aborted_dynamic_shot_uses_fresh_collection_context() {
+        assert_static_collection_after_abort(true);
+    }
+
+    fn assert_static_collection_after_abort(reset: bool) {
         let _env_lock = ENV_MUTEX.lock().unwrap();
         let mut interface = QisHeliosInterface::new();
         interface
@@ -2653,12 +2658,12 @@ ret i64 %status
             unsafe { pending() }.is_null(),
             "error path retained worker TLS"
         );
-        interface.disable_dynamic_mode().unwrap();
+        if reset {
+            interface.reset().unwrap();
+        } else {
+            interface.disable_dynamic_mode().unwrap();
+        }
         assert_eq!(interface.collect_operations().unwrap().operations.len(), 1);
-        assert!(
-            unsafe { pending() }.is_null(),
-            "success path retained worker TLS"
-        );
         assert_eq!(
             interface
                 .execute_with_measurements(BTreeMap::new())
@@ -2667,6 +2672,46 @@ ret i64 %status
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn successful_dynamic_execution_clears_worker_tls_before_context_destruction() {
+        let _env_lock = ENV_MUTEX.lock().unwrap();
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(
+                br"declare void @__quantum__qis__x__body(i64)
+                define i64 @qmain(i64 %shot) {
+                    call void @__quantum__qis__x__body(i64 0)
+                    ret i64 0
+                }",
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        interface.enable_dynamic_mode().unwrap();
+        let retained = interface.context_handle().unwrap();
+        let (execution, empty) = std::thread::spawn(move || {
+            let execution = interface.collect_operations();
+            let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+            let pending: Symbol<unsafe extern "C" fn() -> *mut OperationCollector> =
+                unsafe { ffi.get(b"pecos_get_pending_operations\0").unwrap() };
+            let register: Symbol<RegisterExecutionContextFn> =
+                unsafe { ffi.get(b"pecos_register_execution_context\0").unwrap() };
+            let collector = unsafe { pending() };
+            let empty = collector.is_null();
+            // Clean up even under mutation, after observing TLS while both owners live.
+            unsafe { register(std::ptr::null_mut()) };
+            if !collector.is_null() {
+                drop(unsafe { Box::from_raw(collector) });
+            }
+            interface.disable_dynamic_mode().unwrap();
+            (execution, empty)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(execution.unwrap().operations.len(), 1);
+        assert!(empty, "successful dynamic execution retained worker TLS");
+        drop(retained);
     }
 
     #[test]

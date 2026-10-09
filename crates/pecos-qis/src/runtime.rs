@@ -194,6 +194,9 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// The default keeps existing Boolean runtimes compatible and rejects a
     /// leakage outcome instead of silently converting 2 to true. Deliveries are
     /// ordered and may repeat a program result slot; every delivery is retained.
+    /// After validating all outcomes, the default calls `provide_measurements`
+    /// once per outcome, in order. Delivery is not atomic across the batch:
+    /// an error leaves earlier successful deliveries applied.
     ///
     /// # Errors
     /// Returns an error if any outcome is not 0 or 1, since a Boolean runtime cannot

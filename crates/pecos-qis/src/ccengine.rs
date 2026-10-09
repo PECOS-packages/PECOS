@@ -4859,6 +4859,7 @@ mod scheduled_completion_tests {
         #[default]
         Feedback,
         Padding,
+        FeedbackThenPadding,
     }
 
     #[derive(Clone, Default)]
@@ -4869,6 +4870,7 @@ mod scheduled_completion_tests {
         output: TerminalOutput,
         with_event: bool,
         ended: bool,
+        shot_id: u64,
     }
     impl QisRuntime for FeedbackTail {
         fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
@@ -4896,6 +4898,12 @@ mod scheduled_completion_tests {
         fn num_qubits(&self) -> usize {
             1
         }
+        fn shot_start(&mut self, shot_id: u64, _: Option<u64>) -> RuntimeResult<()> {
+            self.shot_id = shot_id;
+            self.stage = 3;
+            self.ended = false;
+            Ok(())
+        }
         fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
             if std::mem::replace(&mut self.ended, true) {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
@@ -4918,11 +4926,13 @@ mod scheduled_completion_tests {
                     "drain after shot completion".into(),
                 ));
             }
-            if matches!(self.output, TerminalOutput::Padding) {
+            if matches!(self.output, TerminalOutput::Padding)
+                || (matches!(self.output, TerminalOutput::FeedbackThenPadding) && self.stage >= 3)
+            {
                 let index = self.stage;
                 self.stage += 1;
                 return Ok(vec![ScheduledBatch {
-                    runtime_shot_id: 0,
+                    runtime_shot_id: self.shot_id,
                     batch_index: index,
                     start_time_nanos: index as u64,
                     duration_nanos: 0,
@@ -4979,7 +4989,7 @@ mod scheduled_completion_tests {
                 measurements[0].operation_index = 1;
             }
             Ok(vec![ScheduledBatch {
-                runtime_shot_id: 0,
+                runtime_shot_id: self.shot_id,
                 batch_index: index,
                 start_time_nanos: 0,
                 duration_nanos: 0,
@@ -5023,8 +5033,147 @@ mod scheduled_completion_tests {
             assert!(engine.get_results().is_err());
             engine.reset_all().unwrap();
             assert_eq!(engine.scheduled_drain_round, 0);
-            assert!(!engine.scheduled_drain_feedback);
         }
+    }
+
+    #[test]
+    fn scheduled_feedback_permits_only_one_more_terminal_drain() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                output: TerminalOutput::FeedbackThenPadding,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().add_outcomes(&[0]).build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            let error = engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .expect("one delivery cannot permit repeated padding")
+                .to_string();
+            assert!(
+                error.contains("without measurement feedback") && error.contains("round 3"),
+                "{error}"
+            );
+        }
+    }
+
+    #[derive(Clone)]
+    struct GatedTerminalInterface(Arc<std::sync::Barrier>);
+    impl crate::QisInterface for GatedTerminalInterface {
+        fn load_program(&mut self, _: &[u8], _: ProgramFormat) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn collect_operations(&mut self) -> Result<OperationList, InterfaceError> {
+            self.0.wait();
+            Ok(OperationList::new())
+        }
+        fn execute_with_measurements(
+            &mut self,
+            _: BTreeMap<usize, bool>,
+        ) -> Result<OperationList, InterfaceError> {
+            self.collect_operations()
+        }
+        fn name(&self) -> &'static str {
+            "gated-terminal"
+        }
+        fn reset(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn supports_dynamic(&self) -> bool {
+            true
+        }
+        fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+    }
+
+    fn assert_scheduled_drain_progress_cleared(reset: bool) {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let mut engine = QisEngine::new(
+                Box::new(GatedTerminalInterface(Arc::clone(&gate))),
+                Box::new(FeedbackTail::default()),
+            );
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            assert!(engine.drain_terminal_commands().unwrap().is_some());
+            // Pause the first shot after validated feedback, before its next drain.
+            let updates = engine.map_measurements(&[0]).unwrap();
+            engine.store_measurement_updates(&updates).unwrap();
+            engine.provide_measurements_terminal(&updates).unwrap();
+            assert_eq!(engine.scheduled_drain_round, 1);
+            assert!(engine.scheduled_drain_feedback);
+            if reset {
+                engine.reset_all().unwrap();
+                assert_eq!(engine.scheduled_drain_round, 0);
+                assert!(!engine.scheduled_drain_feedback);
+            }
+            // The next shot's worker cannot finish until we've inspected start's
+            // reset. Its first drain must not hide a stale feedback flag.
+            let stage = engine.start(());
+            let progress = (
+                engine.scheduled_drain_round,
+                engine.scheduled_drain_feedback,
+            );
+            gate.wait();
+            assert_eq!(progress, (0, false));
+            let mut stage = stage.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while matches!(stage, EngineStage::NeedsProcessing(_)) {
+                assert!(
+                    Instant::now() < deadline,
+                    "gate-only second shot did not complete"
+                );
+                stage = engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap();
+            }
+            assert_eq!(engine.scheduled_drain_round, 2);
+            assert!(engine.get_results().is_ok());
+        }
+    }
+
+    #[test]
+    fn scheduled_new_shot_clears_drain_progress() {
+        assert_scheduled_drain_progress_cleared(false);
+    }
+
+    #[test]
+    fn scheduled_reset_clears_set_drain_progress() {
+        assert_scheduled_drain_progress_cleared(true);
     }
 
     #[test]

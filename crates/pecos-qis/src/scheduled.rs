@@ -112,33 +112,5 @@ pub(crate) const MAX_PAYLOAD_BYTES: usize = 262_144;
 #[derive(Default)]
 pub(crate) struct ScheduledOutput {
     pub batches: Vec<ScheduledBatch>,
-    pub drain_budget: Option<DrainBudget>,
-}
-
-/// Aggregate limits for one forced scheduled drain, independent of batch size.
-#[cfg(feature = "selene")]
-pub(crate) const MAX_DRAIN_BATCHES: usize = 4096;
-#[cfg(feature = "selene")]
-pub(crate) const MAX_DRAIN_OPERATIONS: usize = 65_536;
-
-#[cfg(feature = "selene")]
-#[derive(Default)]
-pub(crate) struct DrainBudget {
-    batches: usize,
-    operations: usize,
-}
-
-#[cfg(feature = "selene")]
-impl DrainBudget {
-    pub fn charge(&mut self, operations: usize) -> crate::runtime::Result<()> {
-        if self.batches >= MAX_DRAIN_BATCHES || operations > MAX_DRAIN_OPERATIONS - self.operations
-        {
-            return Err(crate::runtime::RuntimeError::ExecutionError(
-                "scheduled forced drain aggregate batch/operation budget exceeded".into(),
-            ));
-        }
-        self.batches += 1;
-        self.operations += operations;
-        Ok(())
-    }
+    pub drain_budget: Option<crate::scheduled_transport::EventBudget>,
 }

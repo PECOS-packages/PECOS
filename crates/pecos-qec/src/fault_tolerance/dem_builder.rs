@@ -118,3 +118,6 @@ pub use types::{
     ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,
     omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
 };
+
+#[cfg(test)]
+mod map_only_tests;

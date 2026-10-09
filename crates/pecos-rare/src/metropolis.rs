@@ -43,17 +43,13 @@ impl MetropolisStepper {
         proposal: State, // Probably don't need two of these
         acceptance_ratio: f64)
         -> MetropolisStep<State> {
-        assert!(
-            acceptance_ratio >= 0.0,
-            "Acceptance ratio must be a non-negative value! got {}", acceptance_ratio
-        );
 
-        // Metropolis-hastings acceptance probability
-        // assuming that the hastings correction comes in `acceptance_ratio` if needed.
         let acceptance_probability: f64 = acceptance_ratio.min(1.0);
-        // accept the new state with probability `acceptance_probability`
+
+        // Accept the new state with the correct probability
         let accepted: bool = self.rng.next_f64() < acceptance_probability;
-        // return the updated state
+        
+        // Return the updated state
         MetropolisStep {
             state: if accepted {proposal} else {current},
             accepted,
@@ -303,8 +299,4 @@ for _i in 1..1_000 {
         }
     }
     }
-
-
 }
-
-// TODO: Implement a parallel metropolis engine for running multiple Metropolis chains concurrently.

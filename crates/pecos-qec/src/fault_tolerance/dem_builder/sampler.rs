@@ -868,7 +868,11 @@ impl DemSampler {
         (outputs, dem_outputs)
     }
 
-    /// Sample multiple shots.
+    /// Sample multiple shots as shot-major rows of detector and observable flips.
+    ///
+    /// To decode the shots, use [`Self::sample_shots`], which returns a
+    /// [`SampleBatch`](pecos_decoders::batch::SampleBatch) ready for
+    /// `pecos_decoders::batch` decoding.
     #[must_use]
     pub fn sample_batch<R: Rng>(
         &self,
@@ -934,6 +938,8 @@ impl DemSampler {
     ///
     /// Much faster than `sample_batch` at low error rates where few mechanisms fire.
     /// Only available in detector-event mode (not raw measurement mode).
+    /// [`Self::sample_shots`] draws the same columns and wraps them in a
+    /// [`SampleBatch`](pecos_decoders::batch::SampleBatch) for decoding.
     ///
     /// # Panics
     ///

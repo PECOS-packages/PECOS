@@ -296,7 +296,7 @@ builder.add_patch(p4, "A", qubit_offset=p4.geometry.num_qubits)
 try:
     builder.add_sz_via_teleportation("D", "A", 2, 2)
 except ValueError as error:
-    assert str(error) == "Injection ancilla 'A' requires odd dx and dz for encoded logical-Y content"
+    assert str(error) == "Teleportation ancilla 'A' requires odd dx and dz for encoded logical-Y content"
 else:
     raise AssertionError("Even-distance teleportation ancilla was accepted")
 ```
@@ -635,7 +635,7 @@ Product-Y preparation followed by Y readout emits no observable. Its encoded
 Y sign is the parity of a solved subset of first-round check records XOR a
 reference bit derived from the logical representatives. SZ teleportation exposes
 that selected subset as `resource_sign_records` and the reference as
-`resource_sign_reference` in its injection metadata. It remains a distance-1 quantity:
+`resource_sign_reference` in its teleportation metadata. It remains a distance-1 quantity:
 a single first-round measurement error flips it.
 At distance 3, zero, one, and two requested rounds give 4, 12, and 20
 deterministic detectors. For one and two rounds, the emitted masks have ranks
@@ -899,8 +899,8 @@ def transversal_cx(ctrl: SurfaceCode_3x3, tgt: SurfaceCode_3x3) -> None:
 `render_surface_protocol_module(patch)` returns source;
 `load_surface_protocol_module(patch)` returns the loaded module's namespace and
 caches per patch geometry. Scoped tags support measurement-provenance checks.
-These five factories (H, CX, logical SZ/SZdg, SZ teleportation, and T
-injection) use full syndrome rounds without a separate initial
+The Clifford factories (H, CX, logical SZ/SZdg, SZ teleportation, and the T
+teleportation placeholder) use full syndrome rounds without a separate initial
 projection. Each example places the factory next to the corresponding builder
 program. The two forms share operation order and measurement partition, not
 physical scheduling or allocation: the builder schedules patches together with
@@ -1040,7 +1040,7 @@ XOR `resource_sign_reference`.
 The builder records both the ancilla's final logical-Z readout (`meas_ids`,
 `records`) and the resource sign (`resource_sign_meas_ids`,
 `resource_sign_records`, and the 0/1 bit `resource_sign_reference`) in
-`injection_readouts`, in the circuit metadata and in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
+`teleportation_readouts`, in the circuit metadata and in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
 records are offsets relative to the end of the measurement stream.
 The reference is the sign of the Pauli identity relating the selected checks,
 signed logical Y (`i X_L Z_L`), and all-Y. If logical X has weight w, the logical
@@ -1070,7 +1070,7 @@ assert callable(program.compile)
 import json
 
 tc = builder.to_tick_circuit()
-readout = json.loads(tc.get_meta("injection_readouts"))[0]
+readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
 assert (readout["ancilla_patch"], readout["data_patch"], readout["basis"]) == ("A", "D", "Z")
 assert len(readout["meas_ids"]) == len(patch.geometry.logical_z.data_qubits)
 # Measurement IDs index the readout stream; map them to the ancilla's data register.
@@ -1087,17 +1087,260 @@ assert readout["resource_sign_reference"] == 0
 assert readout["resource_sign_records"] == [
     meas_id - tc.num_measurements() for meas_id in readout["resource_sign_meas_ids"]
 ]
-assert descriptor["injection_readouts"][0]["resource_sign_records"] == readout["resource_sign_records"]
-assert descriptor["injection_readouts"][0]["resource_sign_reference"] == readout["resource_sign_reference"]
-assert descriptor["injection_readouts"][0]["meas_ids"] == readout["meas_ids"]
+assert descriptor["teleportation_readouts"][0]["resource_sign_records"] == readout["resource_sign_records"]
+assert descriptor["teleportation_readouts"][0]["resource_sign_reference"] == readout["resource_sign_reference"]
+assert descriptor["teleportation_readouts"][0]["meas_ids"] == readout["meas_ids"]
 ```
 
-### T injection stand-in
+### Executable T-gate teleportation
+
+This guide distinguishes two operations:
+
+- **T-state injection** prepares an encoded resource, `|T_L> = T_L|+_L>`.
+  The raw `state_injection` and postselected `hook_injection` gadgets do this.
+- **T-gate teleportation** consumes that resource to apply `T_L` to an existing
+  logical target state, with measurement-dependent Clifford correction.
+
+The latter is the gate-teleportation construction of
+[Zhou, Leung and Chuang](https://arxiv.org/abs/quant-ph/0002039).
+PECOS reserves "injection" for resource preparation even where other literature
+uses that word for both stages.
+
+`make_surface_t_teleportation` implements a logical T (or T-dagger) with a raw
+encoded magic resource and a measurement-dependent **physical** S correction.
+The same factory is available as `make_t_teleportation` in the protocol module.
+It defaults to an X input and X readout so that its effect is observable;
+a Z-eigenstate-only test cannot distinguish a T gate from identity.
 
 ```python
-program = module["make_t_injection"](2, 2)
+from pecos.guppy_gen import make_surface_t_teleportation
+
+program = make_surface_t_teleportation(
+    patch,
+    rounds_before=1,
+    rounds_after=1,
+    input_state="X",
+    readout_basis="Y",
+    dagger=False,
+)
+assert program.compile() is not None
+```
+
+The input can be `"Z"`, `"-Z"`, `"X"`, `"-X"`, `"Y"`, or `"-Y"`;
+readout can be X, Y, or Z. Round counts must be nonnegative integers.
+The factory projects and fixes both initial code states, records the requested
+pre-CX rounds, consumes the resource, executes the correction, records the
+requested data-only rounds, and reads the data. Y readout uses fold SZdg
+followed by X readout. `t_correction` records the correction decision and
+`final_data` contains physical readout bits. Take parity on `logical_z` for Z
+readout or `logical_x` for X/Y readout. For T applied to logical +, the ideal
+X and Y expectations are both `1/sqrt(2)`; T-dagger reverses the Y sign.
+
+Use a non-Clifford simulator such as `pecos.stab_vec()`. For example:
+
+<!--mark.slow-->
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+
+engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+results = (
+    sim(program)
+    .classical(engine)
+    .quantum(stab_vec())
+    .qubits(patch.geometry.num_data + patch.geometry.num_qubits)
+    .seed(42)
+    .run(32)
+    .to_dict()
+)
+assert len(results["final_data"]) == 32
+assert set(results["t_correction"]) == {0, 1}
+```
+
+#### Construction and choice of protocol
+
+The raw encoder adapts the GHZ-seed construction in
+[Horsman et al., section 4.2 and figure 8](https://arxiv.org/html/1111.4022#S4.SS2):
+prepare one physical qubit in the desired state, spread it along the patch's
+logical-X string using CX gates, then project the stabilizers. The implementation
+derives its string and stabilizers from `SurfacePatch`, including rectangular
+rotated patches. It removes random X-check signs with Z corrections solving
+`H_X c = syndrome` and `X_L c = 0`. The second constraint is essential: it
+prevents an unwanted logical Z from changing the injected amplitudes.
+
+The consumer uses the standard one-bit gate-teleportation construction of
+[Zhou, Leung and Chuang](https://arxiv.org/abs/quant-ph/0002039): CX from data
+to the encoded T resource, resource Z readout, then logical S if the decoded
+parity is one. A T-dagger resource instead requires S-dagger. The correction
+uses PECOS's mid-cycle fold-SZ gadget from
+[Chen et al.](https://arxiv.org/abs/2412.01391); the zero branch executes an
+ordinary syndrome round so both branches have the same result layout.
+This correction currently restricts the full protocol to odd square rotated
+patches of distance at least three, and requires the fold's nonlocal connectivity.
+
+This is a suitable executable reference for PECOS's existing transversal-CX
+architecture, **not a claim of optimal noisy resource preparation**.
+[Li's postselected injection](https://arxiv.org/abs/1410.7808) and
+[Gidney's hook injection](https://arxiv.org/abs/2302.12292) target lower resource
+error rates. Their schedules, postselection, growth and noise-dependent tradeoffs
+are not implemented by this encoder. Increasing the distance does not suppress
+an error already on its single-qubit seed. No cultivation or distillation is
+performed.
+
+#### Reusable functions and noisy execution
+
+`load_surface_t_teleportation_module(patch)` returns a namespace with:
+
+- `prepare_injected_t()` and `prepare_injected_tdg()`: raw magic-state encoding,
+  projection, and ideal preparation-sign correction. Signed X/Y/Z preparations
+  are also available.
+- `consume_t_resource(data, resource)`: transversal CX and destructive resource
+  readout, returning its **raw** logical-Z parity. The resource may come from an
+  external factory; both patches must have canonical unswapped orientation, +1 stabilizers,
+  and no pending logical Pauli frame. It leaves the data register alive.
+- `correct_t_teleportation(data, decoded_outcome, dagger)`: perform the conditional
+  logical S/S-dagger correction after the caller supplies the decoded parity.
+- `apply_t_teleportation(data, resource, dagger)`: compose consumption and correction
+  using raw parity. This convenience function assumes noiseless measurements
+  and canonical input code states.
+
+The experiment records syndrome results but supplies no noisy decoder. The
+preparation corrections resolve ideal random projection signs; they are not
+minimum-weight error recovery. A noisy fault-tolerant implementation also needs
+resource verification/distillation, decoding of the resource readout, and frame
+tracking through the fold correction. Merely adding syndrome rounds does not
+provide those features. No logical-error-rate or fault-distance guarantee is
+claimed for the complete raw-resource experiment.
+
+#### Postselected hook resources
+
+PECOS also implements the CNOT schedule from
+[Gidney, *Cleaner magic states with hook injection*, section 2](https://arxiv.org/html/2302.12292#S2),
+checked against the author's [reference circuits](https://doi.org/10.5281/zenodo.7575030).
+The abstract `hook_injection(patch, state="T")` generates a diagonal product
+preparation and four-layer injection round from the patch geometry. A midpoint
+ancilla T rotation creates the logical magic state while the distance-two seed
+grows to the requested square patch. The first layer omits inactive CXs, and
+verification uses the reversed **ordinary** extraction schedule. These details
+are necessary for the intended fault-detection behavior.
+
+The returned `HookInjection` contains `seed`, `injection`, and `verification`
+gadgets. Execute the first two once, then verification at least once. Its
+`accepts(records)` method takes a tuple of `(x_outcomes, z_outcomes)` boolean
+tuples per round. Only predictable first-round checks must be zero; random
+first-round signs establish the baseline. Any later change rejects the attempt.
+On acceptance, `correction_gadget(records[0])` removes both X- and Z-check signs
+while preserving the logical X and Z observables. These are ideal encoding
+byproducts, not corrections inferred by a noisy decoder. The physical steps
+can be rendered to TickCircuit with detector annotations disabled; a host
+controller must perform the acceptance decision and feed-forward.
+
+For an executable Guppy experiment, select hook preparation:
+
+<!--mark.slow-->
+```python
+from pecos.guppy_gen import make_surface_hook_injection, make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch
+
+patch = SurfacePatch.create(distance=3)
+resource = make_surface_hook_injection(
+    patch,
+    verification_rounds=2,
+    state="T",
+    readout_basis="X",
+)
+teleport = make_surface_t_teleportation(
+    patch,
+    resource_preparation="hook",
+    verification_rounds=2,
+    input_state="X",
+    readout_basis="Y",
+)
+assert resource.compile() is not None
+assert teleport.compile() is not None
+```
+
+`verification_rounds` counts rounds **after** injection and must be positive.
+The abstract construction supports square rotated distances >= 2. The Guppy
+module includes the fold-SZ consumer and Y readout, so it requires odd square
+distances >= 3. Supported resource states are T, TDG, X, -X, Y, and -Y.
+There is no subsequent expansion to a separate, larger output patch.
+
+Every shot records `hook_synx`, `hook_synz`, and `hook_accepted`. The syndrome
+arrays concatenate the injection and verification rounds in execution order.
+Rejected resources are discarded; the teleportation experiment does not
+allocate a data patch or apply T in that branch. To keep the simulator's shot
+schema consistent, `final_data` and downstream records contain **invalid zero
+placeholders on rejected shots**. Always filter with `hook_accepted` before
+computing readout statistics. `teleportation_performed` records whether the
+consumer ran. There is no automatic retry loop.
+
+`load_surface_hook_injection_module(patch, verification_rounds=2)` exposes
+`attempt_hook_t()` and `attempt_hook_tdg()`, returning `(resource, accepted)`
+for use inside a larger Guppy program. Callers must discard a rejected resource.
+Accepted resources can be passed to `consume_t_resource` and
+`correct_t_teleportation`. The low-level `hook_initial_is_valid`,
+`hook_syndromes_match`, and `fix_hook_signs` helpers are also available.
+
+Exact amplitude tests cover every ideal branch at distances two and three,
+including T and T-dagger, and tests compile distances three, five, and seven.
+For a depolarizing channel of probability `p` placed **only after the hook
+rotation**, exact tests reject X/Y faults but accept the orthogonal state
+created by a Z fault. Acceptance is `1 - 2*p/3` and conditional fidelity is
+`(1-p)/(1-2*p/3)` in this deliberately restricted noise model. Full-circuit
+depolarizing tests check the acceptance decisions against all recorded checks
+and exercise both execution branches. They do not establish a logical error
+rate for a decoded computation, and the paper's CZ/SI1000 numerical benchmarks
+are not attributed to PECOS's CNOT implementation.
+
+Postselection improves resource screening, but undetectable injection errors
+remain. Physical sign corrections and readout can introduce additional faults.
+This is not cultivation or distillation; noisy resource-readout decoding,
+frame tracking, and further resource improvement remain separate tasks.
+For a runnable noisy experiment with correctly conditioned statistics, see
+`examples/surface/hook_injection.py`.
+
+#### Abstract steps and static exports
+
+`pecos.qec.surface.state_injection(patch, state="T")` returns a `StateInjection`
+with a `seed` gadget, a `projection` gadget and `correction_supports`.
+`correction_gadget(x_outcomes)` materializes the correction for an explicitly
+supplied measurement branch. Seed/projection/correction steps use the existing
+Guppy gadget, TickCircuit and DAG renderers. Disable the memory detector template
+when rendering these pieces. The seed contains a real T or T-dagger operation;
+Stim export rejects it instead of silently omitting that gate.
+
+A static TickCircuit cannot implement the classical branch. Do not concatenate
+a chosen correction and interpret it as unconditional injection. The executable
+Guppy program is adaptive and non-Clifford, and carries no static Clifford DEM
+certificate. `LogicalCircuitBuilder.add_t_via_injection` now raises an explicit
+error before modifying the builder. This legacy spelling is retained only to
+reject the former misleading API; use `make_surface_t_teleportation` for real
+T-gate execution.
+
+### T-gate teleportation stand-in
+
+The former Clifford-only behavior is retained explicitly as
+`make_t_teleportation_placeholder` and `add_t_teleportation_placeholder`. It remains
+useful for static circuit/decoder experiments, but does not measure T fidelity.
+
+To migrate existing code, replace the generated `make_t_injection` factory
+with `make_t_teleportation_placeholder` when the old Clifford experiment is
+intended. Replace `add_t_via_injection` with `add_t_teleportation_placeholder`
+for that same explicit stand-in. For an actual logical T gate, use the new
+`make_surface_t_teleportation` API or the reusable `apply_t_teleportation`
+helper in `pecos.guppy_gen.surface_teleportation`.
+
+The builder's resource-consumption metadata is now `teleportation_readouts`
+and `teleportation_type` (formerly `injection_readouts` and `injection_type`).
+The brickwork example's CLI flags are now `--include-t-teleportation` and
+`--t-teleportation-only`. State-preparation outcomes use `injection_synx` and
+`injection_synz`; these describe injection, not resource consumption.
+
+```python
+program = module["make_t_teleportation_placeholder"](2, 2)
 builder = new_builder(two_patches=True)
-builder.add_t_via_injection("D", "A", 2, 2)
+builder.add_t_teleportation_placeholder("D", "A", 2, 2)
 assert builder.to_tick_circuit().num_measurements() == 82
 assert callable(program.compile)
 ```
@@ -1105,8 +1348,9 @@ assert callable(program.compile)
 !!! note "Resource and correction limits"
     These factories generate uncorrected protocol experiments: the S factory
     uses a projected Y resource with no conditional correction, and the T
-    factory is entirely Clifford (no T gate, no magic resource).
-    The builder records injection readouts in the circuit metadata and in
+    **placeholder** is entirely Clifford (no T gate, no magic resource).
+    The executable T factory above is a separate adaptive implementation.
+    The builder records teleportation readouts in the circuit metadata and in
     `build_algorithm_descriptor()`; those records do not apply a correction.
     The Guppy factories emit measurement outputs only.
     Chen, Chen, Lu and Pan ([arXiv:2412.01391](https://arxiv.org/abs/2412.01391))
@@ -1148,8 +1392,8 @@ for recipe in ("h", "cx", "sz", "t"):
         builder.add_memory("D", 2, "Z")
         scopes = {"data": "D", "anc": "A"}
     else:
-        program = module["make_t_injection"](2, 2)
-        builder.add_t_via_injection("D", "A", 2, 2)
+        program = module["make_t_teleportation_placeholder"](2, 2)
+        builder.add_t_teleportation_placeholder("D", "A", 2, 2)
         scopes = {"data": "D", "anc": "A"}
     expected = measurement_partition_from_builder(builder)
     num_qubits = patch.geometry.num_qubits
@@ -1159,7 +1403,7 @@ for recipe in ("h", "cx", "sz", "t"):
     assert_same_measurement_partition(actual, expected)
 ```
 
-The Guppy protocol factories on this page cannot be traced into a DEM:
+The Clifford Guppy protocol factories below cannot be traced into a DEM:
 they contain `comptime` loops and carry no trusted measurement-layout
 certificate. Their scoped tags serve `measurement_partition_from_trace` only,
 not DEM construction. `make_surface_code` and `make_surface_memory` programs
@@ -1174,7 +1418,7 @@ for factory, arguments in (
     ("make_h_experiment", (2,)),
     ("make_transversal_cx", (2,)),
     ("make_sz_teleportation", (2, 2, 2)),
-    ("make_t_injection", (2, 2)),
+    ("make_t_teleportation_placeholder", (2, 2)),
 ):
     program = module[factory](*arguments)
     num_qubits = patch.geometry.num_qubits
@@ -1326,7 +1570,10 @@ for before_preparation in (True, False):
 | `LogicalCircuitBuilder` | `pecos.qec.surface` | Compose protocols and export circuits, DEMs, and descriptors |
 | `render_gadget_function`, `render_surface_gadget_module` | `pecos.guppy_gen.gadget_render` | Render one function or the memory module |
 | `make_surface_memory` | `pecos.guppy_gen` | Compile certified single-patch gadget memory for Guppy DEM construction |
-| `render_surface_protocol_module`, `load_surface_protocol_module` | `pecos.guppy_gen` | Render or load the four protocol factories |
+| `state_injection`, `StateInjection` | `pecos.qec.surface` | Raw encoding seed, stabilizer projection and branch corrections |
+| `make_surface_t_teleportation` | `pecos.guppy_gen` | Executable T/TDG teleportation with physical feed-forward |
+| `render_surface_t_teleportation_module`, `load_surface_t_teleportation_module` | `pecos.guppy_gen` | Reusable preparation, resource consumption and correction functions |
+| `render_surface_protocol_module`, `load_surface_protocol_module` | `pecos.guppy_gen` | Render or load surface protocol factories |
 | `simulate_tick_circuit`, `stabilizer_generators_after`, `group_contains` | `pecos.testing` | Noiseless simulation and signed stabilizer oracles |
 | `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | Measurement-partition agreement, not circuit or state-action equivalence |
 | `DetectorErrorModel.from_circuit` | `pecos.qec` | Circuit fault analysis and observable distances |

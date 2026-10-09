@@ -274,7 +274,7 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
             builder.add_sz_via_teleportation("D", "Y", 2, 2)
             builder.add_memory("D", 2, "Z")
         else:
-            builder.add_t_via_injection("D", "A", 2, 2)
+            builder.add_t_teleportation_placeholder("D", "A", 2, 2)
     return builder
 
 

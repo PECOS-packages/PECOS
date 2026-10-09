@@ -127,8 +127,8 @@ def build_mirrored_brickwork(width, depth, seed, patch, rounds=2):
     return b
 
 
-def build_t_injection_circuit(distance, _seed, patch, rounds_per_layer):
-    """Build a T-gate injection circuit: memory + T injection + memory."""
+def build_t_teleportation_circuit(distance, _seed, patch, rounds_per_layer):
+    """Build the Clifford-only teleportation placeholder, not a logical T gate."""
     from pecos.qec.surface import LogicalCircuitBuilder
 
     nq = patch.geometry.num_data + patch.geometry.num_ancilla
@@ -136,10 +136,10 @@ def build_t_injection_circuit(distance, _seed, patch, rounds_per_layer):
     b.add_patch(patch, "D", qubit_offset=0)
     b.add_patch(patch, "A", qubit_offset=nq)
 
-    # Memory → T injection → Memory
+    # Memory → T-gate teleportation → Memory
     rounds = max(rounds_per_layer, distance)
     b.add_memory("D", rounds=rounds, basis="Z")
-    b.add_t_via_injection("D", "A", rounds_before=rounds, rounds_after=rounds)
+    b.add_t_teleportation_placeholder("D", "A", rounds_before=rounds, rounds_after=rounds)
     return b
 
 
@@ -405,7 +405,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         "</head><body><main>",
         '<section class="hero">',
         "<h1>PECOS Surface Code Report</h1>",
-        "<p>Mirrored brickwork circuits, T-gate injection, and coherent noise analysis</p>",
+        "<p>Mirrored brickwork circuits, Clifford teleportation placeholders, and coherent noise analysis</p>",
         f'<div class="meta">{" ".join(meta_cards)}</div>',
         "</section>",
         "",
@@ -419,7 +419,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         "the quantum computation.</p>",
         "",
         "<h4>Reaction time</h4>",
-        "<p>At feed-forward decision points (T-gate injection, magic state consumption), "
+        "<p>At feed-forward decision points (T-gate teleportation, magic state consumption), "
         "the physical hardware waits for the decoder to produce a correction. The "
         "<em>reaction time</em> is the time available between the last syndrome arriving "
         "and the correction being applied. For <strong>Clifford-only circuits</strong> "
@@ -457,12 +457,12 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         "",
     ]
 
-    # Separate brickwork and T-injection points
+    # Separate brickwork and T-teleportation points
     brickwork_tables = defaultdict(list)
-    t_injection_tables = defaultdict(list)
+    t_teleportation_tables = defaultdict(list)
     for pt in shard.points:
-        if pt.depth == 0:  # T-injection marker
-            t_injection_tables[(pt.distance, pt.physical_error_rate)].append(pt)
+        if pt.depth == 0:  # T-teleportation marker
+            t_teleportation_tables[(pt.distance, pt.physical_error_rate)].append(pt)
         else:
             brickwork_tables[(pt.distance, pt.physical_error_rate)].append(pt)
 
@@ -499,16 +499,15 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
     if brickwork_tables:
         html_parts.append("</section>")
 
-    if t_injection_tables:
+    if t_teleportation_tables:
         html_parts.append('<section class="section">')
-        html_parts.append("<h2>T-Gate Injection (Non-Clifford)</h2>")
+        html_parts.append("<h2>T-Injection Placeholder (Clifford Only)</h2>")
         html_parts.append(
-            "<p>T gate via magic state teleportation: "
-            "|T&rang; ancilla + CX + measure + conditional S. "
-            "Feed-forward decision point for the decoder.</p>",
+            "<p>Clifford surrogate with a |+&rang; ancilla, CX and readout. "
+            "No magic state or conditional S is executed; these results do not measure logical T fidelity.</p>",
         )
 
-    for (d, p), points in sorted(t_injection_tables.items()):
+    for (d, p), points in sorted(t_teleportation_tables.items()):
         decoders = sorted({r.decoder for pt in points for r in pt.decoder_results})
         html_parts.append(f"<h3>d={d}, p={p}</h3>")
         html_parts.append("<table><tr><th>Circuit</th>")
@@ -516,7 +515,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         html_parts.append("</tr>")
 
         for pt in points:
-            html_parts.append("<tr><td>T-injection</td>")
+            html_parts.append("<tr><td>T-teleportation placeholder</td>")
             for dec in decoders:
                 r = next((r for r in pt.decoder_results if r.decoder == dec), None)
                 if r:
@@ -529,7 +528,7 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
             html_parts.append("</tr>")
         html_parts.append("</table>")
 
-    if t_injection_tables:
+    if t_teleportation_tables:
         html_parts.append("</section>")
 
     # Coherent noise section
@@ -597,14 +596,14 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--rounds-per-layer", type=int, default=2)
     parser.add_argument(
-        "--include-t-injection",
+        "--include-t-teleportation",
         action="store_true",
-        help="Include T-gate injection circuits (non-Clifford)",
+        help="Include Clifford-only T-teleportation placeholder circuits",
     )
     parser.add_argument(
-        "--t-injection-only",
+        "--t-teleportation-only",
         action="store_true",
-        help="Only T-gate injection circuits (skip brickwork)",
+        help="Only Clifford T-teleportation placeholders (skip brickwork)",
     )
     parser.add_argument(
         "--include-coherent-noise",
@@ -625,14 +624,14 @@ def main():
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args()
 
-    if args.t_injection_only:
+    if args.t_teleportation_only:
         shard = BrickworkShard(
             config={
                 "distances": args.distances,
                 "error_rates": args.error_rates,
                 "decoders": args.decoders,
                 "shots": args.shots,
-                "t_injection_only": True,
+                "t_teleportation_only": True,
             },
         )
     elif args.scaled_depth:
@@ -677,8 +676,8 @@ def main():
             rounds_per_layer=args.rounds_per_layer,
         )
 
-    # T-injection circuits
-    if args.include_t_injection or args.t_injection_only:
+    # T-teleportation circuits
+    if args.include_t_teleportation or args.t_teleportation_only:
         from pecos.qec.surface import SurfacePatch
         from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
@@ -686,7 +685,7 @@ def main():
         for d in args.distances:
             patch = SurfacePatch.create(distance=d)
             for p in args.error_rates:
-                b = build_t_injection_circuit(d, args.seed, patch, args.rounds_per_layer)
+                b = build_t_teleportation_circuit(d, args.seed, patch, args.rounds_per_layer)
                 sc = b.stab_coords()
                 dem_str = b.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
                 parsed = ParsedDem.from_string(dem_str)
@@ -695,7 +694,7 @@ def main():
                 point = BrickworkPoint(
                     distance=d,
                     width=2,
-                    depth=0,  # depth=0 signals T-injection
+                    depth=0,  # depth=0 signals T-teleportation
                     physical_error_rate=p,
                     num_shots=args.shots,
                     seed=args.seed,
@@ -748,7 +747,7 @@ def main():
 
                 shard.points.append(point)
                 lers = {r.decoder: f"{r.logical_error_rate:.5f}" for r in point.decoder_results}
-                print(f"d={d} T-injection p={p:.4g} ... LER={lers}")
+                print(f"d={d} T-teleportation-placeholder p={p:.4g} ... LER={lers}")
 
     # Coherent noise sweep
     coherent_results = None

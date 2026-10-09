@@ -190,10 +190,10 @@ class TestMalformedAnnotationMetadata:
 
     def test_malformed_detectors_json_raises(self, d3_tc, depol):
         d3_tc.set_meta("detectors", "not json at all")
-        with pytest.raises(ValueError, match="malformed detector JSON"):
+        with pytest.raises(ValueError, match="detectors JSON is malformed"):
             sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(1).seed(1).run()
 
     def test_out_of_range_detector_record_raises(self, d3_tc, depol):
-        d3_tc.set_meta("detectors", '[{"records": [-100000]}]')
-        with pytest.raises(ValueError, match="does not resolve"):
+        d3_tc.set_meta("detectors", '[{"id": 0, "records": [-100000]}]')
+        with pytest.raises(ValueError, match="record offset -100000 is out of range"):
             sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(1).seed(1).run()

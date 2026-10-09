@@ -13,6 +13,13 @@
 //! - `relay-bp` - Relay BP decoder for qLDPC codes (pure Rust)
 //! - `uf` - Syndrome-graph Union-Find decoder (pure Rust)
 //! - `all` - Enable all decoders
+//!
+//! ## Batch decoding
+//!
+//! [`batch::SampleBatch`] holds detector-event shots and their true observable
+//! flips; [`batch::SampleBatch::decode_with`] decodes and scores them with any
+//! [`batch::DecoderFactory`] (for example a [`DecoderSpec`]) across sequential,
+//! parallel, or native-batch execution and returns a [`batch::DecodeResult`].
 
 pub mod batch;
 pub mod spec;
@@ -24,6 +31,8 @@ pub use pecos_decoder_core::{
     BatchDecoder, CssDecoder, Decoder, DecoderError, DecodingResultTrait, ObservableDecoder,
     SoftDecoder,
 };
+// Wide observable masks appear in `batch::SampleBatch` and `batch::DecodeResult`.
+pub use pecos_decoder_core::obs_mask::ObsMask;
 
 /// Re-export native belief-propagation primitives.
 pub use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};

@@ -3,15 +3,11 @@
 
 """Render surface protocols separately from the byte-stable memory module."""
 
-import hashlib
-
-from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
+from pecos.guppy_gen._module_loader import load_cached_guppy_source
 from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.guppy_gen.surface_teleportation import _render_surface_t_teleportation_module
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import QubitAllocation
-
-_MODULE_CACHE: dict[str, dict] = {}
 
 
 def _rounds(count: str, patches: tuple[str, ...], *, swapped: bool = False) -> list[str]:
@@ -49,6 +45,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     lines = [
         f'"""Surface code protocols for dx={dx}, dz={dz}.',
         "",
+        "Injected signed X/Y/Z inputs project in the data role; T/TDG resources project in the anc role.",
         "Scoped scalar sidebands certify measurement provenance for each patch role.",
         "The surface DEM parser indexes scoped tags but never references them.",
         "The builder protocol has no init round. The certified-slot DEM route",
@@ -92,8 +89,9 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         lines.extend(["", ""])
     for dagger in (False, True):
         fold = gadgets.fold_sz_round_gadget(patch, allocation, round_index=0, dagger=dagger)
-        lines.extend(render_gadget_function(fold, tag_scope="a"))
-        lines.extend(["", ""])
+        for scope in ("a", "data"):
+            lines.extend(render_gadget_function(fold, tag_scope=scope))
+            lines.extend(["", ""])
     swapped = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
     lines.extend(render_gadget_function(swapped, tag_scope="a"))
     lines.extend(["", ""])
@@ -215,11 +213,5 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
 
 
 def load_surface_protocol_module(patch: SurfacePatch) -> dict:
-    """Cache by patch identity and source, including custom stabilizer/logical supports."""
-    source = render_surface_protocol_module(patch)
-    geom = patch.geometry
-    digest = hashlib.sha256(source.encode()).hexdigest()
-    key = f"surface_protocol_{patch.dx}x{patch.dz}_{geom.orientation.name}_{geom.rotated}_{digest}"
-    if key not in _MODULE_CACHE:
-        _MODULE_CACHE[key] = load_guppy_source(source, _get_temp_dir() / f"{key}.py", f"pecos._generated.{key}")
-    return _MODULE_CACHE[key]
+    """Cache by complete source, including custom stabilizer/logical supports."""
+    return load_cached_guppy_source("surface_protocol", render_surface_protocol_module(patch))

@@ -58,6 +58,7 @@ class HookInjection:
             raise ValueError(msg)
         for record in records:
             self._validate_syndrome(record)
+        records = tuple(tuple(tuple(family) for family in record) for record in records)
         first_x, first_z = records[0]
         predictable = [first_x[i] for i in self.predictable_x] + [first_z[i] for i in self.predictable_z]
         return not any(predictable) and all(record == records[0] for record in records[1:])
@@ -142,7 +143,8 @@ def hook_injection(
         tuple(seed_steps),
         (allocation,),
         (d, d),
-        state,
+        None,
+        injection_seed=True,
     )
 
     def make_round(*, inject: bool) -> Gadget:

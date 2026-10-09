@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pecos
 import pytest
-from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_cached_guppy_source, load_guppy_source
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
 from pecos.guppy_gen.protocol_render import load_surface_protocol_module, render_surface_protocol_module
 from pecos.guppy_gen.transversal import (
@@ -99,6 +99,8 @@ def test_all_gadget_functions_compile(module, patch):
         "syndrome_extraction_swapped_a",
         "syndrome_extraction_fold_sz_a",
         "syndrome_extraction_fold_szdg_a",
+        "syndrome_extraction_fold_sz_data",
+        "syndrome_extraction_fold_szdg_data",
         *(f"syndrome_extraction_{scope}" for scope in ("a", "ctrl", "tgt", "data", "anc")),
     }
     rendered = {
@@ -331,7 +333,7 @@ def test_sidebands_and_memory_parity(patch):
             }
         else:
             assert not calls
-    assert len(sidebands) == 64
+    assert len(sidebands) == 80
     assert not re.search(r'output\("s[xz][0-9]+:', source)
     memory = render_surface_gadget_module(patch)
     golden = Path(__file__).parents[1] / "qec/surface/goldens/gadget_parity/guppy_d3.py.txt"
@@ -625,12 +627,11 @@ def test_loader_removes_failed_module(tmp_path):
         sys.modules.pop(name)
 
 
-def test_shared_module_directory():
-    from pecos.guppy_gen.protocol_render import _get_temp_dir as protocol_dir
+def test_shared_module_directory(module):
     from pecos.guppy_gen.surface import _get_temp_dir as surface_dir
     from pecos.guppy_gen.transversal import _get_temp_dir as transversal_dir
 
-    assert surface_dir() == transversal_dir() == protocol_dir() == _get_temp_dir()
+    assert surface_dir() == transversal_dir() == Path(module["__file__"]).parent == _get_temp_dir()
 
 
 @pytest.mark.parametrize("dagger", [False, True])
@@ -738,3 +739,13 @@ def test_teleportation_factory_projection_boundary(module, patch, recipe, rounds
         measurement_partition_from_trace(program, 2 * patch.geometry.num_qubits, {"data": "D", "anc": "A"}),
         measurement_partition_from_builder(builder),
     )
+
+
+def test_source_cache_preserves_content_and_prefix_identity():
+    first = load_cached_guppy_source("test_source_cache", "value = 1\n")
+    assert load_cached_guppy_source("test_source_cache", "value = 1\n") is first
+    changed = load_cached_guppy_source("test_source_cache", "value = 2\n")
+    other_prefix = load_cached_guppy_source("test_other_source_cache", "value = 1\n")
+    assert changed["value"] == 2
+    assert first["value"] == other_prefix["value"] == 1
+    assert len({module["__name__"] for module in (first, changed, other_prefix)}) == 3

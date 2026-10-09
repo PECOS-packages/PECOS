@@ -586,6 +586,18 @@ def test_tag_run_time_window(tracker: Tracker, date: str) -> None:
     assert tracker.api_calls().count(tags_api(tag)) == 1
 
 
+# A re-pushed tag has old runs from its first push and new ones from the second:
+# one recent run of any workflow, watched or not, makes the whole tag recent.
+@pytest.mark.parametrize("recent_workflow", ["unwatched.yml", "rust-test.yml"])
+def test_tag_recent_if_any_run_is_recent(tracker: Tracker, recent_workflow: str) -> None:
+    tag = "py-moved"
+    tracker.tags({tag: RECENT})
+    newer = run_object(branch=tag, created=RECENT, workflow=recent_workflow, number=2)
+    red = run_object("failure", branch=tag, created=ANCIENT, workflow="pre-commit.yml")
+    tracker.runs(tags_api(tag), [newer, red])
+    tracker.check([red_create("pre-commit.yml", red, kind="release")])
+
+
 @pytest.mark.parametrize("failure", ["refs", "runs", "json", "page"])
 def test_tag_discovery_and_read_failure_isolated(tracker: Tracker, failure: str) -> None:
     workflow = "pre-commit.yml"

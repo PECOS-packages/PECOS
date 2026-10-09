@@ -180,7 +180,12 @@ pub unsafe extern "C-unwind" fn selene_qubit_measure(
     q: u64,
 ) -> SeleneBoolResult {
     let result = unsafe { ffi::__quantum__rt__result_allocate() };
-    let value = unsafe { ffi::__quantum__qis__m__body(q.cast_signed(), result) };
+    let placeholder = unsafe { ffi::__quantum__qis__m__body(q.cast_signed(), result) };
+    let value = if crate::is_dynamic_mode_active() {
+        i32::from(unsafe { ffi::___read_future_bool(result) })
+    } else {
+        placeholder
+    };
     SeleneBoolResult {
         error_code: 0,
         value: value != 0,
@@ -205,17 +210,21 @@ pub unsafe extern "C-unwind" fn selene_qubit_lazy_measure(
     }
 }
 
-/// Use the same measurement behavior for leakage-aware futures.
+/// Allocate and queue a leakage-aware measurement future.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
 /// and recovery discipline documented in this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_qubit_lazy_measure_leaked(
-    instance: *mut SeleneInstance,
+    _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneFutureResult {
-    unsafe { selene_qubit_lazy_measure(instance, q) }
+    let result = unsafe { ffi::___lazy_measure_leaked(q.cast_signed()) };
+    SeleneFutureResult {
+        error_code: 0,
+        reference: result.cast_unsigned(),
+    }
 }
 
 /// Read a measurement future through the dynamic execution interface.
@@ -245,10 +254,14 @@ pub unsafe extern "C-unwind" fn selene_future_read_u64(
     _instance: *mut SeleneInstance,
     r: u64,
 ) -> SeleneU64Result {
-    let value = unsafe { ffi::__quantum__rt__result_get_one(r.cast_signed()) };
+    let value = if crate::is_dynamic_mode_active() {
+        unsafe { ffi::___read_future_uint(r.cast_signed()) }
+    } else {
+        i64::from(unsafe { ffi::__quantum__rt__result_get_one(r.cast_signed()) }).cast_unsigned()
+    };
     SeleneU64Result {
         error_code: 0,
-        value: i64::from(value).cast_unsigned(),
+        value,
     }
 }
 

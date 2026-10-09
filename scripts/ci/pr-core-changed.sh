@@ -14,7 +14,9 @@ if [ -z "$base" ]; then
   exit 0
 fi
 
-changed="$(git diff --name-only "$base"...HEAD)"
+# --no-renames: a printed rename shows only its destination, so moving code to an
+# ignored path (e.g. a root .md) would otherwise hide the deletion.
+changed="$(git diff --name-only --no-renames "$base"...HEAD)"
 {
   echo "Changed files:"
   printf '  %s\n' $changed
@@ -32,7 +34,9 @@ changed="$(git diff --name-only "$base"...HEAD)"
 # and run. Anything not on the allowlist runs.
 ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
 
-if printf '%s\n' "$changed" | grep -qvE "$ignore"; then
+# Here-string, not `printf | grep -q`: under pipefail an early-exiting grep can
+# SIGPIPE the producer on a large diff and turn a match into "false".
+if grep -qvE "$ignore" <<<"$changed"; then
   echo "true"
 else
   echo "false"

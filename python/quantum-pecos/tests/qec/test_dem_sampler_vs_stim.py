@@ -12,13 +12,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+import stim
 from pecos.qec.surface import get_measurement_order_from_tick_circuit
 
 if TYPE_CHECKING:
     from pecos.quantum import DagCircuit, TickCircuit
-
-# Skip all tests if stim is not installed
-stim = pytest.importorskip("stim")
 
 
 def extract_measurement_order(tc: "TickCircuit") -> list[int]:

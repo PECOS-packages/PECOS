@@ -285,15 +285,15 @@ pytest *args:
         uv run --frozen pytest -n auto {{args}}
     else
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
-        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+        uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
         uv run --frozen pytest -n auto python/selene-plugins -m "not slow"
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
 
-# Run the substantive PR Python lane after building the test-only native bindings it needs.
+# Run the substantive Python lane, plus pecos-rslib's Rust unit tests, after building the test-only native bindings it needs.
 [group('test')]
 python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (python-ci-build-test profile)
+    just rslib-rust-test
     just pytest-ci-core
 
 # Run pecos-rslib's own Rust unit tests. `pecos rust test` excludes this crate
@@ -323,8 +323,7 @@ rslib-rust-test:
 [group('test')]
 pytest-ci-core:
     uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
-    uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
-    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
 # One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
@@ -342,7 +341,7 @@ pytest-ci-core-shard shard:
     #!/usr/bin/env bash
     set -euo pipefail
     QP=python/quantum-pecos/tests
-    CORE_MARKERS="not optional_dependency and not slow"
+    CORE_MARKERS="not slow"
     HARVEST="$QP/qec/surface/test_pauli_mask_harvest.py"
     case "{{shard}}" in
       qec-surface-harvest)
@@ -357,11 +356,10 @@ pytest-ci-core-shard shard:
       rest)
         # pecos-rslib's own Rust unit tests ride this shard: it is a required
         # check that runs on pull requests and has already built the crate, so
-        # the marginal cost is the test run. `python-ci-core` cannot host them --
-        # its heavy step is post-merge only and skips on a pull request.
+        # the marginal cost is the test run. `python-ci-core` runs them again
+        # post-merge; its heavy step skips on a pull request.
         just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
-        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
         ;;
@@ -457,14 +455,13 @@ python-ci-lint: _msvc-bootstrap ensure-local-build-env python-workspace-check
         echo "(No CUDA -- linting with default features only)"
     fi
 
+    echo "==> Checking Python lockfiles..."
+    uv lock --check --project .
+    uv lock --check --project exp/zluppy
     echo "==> Checking Rust formatting..."
     cargo fmt --all -- --check
     echo "==> Running clippy..."
     cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
-    echo "==> Running pre-commit..."
-    uv run --frozen pre-commit run --all-files
-    echo "==> Running cargo check..."
-    cargo check --locked --workspace --all-targets
 
 # Run cargo check
 [group('lint')]
@@ -792,15 +789,15 @@ julia-lint: (julia-build "release")
 pytest-perf: build-release
     uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
-# Run tests for optional dependencies (only quantum-pecos carries the marker)
+# Performance tests against the CI test environment built in release mode (nightly CI).
 [group('test')]
-pytest-dep:
-    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "optional_dependency"
+python-ci-perf: (python-ci-build-test "release")
+    uv run --frozen --group numpy-compat pytest -n 1 python/pecos-rslib/tests -m "performance" -v
 
 # Run the slower integration lane (excluded from the default fast lane)
 [group('test')]
 pytest-slow:
-    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow and not optional_dependency"
+    uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow"
 
 
 

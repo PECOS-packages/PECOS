@@ -142,6 +142,11 @@ pub fn convert_phir_json_file_to_ron(path: &Path) -> Result<String, PecosError> 
     phir_json_to_ron(&content)
 }
 
+// Compile and run the README's Rust examples as doctests.
+#[cfg(all(doctest, feature = "v0_1"))]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

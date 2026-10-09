@@ -23,7 +23,7 @@ extern bool pecos_program_exited(void);
 // One recovery target per thread; nested guards are unsupported.
 static PECOS_THREAD_LOCAL jmp_buf user_program_jmpbuf;
 
-// Always jump with sentinel 1. The recorded Exit/Panic variant determines
+// Always jump with sentinel 1. The recorded termination variant determines
 // success or failure; the original signed code remains in the context.
 // Both output ABIs use this guard, including calls made outside a wrapper.
 static void pecos_program_panic_transfer(void) {

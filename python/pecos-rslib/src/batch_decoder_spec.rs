@@ -33,6 +33,7 @@
 
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use pecos_decoder_core::{DecoderError, ObservableDecoder, obs_mask::ObsMask};
+use pecos_decoders::batch::DecoderFactory;
 use pecos_decoders::{DecodeModel, DecoderSpec, spec::ExecutionTraits};
 use pyo3::exceptions::{PyAttributeError, PyTypeError};
 use pyo3::prelude::*;
@@ -49,6 +50,15 @@ pub(crate) enum BatchDecoderSpec {
 pub(crate) enum DecoderBuildError {
     Decoder(DecoderError),
     Python(PyErr),
+}
+
+impl std::fmt::Display for DecoderBuildError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Decoder(error) => error.fmt(formatter),
+            Self::Python(error) => error.fmt(formatter),
+        }
+    }
 }
 
 impl BatchDecoderSpec {
@@ -112,31 +122,34 @@ impl BatchDecoderSpec {
             traits,
         })
     }
+}
 
-    pub(crate) fn execution_traits(&self) -> ExecutionTraits {
+impl DecoderFactory for BatchDecoderSpec {
+    type BuildError = DecoderBuildError;
+
+    fn execution_traits(&self) -> ExecutionTraits {
         match self {
             Self::Builtin(spec) => spec.execution_traits(),
             Self::Provider { traits, .. } => *traits,
         }
     }
-    pub(crate) fn native_batch_capable(&self) -> bool {
+    fn native_batch_capable(&self) -> bool {
         match self {
             Self::Builtin(spec) => spec.native_batch_capable(),
             Self::Provider { .. } => false,
         }
     }
-    pub(crate) fn embedded_hybrid_full_dem(&self) -> Option<&str> {
+    fn decode_model(&self, dem: &str) -> DecodeModel {
         match self {
-            Self::Builtin(spec) => spec.embedded_hybrid_full_dem(),
-            Self::Provider { .. } => None,
+            Self::Builtin(spec) => spec.decode_model(dem),
+            Self::Provider { .. } => DecodeModel::SingleDem(dem.to_string()),
         }
     }
-    pub(crate) fn build(
-        &self,
-        model: &DecodeModel,
-    ) -> Result<Box<dyn ObservableDecoder>, DecoderBuildError> {
+    fn build(&self, model: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, DecoderBuildError> {
         match self {
-            Self::Builtin(spec) => spec.build(model).map_err(DecoderBuildError::Decoder),
+            Self::Builtin(spec) => {
+                DecoderFactory::build(spec, model).map_err(DecoderBuildError::Decoder)
+            }
             Self::Provider { spec, .. } => {
                 let DecodeModel::SingleDem(dem) = model else {
                     return Err(DecoderBuildError::Decoder(

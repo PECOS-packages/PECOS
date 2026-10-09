@@ -46,9 +46,13 @@ pub struct LabeledMechanism {
 /// Definition of a detector or observable in terms of MeasIds.
 #[derive(Debug, Clone)]
 pub struct NodeDefinition {
+    /// Declared detector or observable id.
+    pub id: usize,
     /// Label: "D0", "L0", etc.
     pub label: String,
-    /// MeasIds that XOR together to produce this node's value.
+    /// MeasIds that XOR together to produce this node's value. For nonempty
+    /// references, an empty vector means ids are unknown and the field is
+    /// omitted from JSON. Empty references retain an empty JSON list.
     pub meas_ids: Vec<usize>,
     /// Record offsets (negative, relative to end of measurement record).
     pub records: Vec<i32>,
@@ -180,6 +184,7 @@ impl NoiseCharacterization {
         let mut definitions = Vec::new();
         for &(id, ref mids, ref recs) in detector_meas_ids {
             definitions.push(NodeDefinition {
+                id,
                 label: format!("D{id}"),
                 meas_ids: mids.clone(),
                 records: recs.clone(),
@@ -187,6 +192,7 @@ impl NoiseCharacterization {
         }
         for &(id, ref mids, ref recs) in observable_meas_ids {
             definitions.push(NodeDefinition {
+                id,
                 label: format!("L{id}"),
                 meas_ids: mids.clone(),
                 records: recs.clone(),
@@ -291,11 +297,11 @@ impl NoiseCharacterization {
         // Definitions
         j.push_str("  \"definitions\": [\n");
         for (i, def) in self.definitions.iter().enumerate() {
-            let _ = write!(
-                j,
-                "    {{\"label\": \"{}\", \"meas_ids\": {:?}, \"records\": {:?}}}",
-                def.label, def.meas_ids, def.records
-            );
+            let _ = write!(j, "    {{\"id\": {}, \"label\": \"{}\"", def.id, def.label);
+            if !def.meas_ids.is_empty() || def.records.is_empty() {
+                let _ = write!(j, ", \"meas_ids\": {:?}", def.meas_ids);
+            }
+            let _ = write!(j, ", \"records\": {:?}}}", def.records);
             if i + 1 < self.definitions.len() {
                 j.push(',');
             }

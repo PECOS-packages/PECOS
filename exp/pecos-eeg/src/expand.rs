@@ -14,8 +14,17 @@ use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use pecos_core::{Gate, QubitId};
 
 /// Why an EEG DEM could not be built from the circuit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum EegBuildError {
+    /// Invalid detector or observable definitions.
+    Definitions(pecos_qec::fault_tolerance::circuit_definitions::DefinitionError),
+    /// Definition emission and expansion disagree on the measurement count.
+    MeasurementCountMismatch {
+        /// Number of measurement records seen by the definition reader.
+        definition_count: usize,
+        /// Number of auxiliary measurement records produced by expansion.
+        expanded_count: usize,
+    },
     /// A gate fails `Gate::validate`: for example it repeats a qubit, or its
     /// qubit count is not a multiple of its arity. Batched gates are applied
     /// operand group by operand group, which assumes the groups are disjoint.
@@ -56,25 +65,26 @@ pub enum EegBuildError {
         /// How many measurement records the expansion produced.
         num_measurements: usize,
     },
-    /// Two measurements carry the same id, so id resolution would be
-    /// ambiguous. `TickCircuit` does not enforce uniqueness; this expansion
-    /// must, because it resolves annotations by id.
+    /// Two measurements carry the same id, making measurement identity
+    /// ambiguous. Expansion checks uniqueness while recording stamped
+    /// measurements; the shared definition reader resolves references.
     DuplicateMeasId {
         /// The id held by more than one measurement.
         meas_id: pecos_core::MeasId,
-    },
-    /// An annotation references a measurement id the expansion never recorded.
-    UnresolvableAnnotationId {
-        /// The unknown id.
-        meas_id: pecos_core::MeasId,
-        /// How many measurement records the expansion produced.
-        num_measurements: usize,
     },
 }
 
 impl std::fmt::Display for EegBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Definitions(source) => source.fmt(f),
+            Self::MeasurementCountMismatch {
+                definition_count,
+                expanded_count,
+            } => write!(
+                f,
+                "definition reader counted {definition_count} measurement records, but expansion produced {expanded_count}"
+            ),
             Self::InvalidGate { index, reason } => write!(f, "gate {index} is invalid: {reason}"),
             Self::UnsupportedExactNoise { eeg_type } => write!(
                 f,
@@ -105,15 +115,6 @@ impl std::fmt::Display for EegBuildError {
                 f,
                 "two measurements carry MeasId({}); annotation resolution by id \
                  requires each measurement to hold a unique id",
-                meas_id.index()
-            ),
-            Self::UnresolvableAnnotationId {
-                meas_id,
-                num_measurements,
-            } => write!(
-                f,
-                "annotation references MeasId({}), which the expansion never recorded \
-                 ({num_measurements} measurement records exist)",
                 meas_id.index()
             ),
         }
@@ -148,14 +149,10 @@ pub struct ExpandedCircuit {
     /// one this expansion recorded -- an index into `measurement_qubit` and
     /// `original_measured_qubit`.
     ///
-    /// `MZ`, `MeasureFree`, and `MPZ` all appear -- `MeasureFree` lowers to `MZ` in
-    /// this expansion, since the free has no stabilizer effect and its record
-    /// is real. `MeasureLeaked` is refused at the entrance, so an absent id
-    /// here means unknown. Id-less legacy circuits yield an empty map.
-    ///
-    /// This is eeg's private ordinal. It is expansion order, not id-rank order
-    /// and not any other component's ordering; resolve ids through this map
-    /// rather than assuming an id's numeric value indexes anything.
+    /// Used during expansion to reject duplicate measurement identities and
+    /// retained for inspection of stamped measurement provenance. Definitions
+    /// resolve ids through the shared reader, then map its emission positions
+    /// with [`Self::aux_qubit_for_record`]. Id-less measurements have no entry.
     pub meas_id_rank: std::collections::BTreeMap<pecos_core::MeasId, usize>,
 }
 
@@ -190,8 +187,7 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
         // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
         // "free" is resource bookkeeping with no stabilizer effect, and a
         // reused qubit reappears behind an explicit prep the expansion keeps.
-        // Only `MeasureLeaked` is refused: it consumes no record, so this
-        // record-aligned expansion cannot represent it.
+        // MeasureLeaked has no record and cannot be represented here.
         if gate.gate_type == GateType::MeasureLeaked {
             return Err(EegBuildError::UnsupportedMeasurement {
                 gate_type: gate.gate_type,
@@ -288,6 +284,11 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
                     measurement_qubit.push(aux);
                     original_measured_qubit.push(q_idx);
                 }
+            }
+            gate_type if gate_type.consumes_measurement_record() => {
+                // Only the measurement arm above records an auxiliary. Refuse
+                // all other record consumers, including future gate types.
+                return Err(EegBuildError::UnsupportedMeasurement { gate_type });
             }
             GateType::PZ | GateType::QAlloc => {
                 // Keep resets — they re-initialize the qubit for the next round
@@ -476,30 +477,40 @@ impl ExpandedCircuit {
             },
         )
     }
-
-    /// The auxiliary qubit whose final Z-measurement carries the measurement
-    /// named by `meas_id`.
-    ///
-    /// Resolution goes through `meas_id_rank`, so it is correct for external
-    /// (non-positional) ids -- an id's numeric value is never used as an index.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EegBuildError::UnresolvableAnnotationId`] when the expansion
-    /// never recorded the id.
-    pub fn aux_qubit_for_id(&self, meas_id: pecos_core::MeasId) -> Result<usize, EegBuildError> {
-        let rank = self.meas_id_rank.get(&meas_id).copied().ok_or(
-            EegBuildError::UnresolvableAnnotationId {
-                meas_id,
-                num_measurements: self.measurement_qubit.len(),
-            },
-        )?;
-        self.aux_qubit_for_record(rank)
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn record_consuming_gates_are_recorded_or_refused() {
+        // GateType is repr(u8); use its checked conversion and the core
+        // predicate so new record consumers join this test automatically.
+        for gate_type in (u8::MIN..=u8::MAX)
+            .filter_map(|value| GateType::try_from(value).ok())
+            .filter(|gate_type| gate_type.consumes_measurement_record())
+        {
+            let gates = [make_gate(gate_type, &[0])];
+            match expand_circuit(&gates) {
+                Ok(expanded) => assert_eq!(expanded.measurement_qubit.len(), 1, "{gate_type:?}"),
+                Err(EegBuildError::UnsupportedMeasurement { gate_type: refused }) => {
+                    assert_eq!(refused, gate_type);
+                }
+                Err(err) => panic!("unexpected error for {gate_type:?}: {err}"),
+            }
+        }
+    }
+
+    #[test]
+    fn mx_is_refused() {
+        let gates = [make_gate(GateType::MX, &[0])];
+        assert!(matches!(
+            expand_circuit(&gates),
+            Err(EegBuildError::UnsupportedMeasurement {
+                gate_type: GateType::MX
+            })
+        ));
+    }
+
     #[test]
     fn expansion_flags_are_exact() {
         let gates = [

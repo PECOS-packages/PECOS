@@ -1803,3 +1803,216 @@ fn start_discards_measurement_credits_from_the_previous_shot() {
         assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
     }
 }
+
+fn finish_interleaved_stage(
+    engine: &mut QisEngine,
+    quantum: &mut StateVecEngine,
+    stage: EngineStage<ByteMessage, Shot>,
+) -> Shot {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stage = stage;
+    loop {
+        assert!(Instant::now() < deadline);
+        match stage {
+            EngineStage::NeedsProcessing(commands) => {
+                stage = engine
+                    .continue_processing(quantum.process(commands).unwrap())
+                    .unwrap();
+            }
+            EngineStage::Complete(shot) => return shot,
+        }
+    }
+}
+
+#[test]
+fn dynamic_engines_interleave_on_one_host_thread() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut a = dynamic_read_engine(DYNAMIC_READ_PROBE);
+    let mut b = dynamic_read_engine(
+        &DYNAMIC_READ_PROBE.replace("call void @__quantum__qis__x__body(i64 0)", ""),
+    );
+    let mut qa = StateVecEngine::new(2);
+    let mut qb = StateVecEngine::new(2);
+    let sa = a.start(()).unwrap();
+    let sb = b.start(()).unwrap();
+    assert_waiting(&mut a, &sa);
+    assert_waiting(&mut b, &sb);
+    let EngineStage::NeedsProcessing(ca) = sa else {
+        panic!("A must wait")
+    };
+    let EngineStage::NeedsProcessing(cb) = sb else {
+        panic!("B must wait")
+    };
+    let sa = a.continue_processing(qa.process(ca).unwrap()).unwrap();
+    let sb = b.continue_processing(qb.process(cb).unwrap()).unwrap();
+    let ra = finish_interleaved_stage(&mut a, &mut qa, sa);
+    let rb = finish_interleaved_stage(&mut b, &mut qb, sb);
+    assert_eq!(ra.data.get("measurement_1"), Some(&Data::U32(1)));
+    assert_eq!(rb.data.get("measurement_1"), Some(&Data::U32(0)));
+}
+
+#[test]
+fn migrated_shot_replacement_leaves_original_host_tls_empty() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let (send, recv) = mpsc::channel();
+    let (replaced, replacement) = mpsc::channel();
+    let x = std::thread::spawn(move || {
+        let mut engine = dynamic_read_engine(DYNAMIC_READ_PROBE);
+        let path = engine
+            .interface
+            .as_ref()
+            .unwrap()
+            .get_qis_ffi_lib_path()
+            .unwrap();
+        // Use the same runtime instance as the engine, with its compatibility ABI.
+        let lib = unsafe { libloading::Library::new(path).unwrap() };
+        let pending: libloading::Symbol<unsafe extern "C" fn() -> *mut OperationList> =
+            unsafe { lib.get(b"pecos_get_pending_operations\0").unwrap() };
+        let stage = engine.start(()).unwrap();
+        // Check while the context is still live so a registration regression
+        // fails before allowing another thread to free a dangling TLS pointer.
+        assert!(
+            unsafe { pending() }.is_null(),
+            "host X registered the shot context"
+        );
+        send.send((engine, stage)).unwrap();
+        replacement.recv().unwrap();
+        assert!(
+            unsafe { pending() }.is_null(),
+            "host X retained the freed context"
+        );
+    });
+    let (mut engine, stage) = recv.recv().unwrap();
+    let mut quantum = StateVecEngine::new(2);
+    let shot = finish_interleaved_stage(&mut engine, &mut quantum, stage);
+    assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    let old = engine
+        .interface
+        .as_ref()
+        .unwrap()
+        .get_execution_context_ptr()
+        .unwrap() as usize;
+    let stage = engine.start(()).unwrap();
+    // Enabling the next shot replaced the old interface context and sync handle.
+    let shot = finish_interleaved_stage(&mut engine, &mut StateVecEngine::new(2), stage);
+    assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    assert_ne!(
+        old,
+        engine
+            .interface
+            .as_ref()
+            .unwrap()
+            .get_execution_context_ptr()
+            .unwrap() as usize
+    );
+    replaced.send(()).unwrap();
+    x.join().unwrap();
+}
+
+#[test]
+fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
+    use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    // Both SeleneFutureResult and SeleneU64Result use a hidden return pointer
+    // on Windows, and two registers on the other supported 64-bit targets.
+    #[cfg(not(windows))]
+    let (declarations, calls) = (
+        "declare {i32, i64} @selene_qubit_lazy_measure_leaked(ptr, i64)\ndeclare {i32, i64} @selene_future_read_u64(ptr, i64)",
+        "%future = call {i32, i64} @selene_qubit_lazy_measure_leaked(ptr null, i64 0)\n%id = extractvalue {i32, i64} %future, 1\n%read = call {i32, i64} @selene_future_read_u64(ptr null, i64 %id)",
+    );
+    #[cfg(windows)]
+    let (declarations, calls) = (
+        "declare void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}), ptr, i64)\ndeclare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
+        "%out = alloca {i32, i64}\ncall void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}) %out, ptr null, i64 0)\n%future = load {i32, i64}, ptr %out\n%id = extractvalue {i32, i64} %future, 1\ncall void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 %id)\n%read = load {i32, i64}, ptr %out",
+    );
+    let source = format!(
+        r"
+        {declarations}
+        declare void @__quantum__qis__x__body(i64)
+        define i64 @qmain(i64 %shot) {{
+            call void @__quantum__qis__x__body(i64 0)
+            {calls}
+            %value = extractvalue {{i32, i64}} %read, 1
+            %bad = icmp ne i64 %value, 2
+            %status = zext i1 %bad to i64
+            ret i64 %status
+        }}
+    "
+    );
+    let mut engine = dynamic_read_engine(&source);
+    let noise = GeneralNoiseModel::builder()
+        .with_p1(1.0)
+        .with_p1_emission_ratio(1.0)
+        .with_p1_emission_model(&BTreeMap::from([("L".to_string(), 1.0)]))
+        .build();
+    let mut quantum = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(2)));
+    let stage = engine.start(()).unwrap();
+    let shot = finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
+    assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(2)));
+}
+
+#[test]
+fn scheduled_remeasured_slot_reads_and_records_latest_outcome() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        define i64 @qmain(i64 %shot) {
+            %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            call void @__quantum__qis__x__body(i64 0)
+            %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            %read = call i1 @___read_future_bool(i64 7)
+            %bad = xor i1 %read, true
+            %status = zext i1 %bad to i64
+            ret i64 %status
+        }
+    ";
+    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        let mut engine = dynamic_read_engine(source);
+        engine.scheduled_transport = mode;
+        for _ in 0..2 {
+            let stage = engine.start(()).unwrap();
+            let shot =
+                finish_deferred_read_shot(&mut engine, &mut deferred_read_quantum(mode), stage)
+                    .unwrap();
+            assert_eq!(shot.data.get("measurement_7"), Some(&Data::U32(1)));
+        }
+    }
+}
+
+#[test]
+fn soft_rz_large_scheduled_gate_only_tail_completes() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = br"
+        declare void @__quantum__qis__x__body(i64)
+        define i64 @qmain(i64 %shot) {
+        entry:
+            br label %loop
+        loop:
+            %i = phi i64 [0, %entry], [%next, %loop]
+            call void @__quantum__qis__x__body(i64 0)
+            %next = add i64 %i, 1
+            %more = icmp ult i64 %next, 8192
+            br i1 %more, label %loop, label %done
+        done:
+            ret i64 0
+        }
+    ";
+    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(crate::selene_soft_rz_runtime().unwrap()),
+        );
+        engine.set_num_qubits_hint(2);
+        engine.scheduled_transport = mode;
+        engine
+            .load_program(source, ProgramFormat::LlvmIrText)
+            .unwrap();
+        let mut quantum = deferred_read_quantum(mode);
+        let stage = engine.start(()).unwrap();
+        finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
+        assert_eq!(engine.scheduled_drain_round, 2);
+        assert!(engine.get_results().is_ok());
+    }
+}

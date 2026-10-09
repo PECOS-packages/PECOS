@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import pecos as pc
+from pecos._phir_declarations import validate_declaration_names
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -265,6 +266,8 @@ class PyPHIR:
             name_resolver=name_resolver,
         )
 
+        validate_declaration_names(phir["ops"])
+
         next_qvar_int = 0
 
         for o in phir["ops"]:
@@ -297,7 +300,7 @@ class PyPHIR:
                     p.cvar_dtype_list.append(data.data_type)
 
                 if name == "qvar_define":
-                    # Rust ast::validate_quantum_declaration is the normative statement of these rules.
+                    # Validate the quantum declaration shape specified by PHIR-JSON v0.1.
                     data_type = o.get("data_type", "qubits")
                     if data_type != "qubits":
                         msg = f"Do not know handle qvar type: {o['data_type']}"

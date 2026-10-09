@@ -73,6 +73,8 @@ from phir.model import (
 )
 from pydantic import model_validator
 
+from pecos._phir_declarations import validate_declaration_names
+
 
 class _PecosCVarDefine(_CVarDefine):
     """CVarDefine extended with 8-bit and 16-bit integer data types.
@@ -176,8 +178,8 @@ class PhirModel(_PHIRModel):
     """PHIR model extended with PECOS-specific classical and quantum operations.
 
     Adds support for the ``Result`` cop used by PECOS ``HybridEngine`` to
-    map internal measurement registers to external result variables. Fully
-    backwards-compatible with upstream PHIR programs. Also supports the
+    map internal measurement registers to external result variables. Enforces
+    PHIR-JSON's program-wide uniqueness of declared names. Also supports the
     two-angle, two-qubit ``RXYXY2Q`` quantum operation.
 
     The upstream ``phir.model.PHIRModel`` rejects programs containing
@@ -187,6 +189,12 @@ class PhirModel(_PHIRModel):
     """
 
     ops: list[_PecosCmd]  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _check_declaration_names(self) -> PhirModel:
+        """Enforce PHIR-JSON v0.1's unique-name rule for both declaration kinds."""
+        validate_declaration_names(self.model_dump()["ops"])
+        return self
 
 
 _PecosSeqBlock.model_rebuild()

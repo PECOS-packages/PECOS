@@ -27,9 +27,14 @@ pub struct PyStateVec {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    PyStateVec::new(2, None)
-});
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { PyStateVec::new(2, None) },
+    ignored_forcing = (
+        |seed| PyStateVec::new(2, Some(seed)),
+        |sim: &mut PyStateVec| sim.inner.state()
+    )
+);
 
 fn supports(entry: &SymbolEntry) -> bool {
     supports_exact! { entry;

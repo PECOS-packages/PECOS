@@ -421,6 +421,16 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
         GateType::PZ => {
             sim.pz(&qubits);
         }
+        GateType::CS
+        | GateType::CSdg
+        | GateType::CCZ
+        | GateType::CCX
+        | GateType::CH
+        | GateType::T
+        | GateType::Tdg => panic!(
+            "Clifford circuit runner does not support {:?}",
+            gate.gate_type
+        ),
         _ => {}
     }
 }
@@ -1126,6 +1136,38 @@ mod tests {
     use super::*;
     use crate::fault_tolerance::PauliFaultIterator;
     use pecos_simulators::SparseStab;
+
+    #[test]
+    fn diagonal_gates_are_rejected_by_individual_and_tick_dispatch() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = pecos_core::Gate::simple(
+                gt,
+                (0..gt.quantum_arity()).map(QubitId).collect::<Vec<_>>(),
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let mut sim = pecos_simulators::SparseStab::new(3);
+                    apply_gate(&mut sim, &gate);
+                })
+                .is_err()
+            );
+            for count in [1, 8] {
+                let mut circuit = pecos_quantum::TickCircuit::new();
+                let mut tick = circuit.tick();
+                tick.try_add_gate(gate.clone()).unwrap();
+                for q in 3..(3 + count) {
+                    tick.h(&[q]);
+                }
+                assert!(
+                    std::panic::catch_unwind(|| {
+                        let mut sim = pecos_simulators::SparseStab::new(3 + count);
+                        apply_tick_gates(&mut sim, circuit.get_tick(0).unwrap());
+                    })
+                    .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_extract_spacetime_locations_empty_circuit() {

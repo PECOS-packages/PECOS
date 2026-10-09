@@ -846,10 +846,10 @@ def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_r
     return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))
 
 
-def make_t_injection(rounds_before: int, rounds_after: int):
+def make_t_teleportation_placeholder(rounds_before: int, rounds_after: int):
     """Clifford stand-in: ancilla prepared in |+>, no T, no conditional S."""
-    def t_injection() -> None:
-        """Clifford stand-in for T injection."""
+    def t_teleportation() -> None:
+        """Clifford stand-in for T-gate teleportation."""
         data = prep_z_basis()
         anc = prep_x_basis()
         for _ in range(comptime(rounds_before)):
@@ -871,7 +871,7 @@ def make_t_injection(rounds_before: int, rounds_after: int):
         output("final_data", final)
         final = measure_z_basis(anc)
         output("final_anc", final)
-    return guppy(variant_scoped(t_injection, rounds_before, rounds_after))
+    return guppy(variant_scoped(t_teleportation, rounds_before, rounds_after))
 
 
 def make_logical_sz_experiment(rounds_before: int, rounds_after: int, *, dagger: bool = False):
@@ -928,3 +928,276 @@ def make_logical_y_readout_experiment(num_rounds: int):
         final = measure_x_basis(a)
         output("final_a", final)
     return guppy(variant_scoped(logical_y_readout, num_rounds))
+
+from guppylang.std.quantum import t, tdg, z
+
+@guppy
+def prep_injection_z_seed() -> SurfaceCode_3x3:
+    """Prepare the raw Z injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_minus_z_seed() -> SurfaceCode_3x3:
+    """Prepare the raw -Z injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    x(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_x_seed() -> SurfaceCode_3x3:
+    """Prepare the raw X injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    h(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_minus_x_seed() -> SurfaceCode_3x3:
+    """Prepare the raw -X injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    h(data[0])
+    z(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_y_seed() -> SurfaceCode_3x3:
+    """Prepare the raw Y injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    h(data[0])
+    s(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_minus_y_seed() -> SurfaceCode_3x3:
+    """Prepare the raw -Y injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    h(data[0])
+    sdg(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_t_seed() -> SurfaceCode_3x3:
+    """Prepare the raw T injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    h(data[0])
+    t(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_injection_tdg_seed() -> SurfaceCode_3x3:
+    """Prepare the raw TDG injection seed; syndrome projection and sign correction must follow."""
+    data = array(qubit() for _ in range(9))
+    h(data[0])
+    tdg(data[0])
+    cx(data[0], data[3])
+    cx(data[3], data[6])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def fix_injection_signs(surf: SurfaceCode_3x3, syn: Syndrome_3x3) -> None:
+    """Remove ideal encoding byproducts; this is not noisy decoding."""
+    if syn.synx[0]:
+        z(surf.data[1])
+        z(surf.data[2])
+    if syn.synx[1]:
+        z(surf.data[2])
+    if syn.synx[2]:
+        z(surf.data[0])
+        z(surf.data[1])
+        z(surf.data[2])
+        z(surf.data[3])
+    if syn.synx[3]:
+        z(surf.data[0])
+        z(surf.data[1])
+        z(surf.data[2])
+        z(surf.data[3])
+        z(surf.data[7])
+
+
+@guppy
+def prepare_injected_z() -> SurfaceCode_3x3:
+    surf = prep_injection_z_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_minus_z() -> SurfaceCode_3x3:
+    surf = prep_injection_minus_z_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_x() -> SurfaceCode_3x3:
+    surf = prep_injection_x_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_minus_x() -> SurfaceCode_3x3:
+    surf = prep_injection_minus_x_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_y() -> SurfaceCode_3x3:
+    surf = prep_injection_y_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_minus_y() -> SurfaceCode_3x3:
+    surf = prep_injection_minus_y_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_t() -> SurfaceCode_3x3:
+    surf = prep_injection_t_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def prepare_injected_tdg() -> SurfaceCode_3x3:
+    surf = prep_injection_tdg_seed()
+    syn = syndrome_extraction_a(surf)
+    output("injection_synx", syn.synx)
+    output("injection_synz", syn.synz)
+    fix_injection_signs(surf, syn)
+    return surf
+
+
+@guppy
+def consume_t_resource(data: SurfaceCode_3x3, resource: SurfaceCode_3x3 @ owned) -> bool:
+    """Consume canonical T/TDG resource; return RAW logical Z, pending decoding."""
+    transversal_cx(data, resource)
+    bits = measure_z_basis(resource)
+    output("teleportation_resource_readout", bits)
+    return bits[0] ^ bits[1] ^ bits[2]
+
+
+@guppy
+def correct_t_teleportation(data: SurfaceCode_3x3, decoded_outcome: bool, dagger: bool) -> None:
+    """Apply physical logical S/SDG for the decoded teleportation outcome."""
+    output("t_correction", decoded_outcome)
+    if decoded_outcome:
+        if dagger:
+            syn = syndrome_extraction_fold_szdg_a(data)
+        else:
+            syn = syndrome_extraction_fold_sz_a(data)
+    else:
+        syn = syndrome_extraction_a(data)
+    output("correction_synx", syn.synx)
+    output("correction_synz", syn.synz)
+
+
+@guppy
+def apply_t_teleportation(data: SurfaceCode_3x3, resource: SurfaceCode_3x3 @ owned, dagger: bool) -> None:
+    """Noiseless convenience: use raw parity as the correction decision."""
+    outcome = consume_t_resource(data, resource)
+    correct_t_teleportation(data, outcome, dagger)
+
+
+def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
+                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False):
+    """Raw resource + corrected logical T/TDG. Syndrome rounds are recorded, not decoded."""
+    if (type(rounds_before) is not int or type(rounds_after) is not int
+            or min(rounds_before, rounds_after) < 0):
+        raise ValueError("Teleportation round counts must be nonnegative integers")
+    if input_state not in ("Z", "-Z", "X", "-X", "Y", "-Y"):
+        raise ValueError("input_state must be a signed X/Y/Z eigenstate")
+    if readout_basis not in ("X", "Y", "Z"):
+        raise ValueError("readout_basis must be X, Y, or Z")
+    if type(dagger) is not bool:
+        raise ValueError("dagger must be a boolean")
+    def experiment() -> None:
+        if comptime(input_state == "Z"):
+            data = prepare_injected_z()
+        elif comptime(input_state == "-Z"):
+            data = prepare_injected_minus_z()
+        elif comptime(input_state == "X"):
+            data = prepare_injected_x()
+        elif comptime(input_state == "-X"):
+            data = prepare_injected_minus_x()
+        elif comptime(input_state == "Y"):
+            data = prepare_injected_y()
+        elif comptime(input_state == "-Y"):
+            data = prepare_injected_minus_y()
+        else:
+            data = prepare_injected_x()
+        if comptime(dagger):
+            resource = prepare_injected_tdg()
+        else:
+            resource = prepare_injected_t()
+        for _ in range(comptime(rounds_before)):
+            syn_data = syndrome_extraction_a(data)
+            syn_resource = syndrome_extraction_a(resource)
+            output("data_synx", syn_data.synx)
+            output("data_synz", syn_data.synz)
+            output("resource_synx", syn_resource.synx)
+            output("resource_synz", syn_resource.synz)
+        apply_t_teleportation(data, resource, comptime(dagger))
+        for _ in range(comptime(rounds_after)):
+            syn = syndrome_extraction_a(data)
+            output("data_synx", syn.synx)
+            output("data_synz", syn.synz)
+        if comptime(readout_basis == "Y"):
+            syn = syndrome_extraction_fold_szdg_a(data)
+            output("readout_synx", syn.synx)
+            output("readout_synz", syn.synz)
+        if comptime(readout_basis == "Z"):
+            final = measure_z_basis(data)
+        else:
+            final = measure_x_basis(data)
+        output("final_data", final)
+    return guppy(variant_scoped(
+        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger))

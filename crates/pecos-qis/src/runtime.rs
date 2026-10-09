@@ -184,15 +184,24 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// Returns an error if the measurements cannot be provided.
     fn provide_measurements(&mut self, measurements: BTreeMap<usize, bool>) -> Result<()>;
 
+    /// Runtime identity used in execution diagnostics.
+    fn name(&self) -> &str {
+        std::any::type_name::<Self>()
+    }
+
     /// Provide integer-valued measurement outcomes back to the runtime.
     ///
     /// The default keeps existing Boolean runtimes compatible and rejects a
-    /// leakage outcome instead of silently converting 2 to true.
+    /// leakage outcome instead of silently converting 2 to true. Deliveries are
+    /// ordered and may repeat a program result slot; every delivery is retained.
+    /// After validating all outcomes, the default calls `provide_measurements`
+    /// once per outcome, in order. Delivery is not atomic across the batch:
+    /// an error leaves earlier successful deliveries applied.
     ///
     /// # Errors
     /// Returns an error if any outcome is not 0 or 1, since a Boolean runtime cannot
     /// represent a leakage outcome, or if providing the measurements themselves fails.
-    fn provide_measurement_outcomes(&mut self, outcomes: BTreeMap<usize, u32>) -> Result<()> {
+    fn provide_measurement_outcomes(&mut self, outcomes: Vec<(usize, u32)>) -> Result<()> {
         let measurements = outcomes
             .into_iter()
             .map(|(result_id, value)| match value {
@@ -202,8 +211,11 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
                     "runtime does not support leakage outcome {value} for result {result_id}"
                 ))),
             })
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        self.provide_measurements(measurements)
+            .collect::<Result<Vec<_>>>()?;
+        for measurement in measurements {
+            self.provide_measurements(BTreeMap::from([measurement]))?;
+        }
+        Ok(())
     }
 
     /// Get the current classical state (for debugging/inspection)

@@ -29,6 +29,9 @@ The `C` prefix indicates a controlled operation where the first qubit controls t
 | CX | Controlled-X (CNOT) |
 | CY | Controlled-Y |
 | CZ | Controlled-Z |
+| CS | Controlled-S, including the control phase |
+| CSdg | Adjoint of controlled-S |
+| CCZ | Doubly-controlled-Z (symmetric in all three operands) |
 
 Parameterized controlled rotations (`CRX`, `CRY`, `CRZ`) and controlled phase
 (`CPhase`/`CU1`) are accepted only as boundary spellings. Direct PECOS

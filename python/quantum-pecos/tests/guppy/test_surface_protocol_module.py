@@ -48,7 +48,7 @@ RECIPES = {
     "h": ("make_h_experiment", (2,)),
     "cx": ("make_transversal_cx", (2,)),
     "sz": ("make_sz_teleportation", (2, 2, 2)),
-    "t": ("make_t_injection", (2, 2)),
+    "t": ("make_t_teleportation_placeholder", (2, 2)),
 }
 
 
@@ -69,7 +69,7 @@ def _builder(patch, recipe):
             builder.add_sz_via_teleportation("D", "A", 2, 2)
             builder.add_memory("D", 2, "Z")
         else:
-            builder.add_t_via_injection("D", "A", 2, 2)
+            builder.add_t_teleportation_placeholder("D", "A", 2, 2)
     return builder
 
 
@@ -83,6 +83,12 @@ def test_all_gadget_functions_compile(module, patch):
     source = ast.parse(render_surface_protocol_module(patch))
     expected = {
         "prep_z_basis",
+        "fix_injection_signs",
+        "consume_t_resource",
+        "correct_t_teleportation",
+        "apply_t_teleportation",
+        *(f"prep_injection_{state}_seed" for state in ("z", "minus_z", "x", "minus_x", "y", "minus_y", "t", "tdg")),
+        *(f"prepare_injected_{state}" for state in ("z", "minus_z", "x", "minus_x", "y", "minus_y", "t", "tdg")),
         "prep_x_basis",
         "prep_y_basis",
         "measure_z_basis",
@@ -118,7 +124,7 @@ def test_all_gadget_functions_compile(module, patch):
             [("measure_z_basis", "anc"), ("measure_z_basis", "data")],
         ),
         (
-            "make_t_injection",
+            "make_t_teleportation_placeholder",
             [("data", "prep_z_basis"), ("anc", "prep_x_basis")],
             [("measure_z_basis", "data"), ("measure_z_basis", "anc")],
         ),
@@ -313,6 +319,16 @@ def test_sidebands_and_memory_parity(patch):
                 orientation = "swapped:" if "_swapped_" in node.name else ""
                 assert re.fullmatch(rf"{scope}:{orientation}s[xz][0-9]+:(init:)?meas:[0-9]+", tag)
                 sidebands.append(tag)
+        elif node.name.startswith("prepare_injected_"):
+            assert {ast.literal_eval(call.args[0]) for call in calls} == {"injection_synx", "injection_synz"}
+        elif node.name == "consume_t_resource":
+            assert [ast.literal_eval(call.args[0]) for call in calls] == ["teleportation_resource_readout"]
+        elif node.name == "correct_t_teleportation":
+            assert {ast.literal_eval(call.args[0]) for call in calls} == {
+                "t_correction",
+                "correction_synx",
+                "correction_synz",
+            }
         else:
             assert not calls
     assert len(sidebands) == 64
@@ -579,7 +595,7 @@ def _expected_readout(scope, basis="z"):
             ],
         ),
         (
-            "make_t_injection",
+            "make_t_teleportation_placeholder",
             [
                 "data = prep_z_basis()",
                 "anc = prep_x_basis()",
@@ -707,7 +723,7 @@ def test_sz_teleportation_factory_requires_projection(module, patch, rounds_befo
 
 
 @pytest.mark.parametrize(("recipe", "rounds_before"), [("sz", 1), ("t", 0)])
-def test_injection_factory_projection_boundary(module, patch, recipe, rounds_before):
+def test_teleportation_factory_projection_boundary(module, patch, recipe, rounds_before):
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "D")
     builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
@@ -716,8 +732,8 @@ def test_injection_factory_projection_boundary(module, patch, recipe, rounds_bef
         builder.add_sz_via_teleportation("D", "A", rounds_before, 2)
         builder.add_memory("D", 2, "Z")
     else:
-        program = module["make_t_injection"](rounds_before, 2)
-        builder.add_t_via_injection("D", "A", rounds_before, 2)
+        program = module["make_t_teleportation_placeholder"](rounds_before, 2)
+        builder.add_t_teleportation_placeholder("D", "A", rounds_before, 2)
     assert_same_measurement_partition(
         measurement_partition_from_trace(program, 2 * patch.geometry.num_qubits, {"data": "D", "anc": "A"}),
         measurement_partition_from_builder(builder),

@@ -32,9 +32,26 @@ pub struct PyPauliProp {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    PyPauliProp::new(Some(2), false)
-});
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { PyPauliProp::new(Some(2), false) },
+    ignored_forcing = (
+        |seed: u64| {
+            let mut sim = PyPauliProp::new(Some(2), true);
+            if seed & 1 != 0 {
+                sim.inner.track_y(&[0]);
+            }
+            if seed & 2 != 0 {
+                sim.inner.track_z(&[1]);
+            }
+            if seed & 4 != 0 {
+                sim.inner.flip_sign();
+            }
+            sim
+        },
+        |sim: &mut PyPauliProp| sim.inner.to_pauli_string()
+    )
+);
 
 fn supports(entry: &SymbolEntry) -> bool {
     supports_exact! { entry;

@@ -164,6 +164,15 @@ enum QubitPrepState {
     Released,
 }
 
+/// Certification belongs to a shot attempt, including failures before submission.
+#[derive(Debug, PartialEq, Eq)]
+enum ShotLifecycle {
+    Idle,
+    Running,
+    Finalized,
+    Failed(String),
+}
+
 /// State for dynamic circuit execution
 ///
 /// The LLVM program runs in a worker thread. When it needs a measurement result,
@@ -460,6 +469,10 @@ pub struct QisEngine {
     /// runtime, so without this a failed runtime reset would let `get_results`
     /// return the previous, failed shot.
     reset_failure: Option<String>,
+    shot_lifecycle: ShotLifecycle,
+    /// Terminal scheduled drains require feedback before releasing more work.
+    scheduled_drain_round: usize,
+    scheduled_drain_feedback: bool,
 
     /// RNG for generating per-shot seeds
     rng: PecosRng,
@@ -570,10 +583,13 @@ impl QisEngine {
         if updates.is_empty() {
             return Ok(());
         }
-        let measurement_map: BTreeMap<usize, u32> = updates.iter().copied().collect();
         self.runtime
-            .provide_measurement_outcomes(measurement_map)
-            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))
+            .provide_measurement_outcomes(updates.to_vec())
+            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))?;
+        if self.scheduled_transport.enabled() {
+            self.scheduled_drain_feedback = true;
+        }
+        Ok(())
     }
 
     /// Create a new engine with the given interface and runtime
@@ -598,6 +614,9 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             pending_measurements: BTreeMap::new(),
             reset_failure: None,
+            shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -697,6 +716,9 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             pending_measurements: BTreeMap::new(),
             reset_failure: None,
+            shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -1284,6 +1306,9 @@ impl Clone for QisEngine {
             measurement_results: BTreeMap::new(), // Clear for new shot
             pending_measurements: BTreeMap::new(),
             reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
+            shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
             dynamic_state: None,             // Can't clone thread state
@@ -1661,9 +1686,11 @@ impl QisEngine {
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        handle
-            .set_measurement_outcome(result_id, u64::from(value))
-            .map_err(|e| PecosError::Generic(format!("Failed to set measurement result: {e}")))?;
+        let delivered = handle.set_measurement_outcome(result_id, u64::from(value));
+        // A worker that cannot receive its outcome can never finish this shot.
+        delivered.map_err(|e| {
+            self.latch_terminal_error(format!("Failed to set measurement result: {e}"))
+        })?;
         debug!("Set dynamic result: {result_id} = {value}");
         Ok(())
     }
@@ -1679,9 +1706,11 @@ impl QisEngine {
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        handle
-            .signal_result_ready()
-            .map_err(|e| PecosError::Generic(format!("Failed to signal result ready: {e}")))?;
+        let signalled = handle.signal_result_ready();
+        // A worker that is never woken can never finish this shot.
+        signalled.map_err(|e| {
+            self.latch_terminal_error(format!("Failed to signal result ready: {e}"))
+        })?;
         debug!("Signaled result ready");
         Ok(())
     }
@@ -1817,8 +1846,8 @@ impl QisEngine {
                     }
                     if let Some(ref mut state) = self.dynamic_state {
                         state.execution_complete = true;
-                        state.terminal_error = Some(format!("dynamic QIS worker failed: {e}"));
                     }
+                    self.latch_terminal_error(format!("dynamic QIS worker failed: {e}"));
                     return true;
                 }
             }
@@ -1840,11 +1869,16 @@ impl QisEngine {
                     .as_ref()
                     .and_then(|state| state.terminal_error.as_ref())
             })
+            .or(match &self.shot_lifecycle {
+                ShotLifecycle::Failed(error) => Some(error),
+                _ => None,
+            })
             .map(|err| PecosError::Generic(err.clone()))
     }
 
     /// Latch a terminal failure for this shot and return it as an error.
     fn latch_terminal_error(&mut self, message: String) -> PecosError {
+        self.shot_lifecycle = ShotLifecycle::Failed(message.clone());
         if let Some(ref mut state) = self.dynamic_state {
             state.terminal_error = Some(message.clone());
         }
@@ -1863,7 +1897,7 @@ impl QisEngine {
         terminal: bool,
     ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if self.scheduled_transport.enabled() {
-            return self.drain_scheduled_commands();
+            return self.drain_scheduled_commands(terminal);
         }
         if !self.runtime.supports_operation_lowering() {
             return Ok(None);
@@ -1898,11 +1932,20 @@ impl QisEngine {
         )))
     }
 
-    fn drain_scheduled_commands(&mut self) -> Result<Option<(ByteMessage, usize)>, PecosError> {
+    fn drain_scheduled_commands(
+        &mut self,
+        terminal: bool,
+    ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if !self.scheduled_transport.enabled()
             || self.dynamic_state.as_ref().is_some_and(|s| s.finalized)
         {
             return Ok(None);
+        }
+        let permitted =
+            !terminal || self.scheduled_drain_round == 0 || self.scheduled_drain_feedback;
+        if terminal {
+            self.scheduled_drain_round += 1;
+            self.scheduled_drain_feedback = false;
         }
         let result = (|| {
             let batches = self
@@ -1911,6 +1954,13 @@ impl QisEngine {
                 .map_err(|e| PecosError::Generic(e.to_string()))?;
             if batches.is_empty() {
                 return Ok(None);
+            }
+            if !permitted {
+                return Err(PecosError::Generic(format!(
+                    "scheduled runtime {} returned work without measurement feedback in terminal drain round {}",
+                    self.runtime.name(),
+                    self.scheduled_drain_round
+                )));
             }
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
@@ -2022,6 +2072,7 @@ impl QisEngine {
         if let Some(ref mut state) = self.dynamic_state {
             state.finalized = true;
         }
+        self.shot_lifecycle = ShotLifecycle::Finalized;
         Ok(())
     }
 
@@ -2049,10 +2100,14 @@ impl QisEngine {
                 None => Ok(()),
             });
         if let Err(error) = reset {
+            self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
             self.reset_failure = Some(error.to_string());
             return Err(error);
         }
         self.reset_failure = None;
+        self.shot_lifecycle = ShotLifecycle::Idle;
+        self.scheduled_drain_round = 0;
+        self.scheduled_drain_feedback = false;
         self.current_operations = None;
         self.started = false;
         self.measurement_mapping.clear();
@@ -2223,6 +2278,15 @@ impl ClassicalEngine for QisEngine {
             return Err(error);
         }
 
+        match &self.shot_lifecycle {
+            ShotLifecycle::Idle => return Ok(shot),
+            ShotLifecycle::Running => {
+                return Err(PecosError::Generic("shot not finished (Running)".into()));
+            }
+            ShotLifecycle::Failed(error) => return Err(PecosError::Generic(error.clone())),
+            ShotLifecycle::Finalized => {}
+        }
+
         // Named outputs preserve the scalar-for-one, vector-otherwise rule.
         let mut has_named_results = false;
         if let Some(state) = &self.dynamic_state
@@ -2354,79 +2418,97 @@ impl ControlEngine for QisEngine {
                 "scheduled transport does not yet support operation tracing".into(),
             ));
         }
-        // Clear previous shot's measurement state
-        self.measurement_results.clear();
-        self.pending_measurements.clear();
-        self.measurement_mapping.clear();
-        self.pending_dynamic_ops.clear();
-        self.simulated_op_count = 0;
-        self.reset_qubit_slots();
-        debug!("QisEngine: Cleared previous measurement results for new shot");
+        self.shot_lifecycle = ShotLifecycle::Running;
+        self.scheduled_drain_round = 0;
+        self.scheduled_drain_feedback = false;
+        let attempt = (|| {
+            // Clear previous shot's measurement state
+            self.measurement_results.clear();
+            self.pending_measurements.clear();
+            self.measurement_mapping.clear();
+            self.pending_dynamic_ops.clear();
+            self.simulated_op_count = 0;
+            self.reset_qubit_slots();
+            debug!("QisEngine: Cleared previous measurement results for new shot");
 
-        // Generate a per-shot seed from our RNG
-        let shot_seed = self.rng.next_u64();
-        debug!("QisEngine: Generated shot seed {shot_seed}");
+            // Generate a per-shot seed from our RNG
+            let shot_seed = self.rng.next_u64();
+            debug!("QisEngine: Generated shot seed {shot_seed}");
 
-        // Store the shot seed for quantum engine access
-        self.current_shot_seed = Some(shot_seed);
-        self.begin_trace_shot();
+            // Store the shot seed for quantum engine access
+            self.current_shot_seed = Some(shot_seed);
+            self.begin_trace_shot();
 
-        // Reset the runtime to ensure clean state for new shot. A failure is
-        // latched like a failed `reset_all`, which alone clears the latch.
-        if let Err(e) = self.runtime.reset() {
-            let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
-            self.reset_failure = Some(error.to_string());
-            return Err(error);
-        }
-
-        // Start a new shot with the generated seed and a real, monotonically
-        // increasing shot id (a plugin keying state or telemetry on the shot
-        // id must not see every shot as shot 0).
-        let shot_id = u64::try_from(self.trace_shot_index)
-            .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
-        self.runtime
-            .shot_start(shot_id, Some(shot_seed))
-            .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
-
-        self.started = true;
-
-        // Start LLVM program in worker thread
-        self.start_dynamic_worker()?;
-
-        // Wait for the worker to either need a result or complete
-        // Use long timeout as safety net - condvar will wake immediately on signal
-        if let Some(result_id) = self.wait_for_result_needed(30_000) {
-            debug!("Worker needs result for id={result_id}");
-            if let Some(commands) = self.process_result_request(result_id, "pending_start")? {
-                return Ok(EngineStage::NeedsProcessing(commands));
+            // Reset the runtime to ensure clean state for new shot. A failure is
+            // latched like a failed `reset_all`, which alone clears the latch.
+            if let Err(e) = self.runtime.reset() {
+                let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
+                self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
+                self.reset_failure = Some(error.to_string());
+                return Err(error);
             }
-        }
 
-        // Check if worker completed without needing any results
-        if self.check_worker_complete() {
-            if let Some(err) = self.terminal_failure_error() {
-                return Err(err);
-            }
-            // Worker completed but we still need to process any pending operations
-            // through the quantum engine (e.g., programs without measurement-dependent conditionals)
-            if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
-                if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
+            // Start a new shot with the generated seed and a real, monotonically
+            // increasing shot id (a plugin keying state or telemetry on the shot
+            // id must not see every shot as shot 0).
+            let shot_id = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
+            self.runtime
+                .shot_start(shot_id, Some(shot_seed))
+                .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
+
+            self.started = true;
+
+            // Start LLVM program in worker thread
+            self.start_dynamic_worker()?;
+
+            // Wait for the worker to either need a result or complete
+            // Use long timeout as safety net - condvar will wake immediately on signal
+            if let Some(result_id) = self.wait_for_result_needed(30_000) {
+                debug!("Worker needs result for id={result_id}");
+                if let Some(commands) = self.process_result_request(result_id, "pending_start")? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
-            if let Some(commands) = self.drain_terminal_commands()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            self.finalize_shot_for_certification()?;
-            let shot = self.get_results()?;
-            return Ok(EngineStage::Complete(shot));
-        }
 
-        // Return empty commands while we wait
-        Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
+            // Check if worker completed without needing any results
+            if self.check_worker_complete() {
+                if let Some(err) = self.terminal_failure_error() {
+                    return Err(err);
+                }
+                // Worker completed but we still need to process any pending operations
+                // through the quantum engine (e.g., programs without measurement-dependent conditionals)
+                if !self.pending_dynamic_ops.is_empty() {
+                    let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
+                    if !final_ops.is_empty() {
+                        let lowered = self.lower_operations_terminal(&final_ops)?;
+                        self.trace_operations_chunk(
+                            "pending_final",
+                            &final_ops,
+                            None,
+                            Some(&lowered),
+                        );
+                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
+                    }
+                }
+                if let Some(commands) = self.drain_terminal_commands()? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
+                self.finalize_shot_for_certification()?;
+                let shot = self.get_results()?;
+                return Ok(EngineStage::Complete(shot));
+            }
+
+            // Return empty commands while we wait
+            Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
+        })();
+        attempt.inspect_err(|error: &PecosError| {
+            // Preserve an error already latched during this attempt. Startup
+            // can also fail before there is a dynamic state to hold the latch.
+            if !matches!(self.shot_lifecycle, ShotLifecycle::Failed(_)) {
+                self.latch_terminal_error(error.to_string());
+            }
+        })
     }
 
     fn continue_processing(
@@ -2561,6 +2643,37 @@ mod tests {
     #[derive(Clone, Default)]
     struct DummyRuntime {
         state: ClassicalState,
+        delivered: Arc<Mutex<Vec<(usize, bool)>>>,
+    }
+
+    #[test]
+    fn boolean_feedback_preserves_order_duplicates_and_rejects_leakage() {
+        let mut runtime = DummyRuntime::default();
+        runtime
+            .provide_measurement_outcomes(vec![(7, 0), (2, 1), (7, 1)])
+            .unwrap();
+        assert_eq!(
+            *runtime.delivered.lock().unwrap(),
+            [(7, false), (2, true), (7, true)]
+        );
+        runtime.delivered.lock().unwrap().clear();
+        assert!(
+            runtime
+                .provide_measurement_outcomes(vec![(7, 1), (7, 2)])
+                .is_err()
+        );
+        assert_eq!(*runtime.delivered.lock().unwrap(), []);
+    }
+
+    #[test]
+    fn host_feedback_preserves_repeated_program_slots() {
+        let runtime = DummyRuntime::default();
+        let delivered = Arc::clone(&runtime.delivered);
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine
+            .provide_measurement_updates_to_runtime(&[(7, 0), (7, 1)])
+            .unwrap();
+        assert_eq!(*delivered.lock().unwrap(), [(7, false), (7, true)]);
     }
 
     impl QisRuntime for DummyRuntime {
@@ -2574,8 +2687,9 @@ mod tests {
 
         fn provide_measurements(
             &mut self,
-            _measurements: BTreeMap<usize, bool>,
+            measurements: BTreeMap<usize, bool>,
         ) -> RuntimeResult<()> {
+            self.delivered.lock().unwrap().extend(measurements);
             Ok(())
         }
 
@@ -4745,12 +4859,23 @@ mod scheduled_completion_tests {
         }
     }
     #[derive(Clone, Default)]
+    enum TerminalOutput {
+        #[default]
+        Feedback,
+        Padding,
+        FeedbackThenPadding,
+        OversizedV4,
+    }
+
+    #[derive(Clone, Default)]
     struct FeedbackTail {
         state: ClassicalState,
         stage: usize,
         fail_tail: bool,
+        output: TerminalOutput,
         with_event: bool,
         ended: bool,
+        shot_id: u64,
     }
     impl QisRuntime for FeedbackTail {
         fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
@@ -4778,6 +4903,12 @@ mod scheduled_completion_tests {
         fn num_qubits(&self) -> usize {
             1
         }
+        fn shot_start(&mut self, shot_id: u64, _: Option<u64>) -> RuntimeResult<()> {
+            self.shot_id = shot_id;
+            self.stage = 3;
+            self.ended = false;
+            Ok(())
+        }
         fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
             if std::mem::replace(&mut self.ended, true) {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
@@ -4799,6 +4930,53 @@ mod scheduled_completion_tests {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
                     "drain after shot completion".into(),
                 ));
+            }
+            if matches!(self.output, TerminalOutput::OversizedV4) {
+                use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
+                use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+                if self.stage != 0 {
+                    return Ok(vec![]);
+                }
+                self.stage = 1;
+                // One byte over V4's limit, but below the collection lower bound.
+                let tail = MAX_SCHEDULE_BYTES + 1 - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
+                return Ok((0..256)
+                    .map(|index| ScheduledBatch {
+                        runtime_shot_id: 0,
+                        batch_index: index,
+                        start_time_nanos: 0,
+                        duration_nanos: 0,
+                        operations: vec![Op::Custom {
+                            tag: 1,
+                            data: vec![
+                                0;
+                                if index == 255 {
+                                    tail
+                                } else {
+                                    MAX_BATCH_PAYLOAD
+                                }
+                            ],
+                        }],
+                        measurements: vec![],
+                    })
+                    .collect());
+            }
+            if matches!(self.output, TerminalOutput::Padding)
+                || (matches!(self.output, TerminalOutput::FeedbackThenPadding) && self.stage >= 3)
+            {
+                let index = self.stage;
+                self.stage += 1;
+                return Ok(vec![ScheduledBatch {
+                    runtime_shot_id: self.shot_id,
+                    batch_index: index,
+                    start_time_nanos: index as u64,
+                    duration_nanos: 0,
+                    operations: vec![Op::Rz {
+                        qubit_id: 0,
+                        theta: 0.0,
+                    }],
+                    measurements: vec![],
+                }]);
             }
             let (mut ops, mut measurements, index) = match self.stage {
                 1 => {
@@ -4846,7 +5024,7 @@ mod scheduled_completion_tests {
                 measurements[0].operation_index = 1;
             }
             Ok(vec![ScheduledBatch {
-                runtime_shot_id: 0,
+                runtime_shot_id: self.shot_id,
                 batch_index: index,
                 start_time_nanos: 0,
                 duration_nanos: 0,
@@ -4855,6 +5033,258 @@ mod scheduled_completion_tests {
             }])
         }
     }
+    #[test]
+    fn oversized_v4_drain_fails_at_encode_and_latches() {
+        use crate::scheduled_transport::EventBudget;
+        let mut runtime = FeedbackTail {
+            output: TerminalOutput::OversizedV4,
+            ..Default::default()
+        };
+        let batches = runtime.drain_pending_scheduled_operations().unwrap();
+        let mut budget = EventBudget::default();
+        for batch in &batches {
+            budget
+                .charge(&batch.operations, batch.measurements.len())
+                .unwrap();
+        }
+        drop(batches);
+        runtime.stage = 0;
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine.scheduled_transport = ScheduledTransport::V4;
+        let Err(error) = engine.drain_terminal_commands() else {
+            panic!("oversized V4 encoding must fail");
+        };
+        let error = error.to_string();
+        assert!(
+            error.contains("scheduled drain failed") && error.contains("event transport limit"),
+            "{error}"
+        );
+        // A subsequent runtime drain would be empty: it cannot erase the encode failure.
+        assert_eq!(
+            engine.runtime.drain_pending_scheduled_operations().unwrap(),
+            []
+        );
+        assert_eq!(engine.get_results().unwrap_err().to_string(), error);
+        assert_eq!(
+            engine
+                .finalize_shot_for_certification()
+                .unwrap_err()
+                .to_string(),
+            error
+        );
+    }
+
+    #[test]
+    fn scheduled_terminal_padding_without_feedback_fails_promptly() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                output: TerminalOutput::Padding,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.interface = Some(Box::new(TerminalInterface));
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            engine.provide_measurements_terminal(&[]).unwrap();
+            let error = engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .expect("padding must fail on round two")
+                .to_string();
+            assert!(
+                error.contains("without measurement feedback") && error.contains("round 2"),
+                "{error}"
+            );
+            assert!(engine.get_results().is_err());
+            engine.reset_all().unwrap();
+            assert_eq!(engine.scheduled_drain_round, 0);
+        }
+    }
+
+    #[test]
+    fn scheduled_feedback_permits_only_one_more_terminal_drain() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                output: TerminalOutput::FeedbackThenPadding,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().add_outcomes(&[0]).build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            let error = engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .expect("one delivery cannot permit repeated padding")
+                .to_string();
+            assert!(
+                error.contains("without measurement feedback") && error.contains("round 3"),
+                "{error}"
+            );
+        }
+    }
+
+    #[derive(Clone)]
+    struct GatedTerminalInterface(Arc<std::sync::Barrier>);
+    impl crate::QisInterface for GatedTerminalInterface {
+        fn load_program(&mut self, _: &[u8], _: ProgramFormat) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn collect_operations(&mut self) -> Result<OperationList, InterfaceError> {
+            self.0.wait();
+            Ok(OperationList::new())
+        }
+        fn execute_with_measurements(
+            &mut self,
+            _: BTreeMap<usize, bool>,
+        ) -> Result<OperationList, InterfaceError> {
+            self.collect_operations()
+        }
+        fn name(&self) -> &'static str {
+            "gated-terminal"
+        }
+        fn reset(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn supports_dynamic(&self) -> bool {
+            true
+        }
+        fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+    }
+
+    fn assert_scheduled_drain_progress_cleared(reset: bool) {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let mut engine = QisEngine::new(
+                Box::new(GatedTerminalInterface(Arc::clone(&gate))),
+                Box::new(FeedbackTail::default()),
+            );
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            engine
+                .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            assert!(engine.drain_terminal_commands().unwrap().is_some());
+            // Pause the first shot after validated feedback, before its next drain.
+            let updates = engine.map_measurements(&[0]).unwrap();
+            engine.store_measurement_updates(&updates).unwrap();
+            engine.provide_measurements_terminal(&updates).unwrap();
+            assert_eq!(engine.scheduled_drain_round, 1);
+            assert!(engine.scheduled_drain_feedback);
+            if reset {
+                engine.reset_all().unwrap();
+                assert_eq!(engine.scheduled_drain_round, 0);
+                assert!(!engine.scheduled_drain_feedback);
+            }
+            // The next shot's worker cannot finish until we've inspected start's
+            // reset. Its first drain must not hide a stale feedback flag.
+            let stage = engine.start(());
+            let progress = (
+                engine.scheduled_drain_round,
+                engine.scheduled_drain_feedback,
+            );
+            gate.wait();
+            assert_eq!(progress, (0, false));
+            let mut stage = stage.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while matches!(stage, EngineStage::NeedsProcessing(_)) {
+                assert!(
+                    Instant::now() < deadline,
+                    "gate-only second shot did not complete"
+                );
+                stage = engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap();
+            }
+            assert_eq!(engine.scheduled_drain_round, 2);
+            assert!(engine.get_results().is_ok());
+        }
+    }
+
+    #[test]
+    fn scheduled_new_shot_clears_drain_progress() {
+        assert_scheduled_drain_progress_cleared(false);
+    }
+
+    #[test]
+    fn scheduled_reset_clears_set_drain_progress() {
+        assert_scheduled_drain_progress_cleared(true);
+    }
+
+    #[test]
+    fn scheduled_gate_only_final_tail_completes_without_feedback() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                stage: 3,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            assert_eq!(engine.scheduled_drain_round, 1);
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::Complete(_)
+            ));
+            assert_eq!(engine.scheduled_drain_round, 2);
+            assert!(engine.get_results().is_ok());
+        }
+    }
+
     #[test]
     fn terminal_feedback_must_drain_newly_ready_tail() {
         use pecos_engines::noise::IntoNoiseModel;
@@ -5055,3 +5485,7 @@ mod scheduled_completion_tests {
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "ccengine_terminal_tests.rs"]
 mod terminal_lowering_tests;
+
+#[cfg(test)]
+#[path = "ccengine_lifecycle_tests.rs"]
+mod lifecycle_tests;

@@ -109,6 +109,9 @@ mod tests {
             | CoreGateType::RYY
             | CoreGateType::RXXRYYRZZ
             | CoreGateType::U2q
+            | CoreGateType::CCZ
+            | CoreGateType::CS
+            | CoreGateType::CSdg
             | CoreGateType::CCX
             | CoreGateType::MX
             | CoreGateType::MZ

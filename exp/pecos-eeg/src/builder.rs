@@ -10,7 +10,8 @@ use crate::dem_mapping::{self, DemEntry, Detector, Observable};
 use crate::expand;
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_quantum::{AnnotationKind, TickCircuit};
+use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
+use pecos_quantum::TickCircuit;
 
 pub use crate::expand::EegBuildError;
 
@@ -59,10 +60,12 @@ impl<'a> EegDemBuilder<'a> {
 
     /// # Errors
     ///
-    /// Returns [`EegBuildError`] when the circuit contains a measurement type
-    /// the MZ-only expansion cannot represent, or when an annotation references
-    /// a measurement record the expansion did not produce. Both used to be
-    /// silent -- the measurement vanished, or the reference was skipped.
+    /// Returns [`EegBuildError`] for invalid gates, unsupported measurements,
+    /// duplicate measurement ids, or invalid detector/observable definitions
+    /// (including malformed metadata, unresolved references, and disagreement
+    /// between metadata and annotations). Also rejects a declared measurement
+    /// count or definition emission count that disagrees with the circuit's
+    /// measurements or expansion, respectively.
     pub fn build(&self) -> Result<Vec<DemEntry>, EegBuildError> {
         let gates: Vec<pecos_core::Gate> = self
             .tc
@@ -174,70 +177,91 @@ fn exclude_final_mz(gates: &[pecos_core::Gate]) -> Vec<pecos_core::Gate> {
     }
 }
 
-/// Build detectors for the expanded circuit from TickCircuit annotations.
-///
-/// Each detector is defined by measurement records (negative indices from
-/// the end of the measurement sequence). In the expanded circuit, each
-/// measurement record k maps to a Z-measurement on auxiliary qubit
-/// `expanded.measurement_qubit[k]`.
-///
-/// The detector stabilizer in the expanded circuit is:
-///   Z_{aux_r1} * Z_{aux_r2} * ...
-/// where aux_ri = expanded.measurement_qubit[abs_index(ri)]
+/// Resolve metadata and annotations to auxiliary Z parities.
 fn build_detectors(
     tc: &TickCircuit,
     expanded: &expand::ExpandedCircuit,
 ) -> Result<(Vec<Detector>, Vec<Observable>), EegBuildError> {
-    let mut detectors = Vec::new();
-    let mut observables = Vec::new();
-
-    for annotation in tc.annotations() {
-        match &annotation.kind {
-            AnnotationKind::Detector {
-                measurement_ids, ..
-            } => {
-                let bitmask = measurement_ids_to_aux_bitmask(measurement_ids, expanded)?;
-                detectors.push(Detector {
-                    id: detectors.len(),
-                    stabilizer: bitmask,
-                });
-            }
-            AnnotationKind::Observable {
-                measurement_ids, ..
-            } => {
-                let bitmask = measurement_ids_to_aux_bitmask(measurement_ids, expanded)?;
-                observables.push(Observable {
-                    id: observables.len(),
-                    pauli: bitmask,
-                });
-            }
-            AnnotationKind::TrackedPauli => {}
+    // Both expansion's input and tick_circuit_emission walk iter_gate_batches:
+    // tick, batch storage order, then qubit order within each batch.
+    let definitions = definitions_from_tick_circuit(tc).map_err(EegBuildError::Definitions)?;
+    if definitions.num_measurements != expanded.measurement_qubit.len() {
+        return Err(EegBuildError::MeasurementCountMismatch {
+            definition_count: definitions.num_measurements,
+            expanded_count: expanded.measurement_qubit.len(),
+        });
+    }
+    let bitmask = |positions: &[usize]| -> Result<Bm, EegBuildError> {
+        let mut bitmask = Bm::default();
+        for &position in positions {
+            bitmask
+                .z_bits
+                .xor_bit(expanded.aux_qubit_for_record(position)?);
         }
-    }
-
+        Ok(bitmask)
+    };
+    let detectors = definitions
+        .detectors
+        .iter()
+        .map(|entry| {
+            Ok(Detector {
+                id: entry.id as usize,
+                stabilizer: bitmask(&entry.measurements)?,
+            })
+        })
+        .collect::<Result<_, EegBuildError>>()?;
+    let observables = definitions
+        .observables
+        .iter()
+        .map(|entry| {
+            Ok(Observable {
+                id: entry.id as usize,
+                pauli: bitmask(&entry.measurements)?,
+            })
+        })
+        .collect::<Result<_, EegBuildError>>()?;
     Ok((detectors, observables))
-}
-
-/// Map measurement ids to a Z bitmask on auxiliary qubits.
-///
-/// Each id resolves through the expansion's own id-rank map, so external
-/// (non-positional) ids land on the right auxiliary qubit. An unknown id is
-/// an error, never a skip.
-fn measurement_ids_to_aux_bitmask(
-    measurement_ids: &[pecos_core::MeasId],
-    expanded: &expand::ExpandedCircuit,
-) -> Result<Bm, EegBuildError> {
-    let mut bitmask = Bm::default();
-    for &meas_id in measurement_ids {
-        let aux_qubit = expanded.aux_qubit_for_id(meas_id)?;
-        bitmask.z_bits.xor_bit(aux_qubit);
-    }
-    Ok(bitmask)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_only_matches_annotation_dem() {
+        let circuit = || {
+            let mut tc = TickCircuit::new();
+            tc.tick().pz(&[0]);
+            tc.tick().h(&[0]);
+            tc.tick().h(&[0]);
+            let m = tc.tick().mz(&[0]);
+            (tc, m)
+        };
+        let (mut annotated, m) = circuit();
+        annotated.detector(&m).unwrap();
+        annotated.observable(&m).unwrap();
+        let (mut metadata, _) = circuit();
+        for key in ["detectors", "observables"] {
+            metadata.set_meta(
+                key,
+                pecos_quantum::Attribute::String(r#"[{"id":0,"records":[-1]}]"#.into()),
+            );
+        }
+        let build = |tc: &TickCircuit| {
+            EegDemBuilder::from_tick_circuit(tc)
+                .noise(NoiseModel::depolarizing(0.1))
+                .build()
+                .unwrap()
+        };
+        let expected = build(&annotated);
+        let actual = build(&metadata);
+        assert!(!expected.is_empty());
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(actual.event, expected.event);
+            assert_eq!(actual.probability, expected.probability);
+        }
+    }
 
     fn prep_free_noise() -> NoiseModel {
         let mut noise = NoiseModel::depolarizing(0.01);
@@ -304,12 +328,7 @@ mod tests {
             .noise(NoiseModel::depolarizing(0.01))
             .build()
             .expect_err("two measurements hold id 5");
-        assert_eq!(
-            err,
-            EegBuildError::DuplicateMeasId {
-                meas_id: pecos_core::MeasId::from_raw(5),
-            }
-        );
+        assert!(matches!(err, EegBuildError::DuplicateMeasId { meas_id } if meas_id.index() == 5));
     }
 
     /// A supplied id colliding with a later minted one is the same ambiguity
@@ -443,13 +462,11 @@ mod tests {
             .noise(NoiseModel::coherent_only(0.01))
             .build()
             .expect_err("id 7 was never recorded by the expansion");
-        assert_eq!(
-            err,
-            EegBuildError::UnresolvableAnnotationId {
-                meas_id: pecos_core::MeasId::from_raw(7),
-                num_measurements: 1,
+        assert!(matches!(err, EegBuildError::Definitions(
+            pecos_qec::fault_tolerance::circuit_definitions::DefinitionError::UnknownMeasurementId {
+                kind: "observable", id: 0, measurement_id: 7,
             }
-        );
+        )));
     }
 
     #[test]
@@ -537,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_no_annotations_empty_dem() {
-        // Without detector/observable annotations, builder should produce empty DEM
+        // Without detector/observable annotations or metadata, the DEM is empty.
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick().cx(&[(0, 1)]);
@@ -550,7 +567,7 @@ mod tests {
 
         assert!(
             entries.is_empty(),
-            "No annotations → no detectors → no DEM entries"
+            "No annotations or metadata → no detectors → no DEM entries"
         );
     }
 

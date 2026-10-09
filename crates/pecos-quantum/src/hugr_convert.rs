@@ -2058,6 +2058,14 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_gates_remain_explicitly_unsupported_in_hugr() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            assert_eq!(gate_type_to_hugr_op(gt), None);
+            assert_eq!(gate_type_to_tket_op(gt), None);
+        }
+    }
+
+    #[test]
     fn hugr_conversion_auto_wires_staggered_chains_by_qubit() {
         let dag = hugr_to_dag_circuit(&staggered_chains_hugr()).expect("convert HUGR");
         let q0 = QubitId::from(0);

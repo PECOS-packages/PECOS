@@ -66,6 +66,9 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::RXXRYYRZZ => "RXXRYYRZZ",
         GateType::U2q => "U2q",
         GateType::CCX => "CCX",
+        GateType::CCZ => "CCZ",
+        GateType::CS => "CS",
+        GateType::CSdg => "CSdg",
         GateType::MX => "MX",
         GateType::MZ => "MZ",
         GateType::MeasureLeaked => "ML",
@@ -190,6 +193,9 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::RZ
         | GateType::T
         | GateType::Tdg
+        | GateType::CCZ
+        | GateType::CS
+        | GateType::CSdg
         | GateType::RZZ
         | GateType::MZ
         | GateType::PZ
@@ -488,8 +494,20 @@ fn decompose_gate(
             cells.push((rows[1], DiagramCell::Control, CellColor::ControlDot));
             cells.push((
                 rows[2],
-                DiagramCell::Gate("X".to_string(), GateFamily::Default),
-                CellColor::XAxis,
+                DiagramCell::Gate(
+                    if gate.gate_type == GateType::CCZ {
+                        "Z"
+                    } else {
+                        "X"
+                    }
+                    .to_string(),
+                    GateFamily::Default,
+                ),
+                if gate.gate_type == GateType::CCZ {
+                    CellColor::ZAxis
+                } else {
+                    CellColor::XAxis
+                },
             ));
 
             connector = Some((top, bottom));
@@ -593,6 +611,30 @@ mod tests {
         let mut tc = crate::TickCircuit::new();
         build(&mut tc);
         tc.to_color_ascii()
+    }
+
+    #[test]
+    fn diagonal_gate_layout_covers_every_operand() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let qubits: Vec<_> = (0..gt.quantum_arity()).map(|q| QubitId(q * 2)).collect();
+            let rows = qubits
+                .iter()
+                .enumerate()
+                .map(|(row, &q)| (q, row * 2))
+                .collect();
+            let gate = Gate::simple(gt, qubits.clone());
+            let layout = decompose_gate(&gate, &rows, 5, AngleUnit::Radians);
+            for row in (0..gt.quantum_arity()).map(|q| q * 2) {
+                assert!(
+                    layout
+                        .cells
+                        .iter()
+                        .any(|(r, cell, _)| *r == row && !matches!(cell, DiagramCell::Crossing))
+                );
+            }
+            assert_eq!(gate_color(gt), CellColor::ZAxis);
+            assert_eq!(gate_symbol(gt), gt.to_string());
+        }
     }
 
     #[test]

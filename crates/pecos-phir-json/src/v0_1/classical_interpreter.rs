@@ -156,9 +156,8 @@ impl PhirClassicalInterpreter {
                     "cvar_define" => {
                         let resolved_size = infer_size(data_type, *size);
                         let dt = data_type.parse::<DataType>()?;
-                        if !self.environment.has_variable(variable) {
-                            self.environment.add_variable(variable, dt, resolved_size)?;
-                        }
+                        self.environment
+                            .add_classical_variable(variable, dt, resolved_size)?;
                     }
                     _ => {}
                 }
@@ -185,10 +184,8 @@ impl PhirClassicalInterpreter {
         data_type: DataType,
         size: usize,
     ) -> Result<(), PecosError> {
-        if !self.environment.has_variable(name) {
-            self.environment.add_variable(name, data_type, size)?;
-        }
-        Ok(())
+        self.environment
+            .ensure_classical_variable(name, data_type, size)
     }
 
     /// Detach the foreign object (e.g. so the interpreter can be pickled

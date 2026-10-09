@@ -26,6 +26,12 @@ import pecos as pc
 from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners import TimingRunner
 
+__all__ = [
+    "generate_circuits",
+    "get_qubits",
+    "random_circuit_speed",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 

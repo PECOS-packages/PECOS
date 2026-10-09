@@ -986,7 +986,7 @@ mod tests {
                 && !transparent;
             let two = gate.is_two_qubit();
             // Intentionally enumerate errors: a future unclassified variant must fail.
-            let error = matches!(gate, GateType::CCX | GateType::Custom);
+            let error = matches!(gate, GateType::CCX | GateType::CCZ | GateType::Custom);
             let buckets = [
                 (prep, GateNoiseKind::Prep),
                 (single, GateNoiseKind::Single),

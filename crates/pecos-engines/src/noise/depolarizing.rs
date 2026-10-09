@@ -206,6 +206,8 @@ impl DepolarizingNoiseModel {
             | GateType::CY
             | GateType::CZ
             | GateType::CH
+            | GateType::CS
+            | GateType::CSdg
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
@@ -223,7 +225,7 @@ impl DepolarizingNoiseModel {
                 trace!("Applying two-qubit gate with possible fault");
                 Self::apply_tq_faults(rng, p2_threshold, builder, gate);
             }
-            GateType::CCX => {
+            GateType::CCX | GateType::CCZ => {
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying three-qubit gate with possible fault");
                 Self::apply_tq_faults(rng, p2_threshold, builder, gate);
@@ -418,7 +420,7 @@ impl DepolarizingNoiseModel {
                     }
                 }
             }
-            if gate.gate_type == GateType::CCX {
+            if matches!(gate.gate_type, GateType::CCX | GateType::CCZ) {
                 break;
             }
         }
@@ -652,6 +654,43 @@ impl ControlEngine for DepolarizingNoiseModel {
 mod tests {
     use super::*;
     use crate::engine_system::{ControlEngine, EngineStage};
+
+    #[test]
+    fn diagonal_gates_preserve_reference_fault_streams() {
+        for seed in 0..32 {
+            for (gate, reference_gate) in [
+                (
+                    Gate::ccz(&[(0, 1, 2), (3, 4, 5)]),
+                    Gate::ccx(&[(0, 1, 2), (3, 4, 5)]),
+                ),
+                (Gate::cs(&[(0, 1), (2, 3)]), Gate::cz(&[(0, 1), (2, 3)])),
+                (Gate::csdg(&[(0, 1), (2, 3)]), Gate::cz(&[(0, 1), (2, 3)])),
+            ] {
+                let mut noise = DepolarizingNoiseModel::new(0.0, 0.0, 0.0, 1.0);
+                noise.set_seed(seed);
+                let mut reference = noise.clone();
+                let mut actual = ByteMessage::quantum_operations_builder();
+                actual.add_gate_command(&gate);
+                actual.cx(&[(6, 7)]);
+                let mut expected = ByteMessage::quantum_operations_builder();
+                expected.add_gate_command(&reference_gate);
+                expected.cx(&[(6, 7)]);
+                let EngineStage::NeedsProcessing(actual) = noise.start(actual.build()).unwrap()
+                else {
+                    panic!("expected processing");
+                };
+                let EngineStage::NeedsProcessing(expected) =
+                    reference.start(expected.build()).unwrap()
+                else {
+                    panic!("expected processing");
+                };
+                assert_eq!(
+                    actual.quantum_ops().unwrap()[1..],
+                    expected.quantum_ops().unwrap()[1..]
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_ccx_faults_retain_first_pair_behavior() {

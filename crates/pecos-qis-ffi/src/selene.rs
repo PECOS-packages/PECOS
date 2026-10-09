@@ -210,17 +210,21 @@ pub unsafe extern "C-unwind" fn selene_qubit_lazy_measure(
     }
 }
 
-/// Use the same measurement behavior for leakage-aware futures.
+/// Allocate and queue a leakage-aware measurement future.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
 /// and recovery discipline documented in this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn selene_qubit_lazy_measure_leaked(
-    instance: *mut SeleneInstance,
+    _instance: *mut SeleneInstance,
     q: u64,
 ) -> SeleneFutureResult {
-    unsafe { selene_qubit_lazy_measure(instance, q) }
+    let result = unsafe { ffi::___lazy_measure_leaked(q.cast_signed()) };
+    SeleneFutureResult {
+        error_code: 0,
+        reference: result.cast_unsigned(),
+    }
 }
 
 /// Read a measurement future through the dynamic execution interface.

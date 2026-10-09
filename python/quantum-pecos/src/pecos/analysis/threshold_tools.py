@@ -558,11 +558,10 @@ def codecapacity_logical_rate3(
 ) -> tuple[float, float]:
     """A tool for determining the code-capacity logical-error rate for syndrome extraction.
 
-    In this analysis only logical |0> is prepared and each run consists of an ideal logical |0> preparation followed by
-    a single round of syndrome extraction. The error rate is determined by number of runs with logical failures divided
-    by the total number of runs.
-
-    !!! This version determines logical threshold from 1/avg(duration)
+    Each run prepares the logical state ideally and then repeats noisy syndrome extraction and decoding until the
+    first logical failure. The duration of a run is the number of extraction rounds up to and including that failure,
+    and the logical-error rate is 1/avg(duration). A run with no failure within `max_syn_extract` rounds raises, so
+    choose `p` large enough that failures occur.
 
     Args:
     ----
@@ -574,12 +573,12 @@ def codecapacity_logical_rate3(
         decoder: The decoder instance for error correction.
         seed: Random seed for reproducibility.
         state_sim: The state simulator to use.
-        max_syn_extract: Maximum number of syndrome extraction rounds before declaring success.
+        max_syn_extract: Maximum number of syndrome extraction rounds per run before raising.
         circuit_runner: The circuit runner to use for simulations.
         verbose: If True, prints detailed progress and results.
         init_circuit: Custom initialization circuit (if None, uses default logical |0> or |+>).
         init_logical_ops: Custom logical operators for the initialized state.
-        basis: The basis for logical measurements (e.g., 'X' or 'Z').
+        basis: "zero" (default) or "plus"; the logical state to prepare.
 
     """
     p = error_params["p"]

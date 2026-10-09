@@ -1803,3 +1803,108 @@ fn start_discards_measurement_credits_from_the_previous_shot() {
         assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
     }
 }
+
+fn finish_interleaved_stage(
+    engine: &mut QisEngine,
+    quantum: &mut StateVecEngine,
+    stage: EngineStage<ByteMessage, Shot>,
+) -> Shot {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stage = stage;
+    loop {
+        assert!(Instant::now() < deadline);
+        match stage {
+            EngineStage::NeedsProcessing(commands) => {
+                stage = engine
+                    .continue_processing(quantum.process(commands).unwrap())
+                    .unwrap();
+            }
+            EngineStage::Complete(shot) => return shot,
+        }
+    }
+}
+
+#[test]
+fn dynamic_engines_interleave_on_one_host_thread() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut a = dynamic_read_engine(DYNAMIC_READ_PROBE);
+    let mut b = dynamic_read_engine(
+        &DYNAMIC_READ_PROBE.replace("call void @__quantum__qis__x__body(i64 0)", ""),
+    );
+    let mut qa = StateVecEngine::new(2);
+    let mut qb = StateVecEngine::new(2);
+    let sa = a.start(()).unwrap();
+    let sb = b.start(()).unwrap();
+    assert_waiting(&mut a, &sa);
+    assert_waiting(&mut b, &sb);
+    let EngineStage::NeedsProcessing(ca) = sa else {
+        panic!("A must wait")
+    };
+    let EngineStage::NeedsProcessing(cb) = sb else {
+        panic!("B must wait")
+    };
+    let sa = a.continue_processing(qa.process(ca).unwrap()).unwrap();
+    let sb = b.continue_processing(qb.process(cb).unwrap()).unwrap();
+    let ra = finish_interleaved_stage(&mut a, &mut qa, sa);
+    let rb = finish_interleaved_stage(&mut b, &mut qb, sb);
+    assert_eq!(ra.data.get("measurement_1"), Some(&Data::U32(1)));
+    assert_eq!(rb.data.get("measurement_1"), Some(&Data::U32(0)));
+}
+
+#[test]
+fn migrated_shot_replacement_leaves_original_host_tls_empty() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let (send, recv) = mpsc::channel();
+    let (replaced, replacement) = mpsc::channel();
+    let x = std::thread::spawn(move || {
+        let mut engine = dynamic_read_engine(DYNAMIC_READ_PROBE);
+        let path = engine
+            .interface
+            .as_ref()
+            .unwrap()
+            .get_qis_ffi_lib_path()
+            .unwrap();
+        // Use the same runtime instance as the engine, with its compatibility ABI.
+        let lib = unsafe { libloading::Library::new(path).unwrap() };
+        let pending: libloading::Symbol<unsafe extern "C" fn() -> *mut OperationList> =
+            unsafe { lib.get(b"pecos_get_pending_operations\0").unwrap() };
+        let stage = engine.start(()).unwrap();
+        // Check while the context is still live so a registration regression
+        // fails before allowing another thread to free a dangling TLS pointer.
+        assert!(
+            unsafe { pending() }.is_null(),
+            "host X registered the shot context"
+        );
+        send.send((engine, stage)).unwrap();
+        replacement.recv().unwrap();
+        assert!(
+            unsafe { pending() }.is_null(),
+            "host X retained the freed context"
+        );
+    });
+    let (mut engine, stage) = recv.recv().unwrap();
+    let mut quantum = StateVecEngine::new(2);
+    let shot = finish_interleaved_stage(&mut engine, &mut quantum, stage);
+    assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    let old = engine
+        .interface
+        .as_ref()
+        .unwrap()
+        .get_execution_context_ptr()
+        .unwrap() as usize;
+    let stage = engine.start(()).unwrap();
+    // Enabling the next shot replaced the old interface context and sync handle.
+    let shot = finish_interleaved_stage(&mut engine, &mut StateVecEngine::new(2), stage);
+    assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    assert_ne!(
+        old,
+        engine
+            .interface
+            .as_ref()
+            .unwrap()
+            .get_execution_context_ptr()
+            .unwrap() as usize
+    );
+    replaced.send(()).unwrap();
+    x.join().unwrap();
+}

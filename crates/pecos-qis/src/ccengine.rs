@@ -164,6 +164,15 @@ enum QubitPrepState {
     Released,
 }
 
+/// Certification belongs to a shot attempt, including failures before submission.
+#[derive(Debug, PartialEq, Eq)]
+enum ShotLifecycle {
+    Idle,
+    Running,
+    Finalized,
+    Failed(String),
+}
+
 /// State for dynamic circuit execution
 ///
 /// The LLVM program runs in a worker thread. When it needs a measurement result,
@@ -460,6 +469,7 @@ pub struct QisEngine {
     /// runtime, so without this a failed runtime reset would let `get_results`
     /// return the previous, failed shot.
     reset_failure: Option<String>,
+    shot_lifecycle: ShotLifecycle,
 
     /// RNG for generating per-shot seeds
     rng: PecosRng,
@@ -598,6 +608,7 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             pending_measurements: BTreeMap::new(),
             reset_failure: None,
+            shot_lifecycle: ShotLifecycle::Idle,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -697,6 +708,7 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             pending_measurements: BTreeMap::new(),
             reset_failure: None,
+            shot_lifecycle: ShotLifecycle::Idle,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -1284,6 +1296,7 @@ impl Clone for QisEngine {
             measurement_results: BTreeMap::new(), // Clear for new shot
             pending_measurements: BTreeMap::new(),
             reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
+            shot_lifecycle: ShotLifecycle::Idle,
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
             dynamic_state: None,             // Can't clone thread state
@@ -1817,8 +1830,8 @@ impl QisEngine {
                     }
                     if let Some(ref mut state) = self.dynamic_state {
                         state.execution_complete = true;
-                        state.terminal_error = Some(format!("dynamic QIS worker failed: {e}"));
                     }
+                    self.latch_terminal_error(format!("dynamic QIS worker failed: {e}"));
                     return true;
                 }
             }
@@ -1840,11 +1853,16 @@ impl QisEngine {
                     .as_ref()
                     .and_then(|state| state.terminal_error.as_ref())
             })
+            .or(match &self.shot_lifecycle {
+                ShotLifecycle::Failed(error) => Some(error),
+                _ => None,
+            })
             .map(|err| PecosError::Generic(err.clone()))
     }
 
     /// Latch a terminal failure for this shot and return it as an error.
     fn latch_terminal_error(&mut self, message: String) -> PecosError {
+        self.shot_lifecycle = ShotLifecycle::Failed(message.clone());
         if let Some(ref mut state) = self.dynamic_state {
             state.terminal_error = Some(message.clone());
         }
@@ -2022,6 +2040,7 @@ impl QisEngine {
         if let Some(ref mut state) = self.dynamic_state {
             state.finalized = true;
         }
+        self.shot_lifecycle = ShotLifecycle::Finalized;
         Ok(())
     }
 
@@ -2049,10 +2068,12 @@ impl QisEngine {
                 None => Ok(()),
             });
         if let Err(error) = reset {
+            self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
             self.reset_failure = Some(error.to_string());
             return Err(error);
         }
         self.reset_failure = None;
+        self.shot_lifecycle = ShotLifecycle::Idle;
         self.current_operations = None;
         self.started = false;
         self.measurement_mapping.clear();
@@ -2223,6 +2244,15 @@ impl ClassicalEngine for QisEngine {
             return Err(error);
         }
 
+        match &self.shot_lifecycle {
+            ShotLifecycle::Idle => return Ok(shot),
+            ShotLifecycle::Running => {
+                return Err(PecosError::Generic("shot not finished (Running)".into()));
+            }
+            ShotLifecycle::Failed(error) => return Err(PecosError::Generic(error.clone())),
+            ShotLifecycle::Finalized => {}
+        }
+
         // Named outputs preserve the scalar-for-one, vector-otherwise rule.
         let mut has_named_results = false;
         if let Some(state) = &self.dynamic_state
@@ -2354,79 +2384,95 @@ impl ControlEngine for QisEngine {
                 "scheduled transport does not yet support operation tracing".into(),
             ));
         }
-        // Clear previous shot's measurement state
-        self.measurement_results.clear();
-        self.pending_measurements.clear();
-        self.measurement_mapping.clear();
-        self.pending_dynamic_ops.clear();
-        self.simulated_op_count = 0;
-        self.reset_qubit_slots();
-        debug!("QisEngine: Cleared previous measurement results for new shot");
+        self.shot_lifecycle = ShotLifecycle::Running;
+        let attempt = (|| {
+            // Clear previous shot's measurement state
+            self.measurement_results.clear();
+            self.pending_measurements.clear();
+            self.measurement_mapping.clear();
+            self.pending_dynamic_ops.clear();
+            self.simulated_op_count = 0;
+            self.reset_qubit_slots();
+            debug!("QisEngine: Cleared previous measurement results for new shot");
 
-        // Generate a per-shot seed from our RNG
-        let shot_seed = self.rng.next_u64();
-        debug!("QisEngine: Generated shot seed {shot_seed}");
+            // Generate a per-shot seed from our RNG
+            let shot_seed = self.rng.next_u64();
+            debug!("QisEngine: Generated shot seed {shot_seed}");
 
-        // Store the shot seed for quantum engine access
-        self.current_shot_seed = Some(shot_seed);
-        self.begin_trace_shot();
+            // Store the shot seed for quantum engine access
+            self.current_shot_seed = Some(shot_seed);
+            self.begin_trace_shot();
 
-        // Reset the runtime to ensure clean state for new shot. A failure is
-        // latched like a failed `reset_all`, which alone clears the latch.
-        if let Err(e) = self.runtime.reset() {
-            let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
-            self.reset_failure = Some(error.to_string());
-            return Err(error);
-        }
-
-        // Start a new shot with the generated seed and a real, monotonically
-        // increasing shot id (a plugin keying state or telemetry on the shot
-        // id must not see every shot as shot 0).
-        let shot_id = u64::try_from(self.trace_shot_index)
-            .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
-        self.runtime
-            .shot_start(shot_id, Some(shot_seed))
-            .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
-
-        self.started = true;
-
-        // Start LLVM program in worker thread
-        self.start_dynamic_worker()?;
-
-        // Wait for the worker to either need a result or complete
-        // Use long timeout as safety net - condvar will wake immediately on signal
-        if let Some(result_id) = self.wait_for_result_needed(30_000) {
-            debug!("Worker needs result for id={result_id}");
-            if let Some(commands) = self.process_result_request(result_id, "pending_start")? {
-                return Ok(EngineStage::NeedsProcessing(commands));
+            // Reset the runtime to ensure clean state for new shot. A failure is
+            // latched like a failed `reset_all`, which alone clears the latch.
+            if let Err(e) = self.runtime.reset() {
+                let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
+                self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
+                self.reset_failure = Some(error.to_string());
+                return Err(error);
             }
-        }
 
-        // Check if worker completed without needing any results
-        if self.check_worker_complete() {
-            if let Some(err) = self.terminal_failure_error() {
-                return Err(err);
-            }
-            // Worker completed but we still need to process any pending operations
-            // through the quantum engine (e.g., programs without measurement-dependent conditionals)
-            if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
-                if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
+            // Start a new shot with the generated seed and a real, monotonically
+            // increasing shot id (a plugin keying state or telemetry on the shot
+            // id must not see every shot as shot 0).
+            let shot_id = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
+            self.runtime
+                .shot_start(shot_id, Some(shot_seed))
+                .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
+
+            self.started = true;
+
+            // Start LLVM program in worker thread
+            self.start_dynamic_worker()?;
+
+            // Wait for the worker to either need a result or complete
+            // Use long timeout as safety net - condvar will wake immediately on signal
+            if let Some(result_id) = self.wait_for_result_needed(30_000) {
+                debug!("Worker needs result for id={result_id}");
+                if let Some(commands) = self.process_result_request(result_id, "pending_start")? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
-            if let Some(commands) = self.drain_terminal_commands()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            self.finalize_shot_for_certification()?;
-            let shot = self.get_results()?;
-            return Ok(EngineStage::Complete(shot));
-        }
 
-        // Return empty commands while we wait
-        Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
+            // Check if worker completed without needing any results
+            if self.check_worker_complete() {
+                if let Some(err) = self.terminal_failure_error() {
+                    return Err(err);
+                }
+                // Worker completed but we still need to process any pending operations
+                // through the quantum engine (e.g., programs without measurement-dependent conditionals)
+                if !self.pending_dynamic_ops.is_empty() {
+                    let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
+                    if !final_ops.is_empty() {
+                        let lowered = self.lower_operations_terminal(&final_ops)?;
+                        self.trace_operations_chunk(
+                            "pending_final",
+                            &final_ops,
+                            None,
+                            Some(&lowered),
+                        );
+                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
+                    }
+                }
+                if let Some(commands) = self.drain_terminal_commands()? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
+                self.finalize_shot_for_certification()?;
+                let shot = self.get_results()?;
+                return Ok(EngineStage::Complete(shot));
+            }
+
+            // Return empty commands while we wait
+            Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
+        })();
+        attempt.inspect_err(|error: &PecosError| {
+            // Preserve an error already latched during this attempt. Startup
+            // can also fail before there is a dynamic state to hold the latch.
+            if !matches!(self.shot_lifecycle, ShotLifecycle::Failed(_)) {
+                self.latch_terminal_error(error.to_string());
+            }
+        })
     }
 
     fn continue_processing(
@@ -5055,3 +5101,7 @@ mod scheduled_completion_tests {
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "ccengine_terminal_tests.rs"]
 mod terminal_lowering_tests;
+
+#[cfg(test)]
+#[path = "ccengine_lifecycle_tests.rs"]
+mod lifecycle_tests;

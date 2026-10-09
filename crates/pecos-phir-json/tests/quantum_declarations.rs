@@ -218,7 +218,7 @@ fn processor_duplicate_policy() {
         .unwrap();
     processor
         .handle_variable_definition("qvar_define", "qubits", "q", 2)
-        .expect("identical quantum redeclaration must be a no-op");
+        .expect_err("identical quantum redeclaration must be rejected");
     assert_eq!(processor.environment.count_qubits(), 2);
     let error = processor
         .handle_variable_definition("qvar_define", "qubits", "q", 3)
@@ -226,7 +226,7 @@ fn processor_duplicate_policy() {
     assert!(
         error
             .to_string()
-            .contains("Conflicting definition for variable 'q'")
+            .contains("Variable 'q' is already declared as quantum; cannot redeclare as quantum")
     );
     assert_eq!(processor.environment.count_qubits(), 2);
 }
@@ -326,24 +326,26 @@ fn declarations_execute_through_blocks_and_engine_commands() {
     assert_eq!(command_qubits(&executor.get_builder().build()), [3, 1]);
 
     let mut engine = PhirJsonEngine::from_json(&input).unwrap();
-    // The processor is public; replacing it isolates execution from header registration.
-    engine.processor = OperationProcessor::new();
+    // Runtime execution uses the declarations registered during construction.
     let commands = engine
         .generate_commands()
-        .expect("runtime declarations must register qubits before executing gates");
+        .expect("registered qubits must be available while executing gates");
     assert_eq!(engine.num_qubits(), 4);
     assert_eq!(command_qubits(&commands), [3, 1]);
 
-    let mut engine = PhirJsonEngine::from_json(&input).unwrap();
-    engine.processor = OperationProcessor::new();
-    engine.processor.add_quantum_variable("z", 3).unwrap();
-    let error = engine
-        .generate_commands()
+    let mut ast: PHIRProgram = serde_json::from_str(&input).unwrap();
+    ast.ops.push(Operation::VariableDefinition {
+        data: "qvar_define".into(),
+        data_type: "qubits".into(),
+        variable: "z".into(),
+        size: Some(3),
+    });
+    let error = PhirJsonEngine::from_program(ast)
         .map(|_| ())
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("Conflicting definition for variable 'z'"),
+        error.contains("Variable 'z' is already declared as quantum; cannot redeclare as quantum"),
         "{error}"
     );
 }

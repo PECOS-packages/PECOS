@@ -55,8 +55,9 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
     state, raising on the first negative sign.
 
     Then enumerate Pauli errors on (tick, qubit) locations across one extraction
-    round, including data and ancillas, with the same weight bound. Errors on
-    measured qubits precede measurement; other errors follow the tick. Collect
+    round, including data and ancillas, with the same weight bound. On measured
+    qubits, X components precede measurement and Z components are discarded,
+    regardless of measurement basis. Other errors follow the tick. Collect
     all measurements under one round coordinate, decode that output once, and
     check the same logical signs. There is no following fault-free EC round or
     residual-syndrome check. When the computed bound is zero, the underlying

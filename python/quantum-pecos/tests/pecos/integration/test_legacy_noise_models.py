@@ -6,10 +6,36 @@ from pecos.analysis.pseudo_threshold_tools import pseudo_threshold_code_capacity
 from pecos.analysis.threshold_tools import threshold_code_capacity, threshold_code_capacity_calc
 
 
-@pytest.mark.parametrize("model_class", [pc.noise.XModel, pc.noise.ZModel, pc.noise.XZModel, pc.noise.DepolarModel])
+@pytest.mark.parametrize(
+    ("model_class", "single_paulis", "pair_paulis"),
+    [
+        (pc.noise.XModel, ("X", "X"), (("I", "X"), ("X", "X"))),
+        (pc.noise.ZModel, ("Z", "Z"), (("I", "Z"), ("Z", "Z"))),
+        (pc.noise.XZModel, ("X", "Z"), (("I", "X"), ("Z", "Z"))),
+        (pc.noise.DepolarModel, ("X", "Z"), (("I", "X"), ("Z", "Z"))),
+    ],
+)
 @pytest.mark.parametrize("level", ["code_capacity", "phenomenological", "circuit"])
-def test_legacy_models_run_at_supported_levels(model_class, level) -> None:
-    """Construction and sampling must reach every supported model level."""
+@pytest.mark.parametrize("sample_index", [0, -1], ids=["first-pauli", "last-pauli"])
+def test_legacy_models_run_at_supported_levels(
+    model_class,
+    single_paulis,
+    pair_paulis,
+    level,
+    sample_index,
+    monkeypatch,
+) -> None:
+    """Every sampled error has the specified tick, slot, Pauli and target."""
+
+    def choose(population, size):
+        assert size == 1
+        if isinstance(population, int):
+            return pc.array([0 if sample_index == 0 else population - 1])
+        return pc.array([population[sample_index]])
+
+    # Directed draws cover both a two-qubit error with an identity component
+    # and an error on both qubits, without depending on random-stream ordering.
+    monkeypatch.setattr(pc.random, "choice", choose)
     model = model_class(model_level=level)
     qecc = pc.qeccs.Surface4444(distance=3)
     state = pc.simulators.SparseStabPy(qecc.num_qudits)
@@ -18,33 +44,40 @@ def test_legacy_models_run_at_supported_levels(model_class, level) -> None:
     init.append(qecc.gate("ideal init |0>"))
     extraction = pc.circuits.LogicalCircuit(suppress_warning=True)
     extraction.append(qecc.gate("I", num_syn_extract=1))
+    expected = set()
+    single_pauli = single_paulis[sample_index]
+    pair = pair_paulis[sample_index]
+    for tick, time, params in extraction.iter_ticks():
+        if level in {"code_capacity", "phenomenological"} and time[-1] == 0:
+            expected.update((time, "after", single_pauli, q) for q in params["data_qudit_set"])
+        for gate, locations, _ in tick.items():
+            if gate.startswith("measure") and level != "code_capacity":
+                expected.update((time, "before", single_pauli, q) for q in locations)
+            elif level == "circuit":
+                if gate == "CNOT":
+                    expected.update(
+                        (time, "after", pauli, q)
+                        for location in locations
+                        for pauli, q in zip(pair, location, strict=True)
+                        if pauli != "I"
+                    )
+                else:
+                    assert gate.startswith("init") or gate == "H"
+                    expected.update((time, "after", single_pauli, q) for q in locations)
+
     runner.run(state, init)
     measurements, errors = runner.run(state, extraction, error_gen=model, error_params={"p": 1.0})
-    assert errors
-    symbols = {symbol for tick in errors.values() for circuit in tick.values() for symbol, _, _ in circuit.items()}
-    locations = {
-        qudit
-        for tick in errors.values()
-        for circuit in tick.values()
-        for symbol, qudits, _ in circuit.items()
-        if symbol != "I"
-        for qudit in qudits
+    actual = {
+        (time, slot, symbol, q)
+        for time, tick in errors.items()
+        for slot, circuit in tick.items()
+        for symbol, locations, _ in circuit.items()
+        for q in locations
     }
+    assert actual == expected
+    assert all(symbol != "I" for _, _, symbol, _ in actual)
     if level == "code_capacity":
-        if model_class is pc.noise.DepolarModel:
-            assert symbols
-            assert symbols <= {"X", "Y", "Z"}
-        else:
-            expected = {pc.noise.XModel: {"X"}, pc.noise.ZModel: {"Z"}, pc.noise.XZModel: {"X", "Z"}}
-            assert symbols == expected[model_class]
-        assert locations == qecc.data_qudit_set
         runner.run(state, pc.decoders.MWPM2D(qecc).decode(measurements))
-    else:
-        # ZModel historically includes ZX among its two-qubit errors.
-        allowed = {"I", "X", "Y", "Z"} if model_class is pc.noise.DepolarModel else {"I", "X", "Z"}
-        assert symbols <= allowed
-        if level == "phenomenological":
-            assert qecc.data_qudit_set <= locations
 
 
 def test_threshold_code_capacity_default_xmodel() -> None:

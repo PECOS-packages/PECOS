@@ -26,8 +26,8 @@ def test_monte_carlo_plotting_example(tmp_path, monkeypatch) -> None:
     try:
         result = runpy.run_path(str(script))
         lines = plt.gca().get_lines()
-        assert list(lines[0].get_xdata()) == result["ps"]
-        assert list(lines[0].get_ydata()) == result["plog"]
+        assert list(lines[1].get_xdata()) == result["ps"]
+        assert list(lines[1].get_ydata()) == result["plog"]
         assert "pecos.analysis" in source
         assert "pecos.tools" not in source
     finally:

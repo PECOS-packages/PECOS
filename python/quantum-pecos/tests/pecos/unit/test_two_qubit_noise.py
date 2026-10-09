@@ -1,5 +1,7 @@
 """Regression tests for noise eligibility and caller emission slots."""
 
+from itertools import product
+
 import pecos as pc
 import pytest
 from pecos.machines.generic_machine import GenericMachine
@@ -68,7 +70,7 @@ def test_leakage_noise_targets_healthy_pairs(
         pytest.param({0, 1}, set(), id="both-qubits-noiseless"),
         pytest.param(
             set(),
-            {0, 1},
+            {1},
             id="neither-qubit-noiseless",
         ),
     ],
@@ -91,7 +93,7 @@ def test_depolarizing_noise_targets_noisy_qubits(
     errors = list(after.items())
     assert {qubit for _, locations, _ in errors for qubit in locations} == expected_targets
     assert len(errors) == len(expected_targets)
-    assert all(symbol in {"I", "X", "Y", "Z"} for symbol, _, _ in errors)
+    assert all(symbol in {"X", "Y", "Z"} for symbol, _, _ in errors)
 
 
 @pytest.mark.parametrize("model_type", [GenericErrorModel, DepolarizingErrorModel])
@@ -225,7 +227,7 @@ def test_integer_choice_legacy_two_qubit_entry_points(with_noiseless: bool) -> N
         noise_two_qubit_gates_depolarizing_with_noiseless({(0, 1)}, after, 1, set())
     else:
         noise_depolarizing_two_qubit_gates({(0, 1)}, after, 1)
-    assert [(symbol, locations) for symbol, locations, _ in after.items()] == [("I", {0}), ("X", {1})]
+    assert [(symbol, locations) for symbol, locations, _ in after.items()] == [("X", {1})]
 
 
 @pytest.mark.parametrize("after_gate", [False, True])
@@ -257,3 +259,40 @@ def test_group_errors_respect_emission_slot(after_gate: bool) -> None:
         actual = [[(symbol, locations) for symbol, locations, _ in circuit.items()] for circuit in (before, after)]
         expected = [("X", {0}), ("Z", {1})]
         assert actual == ([[], expected] if after_gate else [expected, []])
+
+
+@pytest.mark.parametrize("after_gate", [False, True])
+@pytest.mark.parametrize("symbols", list(product("IXYZ", repeat=2)))
+@pytest.mark.parametrize("storage", ["array", "pauli_tuple", "string_tuple"])
+def test_multi_qudit_identity_filter(after_gate, symbols, storage) -> None:
+    """Identity components are omitted; every non-identity Pauli is preserved."""
+    paulis = tuple(getattr(pc.Pauli, symbol) for symbol in symbols)
+    error = Generator.ErrorSetMultiQuditGate([paulis], after=after_gate)
+    if storage != "array":
+        # Exercise the tuple callback representations as well as PECOS arrays.
+        error.data = [paulis if storage == "pauli_tuple" else symbols]
+    after, before = pc.QuantumCircuit(), pc.QuantumCircuit()
+    error.error_func(after, before, set(), (0, 1), {})
+    actual = {
+        (slot, symbol, qubit)
+        for slot, circuit in (("before", before), ("after", after))
+        for symbol, locations, _ in circuit.items()
+        for qubit in locations
+    }
+    slot = "after" if after_gate else "before"
+    assert actual == {(slot, symbol, qubit) for qubit, symbol in enumerate(symbols) if symbol != "I"}
+
+
+@pytest.mark.parametrize("after_gate", [False, True])
+@pytest.mark.parametrize("symbol", list("IXYZ"))
+@pytest.mark.parametrize("storage", ["string", "string_tuple", "pauli_tuple"])
+def test_single_component_identity_filter(after_gate, symbol, storage) -> None:
+    """Scalar strings and singleton tuples use the same identity rule."""
+    error = Generator.ErrorSetMultiQuditGate([(pc.Pauli.X, pc.Pauli.Z)], after=after_gate)
+    entry = (getattr(pc.Pauli, symbol),) if storage == "pauli_tuple" else (symbol,)
+    error.data = [symbol if storage == "string" else entry]
+    after, before = pc.QuantumCircuit(), pc.QuantumCircuit()
+    error.error_func(after, before, set(), 0, {})
+    actual = [[(gate, locations) for gate, locations, _ in circuit.items()] for circuit in (before, after)]
+    expected = [] if symbol == "I" else [(symbol, {0})]
+    assert actual == ([[], expected] if after_gate else [expected, []])

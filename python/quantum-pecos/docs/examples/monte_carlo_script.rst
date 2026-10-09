@@ -110,21 +110,14 @@ When this script is ran, an example output is:
     ]
 
 
-Plot the sampled logical error-rates against the physical error-rates with Matplotlib. The ``find_pseudo`` function
-in ``pecos.analysis`` estimates the pseudo-threshold from a polynomial fit:
+The ``plot`` function in ``pecos.analysis.pseudo_threshold_tools`` plots the sampled logical error-rates,
+fits a polynomial curve, and estimates the pseudo-threshold:
 
 .. code-block:: python
 
-    import matplotlib.pyplot as plt
-    from pecos.analysis.pseudo_threshold_tools import find_pseudo
+    from pecos.analysis.pseudo_threshold_tools import plot
 
-    plt.plot(ps, plog, "o-", label="Sampled logical error-rate")
-    plt.plot(ps, ps, "--", label="Physical error-rate")
-    plt.axvline(find_pseudo(ps, plog, deg=2), color="green", label="Estimated pseudo-threshold")
-    plt.xlabel("Physical error-rate")
-    plt.ylabel("Logical error-rate")
-    plt.legend()
-    plt.show()
+    plot(plist=ps, plog=plog, deg=2)
 
 An example pseudo-threshold plot is:
 

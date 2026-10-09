@@ -50,7 +50,7 @@ class ZModel(ParentErrorModel):
     error_two_paulis_collection: ClassVar[list[tuple[Pauli, Pauli]]] = [
         (Pauli.I, Pauli.Z),
         (Pauli.Z, Pauli.I),
-        (Pauli.Z, Pauli.X),
+        (Pauli.Z, Pauli.Z),
     ]
 
     def __init__(

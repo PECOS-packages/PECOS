@@ -336,6 +336,9 @@ def plot(
     """
     import matplotlib.pyplot as plt  # noqa: PLC0415
 
+    plist = list(plist)
+    plog = list(plog)
+
     if p_start is None:
         p_start = min(plog) * 0.9
 
@@ -354,10 +357,10 @@ def plot(
     axis_start = p_start
     axis_end = p_end
 
-    x = pc.linspace(axis_start, axis_end, 1000)
+    x = list(pc.linspace(axis_start, axis_end, 1000))
 
     poly = pc.Poly1d(popt)
-    yi = poly(x)
+    yi = [poly(value) for value in x]
 
     # Do the plotting:
     fg, ax = plt.subplots(1, 1, figsize=figsize)

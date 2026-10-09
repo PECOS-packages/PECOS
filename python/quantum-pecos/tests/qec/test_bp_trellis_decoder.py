@@ -15,11 +15,9 @@
 
 from __future__ import annotations
 
+import pecos_rslib_exp
 import pytest
-
-pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
-
-from pecos_rslib_exp import BpTrellisDecoder  # noqa: E402
+from pecos_rslib_exp import BpTrellisDecoder
 
 SMALL_DEM = """\
 error(0.1) D0 L0

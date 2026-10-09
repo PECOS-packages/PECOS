@@ -1,6 +1,7 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
 import pytest
+import stim
 from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -13,17 +14,6 @@ def _return_declared_cregs(prog: Main) -> Main:
     return prog
 
 
-# Check if stim is available
-try:
-    import stim
-
-    STIM_AVAILABLE = True
-except ImportError:
-    STIM_AVAILABLE = False
-    stim = None
-
-
-@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 class TestStimToSLR:
     """Test conversion from Stim circuits to SLR format."""
 
@@ -133,7 +123,6 @@ class TestStimToSLR:
         assert len(h_ops_no_opt) == 3, f"Should have 3 H operations, got {len(h_ops_no_opt)}"
 
 
-@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 class TestSLRToStim:
     """Test conversion from SLR format to Stim circuits."""
 
@@ -245,7 +234,6 @@ class TestSLRToStim:
         assert y_idx < cx_idx
 
 
-@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 class TestStimRoundTrip:
     """Test round-trip conversions between Stim and SLR."""
 
@@ -304,7 +292,6 @@ class TestStimRoundTrip:
         assert "cx q[0],q[1]" in recon_qasm or "cx q[0], q[1]" in recon_qasm
 
 
-@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 class TestStimStaticForAndWhile:
     """Same silent-miscompile class as the QIR For/While, in the AST Stim codegen.
 
@@ -352,7 +339,6 @@ def test_unsupported_gate_fails_loud() -> None:
         SlrConverter(prog).stim()
 
 
-@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 def test_face_clifford_gates_decompose() -> None:
     """F/Fdg/F4/F4dg are PECOS face-Cliffords with no direct Stim
     primitive; cross-codegen audit landed verified decompositions

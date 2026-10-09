@@ -8,7 +8,7 @@ use crate::structure::ActiveStructure;
 use std::cell::RefCell;
 
 #[derive(Debug, Default)]
-struct Coverage {
+pub(super) struct Coverage {
     programs: usize,
     runs: usize,
     operations: usize,
@@ -23,7 +23,7 @@ struct Coverage {
     changed_orders: usize,
 }
 
-fn compare(program: &HeisenbergProgram, coverage: &mut Coverage) {
+pub(super) fn compare(program: &HeisenbergProgram, coverage: &mut Coverage) {
     let expected = program.width_profile();
     assert_eq!(expected.len(), program.operations.len());
     coverage.programs += 1;

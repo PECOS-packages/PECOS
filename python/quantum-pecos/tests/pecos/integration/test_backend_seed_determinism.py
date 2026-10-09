@@ -14,6 +14,7 @@
 Regression test for issue #89 (https://github.com/PECOS-packages/PECOS/issues/89).
 """
 
+import importlib
 from math import sqrt
 
 import pytest
@@ -285,12 +286,11 @@ def test_custatevec_determinism() -> None:
 def _require_mps() -> None:
     """Use the MPS dependency check for optional integration tests."""
     try:
-        from pecos.simulators import MPS
-
-        if MPS is None:
-            pytest.skip("MPS not available")
-    except ImportError:
-        pytest.skip("MPS requires pytket")
+        importlib.import_module("pecos.simulators.mps_pytket")
+    except ModuleNotFoundError as error:
+        if not error.name or error.name.split(".")[0] not in {"pytket", "cupy", "cuquantum"}:
+            raise
+        pytest.skip(f"MPS requires {error.name}")
 
 
 def test_mps_bell_statistics() -> None:

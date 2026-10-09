@@ -351,8 +351,6 @@ class TestIntegrationWithPecos:
     @pytest.fixture
     def surface_code_dem(self) -> tuple[str, str]:
         """Generate a surface code DEM pair (PECOS and Stim)."""
-        pytest.importorskip("stim")
-
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
@@ -420,8 +418,6 @@ class TestPecosDecompositionEquivalence:
     @pytest.fixture
     def surface_code_dem_pair(self) -> tuple[str, str]:
         """Generate both raw and decomposed DEMs from PECOS."""
-        pytest.importorskip("stim")
-
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
 
@@ -540,8 +536,6 @@ class TestPecosDecompositionEquivalence:
         num_rounds: int,
     ) -> None:
         """Decomposition should be equivalent for various code sizes."""
-        pytest.importorskip("stim")
-
         from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
         from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
 

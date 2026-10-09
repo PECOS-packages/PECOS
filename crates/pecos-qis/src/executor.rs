@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tempfile::NamedTempFile;
 
 /// Process-wide singleton for the QIS FFI library.
@@ -219,39 +219,46 @@ enum ExecutionEntryPoint<'a> {
         call: Symbol<'a, CallVoidMainFn>,
     },
 }
-type WaitForNeedResultFn = unsafe extern "C" fn(u64) -> u64;
-type SetMeasurementResultFn = unsafe extern "C" fn(u64, bool);
-type SetMeasurementOutcomeFn = unsafe extern "C" fn(u64, u64);
-type SignalResultReadyFn = unsafe extern "C" fn();
-type AbortExecutionFn = unsafe extern "C" fn();
+type WaitForNeedResultFn = unsafe extern "C" fn(*mut ExecutionContext, u64, *mut u64) -> i32;
+type SetMeasurementResultFn = unsafe extern "C" fn(*mut ExecutionContext, u64, bool) -> i32;
+type SetMeasurementOutcomeFn = unsafe extern "C" fn(*mut ExecutionContext, u64, u64) -> i32;
+type SignalResultReadyFn = unsafe extern "C" fn(*mut ExecutionContext) -> i32;
+type AbortExecutionFn = unsafe extern "C" fn(*mut ExecutionContext) -> i32;
 type GetProgramErrorJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
-type GetNamedResultsJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
-type GetNamedResultTracesJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
+type GetNamedResultsJsonFn =
+    unsafe extern "C" fn(*mut ExecutionContext, *mut *mut std::ffi::c_char) -> i32;
+type GetNamedResultTracesJsonFn =
+    unsafe extern "C" fn(*mut ExecutionContext, *mut *mut std::ffi::c_char) -> i32;
 type FreeNamedResultsJsonFn = unsafe extern "C" fn(*mut std::ffi::c_char);
+
+type GetPendingOperationsFn =
+    unsafe extern "C" fn(*mut ExecutionContext, *mut *mut OperationCollector) -> i32;
+
+fn check_context_status(status: i32, operation: &str) -> Result<(), InterfaceError> {
+    let detail = match status {
+        0 => return Ok(()),
+        1 => "null execution context",
+        2 => "poisoned execution context lock",
+        _ => "invalid data or serialization failure",
+    };
+    Err(InterfaceError::ExecutionError(format!(
+        "{operation}: {detail} (status {status})"
+    )))
+}
 
 /// Synchronization handle for main thread communication with worker thread
 ///
 /// This handle allows the main thread to call FFI functions for synchronization
 /// while the interface is running on a worker thread. It uses the same singleton
 /// library instance as the worker thread, ensuring TLS consistency on macOS.
-pub struct HeliosSyncHandle;
+pub struct HeliosSyncHandle {
+    execution_context: Arc<ExecutionContextPtr>,
+}
 
 impl HeliosSyncHandle {
-    /// Create a new sync handle
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Get the singleton library for FFI calls
     fn get_lib() -> Result<&'static SharedLibrary, InterfaceError> {
         QisHeliosInterface::get_qis_ffi_lib_singleton()
-    }
-}
-
-impl Default for HeliosSyncHandle {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -259,8 +266,10 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64> {
         let lib = Self::get_lib().ok()?;
         let wait_fn: Symbol<WaitForNeedResultFn> =
-            unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
-        let result_id = unsafe { wait_fn(timeout_ms) };
+            unsafe { lib.get(b"pecos_wait_for_need_result_with_context\0").ok()? };
+        let mut result_id = u64::MAX;
+        let status = unsafe { wait_fn(self.execution_context.0, timeout_ms, &raw mut result_id) };
+        check_context_status(status, "wait for result").ok()?;
         if result_id == u64::MAX {
             None
         } else {
@@ -271,13 +280,17 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError> {
         let lib = Self::get_lib()?;
         let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
-            lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_set_measurement_result: {e}"
-                ))
-            })?
+            lib.get(b"pecos_set_measurement_result_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_set_measurement_result: {e}"
+                    ))
+                })?
         };
-        unsafe { set_fn(result_id, value) };
+        check_context_status(
+            unsafe { set_fn(self.execution_context.0, result_id, value) },
+            "set measurement",
+        )?;
         debug!("HeliosSyncHandle: Set measurement result {result_id} = {value}");
         Ok(())
     }
@@ -285,13 +298,17 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
         let lib = Self::get_lib()?;
         let set_fn: Symbol<SetMeasurementOutcomeFn> = unsafe {
-            lib.get(b"pecos_set_measurement_outcome\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_set_measurement_outcome: {e}"
-                ))
-            })?
+            lib.get(b"pecos_set_measurement_outcome_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_set_measurement_outcome: {e}"
+                    ))
+                })?
         };
-        unsafe { set_fn(result_id, value) };
+        check_context_status(
+            unsafe { set_fn(self.execution_context.0, result_id, value) },
+            "set measurement",
+        )?;
         debug!("HeliosSyncHandle: Set measurement outcome {result_id} = {value}");
         Ok(())
     }
@@ -299,13 +316,17 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     fn signal_result_ready(&self) -> Result<(), InterfaceError> {
         let lib = Self::get_lib()?;
         let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
-            lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_signal_result_ready: {e}"
-                ))
-            })?
+            lib.get(b"pecos_signal_result_ready_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_signal_result_ready: {e}"
+                    ))
+                })?
         };
-        unsafe { signal_fn() };
+        check_context_status(
+            unsafe { signal_fn(self.execution_context.0) },
+            "signal readiness",
+        )?;
         debug!("HeliosSyncHandle: Signaled result ready");
         Ok(())
     }
@@ -314,20 +335,22 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
         let lib = Self::get_lib()?;
-        // Use pecos_get_pending_operations which reads from the execution context
-        // (not pecos_qis_get_operations which reads thread-local storage)
-        let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
-            lib.get(b"pecos_get_pending_operations\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_get_pending_operations: {e}"
-                ))
-            })?
+        // Read the owned context queue through pecos_get_pending_operations_with_context.
+        let get_ops_fn: Symbol<GetPendingOperationsFn> = unsafe {
+            lib.get(b"pecos_get_pending_operations_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_get_pending_operations_with_context: {e}"
+                    ))
+                })?
         };
         let collector = unsafe {
-            let ptr = get_ops_fn();
-            if ptr.is_null() {
-                return Ok(Vec::new());
-            }
+            let mut ptr = std::ptr::null_mut();
+            check_context_status(
+                get_ops_fn(self.execution_context.0, &raw mut ptr),
+                "pending operations unavailable",
+            )?;
+            // Success always returns an allocated collector, even for an empty queue.
             Box::from_raw(ptr)
         };
         Ok(collector.operations)
@@ -342,7 +365,14 @@ impl DynamicSyncHandle for HeliosSyncHandle {
                 ))
             })?
         };
-        unsafe { abort_fn() };
+        // SAFETY: This handle's Arc keeps its original context alive throughout
+        // the call, independently of interface replacement or this thread's TLS.
+        let status = unsafe { abort_fn(self.execution_context.0) };
+        if status != 0 {
+            return Err(InterfaceError::ExecutionError(format!(
+                "Dynamic cancellation failed with status {status}"
+            )));
+        }
         debug!("HeliosSyncHandle: Aborted execution");
         Ok(())
     }
@@ -355,14 +385,19 @@ impl DynamicSyncHandle for HeliosSyncHandle {
 
         // Get the JSON string
         let get_fn: Symbol<GetNamedResultsJsonFn> = unsafe {
-            lib.get(b"pecos_get_named_results_json\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_get_named_results_json: {e}"
-                ))
-            })?
+            lib.get(b"pecos_get_named_results_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_get_named_results_json: {e}"
+                    ))
+                })?
         };
 
-        let ptr = unsafe { get_fn() };
+        let mut ptr = std::ptr::null_mut();
+        check_context_status(
+            unsafe { get_fn(self.execution_context.0, &raw mut ptr) },
+            "read named results",
+        )?;
         if ptr.is_null() {
             // No named results - return empty map
             return Ok(std::collections::BTreeMap::new());
@@ -396,7 +431,7 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         let lib = Self::get_lib()?;
 
         let get_fn: Symbol<GetNamedResultTracesJsonFn> = unsafe {
-            lib.get(b"pecos_get_named_result_traces_json\0")
+            lib.get(b"pecos_get_named_result_traces_json_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_get_named_result_traces_json: {e}"
@@ -404,24 +439,14 @@ impl DynamicSyncHandle for HeliosSyncHandle {
                 })?
         };
 
-        let ptr = unsafe { get_fn() };
+        let mut ptr = std::ptr::null_mut();
+        check_context_status(
+            unsafe { get_fn(self.execution_context.0, &raw mut ptr) },
+            "read named results",
+        )?;
         if ptr.is_null() {
             return Ok(Vec::new());
         }
-
-        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
-        let json_str = c_str.to_str().map_err(|e| {
-            InterfaceError::ExecutionError(format!(
-                "Invalid UTF-8 in named result traces JSON: {e}"
-            ))
-        })?;
-
-        let result: Vec<pecos_qis_ffi_types::NamedResultTrace> = serde_json::from_str(json_str)
-            .map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to parse named result traces JSON: {e}"
-                ))
-            })?;
 
         let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
             lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
@@ -430,7 +455,12 @@ impl DynamicSyncHandle for HeliosSyncHandle {
                 ))
             })?
         };
+        let json = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes();
+        let result = serde_json::from_slice::<Vec<pecos_qis_ffi_types::NamedResultTrace>>(json);
         unsafe { free_fn(ptr) };
+        let result = result.map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to parse named result traces JSON: {e}"))
+        })?;
 
         debug!(
             "HeliosSyncHandle: Got {} named result trace records",
@@ -743,21 +773,37 @@ struct ExecutionContextPtr(*mut ExecutionContext, DestroyExecutionContextFn);
 
 impl Drop for ExecutionContextPtr {
     fn drop(&mut self) {
-        // Used at collection return or between shots, while TLS is live.
-        // QisHeliosInterface::drop deliberately skips this for its last context.
+        // SAFETY: This owner is dropped exactly once (after the last Arc for a
+        // dynamic context). ExecutionContext synchronizes shared state internally;
+        // its destructor clears only this thread's matching TLS registration.
+        // The cached library and destructor remain live. Interface Drop leaks
+        // its final Arc, preventing destruction during shutdown TLS teardown.
         unsafe { (self.1)(self.0) };
     }
 }
 
-// SAFETY: ExecutionContext is internally thread-safe and designed for cross-thread sharing
+// SAFETY: ExecutionContext's shared state uses atomics and mutexes. Its FFI
+// methods synchronize access, and its destructor only clears matching local TLS.
 unsafe impl Send for ExecutionContextPtr {}
+// SAFETY: ExecutionContext's atomics/mutexes support concurrent host/worker
+// access; Arc ownership keeps the pointee alive for every shared FFI call.
 unsafe impl Sync for ExecutionContextPtr {}
 
 type CreateExecutionContextFn = unsafe extern "C" fn() -> *mut ExecutionContext;
 type DestroyExecutionContextFn = unsafe extern "C" fn(ctx: *mut ExecutionContext);
 type RegisterExecutionContextFn = unsafe extern "C" fn(ctx: *mut ExecutionContext);
-type EnableDynamicModeFn = unsafe extern "C" fn();
-type DisableDynamicModeFn = unsafe extern "C" fn();
+// Created in the caller of the C recovery guard, never in a skipped frame.
+struct ExecutionRegistration(RegisterExecutionContextFn);
+
+impl Drop for ExecutionRegistration {
+    fn drop(&mut self) {
+        // SAFETY: Null unconditionally clears this executing thread's registration.
+        unsafe { (self.0)(std::ptr::null_mut()) };
+    }
+}
+
+type EnableDynamicModeFn = unsafe extern "C" fn(*mut ExecutionContext) -> i32;
+type DisableDynamicModeFn = unsafe extern "C" fn(*mut ExecutionContext) -> i32;
 
 /// Helios interface implementation
 ///
@@ -783,8 +829,9 @@ pub struct QisHeliosInterface {
     // process-wide caches/singletons to avoid macOS TLS/dynamic linker issues.
     // Program libraries are cached by path in PROGRAM_LIB_CACHE.
     /// Execution context for dynamic circuit coordination
-    /// Owned until the next shot or interface teardown, after workers finish
-    execution_context: Option<ExecutionContextPtr>,
+    /// Shared with sync handles; replacing this Arc leaves older handles valid.
+    execution_context: Option<Arc<ExecutionContextPtr>>,
+    dynamic_mode: bool,
 }
 
 impl QisHeliosInterface {
@@ -797,7 +844,18 @@ impl QisHeliosInterface {
             format: ProgramFormat::QisBitcode,
             metadata: BTreeMap::new(),
             execution_context: None,
+            dynamic_mode: false,
         }
+    }
+
+    fn context_handle(&self) -> Result<HeliosSyncHandle, InterfaceError> {
+        let context = self
+            .execution_context
+            .as_ref()
+            .ok_or_else(|| InterfaceError::ExecutionError("null execution context".into()))?;
+        Ok(HeliosSyncHandle {
+            execution_context: Arc::clone(context),
+        })
     }
 
     fn create_execution_context(lib: &Library) -> Result<ExecutionContextPtr, InterfaceError> {
@@ -1969,8 +2027,13 @@ entry:
         // Collection owns a temporary context; dynamic execution uses the
         // interface's context until its worker and result consumer have finished.
         let collection_context;
-        let ctx = if let Some(ctx) = &self.execution_context {
-            ctx.0
+        let ctx = if self.dynamic_mode {
+            self.execution_context
+                .as_ref()
+                .ok_or_else(|| {
+                    InterfaceError::ExecutionError("Dynamic mode has no execution context".into())
+                })?
+                .0
         } else {
             collection_context = Self::create_execution_context(pecos_qis_lib.inner())?;
             collection_context.0
@@ -1985,7 +2048,6 @@ entry:
                 })?
         };
         debug!("execute_program: registering context {ctx:?} on thread {current_thread_id:?}");
-        unsafe { register_fn(ctx) };
 
         // Step 2: Reset the QIS interface via the cdylib
         // IMPORTANT: We call the cdylib's version to ensure we're using the same thread-local
@@ -1997,99 +2059,125 @@ entry:
                     InterfaceError::ExecutionError(format!("Failed to find reset function: {e}"))
                 })?
         };
+        // This scope is outside the C recovery guard, so neither recovery
+        // transfers nor Rust errors/panics can leave a registration behind.
+        unsafe { register_fn(ctx) };
+        let _registration = ExecutionRegistration(*register_fn);
         unsafe { reset_fn() };
 
-        // Step 2b: Pre-populate measurement results if provided
-        // This enables dynamic circuits - the results are stored in the cdylib's thread-local
-        // storage where ___read_future_bool will find them
-        if let Some(measurements) = measurements {
-            type SetMeasurementResultFn = unsafe extern "C" fn(result_id: u64, value: bool);
-            let set_result_fn: Symbol<SetMeasurementResultFn> = unsafe {
+        let execution = (|| {
+            // Step 2b: Pre-populate the execution context before the program
+            // reads its measurement futures.
+            if let Some(measurements) = measurements {
+                // SAFETY: The singleton exports this symbol with the declared ABI.
+                let set_result_fn: Symbol<SetMeasurementResultFn> = unsafe {
+                    pecos_qis_lib
+                        .get(b"pecos_set_measurement_result_with_context\0")
+                        .map_err(|e| {
+                            InterfaceError::ExecutionError(format!(
+                                "Failed to find pecos_set_measurement_result: {e}"
+                            ))
+                        })?
+                };
+
+                for (&result_id, &value) in measurements {
+                    debug!("Pre-populating measurement result via cdylib: {result_id} = {value}");
+                    // SAFETY: This worker has registered the live context.
+                    check_context_status(
+                        unsafe { set_result_fn(ctx, result_id as u64, value) },
+                        "prepopulate measurement",
+                    )?;
+                }
+            }
+
+            // Step 3: Get the program library from the global cache
+            // The program library is cached to avoid repeated load/unload cycles on macOS.
+            let program_lib = Self::get_or_cache_program_lib(so_path)?;
+            debug!("Using cached program library");
+
+            // Step 4: Get the execution entry point (qmain or main) and matching
+            // setjmp wrapper from the runtime.
+            let entry_point =
+                Self::get_execution_symbols(program_lib.inner(), pecos_qis_lib.inner())?;
+
+            // Step 5: Call the entry point via the matching setjmp wrapper.
+            // FFI Rust guard export → C setjmp → program qmain/main → FFI QIS or
+            // selene_* adapter → thread-local operation collection. Termination
+            // transfers to the C guard, which cleans up and restores the handler.
+            let (entry_label, result) = match &entry_point {
+                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
+                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
+            };
+            // Read the error while this worker still has its context registered.
+            // A type mismatch is fatal even if the program returned normally.
+            // SAFETY: The singleton exports this symbol with the declared ABI.
+            let get_error: Symbol<GetProgramErrorJsonFn> = unsafe {
                 pecos_qis_lib
-                    .get(b"pecos_set_measurement_result\0")
+                    .get(b"pecos_get_program_error_json\0")
                     .map_err(|e| {
                         InterfaceError::ExecutionError(format!(
-                            "Failed to find pecos_set_measurement_result: {e}"
+                            "Failed to find program error reader: {e}"
                         ))
                     })?
             };
-
-            for (&result_id, &value) in measurements {
-                debug!("Pre-populating measurement result via cdylib: {result_id} = {value}");
-                unsafe { set_result_fn(result_id as u64, value) };
-            }
-        }
-
-        // Step 3: Get the program library from the global cache
-        // The program library is cached to avoid repeated load/unload cycles on macOS.
-        let program_lib = Self::get_or_cache_program_lib(so_path)?;
-        debug!("Using cached program library");
-
-        // Step 4: Get the execution entry point (qmain or main) and matching
-        // setjmp wrapper from the runtime.
-        let entry_point = Self::get_execution_symbols(program_lib.inner(), pecos_qis_lib.inner())?;
-
-        // Step 5: Call the entry point via the matching setjmp wrapper.
-        // FFI Rust guard export → C setjmp → program qmain/main → FFI QIS or
-        // selene_* adapter → thread-local operation collection. Termination
-        // transfers to the C guard, which cleans up and restores the handler.
-        let (entry_label, result) = match &entry_point {
-            ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
-            ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
-        };
-        // Read the error while this worker still has its context registered.
-        // A type mismatch is fatal even if the program returned normally.
-        let get_error: Symbol<GetProgramErrorJsonFn> = unsafe {
-            pecos_qis_lib
-                .get(b"pecos_get_program_error_json\0")
-                .map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find program error reader: {e}"
-                    ))
-                })?
-        };
-        let free_error: Symbol<FreeNamedResultsJsonFn> = unsafe {
-            pecos_qis_lib
-                .get(b"pecos_free_named_results_json\0")
-                .map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find program error deallocator: {e}"
-                    ))
-                })?
-        };
-        let error_ptr = unsafe { get_error() };
-        if !error_ptr.is_null() {
-            let json = unsafe { std::ffi::CStr::from_ptr(error_ptr) }.to_bytes();
-            let error = serde_json::from_slice::<pecos_qis_ffi_types::ProgramError>(json);
-            unsafe { free_error(error_ptr) };
-            let error = error.map_err(|e| {
-                InterfaceError::ExecutionError(format!("Invalid program error JSON: {e}"))
-            })?;
-            match error {
-                pecos_qis_ffi_types::ProgramError::Exit { .. } => debug!("{error}"),
-                error => {
-                    return Err(InterfaceError::ExecutionError(format!(
-                        "{entry_label} returned error code: {result}: {error}"
-                    )));
+            // SAFETY: The singleton exports the matching JSON deallocator.
+            let free_error: Symbol<FreeNamedResultsJsonFn> = unsafe {
+                pecos_qis_lib
+                    .get(b"pecos_free_named_results_json\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find program error deallocator: {e}"
+                        ))
+                    })?
+            };
+            // SAFETY: This worker still has the context registered.
+            let error_ptr = unsafe { get_error() };
+            if !error_ptr.is_null() {
+                // SAFETY: Non-null error JSON is a live NUL-terminated allocation.
+                let json = unsafe { std::ffi::CStr::from_ptr(error_ptr) }.to_bytes();
+                let error = serde_json::from_slice::<pecos_qis_ffi_types::ProgramError>(json);
+                // SAFETY: Parsing finished borrowing this allocation; free it once.
+                unsafe { free_error(error_ptr) };
+                let error = error.map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Invalid program error JSON: {e}"))
+                })?;
+                match error {
+                    pecos_qis_ffi_types::ProgramError::Exit { .. } => debug!("{error}"),
+                    pecos_qis_ffi_types::ProgramError::Cancelled => {
+                        return Err(InterfaceError::ProgramError(error));
+                    }
+                    error => {
+                        return Err(InterfaceError::ExecutionError(format!(
+                            "{entry_label} returned error code: {result}: {error}"
+                        )));
+                    }
                 }
             }
+            if result != 0 {
+                return Err(InterfaceError::ExecutionError(format!(
+                    "{entry_label} returned error code: {result}"
+                )));
+            }
+            info!("{entry_label} executed successfully!");
+
+            // Step 6: Collect the operations from thread-local storage via the cdylib
+            // IMPORTANT: We call the cdylib's version to get the operations from the same
+            // thread-local storage instance that the runtime used
+            let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
+
+            // Note: All libraries (QIS FFI and program) are in process-wide caches.
+            // They remain loaded for the process lifetime to avoid macOS dynamic linker issues.
+
+            Ok(operations)
+        })();
+        if execution.is_err() {
+            // SAFETY: The guard/callback stack has returned. Reset the collector
+            // in this worker's TLS on every error, including symbol/JSON errors.
+            unsafe { reset_fn() };
         }
-        if result != 0 {
-            return Err(InterfaceError::ExecutionError(format!(
-                "{entry_label} returned error code: {result}"
-            )));
-        }
-        info!("{entry_label} executed successfully!");
-
-        // Step 6: Collect the operations from thread-local storage via the cdylib
-        // IMPORTANT: We call the cdylib's version to get the operations from the same
-        // thread-local storage instance that the runtime used
-        let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
-
-        // Note: All libraries (QIS FFI and program) are in process-wide caches.
-        // They remain loaded for the process lifetime to avoid macOS dynamic linker issues.
-
-        Ok(operations)
+        execution
     }
 }
 
@@ -2260,7 +2348,8 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn reset(&mut self) -> Result<(), InterfaceError> {
-        // Reset is not needed for this interface - it happens at the start of execute_program
+        // Subsequent collection must use a fresh context, including after cancellation.
+        self.dynamic_mode = false;
         Ok(())
     }
 
@@ -2273,111 +2362,39 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
-        let main_thread_id = std::thread::current().id();
-        debug!("Enabling dynamic execution mode on main thread {main_thread_id:?}");
-
-        // Get the process-wide QIS FFI library singleton
-        // IMPORTANT: We use a process-wide singleton to ensure all code uses the same
-        // library instance. On macOS, loading the library twice creates separate TLS
-        // instances, causing crashes when the execution context is accessed from a
-        // different library instance.
         let lib = Self::get_qis_ffi_lib_singleton()?;
-        debug!("Using QIS FFI library from process-wide singleton for dynamic mode");
-
-        // The previous worker and consumer have finished before this new shot.
-        let context = Self::create_execution_context(lib.inner())?;
-        let ctx = context.0;
-        self.execution_context = Some(context);
-
-        // Register the execution context on this (main) thread
-        let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
-            lib.get(b"pecos_register_execution_context\0")
+        let enable: Symbol<EnableDynamicModeFn> = unsafe {
+            lib.get(b"pecos_enable_dynamic_mode_with_context\0")
                 .map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_register_execution_context: {e}"
-                    ))
+                    InterfaceError::ExecutionError(format!("Failed to find explicit enable: {e}"))
                 })?
         };
-        debug!(
-            "enable_dynamic_mode: registering context {ctx:?} on main thread {main_thread_id:?}"
-        );
-        unsafe { register_fn(ctx) };
-        debug!("enable_dynamic_mode: context {ctx:?} registered on main thread {main_thread_id:?}");
-
-        // Now enable dynamic mode
-        let enable_fn: Symbol<EnableDynamicModeFn> = unsafe {
-            lib.get(b"pecos_enable_dynamic_mode\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_enable_dynamic_mode: {e}"
-                ))
-            })?
-        };
-        unsafe { enable_fn() };
-        debug!(
-            "enable_dynamic_mode: dynamic mode enabled via FFI on main thread {main_thread_id:?}"
-        );
-
+        let context = Self::create_execution_context(lib.inner())?;
+        check_context_status(unsafe { enable(context.0) }, "enable dynamic mode")?;
+        self.execution_context = Some(Arc::new(context));
+        self.dynamic_mode = true;
         Ok(())
     }
 
     fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
-        let worker_thread_id = std::thread::current().id();
-        debug!("Disabling dynamic execution mode on worker thread {worker_thread_id:?}");
-
-        // Get the process-wide QIS FFI library singleton
+        self.dynamic_mode = false;
         let lib = Self::get_qis_ffi_lib_singleton()?;
-
-        // Disable dynamic mode first (signals worker_complete and notifies waiters)
-        let disable_fn: Symbol<DisableDynamicModeFn> = unsafe {
-            lib.get(b"pecos_disable_dynamic_mode\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_disable_dynamic_mode: {e}"
-                ))
-            })?
-        };
-        unsafe { disable_fn() };
-        debug!(
-            "disable_dynamic_mode: dynamic mode disabled via FFI on worker thread {worker_thread_id:?}"
-        );
-
-        // Unregister the execution context from this (worker) thread's TLS
-        let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
-            lib.get(b"pecos_register_execution_context\0")
+        let disable: Symbol<DisableDynamicModeFn> = unsafe {
+            lib.get(b"pecos_disable_dynamic_mode_with_context\0")
                 .map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_register_execution_context: {e}"
-                    ))
+                    InterfaceError::ExecutionError(format!("Failed to find explicit disable: {e}"))
                 })?
         };
-        debug!(
-            "disable_dynamic_mode: unregistering context from worker thread {worker_thread_id:?}"
-        );
-        unsafe { register_fn(std::ptr::null_mut()) };
-        debug!(
-            "disable_dynamic_mode: context unregistered from worker thread {worker_thread_id:?}"
-        );
-
-        // IMPORTANT: Do NOT destroy the execution context here!
-        // The main thread may still be inside pecos_wait_for_need_result using the context.
-        // The context will be destroyed in enable_dynamic_mode() before the next shot starts,
-        // at which point the main thread is guaranteed to not be using the old context.
-        // This prevents a use-after-free race condition.
-
-        Ok(())
+        let handle = self.context_handle()?;
+        // Retain the context until replacement; outstanding handles also own it.
+        check_context_status(
+            unsafe { disable(handle.execution_context.0) },
+            "disable dynamic mode",
+        )
     }
 
     fn wait_for_result_needed(&self, timeout_ms: u64) -> Option<u64> {
-        // Get the process-wide QIS FFI library singleton
-        let lib = Self::get_qis_ffi_lib_singleton().ok()?;
-
-        let wait_fn: Symbol<WaitForNeedResultFn> =
-            unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
-        let result_id = unsafe { wait_fn(timeout_ms) };
-        if result_id == u64::MAX {
-            None
-        } else {
-            Some(result_id)
-        }
+        self.context_handle().ok()?.wait_for_need_result(timeout_ms)
     }
 
     fn set_measurement_result(
@@ -2385,19 +2402,8 @@ impl QisInterface for QisHeliosInterface {
         result_id: u64,
         value: bool,
     ) -> Result<(), InterfaceError> {
-        // Get the process-wide QIS FFI library singleton
-        let lib = Self::get_qis_ffi_lib_singleton()?;
-
-        let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
-            lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_set_measurement_result: {e}"
-                ))
-            })?
-        };
-        unsafe { set_fn(result_id, value) };
-        debug!("Set measurement result via FFI: {result_id} = {value}");
-        Ok(())
+        self.context_handle()?
+            .set_measurement_result(result_id, value)
     }
 
     fn set_measurement_outcome(
@@ -2405,57 +2411,18 @@ impl QisInterface for QisHeliosInterface {
         result_id: u64,
         value: u64,
     ) -> Result<(), InterfaceError> {
-        let lib = Self::get_qis_ffi_lib_singleton()?;
-        let set_fn: Symbol<SetMeasurementOutcomeFn> = unsafe {
-            lib.get(b"pecos_set_measurement_outcome\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_set_measurement_outcome: {e}"
-                ))
-            })?
-        };
-        unsafe { set_fn(result_id, value) };
-        debug!("Set measurement outcome via FFI: {result_id} = {value}");
-        Ok(())
+        self.context_handle()?
+            .set_measurement_outcome(result_id, value)
     }
 
     fn signal_result_ready(&mut self) -> Result<(), InterfaceError> {
-        // Get the process-wide QIS FFI library singleton
-        let lib = Self::get_qis_ffi_lib_singleton()?;
-
-        let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
-            lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_signal_result_ready: {e}"
-                ))
-            })?
-        };
-        unsafe { signal_fn() };
-        debug!("Signaled result ready via FFI");
-        Ok(())
+        self.context_handle()?.signal_result_ready()
     }
 
     fn get_pending_operations(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
-        // Get the process-wide QIS FFI library singleton
-        let lib = Self::get_qis_ffi_lib_singleton()?;
-
-        // Get operations from the library's thread-local storage
-        let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
-            lib.get(b"pecos_qis_get_operations\0").map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_qis_get_operations: {e}"
-                ))
-            })?
-        };
-        let collector = unsafe {
-            let ptr = get_ops_fn();
-            if ptr.is_null() {
-                return Ok(Vec::new());
-            }
-            Box::from_raw(ptr)
-        };
-        Ok(collector.operations)
+        self.context_handle()?.get_pending_operations()
     }
 
     fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
@@ -2469,9 +2436,9 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn get_sync_handle(&self) -> Option<Box<dyn DynamicSyncHandle>> {
-        // Return a handle that uses the singleton library for FFI calls
-        // This ensures TLS consistency between main thread and worker thread on macOS
-        Some(Box::new(HeliosSyncHandle::new()))
+        Some(Box::new(HeliosSyncHandle {
+            execution_context: Arc::clone(self.execution_context.as_ref()?),
+        }))
     }
 }
 
@@ -2490,9 +2457,9 @@ impl Drop for QisHeliosInterface {
         // - The memory will be reclaimed by the OS when the process exits
         // - The TLS entry will be cleaned up by the OS
         //
-        // Note: During normal operation (multi-shot execution), the context is cleaned up
-        // in enable_dynamic_mode() at the start of each new shot, before the previous
-        // context is needed. The context is NOT cleaned up in disable_dynamic_mode() to
+        // During normal operation, enable_dynamic_mode() replaces our Arc. An
+        // older context is cleaned up only when its last retained handle drops.
+        // The context is NOT cleaned up in disable_dynamic_mode() to
         // avoid a use-after-free race condition where the main thread might still be
         // accessing the context when the worker thread tries to destroy it.
         //
@@ -2502,7 +2469,9 @@ impl Drop for QisHeliosInterface {
         //
         // In both cases, leaking the context is acceptable and avoids the TLS hang.
         // Static collection contexts are local to execute_program and have
-        // already been freed. Only the final dynamic context can remain here.
+        // already been freed. Forget our final Arc without decrementing its
+        // strong count: dropping any remaining handle then cannot destroy this
+        // context, even if that handle is dropped during TLS teardown.
         if let Some(context) = self.execution_context.take() {
             std::mem::forget(context);
         }
@@ -2514,6 +2483,513 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
+
+    // Only primitive/pointer ABI types: this oracle also runs on Windows.
+    #[test]
+    fn explicit_context_exports_have_portable_ir_abi() {
+        let _env_lock = ENV_MUTEX.lock().unwrap();
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(
+                br"
+declare ptr @pecos_create_execution_context()
+declare void @pecos_destroy_execution_context(ptr)
+declare void @pecos_free_operations(ptr)
+declare i32 @pecos_enable_dynamic_mode_with_context(ptr)
+declare i32 @pecos_set_measurement_result_with_context(ptr, i64, i1 zeroext)
+declare i32 @pecos_set_measurement_outcome_with_context(ptr, i64, i64)
+declare i32 @pecos_signal_result_ready_with_context(ptr)
+declare i32 @pecos_wait_for_need_result_with_context(ptr, i64, ptr)
+declare i32 @pecos_get_pending_operations_with_context(ptr, ptr)
+declare i32 @pecos_get_named_results_json_with_context(ptr, ptr)
+declare i32 @pecos_get_named_result_traces_json_with_context(ptr, ptr)
+declare i32 @pecos_disable_dynamic_mode_with_context(ptr)
+define i64 @qmain(i64 %shot) {
+%ctx = call ptr @pecos_create_execution_context()
+%result = alloca i64
+%output = alloca ptr
+%s0 = call i32 @pecos_enable_dynamic_mode_with_context(ptr %ctx)
+%bad0 = icmp ne i32 %s0, 0
+%s1 = call i32 @pecos_set_measurement_result_with_context(ptr %ctx, i64 0, i1 zeroext true)
+%bad1 = icmp ne i32 %s1, 0
+%any1 = or i1 %bad0, %bad1
+%s2 = call i32 @pecos_set_measurement_outcome_with_context(ptr %ctx, i64 1, i64 2)
+%bad2 = icmp ne i32 %s2, 0
+%any2 = or i1 %any1, %bad2
+%s3 = call i32 @pecos_signal_result_ready_with_context(ptr %ctx)
+%bad3 = icmp ne i32 %s3, 0
+%any3 = or i1 %any2, %bad3
+%s4 = call i32 @pecos_wait_for_need_result_with_context(ptr %ctx, i64 0, ptr %result)
+%bad4 = icmp ne i32 %s4, 0
+%any4 = or i1 %any3, %bad4
+%s5 = call i32 @pecos_get_pending_operations_with_context(ptr %ctx, ptr %output)
+%bad5 = icmp ne i32 %s5, 0
+%any5 = or i1 %any4, %bad5
+%ops = load ptr, ptr %output
+call void @pecos_free_operations(ptr %ops)
+%s6 = call i32 @pecos_get_named_results_json_with_context(ptr %ctx, ptr %output)
+%bad6 = icmp ne i32 %s6, 0
+%any6 = or i1 %any5, %bad6
+%s7 = call i32 @pecos_get_named_result_traces_json_with_context(ptr %ctx, ptr %output)
+%bad7 = icmp ne i32 %s7, 0
+%any7 = or i1 %any6, %bad7
+%s8 = call i32 @pecos_disable_dynamic_mode_with_context(ptr %ctx)
+%bad8 = icmp ne i32 %s8, 0
+%any8 = or i1 %any7, %bad8
+%s9 = call i32 @pecos_enable_dynamic_mode_with_context(ptr null)
+%bad9 = icmp ne i32 %s9, 1
+%any9 = or i1 %any8, %bad9
+%s10 = call i32 @pecos_set_measurement_result_with_context(ptr null, i64 0, i1 zeroext true)
+%bad10 = icmp ne i32 %s10, 1
+%any10 = or i1 %any9, %bad10
+%s11 = call i32 @pecos_set_measurement_outcome_with_context(ptr null, i64 1, i64 2)
+%bad11 = icmp ne i32 %s11, 1
+%any11 = or i1 %any10, %bad11
+%s12 = call i32 @pecos_signal_result_ready_with_context(ptr null)
+%bad12 = icmp ne i32 %s12, 1
+%any12 = or i1 %any11, %bad12
+%s13 = call i32 @pecos_wait_for_need_result_with_context(ptr null, i64 0, ptr %result)
+%bad13 = icmp ne i32 %s13, 1
+%any13 = or i1 %any12, %bad13
+%s14 = call i32 @pecos_get_pending_operations_with_context(ptr null, ptr %output)
+%bad14 = icmp ne i32 %s14, 1
+%any14 = or i1 %any13, %bad14
+%s15 = call i32 @pecos_get_named_results_json_with_context(ptr null, ptr %output)
+%bad15 = icmp ne i32 %s15, 1
+%any15 = or i1 %any14, %bad15
+%s16 = call i32 @pecos_get_named_result_traces_json_with_context(ptr null, ptr %output)
+%bad16 = icmp ne i32 %s16, 1
+%any16 = or i1 %any15, %bad16
+%s17 = call i32 @pecos_disable_dynamic_mode_with_context(ptr null)
+%bad17 = icmp ne i32 %s17, 1
+%any17 = or i1 %any16, %bad17
+call void @pecos_destroy_execution_context(ptr %ctx)
+%status = zext i1 %any17 to i64
+ret i64 %status
+}
+",
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        interface.collect_operations().unwrap();
+    }
+
+    #[test]
+    fn interface_sync_methods_use_owned_context_pending_queue() {
+        let _env_lock = ENV_MUTEX.lock().unwrap();
+        let mut worker = QisHeliosInterface::new();
+        worker
+            .load_program(
+                br"
+            declare i32 @__quantum__qis__m__body(i64, i64)
+            declare i1 @___read_future_bool(i64)
+            define i64 @qmain(i64 %shot) {
+                %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+                %read = call i1 @___read_future_bool(i64 0)
+                %bad = xor i1 %read, true
+                %status = zext i1 %bad to i64
+                ret i64 %status
+            }
+        ",
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        worker.enable_dynamic_mode().unwrap();
+        let mut host = QisHeliosInterface::new();
+        host.execution_context = Some(Arc::clone(worker.execution_context.as_ref().unwrap()));
+        let execution = std::thread::spawn(move || {
+            let result = worker.collect_operations();
+            worker.disable_dynamic_mode().unwrap();
+            result
+        });
+        assert_eq!(host.wait_for_result_needed(5_000), Some(0));
+        let operations = host.get_pending_operations();
+        // Always release the worker before asserting, including under mutation.
+        host.set_measurement_outcome(0, 0).unwrap();
+        host.set_measurement_result(0, true).unwrap();
+        host.signal_result_ready().unwrap();
+        let result = execution.join().unwrap();
+        let operations = operations.unwrap();
+        assert!(operations.iter().any(|op| matches!(
+            op,
+            pecos_qis_ffi_types::Operation::Quantum(pecos_qis_ffi_types::QuantumOp::Measure(..))
+        )));
+        result.unwrap();
+        assert_eq!(host.get_pending_operations().unwrap(), []);
+        drop(host.execution_context.take());
+    }
+
+    #[test]
+    fn static_collection_after_aborted_dynamic_shot_uses_fresh_context() {
+        assert_static_collection_after_abort(false);
+    }
+
+    #[test]
+    fn reset_after_aborted_dynamic_shot_uses_fresh_collection_context() {
+        assert_static_collection_after_abort(true);
+    }
+
+    fn assert_static_collection_after_abort(reset: bool) {
+        let _env_lock = ENV_MUTEX.lock().unwrap();
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(
+                br"
+            declare void @__quantum__qis__x__body(i64)
+            define i64 @qmain(i64 %shot) {
+                call void @__quantum__qis__x__body(i64 0)
+                ret i64 0
+            }
+        ",
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        interface.enable_dynamic_mode().unwrap();
+        interface
+            .context_handle()
+            .unwrap()
+            .abort_execution()
+            .unwrap();
+        assert!(interface.collect_operations().is_err());
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let pending: Symbol<unsafe extern "C" fn() -> *mut OperationCollector> =
+            unsafe { ffi.get(b"pecos_get_pending_operations\0").unwrap() };
+        assert!(
+            unsafe { pending() }.is_null(),
+            "error path retained worker TLS"
+        );
+        if reset {
+            interface.reset().unwrap();
+        } else {
+            interface.disable_dynamic_mode().unwrap();
+        }
+        assert_eq!(interface.collect_operations().unwrap().operations.len(), 1);
+        assert_eq!(
+            interface
+                .execute_with_measurements(BTreeMap::new())
+                .unwrap()
+                .operations
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn successful_dynamic_execution_clears_worker_tls_before_context_destruction() {
+        let _env_lock = ENV_MUTEX.lock().unwrap();
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(
+                br"declare void @__quantum__qis__x__body(i64)
+                define i64 @qmain(i64 %shot) {
+                    call void @__quantum__qis__x__body(i64 0)
+                    ret i64 0
+                }",
+                ProgramFormat::LlvmIrText,
+            )
+            .unwrap();
+        interface.enable_dynamic_mode().unwrap();
+        let retained = interface.context_handle().unwrap();
+        let (execution, empty) = std::thread::spawn(move || {
+            let execution = interface.collect_operations();
+            let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+            let pending: Symbol<unsafe extern "C" fn() -> *mut OperationCollector> =
+                unsafe { ffi.get(b"pecos_get_pending_operations\0").unwrap() };
+            let register: Symbol<RegisterExecutionContextFn> =
+                unsafe { ffi.get(b"pecos_register_execution_context\0").unwrap() };
+            let collector = unsafe { pending() };
+            let empty = collector.is_null();
+            // Clean up even under mutation, after observing TLS while both owners live.
+            unsafe { register(std::ptr::null_mut()) };
+            if !collector.is_null() {
+                drop(unsafe { Box::from_raw(collector) });
+            }
+            interface.disable_dynamic_mode().unwrap();
+            (execution, empty)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(execution.unwrap().operations.len(), 1);
+        assert!(empty, "successful dynamic execution retained worker TLS");
+        drop(retained);
+    }
+
+    #[test]
+    fn retained_sync_handle_owns_original_context_across_replacement() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        // SAFETY: All symbols use the exact ABIs exported by the pinned runtime.
+        let (register, read, measure, allocate, live, reset) = unsafe {
+            (
+                *ffi.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")
+                    .unwrap(),
+                *ffi.get::<unsafe extern "C-unwind" fn(i64) -> bool>(b"___read_future_bool\0")
+                    .unwrap(),
+                *ffi.get::<unsafe extern "C-unwind" fn(i64, i64) -> i32>(
+                    b"__quantum__qis__m__body\0",
+                )
+                .unwrap(),
+                *ffi.get::<unsafe extern "C-unwind" fn(u64) -> *mut u8>(b"heap_alloc\0")
+                    .unwrap(),
+                *ffi.get::<unsafe extern "C" fn() -> usize>(b"pecos_get_live_allocation_count\0")
+                    .unwrap(),
+                *ffi.get::<ResetInterfaceFn>(b"pecos_qis_reset_interface\0")
+                    .unwrap(),
+            )
+        };
+        for drop_on_other_thread in [false, true] {
+            let mut interface = QisHeliosInterface::new();
+            interface.enable_dynamic_mode().unwrap();
+            unsafe { register(interface.execution_context.as_ref().unwrap().0) };
+            // SAFETY: Reset this test thread's collector before storing cached results.
+            unsafe {
+                reset();
+                measure(0, 7);
+            };
+            let original = Arc::downgrade(interface.execution_context.as_ref().unwrap());
+            let old_address = interface.execution_context.as_ref().unwrap().0 as usize;
+            let handle = interface.get_sync_handle().unwrap();
+            assert_eq!(original.strong_count(), 2);
+            handle.set_measurement_result(7, true).unwrap();
+            // SAFETY: This thread has registered the live original context.
+            let before = unsafe { live() };
+            // SAFETY: Allocate a small program-owned buffer in that context.
+            assert!(!unsafe { allocate(16) }.is_null());
+            interface.enable_dynamic_mode().unwrap();
+            unsafe { register(interface.execution_context.as_ref().unwrap().0) };
+            // SAFETY: Reset this test thread's collector before storing cached results.
+            unsafe {
+                reset();
+                measure(0, 7);
+            };
+            let new_address = interface.execution_context.as_ref().unwrap().0 as usize;
+            assert_ne!(old_address, new_address);
+            // Assert ownership before touching the old pointer, so an ownership
+            // regression fails deterministically instead of testing freed memory.
+            assert_eq!(original.strong_count(), 1);
+            interface
+                .context_handle()
+                .unwrap()
+                .set_measurement_result(7, true)
+                .unwrap();
+            let handle = std::thread::spawn(move || {
+                // This thread has no registration: only the handle identifies the target.
+                handle.abort_execution().unwrap();
+                // SAFETY: The handle owns the old context until returned below.
+                unsafe {
+                    register(old_address as *mut ExecutionContext);
+                    assert!(!read(7), "old context was not cancelled");
+                    register(std::ptr::null_mut());
+                }
+                handle
+            })
+            .join()
+            .unwrap();
+            // SAFETY: The interface still owns and registers the replacement.
+            assert!(
+                unsafe { read(7) },
+                "old handle cancelled replacement context"
+            );
+            // SAFETY: Retained old context still owns its allocation.
+            assert_eq!(unsafe { live() }, before + 1);
+            if drop_on_other_thread {
+                std::thread::spawn(move || {
+                    // SAFETY: Parent keeps the replacement alive until join.
+                    unsafe { register(new_address as *mut ExecutionContext) };
+                    drop(handle);
+                    // SAFETY: Destroying the old context must leave newer TLS intact.
+                    unsafe {
+                        assert!(read(7));
+                        register(std::ptr::null_mut());
+                    }
+                })
+                .join()
+                .unwrap();
+            } else {
+                drop(handle);
+            }
+            assert!(original.upgrade().is_none());
+            // SAFETY: Last-owner destruction reclaimed old allocations without
+            // unregistering or freeing this thread's replacement context.
+            unsafe {
+                assert_eq!(live(), before);
+                assert!(read(7));
+            }
+            interface.disable_dynamic_mode().unwrap();
+            unsafe { register(std::ptr::null_mut()) };
+        }
+    }
+
+    #[test]
+    fn final_context_stays_leaked_after_sync_handles_drop() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let mut interface = QisHeliosInterface::new();
+        interface.enable_dynamic_mode().unwrap();
+        let context = Arc::downgrade(interface.execution_context.as_ref().unwrap());
+        let first = interface.get_sync_handle().unwrap();
+        let second = interface.get_sync_handle().unwrap();
+        assert_eq!(context.strong_count(), 3);
+        interface.disable_dynamic_mode().unwrap();
+        drop(interface);
+        assert_eq!(
+            context.strong_count(),
+            3,
+            "interface Drop must forget its Arc"
+        );
+        drop(first);
+        std::thread::spawn(move || drop(second)).join().unwrap();
+        assert_eq!(
+            context.strong_count(),
+            1,
+            "leaked owner prevents final destruction"
+        );
+        assert!(context.upgrade().is_some());
+    }
+
+    #[test]
+    fn pending_operations_import_reports_unavailable_and_accepts_empty() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let register: Symbol<RegisterExecutionContextFn> =
+            unsafe { ffi.get(b"pecos_register_execution_context\0").unwrap() };
+        unsafe { register(std::ptr::null_mut()) };
+        let mut interface = QisHeliosInterface::new();
+        let error = interface.get_pending_operations().unwrap_err();
+        assert!(error.to_string().contains("null execution context"));
+        interface.enable_dynamic_mode().unwrap();
+        let handle = interface.get_sync_handle().unwrap();
+        assert_eq!(handle.get_pending_operations().unwrap(), []);
+        interface.disable_dynamic_mode().unwrap();
+    }
+
+    #[test]
+    fn guarded_cancellation_is_typed_and_fresh_context_reuses_interface() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        // SAFETY: The loaded singleton exports these exact ABIs for its lifetime.
+        let abort: Symbol<AbortExecutionFn> =
+            unsafe { ffi.get(b"pecos_abort_dynamic_execution\0").unwrap() };
+        // SAFETY: This counter has no arguments and does not transfer.
+        let live: Symbol<unsafe extern "C" fn() -> usize> =
+            unsafe { ffi.get(b"pecos_get_live_allocation_count\0").unwrap() };
+        // Hand-written IR must follow the C ABI the Selene adapters export.
+        // The 8-byte `SeleneBoolResult` returns in one integer register on
+        // every 64-bit target. The 16-byte `SeleneU64Result` returns in two
+        // registers on SysV and AArch64 but through a hidden pointer on Windows.
+        // `RID` stands for the result ID each shot reads.
+        #[cfg(not(windows))]
+        let selene_u64 = (
+            "declare {i32, i64} @selene_future_read_u64(ptr, i64)",
+            "%value = call {i32, i64} @selene_future_read_u64(ptr null, i64 RID)",
+        );
+        #[cfg(windows)]
+        let selene_u64 = (
+            "declare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
+            "%out = alloca {i32, i64}
+                    call void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 RID)",
+        );
+        let reads = [
+            (
+                "___read_future_bool",
+                "declare i1 @___read_future_bool(i64)",
+                "%value = call i1 @___read_future_bool(i64 RID)",
+            ),
+            (
+                "___read_future_uint",
+                "declare i64 @___read_future_uint(i64)",
+                "%value = call i64 @___read_future_uint(i64 RID)",
+            ),
+            (
+                "__quantum__rt__result_get_one",
+                "declare i32 @__quantum__rt__result_get_one(i64)",
+                "%value = call i32 @__quantum__rt__result_get_one(i64 RID)",
+            ),
+            (
+                "selene_future_read_bool",
+                "declare i64 @selene_future_read_bool(ptr, i64)",
+                "%value = call i64 @selene_future_read_bool(ptr null, i64 RID)",
+            ),
+            ("selene_future_read_u64", selene_u64.0, selene_u64.1),
+        ];
+        let mut missed_checkpoints = Vec::new();
+        for (reader, declaration, call) in reads {
+            for cancelled_id in ["0", "-1"] {
+                let fresh_call = call.replace("RID", "0");
+                let source = format!(
+                    r"
+                declare ptr @heap_alloc(i64)
+                declare i32 @__quantum__qis__m__body(i64, i64)
+                {declaration}
+                define i64 @qmain(i64 %shot) {{
+                    %allocation = call ptr @heap_alloc(i64 16)
+                    %measurement = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+                    {fresh_call}
+                    ret i64 0
+                }}
+            "
+                );
+                let mut interface = QisHeliosInterface::new();
+                // No gate may intercept cancellation before the reader. The
+                // invalid-ID case also distinguishes its entry checkpoint from
+                // later checkpoints in the shared dynamic read path.
+                let cancelled_call = call.replace("RID", cancelled_id);
+                let cancelled_source = format!(
+                    r"
+                declare ptr @heap_alloc(i64)
+                {declaration}
+                define i64 @qmain(i64 %shot) {{
+                    %allocation = call ptr @heap_alloc(i64 16)
+                    {cancelled_call}
+                    ret i64 0
+                }}
+            "
+                );
+                interface
+                    .load_program(cancelled_source.as_bytes(), ProgramFormat::LlvmIrText)
+                    .unwrap();
+                interface.enable_dynamic_mode().unwrap();
+                let ctx = interface.execution_context.as_ref().unwrap().0;
+                // SAFETY: Interface owns this context until the next enable call.
+                assert_eq!(unsafe { abort(ctx) }, 0);
+                let error = interface
+                    .execute_with_measurements(BTreeMap::from([(0, true)]))
+                    .unwrap_err();
+                if !matches!(
+                    error,
+                    InterfaceError::ProgramError(pecos_qis_ffi_types::ProgramError::Cancelled)
+                ) {
+                    missed_checkpoints.push(format!("{reader}(result {cancelled_id}): {error}"));
+                }
+                // SAFETY: Query the process counter after the guard has cleaned up.
+                assert_eq!(unsafe { live() }, 0);
+                interface.disable_dynamic_mode().unwrap();
+                interface
+                    .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+                    .unwrap();
+                interface.enable_dynamic_mode().unwrap();
+                // The fresh shot queues a real measurement; only its host reply
+                // may satisfy the read. Pre-populating an unmeasured ID is invalid.
+                let handle = interface.get_sync_handle().unwrap();
+                let worker = std::thread::spawn(move || {
+                    let output = interface.execute_with_measurements(BTreeMap::new());
+                    (interface, output)
+                });
+                assert_eq!(handle.wait_for_need_result(2_000), Some(0));
+                handle.set_measurement_result(0, true).unwrap();
+                handle.signal_result_ready().unwrap();
+                let (mut interface, output) = worker.join().unwrap();
+                output.unwrap();
+                interface.disable_dynamic_mode().unwrap();
+                // SAFETY: Query the process counter after normal guard cleanup.
+                assert_eq!(unsafe { live() }, 0);
+            }
+        }
+        assert_eq!(
+            missed_checkpoints,
+            Vec::<String>::new(),
+            "missed reader entry checkpoints"
+        );
+    }
 
     fn is_qir_text(ir: &str) -> bool {
         match validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText) {
@@ -2875,7 +3351,8 @@ attributes #0 = { "EntryPoint" }
             DESTROYED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         let mut interface = QisHeliosInterface::new();
-        interface.execution_context = Some(ExecutionContextPtr(std::ptr::null_mut(), destroy));
+        interface.execution_context =
+            Some(Arc::new(ExecutionContextPtr(std::ptr::null_mut(), destroy)));
         drop(interface);
         assert_eq!(DESTROYED.load(std::sync::atomic::Ordering::SeqCst), 0);
         {
@@ -2902,7 +3379,8 @@ attributes #0 = { "EntryPoint" }
             unsafe extern "C" fn(*mut std::ffi::c_void, SeleneString, T) -> SeleneVoidResult;
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
-        let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
+        let context =
+            Arc::new(QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"));
         unsafe {
             let register: Symbol<RegisterExecutionContextFn> = ffi
                 .get(b"pecos_register_execution_context\0")
@@ -2920,9 +3398,11 @@ attributes #0 = { "EntryPoint" }
             assert_eq!(print_u(std::ptr::null_mut(), tag(b"u"), 11).error_code, 0);
             assert_eq!(print_f(std::ptr::null_mut(), tag(b"f"), 2.5).error_code, 0);
             assert_eq!(
-                HeliosSyncHandle::new()
-                    .get_named_results()
-                    .expect("outputs"),
+                HeliosSyncHandle {
+                    execution_context: Arc::clone(&context)
+                }
+                .get_named_results()
+                .expect("outputs"),
                 BTreeMap::from([
                     ("i".to_string(), NamedResult::I64(vec![7])),
                     ("u".to_string(), NamedResult::U64(vec![11])),
@@ -2980,7 +3460,8 @@ attributes #0 = { "EntryPoint" }
         type WithU64 = unsafe extern "C" fn(Instance, u64) -> VoidResult;
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
-        let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
+        let context =
+            Arc::new(QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"));
         unsafe {
             let register: Symbol<RegisterExecutionContextFn> = ffi
                 .get(b"pecos_register_execution_context\0")
@@ -3451,7 +3932,6 @@ attributes #0 = { "EntryPoint" }
         use pecos_qis_ffi_types::NamedResult;
 
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
-        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
         for value in [13, 29] {
             let mut interface = QisHeliosInterface::new();
             // Default-visible body definitions and their PLT calls mirror Guppy's
@@ -3473,11 +3953,12 @@ attributes #0 = { "EntryPoint" }
             interface
                 .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
                 .expect("load program");
-            interface.execution_context =
-                Some(QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"));
+            interface.enable_dynamic_mode().unwrap();
             interface.collect_operations().expect("run program");
             assert_eq!(
-                HeliosSyncHandle::new()
+                interface
+                    .context_handle()
+                    .unwrap()
                     .get_named_results()
                     .expect("outputs"),
                 BTreeMap::from([("x".to_string(), NamedResult::I64(vec![value]))])
@@ -3563,9 +4044,7 @@ attributes #0 = { "EntryPoint" }
                 interface
                     .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
                     .expect("load program");
-                interface.execution_context = Some(
-                    QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"),
-                );
+                interface.enable_dynamic_mode().unwrap();
                 let live_before = unsafe { live() };
                 let result = interface.collect_operations();
                 if let Some(expected) = expected_error {
@@ -3576,11 +4055,14 @@ attributes #0 = { "EntryPoint" }
                 } else {
                     result.expect("normal return or exit");
                 }
-                assert_eq!(
-                    unsafe { freed() },
-                    2,
-                    "both allocations must actually be freed"
-                );
+                // The worker has cleared TLS. Register only for the legacy
+                // per-context counter, while this test still owns the context.
+                let register: Symbol<RegisterExecutionContextFn> =
+                    unsafe { ffi.get(b"pecos_register_execution_context\0").unwrap() };
+                unsafe { register(interface.execution_context.as_ref().unwrap().0) };
+                let freed_count = unsafe { freed() };
+                unsafe { register(std::ptr::null_mut()) };
+                assert_eq!(freed_count, 2, "both allocations must actually be freed");
                 assert_eq!(unsafe { live() }, live_before);
                 // Free the test's context during normal execution, before TLS teardown.
                 drop(interface.execution_context.take());

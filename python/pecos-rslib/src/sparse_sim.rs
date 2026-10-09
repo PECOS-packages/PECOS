@@ -11,7 +11,9 @@
 // the License.
 
 use crate::prelude::*;
-use crate::simulator_utils::{SymbolEntry, supports_exact, validate_supported_symbol};
+use crate::simulator_utils::{
+    SymbolEntry, extract_forced_outcome, supports_exact, validate_supported_symbol,
+};
 use pecos_core::BitSet;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -23,8 +25,55 @@ pub struct SparseSim {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    SparseSim::new(2)
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { SparseSim::new(2) },
+    supports_forcing = true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_mz_matches_aliases,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    "MZ",
+    &["MZForced"],
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_pz_matches_aliases,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    "PZ",
+    &["PZForced"],
+    false
+);
+
+#[cfg(test)]
+crate::simulator_utils::random_z_surface_test!(
+    random_z_measurement_sentinel,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::random_z_surface_test!(
+    random_z_preparation_sentinel,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    false
+);
+
+#[cfg(test)]
+crate::simulator_utils::invalid_forced_z_surface_test!(SparseSim {
+    inner: SparseStab::with_seed(2, 0)
 });
 
 fn supports(entry: &SymbolEntry) -> bool {
@@ -202,7 +251,13 @@ impl SparseSim {
                 self.inner.szdg(q);
                 Ok(None)
             }
-            "PZ" => {
+            "PZ" | "PZForced" => {
+                if let Some(forced_value) =
+                    extract_forced_outcome(params, symbol, symbol == "PZForced")?
+                {
+                    self.inner.pz_forced(location, forced_value);
+                    return Ok(None);
+                }
                 self.inner.pz(q);
                 Ok(None)
             }
@@ -226,31 +281,21 @@ impl SparseSim {
                 self.inner.pny(q);
                 Ok(None)
             }
-            "PZForced" => {
-                let forced_value = params
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>("PZForced requires params")
-                    })?
-                    .get_item("forced_outcome")?
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "PZForced requires a 'forced_outcome' parameter",
-                        )
-                    })?
-                    .call_method0("__bool__")?
-                    .extract::<bool>()?;
-                // pz_forced is an inherent method still using old API
-                self.inner.pz_forced(location, forced_value);
-                Ok(None)
-            }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self
-                        .inner
-                        .mz(q)
-                        .into_iter()
-                        .next()
-                        .expect("measurement returned no results"),
+                    "MZ" | "MZForced" => {
+                        if let Some(forced_value) =
+                            extract_forced_outcome(params, symbol, symbol == "MZForced")?
+                        {
+                            self.inner.mz_forced(location, forced_value)
+                        } else {
+                            self.inner
+                                .mz(q)
+                                .into_iter()
+                                .next()
+                                .expect("measurement returned no results")
+                        }
+                    }
                     "MX" => self
                         .inner
                         .mx(q)
@@ -263,24 +308,6 @@ impl SparseSim {
                         .into_iter()
                         .next()
                         .expect("measurement returned no results"),
-                    "MZForced" => {
-                        let forced_value = params
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "MZForced requires params",
-                                )
-                            })?
-                            .get_item("forced_outcome")?
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "MZForced requires a 'forced_outcome' parameter",
-                                )
-                            })?
-                            .call_method0("__bool__")?
-                            .extract::<bool>()?;
-                        // mz_forced is an inherent method still using old API
-                        self.inner.mz_forced(location, forced_value)
-                    }
                     _ => unreachable!(),
                 };
                 Ok(Some(u8::from(result.outcome)))

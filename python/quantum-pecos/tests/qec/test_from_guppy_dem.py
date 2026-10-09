@@ -2172,7 +2172,7 @@ def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -
     assert all("meas_ids" in entry for entry in detectors + observables)
 
     logical_z_qubits = list(patch.geometry.logical_z.data_qubits)
-    assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits]}]
+    assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits], "reference": 0}]
 
 
 def test_surface_result_tags_reject_permuted_runtime_ids() -> None:

@@ -247,14 +247,15 @@ def test_replay_measurement_count_mismatch(monkeypatch, consumer, count_delta):
             measurements.append(0)
         return sim, measurements
 
+    build = {
+        "logical": builder.to_tick_circuit,
+        "memory": lambda: build_memory_circuit(distance=3, rounds=1),
+        "signed": lambda: simulate_tick_circuit(tc),
+    }[consumer]
+
     monkeypatch.setattr("pecos.qec._replay._replay_tick_circuit", replay_wrong_count)
-    with pytest.raises(ValueError, match="^Replay measurement count disagrees with circuit metadata$"):
-        if consumer == "logical":
-            builder.to_tick_circuit()
-        elif consumer == "memory":
-            build_memory_circuit(distance=3, rounds=1)
-        else:
-            simulate_tick_circuit(tc)
+    with pytest.raises(ValueError, match=r"^Replay measurement count disagrees with circuit metadata$"):
+        build()
 
 
 @pytest.mark.parametrize("rows", [[], [[0]]])
@@ -262,5 +263,5 @@ def test_missing_reference_and_id_names_entry(rows):
     tc = build_memory_circuit(distance=3, rounds=1)
     tc.set_meta("num_measurements", "1")
     tc.set_meta("observables", json.dumps([{"id": 0, "records": [-1], "reference": 0}, {"records": [-1]}]))
-    with pytest.raises(MissingObservableReferenceError, match="^observable entry 1 is missing 'reference'$"):
+    with pytest.raises(MissingObservableReferenceError, match=r"^observable entry 1 is missing 'reference'$"):
         extract_detection_events_and_observables(tc, rows)

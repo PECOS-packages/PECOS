@@ -8,7 +8,7 @@ use pecos_quantum::TickCircuit;
 use pecos_random::{PecosRng, RngExt};
 
 // Simple structure to hold the results of the brute force calculation
-pub struct BruteForceResult {
+pub struct BruteForceResults {
     seed: u64,
     nfail: usize,
     ntot: usize,
@@ -22,7 +22,7 @@ pub struct BruteForceResult {
     nbootstraps: usize,
 }
 
-impl BruteForceResult {
+impl BruteForceResults {
     pub fn new(seed: u64, save_failures: String, nbootstraps: usize) -> Self {
         Self {
             seed,
@@ -214,13 +214,13 @@ pub fn find_logical_failure_rate(
     nbootstraps: usize,
     check_frequency: usize,
     error_threshold: f64,
-) -> Result<BruteForceResult, PecosError> {
+) -> Result<BruteForceResults, PecosError> {
 
     // Grab everything that's needed for the simulation
     let (fault_catalog, mut monte_carlo, mut decoder, detectors, observables) = setup_rare_event_simulation(circuit, p_phys, seed)?;
 
     // Set up a result logger
-    let mut results = BruteForceResult::new(seed, save_failures, nbootstraps);
+    let mut results = BruteForceResults::new(seed, save_failures, nbootstraps);
 
     // start the progress bar
     let (pb, game_thread) = start_rps_loading(max_histories as u64);

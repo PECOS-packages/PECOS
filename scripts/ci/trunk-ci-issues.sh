@@ -3,7 +3,7 @@
 #
 # Post-merge and scheduled runs catch what pull-request CI does not, so a red
 # run there must not go unnoticed. For each watched workflow and branch this
-# reads the latest completed push and schedule runs separately: failures open
+# reads push and schedule runs separately, deferring active reruns: failures open
 # issues (or comment when the failing run is new); successes close them. Daily
 # schedules also get a missing-run backstop, and recent release tags are tracked:
 #   Trunk CI red: ${name} on ${branch} (nightly)
@@ -22,7 +22,7 @@ set -euo pipefail
 # Command substitutions (issue_text, gh calls) fail the script like any command.
 shopt -s inherit_errexit
 
-branches=(dev master)
+branches=(dev)
 workflows=(
   cargo-deny.yml
   codeql.yml
@@ -52,11 +52,13 @@ workflows=(
 superseded_ok=(julia-release.yml python-release.yml)
 
 # Only workflows with a daily cron belong here; a missing run is independent
-# of whether the latest completed nightly passed.
+# of whether the latest completed nightly passed. Allow 36 hours because
+# schedules can arrive 5-9 hours late without a dropped day.
 daily_workflows=(dependency-integrity-check.yml nightly.yml)
 now="$(date -u -d "${TRUNK_CI_NOW:-now}" +%s)"
-nightly_cutoff=$((now - 30 * 60 * 60))
+nightly_cutoff=$((now - 36 * 60 * 60))
 release_cutoff=$((now - 14 * 24 * 60 * 60))
+release_since="$(date -u -d "@${release_cutoff}" +%Y-%m-%dT%H:%M:%SZ)"
 recent_tags=()
 
 status=0
@@ -123,19 +125,23 @@ check_class() {
   if [ "$event" = push ] && [[ " ${superseded_ok[*]} " == *" $workflow "* ]]; then
     skip_cancelled=true
   fi
-  local page runs run title count
+  local page runs run title count run_status
   # Filter events at the API so absent nightlies do not scan all push history.
-  # Only ignored conclusions should require another page.
+  # First attempts in flight and ignored conclusions may require another page.
+  # A rerun in flight is a barrier: older results cannot resolve its issue.
   for ((page = 1; ; page++)); do
-    runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${branch}&event=${event}&status=completed&per_page=100&page=${page}")" || return 1
+    runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${branch}&event=${event}&per_page=100&page=${page}")" || return 1
     count="$(jq '.workflow_runs | length' <<<"$runs")" || return 1
     [ "$count" -gt 0 ] || return 0
     run="$(jq -c --arg event "$event" --argjson skip_cancelled "$skip_cancelled" '
       [.workflow_runs[] | select(.event == $event
-        and .conclusion != "skipped" and .conclusion != "neutral"
-        and (($skip_cancelled | not) or .conclusion != "cancelled"))]
+        and ((.status != "completed" and (.run_attempt // 1) > 1)
+          or (.status == "completed" and .conclusion != "skipped" and .conclusion != "neutral"
+            and (($skip_cancelled | not) or .conclusion != "cancelled"))))]
       | first // empty' <<<"$runs")" || return 1
     [ -n "$run" ] || continue
+    run_status="$(jq -r .status <<<"$run")" || return 1
+    [ "$run_status" = completed ] || return 0
     title="Trunk CI red: ${name} on ${branch}"
     [ "$event" != schedule ] || title+=" (nightly)"
     reconcile_run "$name" "$branch" "$title" "$run" trunk || return 1
@@ -165,18 +171,18 @@ check_nightly() {
     fi
   elif [ -z "$issue" ]; then
     gh issue create --title "$title" --label bug --label github_actions --label severity:high \
-      --body "No scheduled run was created in the last 30 hours. ${summary}
+      --body "No scheduled run was created in the last 36 hours. ${summary}
 
-The 30-hour backstop detects dropped daily schedules. This issue closes itself when a recent scheduled run exists." || return 1
+The 36-hour backstop detects dropped daily schedules. This issue closes itself when a recent scheduled run exists." || return 1
     echo "opened: ${title}"
   fi
 }
 
 discover_tags() {
-  local prefix tags tag encoded_tag created
-  local -A seen=()
-  # Resolve refs and commit dates once for the entire tracker. Old release
-  # history must not multiply the run-listing cost by the workflow count.
+  local prefix tags tag encoded_tag runs
+  local -A seen=() included=()
+  # Discover once for the entire tracker. CI run time matters: new release
+  # tags can point to old commits. Old history must not multiply workflow reads.
   for prefix in py- jl- rs-; do
     if ! tags="$(gh api --paginate "repos/{owner}/{repo}/git/matching-refs/tags/${prefix}" \
       --jq '.[].ref | ltrimstr("refs/tags/")')"; then
@@ -189,42 +195,64 @@ discover_tags() {
       [ -z "${seen[$tag]:-}" ] || continue
       seen["$tag"]=1
       encoded_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')"
-      if ! created="$(gh api "repos/{owner}/{repo}/commits/${encoded_tag}" --jq .commit.committer.date)"; then
-        echo "::error::cannot read commit date for release tag ${tag}"
+      if ! runs="$(gh api "repos/{owner}/{repo}/actions/runs?branch=${encoded_tag}&event=push&created=%3E%3D${release_since}&per_page=1")"; then
+        echo "::error::cannot read recent runs for release tag ${tag}"
         status=1
         continue
       fi
-      if ! created="$(date -u -d "$created" +%s)"; then
-        echo "::error::invalid commit date for release tag ${tag}"
+      if ! runs="$(jq '.workflow_runs | length' <<<"$runs")"; then
+        echo "::error::invalid runs for release tag ${tag}"
         status=1
         continue
       fi
-      if [ "$created" -ge "$release_cutoff" ] && [ "$created" -le "$now" ]; then
+      if [ "$runs" -gt 0 ] && [ -z "${included[$tag]:-}" ]; then
+        included["$tag"]=1
         recent_tags+=("$tag")
       fi
     done <<<"$tags"
   done
+  # Open issues outlive the discovery window, even if a tag ref was deleted.
+  tags="$(jq -r '[.[] | .title | select(startswith("Release tag CI red: "))
+    | capture("^Release tag CI red: .+ on (?<tag>.+)$").tag] | unique[]' <<<"$open_issues")"
+  while IFS= read -r tag; do
+    [ -n "$tag" ] || continue
+    [ -z "${included[$tag]:-}" ] || continue
+    included["$tag"]=1
+    recent_tags+=("$tag")
+  done <<<"$tags"
 }
 
 check_tags() {
-  local workflow="$1" name="$2" runs run tag encoded_tag title
+  local workflow="$1" name="$2" runs run tag encoded_tag title page count run_status
   local result=0
   for tag in "${recent_tags[@]}"; do
     encoded_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')" || return 1
-    # All returned runs are completed; skipped/neutral leave the issue alone,
-    # while cancellation is red even for superseded artifact workflows.
-    if ! runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${encoded_tag}&event=push&status=completed&per_page=100&page=1")"; then
-      echo "::error::cannot list runs of ${workflow} on release tag ${tag}"
-      result=1
-      continue
-    fi
-    if ! run="$(jq -c '.workflow_runs | first // empty' <<<"$runs")"; then
-      result=1
-      continue
-    fi
-    [ -n "$run" ] || continue
-    title="Release tag CI red: ${name} on ${tag}"
-    reconcile_run "$name" "$tag" "$title" "$run" release || result=1
+    # Skip first attempts in flight, but an active rerun blocks older results.
+    # Skipped/neutral leave the issue alone; cancellation is always red here.
+    for ((page = 1; ; page++)); do
+      if ! runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${encoded_tag}&event=push&per_page=100&page=${page}")"; then
+        echo "::error::cannot list runs of ${workflow} on release tag ${tag}"
+        result=1
+        break
+      fi
+      if ! count="$(jq '.workflow_runs | length' <<<"$runs")" || ! run="$(jq -c '
+        [.workflow_runs[] | select(.event == "push"
+          and (.status == "completed" or (.run_attempt // 1) > 1))]
+        | first // empty' <<<"$runs")"; then
+        result=1
+        break
+      fi
+      [ "$count" -gt 0 ] || break
+      [ -n "$run" ] || continue
+      if ! run_status="$(jq -r .status <<<"$run")"; then
+        result=1
+        break
+      fi
+      [ "$run_status" = completed ] || break
+      title="Release tag CI red: ${name} on ${tag}"
+      reconcile_run "$name" "$tag" "$title" "$run" release || result=1
+      break
+    done
   done
   return "$result"
 }

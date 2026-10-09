@@ -4,9 +4,11 @@
 """Independent complex-amplitude oracles for raw injection and T teleportation."""
 
 import itertools
+from dataclasses import replace
 
 import numpy as np
 import pytest
+from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
@@ -223,3 +225,16 @@ def test_invalid_inputs():
     allocation.data_qubits[0] = allocation.x_ancilla_qubits[0]
     with pytest.raises(ValueError, match="distinct"):
         state_injection(patch, allocation)
+
+
+def test_raw_seed_flag_and_measurement_sideband_option():
+    injection = state_injection(SurfacePatch.create(distance=3), state="tdg")
+    assert injection.seed.injection_seed
+    assert injection.seed.basis == "TDG"
+    seed = replace(injection.seed, name="renamed_seed")
+    assert "raw TDG injection seed" in "\n".join(render_gadget_function(seed))
+    with_sidebands = render_gadget_function(injection.projection, tag_scope="data")
+    without_sidebands = render_gadget_function(injection.projection, tag_scope="data", sidebands=False)
+    outputs = [line for line in with_sidebands if 'output("data:' in line]
+    assert len(outputs) == 8
+    assert [line for line in with_sidebands if line not in outputs] == without_sidebands

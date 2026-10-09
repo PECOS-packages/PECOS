@@ -3,11 +3,8 @@
 
 """Render and load physical surface gadgets, and certify Guppy memory programs."""
 
-import hashlib
-from functools import cache
-
 from pecos.guppy_gen._certificate import certify_surface_measurement_layout
-from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
+from pecos.guppy_gen._module_loader import load_cached_guppy_source
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
     cnot_round_order_for_check_plan,
@@ -26,13 +23,6 @@ from pecos.qec.surface.gadgets import (
     syndrome_round_gadget,
 )
 from pecos.qec.surface.patch import SurfacePatch
-
-
-@cache
-def _load_surface_gadget_source(source: str) -> dict:
-    """Keep module identity tied to the entire rendered geometry and schedule."""
-    key = f"surface_gadgets_{hashlib.sha256(source.encode()).hexdigest()}"
-    return load_guppy_source(source, _get_temp_dir() / f"{key}.py", f"pecos._generated.{key}")
 
 
 def _allocation_epochs(
@@ -96,7 +86,7 @@ def _allocation_epochs(
     )
 
 
-def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> list[str]:
+def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None, sidebands: bool = True) -> list[str]:
     """Interpret one gadget's physical steps through its register allocation."""
     if tag_scope is not None and not tag_scope.isidentifier():
         msg = f"Invalid gadget tag scope: {tag_scope!r}"
@@ -137,8 +127,9 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     if kind == GadgetKind.PREP:
         argument = ""
         result = surface
-        if gadget.name.startswith("prep_injection_"):
-            doc = f"Prepare the raw {basis} injection seed; syndrome projection and sign correction must follow."
+        if gadget.injection_seed:
+            seed = "state-independent hook" if basis is None else f"raw {basis}"
+            doc = f"Prepare the {seed} injection seed; syndrome projection and sign correction must follow."
         else:
             state = {"X": "+", "Y": "+i", "Z": "0"}[basis]
             doc = f"Prepare logical |{state}_L> state."
@@ -250,7 +241,8 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             label = step.label
             lines.append(f"    {label} = measure({names[step.qubits[0]]}).read()")
             tag = "init:meas" if kind == GadgetKind.INIT_SYNDROME else "meas"
-            lines.append(f'    output("{tag_prefix}{label}:{tag}:{ordinal}", {label})')
+            if sidebands:
+                lines.append(f'    output("{tag_prefix}{label}:{tag}:{ordinal}", {label})')
             ordinal += 1
             del names[step.qubits[0]]
         else:
@@ -461,7 +453,7 @@ def make_surface_memory(
         raise ValueError(msg)
     basis = basis.upper()
     source = render_surface_gadget_module(patch, ancilla_budget=ancilla_budget, check_plan=check_plan)
-    module = _load_surface_gadget_source(source)
+    module = load_cached_guppy_source("surface_gadgets", source)
     program = module[f"make_memory_{basis.lower()}"](num_rounds)
 
     abstract_tc = generate_tick_circuit_from_patch(

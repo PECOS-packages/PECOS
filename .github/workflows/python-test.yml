@@ -18,6 +18,7 @@ env:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'python/**'
@@ -54,6 +55,8 @@ on:
       - '.github/uv.toml'
       - '.github/workflows/python-test.yml'
   workflow_dispatch:
+  schedule:
+    - cron: "37 11 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main
@@ -208,8 +211,8 @@ jobs:
         path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-    - name: Run core Python tests (post-merge)
-      if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+    - name: Run core Python tests
+      if: github.event_name != 'pull_request'
       run: just python-ci-core
 
   python-compat-smoke-build:
@@ -538,11 +541,9 @@ jobs:
 
   # Post-merge lane excluded from the PR fast path: the slow integration tests.
   python-slow-postmerge:
-    # workflow_dispatch escape hatch: the slow suite otherwise has NO pre-merge
-    # path -- a branch whose risk lives in that suite could only get its first
-    # CI signal after landing. Dispatch is manual-only; the PR fast path is
-    # unaffected.
-    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
+    # All admitted non-PR events validate the slow suite. Dispatch also lets a
+    # branch get a signal before landing; PRs keep their fast checks.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -621,7 +622,7 @@ jobs:
       run: just pytest-slow
 
   zluppy-postmerge:
-    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:

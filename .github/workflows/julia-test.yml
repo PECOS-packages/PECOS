@@ -22,6 +22,7 @@ env:
 on:
   # Merges into the main branches always run Julia CI, whatever they touch.
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
   # No `paths:` filter: GitHub applies it to label events too, so adding
   # ci:julia could never start a run on a PR that leaves julia/ alone. The
@@ -30,6 +31,8 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
+  schedule:
+    - cron: "47 12 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main

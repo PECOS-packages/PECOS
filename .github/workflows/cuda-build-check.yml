@@ -13,6 +13,7 @@ env:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/pecos-cuquantum/**'
@@ -37,6 +38,8 @@ on:
       - 'python/quantum-pecos/tests/pecos/test_native_extension_import_laziness.py'
       - '.github/workflows/cuda-build-check.yml'
   workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main

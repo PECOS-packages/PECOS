@@ -2,6 +2,7 @@ name: GitHub Actions Security Check
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - '.github/workflows/**'
@@ -22,7 +23,7 @@ on:
       - 'action.yml'
       - 'action.yaml'
   schedule:
-    - cron: "31 8 * * 1"
+    - cron: "25 5 * * *"
 
 permissions:
   contents: read

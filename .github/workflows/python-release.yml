@@ -22,8 +22,7 @@ on:
       - dev
       - development
       - master
-    tags:
-      - 'py-*'
+    tags: [ "py-*", "jl-*", "rs-*" ]
     paths:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
@@ -39,13 +38,15 @@ on:
       sha:
         description: Commit SHA
         type: string
+  schedule:
+    - cron: "7 8 * * *"
 
 concurrency:
   # Finish a started build: cancelling it on each merge threw away 49-minute
   # Intel and 27-minute arm macOS builds. A newer push still replaces an older
-  # pending one. A manual dispatch gets its own group so a merge cannot drop it
-  # while it waits.
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  # pending one. Schedules and manual dispatches get their own groups so a
+  # merge cannot drop their validation while they wait.
+  group: ${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.run_id || github.ref }}
   cancel-in-progress: false
 
 defaults:
@@ -55,10 +56,8 @@ defaults:
 jobs:
   resolve_release_mode:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-') ||
-      github.event_name == 'workflow_dispatch'
+    # The push trigger limits refs; every admitted event builds and tests all artifacts.
+    if: github.event_name != 'pull_request'
     outputs:
       full_release: ${{ steps.mode.outputs.full_release }}
     steps:
@@ -71,14 +70,9 @@ jobs:
         id: mode
         env:
           EVENT_NAME: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
-            echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
+          # Branch/tag pushes, schedules and dispatches all validate the full matrix.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "full_release=true" >> $GITHUB_OUTPUT
           else
             echo "full_release=false" >> $GITHUB_OUTPUT

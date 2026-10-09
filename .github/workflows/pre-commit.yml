@@ -8,10 +8,13 @@ permissions:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
+  schedule:
+    - cron: "35 4 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main

@@ -20,6 +20,7 @@ env:
 on:
   workflow_dispatch:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
@@ -54,6 +55,8 @@ on:
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
+  schedule:
+    - cron: "17 12 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main

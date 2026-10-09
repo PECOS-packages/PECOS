@@ -70,7 +70,7 @@ def test_leakage_noise_targets_healthy_pairs(
         pytest.param({0, 1}, set(), id="both-qubits-noiseless"),
         pytest.param(
             set(),
-            {1},
+            {0, 1},
             id="neither-qubit-noiseless",
         ),
     ],
@@ -80,7 +80,8 @@ def test_depolarizing_noise_targets_noisy_qubits(
     expected_targets: set[int],
 ) -> None:
     """A noiseless input protects itself without protecting its noisy partner."""
-    pc.random.seed(42)
+    # Seed 4 draws a pair with no identity, so every noisy qubit is hit.
+    pc.random.seed(4)
     after = pc.QuantumCircuit()
 
     noise_two_qubit_gates_depolarizing_with_noiseless(

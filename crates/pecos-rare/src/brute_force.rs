@@ -14,6 +14,7 @@ pub struct BruteForceResult {
     ntot: usize,
     pfails: Vec<f64>,
     ptots: Vec<f64>,
+    results: Vec<u8>,
     rng: PecosRng,
     save_failures: String,
     failures: Vec<FaultHistory>,
@@ -29,6 +30,7 @@ impl BruteForceResult {
             ntot: 0,
             pfails: Vec::new(),
             ptots: Vec::new(),
+            results: Vec::new(),
             rng: PecosRng::seed_from_u64(seed),
             save_failures,
             failures: Vec::new(),
@@ -42,6 +44,7 @@ impl BruteForceResult {
         self.ntot += 1;
         self.pfails.push(phist);
         self.ptots.push(phist);
+        self.results.push(1);
         if self.save_failures.to_lowercase() == "true" {
             self.failures.push(history.clone());
         }
@@ -61,6 +64,7 @@ impl BruteForceResult {
     pub fn record_pass(&mut self, phist: f64) {
         self.ntot += 1;
         self.ptots.push(phist);
+        self.results.push(0);
     }
 
     // Returns the average failure rate
@@ -68,7 +72,7 @@ impl BruteForceResult {
         if self.ntot == 0 {
             0.0
         } else {
-            self.pfails.iter().sum::<f64>() / self.ptots.iter().sum::<f64>()
+            self.nfail as f64 / self.ntot as f64
         }
     }
 
@@ -81,15 +85,14 @@ impl BruteForceResult {
         let mut rng = self.rng.clone();
         let mut resampled_rates = Vec::with_capacity(self.nbootstraps);
         for _ in 0..self.nbootstraps {
-            let mut resampled_pfails = Vec::with_capacity(self.pfails.len());
-            let mut resampled_ptots = Vec::with_capacity(self.ptots.len());
-            for _ in 0..self.pfails.len() {
+            let mut resampled_results = Vec::with_capacity(self.results.len());
+            for _ in 0..self.results.len() {
                 // Generate a random index using the PecosRng
-                let idx = rng.random_range(0..self.pfails.len());
-                resampled_pfails.push(self.pfails[idx]);
-                resampled_ptots.push(self.ptots[idx]);
+                let idx = rng.random_range(0..self.results.len());
+                resampled_results.push(self.results[idx]);
             }
-            let resampled_rate = resampled_pfails.iter().sum::<f64>() / resampled_ptots.iter().sum::<f64>();
+            let resampled_rate = resampled_results.iter().copied().map(f64::from).sum::<f64>()
+                / resampled_results.len() as f64;
             resampled_rates.push(resampled_rate);
         }
         resampled_rates
@@ -161,6 +164,7 @@ impl BruteForceResult {
                     "smallest_failure_weight": self.smallest_failure_weight,
                     "failure_probabilities": self.pfails,
                     "all_probabilities": self.ptots,
+                    "results": self.results,
                 })
             }
             _ => return Err(PecosError::Input("JSON level must be 0, 1, or 2".into())),
@@ -208,6 +212,8 @@ pub fn find_logical_failure_rate(
     verbose: bool,
     save_failures: String,
     nbootstraps: usize,
+    check_frequency: usize,
+    error_threshold: f64,
 ) -> Result<BruteForceResult, PecosError> {
 
     // Grab everything that's needed for the simulation
@@ -227,15 +233,34 @@ pub fn find_logical_failure_rate(
         // Accumulate failure statistics
         if failed {
             results.record_failure(phist, &fault_history);
-            if verbose && results.nfail % 1000 == 0 {
-                pb.println(format!(
-                    "Failed {} / {} histories, pfail = {:.3e} +/- {:.3e}, smallest failure = {}",
-                    results.nfail,
-                    results.ntot,
-                    results.failure_rate(),
-                    results.failure_rate_std(),
-                    results.smallest_failure_weight,
-                ));
+            if verbose && results.nfail % check_frequency == 0 {
+
+                let avg = results.failure_rate();
+                let std = results.failure_rate_std();
+                let error = std / avg;
+                if error < error_threshold {
+                    pb.println(format!(
+                        "Failed {} / {} histories, pfail = {:.3e} +/- {:.3e}, Percent error {:.3}% below threshold {:.3}%",
+                        results.nfail,
+                        results.ntot,
+                        avg,
+                        std,
+                        error*100.0,
+                        error_threshold*100.0,
+                    ));
+                    break
+                }
+                else {
+                    pb.println(format!(
+                        "Failed {} / {} histories, pfail = {:.3e} +/- {:.3e}, Percent error {:.3}% above threshold {:.3}%",
+                        results.nfail,
+                        results.ntot,
+                        avg,
+                        std,
+                        error*100.0,
+                        error_threshold*100.0,
+                    ));
+                }
             }
         } else {
             results.record_pass(phist);

@@ -4538,6 +4538,7 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",
+ "pecos-decoders",
  "pecos-engines",
  "pecos-ldpc-decoders",
  "pecos-neo",

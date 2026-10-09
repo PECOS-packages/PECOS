@@ -53,7 +53,10 @@ fn assert_dem_error(
     };
     assert_eq!(error.gate_type, gate_type);
     assert_eq!(error.location, location);
-    assert_eq!(error.qubits, [0]);
+    assert_eq!(
+        error.qubits,
+        (0..gate_type.quantum_arity()).collect::<Vec<_>>()
+    );
 }
 
 fn assert_sampler_error(
@@ -66,7 +69,10 @@ fn assert_sampler_error(
     };
     assert_eq!(error.gate_type, gate_type);
     assert_eq!(error.location, location);
-    assert_eq!(error.qubits, [0]);
+    assert_eq!(
+        error.qubits,
+        (0..gate_type.quantum_arity()).collect::<Vec<_>>()
+    );
 }
 
 /// Every DEM entry point must reject `gate_type`, placed as the single gate
@@ -442,7 +448,7 @@ fn non_clifford_rz_is_rejected_with_its_gate_and_location() {
     };
     assert_eq!(error.gate_type, GateType::RZ);
     assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 1 });
-    assert_eq!(error.qubits, [0]);
+    assert_eq!(error.qubits, vec![0]);
 }
 
 #[test]
@@ -1777,5 +1783,31 @@ fn rxyxy2q_non_clifford_dem_preflight_is_structured() {
             assert_eq!(error.angles, gate.angles.as_slice());
             assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 2 });
         }
+    }
+}
+
+#[test]
+fn diagonal_gates_rejected_by_all_dem_families_and_fault_catalogs() {
+    use pecos_qec::fault_tolerance::fault_sampler::{FaultCatalog, symbolic_measurement_history};
+    for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+        let gate = Gate::simple(
+            gt,
+            (0..gt.quantum_arity())
+                .map(pecos_core::QubitId)
+                .collect::<Vec<_>>(),
+        );
+        assert_rotation_rejected_by_every_dem_family(
+            gt,
+            &|dag| {
+                dag.add_gate_auto_wire(gate.clone());
+            },
+            &|tick| {
+                tick.tick().try_add_gate(gate.clone()).unwrap();
+            },
+        );
+        let mut tick = TickCircuit::new();
+        tick.tick().try_add_gate(gate).unwrap();
+        assert_eq!(FaultCatalog::from_circuit(&tick).unwrap_err().gate_type, gt);
+        assert!(symbolic_measurement_history(&tick).is_err());
     }
 }

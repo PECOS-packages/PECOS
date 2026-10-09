@@ -402,7 +402,7 @@ def assert_y_composition(builder, explicit, *, empty_commit):
     for _ in range(2):
         actual = builder.to_tick_circuit()
         assert tick_circuit_to_stim(actual) == tick_circuit_to_stim(expected)
-        for key in ("detectors", "observables", "num_measurements", "measurement_keys", "injection_readouts"):
+        for key in ("detectors", "observables", "num_measurements", "measurement_keys", "teleportation_readouts"):
             assert actual.get_meta(key) == expected.get_meta(key), key
         assert builder.build_dem() == expected_dem
         if empty_commit:

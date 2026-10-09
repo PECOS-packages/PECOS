@@ -86,7 +86,7 @@ def _decision_descriptor() -> dict:
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "data", qubit_offset=0)
     builder.add_patch(patch, "ancilla", qubit_offset=num_qubits)
-    builder.add_t_via_injection("data", "ancilla", rounds_before=2, rounds_after=2)
+    builder.add_t_teleportation_placeholder("data", "ancilla", rounds_before=2, rounds_after=2)
     return builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
 
 

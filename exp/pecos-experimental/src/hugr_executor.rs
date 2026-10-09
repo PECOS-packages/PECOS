@@ -341,6 +341,9 @@ where
             | GateType::SZZdg
             | GateType::SWAP
             | GateType::CH
+            | GateType::CCZ
+            | GateType::CS
+            | GateType::CSdg
             | GateType::CCX
             | GateType::Channel
             | GateType::Custom => {
@@ -378,6 +381,23 @@ mod tests {
     use super::*;
     use pecos_quantum::DagCircuit;
     use pecos_simulators::SymbolicSparseStab;
+
+    #[test]
+    fn diagonal_gates_are_rejected_by_hugr_execution() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let mut circuit = DagCircuit::new();
+            circuit.add_gate(pecos_core::Gate::simple(
+                gt,
+                (0..gt.quantum_arity())
+                    .map(pecos_core::QubitId)
+                    .collect::<Vec<_>>(),
+            ));
+            let result = execute_hugr(&mut SymbolicSparseStab::new(3), &circuit);
+            assert!(
+                matches!(result, Err(HugrExecutionError::UnsupportedGate { gate_type, .. }) if gate_type == gt)
+            );
+        }
+    }
 
     #[test]
     fn test_bell_state_circuit() {

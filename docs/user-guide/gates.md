@@ -89,6 +89,8 @@ PECOS supports two categories of quantum gates:
 | CX (CNOT) | Clifford | Controlled-X |
 | CY | Clifford | Controlled-Y |
 | CZ | Clifford | Controlled-Z |
+| CS | Non-Clifford | Controlled-S: diag(1, 1, 1, i) |
+| CSdg | Non-Clifford | Controlled-S adjoint: diag(1, 1, 1, -i) |
 | SWAP | Clifford | Swap two qubits |
 | iSWAP | Clifford | Swap with phase |
 | SXX, SYY, SZZ | Clifford | Square root of Pauli-Pauli interactions |
@@ -110,6 +112,16 @@ macros, the `cu1` controlled-phase alias, and the `ry`, `crx`, and `cry`
 expansions are asserted against their textbook matrices by the include gate
 conformance tests. SLR QASM output declares `qelib1.inc` for these exact
 boundary expansions.
+
+### Three-Qubit Gates
+
+| Gate | Type | Description |
+|------|------|-------------|
+| CCZ | Non-Clifford | diag(1, 1, 1, 1, 1, 1, 1, -1); self-adjoint and Hermitian |
+
+CS, CSdg, and CCZ are symmetric in their qubit operands. CS and CSdg are
+adjoints; CS squared is CZ. These are controlled phase gates, not named
+Pauli-product roots. Their core gate ids are 72, 73, and 91, respectively.
 
 ### Measurements and Preparations
 

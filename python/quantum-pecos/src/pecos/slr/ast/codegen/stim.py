@@ -32,7 +32,13 @@ from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    AssignOp,
     BarrierOp,
+    BinaryExpr,
+    BinaryOp,
+    BitExpr,
+    BitRef,
+    CommentOp,
     ForStmt,
     GateKind,
     GateOp,
@@ -52,6 +58,7 @@ if TYPE_CHECKING:
     import stim
 
     from pecos.slr.ast.nodes import (
+        Expression,
         Program,
         Statement,
     )
@@ -85,6 +92,15 @@ GATE_TO_STIM: dict[GateKind, str] = {
     GateKind.SXXdg: "SQRT_XX_DAG",
     GateKind.SYYdg: "SQRT_YY_DAG",
     GateKind.SZZdg: "SQRT_ZZ_DAG",
+}
+
+# Pauli gates a measurement-conditioned `If` body may contain, and the Stim
+# gate that applies each one classically controlled by a measurement record
+# target (`CX rec[-k] q` applies X to q when that measurement was 1).
+_RECORD_CONTROLLED_PAULI: dict[GateKind, str] = {
+    GateKind.X: "CX",
+    GateKind.Y: "CY",
+    GateKind.Z: "CZ",
 }
 
 # Two-qubit gate kinds for special handling
@@ -137,7 +153,20 @@ class StimCodeGenContext:
 
     qubit_map: dict[tuple[str, int], int] = field(default_factory=dict)
     next_qubit_id: int = 0
+    # Number of measurements in the current record frame: the top-level
+    # circuit, or one iteration of the innermost REPEAT body.
     measurement_count: int = 0
+    # Measurement-record provenance of classical bits in the current frame:
+    # (register, index) -> position of the measurement that last wrote the
+    # bit. None marks a bit whose value no longer comes from a tracked
+    # measurement (classical assignment or permutation). A bit absent here
+    # was not measured in this frame. A condition on either has no record
+    # target.
+    bit_records: dict[tuple[str, int], int | None] = field(default_factory=dict)
+    # Register names whose every bit lost its provenance in the current
+    # frame (whole-register assignment, or named by a Permute). Carried out
+    # of a REPEAT body so bits recorded before the REPEAT are invalidated too.
+    invalidated_registers: set[str] = field(default_factory=set)
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
@@ -295,6 +324,8 @@ class AstToStim:
             self._process_parallel(stmt)
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
+        elif isinstance(stmt, AssignOp):
+            self._process_assign(stmt)
         elif isinstance(stmt, PrintOp):
             # Classical-output streaming is unimplemented in the Stim
             # backend. Silently dropping it loses observable program
@@ -305,7 +336,7 @@ class AstToStim:
                 "lose observable program output)."
             )
             raise NotImplementedError(msg)
-        # Other statement types (Comment, Assign, Return) don't generate Stim output
+        # Other statement types (Comment, Return) don't generate Stim output
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -379,8 +410,30 @@ class AstToStim:
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""
         qubits = [self.context.get_qubit(t.allocator, t.index) for t in node.targets]
+        # Result bits pair with targets by position, as in the QIR backend.
+        for offset, bit in enumerate(node.results[: len(qubits)]):
+            self.context.bit_records[bit.register, bit.index] = self.context.measurement_count + offset
         self.circuit.append_operation("M", qubits)
         self.context.measurement_count += len(qubits)
+
+    def _process_assign(self, node: AssignOp) -> None:
+        """Mark bits overwritten by a classical assignment.
+
+        Stim has no classical registers, so the assignment emits nothing,
+        but a later condition on an overwritten bit must not read the
+        measurement the bit held before.
+        """
+        if isinstance(node.target, BitRef):
+            self.context.bit_records[node.target.register, node.target.index] = None
+        else:
+            self._invalidate_register(node.target)
+
+    def _invalidate_register(self, name: str) -> None:
+        """Mark every bit of register `name` as no longer holding a tracked measurement."""
+        for bit in self.context.bit_records:
+            if bit[0] == name:
+                self.context.bit_records[bit] = None
+        self.context.invalidated_registers.add(name)
 
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
@@ -401,18 +454,114 @@ class AstToStim:
         self.circuit.append("TICK")
 
     def _process_if(self, node: IfStmt) -> None:
-        """Process an if statement."""
-        # Stim doesn't directly support conditionals
-        # Process both branches with TICK markers
-        self.circuit.append("TICK")
+        """Lower a measurement-conditioned Pauli correction.
 
-        for stmt in node.then_body:
-            self._process_statement(stmt)
+        Stim has no runtime branching, but it applies Pauli gates
+        classically controlled by a measurement record: `CX rec[-k] q`
+        applies X to q exactly when the k-th most recent measurement was 1.
+        A then-body of X/Y/Z gates conditioned on one measured bit is
+        therefore compiled faithfully. A condition requiring the bit to be
+        0 applies the Pauli unconditionally and then again under the
+        record control, which cancels it when the bit is 1.
 
+        Anything else (an else-body, a non-Pauli body, a condition that is
+        not a single measured bit compared with 0 or 1) raises: emitting
+        the body unconditionally would be a silent miscompile.
+        """
         if node.else_body:
-            self.circuit.append("TICK")
-            for stmt in node.else_body:
-                self._process_statement(stmt)
+            msg = (
+                "Stim codegen: If with an else-body is not supported (Stim "
+                "only applies Pauli gates conditioned on a measurement record)."
+            )
+            raise NotImplementedError(msg)
+        record_target, fires_when_one = self._condition_record_target(node.condition)
+        corrections = self._conditional_paulis(node.then_body)
+
+        import stim  # noqa: PLC0415
+
+        rec = stim.target_rec(record_target)
+        for gate, qubits in corrections:
+            if not fires_when_one:
+                self.circuit.append_operation(GATE_TO_STIM[gate], qubits)
+            targets: list[object] = []
+            for qubit in qubits:
+                targets.extend((rec, qubit))
+            self.circuit.append_operation(_RECORD_CONTROLLED_PAULI[gate], targets)
+
+    def _condition_record_target(self, condition: Expression) -> tuple[int, bool]:
+        """Resolve an If condition to a measurement record lookback.
+
+        Returns the negative `rec[...]` lookback of the measurement the
+        condition reads, and whether the body runs when that measurement
+        is 1 (otherwise it runs when it is 0).
+        """
+        bit_expr: Expression | None = None
+        fires_when_one = True
+        if isinstance(condition, BitExpr):
+            bit_expr = condition
+        elif isinstance(condition, BinaryExpr) and condition.op in (BinaryOp.EQ, BinaryOp.NE):
+            bit_side, value_side = condition.left, condition.right
+            if not isinstance(bit_side, BitExpr):
+                bit_side, value_side = value_side, bit_side
+            if (
+                isinstance(bit_side, BitExpr)
+                and isinstance(value_side, LiteralExpr)
+                and isinstance(value_side.value, int)
+                and value_side.value in (0, 1)
+            ):
+                bit_expr = bit_side
+                fires_when_one = (value_side.value == 1) == (condition.op is BinaryOp.EQ)
+        if not isinstance(bit_expr, BitExpr):
+            msg = (
+                "Stim codegen: unsupported If condition "
+                f"({type(condition).__name__}); only a single measured bit, "
+                "optionally compared with 0 or 1, maps to a Stim measurement "
+                "record target."
+            )
+            raise NotImplementedError(msg)
+
+        bit = bit_expr.ref
+        key = (bit.register, bit.index)
+        if key not in self.context.bit_records:
+            msg = (
+                f"Stim codegen: If condition reads {bit}, which holds no "
+                "measurement result in this scope (never measured, or "
+                "measured outside the enclosing REPEAT body, where its record "
+                "offset changes every iteration)."
+            )
+            raise NotImplementedError(msg)
+        position = self.context.bit_records[key]
+        if position is None:
+            msg = (
+                f"Stim codegen: If condition reads {bit}, whose value no "
+                "longer comes from a tracked measurement (classical "
+                "assignment or permutation); Stim can only condition on a "
+                "measurement record."
+            )
+            raise NotImplementedError(msg)
+        return position - self.context.measurement_count, fires_when_one
+
+    def _conditional_paulis(self, body: tuple[Statement, ...]) -> list[tuple[GateKind, list[int]]]:
+        """Collect the Pauli gates of a conditional body, rejecting anything else."""
+        corrections: list[tuple[GateKind, list[int]]] = []
+        for stmt in body:
+            if isinstance(stmt, CommentOp):
+                continue
+            if isinstance(stmt, ParallelBlock):
+                corrections.extend(self._conditional_paulis(stmt.body))
+                continue
+            if isinstance(stmt, GateOp) and stmt.gate in _RECORD_CONTROLLED_PAULI:
+                qubits = [self.context.get_qubit(t.allocator, t.index) for t in stmt.targets]
+                corrections.append((stmt.gate, qubits))
+                continue
+            stmt_name = getattr(getattr(stmt, "gate", None), "name", type(stmt).__name__)
+            msg = (
+                f"Stim codegen: If body contains {stmt_name}; only X, Y and Z "
+                "gates can be conditioned on a measurement in Stim. Emitting "
+                "the body unconditionally would be a silent miscompile."
+            )
+            raise NotImplementedError(msg)
+        return corrections
 
     def _process_while(self, node: WhileStmt) -> None:
         """`While` is not supported by the Stim backend.
@@ -468,15 +617,39 @@ class AstToStim:
         if node.count <= 0:
             return
 
-        # Build sub-circuit for repeat body
+        # Build sub-circuit for repeat body. The body is its own measurement
+        # record frame: a record offset into a measurement taken before the
+        # REPEAT would change every iteration, so only measurements from the
+        # current iteration are visible to conditions inside the body.
         original_circuit = self.circuit
+        outer_records = self.context.bit_records
+        outer_count = self.context.measurement_count
+        outer_invalidated = self.context.invalidated_registers
         self.circuit = stim.Circuit()
+        self.context.bit_records = {}
+        self.context.measurement_count = 0
+        self.context.invalidated_registers = set()
 
         for stmt in node.body:
             self._process_statement(stmt)
 
         sub_circuit = self.circuit
+        body_records = self.context.bit_records
+        body_count = self.context.measurement_count
+        body_invalidated = self.context.invalidated_registers
         self.circuit = original_circuit
+        self.context.bit_records = outer_records
+        self.context.measurement_count = outer_count
+        self.context.invalidated_registers = outer_invalidated
+
+        # Registers invalidated in the body lose their pre-REPEAT records;
+        # bits written in the body then hold the last iteration's state.
+        for name in body_invalidated:
+            self._invalidate_register(name)
+        last_iteration_start = outer_count + (node.count - 1) * body_count
+        for bit, position in body_records.items():
+            outer_records[bit] = None if position is None else last_iteration_start + position
+        self.context.measurement_count = outer_count + node.count * body_count
 
         # Add repeat block if sub-circuit has content
         if len(sub_circuit) > 0:
@@ -550,6 +723,11 @@ class AstToStim:
         # so a whole-register (a,b)/(b,a) pair applies once.
         old = dict(self.context.permutation_map)
         self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
+        # A Permute ref is a bare string that may name a qubit or a classical
+        # register (SLR allows both under one name), so classical bits under
+        # any permuted name stop being valid If conditions.
+        for name in {ref[0] for ref in src_all}:
+            self._invalidate_register(name)
 
 
 def ast_to_stim(program: Program) -> stim.Circuit:

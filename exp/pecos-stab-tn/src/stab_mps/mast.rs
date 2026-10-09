@@ -974,6 +974,35 @@ mod tests {
     }
 
     #[test]
+    fn scaled_mast_data_measurement_matches_normalized_state() {
+        use crate::stab_mps::trivial_measurement_tests::assert_pair_close;
+
+        for probability_one in [0.0_f64, 0.37, 1.0] {
+            for seed in 0..8 {
+                let mut normalized = Mast::with_seed(2, 2, seed);
+                normalized.mps.tensors_mut()[0][(0, 0)] =
+                    Complex64::new((1.0 - probability_one).sqrt(), 0.0);
+                normalized.mps.tensors_mut()[0][(0, 1)] =
+                    Complex64::new(probability_one.sqrt(), 0.0);
+                let mut scaled = Mast::with_seed(2, 2, seed);
+                scaled.mps = normalized.mps.clone();
+                scaled.mps.scale(Complex64::new(1e-7, 0.0));
+                let actual = scaled.mz(&[QubitId(0)]);
+                let expected = normalized.mz(&[QubitId(0)]);
+                assert_eq!(actual[0].outcome, expected[0].outcome);
+                assert_eq!(actual[0].is_deterministic, expected[0].is_deterministic);
+                assert_pair_close(
+                    &scaled.tableau,
+                    &scaled.mps,
+                    &normalized.tableau,
+                    &normalized.mps,
+                );
+                assert_eq!(scaled.disent_flags, normalized.disent_flags);
+            }
+        }
+    }
+
+    #[test]
     fn trivial_exact_mast_matches_general_path_bitwise() {
         use crate::stab_mps::trivial_measurement_tests::{assert_pair_bits, with_fast_path};
 

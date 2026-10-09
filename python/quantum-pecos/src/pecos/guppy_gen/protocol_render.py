@@ -7,6 +7,7 @@ import hashlib
 
 from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.guppy_gen.gadget_render import render_gadget_function
+from pecos.guppy_gen.surface_teleportation import _render_surface_t_teleportation_module
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import QubitAllocation
 
@@ -148,10 +149,10 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))",
             "",
             "",
-            "def make_t_injection(rounds_before: int, rounds_after: int):",
+            "def make_t_teleportation_placeholder(rounds_before: int, rounds_after: int):",
             '    """Clifford stand-in: ancilla prepared in |+>, no T, no conditional S."""',
-            "    def t_injection() -> None:",
-            '        """Clifford stand-in for T injection."""',
+            "    def t_teleportation() -> None:",
+            '        """Clifford stand-in for T-gate teleportation."""',
             "        data = prep_z_basis()",
             "        anc = prep_x_basis()",
             *_rounds("rounds_before", ("data", "anc")),
@@ -159,7 +160,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             *_rounds("rounds_after", ("data", "anc")),
             *_readout("data"),
             *_readout("anc"),
-            "    return guppy(variant_scoped(t_injection, rounds_before, rounds_after))",
+            "    return guppy(variant_scoped(t_teleportation, rounds_before, rounds_after))",
             "",
         ],
     )
@@ -209,6 +210,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "",
         ],
     )
+    lines.append(_render_surface_t_teleportation_module(patch, include_common=False))
     return "\n".join(lines)
 
 

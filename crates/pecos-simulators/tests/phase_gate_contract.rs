@@ -19,7 +19,8 @@
 //!   hardware lowering rejects nontrivial scalars because a gate list has no phase carrier
 //! - `S = {q}`  -> `diag(1, e^{i gamma})`, which is exactly `U(0, 0, gamma)`
 //! - `S = {c,t}` -> `diag(1, 1, 1, e^{i gamma})`
-//! - `|S| > 2`  -> the same mathematical rule; direct hardware lowering is unavailable
+//! - `|S| > 2`  -> the same mathematical rule; direct hardware lowering is available only
+//!   for three operands at exactly pi, as CCZ
 //!
 //! `control()` is structural: controlling `Phase` on `S` by `c` is `Phase` on `S + {c}`.
 //!
@@ -35,7 +36,7 @@
 use num_complex::Complex64;
 use pecos_core::controlled_rotations::lower_phase;
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, PhaseGateError, QubitId, Unitary, UnitaryRep};
+use pecos_core::{Angle64, Gate, PhaseGateError, QubitId, Unitary, UnitaryRep};
 use pecos_quantum::unitary_matrix::{ToMatrix, to_matrix_with_size};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA};
 use smallvec::smallvec;
@@ -223,8 +224,18 @@ fn phase_on_three_or_more_qubits_follows_the_rule() {
 }
 
 #[test]
-fn three_operand_phase_exceeds_the_direct_hardware_lowering_limit() {
+fn three_operand_phase_lowering_allows_only_ccz() {
     for &g in &ANGLES {
+        if Angle64::from_radians(g) == Angle64::HALF_TURN {
+            let expected = vec![Gate::ccz(&[(0, 1, 2)])];
+            assert_eq!(
+                lower_phase(g, &[QubitId(0), QubitId(1), QubitId(2)]),
+                Ok(expected.clone())
+            );
+            let phase = UnitaryRep::phase_gate(Angle64::HALF_TURN, smallvec![0, 1, 2]);
+            assert_eq!(phase.try_decompose(), Ok(expected));
+            continue;
+        }
         let error = lower_phase(g, &[QubitId(0), QubitId(1), QubitId(2)]).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("hardware lowering"), "{message}");

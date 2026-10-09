@@ -807,6 +807,11 @@ impl<'a> FaultChecker<'a> {
     /// # Returns
     ///
     /// The result of the fault tolerance check.
+    ///
+    /// # Panics
+    ///
+    /// Panics if circuit execution encounters `T`, `Tdg`, `CH`, `CCX`, `CS`,
+    /// `CSdg`, or `CCZ`, which the Clifford circuit runner does not support.
     pub fn check<S, F, Factory>(
         &self,
         mut failure_fn: F,
@@ -1069,6 +1074,11 @@ impl<'a> FaultChecker<'a> {
     ///
     /// A `FaultCheckResult` containing faults that fail either the Pauli-based
     /// classification (undetectable logical error) or the simulator-based check.
+    ///
+    /// # Panics
+    ///
+    /// Panics if circuit execution encounters `T`, `Tdg`, `CH`, `CCX`, `CS`,
+    /// `CSdg`, or `CCZ`, which the Clifford circuit runner does not support.
     pub fn check_with_simulator<S, F, Factory>(
         &self,
         z_ancillas: &[usize],

@@ -102,6 +102,8 @@ pub struct CircuitDefinitions {
 /// Invalid circuit definitions or measurement identity/order data.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DefinitionError {
+    #[error("detector id {id}: coordinate length {length} must be zero or three for a DEM")]
+    InvalidDetectorCoordinates { id: u32, length: usize },
     #[error("{kind} metadata: {source}")]
     Parse {
         kind: &'static str,
@@ -110,21 +112,27 @@ pub enum DefinitionError {
     },
     #[error("{kind} id {id} is repeated in metadata")]
     DuplicateMetadataId { kind: &'static str, id: u32 },
-    #[error("{kind} id {id}: negative record {record} precedes {num_measurements} measurements")]
+    #[error(
+        "{kind} id {id}: record offset {record} is out of range for a circuit with {num_measurements} measurement(s)"
+    )]
     NegativeRecordOutOfRange {
         kind: &'static str,
         id: u32,
         record: i32,
         num_measurements: usize,
     },
-    #[error("{kind} id {id}: absolute record {record} is outside {num_measurements} measurements")]
+    #[error(
+        "{kind} id {id}: record offset {record} is out of range for a circuit with {num_measurements} measurement(s)"
+    )]
     AbsoluteRecordOutOfRange {
         kind: &'static str,
         id: u32,
         record: i32,
         num_measurements: usize,
     },
-    #[error("{kind} id {id}: unknown measurement id {measurement_id}")]
+    #[error(
+        "{kind} id {id}: meas_id {measurement_id} is not present in the circuit's measurements"
+    )]
     UnknownMeasurementId {
         kind: &'static str,
         id: u32,
@@ -174,7 +182,9 @@ pub enum DefinitionError {
     },
     #[error("num_measurements {value:?} does not parse as usize")]
     InvalidMeasurementCount { value: String },
-    #[error("num_measurements declares {declared}, but emission contains {actual}")]
+    #[error(
+        "num_measurements={declared} disagrees with the {actual} measurement(s) the circuit performs; the declared count must match so detector/observable record offsets resolve correctly"
+    )]
     MeasurementCountMismatch { declared: usize, actual: usize },
 }
 

@@ -32,6 +32,14 @@ from pecos.noise import XModel
 from pecos.qeccs import Surface4444
 from pecos.simulators import SparseStabPy
 
+__all__ = [
+    "codecapacity_logical_rate",
+    "codecapacity_logical_rate2",
+    "codecapacity_logical_rate3",
+    "threshold_code_capacity",
+    "threshold_code_capacity_calc",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from typing import TypedDict

@@ -1,16 +1,14 @@
 """Legacy QECC analysis must exercise the current instruction and decoder APIs."""
 
 import ast
-from importlib import import_module
 
 import pecos as pc
 import pytest
+from pecos.analysis import pseudo_threshold_tools, threshold_tools, tool_collection
 from pecos.analysis.fault_tolerance_checks import distance_check, fault_check, t_errors_check
 from pecos.analysis.tool_collection import _apply_err as apply_err
 from pecos.analysis.tool_collection import _apply_err_spacetime as apply_err_spacetime
 from pecos.analysis.tool_collection import form_errors
-from pecos.tools.tool_collection import _apply_err as legacy_apply_err
-from pecos.tools.tool_collection import _apply_err_spacetime as legacy_apply_err_spacetime
 
 
 @pytest.mark.parametrize("check", [t_errors_check, fault_check])
@@ -23,7 +21,11 @@ def test_correctable_errors(check, weight, expected, physical) -> None:
     if physical:
         extraction = qecc.instruction("instr_syn_extract").circuit
         kwargs["syn_extract" if check is t_errors_check else "logical_gate"] = extraction
-    assert check(qecc, t_weight=weight, verbose=False, **kwargs) == expected
+    with pytest.warns(DeprecationWarning, match="does not establish circuit-level fault tolerance") as caught:
+        assert check(qecc, t_weight=weight, verbose=False, **kwargs) == expected
+    assert check.__name__ in str(caught[0].message)
+    assert "Fault Tolerance Analysis" in str(caught[0].message)
+    assert "docs/user-guide/fault-tolerance.md" in str(caught[0].message)
 
 
 @pytest.mark.parametrize("mode", [None, "X", "Z", "power"])
@@ -52,13 +54,12 @@ def test_distance_check(mode) -> None:
     assert any(not pc.quantum.commute.qubit_pauli(op, error) for op in logical_ops.values())
 
 
-@pytest.mark.parametrize("module", ["pecos.analysis.threshold_tools", "pecos.tools.threshold_tools"])
 @pytest.mark.parametrize("p", [0.0, 0.5])
 @pytest.mark.parametrize("simulator", [None, pc.simulators.SparseStabPy])
-def test_codecapacity_logical_rate2(module, p, simulator) -> None:
+def test_codecapacity_logical_rate2(p, simulator) -> None:
     """Seeded two-basis sampling has no noiseless failures and detects strong noise."""
     qecc = pc.qeccs.Surface4444(distance=3)
-    rate, elapsed = import_module(module).codecapacity_logical_rate2(
+    rate, elapsed = threshold_tools.codecapacity_logical_rate2(
         20,
         qecc,
         3,
@@ -73,14 +74,9 @@ def test_codecapacity_logical_rate2(module, p, simulator) -> None:
     assert elapsed >= 0.0
 
 
-@pytest.mark.parametrize(
-    ("apply_error", "apply_spacetime"),
-    [(apply_err, apply_err_spacetime), (legacy_apply_err, legacy_apply_err_spacetime)],
-    ids=["analysis", "tools"],
-)
 @pytest.mark.parametrize("spacetime", [False, True])
 @pytest.mark.parametrize("weight", [0, 1, 2])
-def test_apply_errors(apply_error, apply_spacetime, spacetime, weight) -> None:
+def test_apply_errors(spacetime, weight) -> None:
     """Recovery corrects one X and fails on two Xs from a logical string."""
     qecc = pc.qeccs.Surface4444(distance=3)
     runner = pc.circuit_runners.Standard(seed=1)
@@ -92,13 +88,13 @@ def test_apply_errors(apply_error, apply_spacetime, spacetime, weight) -> None:
     xs = set(sorted(qecc.sides["left"])[:weight])
     if spacetime:
         errors = form_errors([(0, q) for q in xs], [])
-        sign = apply_spacetime(state, runner, init, errors, decoder, logical_z, qecc)
+        sign = apply_err_spacetime(state, runner, init, errors, decoder, logical_z, qecc)
         assert errors == form_errors([(0, q) for q in xs], [])
     else:
         extraction = pc.circuits.LogicalCircuit(suppress_warning=True)
         extraction.append(qecc.gate("I", num_syn_extract=1))
         error = pc.circuits.QuantumCircuit([{"X": xs}])
-        sign = apply_error(state, runner, init, extraction, error, decoder, logical_z)
+        sign = apply_err(state, runner, init, extraction, error, decoder, logical_z)
     assert sign == (weight == 2)
 
 
@@ -117,28 +113,30 @@ class _NoZRecovery:
         return pc.circuits.QuantumCircuit([{"X": xs}])
 
 
-@pytest.mark.parametrize("module", ["pecos.analysis.tool_collection", "pecos.tools.tool_collection"])
-def test_fault_tolerance_checks_data_both_bases(module, monkeypatch) -> None:
+def test_fault_tolerance_checks_data_both_bases(monkeypatch) -> None:
     """A decoder omitting Z corrections must fail before reaching circuit faults."""
-    tools = import_module(module)
     qecc = pc.qeccs.Surface4444(distance=3)
 
     def unexpected_spacetime(*_args):
         pytest.fail("Data errors passed despite missing Z corrections")
 
-    monkeypatch.setattr(tools, "_apply_err_spacetime", unexpected_spacetime)
-    with pytest.raises(Exception, match="Decoder failed to correct error:") as exc:
-        tools.fault_tolerance_check(qecc, _NoZRecovery(qecc))
+    monkeypatch.setattr(tool_collection, "_apply_err_spacetime", unexpected_spacetime)
+    with (
+        pytest.warns(DeprecationWarning, match="does not establish circuit-level fault tolerance") as caught,
+        pytest.raises(Exception, match="Decoder failed to correct error:") as exc,
+    ):
+        tool_collection.fault_tolerance_check(qecc, _NoZRecovery(qecc))
     # The first Z error along logical X must be reported as a data-qubit circuit.
     qudit = next(q for q in qecc.data_qudit_set if q in qecc.sides["left"])
     error = pc.circuits.QuantumCircuit([{"X": set(), "Z": {qudit}}])
+    assert "fault_tolerance_check" in str(caught[0].message)
+    assert "Fault Tolerance Analysis" in str(caught[0].message)
+    assert "docs/user-guide/fault-tolerance.md" in str(caught[0].message)
     assert str(exc.value) == f"Decoder failed to correct error: {error}"
 
 
-@pytest.mark.parametrize("module", ["pecos.analysis.tool_collection", "pecos.tools.tool_collection"])
-def test_fault_tolerance_checks_spacetime_both_bases(module, monkeypatch) -> None:
+def test_fault_tolerance_checks_spacetime_both_bases(monkeypatch) -> None:
     """A circuit Z fault is tested in the plus state and reported individually."""
-    tools = import_module(module)
     qecc = pc.qeccs.Surface4444(distance=3)
     qudit = min(qecc.sides["left"])
     error = {0: {"Z": {qudit}}}
@@ -149,16 +147,21 @@ def test_fault_tolerance_checks_spacetime_both_bases(module, monkeypatch) -> Non
             return iter(())
         return iter([(set(), {(0, qudit)})])
 
-    monkeypatch.setattr(tools, "gen_pauli_errors", errors)
-    with pytest.raises(Exception, match="Decoder failed to correct error:") as exc:
-        tools.fault_tolerance_check(qecc, _NoZRecovery(qecc))
+    monkeypatch.setattr(tool_collection, "gen_pauli_errors", errors)
+    with (
+        pytest.warns(DeprecationWarning, match="does not establish circuit-level fault tolerance") as caught,
+        pytest.raises(Exception, match="Decoder failed to correct error:") as exc,
+    ):
+        tool_collection.fault_tolerance_check(qecc, _NoZRecovery(qecc))
+    assert "fault_tolerance_check" in str(caught[0].message)
+    assert "Fault Tolerance Analysis" in str(caught[0].message)
+    assert "docs/user-guide/fault-tolerance.md" in str(caught[0].message)
     assert str(exc.value) == f"Decoder failed to correct error: {error}"
 
 
-@pytest.mark.parametrize("module", ["pecos.analysis.threshold_tools", "pecos.tools.threshold_tools"])
-def test_threshold_code_capacity_both_bases(module) -> None:
+def test_threshold_code_capacity_both_bases() -> None:
     """The wrapper can call the two-basis sampler with explicit depolarizing noise."""
-    result = import_module(module).threshold_code_capacity(
+    result = threshold_tools.threshold_code_capacity(
         pc.qeccs.Surface4444,
         pc.noise.DepolarModel(model_level="code_capacity"),
         pc.decoders.MWPM2D,
@@ -176,13 +179,11 @@ def test_threshold_code_capacity_both_bases(module) -> None:
     assert 0.0 <= rates[1] <= 1.0
 
 
-@pytest.mark.parametrize("module", ["pecos.analysis.threshold_tools", "pecos.tools.threshold_tools"])
-def test_threshold_code_capacity_modes(module) -> None:
+def test_threshold_code_capacity_modes() -> None:
     """Every supported mode and basis samples a rate, including observed lifetimes."""
-    tools = import_module(module)
     for mode, bases in [(1, [None, "zero", "plus", "both"]), (2, [None, "zero", "plus"])]:
         for basis in bases:
-            result = tools.threshold_code_capacity(
+            result = threshold_tools.threshold_code_capacity(
                 pc.qeccs.Surface4444,
                 pc.noise.DepolarModel(model_level="code_capacity"),
                 pc.decoders.MWPM2D,
@@ -200,7 +201,7 @@ def test_threshold_code_capacity_modes(module) -> None:
                 # Five short sampled lifetimes cannot equal the unused ten-million-round cap.
                 assert all(rate >= 1.0 / 100 for rate in rates)
     with pytest.raises(ValueError, match="Mode 2 requires basis"):
-        tools.threshold_code_capacity(
+        threshold_tools.threshold_code_capacity(
             pc.qeccs.Surface4444,
             pc.noise.DepolarModel(model_level="code_capacity"),
             pc.decoders.MWPM2D,
@@ -212,10 +213,9 @@ def test_threshold_code_capacity_modes(module) -> None:
         )
 
 
-@pytest.mark.parametrize("module", ["pecos.analysis.pseudo_threshold_tools", "pecos.tools.pseudo_threshold_tools"])
-def test_pseudo_threshold_two_basis_sampler(module) -> None:
+def test_pseudo_threshold_two_basis_sampler() -> None:
     """The other rate2 caller must also omit the single-basis selection argument."""
-    result = import_module(module).pseudo_threshold_code_capacity(
+    result = pseudo_threshold_tools.pseudo_threshold_code_capacity(
         [0.0, 0.2],
         3,
         5,

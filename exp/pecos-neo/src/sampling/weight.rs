@@ -185,16 +185,22 @@ impl<T> WeightedOutcome<T> {
 /// Computes weighted mean and variance using numerically stable algorithms.
 #[derive(Debug, Clone)]
 pub struct WeightedStatistics {
-    /// Sum of weights (in log space for stability).
-    log_weight_sum: f64,
-    /// Sum of squared weights (in log space), for the effective sample size.
-    log_weight_sq_sum: f64,
-    /// Weighted sum of values.
+    /// Sum of weights normalized by the maximum weight.
+    weight_sum: f64,
+    /// Sum of squared normalized weights, for the effective sample size.
+    weight_sq_sum: f64,
+    /// Sum of values weighted by normalized weights.
     weighted_sum: f64,
-    /// Weighted sum of squared values (for variance).
+    /// Sum of squared values weighted by normalized weights (for variance).
     weighted_sum_sq: f64,
+    /// Sum of values weighted by squared normalized weights.
+    squared_weight_sum: f64,
+    /// Sum of squared values weighted by squared normalized weights.
+    squared_weight_sum_sq: f64,
     /// Number of samples.
     count: usize,
+    /// Number of samples in floating point, for the ESS upper bound.
+    count_float: f64,
     /// Maximum log weight seen (for normalization).
     max_log_weight: f64,
 }
@@ -210,11 +216,14 @@ impl WeightedStatistics {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            log_weight_sum: f64::NEG_INFINITY,
-            log_weight_sq_sum: f64::NEG_INFINITY,
+            weight_sum: 0.0,
+            weight_sq_sum: 0.0,
             weighted_sum: 0.0,
             weighted_sum_sq: 0.0,
+            squared_weight_sum: 0.0,
+            squared_weight_sum_sq: 0.0,
             count: 0,
+            count_float: 0.0,
             max_log_weight: f64::NEG_INFINITY,
         }
     }
@@ -226,30 +235,34 @@ impl WeightedStatistics {
     /// * `weight` - The importance weight
     pub fn add(&mut self, value: f64, weight: &SampleWeight) {
         let log_w = weight.log_weight();
-        self.log_weight_sq_sum = log_sum_exp(self.log_weight_sq_sum, 2.0 * log_w);
 
         // Update max for normalization
         if log_w > self.max_log_weight {
             // Rescale existing sums
             if self.count > 0 {
                 let scale = (self.max_log_weight - log_w).exp();
+                let scale_sq = scale * scale;
+                self.weight_sum *= scale;
+                self.weight_sq_sum *= scale_sq;
                 self.weighted_sum *= scale;
                 self.weighted_sum_sq *= scale;
-                // log_weight_sum needs log-space addition
-                self.log_weight_sum = log_sum_exp(self.log_weight_sum, log_w);
-            } else {
-                self.log_weight_sum = log_w;
+                self.squared_weight_sum *= scale_sq;
+                self.squared_weight_sum_sq *= scale_sq;
             }
             self.max_log_weight = log_w;
-        } else {
-            self.log_weight_sum = log_sum_exp(self.log_weight_sum, log_w);
         }
 
         // Add contribution (normalized by max weight)
         let normalized_w = (log_w - self.max_log_weight).exp();
+        let normalized_w_sq = normalized_w * normalized_w;
+        self.weight_sum += normalized_w;
+        self.weight_sq_sum += normalized_w_sq;
         self.weighted_sum += normalized_w * value;
         self.weighted_sum_sq += normalized_w * value * value;
+        self.squared_weight_sum += normalized_w_sq * value;
+        self.squared_weight_sum_sq += normalized_w_sq * value * value;
         self.count += 1;
+        self.count_float += 1.0;
     }
 
     /// Add a sample with unit weight (standard Monte Carlo).
@@ -263,9 +276,7 @@ impl WeightedStatistics {
         if self.count == 0 {
             return 0.0;
         }
-        // Total weight (normalized)
-        let total_w = (self.log_weight_sum - self.max_log_weight).exp();
-        self.weighted_sum / total_w
+        self.weighted_sum / self.weight_sum
     }
 
     /// Get the weighted variance.
@@ -275,18 +286,29 @@ impl WeightedStatistics {
             return 0.0;
         }
         let mean = self.mean();
-        let total_w = (self.log_weight_sum - self.max_log_weight).exp();
-        (self.weighted_sum_sq / total_w) - mean * mean
+        (self.weighted_sum_sq / self.weight_sum) - mean * mean
     }
 
     /// Get the standard error of the weighted mean.
+    ///
+    /// Uses the delta-method estimator for independent self-normalized importance
+    /// samples: `SE² = Σ wᵢ² (xᵢ - mean)² / (Σ wᵢ)²`; see
+    /// [Owen, Monte Carlo theory, methods and examples, §9.2, equation (9.9)](
+    /// https://artowen.su.domains/mc/Ch-var-is.pdf).
+    /// No finite-sample correction is applied, so equal weights give exactly
+    /// `sqrt(variance / count)`. Fewer than two samples return infinity.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // count as f64 for statistics
     pub fn standard_error(&self) -> f64 {
         if self.count < 2 {
             return f64::INFINITY;
         }
-        (self.variance() / self.count as f64).sqrt()
+        let mean = self.mean();
+        let squared_weight_mean = self.squared_weight_sum / self.weight_sq_sum;
+        // Expand the squared residuals around the weighted mean. This ordering
+        // also reproduces variance() exactly when all weights are equal.
+        let residual = (self.squared_weight_sum_sq / self.weight_sq_sum - mean * mean)
+            - 2.0 * mean * (squared_weight_mean - mean);
+        (residual / self.effective_sample_size()).sqrt()
     }
 
     /// Get the number of samples.
@@ -301,12 +323,15 @@ impl WeightedStatistics {
     /// ESS = (Σw)² / Σw²
     ///
     /// Low ESS indicates weight degeneracy (few samples dominate).
+    /// Weight moments are normalized by the maximum weight, so a common finite
+    /// log-weight offset does not affect ESS when the weight ratios are preserved.
     #[must_use]
     pub fn effective_sample_size(&self) -> f64 {
         if self.count == 0 {
             return 0.0;
         }
-        (2.0 * self.log_weight_sum - self.log_weight_sq_sum).exp()
+        // Enforce the mathematical bounds against floating-point roundoff.
+        (self.weight_sum / self.weight_sq_sum * self.weight_sum).clamp(1.0, self.count_float)
     }
 
     /// Merge with another statistics accumulator.
@@ -323,32 +348,199 @@ impl WeightedStatistics {
         let new_max = self.max_log_weight.max(other.max_log_weight);
         let self_scale = (self.max_log_weight - new_max).exp();
         let other_scale = (other.max_log_weight - new_max).exp();
+        let self_scale_sq = self_scale * self_scale;
+        let other_scale_sq = other_scale * other_scale;
 
+        self.weight_sum = self.weight_sum * self_scale + other.weight_sum * other_scale;
+        self.weight_sq_sum =
+            self.weight_sq_sum * self_scale_sq + other.weight_sq_sum * other_scale_sq;
         self.weighted_sum = self.weighted_sum * self_scale + other.weighted_sum * other_scale;
         self.weighted_sum_sq =
             self.weighted_sum_sq * self_scale + other.weighted_sum_sq * other_scale;
-        self.log_weight_sum = log_sum_exp(self.log_weight_sum, other.log_weight_sum);
-        self.log_weight_sq_sum = log_sum_exp(self.log_weight_sq_sum, other.log_weight_sq_sum);
+        self.squared_weight_sum =
+            self.squared_weight_sum * self_scale_sq + other.squared_weight_sum * other_scale_sq;
+        self.squared_weight_sum_sq = self.squared_weight_sum_sq * self_scale_sq
+            + other.squared_weight_sum_sq * other_scale_sq;
         self.count += other.count;
+        self.count_float += other.count_float;
         self.max_log_weight = new_max;
     }
-}
-
-/// Compute log(exp(a) + exp(b)) in a numerically stable way.
-fn log_sum_exp(a: f64, b: f64) -> f64 {
-    if a == f64::NEG_INFINITY {
-        return b;
-    }
-    if b == f64::NEG_INFINITY {
-        return a;
-    }
-    let max = a.max(b);
-    max + ((a - max).exp() + (b - max).exp()).ln()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_equal_weight_scale_invariance(log_weight: f64, merge: bool) {
+        let mut stats = WeightedStatistics::new();
+        let weight = SampleWeight::from_log(log_weight);
+        stats.add(0.0, &weight);
+        if merge {
+            let mut other = WeightedStatistics::new();
+            other.add(1.0, &weight);
+            stats.merge(&other);
+        } else {
+            stats.add(1.0, &weight);
+        }
+        assert_eq!(stats.effective_sample_size().to_bits(), 2.0_f64.to_bits());
+        assert_eq!(stats.mean().to_bits(), 0.5_f64.to_bits());
+        assert_eq!(stats.variance().to_bits(), 0.25_f64.to_bits());
+        assert_eq!(
+            stats.standard_error().to_bits(),
+            (0.25_f64 / 2.0).sqrt().to_bits()
+        );
+    }
+
+    macro_rules! scale_invariance_tests {
+        ($($name:ident: $offset:expr, $merge:expr;)*) => {
+            $(#[test]
+            fn $name() {
+                assert_equal_weight_scale_invariance($offset, $merge);
+            })*
+        };
+    }
+
+    scale_invariance_tests! {
+        scale_invariance_negative_large_direct: -1e16, false;
+        scale_invariance_negative_large_merge: -1e16, true;
+        scale_invariance_positive_large_direct: 1e15, false;
+        scale_invariance_positive_large_merge: 1e15, true;
+        scale_invariance_negative_extreme_direct: -1e308, false;
+        scale_invariance_negative_extreme_merge: -1e308, true;
+        scale_invariance_positive_extreme_direct: 1e308, false;
+        scale_invariance_positive_extreme_merge: 1e308, true;
+    }
+
+    #[test]
+    fn standard_error_accounts_for_unequal_weights() {
+        let mut stats = WeightedStatistics::new();
+        for (value, weight) in [(0.0, 9.0), (1.0, 9.0), (0.0, 1.0), (1.0, 1.0)] {
+            stats.add(value, &SampleWeight::from_linear(weight));
+        }
+        assert!((stats.mean() - 0.5).abs() < 1e-14);
+        assert!((stats.variance() - 0.25).abs() < 1e-14);
+        assert!((stats.effective_sample_size() - 100.0 / 41.0).abs() < 1e-14);
+        assert!((stats.standard_error() - 0.1025_f64.sqrt()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn standard_error_accounts_for_weight_value_dependence() {
+        let mut stats = WeightedStatistics::new();
+        stats.add(0.0, &SampleWeight::from_linear(9.0));
+        stats.add(1.0, &SampleWeight::one());
+        // mean = 0.1; SE² = (9² * 0.1² + 1² * 0.9²) / 10².
+        assert!((stats.standard_error() - 0.0162_f64.sqrt()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn scale_invariance_preserves_unequal_weight_ratios() {
+        let expected = ess_of(&[(-4.0_f64).exp(), (-2.0_f64).exp(), 1.0]);
+        for offset in [0.0, -1e16, 1e15] {
+            for logs in [[-4.0, -2.0, 0.0], [0.0, -2.0, -4.0]] {
+                let mut whole = WeightedStatistics::new();
+                let mut merged = WeightedStatistics::new();
+                for log_weight in logs {
+                    let weight = SampleWeight::from_log(offset + log_weight);
+                    whole.add(1.0, &weight);
+                    let mut part = WeightedStatistics::new();
+                    part.add(1.0, &weight);
+                    merged.merge(&part);
+                }
+                for stats in [&whole, &merged] {
+                    assert!((stats.effective_sample_size() - expected).abs() < 1e-14);
+                    assert!((1.0..=3.0).contains(&stats.effective_sample_size()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn effective_sample_size_handles_opposite_extreme_logs() {
+        for logs in [[-1e308, 1e308], [1e308, -1e308]] {
+            let mut whole = WeightedStatistics::new();
+            let mut merged = WeightedStatistics::new();
+            for log_weight in logs {
+                let weight = SampleWeight::from_log(log_weight);
+                whole.add(1.0, &weight);
+                let mut part = WeightedStatistics::new();
+                part.add(1.0, &weight);
+                merged.merge(&part);
+            }
+            for stats in [&whole, &merged] {
+                assert_eq!(stats.effective_sample_size().to_bits(), 1.0_f64.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn effective_sample_size_respects_count_despite_roundoff() {
+        let mut stats = WeightedStatistics::new();
+        stats.add(0.0, &SampleWeight::from_log(-6.332_362_723_286_32e-10));
+        stats.add(1.0, &SampleWeight::from_log(-7.716_802_554_225_296e-9));
+        assert!((1.0..=2.0).contains(&stats.effective_sample_size()));
+    }
+
+    #[test]
+    fn standard_error_matches_equal_weight_formula_exactly() {
+        for count in [2, 3, 4, 7, 10, 100] {
+            let values: Vec<f64> = (0..count).map(|i| f64::from(i % 3) - 0.5).collect();
+            let mean = values.iter().sum::<f64>() / f64::from(count);
+            let variance = values.iter().map(|value| value * value).sum::<f64>() / f64::from(count)
+                - mean * mean;
+            let expected = (variance / f64::from(count)).sqrt();
+            for offset in [0.0, -1e16, 1e15, -1e308, 1e308] {
+                let mut stats = WeightedStatistics::new();
+                for &value in &values {
+                    stats.add(value, &SampleWeight::from_log(offset));
+                }
+                assert_eq!(stats.standard_error().to_bits(), expected.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn standard_error_preserves_squared_weight_moments_through_merge() {
+        let samples = [(0.0, -4.0_f64), (3.0, 0.0), (-1.0, -2.0), (2.0, -6.0)];
+        let weight_sum: f64 = samples.iter().map(|(_, log_w)| log_w.exp()).sum();
+        let mean: f64 = samples
+            .iter()
+            .map(|(value, log_w)| value * log_w.exp())
+            .sum::<f64>()
+            / weight_sum;
+        let expected = samples
+            .iter()
+            .map(|(value, log_w)| (log_w.exp() * (value - mean)).powi(2))
+            .sum::<f64>()
+            .sqrt()
+            / weight_sum;
+        for offset in [0.0, -1e16, 1e15] {
+            for split in 0..=samples.len() {
+                let mut left = WeightedStatistics::new();
+                let mut right = WeightedStatistics::new();
+                for (i, &(value, log_w)) in samples.iter().enumerate() {
+                    let stats = if i < split { &mut left } else { &mut right };
+                    stats.add(value, &SampleWeight::from_log(log_w + offset));
+                }
+                let mut reverse = right.clone();
+                reverse.merge(&left);
+                left.merge(&right);
+                for stats in [&left, &reverse] {
+                    assert!((stats.standard_error() - expected).abs() < 1e-14);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn weighted_statistics_empty_and_single_sample() {
+        let mut stats = WeightedStatistics::new();
+        stats.merge(&WeightedStatistics::new());
+        assert_eq!(stats.effective_sample_size().to_bits(), 0.0_f64.to_bits());
+        assert_eq!(stats.standard_error(), f64::INFINITY);
+        stats.add(3.0, &SampleWeight::from_log(-1e308));
+        assert_eq!(stats.effective_sample_size().to_bits(), 1.0_f64.to_bits());
+        assert_eq!(stats.standard_error(), f64::INFINITY);
+    }
 
     fn ess_of(weights: &[f64]) -> f64 {
         let sum: f64 = weights.iter().sum();
@@ -475,16 +667,5 @@ mod tests {
 
         // Weighted mean = (1.0 * 0.1 + 0.0 * 0.9) / (0.1 + 0.9) = 0.1
         assert!((stats.mean() - 0.1).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_log_sum_exp() {
-        // log(e^0 + e^0) = log(2)
-        let result = log_sum_exp(0.0, 0.0);
-        assert!((result - 2.0_f64.ln()).abs() < 1e-10);
-
-        // log(e^10 + e^0) ≈ 10 (dominated by larger term)
-        let result = log_sum_exp(10.0, 0.0);
-        assert!((result - 10.0).abs() < 0.001);
     }
 }

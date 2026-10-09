@@ -89,7 +89,6 @@ fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
 struct MeasurementAdmission {
     ids: Vec<usize>,
     native: BTreeSet<u64>,
-    source: BTreeSet<usize>,
 }
 fn measurement_mappings(
     batch: &ScheduledBatch,
@@ -151,7 +150,6 @@ impl MeasurementAdmission {
                     .ok_or_else(|| error("missing scheduled measurement mapping"))?;
                 if m.runtime_result != *result_id
                     || !self.native.insert(*result_id)
-                    || !self.source.insert(m.program_result)
                     || (matches!(op, Op::MeasureLeaked { .. }) && !m.leakage_aware)
                 {
                     return Err(error("invalid or duplicate scheduled measurement identity"));
@@ -482,7 +480,7 @@ mod tests {
             result_id: 24,
         };
         b.measurements[0].runtime_result = 24;
-        assert!(encode(vec![a, b], 7).is_err());
+        assert_eq!(encode(vec![a, b], 7).unwrap().1, [91, 91]);
     }
     #[test]
     fn rejects_opaque_events_wrong_shots_and_nonfinite_angles() {

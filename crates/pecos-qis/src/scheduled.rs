@@ -77,7 +77,7 @@ pub struct ScheduledMeasurement {
     pub operation_index: usize,
     /// Future allocated by the native runtime.
     pub runtime_result: u64,
-    /// Result expected by the source program.
+    /// Result expected by the source program; may repeat when a slot is re-measured.
     pub program_result: usize,
     /// Source measurement requires a leakage-aware result, even if the ABI
     /// emitted an ordinary measurement operation.
@@ -102,7 +102,7 @@ pub struct ScheduledBatch {
 }
 
 // Bounds on each indivisible native callback batch, not the entire drain.
-// Returned output has no aggregate cap; callers own it after extraction.
+// Forced drains also have aggregate limits, including empty native batches.
 #[cfg(feature = "selene")]
 pub(crate) const MAX_OPERATIONS: usize = 4096;
 #[cfg(feature = "selene")]
@@ -112,4 +112,33 @@ pub(crate) const MAX_PAYLOAD_BYTES: usize = 262_144;
 #[derive(Default)]
 pub(crate) struct ScheduledOutput {
     pub batches: Vec<ScheduledBatch>,
+    pub drain_budget: Option<DrainBudget>,
+}
+
+/// Aggregate limits for one forced scheduled drain, independent of batch size.
+#[cfg(feature = "selene")]
+pub(crate) const MAX_DRAIN_BATCHES: usize = 4096;
+#[cfg(feature = "selene")]
+pub(crate) const MAX_DRAIN_OPERATIONS: usize = 65_536;
+
+#[cfg(feature = "selene")]
+#[derive(Default)]
+pub(crate) struct DrainBudget {
+    batches: usize,
+    operations: usize,
+}
+
+#[cfg(feature = "selene")]
+impl DrainBudget {
+    pub fn charge(&mut self, operations: usize) -> crate::runtime::Result<()> {
+        if self.batches >= MAX_DRAIN_BATCHES || operations > MAX_DRAIN_OPERATIONS - self.operations
+        {
+            return Err(crate::runtime::RuntimeError::ExecutionError(
+                "scheduled forced drain aggregate batch/operation budget exceeded".into(),
+            ));
+        }
+        self.batches += 1;
+        self.operations += operations;
+        Ok(())
+    }
 }

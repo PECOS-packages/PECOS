@@ -1908,3 +1908,75 @@ fn migrated_shot_replacement_leaves_original_host_tls_empty() {
     replaced.send(()).unwrap();
     x.join().unwrap();
 }
+
+#[test]
+fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
+    use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    // Both SeleneFutureResult and SeleneU64Result use a hidden return pointer
+    // on Windows, and two registers on the other supported 64-bit targets.
+    #[cfg(not(windows))]
+    let (declarations, calls) = (
+        "declare {i32, i64} @selene_qubit_lazy_measure_leaked(ptr, i64)\ndeclare {i32, i64} @selene_future_read_u64(ptr, i64)",
+        "%future = call {i32, i64} @selene_qubit_lazy_measure_leaked(ptr null, i64 0)\n%id = extractvalue {i32, i64} %future, 1\n%read = call {i32, i64} @selene_future_read_u64(ptr null, i64 %id)",
+    );
+    #[cfg(windows)]
+    let (declarations, calls) = (
+        "declare void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}), ptr, i64)\ndeclare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
+        "%out = alloca {i32, i64}\ncall void @selene_qubit_lazy_measure_leaked(ptr sret({i32, i64}) %out, ptr null, i64 0)\n%future = load {i32, i64}, ptr %out\n%id = extractvalue {i32, i64} %future, 1\ncall void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 %id)\n%read = load {i32, i64}, ptr %out",
+    );
+    let source = format!(
+        r"
+        {declarations}
+        declare void @__quantum__qis__x__body(i64)
+        define i64 @qmain(i64 %shot) {{
+            call void @__quantum__qis__x__body(i64 0)
+            {calls}
+            %value = extractvalue {{i32, i64}} %read, 1
+            %bad = icmp ne i64 %value, 2
+            %status = zext i1 %bad to i64
+            ret i64 %status
+        }}
+    "
+    );
+    let mut engine = dynamic_read_engine(&source);
+    let noise = GeneralNoiseModel::builder()
+        .with_p1(1.0)
+        .with_p1_emission_ratio(1.0)
+        .with_p1_emission_model(&BTreeMap::from([("L".to_string(), 1.0)]))
+        .build();
+    let mut quantum = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(2)));
+    let stage = engine.start(()).unwrap();
+    let shot = finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
+    assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(2)));
+}
+
+#[test]
+fn scheduled_remeasured_slot_reads_and_records_latest_outcome() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        define i64 @qmain(i64 %shot) {
+            %first = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            call void @__quantum__qis__x__body(i64 0)
+            %second = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            %read = call i1 @___read_future_bool(i64 7)
+            %bad = xor i1 %read, true
+            %status = zext i1 %bad to i64
+            ret i64 %status
+        }
+    ";
+    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        let mut engine = dynamic_read_engine(source);
+        engine.scheduled_transport = mode;
+        for _ in 0..2 {
+            let stage = engine.start(()).unwrap();
+            let shot =
+                finish_deferred_read_shot(&mut engine, &mut deferred_read_quantum(mode), stage)
+                    .unwrap();
+            assert_eq!(shot.data.get("measurement_7"), Some(&Data::U32(1)));
+        }
+    }
+}

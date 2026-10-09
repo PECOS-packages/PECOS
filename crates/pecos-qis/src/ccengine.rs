@@ -470,6 +470,9 @@ pub struct QisEngine {
     /// return the previous, failed shot.
     reset_failure: Option<String>,
     shot_lifecycle: ShotLifecycle,
+    /// Terminal scheduled drains require feedback before releasing more work.
+    scheduled_drain_round: usize,
+    scheduled_drain_feedback: bool,
 
     /// RNG for generating per-shot seeds
     rng: PecosRng,
@@ -580,10 +583,13 @@ impl QisEngine {
         if updates.is_empty() {
             return Ok(());
         }
-        let measurement_map: BTreeMap<usize, u32> = updates.iter().copied().collect();
         self.runtime
-            .provide_measurement_outcomes(measurement_map)
-            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))
+            .provide_measurement_outcomes(updates.to_vec())
+            .map_err(|e| PecosError::Generic(format!("Failed to provide measurements: {e}")))?;
+        if self.scheduled_transport.enabled() {
+            self.scheduled_drain_feedback = true;
+        }
+        Ok(())
     }
 
     /// Create a new engine with the given interface and runtime
@@ -609,6 +615,8 @@ impl QisEngine {
             pending_measurements: BTreeMap::new(),
             reset_failure: None,
             shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -709,6 +717,8 @@ impl QisEngine {
             pending_measurements: BTreeMap::new(),
             reset_failure: None,
             shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -1297,6 +1307,8 @@ impl Clone for QisEngine {
             pending_measurements: BTreeMap::new(),
             reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
             shot_lifecycle: ShotLifecycle::Idle,
+            scheduled_drain_round: 0,
+            scheduled_drain_feedback: false,
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
             dynamic_state: None,             // Can't clone thread state
@@ -1881,7 +1893,7 @@ impl QisEngine {
         terminal: bool,
     ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if self.scheduled_transport.enabled() {
-            return self.drain_scheduled_commands();
+            return self.drain_scheduled_commands(terminal);
         }
         if !self.runtime.supports_operation_lowering() {
             return Ok(None);
@@ -1916,11 +1928,20 @@ impl QisEngine {
         )))
     }
 
-    fn drain_scheduled_commands(&mut self) -> Result<Option<(ByteMessage, usize)>, PecosError> {
+    fn drain_scheduled_commands(
+        &mut self,
+        terminal: bool,
+    ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if !self.scheduled_transport.enabled()
             || self.dynamic_state.as_ref().is_some_and(|s| s.finalized)
         {
             return Ok(None);
+        }
+        let permitted =
+            !terminal || self.scheduled_drain_round == 0 || self.scheduled_drain_feedback;
+        if terminal {
+            self.scheduled_drain_round += 1;
+            self.scheduled_drain_feedback = false;
         }
         let result = (|| {
             let batches = self
@@ -1929,6 +1950,13 @@ impl QisEngine {
                 .map_err(|e| PecosError::Generic(e.to_string()))?;
             if batches.is_empty() {
                 return Ok(None);
+            }
+            if !permitted {
+                return Err(PecosError::Generic(format!(
+                    "scheduled runtime {} returned work without measurement feedback in terminal drain round {}",
+                    self.runtime.name(),
+                    self.scheduled_drain_round
+                )));
             }
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
@@ -2074,6 +2102,8 @@ impl QisEngine {
         }
         self.reset_failure = None;
         self.shot_lifecycle = ShotLifecycle::Idle;
+        self.scheduled_drain_round = 0;
+        self.scheduled_drain_feedback = false;
         self.current_operations = None;
         self.started = false;
         self.measurement_mapping.clear();
@@ -2385,6 +2415,8 @@ impl ControlEngine for QisEngine {
             ));
         }
         self.shot_lifecycle = ShotLifecycle::Running;
+        self.scheduled_drain_round = 0;
+        self.scheduled_drain_feedback = false;
         let attempt = (|| {
             // Clear previous shot's measurement state
             self.measurement_results.clear();
@@ -2607,6 +2639,37 @@ mod tests {
     #[derive(Clone, Default)]
     struct DummyRuntime {
         state: ClassicalState,
+        delivered: Arc<Mutex<Vec<(usize, bool)>>>,
+    }
+
+    #[test]
+    fn boolean_feedback_preserves_order_duplicates_and_rejects_leakage() {
+        let mut runtime = DummyRuntime::default();
+        runtime
+            .provide_measurement_outcomes(vec![(7, 0), (2, 1), (7, 1)])
+            .unwrap();
+        assert_eq!(
+            *runtime.delivered.lock().unwrap(),
+            [(7, false), (2, true), (7, true)]
+        );
+        runtime.delivered.lock().unwrap().clear();
+        assert!(
+            runtime
+                .provide_measurement_outcomes(vec![(7, 1), (7, 2)])
+                .is_err()
+        );
+        assert_eq!(*runtime.delivered.lock().unwrap(), []);
+    }
+
+    #[test]
+    fn host_feedback_preserves_repeated_program_slots() {
+        let runtime = DummyRuntime::default();
+        let delivered = Arc::clone(&runtime.delivered);
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine
+            .provide_measurement_updates_to_runtime(&[(7, 0), (7, 1)])
+            .unwrap();
+        assert_eq!(*delivered.lock().unwrap(), [(7, false), (7, true)]);
     }
 
     impl QisRuntime for DummyRuntime {
@@ -2620,8 +2683,9 @@ mod tests {
 
         fn provide_measurements(
             &mut self,
-            _measurements: BTreeMap<usize, bool>,
+            measurements: BTreeMap<usize, bool>,
         ) -> RuntimeResult<()> {
+            self.delivered.lock().unwrap().extend(measurements);
             Ok(())
         }
 
@@ -4791,10 +4855,18 @@ mod scheduled_completion_tests {
         }
     }
     #[derive(Clone, Default)]
+    enum TerminalOutput {
+        #[default]
+        Feedback,
+        Padding,
+    }
+
+    #[derive(Clone, Default)]
     struct FeedbackTail {
         state: ClassicalState,
         stage: usize,
         fail_tail: bool,
+        output: TerminalOutput,
         with_event: bool,
         ended: bool,
     }
@@ -4845,6 +4917,21 @@ mod scheduled_completion_tests {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
                     "drain after shot completion".into(),
                 ));
+            }
+            if matches!(self.output, TerminalOutput::Padding) {
+                let index = self.stage;
+                self.stage += 1;
+                return Ok(vec![ScheduledBatch {
+                    runtime_shot_id: 0,
+                    batch_index: index,
+                    start_time_nanos: index as u64,
+                    duration_nanos: 0,
+                    operations: vec![Op::Rz {
+                        qubit_id: 0,
+                        theta: 0.0,
+                    }],
+                    measurements: vec![],
+                }]);
             }
             let (mut ops, mut measurements, index) = match self.stage {
                 1 => {
@@ -4901,6 +4988,78 @@ mod scheduled_completion_tests {
             }])
         }
     }
+    #[test]
+    fn scheduled_terminal_padding_without_feedback_fails_promptly() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                output: TerminalOutput::Padding,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.interface = Some(Box::new(TerminalInterface));
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            engine.provide_measurements_terminal(&[]).unwrap();
+            let error = engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .err()
+                .expect("padding must fail on round two")
+                .to_string();
+            assert!(
+                error.contains("without measurement feedback") && error.contains("round 2"),
+                "{error}"
+            );
+            assert!(engine.get_results().is_err());
+            engine.reset_all().unwrap();
+            assert_eq!(engine.scheduled_drain_round, 0);
+            assert!(!engine.scheduled_drain_feedback);
+        }
+    }
+
+    #[test]
+    fn scheduled_gate_only_final_tail_completes_without_feedback() {
+        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+            let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+                stage: 3,
+                ..Default::default()
+            }));
+            engine.scheduled_transport = mode;
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::NeedsProcessing(_)
+            ));
+            assert_eq!(engine.scheduled_drain_round, 1);
+            assert!(matches!(
+                engine
+                    .continue_processing(ByteMessage::outcomes_builder().build())
+                    .unwrap(),
+                EngineStage::Complete(_)
+            ));
+            assert_eq!(engine.scheduled_drain_round, 2);
+            assert!(engine.get_results().is_ok());
+        }
+    }
+
     #[test]
     fn terminal_feedback_must_drain_newly_ready_tail() {
         use pecos_engines::noise::IntoNoiseModel;

@@ -5,8 +5,7 @@ fn synthetic() -> SeleneRuntime {
     runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
     runtime.set_num_qubits(4);
     runtime.shot_start(17, Some(41)).unwrap();
-    runtime.runtime_to_program_results.insert(901, 7);
-    runtime.leakage_results.insert(7);
+    runtime.runtime_to_program_results.insert(901, (7, true));
     runtime
 }
 
@@ -33,7 +32,7 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
     let mut runtime = synthetic();
     // Explicit capture transports opaque events to a downstream consumer.
     let extracted = runtime
-        .collect_scheduled(|runtime| {
+        .collect_scheduled(false, |runtime| {
             runtime.retain_scheduled_batch(batch())?;
             runtime.retain_scheduled_batch(RuntimeOperationBatch {
                 start_time_nanos: 40,
@@ -71,7 +70,7 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
     );
     assert!(runtime.scheduled_output.is_none());
     let next = runtime
-        .collect_scheduled(|runtime| {
+        .collect_scheduled(false, |runtime| {
             runtime.retain_scheduled_batch(batch())?;
             Ok(vec![])
         })
@@ -100,7 +99,7 @@ fn invalid_batches_do_not_escape_and_failures_require_reset() {
             }),
         }
         let error = runtime
-            .collect_scheduled(|runtime| {
+            .collect_scheduled(false, |runtime| {
                 runtime.retain_scheduled_batch(RuntimeOperationBatch::default())?;
                 runtime.retain_scheduled_batch(bad)?;
                 Ok(vec![])
@@ -158,7 +157,7 @@ fn operation_limit_applies_to_one_native_batch() {
     let mut runtime = synthetic();
     assert!(
         runtime
-            .collect_scheduled(|runtime| {
+            .collect_scheduled(false, |runtime| {
                 runtime.retain_scheduled_batch(RuntimeOperationBatch {
                     operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS + 1],
                     ..Default::default()
@@ -197,7 +196,7 @@ fn preflight_rejects_unsupported_inputs_without_loading_plugin() {
 #[test]
 fn mode_and_clone_isolation_prevent_false_live_snapshots() {
     let mut runtime = synthetic();
-    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
+    runtime.collect_scheduled(false, |_| Ok(vec![])).unwrap();
     assert!(runtime.lower_operations(&[]).is_err());
     assert!(runtime.lower_operations_with_metadata(&[]).is_err());
     let mut cloned = runtime.clone();
@@ -224,7 +223,7 @@ fn mode_and_clone_isolation_prevent_false_live_snapshots() {
 fn caught_unwind_drops_output_and_poison_survives_clone() {
     let mut runtime = synthetic();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runtime.collect_scheduled(|runtime| {
+        runtime.collect_scheduled(false, |runtime| {
             runtime.retain_scheduled_batch(batch())?;
             panic!("synthetic panic");
         })
@@ -317,7 +316,7 @@ fn legacy_execution_must_not_bypass_scheduled_mode() {
     let mut interface = OperationCollector::default();
     interface.operations.push(QuantumOp::X(0).into());
     runtime.load_interface(interface).unwrap();
-    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
+    runtime.collect_scheduled(false, |_| Ok(vec![])).unwrap();
     assert!(
         runtime.execute_until_quantum().is_err(),
         "flat legacy execution was allowed inside a scheduled shot"
@@ -338,7 +337,7 @@ fn scheduled_mode_must_not_follow_legacy_execution() {
         Some(vec![QuantumOp::RXY(std::f64::consts::PI, 0.0, 0)])
     );
     assert!(
-        runtime.collect_scheduled(|_| Ok(vec![])).is_err(),
+        runtime.collect_scheduled(false, |_| Ok(vec![])).is_err(),
         "scheduled extraction was allowed after flat legacy execution"
     );
 }
@@ -346,7 +345,7 @@ fn scheduled_mode_must_not_follow_legacy_execution() {
 #[test]
 fn legacy_terminal_drain_cannot_enter_a_scheduled_session() {
     let mut runtime = synthetic();
-    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
+    runtime.collect_scheduled(false, |_| Ok(vec![])).unwrap();
     assert!(
         runtime
             .drain_pending_operations()
@@ -501,7 +500,7 @@ fn measurement_feedback_invalidates_terminal_drain() {
         .unwrap();
     runtime.drain_pending_scheduled_operations().unwrap();
     runtime
-        .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+        .provide_measurement_outcomes(Vec::from([(0, 0)]))
         .unwrap();
     assert!(
         runtime.shot_end().is_err(),
@@ -509,9 +508,7 @@ fn measurement_feedback_invalidates_terminal_drain() {
     );
     assert!(runtime.shot_start(43, None).is_err());
     runtime.drain_pending_scheduled_operations().unwrap();
-    runtime
-        .provide_measurement_outcomes(BTreeMap::new())
-        .unwrap();
+    runtime.provide_measurement_outcomes(Vec::new()).unwrap();
     runtime.shot_end().unwrap();
 }
 
@@ -535,4 +532,46 @@ fn inactive_scheduled_extraction_does_not_invoke_custom_handler() {
     assert!(error.contains("no scheduled extraction active"), "{error}");
     assert!(!invoked.load(Ordering::SeqCst));
     assert_eq!(runtime.runtime_batch_index, 0);
+}
+
+#[test]
+fn forced_scheduled_accumulation_limits_batches_and_operations() {
+    for (operations, count) in [
+        (0, crate::scheduled::MAX_DRAIN_BATCHES + 1),
+        (
+            MAX_OPERATIONS,
+            crate::scheduled::MAX_DRAIN_OPERATIONS / MAX_OPERATIONS + 1,
+        ),
+    ] {
+        let mut runtime = synthetic();
+        let error = runtime
+            .collect_scheduled(true, |runtime| {
+                for _ in 0..count {
+                    runtime.retain_scheduled_batch(RuntimeOperationBatch {
+                        operations: vec![
+                            RuntimeScheduledOp::Rz {
+                                qubit_id: 0,
+                                theta: 0.0
+                            };
+                            operations
+                        ],
+                        ..Default::default()
+                    })?;
+                }
+                Ok(vec![])
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("aggregate batch/operation budget exceeded"),
+            "{error}"
+        );
+        assert_eq!(
+            runtime
+                .drain_pending_scheduled_operations()
+                .unwrap_err()
+                .to_string(),
+            error
+        );
+    }
 }

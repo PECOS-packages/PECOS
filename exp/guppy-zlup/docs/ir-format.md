@@ -324,6 +324,7 @@ Both arithmetic and comparison operations use `"kind": "binary"`:
   "op": "<",
   "right": {"kind": "literal", "value": 10}
 }
+```
 
 ### Function Call
 

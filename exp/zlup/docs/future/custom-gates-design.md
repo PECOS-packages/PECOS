@@ -76,7 +76,7 @@ current target's definitions.
 - [Noise Model Integration](#noise-model-integration)
 - [Composite Gate Generalization](#composite-gate-generalization)
 - [Compilation Model](#compilation-model)
-- [IDE / Language Server Support](#ide--language-server-support)
+- [IDE / Language Server Support](#ide-language-server-support)
 - [Open Questions](#open-questions)
 
 ---
@@ -1299,6 +1299,8 @@ if (comptime builtin.target.has_gate("ms")) {
     // Use decomposition
 }
 ```
+
+## IDE / Language Server Support
 
 ### How Zig and Rust Handle This
 

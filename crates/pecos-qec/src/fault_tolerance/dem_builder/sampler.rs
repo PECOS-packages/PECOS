@@ -992,6 +992,9 @@ pub struct DemSamplerBuilder<'a> {
     detector_records: Option<Vec<Vec<i32>>>,
     observable_records: Option<Vec<Vec<i32>>>,
     measurement_order: Option<Vec<usize>>,
+    detectors_json: Option<String>,
+    observables_json: Option<String>,
+    observable_records_in_map_order: bool,
     detector_records_abs: Option<Vec<Vec<usize>>>,
     labels: SamplerLabels,
 }
@@ -1008,6 +1011,9 @@ impl<'a> DemSamplerBuilder<'a> {
             detector_records: None,
             observable_records: None,
             measurement_order: None,
+            detectors_json: None,
+            observables_json: None,
+            observable_records_in_map_order: false,
             detector_records_abs: None,
             labels: SamplerLabels::default(),
         }
@@ -1062,6 +1068,9 @@ impl<'a> DemSamplerBuilder<'a> {
         self.output_mode = OutputMode::RawMeasurements;
         self.detector_records = None;
         self.observable_records = None;
+        self.detectors_json = None;
+        self.observables_json = None;
+        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1078,6 +1087,9 @@ impl<'a> DemSamplerBuilder<'a> {
         self.output_mode = OutputMode::DetectorEvents;
         self.detector_records = Some(detector_records);
         self.observable_records = Some(observable_records);
+        self.detectors_json = None;
+        self.observables_json = None;
+        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1086,6 +1098,7 @@ impl<'a> DemSamplerBuilder<'a> {
     pub fn with_detector_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.output_mode = OutputMode::DetectorEvents;
         self.detector_records = Some(records);
+        self.detectors_json = None;
         if self.observable_records.is_none() {
             self.observable_records = Some(Vec::new());
         }
@@ -1096,6 +1109,8 @@ impl<'a> DemSamplerBuilder<'a> {
     #[must_use]
     pub fn with_observable_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.observable_records = Some(records);
+        self.observables_json = None;
+        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1104,11 +1119,15 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed.
-    pub fn with_detectors_json(self, json: &str) -> Result<Self, String> {
-        let records = super::builder::parse_detector_record_vectors(json, self.influence_map)
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using the final measurement order.
+    pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
+        super::builder::validate_sampler_json(json, self.influence_map, true)
             .map_err(|err| err.to_string())?;
-        Ok(self.with_detector_records(records))
+        self.detectors_json = Some(json.to_string());
+        self.output_mode = OutputMode::DetectorEvents;
+        Ok(self)
     }
 
     /// Set observable definitions from JSON.
@@ -1116,12 +1135,15 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed, fails schema validation, or
-    /// references measurements out of range for the circuit.
-    pub fn with_observables_json(self, json: &str) -> Result<Self, String> {
-        let records = super::builder::parse_observable_record_vectors(json, self.influence_map)
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using the final measurement order.
+    pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
+        super::builder::validate_sampler_json(json, self.influence_map, false)
             .map_err(|err| err.to_string())?;
-        Ok(self.with_observable_records(records))
+        self.observables_json = Some(json.to_string());
+        self.observable_records_in_map_order = false;
+        Ok(self)
     }
 
     /// Enable dual output (raw measurements + detector events from same sample).
@@ -1215,7 +1237,10 @@ impl<'a> DemSamplerBuilder<'a> {
             self.detector_records_abs = Some(det_records_abs);
         }
 
-        if !observables.is_empty() && self.observable_records.is_none() {
+        if !observables.is_empty()
+            && self.observable_records.is_none()
+            && self.observables_json.is_none()
+        {
             let num_measurements =
                 i32::try_from(self.influence_map.measurements.len()).map_err(|_| {
                     DetectorValidationError::InvalidMetadata {
@@ -1248,6 +1273,7 @@ impl<'a> DemSamplerBuilder<'a> {
             }
             let records = records;
             self.observable_records = Some(records);
+            self.observable_records_in_map_order = true;
         }
 
         let observable_labels: Vec<Option<String>> =
@@ -1286,48 +1312,84 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Returns an error if detector definitions reference non-deterministic
     /// measurements or are not linearly independent over `Z_2`, or
     /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
-    pub fn build(self) -> Result<DemSampler, DetectorValidationError> {
-        // A supplied measurement order must cover every measurement, otherwise
-        // detector/observable record offsets validated against the circuit's
-        // measurement count would resolve in a different (shorter/longer) frame
-        // at sample time and silently misbind. (See sampler-JSON validation.)
-        if let Some(ref order) = self.measurement_order {
-            // A supplied order feeds the qubit-occurrence heuristic, which
-            // needs per-qubit chronology on both sides. Minted (positional)
-            // ids keep it; external non-positional ids can reorder a qubit's
-            // measurements in the map, and the caller's record order is then
-            // not recoverable.
-            let n = self.influence_map.meas_ids.len();
-            let mut seen = vec![false; n];
-            let positional = self
-                .influence_map
-                .meas_ids
-                .iter()
-                .all(|mid| seen.get_mut(mid.index()).map(|slot| *slot = true).is_some())
-                && seen.into_iter().all(|s| s);
-            if !positional {
-                return Err(DetectorValidationError::InvalidMetadata {
-                    message: "measurement_order cannot be combined with a circuit \
-                              whose stable MeasIds are non-positional; the \
-                              caller's record order is not recoverable"
-                        .to_string(),
-                });
+    /// Invalid record ranges and incomplete measurement orders are errors.
+    /// On an empty map, record bounds and order coverage are not checked;
+    /// detector independence and other configuration checks still apply.
+    pub fn build(mut self) -> Result<DemSampler, DetectorValidationError> {
+        let im_to_tc = super::builder::sampler_measurement_mapping(
+            self.influence_map,
+            self.measurement_order.as_deref(),
+        )
+        .map_err(|error| match error {
+            super::DemBuilderError::ParseError(message)
+            | super::DemBuilderError::ConfigurationError(message) => {
+                DetectorValidationError::InvalidMetadata { message }
             }
-            let expected = self.influence_map.measurements.len();
-            if order.len() != expected {
-                return Err(DetectorValidationError::InvalidMetadata {
-                    message: format!(
-                        "measurement_order has {} entries but the circuit performs \
-                         {expected} measurement(s); a measurement order must cover \
-                         every measurement so record offsets resolve in the same frame",
-                        order.len()
-                    ),
-                });
+            other => other.into(),
+        })?;
+        if let Some(json) = &self.detectors_json {
+            self.detector_records = Some(super::builder::parse_detector_record_vectors(
+                json,
+                self.influence_map,
+                im_to_tc.as_deref(),
+            )?);
+        }
+        if let Some(json) = &self.observables_json {
+            self.observable_records = Some(super::builder::parse_observable_record_vectors(
+                json,
+                self.influence_map,
+                im_to_tc.as_deref(),
+            )?);
+        }
+        let num_measurements = self.influence_map.measurements.len();
+        if self.observable_records_in_map_order
+            && let Some(mapping) = &im_to_tc
+        {
+            for records in self.observable_records.iter_mut().flatten() {
+                for record in records {
+                    let im =
+                        super::types::record_offset_to_absolute_index(num_measurements, *record)
+                            .and_then(|index| mapping.get(index))
+                            .ok_or_else(|| DetectorValidationError::InvalidMetadata {
+                                message: format!("record offset {record} is out of range"),
+                            })?;
+                    *record = i32::try_from(*im).map_err(|_| {
+                        DetectorValidationError::InvalidMetadata {
+                            message: format!("resolved measurement index {im} exceeds i32 range"),
+                        }
+                    })?;
+                }
             }
         }
+        super::builder::validate_sampler_records(
+            "Detector",
+            self.detector_records.as_deref().unwrap_or_default(),
+            num_measurements,
+        )?;
+        super::builder::validate_sampler_records(
+            "Observable",
+            self.observable_records.as_deref().unwrap_or_default(),
+            num_measurements,
+        )?;
+        if num_measurements != 0
+            && let Some(records) = &self.detector_records_abs
+        {
+            for (id, records) in records.iter().enumerate() {
+                for &index in records {
+                    if index >= num_measurements {
+                        return Err(DetectorValidationError::InvalidMetadata {
+                            message: format!(
+                                "Detector {id} references record offset {index}, which is out of range for a circuit with {num_measurements} measurement(s)"
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
         match self.output_mode {
             OutputMode::RawMeasurements => self.build_raw(),
-            OutputMode::DetectorEvents => self.build_detector(),
+            OutputMode::DetectorEvents => self.build_detector(im_to_tc.as_deref()),
         }
     }
 
@@ -1402,13 +1464,22 @@ impl<'a> DemSamplerBuilder<'a> {
     ///
     /// Validates detector definitions, then uses `DemSamplerBuilder` to build
     /// the mechanism table in detector coordinates.
-    fn build_detector(self) -> Result<DemSampler, DetectorValidationError> {
+    fn build_detector(
+        self,
+        im_to_tc: Option<&[usize]>,
+    ) -> Result<DemSampler, DetectorValidationError> {
         use super::dem_sampler::SamplingEngineBuilder;
 
         let num_measurements = self.influence_map.measurements.len();
 
         // Validate: check which measurements are deterministic (before partial move)
-        let deterministic = self.compute_deterministic_mask();
+        let mut deterministic = self.compute_deterministic_mask();
+        if let Some(mapping) = im_to_tc {
+            let map_mask = deterministic.clone();
+            for (im, &tc) in mapping.iter().enumerate() {
+                deterministic[tc] = map_mask[im];
+            }
+        }
 
         let detector_records = self.detector_records.unwrap_or_default();
         let observable_records = self.observable_records.unwrap_or_default();

@@ -114,8 +114,13 @@ impl<'a> MemBuilder<'a> {
         let num_measurements = self.influence_map.measurements.len();
         let mut mem = MeasurementNoiseModel::new(num_measurements);
 
-        if let Some(ref tc_order) = self.measurement_order {
-            mem.set_measurement_order(self.compute_im_to_tc_mapping(tc_order));
+        // The shared validated mapping: an order that does not cover every map
+        // measurement is an error, never a silent bind to TC index 0.
+        if let Some(im_to_tc) = super::builder::sampler_measurement_mapping(
+            self.influence_map,
+            self.measurement_order.as_deref(),
+        )? {
+            mem.set_measurement_order(im_to_tc);
         }
 
         let locations = &self.influence_map.locations;
@@ -187,33 +192,6 @@ impl<'a> MemBuilder<'a> {
         }
 
         Ok(mem)
-    }
-
-    fn compute_im_to_tc_mapping(&self, tc_order: &[usize]) -> Vec<usize> {
-        let im_measurements = &self.influence_map.measurements;
-        let mut tc_indices_by_qubit: std::collections::BTreeMap<usize, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (tc_idx, &qubit) in tc_order.iter().enumerate() {
-            tc_indices_by_qubit.entry(qubit).or_default().push(tc_idx);
-        }
-
-        let mut im_indices_by_qubit: std::collections::BTreeMap<usize, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (im_idx, &(_node, qubit, _basis)) in im_measurements.iter().enumerate() {
-            im_indices_by_qubit.entry(qubit).or_default().push(im_idx);
-        }
-
-        let mut im_to_tc = vec![0; im_measurements.len()];
-        for (qubit, im_indices) in &im_indices_by_qubit {
-            if let Some(tc_indices) = tc_indices_by_qubit.get(qubit) {
-                for (i, &im_idx) in im_indices.iter().enumerate() {
-                    if let Some(&tc_idx) = tc_indices.get(i) {
-                        im_to_tc[im_idx] = tc_idx;
-                    }
-                }
-            }
-        }
-        im_to_tc
     }
 
     fn process_single_pauli_fault(

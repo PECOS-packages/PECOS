@@ -18,9 +18,10 @@ on:
       - 'crates/pecos-cuquantum/**'
       - 'crates/pecos-cuquantum-sys/**'
       - 'python/pecos-rslib-cuda/**'
-      # Where an eager import would break the CUDA import-laziness contract.
-      - 'python/quantum-pecos/src/pecos/__init__.py'
-      - 'python/quantum-pecos/src/pecos/simulators/**'
+      # `import pecos` imports much of the package eagerly (pecos.engines and more), so
+      # an eager CUDA import anywhere here could break the import-laziness contract.
+      - 'python/quantum-pecos/src/pecos/**'
+      - 'python/pecos-rslib/pecos_rslib/**'
       - 'python/quantum-pecos/tests/pecos/test_native_extension_import_laziness.py'
       - '.github/workflows/cuda-build-check.yml'
   pull_request:
@@ -29,9 +30,10 @@ on:
       - 'crates/pecos-cuquantum/**'
       - 'crates/pecos-cuquantum-sys/**'
       - 'python/pecos-rslib-cuda/**'
-      # Where an eager import would break the CUDA import-laziness contract.
-      - 'python/quantum-pecos/src/pecos/__init__.py'
-      - 'python/quantum-pecos/src/pecos/simulators/**'
+      # `import pecos` imports much of the package eagerly (pecos.engines and more), so
+      # an eager CUDA import anywhere here could break the import-laziness contract.
+      - 'python/quantum-pecos/src/pecos/**'
+      - 'python/pecos-rslib/pecos_rslib/**'
       - 'python/quantum-pecos/tests/pecos/test_native_extension_import_laziness.py'
       - '.github/workflows/cuda-build-check.yml'
   workflow_dispatch:
@@ -130,6 +132,11 @@ jobs:
       LLVM_VERSION: "21.1"
       LLVM_RELEASE_VERSION: "21.1.8"
       PYTHONUTF8: 1
+      # rust-cache hashes these into its keys; match python-test.yml so the shared
+      # `python-core` cache it saves is found here.
+      CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "10"
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -182,7 +189,9 @@ jobs:
         run: just python-ci-build-test
 
       - name: Build pecos-rslib-cuda without the CUDA SDK
-        run: uv run --frozen --package pecos-rslib-cuda maturin develop --uv --locked --manifest-path python/pecos-rslib-cuda/Cargo.toml
+        # --no-sync: uv would otherwise build and install a release copy of this
+        # workspace member first, which maturin then rebuilds and replaces.
+        run: uv run --frozen --no-sync maturin develop --uv --locked --manifest-path python/pecos-rslib-cuda/Cargo.toml
 
       - name: Require the stub build
         # If the SDK ever appeared on this runner, the tests below would take the

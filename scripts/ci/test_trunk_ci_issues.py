@@ -66,8 +66,10 @@ def run_object(
     created: str = RECENT,
     number: int = 1,
     attempt: int = 1,
+    workflow: str = "rust-test.yml",
 ) -> dict:
     return {
+        "path": f".github/workflows/{workflow}",
         "run_attempt": attempt,
         "conclusion": conclusion,
         "status": status,
@@ -90,16 +92,12 @@ def nightly_api(workflow: str) -> list[str]:
     return ["api", f"{BASE}/actions/workflows/{workflow}/runs?branch=dev&event=schedule&per_page=1&page=1"]
 
 
-def tags_api(workflow: str, tag: str = "py-1.2.3", page: int = 1) -> list[str]:
-    return branch_api(workflow, quote(tag, safe=""), page)
+def tags_api(tag: str, page: int = 1) -> list[str]:
+    return ["api", f"{BASE}/actions/runs?branch={quote(tag, safe='')}&event=push&per_page=100&page={page}"]
 
 
 def refs_api(prefix: str) -> list[str]:
     return ["api", "--paginate", f"{BASE}/git/matching-refs/tags/{prefix}", "--jq", '.[].ref | ltrimstr("refs/tags/")']
-
-
-def recent_tag_api(tag: str) -> list[str]:
-    return ["api", f"{BASE}/actions/runs?branch={quote(tag, safe='')}&event=push&created=%3E%3D{SINCE}&per_page=1"]
 
 
 def title_for(workflow: str, branch: str = "dev", *, kind: str = "push") -> str:
@@ -207,18 +205,23 @@ class Tracker:
         self.tag_run_dates.update(dates)
         for prefix in ("py-", "jl-", "rs-"):
             self.answer(refs_api(prefix), "\n".join(tag for tag in self.tag_run_dates if tag.startswith(prefix)))
-        for tag, date in self.tag_run_dates.items():
-            self.runs(recent_tag_api(tag), [run_object(branch=tag, created=date)] if date >= SINCE else [])
-            for workflow in WORKFLOWS:
-                self.responses.setdefault(
-                    json.dumps(tags_api(workflow, tag)),
-                    {"stdout": '{"workflow_runs": []}', "code": 0},
-                )
+        for tag, date in dates.items():
+            placeholder = run_object(branch=tag, created=date, workflow="unwatched.yml")
+            self.responses.setdefault(
+                json.dumps(tags_api(tag)),
+                {
+                    "stdout": json.dumps({"workflow_runs": [placeholder]}),
+                    "code": 0,
+                },
+            )
 
     def tag_runs(self, workflow: str, runs: list[dict]) -> None:
         tag = runs[0]["head_branch"]
-        self.tags({tag: RECENT})
-        self.runs(tags_api(workflow, tag), runs)
+        self.tags({tag: runs[0]["created_at"]})
+        path = f".github/workflows/{workflow}"
+        existing = json.loads(self.responses[json.dumps(tags_api(tag))]["stdout"])["workflow_runs"]
+        retained = [run for run in existing if run["path"] not in (path, ".github/workflows/unwatched.yml")]
+        self.runs(tags_api(tag), retained + [{**run, "path": path} for run in runs])
 
     def calls(self, filename: str = "calls.bin") -> list[list[str]]:
         path = self.folder / filename
@@ -436,11 +439,11 @@ def test_tag_discovery_latest_completed_and_independent_tags(tracker: Tracker) -
     tracker.tag_runs(workflow, [green, run_object("failure", branch="rs-1.2.3")])
     tracker.tag_runs(workflow, [red, run_object(branch="jl-1.2.3")])
     # gh --paginate applies --jq to every page. A duplicate ref across pages
-    # must still probe recent runs once and reconcile each workflow/tag once.
+    # must still list runs once and reconcile each workflow/tag once.
     tracker.answer(refs_api("rs-"), "rs-1.2.3\nrs-1.2.3\n")
     tracker.issues(title_for(workflow, "rs-1.2.3", kind="release"))
     tracker.check([red_create(workflow, red, kind="release"), green_close(workflow, green)])
-    assert tracker.api_calls().count(recent_tag_api("rs-1.2.3")) == 1
+    assert tracker.api_calls().count(tags_api("rs-1.2.3")) == 1
 
 
 @pytest.mark.parametrize(
@@ -463,7 +466,7 @@ def test_api_failure_isolated(tracker: Tracker, failure: str) -> None:
         tracker.answer(nightly_api(workflow), code=1)
     elif failure == "tags":
         tracker.tags({"py-1.2.3": RECENT})
-        tracker.answer(tags_api(workflow), code=1)
+        tracker.answer(tags_api("py-1.2.3"), code=1)
     elif failure == "create":
         tracker.answer(expected[0], code=1)
     elif failure == "close":
@@ -503,7 +506,7 @@ def test_no_qualifying_runs_leave_issues_open(tracker: Tracker) -> None:
 def test_push_page_failure_still_reconciles_same_branch_nightly(tracker: Tracker) -> None:
     workflow = "rust-test.yml"
     nightly = run_object("failure", event="schedule")
-    tracker.branch_runs(workflow, [run_object("skipped"), nightly])
+    tracker.branch_runs(workflow, [run_object("skipped")] * 100 + [nightly])
     tracker.answer(branch_api(workflow, page=2), code=1)
     tracker.check([red_create(workflow, nightly, kind="schedule")], code=1)
 
@@ -524,22 +527,35 @@ def test_cancelled_nightly_is_red_for_superseded_workflow(tracker: Tracker, work
     tracker.check([red_create(workflow, cancelled, kind="schedule")])
 
 
-@pytest.mark.parametrize("recent", [False, True])
-def test_api_budget(tracker: Tracker, recent: bool) -> None:
-    # Reserve capacity for 21 workflows (currently 20), with 25 old refs:
-    # 21 * (1 metadata + 1 branch * 2 classes) + 3 refs + 25 recency probes
-    # + 2 freshness reads + 1 code-scanning read = 94 REST API calls.
-    # One additional recent tag costs 1 probe + 21 workflow reads: 116.
-    # At the observed peak of 7 runs/hour: 7 * 94 = 658, or 7 * 116 = 812,
-    # versus 7 * 136 = 952 before. GITHUB_TOKEN's 1,000/hour is shared:
-    # allow room for issue inventory/mutations and other workflows too.
-    # Exact unfiltered queries let the event= mutant traverse history, so
-    # the numeric budget assertion detects the extra calls.
+@pytest.mark.parametrize("recent_count", [0, 1, 3])
+def test_api_budget(tracker: Tracker, recent_count: int) -> None:
+    # Reserve capacity for 21 workflows (currently 20). Each tag fits one page:
+    # 21 * (1 metadata + 1 branch * 2 classes) + 3 ref listings
+    # + (25 old + 3 recent + 2 aged-out issue tags) repository run listings
+    # + 2 freshness + 1 code-scanning + 2 issues * (1 body + 1 comments) = 103.
+    # At 7 runs/hour: 7 * 103 = 721 of the shared 1,000 REST calls/hour,
+    # including issue_text reads. Inventory/mutations are gh issue commands;
+    # these issues already contain their failure URLs, so no mutations occur.
+    # With today's 20 workflows the peak fixture is 100 calls, or 700/hour.
+    # Exact unfiltered queries retain the event= mutation budget guard.
     capacity = 21
     assert len(WORKFLOWS) <= capacity
     tracker.tags({f"{('py-', 'jl-', 'rs-')[i % 3]}old-{i}": ANCIENT for i in range(25)})
-    if recent:
-        tracker.tags({"py-1.2.3": RECENT})
+    for index in range(recent_count):
+        tag = f"py-0.9.0.dev{index}"
+        tracker.tags({tag: RECENT})
+        tracker.runs(tags_api(tag), [run_object(branch=tag, workflow=workflow) for workflow in WORKFLOWS])
+    aged_tags = ["py-aged-out", "jl-aged-out"]
+    old_red = [
+        run_object("failure", branch=tag, created=ANCIENT, number=index + 1) for index, tag in enumerate(aged_tags)
+    ]
+    # These tags have no refs, so only the open issue inventory discovers them.
+    for tag, red in zip(aged_tags, old_red, strict=True):
+        tracker.runs(tags_api(tag), [red])
+    tracker.issues(
+        *(title_for("rust-test.yml", tag, kind="release") for tag in aged_tags),
+        body="\n".join(run["html_url"] for run in old_red),
+    )
     for workflow in WORKFLOWS:
         tracker.runs(branch_api(workflow), [] if workflow == "nightly.yml" else [run_object()])
         if workflow in DAILY:
@@ -551,13 +567,12 @@ def test_api_budget(tracker: Tracker, recent: bool) -> None:
             if workflow == "dependency-integrity-check.yml" and page == 1:
                 history[0] = run_object(event="schedule")
             tracker.runs(legacy, history if page <= 3 else [])
-        if recent:
-            tracker.runs(tags_api(workflow), [run_object(branch="py-1.2.3")])
     tracker.check([])
     count = len(tracker.api_calls())
-    bound = capacity * 3 + 3 + 25 + 2 + 1 + (1 + capacity if recent else 0)
+    bound = capacity * 3 + 3 + 25 + recent_count + 2 + 2 + 1 + 4
     assert count <= bound, f"API budget exceeded: {count} > {bound}"
-    assert count == len(WORKFLOWS) * 3 + 31 + (1 + len(WORKFLOWS) if recent else 0)
+    assert count == len(WORKFLOWS) * 3 + 37 + recent_count
+    assert sum("/issues/" in " ".join(call) for call in tracker.api_calls()) == 4
 
 
 @pytest.mark.parametrize("date", [ANCIENT, SINCE, RECENT, "2026-10-09T13:00:00Z"])
@@ -565,33 +580,33 @@ def test_tag_run_time_window(tracker: Tracker, date: str) -> None:
     workflow = "rust-test.yml"
     tag = "rs-1.2.3"
     tracker.tags({tag: date})
-    red = run_object("failure", branch=tag)
-    tracker.runs(tags_api(workflow, tag), [red])
+    red = run_object("failure", branch=tag, created=date)
+    tracker.runs(tags_api(tag), [red])
     tracker.check([red_create(workflow, red, kind="release")] if date >= SINCE else [])
-    assert tracker.api_calls().count(recent_tag_api(tag)) == 1
-    assert (tags_api(workflow, tag) in tracker.api_calls()) == (date >= SINCE)
+    assert tracker.api_calls().count(tags_api(tag)) == 1
 
 
-@pytest.mark.parametrize("failure", ["refs", "recency", "json", "runs"])
+@pytest.mark.parametrize("failure", ["refs", "runs", "json", "page"])
 def test_tag_discovery_and_read_failure_isolated(tracker: Tracker, failure: str) -> None:
     workflow = "pre-commit.yml"
     tracker.tags({"py-1.2.3": RECENT, "jl-1.2.3": RECENT})
     if failure == "refs":
         tracker.answer(refs_api("py-"), code=1)
-    elif failure == "recency":
-        tracker.answer(recent_tag_api("py-1.2.3"), code=1)
+    elif failure == "runs":
+        tracker.answer(tags_api("py-1.2.3"), code=1)
     elif failure == "json":
-        tracker.answer(recent_tag_api("py-1.2.3"), "invalid JSON")
+        tracker.answer(tags_api("py-1.2.3"), "invalid JSON")
     else:
-        tracker.answer(tags_api(workflow), code=1)
+        tracker.runs(tags_api("py-1.2.3"), [run_object(None, branch="py-1.2.3", status="in_progress")] * 100)
+        tracker.answer(tags_api("py-1.2.3", page=2), code=1)
     red = run_object("failure")
-    tag = run_object("failure", branch="jl-1.2.3", number=2)
+    tag = run_object("failure", branch="jl-1.2.3", number=2, workflow=workflow)
     tracker.runs(branch_api(workflow), [red])
-    tracker.runs(tags_api(workflow, "jl-1.2.3"), [tag])
+    tracker.runs(tags_api("jl-1.2.3"), [tag])
     tracker.check([red_create(workflow, red), red_create(workflow, tag, kind="release")], code=1)
 
 
-def test_tag_name_encoded_for_recency_and_workflow_queries(tracker: Tracker) -> None:
+def test_tag_name_encoded_for_repository_query(tracker: Tracker) -> None:
     workflow = "rust-test.yml"
     tag = "py-release/1.2.3+build#1&x"
     red = run_object("failure", branch=tag)
@@ -679,17 +694,20 @@ def test_active_rerun_blocks_older_result_but_first_attempt_does_not(
     workflow = "python-release.yml"
     branch = "py-1.2.3" if kind == "release" else "dev"
     event = "schedule" if kind == "schedule" else "push"
-    active = run_object(None, branch=branch, event=event, status=status, attempt=attempt, number=2)
-    older = run_object(branch=branch, event=event)
+    active = run_object(None, branch=branch, event=event, status=status, attempt=attempt, number=2, workflow=workflow)
+    older = run_object(branch=branch, event=event, workflow=workflow)
     if kind == "release":
         tracker.tags({branch: RECENT})
     # An ignored first attempt on a previous page must not hide the rerun barrier.
     if paged:
+        query = tags_api(branch) if kind == "release" else branch_api(workflow, event=event)
         tracker.runs(
-            branch_api(workflow, branch, event=event),
-            [run_object(None, branch=branch, event=event, status="in_progress", number=3)] * 100,
+            query,
+            [run_object(None, branch=branch, event=event, status="in_progress", number=3, workflow=workflow)] * 100,
         )
-    tracker.runs(branch_api(workflow, branch, page=2 if paged else 1, event=event), [active, older])
+    page = 2 if paged else 1
+    query = tags_api(branch, page) if kind == "release" else branch_api(workflow, page=page, event=event)
+    tracker.runs(query, [active, older])
     tracker.issues(title_for(workflow, branch, kind=kind), body=f"Previously red: {active['html_url']}")
     tracker.check([green_close(workflow, older)] if attempt == 1 else [])
 
@@ -699,9 +717,8 @@ def test_old_commit_with_recent_tag_run_is_checked(tracker: Tracker) -> None:
     red = run_object("failure", branch="rs-old-commit")
     red["head_commit"] = {"id": red["head_sha"], "timestamp": ANCIENT}
     tracker.tag_runs(workflow, [red])
-    tracker.runs(recent_tag_api(red["head_branch"]), [red])
     tracker.check([red_create(workflow, red, kind="release")])
-    assert tracker.api_calls().count(recent_tag_api(red["head_branch"])) == 1
+    assert tracker.api_calls().count(tags_api(red["head_branch"])) == 1
 
 
 @pytest.mark.parametrize("ref_exists", [False, True])
@@ -712,7 +729,7 @@ def test_aged_out_tag_with_open_issue_still_closes(tracker: Tracker, ref_exists:
     tracker.tags({tag: ANCIENT})
     if not ref_exists:
         tracker.answer(refs_api("rs-"), "")
-    tracker.runs(tags_api(workflow, tag), [green])
+    tracker.runs(tags_api(tag), [green])
     tracker.issues(title_for(workflow, tag, kind="release"))
     tracker.check([green_close(workflow, green)])
 
@@ -726,3 +743,78 @@ def test_release_issue_creation_failure_still_reconciles_other_workflows(tracker
     later = run_object("failure", number=2)
     tracker.runs(branch_api("pre-commit.yml"), [later])
     tracker.check([failed, red_create("pre-commit.yml", later)], code=1)
+
+
+def test_aged_tag_issue_with_on_in_workflow_display_name(tracker: Tracker) -> None:
+    workflow = "rust-test.yml"
+    name = "Build on push"
+    tag = "rs-aged-out"
+    green = run_object(branch=tag, created=ANCIENT, workflow=workflow)
+    tracker.answer(["api", f"{BASE}/actions/workflows/{workflow}", "--jq", ".name"], name)
+    tracker.runs(tags_api(tag), [green])
+    tracker.issues(title_for(name, tag, kind="release"))
+    tracker.check([green_close(name, green)])
+    assert tracker.api_calls().count(tags_api(tag)) == 1
+
+
+@pytest.mark.parametrize("kind", ["push", "schedule", "release"])
+@pytest.mark.parametrize("conclusion", ["success", "failure"])
+def test_completed_run_before_older_rerun_decides(tracker: Tracker, kind: str, conclusion: str) -> None:
+    workflow = "python-release.yml"
+    event = "schedule" if kind == "schedule" else "push"
+    branch = "py-1.2.3" if kind == "release" else "dev"
+    first_attempt = run_object(None, branch=branch, event=event, status="in_progress", number=3)
+    completed = run_object(conclusion, branch=branch, event=event, number=2)
+    rerun = run_object(None, branch=branch, event=event, status="in_progress", attempt=2)
+    if kind == "release":
+        tracker.tag_runs(workflow, [first_attempt, completed, rerun])
+    else:
+        tracker.runs(branch_api(workflow, event=event), [first_attempt, completed, rerun])
+    tracker.issues(title_for(workflow, branch, kind=kind), body="old failure")
+    tracker.check(
+        (
+            [green_close(workflow, completed)]
+            if conclusion == "success"
+            else [["issue", "comment", "42", "--body", f"Still red. {summary(workflow, completed)}"]]
+        ),
+    )
+
+
+@pytest.mark.parametrize("kind", ["push", "schedule", "release"])
+def test_short_page_without_qualifying_runs_does_not_page(tracker: Tracker, kind: str) -> None:
+    workflow = "rust-test.yml"
+    event = "schedule" if kind == "schedule" else "push"
+    branch = "rs-1.2.3" if kind == "release" else "dev"
+    active = run_object(None, branch=branch, event=event, status="in_progress")
+    if kind == "release":
+        tracker.tag_runs(workflow, [active] * 99)
+    else:
+        tracker.runs(branch_api(workflow, event=event), [active] * 99)
+    tracker.issues(title_for(workflow, branch, kind=kind))
+    # No second-page fixture: an unnecessary request is unexpected and fatal.
+    tracker.check([])
+
+
+def test_repository_tag_runs_are_isolated_by_workflow_path(tracker: Tracker) -> None:
+    tag = "py-1.2.3"
+    red = run_object("failure", branch=tag, workflow="python-release.yml", number=2)
+    green = run_object(branch=tag, workflow="rust-test.yml")
+    foreign = run_object(None, branch=tag, workflow="unwatched.yml", status="in_progress", attempt=2, number=3)
+    tracker.tags({tag: RECENT})
+    tracker.runs(tags_api(tag), [foreign, red, green])
+    tracker.issues(title_for("rust-test.yml", tag, kind="release"))
+    tracker.check([red_create("python-release.yml", red, kind="release"), green_close("rust-test.yml", green)])
+    assert tracker.api_calls().count(tags_api(tag)) == 1
+
+
+@pytest.mark.parametrize("qualifies", [False, True])
+def test_tag_pages_preserve_workflow_results_and_stop_at_short_page(tracker: Tracker, qualifies: bool) -> None:
+    tag = "py-1.2.3"
+    tracker.tags({tag: RECENT})
+    foreign = run_object(branch=tag, workflow="unwatched.yml")
+    tracker.runs(tags_api(tag), [foreign] * 100)
+    red = run_object("failure", branch=tag, workflow="rust-test.yml", number=2)
+    tracker.runs(tags_api(tag, page=2), [red] if qualifies else [foreign])
+    tracker.check([red_create("rust-test.yml", red, kind="release")] if qualifies else [])
+    assert tracker.api_calls().count(tags_api(tag)) == 1
+    assert tracker.api_calls().count(tags_api(tag, page=2)) == 1

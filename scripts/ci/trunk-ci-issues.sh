@@ -60,6 +60,7 @@ nightly_cutoff=$((now - 36 * 60 * 60))
 release_cutoff=$((now - 14 * 24 * 60 * 60))
 release_since="$(date -u -d "@${release_cutoff}" +%Y-%m-%dT%H:%M:%SZ)"
 recent_tags=()
+declare -A release_runs=()
 
 status=0
 open_issues="$(gh issue list --state open --label bug --limit 1000 --json number,title)"
@@ -139,7 +140,10 @@ check_class() {
           or (.status == "completed" and .conclusion != "skipped" and .conclusion != "neutral"
             and (($skip_cancelled | not) or .conclusion != "cancelled"))))]
       | first // empty' <<<"$runs")" || return 1
-    [ -n "$run" ] || continue
+    if [ -z "$run" ]; then
+      [ "$count" -eq 100 ] || return 0
+      continue
+    fi
     run_status="$(jq -r .status <<<"$run")" || return 1
     [ "$run_status" = completed ] || return 0
     title="Trunk CI red: ${name} on ${branch}"
@@ -178,11 +182,24 @@ The 36-hour backstop detects dropped daily schedules. This issue closes itself w
   fi
 }
 
+read_tag_runs() {
+  local tag="$1" encoded_tag page runs count pages=""
+  encoded_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')" || return 1
+  # One repository listing serves recency and every workflow. Preserve page
+  # order so an older rerun cannot hide a newer completed result.
+  for ((page = 1; ; page++)); do
+    runs="$(gh api "repos/{owner}/{repo}/actions/runs?branch=${encoded_tag}&event=push&per_page=100&page=${page}")" || return 1
+    count="$(jq '.workflow_runs | length' <<<"$runs")" || return 1
+    pages+="${runs}"$'\n'
+    [ "$count" -eq 100 ] || break
+  done
+  jq -cs '[.[].workflow_runs[]]' <<<"$pages"
+}
+
 discover_tags() {
-  local prefix tags tag encoded_tag runs
-  local -A seen=() included=()
-  # Discover once for the entire tracker. CI run time matters: new release
-  # tags can point to old commits. Old history must not multiply workflow reads.
+  local prefix tags tag runs recent
+  local -a candidates=()
+  local -A seen=() issue_tags=()
   for prefix in py- jl- rs-; do
     if ! tags="$(gh api --paginate "repos/{owner}/{repo}/git/matching-refs/tags/${prefix}" \
       --jq '.[].ref | ltrimstr("refs/tags/")')"; then
@@ -194,65 +211,61 @@ discover_tags() {
       [ -n "$tag" ] || continue
       [ -z "${seen[$tag]:-}" ] || continue
       seen["$tag"]=1
-      encoded_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')"
-      if ! runs="$(gh api "repos/{owner}/{repo}/actions/runs?branch=${encoded_tag}&event=push&created=%3E%3D${release_since}&per_page=1")"; then
-        echo "::error::cannot read recent runs for release tag ${tag}"
-        status=1
-        continue
-      fi
-      if ! runs="$(jq '.workflow_runs | length' <<<"$runs")"; then
-        echo "::error::invalid runs for release tag ${tag}"
-        status=1
-        continue
-      fi
-      if [ "$runs" -gt 0 ] && [ -z "${included[$tag]:-}" ]; then
-        included["$tag"]=1
-        recent_tags+=("$tag")
-      fi
+      candidates+=("$tag")
     done <<<"$tags"
   done
   # Open issues outlive the discovery window, even if a tag ref was deleted.
+  # Workflow names may contain " on "; tag names cannot contain spaces.
   tags="$(jq -r '[.[] | .title | select(startswith("Release tag CI red: "))
     | capture("^Release tag CI red: .+ on (?<tag>.+)$").tag] | unique[]' <<<"$open_issues")"
   while IFS= read -r tag; do
     [ -n "$tag" ] || continue
-    [ -z "${included[$tag]:-}" ] || continue
-    included["$tag"]=1
-    recent_tags+=("$tag")
+    issue_tags["$tag"]=1
+    [ -z "${seen[$tag]:-}" ] || continue
+    seen["$tag"]=1
+    candidates+=("$tag")
   done <<<"$tags"
+  for tag in "${candidates[@]}"; do
+    if ! runs="$(read_tag_runs "$tag")"; then
+      echo "::error::cannot list release tag runs for ${tag}"
+      status=1
+      continue
+    fi
+    # API created_at timestamps and release_since use the same UTC ISO format.
+    if ! recent="$(jq --arg cutoff "$release_since" 'any(.[]; .created_at >= $cutoff)' <<<"$runs")"; then
+      echo "::error::cannot determine recency for release tag ${tag}"
+      status=1
+      continue
+    fi
+    if [ "$recent" = true ] || [ -n "${issue_tags[$tag]:-}" ]; then
+      recent_tags+=("$tag")
+      release_runs["$tag"]="$runs"
+    fi
+  done
 }
 
 check_tags() {
-  local workflow="$1" name="$2" runs run tag encoded_tag title page count run_status
+  local workflow="$1" name="$2" run tag title run_status
   local result=0
   for tag in "${recent_tags[@]}"; do
-    encoded_tag="$(jq -rn --arg tag "$tag" '$tag | @uri')" || return 1
-    # Skip first attempts in flight, but an active rerun blocks older results.
+    # Repository results mix workflows. Filter by file, then skip first attempts
+    # in flight; an active rerun blocks older results only for this workflow.
     # Skipped/neutral leave the issue alone; cancellation is always red here.
-    for ((page = 1; ; page++)); do
-      if ! runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${encoded_tag}&event=push&per_page=100&page=${page}")"; then
-        echo "::error::cannot list runs of ${workflow} on release tag ${tag}"
-        result=1
-        break
-      fi
-      if ! count="$(jq '.workflow_runs | length' <<<"$runs")" || ! run="$(jq -c '
-        [.workflow_runs[] | select(.event == "push"
-          and (.status == "completed" or (.run_attempt // 1) > 1))]
-        | first // empty' <<<"$runs")"; then
-        result=1
-        break
-      fi
-      [ "$count" -gt 0 ] || break
-      [ -n "$run" ] || continue
-      if ! run_status="$(jq -r .status <<<"$run")"; then
-        result=1
-        break
-      fi
-      [ "$run_status" = completed ] || break
-      title="Release tag CI red: ${name} on ${tag}"
-      reconcile_run "$name" "$tag" "$title" "$run" release || result=1
-      break
-    done
+    if ! run="$(jq -c --arg path ".github/workflows/${workflow}" '
+      [.[] | select(.path == $path and .event == "push"
+        and (.status == "completed" or (.run_attempt // 1) > 1))]
+      | first // empty' <<<"${release_runs[$tag]}")"; then
+      result=1
+      continue
+    fi
+    [ -n "$run" ] || continue
+    if ! run_status="$(jq -r .status <<<"$run")"; then
+      result=1
+      continue
+    fi
+    [ "$run_status" = completed ] || continue
+    title="Release tag CI red: ${name} on ${tag}"
+    reconcile_run "$name" "$tag" "$title" "$run" release || result=1
   done
   return "$result"
 }

@@ -41,8 +41,12 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish a started build: cancelling it on each merge threw away 49-minute
+  # Intel and 27-minute arm macOS builds. A newer push still replaces an older
+  # pending one. A manual dispatch gets its own group so a merge cannot drop it
+  # while it waits.
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -505,7 +509,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.12', '3.13', '3.14']
         platform:
           - runner: ubuntu-latest
             os: ubuntu-latest
@@ -533,11 +536,6 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.inputs.sha || github.sha }}
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Download pecos-rslib abi3 wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -550,9 +548,48 @@ jobs:
           name: wheel-pecos-rslib-llvm-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-llvm-wheel
 
-      - name: Test abi3 wheels with Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Test abi3 wheels with Python 3.12
         run: |
-          echo "Testing abi3 wheels with Python ${{ matrix.python-version }}"
+          echo "Testing abi3 wheels with Python 3.12"
+          python --version
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Set up Python 3.13
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Test abi3 wheels with Python 3.13
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Testing abi3 wheels with Python 3.13"
+          python --version
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Set up Python 3.14
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Test abi3 wheels with Python 3.14
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Testing abi3 wheels with Python 3.14"
           python --version
           python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'

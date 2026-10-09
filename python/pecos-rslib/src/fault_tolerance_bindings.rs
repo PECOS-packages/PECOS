@@ -3389,7 +3389,7 @@ impl PySampleBatch {
     ) -> Self {
         Self {
             samples: SampleBatch::from_row_major(
-                detection_events,
+                &detection_events,
                 observable_masks,
                 num_observables,
             )

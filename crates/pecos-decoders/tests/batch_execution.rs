@@ -147,7 +147,7 @@ fn batch(n: usize) -> SampleBatch {
     if n == 0 {
         return SampleBatch::from_columnar(vec![vec![]; WIDTH], vec![vec![]; 130], 0).unwrap();
     }
-    let rows = (0..n)
+    let rows: Vec<Vec<u8>> = (0..n)
         .map(|shot| {
             (0..WIDTH)
                 .map(|bit| u8::from(shot & (1 << bit) != 0))
@@ -163,7 +163,7 @@ fn batch(n: usize) -> SampleBatch {
             }
         })
         .collect();
-    SampleBatch::from_row_major(rows, &truths, 130).unwrap()
+    SampleBatch::from_row_major(&rows, &truths, 130).unwrap()
 }
 fn options(workers: Option<usize>) -> DecodeOptions {
     let mut options = DecodeOptions::default();
@@ -408,20 +408,20 @@ fn constructors_validate_before_transposing_and_round_trip_wide_masks() {
     ] {
         assert!(SampleBatch::from_columnar(det, obs, shots).is_err());
     }
-    assert!(SampleBatch::from_row_major(vec![vec![1]], &[], 1).is_err());
-    assert!(SampleBatch::from_row_major(vec![], &[ObsMask::new()], 0).is_err());
+    assert!(SampleBatch::from_row_major(&[vec![1u8]], &[], 1).is_err());
+    assert!(SampleBatch::from_row_major::<Vec<u8>>(&[], &[ObsMask::new()], 0).is_err());
     assert!(
         SampleBatch::from_row_major(
-            vec![vec![1], vec![1, 1]],
+            &[vec![1u8], vec![1, 1]],
             &[ObsMask::new(), ObsMask::new()],
             0
         )
         .is_err()
     );
-    assert!(SampleBatch::from_row_major(vec![vec![1]], &[prediction(64)], 64).is_err());
+    assert!(SampleBatch::from_row_major(&[vec![1u8]], &[prediction(64)], 64).is_err());
     let rows: Vec<_> = (0..130).map(|i| vec![u8::from(i % 2 == 0), 255]).collect();
     let masks: Vec<_> = (0..130).map(prediction).collect();
-    let batch = SampleBatch::from_row_major(rows.clone(), &masks, 130).unwrap();
+    let batch = SampleBatch::from_row_major(&rows, &masks, 130).unwrap();
     assert_eq!(batch.num_shots(), 130);
     assert_eq!(batch.num_detectors(), 2);
     assert_eq!(batch.num_observables(), 130);
@@ -552,6 +552,23 @@ fn syndrome_rejects_every_out_of_range_shot() {
             assert_shot_panic(panic.as_ref(), shot, batch.num_shots());
         }
     }
+}
+
+#[test]
+fn syndrome_rejects_a_short_buffer_even_without_set_detectors() {
+    // All detectors are clear, so a missing length check would index nothing
+    // out of bounds and silently return a truncated syndrome.
+    let batch = SampleBatch::from_row_major(&[vec![0u8; 3]], &[ObsMask::new()], 0).unwrap();
+    let panic = std::panic::catch_unwind(|| batch.syndrome_into(0, &mut [0u8; 1]))
+        .expect_err("a buffer shorter than the detector count must panic");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied());
+    assert_eq!(
+        message,
+        Some("syndrome buffer has 1 bytes but the batch has 3 detectors")
+    );
 }
 
 #[test]

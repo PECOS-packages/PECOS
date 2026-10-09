@@ -193,8 +193,8 @@ pub(super) fn batch_error_to_py(error: BatchDecodeError<DecoderBuildError>) -> P
         BatchDecodeError::Plan(_) | BatchDecodeError::Dimension { .. } => {
             PyValueError::new_err(error.to_string())
         }
-        BatchDecodeError::MissingDetectorDimension
-        | BatchDecodeError::Decode(_)
-        | BatchDecodeError::Runtime(_) => PyRuntimeError::new_err(error.to_string()),
+        // Missing detector dimension, indexed decode failures, runtime
+        // failures, and any executor failure added later.
+        _ => PyRuntimeError::new_err(error.to_string()),
     }
 }

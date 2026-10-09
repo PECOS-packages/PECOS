@@ -19,6 +19,7 @@ use std::ops::Range;
 
 /// A decoder failure annotated with the shot that caused it.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ShotDecodeError {
     /// Absolute index in the original batch.
     pub shot_index: usize,
@@ -35,6 +36,10 @@ impl ShotDecodeError {
 }
 
 /// Scored output from one contiguous sequential worker range.
+///
+/// Low-level building block shared with the Python bindings' streaming
+/// executor; not part of the stable batch-decode API.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct DecodeRangeResult {
     /// Predictions differing from the true observable flips.
@@ -68,6 +73,7 @@ impl std::error::Error for ShotDecodeError {
 ///
 /// # Errors
 /// Returns the first decoding failure with its absolute shot index.
+#[doc(hidden)]
 pub fn decode_and_score_range(
     shots: Range<usize>,
     syndrome: &mut [u8],

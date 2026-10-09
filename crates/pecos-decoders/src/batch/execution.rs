@@ -132,6 +132,7 @@ impl DecodeResult {
 
 /// Planning, construction, dimension, or execution failure.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum BatchDecodeError<E> {
     /// Invalid planner inputs.
     Plan(ExecutionPlanError),
@@ -195,6 +196,13 @@ impl SampleBatch {
         self.decode_with(dem, factory, &DecodeOptions::default())
     }
     /// Decode and score with explicit execution and retention options.
+    ///
+    /// Automatic planning sizes parallel work from `rayon::current_num_threads()`,
+    /// and a parallel decode runs on its own thread pool. Call it from outside a
+    /// rayon pool: called from inside one (for example from a `par_iter` over
+    /// several batches), it sizes itself from that pool and each call starts
+    /// another pool, oversubscribing the machine. To decode several batches
+    /// concurrently, give each call an explicit worker count instead.
     ///
     /// # Errors
     /// Returns planning, factory, dimension, or indexed decoding errors.
@@ -544,6 +552,7 @@ pub(super) fn execute<F: DecoderFactory + ?Sized>(
 }
 
 /// Empirical mismatch fraction from scored counts, or zero for an empty batch.
+#[doc(hidden)]
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn logical_error_rate(num_errors: usize, num_shots: usize) -> f64 {

@@ -86,8 +86,8 @@ impl SampleBatch {
     ///
     /// # Errors
     /// Rejects unequal shot counts, unequal row widths, and observable bits outside the width.
-    pub fn from_row_major(
-        detection_events: Vec<Vec<u8>>,
+    pub fn from_row_major<R: AsRef<[u8]>>(
+        detection_events: &[R],
         observable_masks: &[ObsMask],
         num_observables: usize,
     ) -> Result<Self, SampleBatchError> {
@@ -98,8 +98,9 @@ impl SampleBatch {
                 observable_masks.len()
             )));
         }
-        let num_detectors = detection_events.first().map_or(0, Vec::len);
+        let num_detectors = detection_events.first().map_or(0, |row| row.as_ref().len());
         for (i, row) in detection_events.iter().enumerate() {
+            let row = row.as_ref();
             if row.len() != num_detectors {
                 return Err(SampleBatchError(format!(
                     "detection_events row {i} has length {} but expected {num_detectors} (matching row 0)",
@@ -119,10 +120,10 @@ impl SampleBatch {
         let num_shots = detection_events.len();
         let num_words = num_shots.div_ceil(64);
         let mut det_columns = vec![vec![0u64; num_words]; num_detectors];
-        for (shot, row) in detection_events.into_iter().enumerate() {
+        for (shot, row) in detection_events.iter().enumerate() {
             let word_idx = shot / 64;
             let bit_mask = 1u64 << (shot % 64);
-            for (det_idx, &val) in row.iter().enumerate() {
+            for (det_idx, &val) in row.as_ref().iter().enumerate() {
                 if val != 0 {
                     det_columns[det_idx][word_idx] |= bit_mask;
                 }
@@ -173,12 +174,18 @@ impl SampleBatch {
     /// The caller supplies space for every detector.
     ///
     /// # Panics
-    /// Panics if `shot >= self.num_shots()`, or the buffer cannot hold a set detector.
+    /// Panics if `shot >= self.num_shots()` or `buf` is shorter than `self.num_detectors()`.
     pub fn syndrome_into(&self, shot: usize, buf: &mut [u8]) {
         assert!(
             shot < self.num_shots,
             "shot index {shot} out of range (num_shots={})",
             self.num_shots
+        );
+        assert!(
+            buf.len() >= self.num_detectors(),
+            "syndrome buffer has {} bytes but the batch has {} detectors",
+            buf.len(),
+            self.num_detectors()
         );
         buf.fill(0);
         let word_idx = shot / 64;

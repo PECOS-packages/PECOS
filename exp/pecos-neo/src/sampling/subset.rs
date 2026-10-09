@@ -456,8 +456,7 @@ where
             }
 
             if num_exceeded == 0 {
-                // No samples exceeded threshold - failure unreachable
-                cumulative_prob = 0.0;
+                // No survivors to resample; estimate from the current population.
                 break;
             }
 
@@ -469,20 +468,14 @@ where
                 break;
             }
 
-            // Commit this level: condition on score >= threshold.
-            cumulative_prob *= conditional_prob;
-            committed_conditionals.push(conditional_prob);
-
             // Check if all survivors are failures
             if samples
                 .iter()
                 .filter(|s| s.score >= threshold)
                 .all(|s| s.is_failure)
             {
-                // All survivors are failures - we're done. Keep only the
-                // conditioned population so the final failure fraction is
-                // measured on it (= 1.0 here).
-                samples.retain(|s| s.score >= threshold);
+                // Estimate from the current population: failures can also
+                // lie below the threshold and must not be discarded.
                 break;
             }
 
@@ -497,6 +490,10 @@ where
             if survivor_indices.is_empty() {
                 break;
             }
+
+            // Commit this level only when resampling for a later level.
+            cumulative_prob *= conditional_prob;
+            committed_conditionals.push(conditional_prob);
 
             // Resample with replacement from survivors
             let new_weight = 1.0 / survivor_indices.len() as f64;
@@ -1397,10 +1394,11 @@ impl ProperSubsetSimulation {
                 break;
             }
 
-            cumulative_prob *= conditional_prob;
-            committed_conditionals.push(conditional_prob);
-
-            current_threshold = new_threshold;
+            // The final permitted level measures the current population.
+            // Commit only if a later level can measure the resampled population.
+            if level + 1 == self.config.max_levels {
+                break;
+            }
 
             // Step 3: Resample - replace trajectories below threshold
             let survivors: Vec<HistoryTrajectory> = self
@@ -1413,6 +1411,10 @@ impl ProperSubsetSimulation {
             if survivors.is_empty() {
                 break;
             }
+
+            cumulative_prob *= conditional_prob;
+            committed_conditionals.push(conditional_prob);
+            current_threshold = new_threshold;
 
             // Replace trajectories below threshold
             let mut new_trajectories = Vec::with_capacity(n);
@@ -1532,8 +1534,8 @@ impl ProperSubsetSimulation {
             .map(|t| t.score)
             .fold(0.0_f64, f64::max);
 
-        // If max score is 0, no damage occurred - failure is extremely rare
-        if max_score == 0.0 {
+        // A zero score is terminal only if the current population has no failures.
+        if max_score == 0.0 && self.trajectories.iter().all(|t| !t.is_failure) {
             return SubsetResult {
                 levels: vec![LevelStats {
                     level: 0,
@@ -1646,12 +1648,11 @@ impl ProperSubsetSimulation {
                 break;
             }
 
-            if conditional_prob > 0.0 {
-                cumulative_prob *= conditional_prob;
-                committed_conditionals.push(conditional_prob);
+            // Stop before committing when no later level can measure the
+            // resampled population, including the end of the threshold schedule.
+            if level + 1 == self.config.max_levels || level + 1 == thresholds.len() {
+                break;
             }
-
-            current_threshold = actual_threshold;
 
             // Step 5: Resample - replace trajectories below threshold
             let survivors: Vec<HistoryTrajectory> = self
@@ -1664,6 +1665,10 @@ impl ProperSubsetSimulation {
             if survivors.is_empty() {
                 break;
             }
+
+            cumulative_prob *= conditional_prob;
+            committed_conditionals.push(conditional_prob);
+            current_threshold = actual_threshold;
 
             // Replace trajectories below threshold
             let mut new_trajectories = Vec::with_capacity(n);
@@ -2223,10 +2228,11 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
                 break;
             }
 
-            cumulative_prob *= conditional_prob;
-            committed_conditionals.push(conditional_prob);
-
-            current_threshold = new_threshold;
+            // The final permitted level measures the current population.
+            // Commit only if a later level can measure the resampled population.
+            if level + 1 == self.config.base.max_levels {
+                break;
+            }
 
             // Step 3: Resample - replace trajectories below threshold
             let survivors: Vec<usize> = (0..n)
@@ -2236,6 +2242,10 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
             if survivors.is_empty() {
                 break;
             }
+
+            cumulative_prob *= conditional_prob;
+            committed_conditionals.push(conditional_prob);
+            current_threshold = new_threshold;
 
             // Replace trajectories below threshold
             for i in 0..n {
@@ -2503,6 +2513,170 @@ mod tests {
             "CV {} must be the direct Monte Carlo CV {expected_cv}",
             result.coefficient_of_variation
         );
+    }
+
+    fn check_subset_terminal_survivors(max_levels: usize) {
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1])
+            .h(&[0, 1])
+            .mz(&[0, 1])
+            .build();
+        let bit = |outcomes: &MeasurementOutcomes, q: usize| {
+            u8::from(outcomes.get_bit(QubitId(q)).unwrap())
+        };
+        let n = 2000;
+        let result = SubsetSimulation::new(
+            circuit,
+            2,
+            move |outcomes: &MeasurementOutcomes| {
+                f64::from(2 * bit(outcomes, 0) + bit(outcomes, 1))
+            },
+            move |outcomes: &MeasurementOutcomes| bit(outcomes, 0) == 1,
+        )
+        .with_config(
+            SubsetConfig::new()
+                .with_samples_per_level(n)
+                .with_threshold_fraction(0.1)
+                .with_max_levels(max_levels)
+                .with_seed(902),
+        )
+        .run();
+
+        assert_eq!(result.levels.len(), 1);
+        let initial = &result.levels[0];
+        assert_eq!(initial.threshold, 3.0, "all survivors must be failures");
+        assert!(initial.num_failures > initial.num_exceeded);
+        assert_eq!(result.total_samples, n);
+        assert_eq!(result.probability, initial.num_failures as f64 / n as f64);
+    }
+
+    #[test]
+    fn subset_terminal_survivors_preserve_failures_below_threshold() {
+        check_subset_terminal_survivors(2);
+    }
+
+    #[test]
+    fn subset_terminal_survivors_preserve_failures_with_default_levels() {
+        check_subset_terminal_survivors(SubsetConfig::default().max_levels);
+    }
+
+    #[test]
+    fn two_level_subset_cv_includes_committed_conditional() {
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1])
+            .h(&[0, 1])
+            .mz(&[0, 1])
+            .build();
+        let bit = |outcomes: &MeasurementOutcomes, q: usize| outcomes.get_bit(QubitId(q)).unwrap();
+        let n = 2000;
+        let result = SubsetSimulation::new(
+            circuit,
+            2,
+            move |outcomes: &MeasurementOutcomes| f64::from(u8::from(bit(outcomes, 0))),
+            move |outcomes: &MeasurementOutcomes| bit(outcomes, 0) && bit(outcomes, 1),
+        )
+        .with_config(
+            SubsetConfig::new()
+                .with_samples_per_level(n)
+                .with_threshold_fraction(0.1)
+                .with_max_levels(2)
+                .with_seed(902),
+        )
+        .run();
+
+        assert_eq!(result.levels.len(), 2);
+        assert!(result.total_samples > n, "the first level must resample");
+        let committed = result.levels[0].conditional_prob;
+        assert!(committed > 0.0 && committed < 1.0);
+        let final_level = &result.levels[1];
+        let final_fraction = final_level.num_failures as f64 / final_level.num_samples as f64;
+        assert_eq!(result.probability, committed * final_fraction);
+        let expected_cv =
+            independent_levels_cv_squared(std::iter::once(committed), final_fraction, n).sqrt();
+        assert!(
+            (result.coefficient_of_variation - expected_cv).abs() < 1e-12,
+            "CV {} must include the committed conditional: {expected_cv}",
+            result.coefficient_of_variation
+        );
+    }
+
+    fn single_level_config() -> SubsetConfig {
+        SubsetConfig::new()
+            .with_samples_per_level(2000)
+            .with_threshold_fraction(0.1)
+            .with_max_levels(1)
+            .with_seed(902)
+    }
+
+    #[test]
+    fn single_level_proper_subset_is_direct_monte_carlo() {
+        let config = single_level_config();
+        let n = config.samples_per_level;
+        let sim = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config);
+        let direct = sim.run_direct_mc(n);
+        let result = sim.run();
+
+        assert_eq!(direct, 0.0015);
+        assert_eq!(result.total_samples, n, "a single level must not resample");
+        assert_eq!(result.probability, direct);
+    }
+
+    #[test]
+    fn single_level_adaptive_subset_is_direct_monte_carlo() {
+        let config = single_level_config();
+        let n = config.samples_per_level;
+        let sim = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config);
+        let direct = sim.run_direct_mc(n);
+        let result = sim.run_adaptive();
+
+        assert_eq!(direct, 0.0015);
+        assert_eq!(result.total_samples, n, "a single level must not resample");
+        assert_eq!(result.probability, direct);
+    }
+
+    #[test]
+    fn adaptive_subset_zero_score_preserves_failures() {
+        let config = single_level_config();
+        let n = config.samples_per_level;
+        let result = ProperSubsetSimulation::new(0.0, 1.0, 0.0, 40, config).run_adaptive();
+
+        assert_eq!(result.total_samples, n);
+        assert_eq!(result.direct_failures, n);
+        assert_eq!(result.probability, 1.0);
+    }
+
+    #[test]
+    fn single_level_qec_subset_is_direct_monte_carlo() {
+        let config = single_level_config();
+        let n = config.samples_per_level;
+        // One ancilla has the same initial damage process and seed stream.
+        let direct =
+            ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config.clone()).run_direct_mc(n);
+        let mut world = World::new(902);
+        for _ in 0..n {
+            world.spawn_with_simulator(SparseStab::with_seed(1, 902));
+        }
+        let result = QecSubsetSimulation::new(
+            world,
+            QecSubsetConfig::new(40, vec![QubitId(0)], 11.0).with_base_config(config),
+        )
+        .run_proper(0.1);
+
+        assert_eq!(direct, 0.0015);
+        assert_eq!(result.total_samples, n, "a single level must not resample");
+        assert_eq!(result.probability, direct);
+    }
+
+    #[test]
+    fn single_level_bernoulli_subset_is_direct_monte_carlo() {
+        let config = single_level_config();
+        let n = config.samples_per_level;
+        let sim = BernoulliSubsetSimulation::new(0.1, 40, 11.0).with_config(config);
+        let direct = sim.run_direct_mc(n, 902);
+        let result = sim.run();
+
+        assert_eq!(result.total_samples, n);
+        assert_eq!(result.probability, direct);
     }
 
     #[test]

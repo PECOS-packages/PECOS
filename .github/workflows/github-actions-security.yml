@@ -22,6 +22,7 @@ on:
       - '.github/zizmor.yaml'
       - 'action.yml'
       - 'action.yaml'
+  workflow_dispatch:
   schedule:
     - cron: "25 5 * * *"
 

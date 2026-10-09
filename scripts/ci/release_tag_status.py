@@ -3,17 +3,18 @@
 # Licensed under the Apache License, Version 2.0
 """Report validation for a release tag; exit 0 only when every workflow succeeds.
 
-Usage: python3 scripts/ci/release_tag_status.py <tag>
+Usage: uv run --frozen python scripts/ci/release_tag_status.py <tag>
 
-Requires authenticated gh and the existing dev dependency PyYAML. Expectations
-come from this checkout's workflows, so older tags can report missing runs.
+Requires authenticated gh, a git checkout, and the existing dev dependency
+PyYAML. Fetch the release tag before running; fetching is the operator's job.
+Every validation workflow in either the tag's commit or this checkout is
+expected, regardless of its triggers, so older tags can report missing runs.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -22,50 +23,62 @@ from urllib.parse import quote
 
 import yaml
 
-WORKFLOWS = Path(__file__).resolve().parents[2] / ".github/workflows"
+REPOSITORY = Path(__file__).resolve().parents[2]
+WORKFLOWS = REPOSITORY / ".github/workflows"
 NON_VALIDATION = {
+    "dependency-review.yml": "Reviews dependency diffs rather than validating the whole commit.",
     "julia-update-hash.yml": "Opens a build-hash update PR rather than validating the tag.",
+    "trunk-ci-issues.yml": "Writes CI tracking issues rather than validating the commit.",
+    "pr-core-gate.yml": "PR-only duplicate of rust-test's Ubuntu leg and python-core.",
 }
 
 
-def tag_matches(pattern: str, tag: str, filename: str) -> bool:
-    """Match literal text and slash-aware *; reject all other ref-glob syntax."""
-    if "**" in pattern or any(char in pattern for char in "?+[]\\") or pattern.startswith("!"):
-        message = f"{filename}: unsupported tag pattern {pattern!r}; only literal text and * are supported"
-        raise ValueError(message)
-    expression = "[^/]*".join(re.escape(part) for part in pattern.split("*"))
-    return re.fullmatch(expression, tag) is not None
+def git_output(*args: str) -> str:
+    """Read local git objects without fetching or changing the checkout."""
+    git = shutil.which("git")
+    if git is None:
+        message = "git is required to inspect the release tag's workflows"
+        raise FileNotFoundError(message)
+    return subprocess.run(
+        [git, *args],
+        cwd=REPOSITORY,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
-def push_runs_for_tag(workflow: dict, tag: str, filename: str) -> bool:
-    """Return whether on.push admits this tag; path filters do not affect tags."""
-    # PyYAML's YAML 1.1 loader reads an unquoted on key as boolean True.
-    events = workflow.get("on", workflow.get(True, {}))
-    if isinstance(events, str):
-        return events == "push"
-    if isinstance(events, list):
-        return "push" in events
-    if not isinstance(events, dict) or "push" not in events:
-        return False
-    push = events["push"] or {}
-    if "tags-ignore" in push:
-        message = f"{filename}: unsupported tags-ignore patterns {push['tags-ignore']!r}"
-        raise ValueError(message)
-    if "tags" in push:
-        # Evaluate every pattern so an earlier match cannot hide unsupported syntax.
-        matches = [tag_matches(pattern, tag, filename) for pattern in push["tags"]]
-        return any(matches)
-    return "branches" not in push and "branches-ignore" not in push
+def local_tag_commit(tag: str) -> str:
+    """Resolve an actual local tag, including annotated tags, to its commit."""
+    try:
+        return git_output("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}").strip()
+    except subprocess.CalledProcessError as error:
+        message = f"Local tag {tag!r} is unavailable or does not point to a commit; fetch it before running this check"
+        raise ValueError(message) from error
+
+
+def checkout_workflows(directory: Path = WORKFLOWS) -> dict[str, str]:
+    """Read every validation workflow, including files without tag triggers."""
+    expected = {}
+    for path in sorted([*directory.glob("*.yml"), *directory.glob("*.yaml")]):
+        if path.name not in NON_VALIDATION:
+            workflow = yaml.safe_load(path.read_text())
+            expected[path.name] = workflow.get("name", path.name)
+    return expected
 
 
 def expected_workflows(tag: str, directory: Path = WORKFLOWS) -> dict[str, str]:
-    """Derive filename -> display name from every validation workflow in the tree."""
+    """Expect the union of validation workflows in the local tag and checkout."""
+    commit = local_tag_commit(tag)
+    paths = git_output("ls-tree", "--name-only", "-z", commit, ".github/workflows/").split("\0")
     expected = {}
-    for path in sorted(directory.glob("*.yml")):
-        workflow = yaml.safe_load(path.read_text())
-        if path.name not in NON_VALIDATION and push_runs_for_tag(workflow, tag, path.name):
+    for filename in paths:
+        path = Path(filename)
+        if path.suffix in {".yml", ".yaml"} and path.name not in NON_VALIDATION:
+            workflow = yaml.safe_load(git_output("show", f"{commit}:{filename}"))
             expected[path.name] = workflow.get("name", path.name)
-    return expected
+    expected.update(checkout_workflows(directory))
+    return dict(sorted(expected.items()))
 
 
 def gh_api(*args: str) -> str:
@@ -75,6 +88,15 @@ def gh_api(*args: str) -> str:
         message = "gh is required; install it and authenticate before checking release status"
         raise FileNotFoundError(message)
     return subprocess.run([gh, "api", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+
+
+def github_tag_commit(tag: str) -> str:
+    """Require the local workflow inventory to describe GitHub's tag commit."""
+    sha = gh_api(f"repos/{{owner}}/{{repo}}/commits/{quote(tag, safe='')}", "--jq", ".sha").strip()
+    if sha != local_tag_commit(tag):
+        message = f"Local tag {tag!r} differs from GitHub; refresh the local tag before running this check"
+        raise ValueError(message)
+    return sha
 
 
 def newest_tag_run(workflow: str, tag: str, sha: str) -> dict | None:
@@ -107,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         if not expected:
             print(f"No validation workflows expect tag {args.tag!r}", file=sys.stderr)
             return 1
-        sha = gh_api(f"repos/{{owner}}/{{repo}}/commits/{quote(args.tag, safe='')}", "--jq", ".sha").strip()
+        sha = github_tag_commit(args.tag)
     except (OSError, subprocess.CalledProcessError, yaml.YAMLError, ValueError) as error:
         print(f"Could not resolve release validation: {error}", file=sys.stderr)
         return 1

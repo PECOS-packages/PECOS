@@ -33,10 +33,23 @@ filters. Release builds finish once started; newer pushes can replace pending
 release builds.
 
 Nightly validation runs every validation workflow with its full OS matrix.
-Daily crons are staggered to spread runner demand. Each workflow tests `dev`'s
+Daily macOS crons are staggered for five macOS slots. Measured schedule delays
+of 5-9 hours shift the 19:07-22:37 UTC stagger outside 13:00-23:00 UTC working
+hours. Ubuntu-only crons remain in the early UTC hours. Each workflow tests `dev`'s
 head at its own start time, so the nightly results do not represent one SHA.
 Diff-based dependency review and the duplicate PR core gate stay in the PR tier.
 
-Release tags (`py-*`, `jl-*`, `rs-*`) run the full validation matrix. Run
-`python3 scripts/ci/release_tag_status.py <tag>` and require exit 0 before
-publishing; missing, unfinished, skipped, or failed workflows count as red.
+Release tags (`py-*`, `jl-*`, `rs-*`) run the full validation matrix. Push release
+tags one at a time: GitHub creates no tag push events when more than three tags
+are pushed at once. See [GitHub's push-event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push).
+
+For `py-*`, PyPI publication is manual. Run
+`uv run --frozen python scripts/ci/release_tag_status.py <tag>` and require exit 0
+before publishing. PyYAML comes from the dev group; fetch the tag locally before
+running the check. Missing, unfinished, skipped, or failed workflows count as red.
+The check expects every validation workflow in either the tag or this checkout.
+
+For `jl-*`, GitHub-release publication is automatic on the tag push, as soon as
+the Julia workflow's own jobs pass. Validate the commit before tagging: require
+green post-merge runs for that SHA and a green nightly that tested it. Run the same status
+command afterwards to check the full validation matrix.

@@ -38,8 +38,10 @@ on:
       sha:
         description: Commit SHA
         type: string
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
   schedule:
-    - cron: "7 8 * * *"
+    - cron: "7 20 * * *"
 
 concurrency:
   # Finish a started build: cancelling it on each merge threw away 49-minute

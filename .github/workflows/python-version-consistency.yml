@@ -26,6 +26,7 @@ on:
       - '.github/workflows/python-release.yml'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-version-consistency.yml'
+  workflow_dispatch:
   schedule:
     - cron: "41 5 * * *"
 

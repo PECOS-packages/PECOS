@@ -55,8 +55,10 @@ on:
       - 'scripts/ci/**'
       - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
   schedule:
-    - cron: "17 12 * * *"
+    - cron: "7 22 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main

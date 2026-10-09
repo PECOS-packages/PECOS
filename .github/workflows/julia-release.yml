@@ -44,8 +44,10 @@ on:
       sha:
         description: Commit SHA to build (manual runs build and test; only a jl-* tag push publishes)
         type: string
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
   schedule:
-    - cron: "37 9 * * *"
+    - cron: "7 19 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Elsewhere a started build finishes

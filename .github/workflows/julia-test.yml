@@ -31,8 +31,10 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
   schedule:
-    - cron: "47 12 * * *"
+    - cron: "37 22 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Every other event (a push to a main

@@ -175,11 +175,7 @@ impl MemStabSimBuilder {
         since = "0.2.0-dev.0",
         note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
     )]
-    pub fn measurement_order(self, order: Vec<usize>) -> Self {
-        self.set_measurement_order_internal(order)
-    }
-
-    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
+    pub fn measurement_order(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
         self
     }

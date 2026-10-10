@@ -285,10 +285,10 @@ fn dag_update_refuses_duplicate_measurement_ids() {
         .expect("the rejected edit must leave distinct measurement IDs");
 }
 
-/// The deprecated qubit-occurrence mapping retains its guard against
+// exercises the deprecated measurement-order API
+/// The deprecated qubit-occurrence mapping keeps its guard against
 /// non-positional stamped IDs, even when the requested order is the identity.
 /// A different record frame can be expressed with `meas_ids` in metadata.
-// exercises the deprecated measurement-order API
 #[allow(deprecated)]
 #[test]
 fn measurement_order_is_refused_on_a_stamped_id_circuit() {

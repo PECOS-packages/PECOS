@@ -919,9 +919,9 @@ impl<'a> DemBuilder<'a> {
                 )));
             }
         }
-        // Preserve the deprecated API's restriction on non-positional stamps.
-        // Circuit-built maps now use emission order independently of stamped IDs,
-        // so this historical guard can also reject an identity order.
+        // The deprecated qubit-occurrence API refuses non-positional stamps.
+        // Circuit-built maps use emission order independently of stamped IDs, so
+        // this guard can also reject an identity order.
         if self.measurement_order.is_some() && !stamped_ids_are_positional(self.influence_map) {
             return Err(DemBuilderError::ConfigurationError(
                 "measurement_order cannot be combined with a circuit whose stable \
@@ -5519,11 +5519,11 @@ mod tests {
         );
     }
 
+    // exercises the deprecated measurement-order API
     /// The stamped branch of `build_measurement_mappings` must use the
     /// resolved index directly: it is already an influence-map index, and
     /// composing it with the tick-to-influence occurrence mapping re-binds
     /// annotations whenever the two orders differ.
-    // exercises the deprecated measurement-order API
     #[allow(deprecated)]
     #[test]
     fn stamped_meas_id_mapping_is_not_recomposed_through_the_order() {
@@ -5589,8 +5589,8 @@ mod tests {
             .try_build();
         assert!(
             result.is_err(),
-            "measurement_order on a stamped-id circuit silently mis-binds; it \
-             must fail loud",
+            "the deprecated measurement-order guard rejects non-positional \
+             stamped ids",
         );
     }
 

@@ -432,7 +432,9 @@ def test_nightly_schedule_change_grace(tracker: Tracker, created: str | None, ch
     result = tracker.check([] if held_off else [missing_create(name, run)])
     assert tracker.api_calls().count(commits_api(workflow)) == 1
     hold_off_lines = [line for line in result.stdout.splitlines() if "held off" in line]
-    assert hold_off_lines == ([f"nightly check held off for {name}: schedule changed at {changed}"] if held_off else [])
+    assert hold_off_lines == (
+        [f"nightly check held off for {name}: workflow file changed at {changed}"] if held_off else []
+    )
 
 
 def test_schedule_grace_still_reconciles_red_runs(tracker: Tracker) -> None:
@@ -454,7 +456,10 @@ def test_schedule_grace_still_reconciles_red_runs(tracker: Tracker) -> None:
 
 
 @pytest.mark.parametrize("created", [OLD, None])
-@pytest.mark.parametrize("failure", ["api", "empty", "bad_date", "null_date", "empty_date", "missing_date", "json"])
+@pytest.mark.parametrize(
+    "failure",
+    ["api", "empty", "empty_body", "bad_date", "null_date", "empty_date", "missing_date", "json"],
+)
 def test_schedule_change_lookup_failure_isolated(tracker: Tracker, created: str | None, failure: str) -> None:
     workflow = "nightly.yml"
     run = run_object(event="schedule", created=created) if created else None
@@ -463,6 +468,9 @@ def test_schedule_change_lookup_failure_isolated(tracker: Tracker, created: str 
         tracker.answer(commits_api(workflow), code=1)
     elif failure == "empty":
         tracker.answer(commits_api(workflow), "[]")
+    elif failure == "empty_body":
+        # jq 1.6 exits 0 on empty input; the script must still refuse it.
+        tracker.answer(commits_api(workflow), "")
     elif failure == "json":
         tracker.answer(commits_api(workflow), "invalid JSON")
     elif failure == "missing_date":

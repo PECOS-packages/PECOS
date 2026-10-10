@@ -278,10 +278,7 @@ def test_missing_reference_and_id_names_entry(rows):
     tc.set_meta("observables", json.dumps([{"id": 0, "records": [-1], "reference": 0}, {"records": [-1]}]))
     with pytest.raises(
         MissingObservableReferenceError,
-        match=(
-            r"^observable entry 1 is missing 'reference';.*carries no reference.*"
-            r"flip cannot be derived without one"
-        ),
+        match=r"^observable entry 1 is missing 'reference';.*carries no reference.*flip cannot be derived without one",
     ):
         extract_detection_events_and_observables(tc, rows)
 

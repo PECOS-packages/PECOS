@@ -117,11 +117,18 @@ boundary expansions.
 
 | Gate | Type | Description |
 |------|------|-------------|
+| CCX (Toffoli) | Non-Clifford | Controlled-controlled-X |
 | CCZ | Non-Clifford | diag(1, 1, 1, 1, 1, 1, 1, -1); self-adjoint and Hermitian |
 
 CS, CSdg, and CCZ are symmetric in their qubit operands. CS and CSdg are
 adjoints; CS squared is CZ. These are controlled phase gates, not named
 Pauli-product roots. Their core gate ids are 72, 73, and 91, respectively.
+
+CS, CSdg, and CCZ are available as Rust `GateType` variants, `Gate`
+constructors, and `TickCircuit` / `DagCircuit` builder methods. General and
+state-vector engines execute them through exact lowering to simulator
+primitives; Clifford engines reject them. There are no direct simulator methods
+named `sim.cs()`, `sim.csdg()`, or `sim.ccz()`.
 
 ### Measurements and Preparations
 

@@ -1,4 +1,5 @@
 //! Dense regression oracles for named diagonal gates and gate adjoints.
+use num_complex::Complex64;
 use pecos_core::gate_type::GateType;
 use pecos_core::unitary_rep::RotationType;
 use pecos_core::{Angle64, Gate, PhaseGateError, Unitary, UnitaryRep};
@@ -259,6 +260,32 @@ fn diagonal_matrices_recognition_and_identities() {
     let cs = Unitary::named(GateType::CS).to_matrix();
     let csdg = Unitary::named(GateType::CSdg).to_matrix();
     let ccz = Unitary::named(GateType::CCZ).to_matrix();
+    // Literal entries independently pin the controlled phase and its sign.
+    let literal_cs = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(0.0, 1.0),
+    ]));
+    let literal_csdg = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(0.0, -1.0),
+    ]));
+    let literal_ccz = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(1.0, 0.0),
+        Complex64::new(-1.0, 0.0),
+    ]));
+    assert!((&*cs - literal_cs).norm() < 1e-14);
+    assert!((&*csdg - literal_csdg).norm() < 1e-14);
+    assert!((&*ccz - literal_ccz).norm() < 1e-14);
     assert!((&*(&cs * &csdg) - nalgebra::DMatrix::identity(4, 4)).norm() < 1e-14);
     assert!((&*(&ccz * &ccz) - nalgebra::DMatrix::identity(8, 8)).norm() < 1e-14);
     assert!((&*(&cs * &cs) - &*Unitary::named(GateType::CZ).to_matrix()).norm() < 1e-14);
@@ -298,5 +325,19 @@ fn cz_products_keep_dev_composition_and_operand_support() {
     assert_eq!(
         (cs.clone() * cs).simplify(),
         UnitaryRep::gate(GateType::CZ, vec![0, 1])
+    );
+}
+
+#[test]
+fn three_operand_pi_phase_decomposes_to_exact_ccz() {
+    // Preserve nonconsecutive operands and their order as well as global phase.
+    let phase = UnitaryRep::phase_gate(Angle64::HALF_TURN, vec![4, 0, 2]);
+    let gates = phase.try_decompose().unwrap();
+    assert_eq!(gates, vec![Gate::ccz(&[(4, 0, 2)])]);
+    let actual = gate_rep(&gates[0]).unwrap().to_matrix();
+    assert!((&*actual - &*phase.to_matrix()).norm() < 1e-14);
+    assert_eq!(
+        UnitaryRep::phase_gate(Angle64::QUARTER_TURN, vec![4, 0, 2]).try_decompose(),
+        Err(PhaseGateError::TooManyQubits { num_qubits: 3 })
     );
 }

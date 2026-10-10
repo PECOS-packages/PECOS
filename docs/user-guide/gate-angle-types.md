@@ -150,6 +150,9 @@ The `GateType` enum classifies quantum gates for circuit representation and simu
 **Two-qubit Clifford:**
 `CX`, `CY`, `CZ`, `SWAP`, `SXX`, `SXXdg`, `SYY`, `SYYdg`, `SZZ`, `SZZdg`, `ISWAP`, `ISWAPdg`
 
+**Two-qubit non-Clifford:**
+`CS`, `CSdg`
+
 **Parameterized (non-Clifford):**
 `RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `T`, `Tdg`, `U`, `RXY1Q`, `RXYXY2Q`
 
@@ -165,7 +168,7 @@ typed `Angle` used by ordinary stored rotations because it is already reduced
 modulo 2pi.
 
 **Three-qubit:**
-`CCX` (Toffoli)
+`CCX` (Toffoli), `CCZ`
 
 **Measurement/Preparation:**
 `MZ`, `PZ`

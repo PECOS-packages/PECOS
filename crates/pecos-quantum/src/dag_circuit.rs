@@ -564,9 +564,10 @@ pub enum AnnotationKind {
 /// are all Pauli strings tracked for flipping via backward propagation.
 ///
 /// - **Detectors** are stabilizer checks that should be +1 (noiseless).
-///   Their Pauli is Z on the measured qubits.
+///   Their Pauli is the measured Pauli (X for MX, Z otherwise) on the
+///   measured qubits.
 /// - **Observables** are logical operators read out via measurements.
-///   Their Pauli is Z on the measured qubits.
+///   Their Pauli is the measured Pauli on the measured qubits.
 /// - **Tracked Paulis** are arbitrary Pauli strings with no measurement readout.
 ///   Their Pauli is user-specified and their position comes from a meta-gate node.
 #[derive(Debug, Clone)]
@@ -2378,8 +2379,9 @@ impl DagCircuit {
     /// Annotate a detector: a set of measurements whose XOR should be
     /// deterministic in the noiseless case.
     ///
-    /// The Pauli string is Z on each referenced measurement's own qubit --
-    /// referencing one measurement of a batched gate touches only that qubit.
+    /// The Pauli string is the Pauli each referenced measurement reads (X for
+    /// MX, Z otherwise) on that measurement's own qubit -- referencing one
+    /// measurement of a batched gate touches only that qubit.
     ///
     /// Returns the annotation index.
     ///
@@ -2435,7 +2437,8 @@ impl DagCircuit {
     /// Annotate a logical observable: a set of measurements whose XOR
     /// defines whether a logical operator flipped.
     ///
-    /// The Pauli string is Z on each referenced measurement's own qubit.
+    /// The Pauli string is the Pauli each referenced measurement reads (X for
+    /// MX, Z otherwise) on that measurement's own qubit.
     ///
     /// Returns the annotation index.
     ///

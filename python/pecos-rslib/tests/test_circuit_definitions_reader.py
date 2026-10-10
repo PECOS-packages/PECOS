@@ -6,6 +6,7 @@
 import json
 
 import pytest
+from pecos_rslib import PauliString
 from pecos_rslib.quantum import DagCircuit, TickCircuit
 
 
@@ -132,16 +133,19 @@ def test_annotation_definition_ids(circuit_type, label):
     measurements = circuit.tick().mz([0, 1]) if circuit_type is TickCircuit else circuit.mz([0, 1])
     first, second = measurements
 
+    # Tracked Paulis share the annotation list but have their own numbering.
     ids = [
+        circuit.tracked_pauli(PauliString.from_str("X"), label=label),
         circuit.observable([second], label=label),
         circuit.detector([first], label=label),
+        circuit.tracked_pauli(PauliString.from_str("Z"), label=label),
         circuit.detector([first, second], label=label),
         circuit.observable([first], label=label),
     ]
-    assert ids == [0, 0, 1, 1]
+    assert ids == [0, 0, 0, 1, 1, 1]
 
     tick_circuit = circuit if circuit_type is TickCircuit else circuit.to_tick_circuit()
     definitions = tick_circuit.circuit_definitions()
     assert [(d["id"], d["measurements"]) for d in definitions["detectors"]] == [(0, [0]), (1, [0, 1])]
     assert [(o["id"], o["measurements"]) for o in definitions["observables"]] == [(0, [1]), (1, [0])]
-    assert [a["label"] for a in circuit.annotations()] == [label] * 4
+    assert [a["label"] for a in circuit.annotations()] == [label] * 6

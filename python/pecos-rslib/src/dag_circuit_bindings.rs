@@ -1557,7 +1557,8 @@ impl PyDagCircuit {
     ///     label: Optional label string.
     ///
     /// Returns:
-    ///     The annotation index.
+    ///     The zero-based tracked-Pauli id: the number of preceding tracked-Pauli
+    ///     annotations. It is not an index into ``annotations()``.
     ///
     /// Example:
     ///     >>> from pecos import PauliString
@@ -1568,11 +1569,13 @@ impl PyDagCircuit {
         pauli: &crate::pauli_bindings::PauliString,
         label: Option<String>,
     ) -> usize {
+        let tracked_id = self.inner.tracked_paulis().count();
         if let Some(l) = label {
-            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone())
+            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone());
         } else {
-            self.inner.tracked_pauli(pauli.inner.clone())
+            self.inner.tracked_pauli(pauli.inner.clone());
         }
+        tracked_id
     }
 
     /// Get all annotations as a list of dicts.
@@ -3004,17 +3007,28 @@ impl PyTickCircuit {
     }
 
     /// Place a tracked-Pauli annotation.
+    ///
+    /// Returns:
+    ///     The zero-based tracked-Pauli id: the number of preceding tracked-Pauli
+    ///     annotations. It is not an index into ``annotations()``.
     #[pyo3(signature = (pauli, label=None))]
     fn tracked_pauli(
         &mut self,
         pauli: &crate::pauli_bindings::PauliString,
         label: Option<String>,
     ) -> usize {
+        let tracked_id = self
+            .inner
+            .annotations()
+            .iter()
+            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::TrackedPauli))
+            .count();
         if let Some(l) = label {
-            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone())
+            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone());
         } else {
-            self.inner.tracked_pauli(pauli.inner.clone())
+            self.inner.tracked_pauli(pauli.inner.clone());
         }
+        tracked_id
     }
 
     /// Get all annotations.

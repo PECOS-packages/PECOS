@@ -93,7 +93,7 @@ def gh_api(*args: str) -> str:
 
 def github_tag_commit(tag: str) -> str:
     """Require the local workflow inventory to describe GitHub's tag commit."""
-    sha = gh_api(f"repos/{{owner}}/{{repo}}/commits/tags/{quote(tag, safe='')}", "--jq", ".sha").strip()
+    sha = gh_api(f"repos/{{owner}}/{{repo}}/commits/refs/tags/{quote(tag, safe='')}", "--jq", ".sha").strip()
     if sha != local_tag_commit(tag):
         message = f"Local tag {tag!r} differs from GitHub; refresh the local tag before running this check"
         raise ValueError(message)

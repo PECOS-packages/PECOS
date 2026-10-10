@@ -37,7 +37,10 @@ Daily macOS crons are staggered for five macOS slots. Measured schedule delays
 of 5-9 hours shift the 19:07-22:37 UTC stagger outside 13:00-23:00 UTC working
 hours. Ubuntu-only crons remain in the early UTC hours. Each workflow tests `dev`'s
 head at its own start time, so the nightly results do not represent one SHA.
-Diff-based dependency review and the duplicate PR core gate stay in the PR tier.
+Four workflows are excluded from full validation: `dependency-review.yml` reviews
+dependency diffs, `julia-update-hash.yml` opens a build-hash update PR,
+`trunk-ci-issues.yml` writes CI tracking issues, and `pr-core-gate.yml` is a PR-only
+duplicate of rust-test's Ubuntu leg and python-core.
 
 Release tags (`py-*`, `jl-*`, `rs-*`) run the full validation matrix. Push release
 tags one at a time: GitHub creates no tag push events when more than three tags
@@ -53,6 +56,7 @@ MISSING; for such tags, run the check from a checkout of the tagged commit.
 
 For `jl-*`, GitHub-release publication is automatic on the tag push, as soon as
 the Julia workflow's own jobs pass. Validate the commit before tagging: require
-the latest scheduled run of every validation workflow tested this SHA (or a
-manual dispatch of each on `dev` while `dev` is at this SHA). Run the same status
-command afterwards to check the full validation matrix.
+that the latest scheduled run of every validation workflow tested this SHA and
+succeeded (or a successful manual dispatch of each on `dev` while `dev` is at
+this SHA). Run the same status command afterwards to check the full validation
+matrix.

@@ -133,6 +133,8 @@ def test_real_validation_workflows_admit_release_tags_and_one_daily_cron() -> No
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "7 19 * * 1"}], "cron must be daily"),
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "*/5 * * * *"}], "cron must be daily"),
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "0 * * * *"}], "cron must be daily"),
+        ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "60 3 * * *"}], "cron must be daily"),
+        ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "0 24 * * *"}], "cron must be daily"),
         ({"tags": ["py-*", "jl-*", "rs-*"]}, [{"cron": "7 19 * * *"}] * 2, "exactly one daily cron"),
     ],
 )
@@ -266,6 +268,28 @@ def test_tags_ignore_names_workflow_and_pattern(tmp_path: Path) -> None:
     assert "jl-*" in str(error.value)
 
 
+@pytest.mark.parametrize("tag", ["py-1", "archive/master-2024-02-07"])
+def test_github_tag_commit_uses_tag_ref_in_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str,
+) -> None:
+    calls = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout="tag-sha\n")
+
+    monkeypatch.setattr(release_tag_status.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(release_tag_status.subprocess, "run", fake_run)
+    monkeypatch.setattr(release_tag_status, "local_tag_commit", lambda _tag: "tag-sha")
+    assert release_tag_status.github_tag_commit(tag) == "tag-sha"
+    quoted_tag = "py-1" if tag == "py-1" else "archive%2Fmaster-2024-02-07"
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ["/usr/bin/gh", "api", f"repos/{{owner}}/{{repo}}/commits/refs/tags/{quoted_tag}", "--jq", ".sha"]
+    assert kwargs["cwd"] == release_tag_status.REPOSITORY
+
+
 def test_newest_run_must_match_current_tag_sha(monkeypatch: pytest.MonkeyPatch) -> None:
     wrong_sha = {"id": 3, "created_at": "2026-10-09T10:00:00Z", "head_sha": "old-sha"}
     older_match = {"id": 1, "created_at": "2026-10-09T08:00:00Z", "head_sha": "current-sha"}
@@ -292,6 +316,7 @@ def test_newest_run_must_match_current_tag_sha(monkeypatch: pytest.MonkeyPatch) 
         assert args[args.index("event=push") - 1] == "-f"
 
 
+@pytest.mark.parametrize("position", ["first", "middle", "last"])
 @pytest.mark.parametrize(
     ("status", "conclusion", "exit_code"),
     [
@@ -309,15 +334,18 @@ def test_release_exit_requires_every_workflow_success(
     status: str | None,
     conclusion: str | None,
     exit_code: int,
+    position: str,
 ) -> None:
-    monkeypatch.setattr(release_tag_status, "expected_workflows", lambda _tag: {"one.yml": "One", "two.yml": "Two"})
+    workflows = {"one.yml": "One", "two.yml": "Two", "three.yml": "Three"}
+    varied_workflow = {"first": "one.yml", "middle": "two.yml", "last": "three.yml"}[position]
+    monkeypatch.setattr(release_tag_status, "expected_workflows", lambda _tag: workflows)
     monkeypatch.setattr(release_tag_status, "gh_api", lambda *_args: "current-sha\n")
     monkeypatch.setattr(release_tag_status, "local_tag_commit", lambda _tag: "current-sha")
 
     def fake_run(workflow: str, tag: str, sha: str) -> dict | None:
         assert tag == "py-1"
         assert sha == "current-sha"
-        if workflow == "one.yml":
+        if workflow != varied_workflow:
             return {"status": "completed", "conclusion": "success", "html_url": "https://example.com/one"}
         return (
             None

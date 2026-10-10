@@ -33,15 +33,18 @@ fn main() {
             }
         }
 
-        // cuTensor (transitive dependency of cuTensorNet)
-        match pecos_build::cutensor::ensure_cutensor() {
-            Ok(cutensor_path) => {
-                if let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
-                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+        // cuTensor (transitive dependency of cuTensorNet). It is a CUDA library, so
+        // only install it when a CUDA toolkit is present.
+        if pecos_build::cuda::find_cuda().is_some() {
+            match pecos_build::cutensor::ensure_cutensor() {
+                Ok(cutensor_path) => {
+                    if let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path) {
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+                    }
                 }
-            }
-            Err(error) => {
-                println!("cargo:warning=cuTensor auto-install failed: {error}");
+                Err(error) => {
+                    println!("cargo:warning=cuTensor auto-install failed: {error}");
+                }
             }
         }
 

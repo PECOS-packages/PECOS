@@ -901,9 +901,12 @@ def test_failed_schedule_first_page_leaves_missing_issue_untouched(
     issue_open: bool,
     failure: str,
 ) -> None:
-    # Seed another daily workflow's cache to catch accidental reuse on failure.
+    # Seed the daily workflow checked earlier and the watched workflow checked
+    # immediately before nightly.yml: a page leaked into nightly.yml after its
+    # own read fails would close the open issue (RECENT) or open one (OLD).
     previous = run_object(event="schedule", created=previous_created)
     tracker.runs(nightly_api("dependency-integrity-check.yml"), [previous])
+    tracker.runs(nightly_api("julia-version-consistency.yml"), [previous])
     workflow = "nightly.yml"
     if failure == "api":
         tracker.answer(nightly_api(workflow), code=1)

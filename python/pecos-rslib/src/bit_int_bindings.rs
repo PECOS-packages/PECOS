@@ -15,6 +15,7 @@
 use crate::bit_conversion;
 use crate::prelude::BitInt;
 use pyo3::basic::CompareOp;
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 
 /// Convert an inbound value, preserving same-class widths for the core operators.
@@ -370,13 +371,24 @@ impl PyBitInt {
     }
 
     // Comparison operations (always signed)
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        let py = other.py();
         if let Ok(value) = other.extract::<PyRef<PyBitInt>>() {
-            return Ok(op.matches(self.inner.cmp(&value.inner)));
+            return Ok(op
+                .matches(self.inner.cmp(&value.inner))
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind());
         }
-        self.__int__(other.py())?
-            .rich_compare(bit_conversion::operand_to_pyint(other)?, op)?
-            .is_truthy()
+        // An operand with no integer value is not comparable: equality then
+        // falls back to identity, so containers holding floats keep working.
+        let value = match bit_conversion::operand_to_pyint(other) {
+            Ok(value) => value,
+            Err(err) if err.is_instance_of::<PyTypeError>(py) => return Ok(py.NotImplemented()),
+            Err(err) => return Err(err),
+        };
+        Ok(self.__int__(py)?.rich_compare(value, op)?.unbind())
     }
 
     pub fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {

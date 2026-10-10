@@ -18,7 +18,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt};
 
-/// Reduce an integer modulo the target bit count, then decode little-endian words.
+/// Decode an integer's two's-complement value into the little-endian words that
+/// cover `bits`. Bits above `bits` in the top word may be set; callers mask them
+/// when building the fixed-width value.
 pub fn pyint_to_u64_words(obj: &Bound<'_, PyAny>, bits: u16) -> PyResult<Vec<u64>> {
     let n_words = usize::from(bits).div_ceil(64);
     if let Ok(v) = obj.extract::<u64>() {
@@ -32,11 +34,8 @@ pub fn pyint_to_u64_words(obj: &Bound<'_, PyAny>, bits: u16) -> PyResult<Vec<u64
         return Ok(words);
     }
 
-    let one = 1u32.into_pyobject(obj.py())?;
-    let mask = one
-        .call_method1("__lshift__", (bits,))?
-        .call_method1("__sub__", (1,))?;
-    let wrapped = obj.call_method1("__and__", (mask,))?;
+    let mask = 1u32.into_pyobject(obj.py())?.lshift(bits)?.sub(1)?;
+    let wrapped = obj.bitand(mask)?;
     let bytes = wrapped.call_method1("to_bytes", (n_words * 8, "little"))?;
     Ok(bytes
         .cast::<PyBytes>()?
@@ -91,9 +90,11 @@ pub fn operand_to_pyint<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyA
 
 /// Shift counts retain the low sixteen bits of the mathematical value.
 pub fn shift_count(obj: &Bound<'_, PyAny>) -> PyResult<u16> {
-    operand_to_pyint(obj)?
-        .call_method1("__and__", (u16::MAX,))?
-        .extract()
+    if let Ok(value) = obj.extract::<i64>() {
+        let [low, high, ..] = value.to_le_bytes();
+        return Ok(u16::from_le_bytes([low, high]));
+    }
+    operand_to_pyint(obj)?.bitand(u16::MAX)?.extract()
 }
 
 /// Convert `u64` words (little-endian) representing a two's complement value

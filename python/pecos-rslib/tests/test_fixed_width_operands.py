@@ -199,15 +199,24 @@ def test_index_operand(cls, value):
 @pytest.mark.parametrize("cls", [I, U])
 @pytest.mark.parametrize("operand", [object(), 1.5])
 def test_unsupported_operand(cls, operand):
-    """Unsupported operands retain TypeError, including comparisons."""
+    """Unsupported operands raise TypeError, except equality, which is False."""
     for action in (
         lambda: cls(8, 0) + operand,
-        lambda: cls(8, 0) == operand,
+        lambda: cls(8, 0) < operand,
         lambda: cls(8, operand),
         lambda: cls(8, 0).set(operand),
     ):
         with pytest.raises(TypeError):
             action()
+    assert not (cls(8, 0) == operand)
+    assert cls(8, 0) != operand
+
+
+@pytest.mark.parametrize("cls", [I, U])
+def test_lookup_in_float_containers(cls):
+    """Equal hashes with a float must not turn a container lookup into an error."""
+    assert cls(8, 1) not in {1.0}
+    assert {5.0: "x"}.get(cls(8, 5)) is None
 
 
 @st.composite

@@ -35,7 +35,7 @@ def _circuit():
         exp.noise_characterization,
     ],
 )
-@pytest.mark.parametrize("parameter,limit,fraction", [("p1", 0.75, "3/4"), ("p2", 0.9375, "15/16")])
+@pytest.mark.parametrize(("parameter", "limit", "fraction"), [("p1", 0.75, "3/4"), ("p2", 0.9375, "15/16")])
 def test_generator_bindings_reject_out_of_domain_before_reading_circuit(function, parameter, limit, fraction):
     # An unusable circuit proves validation happens before circuit work.
     with pytest.raises(ValueError, match=f"generator view requires {parameter} <= {fraction}"):
@@ -72,16 +72,11 @@ def test_channel_only_bindings_accept_negative_eigenvalues(function):
 
 
 @pytest.mark.parametrize("method", ["auto", "coherent", "coherent_approx", "coherent_exact"])
-@pytest.mark.parametrize("parameter,limit,fraction", [("p1", 0.75, "3/4"), ("p2", 0.9375, "15/16")])
+@pytest.mark.parametrize(("parameter", "limit", "fraction"), [("p1", 0.75, "3/4"), ("p2", 0.9375, "15/16")])
 def test_coherent_measurement_sampling_validates_generator_domain(method, parameter, limit, fraction):
     noise = exp.depolarizing().idle_rz(0.125)
     noise = getattr(noise, parameter)(math.nextafter(limit, math.inf))
-    simulation = (
-        exp.sim_neo(_circuit())
-        .quantum(exp.meas_sampling(method))
-        .noise(noise)
-        .sampling(exp.monte_carlo(1))
-    )
+    simulation = exp.sim_neo(_circuit()).quantum(exp.meas_sampling(method)).noise(noise).sampling(exp.monte_carlo(1))
     with pytest.raises(ValueError, match=f"generator view requires {parameter} <= {fraction}"):
         simulation.run()
 

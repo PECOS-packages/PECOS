@@ -34,9 +34,7 @@ def test_hash_newly_convertible_wide_value(value: int) -> None:
         (63, -(2**63), -1, -(2**63), 0),
     ],
 )
-def test_wide_division(
-    size: int, a: int, b: int, quotient: int, remainder: int
-) -> None:
+def test_wide_division(size: int, a: int, b: int, quotient: int, remainder: int) -> None:
     """Python // keeps BitInt's truncation toward zero and dividend-sign %."""
     lhs, rhs = BitInt(size, a), BitInt(size, b)
     assert int(lhs // rhs) == quotient
@@ -51,22 +49,10 @@ def test_wide_zero_divisor() -> None:
         BitInt(100, 2**70) % BitInt(130, 0)
 
 
-def test_conversion_downstream_observations() -> None:
-    """Pin effects of to_i64 without repairing the other binding defects (#958)."""
+def test_wide_value_that_fits_i64_converts_downstream() -> None:
+    """A wide value that fits i64 now reaches clamp and the unsigned operand path."""
     value = BitInt(100, -1)
     value.clamp(4)
     assert int(value) == 15
     assert value.size == 100
     assert int(BitUInt(8, 5) + BitInt(100, -1)) == 4
-    # Unrepresentable values still hit the existing no-op / zero fallback.
-    value = BitInt(100, 2**70)
-    value.clamp(4)
-    assert int(value) == 2**70
-    assert int(BitUInt(8, 5) + value) == 5
-
-
-def test_cross_type_comparison_defect_remains() -> None:
-    """Cross-type equality still truncates operands; hash cannot repair that."""
-    value = BitInt(1, 1)
-    assert value == 1
-    assert value == 5

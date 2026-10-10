@@ -105,7 +105,7 @@ pub(crate) fn negative(value: &BitUInt) -> bool {
     value.get_bit(value.size() - 1)
 }
 
-pub(crate) fn negate(value: &BitUInt) -> BitUInt {
+fn negate(value: &BitUInt) -> BitUInt {
     &BitUInt::zero(value.size()) - value
 }
 

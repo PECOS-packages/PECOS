@@ -16,6 +16,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
+from pecos.slr.gen_codes._permutation import reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 
 if TYPE_CHECKING:
@@ -126,6 +127,8 @@ class StimGenerator(Generator):
         previous_scope = self.enter_block(block)
 
         block_name = type(block).__name__
+        if block_name in ("If", "While", "For", "Repeat"):
+            reject_permute_in_region(block, "StimGenerator")
 
         if block_name == "While":
             # While loops can't be directly represented

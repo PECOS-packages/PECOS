@@ -7,11 +7,12 @@ permissions:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
   schedule:
-    - cron: "29 4 * * 1"
+    - cron: "59 4 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -31,8 +32,8 @@ jobs:
       fail-fast: false
       matrix:
         # Rust analysis takes about 25 minutes, the longest required check on a
-        # pull request, so it runs on pushes to the main branches, on the weekly
-        # schedule and on dispatch, not on pull requests.
+        # pull request, so it runs on branch/tag pushes, the daily schedule and
+        # dispatch, not on pull requests.
         include: >-
           ${{ fromJSON(github.event_name == 'pull_request'
           && '[{"language":"actions","build-mode":""},{"language":"c-cpp","build-mode":"none"},{"language":"python","build-mode":""}]'

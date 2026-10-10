@@ -54,7 +54,27 @@ superseded_ok=(julia-release.yml python-release.yml)
 # Only workflows with a daily cron belong here; a missing run is independent
 # of whether the latest completed nightly passed. Allow 36 hours because
 # schedules can arrive 5-9 hours late without a dropped day.
-daily_workflows=(dependency-integrity-check.yml nightly.yml)
+daily_workflows=(
+  cargo-deny.yml
+  codeql.yml
+  cuda-build-check.yml
+  dependency-integrity-check.yml
+  github-actions-security.yml
+  julia-release.yml
+  julia-test.yml
+  julia-version-consistency.yml
+  nightly.yml
+  osv-scanner.yml
+  pre-commit.yml
+  python-release.yml
+  python-test.yml
+  python-version-consistency.yml
+  rust-test.yml
+  rust-version-consistency.yml
+  selene-general-noise-semantics.yml
+  selene-plugins.yml
+  test-docs-examples.yml
+)
 now="$(date -u -d "${TRUNK_CI_NOW:-now}" +%s)"
 nightly_cutoff=$((now - 36 * 60 * 60))
 release_cutoff=$((now - 14 * 24 * 60 * 60))

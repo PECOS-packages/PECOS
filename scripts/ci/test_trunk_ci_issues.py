@@ -48,7 +48,27 @@ WORKFLOWS = (
     "selene-plugins.yml",
     "test-docs-examples.yml",
 )
-DAILY = ("dependency-integrity-check.yml", "nightly.yml")
+DAILY = (
+    "cargo-deny.yml",
+    "codeql.yml",
+    "cuda-build-check.yml",
+    "dependency-integrity-check.yml",
+    "github-actions-security.yml",
+    "julia-release.yml",
+    "julia-test.yml",
+    "julia-version-consistency.yml",
+    "nightly.yml",
+    "osv-scanner.yml",
+    "pre-commit.yml",
+    "python-release.yml",
+    "python-test.yml",
+    "python-version-consistency.yml",
+    "rust-test.yml",
+    "rust-version-consistency.yml",
+    "selene-general-noise-semantics.yml",
+    "selene-plugins.yml",
+    "test-docs-examples.yml",
+)
 ALERT_FILTER = (
     '.[] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")\n'
     '        | "\\(.number)\\t- \\(.html_url) `\\(.rule.id)` (\\(.rule.security_severity_level))'
@@ -522,6 +542,9 @@ def test_api_failure_isolated(tracker: Tracker, failure: str) -> None:
 
 def test_no_qualifying_runs_leave_issues_open(tracker: Tracker) -> None:
     tracker.issues(title_for("rust-test.yml"), title_for("rust-test.yml", kind="schedule"))
+    # rust-test.yml is daily: a recent skipped scheduled run shows the schedule
+    # fired (no missing-nightly issue) without deciding the nightly issue.
+    tracker.runs(nightly_api("rust-test.yml"), [run_object("skipped", event="schedule")])
     tracker.check([])
 
 
@@ -916,7 +939,15 @@ def test_failed_schedule_first_page_leaves_missing_issue_untouched(
         tracker.issues(title_for(workflow, kind="missing"))
     later = run_object("failure")
     tracker.runs(branch_api("pre-commit.yml"), [later])
-    expected = [missing_create("dependency-integrity-check.yml", previous)] if previous_created == OLD else []
+    # Both seeded workflows are daily, so an old seeded run opens their own issues.
+    expected = (
+        [
+            missing_create("dependency-integrity-check.yml", previous),
+            missing_create("julia-version-consistency.yml", previous),
+        ]
+        if previous_created == OLD
+        else []
+    )
     expected.append(red_create("pre-commit.yml", later))
     result = tracker.check(expected, code=1)
     assert f"::error::cannot reconcile {workflow} on dev (schedule)" in result.stdout

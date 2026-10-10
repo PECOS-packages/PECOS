@@ -56,7 +56,7 @@ guards. Rust is a single literal (`[workspace.package].version`), so it needs no
 
 Merge the bump PR to `dev`, then wait for **all** post-merge workflows on the
 merge commit to pass -- including the long ones (`python-core` is the full
-suite and only runs post-merge; `Python Artifacts` is the full wheel matrix,
+suite; `Python Artifacts` is the full wheel matrix,
 i.e. the release rehearsal). Optionally run `just check-all` locally on the
 merge commit as a belt-and-braces gate.
 
@@ -67,12 +67,19 @@ git tag py-<version> <merge-sha>
 git push origin py-<version>
 ```
 
-The `py-*` tag triggers `python-release.yml` in full-release mode: all
+The `py-*` tag triggers full validation, including `python-release.yml` in full-release mode: all
 platform wheels (pecos-rslib, pecos-rslib-llvm), quantum-pecos wheel + sdist,
 abi3 wheel tests across Python versions, and a `collect_artifacts` bundle
-pinned to the tagged commit. Wait for it to go green. Publish from the **tag
-run's** bundle, not a branch run -- provenance stays tied to the immutable
-ref.
+pinned to the tagged commit. Wait for it to go green. Then run:
+
+```
+uv run --frozen python scripts/ci/release_tag_status.py py-<version>
+```
+
+Require exit 0 before proceeding to steps 4 and 5; missing or unfinished
+validation counts as red. Push release tags one at a time, and keep the tag
+available locally for the check. Publish from the **tag run's** bundle, not a
+branch run -- provenance stays tied to the immutable ref.
 
 ## 4. Download the bundle and dry-run
 

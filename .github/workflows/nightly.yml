@@ -19,6 +19,8 @@ env:
   CARGO_NET_RETRY: "10"
 
 on:
+  push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
   schedule:
     - cron: "37 6 * * *"
   workflow_dispatch:

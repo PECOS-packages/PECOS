@@ -2374,7 +2374,8 @@ mod tests {
 
         // For comparison: forward EEG
         let eeg_result =
-            crate::circuit::analyze_with_noise(&expanded.gates, &noise, &expanded.expansion_gates);
+            crate::circuit::analyze_with_noise(&expanded.gates, &noise, &expanded.expansion_gates)
+                .expect("valid forward noise");
         let dets = vec![
             crate::dem_mapping::Detector {
                 id: 1,

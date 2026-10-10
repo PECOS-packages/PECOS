@@ -55,7 +55,8 @@ fn bit_to_f64(value: usize) -> f64 {
 fn eeg_detection_prob(gates: &[Gate], theta: f64) -> f64 {
     let expanded = expand::expand_circuit(gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     // Parity detector: Z on all auxiliary qubits
     let mut det_stab = Bm::default();
@@ -87,7 +88,8 @@ fn eeg_detection_prob(gates: &[Gate], theta: f64) -> f64 {
 fn eeg_per_round_probs(gates: &[Gate], theta: f64, num_rounds: usize) -> Vec<f64> {
     let expanded = expand::expand_circuit(gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     // One detector per round (Z on that round's aux qubit)
     let dets: Vec<Detector> = (0..num_rounds)
@@ -147,7 +149,8 @@ fn test_eeg_vs_statevec_bell_parity() {
 
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     // Parity detector: Z_aux0 * Z_aux1
     assert_eq!(expanded.measurement_qubit.len(), 2);
@@ -238,7 +241,8 @@ fn test_eeg_vs_statevec_larger_angle() {
 
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     let aux0 = expanded.measurement_qubit[0];
     let aux1 = expanded.measurement_qubit[1];
@@ -477,7 +481,8 @@ fn bench_z_basis_check() {
     for &theta in &[0.01, 0.05, 0.1, 0.2, 0.3] {
         let expanded = expand::expand_circuit(&gates).expect("supported circuit");
         let noise = NoiseModel::coherent_only(theta);
-        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+            .expect("valid forward noise");
 
         let aux = expanded.measurement_qubit[0];
         let det = Detector {
@@ -609,7 +614,8 @@ fn bench_repetition_code_comparison() {
             let expanded = expand::expand_circuit(&gates).expect("supported circuit");
             let noise_model = NoiseModel::coherent_only(theta);
             let noise_spec = UniformNoise::coherent_only(theta);
-            let result = analyze_expanded(&expanded.gates, &noise_model, &expanded.expansion_gates);
+            let result = analyze_expanded(&expanded.gates, &noise_model, &expanded.expansion_gates)
+                .expect("valid forward noise");
 
             let mut dets = Vec::new();
             for round in 0..(num_rounds - 1) {

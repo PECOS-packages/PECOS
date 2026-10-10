@@ -15,10 +15,10 @@
 //! Propagates mid-round fault locations to round boundaries, producing
 //! effective noise sources with accumulated probabilities/amplitudes.
 //!
-//! This compresses the forward EEG generator approximation, not physical
-//! categorical channels. Adding rates does not preserve exclusive Pauli
-//! choices or exact finite-probability composition. Use it for DEM mechanism
-//! structure, keeping the original noise model for exact Heisenberg targets.
+//! Compression is exact for independent S flips and first order for H
+//! amplitudes. S sources compose through product(1 - 2p), with p = -rate.
+//! Categorical channels use the injection view's independent-flip approximation;
+//! keep the original noise model for exact categorical Heisenberg targets.
 //!
 //! This dramatically reduces the number of noise sources:
 //! ~60 mid-round faults per round → ~17 boundary faults (9 data + 8 meas).
@@ -38,7 +38,7 @@ pub struct BoundaryNoise {
     pub label: Bm,
     /// EEG type (H or S).
     pub eeg_type: EegType,
-    /// Accumulated rate (S-type) or amplitude (H-type).
+    /// Negative composed flip probability (S-type) or summed amplitude (H-type).
     pub value: f64,
     /// Gate index of the boundary (for position tracking).
     pub boundary_gate: usize,
@@ -66,7 +66,7 @@ pub struct CompressedNoise {
 ///
 /// Gate noise (p1, p2) is compressed. Measurement (p_meas) and
 /// preparation (p_prep) noise is kept at its original position.
-/// The result is a generator approximation, not an exact replacement channel.
+/// Independent S flips compose exactly; H amplitudes use a first-order sum.
 ///
 /// # Panics
 /// Panics if the provenance flags do not match the gate count, or a noise
@@ -169,19 +169,28 @@ pub fn compress_noise_to_boundaries(
         }
 
         let key = (inject_at, label.clone(), inj.eeg_type);
-        *boundary_groups.entry(key).or_insert(0.0) += inj.rate;
+        if inj.eeg_type == EegType::S {
+            let p = -inj.rate;
+            *boundary_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
+        } else {
+            *boundary_groups.entry(key).or_insert(0.0) += inj.rate;
+        }
     }
 
     // Step 4: Convert groups to boundary noise sources
     let boundary_sources: Vec<BoundaryNoise> = boundary_groups
         .into_iter()
-        .filter(|(_, value)| value.abs() > 1e-20)
         .map(|((boundary_gate, label, eeg_type), value)| BoundaryNoise {
             label,
             eeg_type,
-            value,
+            value: if eeg_type == EegType::S {
+                -(1.0 - value) / 2.0
+            } else {
+                value
+            },
             boundary_gate,
         })
+        .filter(|source| source.value.abs() > 1e-20)
         .collect();
 
     let compressed_count =
@@ -284,8 +293,8 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
 ///
 /// Call `noise_after_gate()` on each gate just like the original noise model,
 /// but mid-round gate noise is empty — all accumulated at boundaries.
-/// This is a generator approximation. Its default physical view uses
-/// independent S flips and does not reproduce the original categorical noise.
+/// Its default physical view preserves independent S flips exactly, while H
+/// compression is first order. It does not reproduce original categorical noise.
 /// Keep the original model for exact targets and use this for DEM structure.
 pub struct CompressedNoiseSpec {
     /// Gate index → noise injections at that gate.

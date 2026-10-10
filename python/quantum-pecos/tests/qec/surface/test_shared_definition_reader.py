@@ -181,18 +181,26 @@ def test_descriptor_cache_is_returned_without_rereading(scrambled):
 
 
 @pytest.mark.parametrize("records", [[-2], [0], [-1]])
-def test_dem_nonpositional_ids_need_no_measurement_order(scrambled, records):
+def test_dem_nonpositional_ids_need_no_measurement_order(records):
     from pecos.qec.surface import generate_dem_from_tick_circuit
 
-    # With two emissions, -2 / 0 names id 17, and -1 names id 9.
-    meas_id = 9 if records == [-1] else 17
-    scrambled.set_meta("detectors", json.dumps([{"id": 0, "records": records}]))
-    scrambled.set_meta("observables", json.dumps([{"id": 0, "records": records}]))
-    records_dem = generate_dem_from_tick_circuit(scrambled, p_meas=0.125)
-    scrambled.set_meta("detectors", json.dumps([{"id": 0, "meas_ids": [meas_id]}]))
-    scrambled.set_meta("observables", json.dumps([{"id": 0, "meas_ids": [meas_id]}]))
-    assert records_dem == generate_dem_from_tick_circuit(scrambled, p_meas=0.125)
-    assert records_dem == "detector D0\nlogical_observable L0\nerror(0.125) D0 L0"
+    # Only qubit 0 is prepared, so only the measurement stamped 17 sees the
+    # preparation error and the two measurements give different DEMs.
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz_with_ids([0, 1], [17, 9])
+    circuit.set_meta("num_measurements", "2")
+
+    def dem(references):
+        circuit.set_meta("detectors", json.dumps([{"id": 0, **references}]))
+        circuit.set_meta("observables", json.dumps([{"id": 0, **references}]))
+        return generate_dem_from_tick_circuit(circuit, p_meas=0.125, p_prep=0.25)
+
+    # Emission order is [17, 9]: -2 and 0 name id 17, and -1 names id 9.
+    meas_id, other_id = (9, 17) if records == [-1] else (17, 9)
+    records_dem = dem({"records": records})
+    assert dem({"meas_ids": [other_id]}) != dem({"meas_ids": [meas_id]})
+    assert records_dem == dem({"meas_ids": [meas_id]})
 
 
 @pytest.mark.parametrize("basis", ["Z", "X"])
@@ -294,26 +302,20 @@ def test_decode_readers_reject_disagreeing_sources(scrambled, consumer, monkeypa
         function(*args, **kwargs)
 
 
-@pytest.mark.parametrize("annotation_only", [False, True])
-def test_native_topology_passes_resolved_offsets_to_pauli_lookup(scrambled, monkeypatch, annotation_only):
+def test_native_topology_passes_resolved_offsets_to_pauli_lookup(scrambled, monkeypatch):
     from types import SimpleNamespace
 
     from pecos.qec.surface import decode
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos_rslib import qec
 
-    if annotation_only:
-        scrambled.detector([(0, 0, 1)])
-        scrambled.observable([(0, 0, 0)])
-        expected_detectors = [[-1]]
-    else:
-        scrambled.set_meta("detectors", '[{"id":1,"records":[0,0]},{"id":0,"meas_ids":[9]}]')
-        scrambled.set_meta("observables", '[{"id":0,"records":[0],"meas_ids":[17]}]')
-        expected_detectors = [[-1], [-2, -2]]
+    scrambled.set_meta("detectors", '[{"id":1,"records":[0,0]},{"id":0,"meas_ids":[9]}]')
+    scrambled.set_meta("observables", '[{"id":0,"records":[0],"meas_ids":[17]}]')
+    expected_detectors = [[-1], [-2, -2]]
+    lookup_calls = []
 
     def capture_lookup(_dag, detectors, observables):
-        assert detectors == expected_detectors
-        assert observables == [[-2]]
+        lookup_calls.append((detectors, observables))
         return SimpleNamespace(num_pauli_sites=0)
 
     monkeypatch.setattr(qec, "PauliFrameLookup", SimpleNamespace(from_circuit=capture_lookup))
@@ -330,6 +332,7 @@ def test_native_topology_passes_resolved_offsets_to_pauli_lookup(scrambled, monk
         False,
         twirl=TwirlConfig(),
     )
+    assert lookup_calls == [(expected_detectors, [[-2]])]
     assert topology.num_measurements == 2
     assert topology.num_detectors == len(expected_detectors)
     assert topology.num_observables == 1

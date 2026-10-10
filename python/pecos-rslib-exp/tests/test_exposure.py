@@ -610,5 +610,6 @@ def test_sim_neo_coherent_rebuild_accepts_duck_typed_circuit_without_metadata():
         .seed(1046)
         .run()
     )
-    # No detector constrains the raw measurement; synthesis assigns a coin.
-    assert {tuple(row) for row in rows} == {(0,), (1,)}
+    # No definition covers the measurement, so the coherent path leaves it at
+    # its noiseless value: |0> measured in Z is always 0.
+    assert {tuple(row) for row in rows} == {(0,)}

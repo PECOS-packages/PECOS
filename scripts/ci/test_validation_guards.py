@@ -1,10 +1,11 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
-"""Reject branch-only validation admission in workflow job and step ``if:`` gates.
+"""Reject ref-dependent job and step ``if:`` and ``continue-on-error:`` gates.
 
-Shell ``run:`` bodies are out of scope: this structural check inspects YAML
-conditions only. Cache writes retain their trusted-branch policy, and release
-publication has an explicit exception because it must only run for jl-* tags.
+Shell ``run:`` bodies, env/``needs`` indirection (a ref-derived value computed
+elsewhere), and ref-derived matrices are out of scope. This structural check
+inspects YAML conditions only. Dedicated cache saves retain their trusted-branch
+policy, and release publication has an explicit jl-* tag exception.
 """
 
 from __future__ import annotations
@@ -15,14 +16,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 import yaml
-from cache_guard import gate_is_trusted_push, input_node, mapping_get, norm
+from cache_guard import gate_is_trusted_push, mapping_get, norm
 from release_tag_status import WORKFLOWS, checkout_workflows
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 BRANCH_GATE = re.compile(
-    r"github\s*\.\s*(?:ref_name|head_ref)\b|github\s*\.\s*ref\s*==|refs/heads/"
+    r"github\s*(?:\.\s*|\[\s*['\"])(?:ref|ref_name|ref_type|head_ref|base_ref)\b"
+    r"|github\s*\.\s*event\s*\.\s*(?:ref|base_ref)\b|refs/(?:heads|tags)/"
     r"|contains\s*\(\s*fromJSON\s*\(\s*'\s*\[\s*\"(?:main|master|development|dev)\"",
     re.IGNORECASE,
 )
@@ -39,12 +41,11 @@ OLD_CORE_GUARD = (
 
 
 def is_trusted_cache_write(step: yaml.MappingNode, condition: str) -> bool:
-    """Identify cache writers and apply cache_guard's existing gate predicate."""
-    # cache_guard exposes input lookup and gate validation, not writer detection.
+    """Exempt only dedicated cache-save steps with cache_guard's trusted gate."""
+    # Restore+save actions gate their save input, never admission of the whole step.
     uses = mapping_get(step, "uses")
     cache_save = isinstance(uses, yaml.ScalarNode) and uses.value.split("@")[0] == "actions/cache/save"
-    cache_inputs = any(input_node(step, key) is not None for key in ("save-if", "save-cache"))
-    return (cache_save or cache_inputs) and gate_is_trusted_push(condition)
+    return cache_save and gate_is_trusted_push(condition)
 
 
 def assert_validation_guards(directory: Path) -> None:
@@ -65,21 +66,23 @@ def assert_validation_guards(directory: Path) -> None:
                 conditions.extend(enumerate(steps.value))
             for index, owner in conditions:
                 assert isinstance(owner, yaml.MappingNode), f"{filename}: step must be a mapping"
-                condition = mapping_get(owner, "if")
-                if condition is None:
-                    continue
-                location = f"{filename}:{condition.start_mark.line + 1}: {job_key.value}"
-                if index is not None:
-                    location += f" step {index + 1}"
-                assert isinstance(condition, yaml.ScalarNode), f"{location}: if must be a scalar"
-                allowed = ALLOWED_GUARDS.get((filename, job_key.value, index))
-                if allowed is not None:
-                    if norm(condition.value) != norm(allowed[0]):
-                        problems.append(f"{location}: allowlisted guard changed ({allowed[1]})")
-                elif BRANCH_GATE.search(condition.value) and not (
-                    index is not None and is_trusted_cache_write(owner, condition.value)
-                ):
-                    problems.append(f"{location}: branch-ref gate can skip validation: {condition.value}")
+                for key in ("if", "continue-on-error"):
+                    condition = mapping_get(owner, key)
+                    if condition is None:
+                        continue
+                    location = f"{filename}:{condition.start_mark.line + 1}: {job_key.value}"
+                    if index is not None:
+                        location += f" step {index + 1}"
+                    location += f" {key}"
+                    assert isinstance(condition, yaml.ScalarNode), f"{location}: must be a scalar"
+                    allowed = ALLOWED_GUARDS.get((filename, job_key.value, index)) if key == "if" else None
+                    if allowed is not None:
+                        if norm(condition.value) != norm(allowed[0]):
+                            problems.append(f"{location}: allowlisted guard changed ({allowed[1]})")
+                    elif BRANCH_GATE.search(condition.value) and not (
+                        index is not None and is_trusted_cache_write(owner, condition.value)
+                    ):
+                        problems.append(f"{location}: branch-ref gate can skip validation: {condition.value}")
     assert not problems, "\n".join(problems)
 
 
@@ -118,6 +121,12 @@ def test_old_python_core_guard_is_rejected(tmp_path: Path) -> None:
         "startsWith(github.ref, 'refs/heads/')",
         "github.head_ref == 'dev'",
         'contains(fromJSON(\'["main", "dev"]\'), inputs.branch)',
+        "github.ref_type == 'branch'",
+        "!startsWith(github.ref, 'refs/tags/')",
+        "github.ref != 'refs/tags/py-1'",
+        "contains(github.ref, 'dev')",
+        "endsWith(github.ref, '/dev')",
+        "github['ref_name'] == 'dev'",
     ],
 )
 def test_branch_ref_guards_are_rejected(tmp_path: Path, level: str, condition: str) -> None:
@@ -130,22 +139,56 @@ def test_branch_ref_guards_are_rejected(tmp_path: Path, level: str, condition: s
 
 
 @pytest.mark.parametrize(
-    "writer",
+    ("writer", "allowed"),
     [
-        {"uses": "actions/cache/save@pinned"},
-        {"uses": "Swatinem/rust-cache@pinned", "with": {"save-if": OLD_CORE_GUARD}},
-        {"uses": "astral-sh/setup-uv@pinned", "with": {"save-cache": OLD_CORE_GUARD}},
+        ({"uses": "actions/cache/save@pinned"}, True),
+        ({"uses": "Swatinem/rust-cache@pinned", "with": {"save-if": OLD_CORE_GUARD}}, False),
+        ({"uses": "astral-sh/setup-uv@pinned", "with": {"save-cache": OLD_CORE_GUARD}}, False),
     ],
 )
-def test_cache_write_exception_is_limited_to_trusted_step_guards(tmp_path: Path, writer: dict) -> None:
+def test_cache_write_exception_is_limited_to_trusted_step_guards(
+    tmp_path: Path,
+    writer: dict,
+    *,
+    allowed: bool,
+) -> None:
     step = {**writer, "if": OLD_CORE_GUARD}
     workflow = {"jobs": {"validate": {"steps": [step]}}}
     path = tmp_path / "validation.yml"
     path.write_text(yaml.safe_dump(workflow))
-    assert_validation_guards(tmp_path)
+    if allowed:
+        assert_validation_guards(tmp_path)
+    else:
+        with pytest.raises(AssertionError, match="branch-ref gate"):
+            assert_validation_guards(tmp_path)
     workflow["jobs"]["validate"]["if"] = OLD_CORE_GUARD
     path.write_text(yaml.safe_dump(workflow))
     with pytest.raises(AssertionError, match="branch-ref gate"):
+        assert_validation_guards(tmp_path)
+
+
+def test_reusable_workflow_job_never_uses_step_cache_exemption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    job = {
+        "uses": "./.github/workflows/suite.yml",
+        "with": {"save-cache": "x"},
+        "if": OLD_CORE_GUARD,
+    }
+    (tmp_path / "validation.yml").write_text(yaml.safe_dump({"jobs": {"validate": job}}))
+    with pytest.raises(AssertionError, match="branch-ref gate"):
+        assert_validation_guards(tmp_path)
+    # Pin the job/step boundary independently of how strict the cache classifier is.
+    monkeypatch.setitem(globals(), "is_trusted_cache_write", lambda *_args: True)
+    with pytest.raises(AssertionError, match="branch-ref gate"):
+        assert_validation_guards(tmp_path)
+
+
+@pytest.mark.parametrize("level", ["job", "step"])
+def test_ref_dependent_continue_on_error_is_rejected(tmp_path: Path, level: str) -> None:
+    job = {"steps": [{"run": "validate"}]}
+    owner = job if level == "job" else job["steps"][0]
+    owner["continue-on-error"] = "github.ref_type == 'branch'"
+    (tmp_path / "validation.yml").write_text(yaml.safe_dump({"jobs": {"validate": job}}))
+    with pytest.raises(AssertionError, match="continue-on-error: branch-ref gate"):
         assert_validation_guards(tmp_path)
 
 

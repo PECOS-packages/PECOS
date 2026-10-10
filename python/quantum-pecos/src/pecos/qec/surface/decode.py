@@ -1145,10 +1145,15 @@ def _is_surface_sideband_result_tag(name: str) -> bool:
 
 
 def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
-    """Return the result-tag reference for each abstract surface measurement."""
+    """Return one result-tag reference per record, in shared-reader emission order.
+
+    A batched ``final[i]`` label starts at array element i and follows the
+    gate's qubit-list order. Scalar syndrome labels require a single record.
+    """
     refs: list[tuple[str, str] | tuple[str, str, int]] = []
+    measured_qubits: list[int] = []
     syndrome_measure_index_by_round: dict[int, int] = {}
-    measurement_gate_types = {"MZ", "MeasureFree"}
+    measurement_gate_types = {"MZ", "MX", "MPZ", "MeasureFree"}
     for tick_index in range(abstract_tc.num_ticks()):
         tick = abstract_tc.get_tick(tick_index)
         if tick is None:
@@ -1157,8 +1162,13 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
             gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
             if gate_type not in measurement_gate_types:
                 continue
+            qubits = list(gate.qubits)
+            measured_qubits.extend(qubits)
             label = str(abstract_tc.get_gate_meta(tick_index, gate_index, "label") or "")
             if label.startswith(("sx", "sz")):
+                if len(qubits) != 1:
+                    msg = f"scalar surface measurement label {label!r} requires a single-qubit gate"
+                    raise ValueError(msg)
                 round_value = abstract_tc.get_gate_meta(tick_index, gate_index, "syndrome_round")
                 if round_value is None:
                     msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
@@ -1170,10 +1180,15 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
                 refs.append(("scalar", f"{label}:{phase}:{measurement_index}"))
                 continue
             if label.startswith("final[") and label.endswith("]"):
-                refs.append(("array", "final", int(label.removeprefix("final[").removesuffix("]"))))
+                first_element = int(label.removeprefix("final[").removesuffix("]"))
+                refs.extend(("array", "final", first_element + element) for element in range(len(qubits)))
                 continue
             msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
             raise ValueError(msg)
+    emission_qubits = [qubit for qubit, _ in abstract_tc.measurement_emission()]
+    if len(refs) != len(emission_qubits) or measured_qubits != emission_qubits:
+        msg = "surface measurement result refs disagree with the shared reader's measurement emission"
+        raise ValueError(msg)
     return refs
 
 
@@ -1718,6 +1733,8 @@ def _surface_native_topology(
     max_hosted_tick_separation: int | None = None,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
+    import json
+
     from pecos.qec.surface.circuit_builder import _build_canonical_dem_influence_map
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
@@ -1757,8 +1774,6 @@ def _surface_native_topology(
     dag = tc.to_dag_circuit()
     influence_map = _build_canonical_dem_influence_map(dag)
 
-    detectors_json = tc.get_meta("detectors") or "[]"
-    observables_json = tc.get_meta("observables") or "[]"
     definitions = tc.circuit_definitions()
     num_measurements = definitions["num_measurements"]
     det_records = [
@@ -1768,6 +1783,25 @@ def _surface_native_topology(
         [position - num_measurements for position in observable["measurements"]]
         for observable in definitions["observables"]
     ]
+    # The map has no circuit annotations: all consumers must receive the same
+    # resolved definitions, expressed as end-relative records for the builders.
+    detectors_json = json.dumps(
+        [
+            {
+                "id": detector["id"],
+                "records": records,
+                "label": detector["label"],
+                **({"coords": detector["coords"]} if detector["coords"] is not None else {}),
+            }
+            for detector, records in zip(definitions["detectors"], det_records, strict=True)
+        ],
+    )
+    observables_json = json.dumps(
+        [
+            {"id": observable["id"], "records": records, "label": observable["label"]}
+            for observable, records in zip(definitions["observables"], obs_records, strict=True)
+        ],
+    )
 
     pauli_frame_lookup = None
     num_pauli_sites = 0
@@ -3983,8 +4017,8 @@ class NativeSampler:
 
     This provides a pure-PECOS alternative to Stim's DEM sampler.
 
-    The sampler uses explicit detector and observable definitions from
-    TickCircuit metadata, matching Stim's output format closely.
+    The sampler uses resolved detector and observable definitions from
+    the shared TickCircuit reader, matching Stim's output format closely.
 
     Two sampling backends are available:
     - `dem` (default): sample the generated decomposed DEM via `ParsedDem`

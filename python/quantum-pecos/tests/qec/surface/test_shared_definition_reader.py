@@ -229,6 +229,33 @@ def test_logical_dem_matches_pre_removal_baseline(monkeypatch):
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == expected
 
 
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_native_topology_agreeing_annotations_match_dem_baseline(basis, monkeypatch):
+    from pecos.qec.surface import NoiseParameters, decode
+    from pecos.qec.surface.decode import build_native_sampler, generate_circuit_level_dem_from_builder
+
+    expected = json.loads((Path(__file__).parent / "data" / "reader_dem_baseline.json").read_text())[basis]
+    patch = SurfacePatch.create(distance=3)
+    circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=2,
+        basis=basis,
+        ancilla_budget=2,
+        add_typed_annotations=True,
+    )
+    monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: circuit)
+    noise = NoiseParameters(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    # An explicit runtime bypasses the metadata-only topology cache.
+    assert (
+        generate_circuit_level_dem_from_builder(patch, 2, noise, basis, ancilla_budget=2, runtime=object())
+        == expected["cached"]
+    )
+    assert (
+        build_native_sampler(patch, 2, noise, basis, ancilla_budget=2, runtime=object()).dem_string
+        == expected["sampler"]
+    )
+
+
 @pytest.mark.parametrize("references", [{"records": [0]}, {"meas_ids": [17]}, {"records": [0], "meas_ids": [17]}])
 def test_audit_schema_uses_resolved_positions(scrambled, references):
     from pecos.qec.dem_spec import _resolved_schema_from_validated_json
@@ -336,3 +363,123 @@ def test_native_topology_passes_resolved_offsets_to_pauli_lookup(scrambled, monk
     assert topology.num_measurements == 2
     assert topology.num_detectors == len(expected_detectors)
     assert topology.num_observables == 1
+
+
+@pytest.mark.parametrize("sampling_model", ["dem", "influence_dem", "mnm"])
+def test_native_topology_uses_annotation_definitions(scrambled, monkeypatch, sampling_model):
+    from pecos.qec import ParsedDem
+    from pecos.qec.surface import NoiseParameters, decode
+    from pecos.qec.surface._twirl_config import TwirlConfig
+    from pecos.qec.surface.decode import (
+        _build_native_sampler_from_cached_surface_topology,
+        _dem_string_from_cached_surface_topology,
+        _surface_native_topology,
+        _surface_patch_cache_key,
+    )
+
+    scrambled.detector([(0, 0, 0)], label="first")
+    scrambled.detector([(0, 0, 1)], label="second")
+    scrambled.observable([(0, 0, 1)], label="logical")
+    monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: scrambled)
+    topology = _surface_native_topology(
+        _surface_patch_cache_key(SurfacePatch.create(distance=3)),
+        1,
+        "Z",
+        None,
+        "abstract",
+        False,
+        twirl=TwirlConfig(),
+    )
+    assert topology.num_measurements == 2
+    assert topology.num_detectors == 2
+    assert topology.num_observables == 1
+    noise = NoiseParameters(p_meas=0.125)
+    dem = ParsedDem.from_string(_dem_string_from_cached_surface_topology(topology, noise, decompose_errors=False))
+    assert dem.num_detectors == topology.num_detectors
+    assert dem.num_observables == topology.num_observables
+    sampler = _build_native_sampler_from_cached_surface_topology(topology, noise, sampling_model=sampling_model)
+    detectors, observables = sampler.sample(8, seed=42)
+    assert detectors.shape == (8, topology.num_detectors)
+    assert observables.shape == (8, topology.num_observables)
+    assert detectors[:, 1].tolist() == observables[:, 0].tolist()
+    assert json.loads(topology.detectors_json) == [
+        {"id": 0, "records": [-2], "label": "first"},
+        {"id": 1, "records": [-1], "label": "second"},
+    ]
+    assert json.loads(topology.observables_json) == [{"id": 0, "records": [-1], "label": "logical"}]
+
+
+@pytest.mark.parametrize("gate_type", ["MX", "MPZ"])
+def test_abstract_result_refs_follow_all_measurement_emissions(gate_type):
+    from pecos.qec.surface.decode import (
+        _remap_surface_record_metadata_json,
+        _surface_abstract_measurement_result_refs,
+        _surface_runtime_measurement_remap_from_result_traces,
+    )
+
+    circuit = TickCircuit()
+    circuit.tick().add_gate(gate_type, [4])
+    circuit.set_gate_meta(0, 0, "label", "final[0]")
+    circuit.tick().mz([2])
+    circuit.set_gate_meta(1, 0, "label", "sz0")
+    circuit.set_gate_meta(1, 0, "syndrome_round", 0)
+    circuit.set_meta("num_measurements", "2")
+    circuit.set_meta("detectors", '[{"id":0,"records":[1]}]')
+    assert _surface_abstract_measurement_result_refs(circuit) == [("array", "final", 0), ("scalar", "sz0:meas:0")]
+    remap = _surface_runtime_measurement_remap_from_result_traces(
+        circuit,
+        [
+            {"name": "final", "values": [0], "result_ids": [1]},
+            {"name": "sz0:meas:0", "values": [0], "result_ids": [0]},
+        ],
+    )
+    assert remap == {0: 1, 1: 0}
+    assert json.loads(
+        _remap_surface_record_metadata_json(
+            circuit.get_meta("detectors"),
+            source_tc=circuit,
+            definition_kind="detectors",
+            measurement_index_remap=remap,
+        ),
+    ) == [{"id": 0, "meas_ids": [0]}]
+
+
+@pytest.mark.parametrize("gate_type", ["MZ", "MeasureFree", "MX", "MPZ"])
+def test_abstract_result_refs_expand_array_labels_in_qubit_order(gate_type):
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+    from pecos_rslib.quantum import DagCircuit, Gate
+
+    # The name-based TickHandle API broadcasts into single-qubit batches.
+    # A DAG gate preserves the multi-qubit batch on conversion to ticks.
+    template = TickCircuit()
+    template.tick().add_gate(gate_type, [4])
+    dag = DagCircuit()
+    dag.add_gate(Gate(template.get_tick(0).gate_batches()[0].gate_type, qubits=[4, 2]))
+    circuit = dag.to_tick_circuit()
+    circuit.set_gate_meta(0, 0, "label", "final[3]")
+    circuit.tick().mz([1])
+    circuit.set_gate_meta(1, 0, "label", "final[5]")
+    assert [qubit for qubit, _ in circuit.measurement_emission()] == [4, 2, 1]
+    assert _surface_abstract_measurement_result_refs(circuit) == [
+        ("array", "final", 3),
+        ("array", "final", 4),
+        ("array", "final", 5),
+    ]
+
+
+@pytest.mark.parametrize("gate_type", ["MZ", "MeasureFree", "MX", "MPZ"])
+def test_abstract_result_refs_reject_batched_scalar_labels(gate_type):
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+    from pecos_rslib.quantum import DagCircuit, Gate
+
+    # The name-based TickHandle API broadcasts into single-qubit batches.
+    # A DAG gate preserves the multi-qubit batch on conversion to ticks.
+    template = TickCircuit()
+    template.tick().add_gate(gate_type, [4])
+    dag = DagCircuit()
+    dag.add_gate(Gate(template.get_tick(0).gate_batches()[0].gate_type, qubits=[4, 2]))
+    circuit = dag.to_tick_circuit()
+    circuit.set_gate_meta(0, 0, "label", "sx0")
+    circuit.set_gate_meta(0, 0, "syndrome_round", 0)
+    with pytest.raises(ValueError, match="scalar surface measurement label 'sx0' requires a single-qubit gate"):
+        _surface_abstract_measurement_result_refs(circuit)

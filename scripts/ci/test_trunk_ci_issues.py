@@ -89,7 +89,7 @@ def branch_api(workflow: str, branch: str = "dev", page: int = 1, *, event: str 
 
 
 def nightly_api(workflow: str) -> list[str]:
-    return ["api", f"{BASE}/actions/workflows/{workflow}/runs?branch=dev&event=schedule&per_page=1&page=1"]
+    return branch_api(workflow, event="schedule")
 
 
 def tags_api(tag: str, page: int = 1) -> list[str]:
@@ -280,13 +280,32 @@ class Tracker:
                 comments,
             )
 
-    def check(self, expected: list[list[str]], *, code: int = 0) -> subprocess.CompletedProcess:
+    def check(
+        self,
+        expected: list[list[str]],
+        *,
+        code: int = 0,
+        daily_workflows: tuple[str, ...] | None = None,
+    ) -> subprocess.CompletedProcess:
         for args in expected:
             # A test can inject a failure for an expected mutation too.
             self.responses.setdefault(json.dumps(args), {"stdout": "", "code": 0})
         self.prepare()
+        script = ROOT / "scripts/ci/trunk-ci-issues.sh"
+        if daily_workflows is not None:
+            # Simulate future daily coverage in a private copy; the real list
+            # and its YAML sync test remain untouched, including under xdist.
+            source, count = re.subn(
+                r"^daily_workflows=\([^)]*\)",
+                "daily_workflows=(" + shlex.join(daily_workflows) + ")",
+                script.read_text(),
+                flags=re.MULTILINE,
+            )
+            assert count == 1
+            script = self.folder / "trunk-ci-issues.sh"
+            script.write_text(source)
         done = subprocess.run(
-            ["/bin/bash", "scripts/ci/trunk-ci-issues.sh"],
+            ["/bin/bash", str(script)],
             cwd=ROOT,
             env={
                 **os.environ,
@@ -352,7 +371,7 @@ def test_superseded_push_ignored_but_cancelled_tag_red(tracker: Tracker, workflo
 
 
 @pytest.mark.parametrize("workflow", DAILY)
-@pytest.mark.parametrize("created", [OLD, None])
+@pytest.mark.parametrize("created", [OLD, "2026-10-07T23:59:59Z", None])
 def test_stale_or_absent_nightly_opens(tracker: Tracker, workflow: str, created: str | None) -> None:
     run = run_object(event="schedule", created=created) if created else None
     tracker.runs(nightly_api(workflow), [run] if run else [])
@@ -366,9 +385,11 @@ def test_recent_nightly_closes_missing(tracker: Tracker, status: str, created: s
     run = run_object("failure" if status == "completed" else None, event="schedule", status=status, created=created)
     tracker.runs(nightly_api(workflow), [run])
     tracker.issues(title_for(workflow, kind="missing"))
-    tracker.check(
-        [["issue", "close", "42", "--comment", f"Nightly schedule resumed. {nightly_summary(workflow, run)}"]],
+    expected = [red_create(workflow, run, kind="schedule")] if status == "completed" else []
+    expected.append(
+        ["issue", "close", "42", "--comment", f"Nightly schedule resumed. {nightly_summary(workflow, run)}"],
     )
+    tracker.check(expected)
 
 
 def test_still_missing_does_not_repeat_comment(tracker: Tracker) -> None:
@@ -464,6 +485,7 @@ def test_api_failure_isolated(tracker: Tracker, failure: str) -> None:
         expected = expected[1:]
     elif failure == "nightly":
         tracker.answer(nightly_api(workflow), code=1)
+        expected = expected[:1]
     elif failure == "tags":
         tracker.tags({"py-1.2.3": RECENT})
         tracker.answer(tags_api("py-1.2.3"), code=1)
@@ -527,18 +549,22 @@ def test_cancelled_nightly_is_red_for_superseded_workflow(tracker: Tracker, work
     tracker.check([red_create(workflow, cancelled, kind="schedule")])
 
 
+@pytest.mark.parametrize("all_daily", [False, True])
 @pytest.mark.parametrize("recent_count", [0, 1, 3])
-def test_api_budget(tracker: Tracker, recent_count: int) -> None:
+def test_api_budget(tracker: Tracker, recent_count: int, all_daily: bool) -> None:
     # Reserve capacity for 21 workflows (currently 20). Each tag fits one page:
     # 21 * (1 metadata + 1 branch * 2 classes) + 3 ref listings
     # + (25 old + 3 recent + 2 aged-out issue tags) repository run listings
-    # + 2 freshness + 1 code-scanning + 2 issues * (1 body + 1 comments) = 103.
-    # At 7 runs/hour: 7 * 103 = 721 of the shared 1,000 REST calls/hour,
+    # + 1 code-scanning + 2 issues * (1 body + 1 comments) = 101.
+    # Freshness reuses schedule page 1: two or twenty daily workflows cost the
+    # same. At 7 runs/hour: 7 * 101 = 707 of the shared 1,000 REST calls/hour,
     # including issue_text reads. Inventory/mutations are gh issue commands;
     # these issues already contain their failure URLs, so no mutations occur.
-    # With today's 20 workflows the peak fixture is 100 calls, or 700/hour.
+    # With today's 20 workflows the peak fixture is 98 calls, or 686/hour.
+    # Separate freshness requests would cost 100 (two daily) or 118 (twenty).
     # Exact unfiltered queries retain the event= mutation budget guard.
     capacity = 21
+    daily = WORKFLOWS if all_daily else DAILY
     assert len(WORKFLOWS) <= capacity
     tracker.tags({f"{('py-', 'jl-', 'rs-')[i % 3]}old-{i}": ANCIENT for i in range(25)})
     for index in range(recent_count):
@@ -558,7 +584,7 @@ def test_api_budget(tracker: Tracker, recent_count: int) -> None:
     )
     for workflow in WORKFLOWS:
         tracker.runs(branch_api(workflow), [] if workflow == "nightly.yml" else [run_object()])
-        if workflow in DAILY:
+        if workflow in daily:
             tracker.runs(branch_api(workflow, event="schedule"), [run_object(event="schedule")])
         for page in range(1, 5):
             legacy = ["api", f"{BASE}/actions/workflows/{workflow}/runs?branch=dev&per_page=100&page={page}"]
@@ -567,11 +593,11 @@ def test_api_budget(tracker: Tracker, recent_count: int) -> None:
             if workflow == "dependency-integrity-check.yml" and page == 1:
                 history[0] = run_object(event="schedule")
             tracker.runs(legacy, history if page <= 3 else [])
-    tracker.check([])
+    tracker.check([], daily_workflows=daily if all_daily else None)
     count = len(tracker.api_calls())
-    bound = capacity * 3 + 3 + 25 + recent_count + 2 + 2 + 1 + 4
+    bound = capacity * 3 + 3 + 25 + recent_count + 2 + 1 + 4
     assert count <= bound, f"API budget exceeded: {count} > {bound}"
-    assert count == len(WORKFLOWS) * 3 + 37 + recent_count
+    assert count == len(WORKFLOWS) * 3 + 35 + recent_count
     assert sum("/issues/" in " ".join(call) for call in tracker.api_calls()) == 4
 
 
@@ -830,3 +856,65 @@ def test_tag_pages_preserve_workflow_results_and_stop_at_short_page(tracker: Tra
     tracker.check([red_create("rust-test.yml", red, kind="release")] if qualifies else [])
     assert tracker.api_calls().count(tags_api(tag)) == 1
     assert tracker.api_calls().count(tags_api(tag, page=2)) == 1
+
+
+@pytest.mark.parametrize("created", [RECENT, OLD])
+@pytest.mark.parametrize("issue_open", [False, True])
+@pytest.mark.parametrize("page_failure", [False, True])
+def test_nightly_freshness_uses_first_page_even_when_class_pages_further(
+    tracker: Tracker,
+    created: str,
+    issue_open: bool,
+    page_failure: bool,
+) -> None:
+    workflow = "nightly.yml"
+    newest = run_object(None, event="schedule", status="queued", created=created, number=101)
+    older = run_object(event="schedule", created=ANCIENT)
+    tracker.runs(nightly_api(workflow), [newest] * 100)
+    second_page = branch_api(workflow, event="schedule", page=2)
+    if page_failure:
+        tracker.answer(second_page, code=1)
+    else:
+        tracker.runs(second_page, [older])
+    if issue_open:
+        tracker.issues(title_for(workflow, kind="missing"))
+    expected = []
+    if created == RECENT and issue_open:
+        expected.append(
+            ["issue", "close", "42", "--comment", f"Nightly schedule resumed. {nightly_summary(workflow, newest)}"],
+        )
+    elif created == OLD and not issue_open:
+        expected.append(missing_create(workflow, newest))
+    result = tracker.check(expected, code=int(page_failure))
+    assert tracker.api_calls().count(nightly_api(workflow)) == 1
+    assert tracker.api_calls().count(second_page) == 1
+    if page_failure:
+        assert f"::error::cannot reconcile {workflow} on dev (schedule)" in result.stdout
+
+
+@pytest.mark.parametrize("previous_created", [RECENT, OLD])
+@pytest.mark.parametrize("issue_open", [False, True])
+@pytest.mark.parametrize("failure", ["api", "json"])
+def test_failed_schedule_first_page_leaves_missing_issue_untouched(
+    tracker: Tracker,
+    previous_created: str,
+    issue_open: bool,
+    failure: str,
+) -> None:
+    # Seed another daily workflow's cache to catch accidental reuse on failure.
+    previous = run_object(event="schedule", created=previous_created)
+    tracker.runs(nightly_api("dependency-integrity-check.yml"), [previous])
+    workflow = "nightly.yml"
+    if failure == "api":
+        tracker.answer(nightly_api(workflow), code=1)
+    else:
+        tracker.answer(nightly_api(workflow), "invalid JSON")
+    if issue_open:
+        tracker.issues(title_for(workflow, kind="missing"))
+    later = run_object("failure")
+    tracker.runs(branch_api("pre-commit.yml"), [later])
+    expected = [missing_create("dependency-integrity-check.yml", previous)] if previous_created == OLD else []
+    expected.append(red_create("pre-commit.yml", later))
+    result = tracker.check(expected, code=1)
+    assert f"::error::cannot reconcile {workflow} on dev (schedule)" in result.stdout
+    assert tracker.api_calls().count(nightly_api(workflow)) == 1

@@ -133,6 +133,10 @@ check_class() {
   for ((page = 1; ; page++)); do
     runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=${branch}&event=${event}&per_page=100&page=${page}")" || return 1
     count="$(jq '.workflow_runs | length' <<<"$runs")" || return 1
+    # Freshness needs the newest scheduled run, even if this class scans on.
+    if [ "$branch" = dev ] && [ "$event" = schedule ] && [ "$page" -eq 1 ]; then
+      schedule_first_page="$runs"
+    fi
     [ "$count" -gt 0 ] || return 0
     run="$(jq -c --arg event "$event" --argjson skip_cancelled "$skip_cancelled" '
       [.workflow_runs[] | select(.event == $event
@@ -154,9 +158,8 @@ check_class() {
 }
 
 check_nightly() {
-  local workflow="$1" name="$2" runs run created url issue title summary
-  # Any status counts: queued and running nightlies prove the schedule fired.
-  runs="$(gh api "repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=dev&event=schedule&per_page=1&page=1")" || return 1
+  local name="$1" runs="$2" run created url issue title summary
+  # Reuse page 1, including queued/running runs that prove the schedule fired.
   run="$(jq -c '.workflow_runs | first // empty' <<<"$runs")" || return 1
   title="Nightly missing: ${name} on dev"
   issue="$(find_issue "$title")" || return 1
@@ -278,6 +281,8 @@ for workflow in "${workflows[@]}"; do
     status=1
     continue
   fi
+  # An unread first page must not reuse another workflow's freshness data.
+  schedule_first_page=""
   for branch in "${branches[@]}"; do
     for event in push schedule; do
       if ! check_class "$workflow" "$name" "$branch" "$event"; then
@@ -286,8 +291,8 @@ for workflow in "${workflows[@]}"; do
       fi
     done
   done
-  if [[ " ${daily_workflows[*]} " == *" $workflow "* ]]; then
-    if ! check_nightly "$workflow" "$name"; then
+  if [[ " ${daily_workflows[*]} " == *" $workflow "* ]] && [ -n "$schedule_first_page" ]; then
+    if ! check_nightly "$name" "$schedule_first_page"; then
       echo "::error::cannot reconcile nightly staleness for ${workflow}"
       status=1
     fi

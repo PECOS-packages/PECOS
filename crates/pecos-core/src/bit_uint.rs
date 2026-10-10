@@ -30,6 +30,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
 
+pub(crate) mod twos_complement;
+
 /// Internal storage for `BitUInt` values.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BitUIntValue {

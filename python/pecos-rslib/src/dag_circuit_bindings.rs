@@ -1497,7 +1497,7 @@ impl PyDagCircuit {
     ///     label: Optional label string.
     ///
     /// Returns:
-    ///     The annotation index.
+    ///     The zero-based detector definition id: the number of preceding detector annotations.
     ///
     /// Example:
     ///     >>> ms = dag.mz([0, 1])
@@ -1509,12 +1509,15 @@ impl PyDagCircuit {
         label: Option<String>,
     ) -> PyResult<usize> {
         let refs = extract_dag_meas_refs(&self.inner, measurements)?;
+        let definition_id = self.inner.detectors().count();
         let result = if let Some(l) = label {
             self.inner.detector_labeled(&l, &refs)
         } else {
             self.inner.detector(&refs)
         };
-        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+        result
+            .map(|_| definition_id)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Annotate a logical observable: measurements whose XOR gives a logical outcome.
@@ -1525,7 +1528,7 @@ impl PyDagCircuit {
     ///     label: Optional label string.
     ///
     /// Returns:
-    ///     The annotation index.
+    ///     The zero-based observable definition id: the number of preceding observable annotations.
     #[pyo3(signature = (measurements, label=None))]
     fn observable(
         &mut self,
@@ -1533,12 +1536,15 @@ impl PyDagCircuit {
         label: Option<String>,
     ) -> PyResult<usize> {
         let refs = extract_dag_meas_refs(&self.inner, measurements)?;
+        let definition_id = self.inner.observables().count();
         let result = if let Some(l) = label {
             self.inner.observable_labeled(&l, &refs)
         } else {
             self.inner.observable(&refs)
         };
-        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+        result
+            .map(|_| definition_id)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Place a tracked-Pauli annotation at this point in the circuit.
@@ -1551,7 +1557,8 @@ impl PyDagCircuit {
     ///     label: Optional label string.
     ///
     /// Returns:
-    ///     The annotation index.
+    ///     The zero-based tracked-Pauli id: the number of preceding tracked-Pauli
+    ///     annotations. It is not an index into ``annotations()``.
     ///
     /// Example:
     ///     >>> from pecos import PauliString
@@ -1562,11 +1569,13 @@ impl PyDagCircuit {
         pauli: &crate::pauli_bindings::PauliString,
         label: Option<String>,
     ) -> usize {
+        let tracked_id = self.inner.tracked_paulis().count();
         if let Some(l) = label {
-            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone())
+            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone());
         } else {
-            self.inner.tracked_pauli(pauli.inner.clone())
+            self.inner.tracked_pauli(pauli.inner.clone());
         }
+        tracked_id
     }
 
     /// Get all annotations as a list of dicts.
@@ -2945,6 +2954,9 @@ impl PyTickCircuit {
     // ==================== Annotations ====================
 
     /// Annotate a detector: measurements whose XOR should be deterministic.
+    ///
+    /// Returns:
+    ///     The zero-based detector definition id: the number of preceding detector annotations.
     #[pyo3(signature = (measurements, label=None))]
     fn detector(
         &mut self,
@@ -2952,15 +2964,26 @@ impl PyTickCircuit {
         label: Option<String>,
     ) -> PyResult<usize> {
         let refs = extract_tick_meas_refs(&self.inner, measurements)?;
+        let definition_id = self
+            .inner
+            .annotations()
+            .iter()
+            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::Detector { .. }))
+            .count();
         let result = if let Some(l) = label {
             self.inner.detector_labeled(&l, &refs)
         } else {
             self.inner.detector(&refs)
         };
-        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+        result
+            .map(|_| definition_id)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Annotate a logical observable.
+    ///
+    /// Returns:
+    ///     The zero-based observable definition id: the number of preceding observable annotations.
     #[pyo3(signature = (measurements, label=None))]
     fn observable(
         &mut self,
@@ -2968,26 +2991,45 @@ impl PyTickCircuit {
         label: Option<String>,
     ) -> PyResult<usize> {
         let refs = extract_tick_meas_refs(&self.inner, measurements)?;
+        let definition_id = self
+            .inner
+            .annotations()
+            .iter()
+            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::Observable { .. }))
+            .count();
         let result = if let Some(l) = label {
             self.inner.observable_labeled(&l, &refs)
         } else {
             self.inner.observable(&refs)
         };
-        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+        result
+            .map(|_| definition_id)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Place a tracked-Pauli annotation.
+    ///
+    /// Returns:
+    ///     The zero-based tracked-Pauli id: the number of preceding tracked-Pauli
+    ///     annotations. It is not an index into ``annotations()``.
     #[pyo3(signature = (pauli, label=None))]
     fn tracked_pauli(
         &mut self,
         pauli: &crate::pauli_bindings::PauliString,
         label: Option<String>,
     ) -> usize {
+        let tracked_id = self
+            .inner
+            .annotations()
+            .iter()
+            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::TrackedPauli))
+            .count();
         if let Some(l) = label {
-            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone())
+            self.inner.tracked_pauli_labeled(&l, pauli.inner.clone());
         } else {
-            self.inner.tracked_pauli(pauli.inner.clone())
+            self.inner.tracked_pauli(pauli.inner.clone());
         }
+        tracked_id
     }
 
     /// Get all annotations.

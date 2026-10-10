@@ -192,7 +192,9 @@ pub fn build_coherent_dem(
                 let p = -contrib.value;
                 *s_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 
@@ -404,7 +406,9 @@ pub fn build_coherent_dem_decomposable(
                 let (product, _, _) = s_groups.entry(key).or_insert((1.0, x_event, z_event));
                 *product *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 

@@ -13,7 +13,7 @@ use pecos_eeg::heisenberg::{
 };
 use pecos_eeg::noise_compression::compress_noise_to_boundaries;
 use pecos_eeg::stabilizer::StabilizerGroup;
-use pecos_eeg::{Bm, NoiseInjection, NoiseSpec};
+use pecos_eeg::{Bm, NoiseInjection, NoiseSpec, UniformNoise};
 
 struct UnsupportedNoise(EegType);
 
@@ -47,7 +47,10 @@ fn run(consumer: &str, eeg_type: EegType) {
             heisenberg_windowed(&gates, &detector, &noise, &initial, 0.0, None, &[false]);
         }
         "sparse" | "sparse_mapped" => {
-            let index = GateIndex::build(&gates, 2, &noise, &[false]);
+            // Index construction must not receive the unsupported injection.
+            // Gate 0 itself touches detector qubit 0, so the walk visits it.
+            let index = GateIndex::build(&gates, 2, &UniformNoise::coherent_only(0.0), &[false]);
+            assert_eq!(index.gates_on_qubit_rev(0).collect::<Vec<_>>(), [0]);
             let map = [Some(noise.exact_noise_after_gate(0, GateType::I, &[0]))];
             heisenberg_sparse(
                 &gates,

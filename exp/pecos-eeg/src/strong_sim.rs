@@ -496,7 +496,7 @@ mod tests {
             source: None,
         }];
         let p0x = outcome_probability(&gens_x, &outcome_0, &stabs);
-        // X flips bit: α = [1∈supp] - [0∈supp] = 1-1 = 0 (both in support)
+        // X flips bit: α(S_X) = [0∈supp] - [1∈supp] = 1-1 = 0 (both in support)
         // So h_correction = 0 for |+⟩ with H_X too (both outcomes in support)
         assert!((p0x.h_correction).abs() < 1e-10);
     }
@@ -520,13 +520,13 @@ mod tests {
         let p1 = outcome_probability(&gens, &outcome_1, &stabs);
 
         // |0⟩: only outcome 0 is in support.
-        // α(S_X) for outcome 0: [1∈supp] - [0∈supp] = 0-1 = -1
-        // Diagonal H·H: h² · α = 0.01 · (-1) = -0.01
+        // α(C_{X,X})/2 = -α(S_X) for outcome 0: [1∈supp] - [0∈supp] = -1
+        // Diagonal H·H: h² · α(C_{X,X})/2 = 0.01 · (-1) = -0.01
         assert!((p0.h_correction + 0.01).abs() < 1e-10);
         assert!((p0.total - 0.99).abs() < 0.02);
 
-        // α(S_X) for outcome 1: [0∈supp] - [1∈supp] = 1-0 = +1
-        // h² · α = 0.01 · 1 = +0.01
+        // α(C_{X,X})/2 = -α(S_X) for outcome 1: [0∈supp] - [1∈supp] = +1
+        // h² · α(C_{X,X})/2 = 0.01 · 1 = +0.01
         assert!((p1.h_correction - 0.01).abs() < 1e-10);
         assert!((p1.total - 0.01).abs() < 0.02);
     }

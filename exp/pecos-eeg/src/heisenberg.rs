@@ -822,7 +822,9 @@ pub fn heisenberg_with_noise_map(
                             }
                         }
                     }
-                    _ => {}
+                    crate::eeg::EegType::C | crate::eeg::EegType::A => {
+                        unreachable!("C/A injections are rejected at ingress")
+                    }
                 }
             }
         }
@@ -1114,7 +1116,9 @@ pub fn heisenberg_windowed(
                             }
                         }
                     }
-                    _ => {}
+                    crate::eeg::EegType::C | crate::eeg::EegType::A => {
+                        unreachable!("C/A injections are rejected at ingress")
+                    }
                 }
 
                 if prune_threshold > 0.0 {
@@ -1241,7 +1245,7 @@ pub fn heisenberg_windowed(
 ///
 /// # Panics
 /// Panics if the index provenance flags or a supplied noise map do not match the gate count,
-/// or received noise includes a C or A injection, even at zero rate.
+/// or noise on a gate the walk visits includes a C or A injection, even at zero rate.
 pub fn heisenberg_sparse(
     gates: &[Gate],
     detector: &Bm,
@@ -1259,9 +1263,6 @@ pub fn heisenberg_sparse(
 
     if let Some(noise_map) = noise_map {
         crate::expand::assert_one_per_gate("noise_map", noise_map.len(), gates.len());
-        for exact in noise_map.iter().flatten() {
-            crate::noise::assert_hs_injections(&exact.injections);
-        }
     }
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
@@ -1322,9 +1323,9 @@ pub fn heisenberg_sparse(
                 let qubits_usize: SmallVec<[usize; 4]> =
                     gate_qs.iter().map(|&q| q as usize).collect();
                 dynamic_noise = noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize);
-                crate::noise::assert_hs_injections(&dynamic_noise.injections);
                 &dynamic_noise
             };
+            crate::noise::assert_hs_injections(&gate_noise.injections);
 
             apply_depolarizing(&mut terms, &gate_noise.depolarizing);
             for inj in gate_noise.injections.iter().rev() {
@@ -1463,7 +1464,9 @@ pub fn heisenberg_sparse(
                             }
                         }
                     }
-                    _ => {}
+                    crate::eeg::EegType::C | crate::eeg::EegType::A => {
+                        unreachable!("C/A injections are rejected at ingress")
+                    }
                 }
             }
         }

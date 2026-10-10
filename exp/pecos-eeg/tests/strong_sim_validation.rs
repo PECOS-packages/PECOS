@@ -210,7 +210,7 @@ fn test_two_h_generators_interference() {
 /// C-type first-order α: directly construct a C generator and verify.
 #[test]
 fn test_c_type_alpha() {
-    // |0⟩ with C_{X,X} = 2S_X. Should give same result as S_X at double rate.
+    // |0⟩ with C_{X,X}(c) = S_X(-2c) under the PECOS S convention.
     let stabs = vec![Bm::z(0)];
     let c = 0.005;
 
@@ -225,7 +225,7 @@ fn test_c_type_alpha() {
     let p0 = outcome_probability(&gens, &[false], &stabs);
     let p1 = outcome_probability(&gens, &[true], &stabs);
 
-    // C_{X,X} = 2S_X. α(C_{X,X}) at outcome 0:
+    // C_{X,X} = -2S_X. α(C_{X,X}) at outcome 0:
     // Φ(X,X) at 0 = 0 (flipped not in support), Φ(I,I) = 1.
     // Φ(XX,I) = Φ(I,I) = 1.
     // α = 2*Re(0) - Re(1 + 1) = -2.

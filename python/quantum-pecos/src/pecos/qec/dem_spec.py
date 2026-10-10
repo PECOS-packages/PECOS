@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from numbers import Integral
 from typing import TYPE_CHECKING, Any
 
+from pecos._traced_circuit import measurement_ids_in_execution_order
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -357,22 +359,7 @@ class GuppyDemBuild:
 
 
 def _measurement_ids_in_runtime_order(circuit: Any) -> list[int]:
-    ids: list[int] = []
-    for tick_index in range(circuit.num_ticks()):
-        tick = circuit.get_tick(tick_index)
-        if tick is None:
-            continue
-        for gate in tick.gate_batches():
-            gate_type = str(gate.gate_type).rsplit(".", maxsplit=1)[-1]
-            if gate_type not in {"MZ", "MeasureFree"}:
-                continue
-            qubits = list(gate.qubits)
-            meas_ids = [int(meas_id) for meas_id in gate.meas_ids]
-            if len(qubits) != len(meas_ids):
-                raise ValueError(
-                    f"traced measurement has {len(qubits)} qubit(s) but {len(meas_ids)} MeasId(s)",
-                )
-            ids.extend(meas_ids)
+    ids = measurement_ids_in_execution_order(circuit)
     duplicates = sorted(meas_id for meas_id, count in Counter(ids).items() if count > 1)
     if duplicates:
         raise ValueError(f"traced circuit contains duplicate MeasId(s): {duplicates[:8]}")

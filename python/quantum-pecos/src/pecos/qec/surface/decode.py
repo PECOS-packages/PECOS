@@ -1734,9 +1734,9 @@ def _surface_native_topology(
 
     from pecos.qec.surface.circuit_builder import (
         _build_canonical_dem_influence_map,
-        _extract_measurement_order,
         _metadata_record_offsets,
         _metadata_uses_record_offsets,
+        get_measurement_order_from_tick_circuit,
     )
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
@@ -1779,7 +1779,9 @@ def _surface_native_topology(
     detectors_json = tc.get_meta("detectors") or "[]"
     observables_json = tc.get_meta("observables") or "[]"
     measurement_order = (
-        tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
+        tuple(get_measurement_order_from_tick_circuit(tc))
+        if _metadata_uses_record_offsets(detectors_json, observables_json)
+        else ()
     )
     num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
     det_records = (

@@ -16,8 +16,6 @@ from importlib import import_module
 from itertools import combinations
 from typing import TYPE_CHECKING
 
-from pecos.qec.surface._detection_events import _record_offsets, extract_detection_events_and_observables
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -567,10 +565,7 @@ def empirical_correlation_table(
 
     Runs ``sim_neo`` with the given noise model, extracts detector events
     per shot, and computes k-body joint detection rates. Same output format
-    as :func:`exact_correlation_table` from the Heisenberg walk. Observable
-    rates here are reference-relative flips keyed by declared observable ids;
-    ``exact_correlation_table`` reports raw parity. They diverge for observables
-    whose noiseless reference is one.
+    as :func:`exact_correlation_table` from the Heisenberg walk.
 
     Args:
         tick_circuit: A ``TickCircuit`` with detector metadata.
@@ -586,10 +581,6 @@ def empirical_correlation_table(
     Returns:
         List of ``(detector_indices_tuple, probability)`` pairs, same format
         as ``exact_correlation_table``.
-
-    Raises:
-        MissingObservableReferenceError: Observable metadata lacks a unique integer
-            id or an integer reference bit (0 or 1).
 
     Example::
 
@@ -636,6 +627,8 @@ def empirical_correlation_table(
         raise ValueError(
             msg,
         )
+
+    from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 
     fired_per_shot, obs_per_shot = extract_detection_events_and_observables(tick_circuit, results)
 
@@ -742,9 +735,8 @@ def fit_dem_from_simulation(
             mechs.append((prob, ds, os))
 
     # Step 2: Run simulation and extract empirical rates
-    det_json = json.loads(tick_circuit.get_meta("detectors"))
-    num_meas = int(tick_circuit.get_meta("num_measurements"))
-    num_dets = len(det_json)
+    definitions = tick_circuit.circuit_definitions()
+    num_dets = max((det["id"] for det in definitions["detectors"]), default=-1) + 1
 
     if backend == "meas_sampling":
         results = (
@@ -770,18 +762,14 @@ def fit_dem_from_simulation(
         msg = f"Unknown backend {backend!r}. Supported: {supported}."
         raise ValueError(msg)
 
+    from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+
+    fired_per_shot, _ = extract_detection_events_and_observables(tick_circuit, results)
     inv_shots = 1.0 / shots
     emp_marginals = [0.0] * num_dets
-    for r in results:
-        meas = list(r)
-        for i, det in enumerate(det_json):
-            val = 0
-            for rec in _record_offsets(det, num_meas):
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                emp_marginals[i] += inv_shots
+    for fired in fired_per_shot:
+        for detector_id in fired:
+            emp_marginals[detector_id] += inv_shots
 
     # Step 3: Fit mechanism probabilities to empirical marginals
     fitted, _residuals = fit_dem_to_marginals(mechs, emp_marginals)

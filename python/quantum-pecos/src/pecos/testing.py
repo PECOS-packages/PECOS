@@ -41,10 +41,10 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from pecos_rslib import SparseStab
+
 import pecos as pc
 from pecos._traced_circuit import measurement_ids_in_execution_order
-from pecos.qec._replay import _replay_measurements, _replay_tick_circuit
-from pecos.qec.surface._detection_events import _record_offsets
 from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
@@ -244,33 +244,59 @@ __all__ = [
 ]
 
 
+def _replay_tick_circuit(tc: TickCircuit, num_ticks: int, seed: int) -> tuple[SparseStab, list[int]]:
+    """Replay supported Clifford operations, rejecting unknown operations and angles."""
+    if not 0 <= num_ticks <= tc.num_ticks():
+        msg = "Replay tick count is outside the circuit"
+        raise ValueError(msg)
+    max_q = max(
+        (int(q) for i in range(tc.num_ticks()) for g in tc.get_tick(i).gate_batches() for q in g.qubits),
+        default=0,
+    )
+    sim = SparseStab(max_q + 1)
+    sim.set_seed(seed)
+    flat = []
+    for i in range(num_ticks):
+        for gate in tc.get_tick(i).gate_batches():
+            name = gate.gate_type.name
+            qubits = [int(q) for q in gate.qubits]
+            if gate.angles:
+                msg = f"Unsupported replay operation: {name} with angles"
+                raise NotImplementedError(msg)
+            if name in {"QAlloc", "PZ"}:
+                sim.run_gate("PZ", set(qubits))
+            elif name == "MZ":
+                flat.extend(sim.run_gate("MZ", {q}).get(q, 0) for q in qubits)
+            elif gate.is_two_qubit():
+                # Gate arity accessor: python/pecos-rslib/src/dag_circuit_bindings.rs.
+                sim.run_gate(name, set(zip(qubits[::2], qubits[1::2], strict=True)))
+            elif gate.is_single_qubit():
+                # SparseStab.run_gate raises for unsupported symbols.
+                sim.run_gate(name, set(qubits))
+            else:
+                msg = f"Unsupported replay operation: {name}"
+                raise NotImplementedError(msg)
+    return sim, flat
+
+
 def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], int, dict[int, int]]:
-    """Return noiseless measurements, fired detector count, and raw parity by observable id.
+    """Replay noiselessly; return measurements, fired detector count, and observables."""
+    definitions = tc.circuit_definitions()
+    _, flat = _replay_tick_circuit(tc, tc.num_ticks(), seed)
+    if len(flat) != definitions["num_measurements"]:
+        msg = "Replay measurement count disagrees with circuit definitions"
+        raise ValueError(msg)
 
-    The signed parity is a gate-correctness oracle: a negative logical image
-    gives one even noiselessly. It does not apply the metadata's ``reference``.
-    Use ``pecos.qec.surface.extract_detection_events_and_observables`` for
-    observable flips relative to that reference instead.
-    """
-    num_meas = int(tc.get_meta("num_measurements"))
-    flat = _replay_measurements(tc, num_meas, seed)
-
-    def parity(records: list[int]) -> int:
+    def parity(positions: list[int]) -> int:
         value = 0
-        for rec in records:
-            index = num_meas + rec
-            if not 0 <= index < len(flat):
-                msg = f"Invalid measurement record: {rec}"
-                raise ValueError(msg)
-            value ^= flat[index]
+        for position in positions:
+            value ^= flat[position]
         return value
 
-    detectors = json.loads(tc.get_meta("detectors") or "[]")
-    observables = json.loads(tc.get_meta("observables") or "[]")
     return (
         flat,
-        sum(parity(_record_offsets(det, num_meas)) for det in detectors),
-        {obs["id"]: parity(_record_offsets(obs, num_meas)) for obs in observables},
+        sum(parity(det["measurements"]) for det in definitions["detectors"]),
+        {obs["id"]: parity(obs["measurements"]) for obs in definitions["observables"]},
     )
 
 

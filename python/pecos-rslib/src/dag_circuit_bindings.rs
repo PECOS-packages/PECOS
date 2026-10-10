@@ -25,6 +25,9 @@
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
+use pecos_qec::fault_tolerance::circuit_definitions::{
+    definitions_from_tick_circuit, tick_circuit_measurement_emission,
+};
 use pecos_qec::fault_tolerance::propagator::{
     GateNoiseKind, gate_noise_kind, is_supported_noop_or_metadata_gate,
 };
@@ -2291,6 +2294,48 @@ impl PyTickCircuit {
     /// Get the total number of measurement results produced so far.
     fn num_measurements(&self) -> usize {
         self.inner.num_measurements()
+    }
+
+    /// Return (qubit, optional measurement id) pairs in measurement emission order.
+    fn measurement_emission(&self) -> Vec<(usize, Option<usize>)> {
+        tick_circuit_measurement_emission(&self.inner)
+            .into_iter()
+            .map(|record| {
+                (
+                    record.qubit.index(),
+                    record.meas_id.map(pecos_core::MeasId::index),
+                )
+            })
+            .collect()
+    }
+
+    /// Resolve detector and observable definitions to absolute emission positions.
+    fn circuit_definitions(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let definitions = definitions_from_tick_circuit(&self.inner)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        let result = PyDict::new(py);
+        result.set_item("num_measurements", definitions.num_measurements)?;
+        let detectors = PyList::empty(py);
+        for detector in definitions.detectors {
+            let entry = PyDict::new(py);
+            entry.set_item("id", detector.id)?;
+            entry.set_item("measurements", detector.measurements)?;
+            entry.set_item("coords", detector.coords)?;
+            entry.set_item("label", detector.label)?;
+            detectors.append(entry)?;
+        }
+        result.set_item("detectors", detectors)?;
+        let observables = PyList::empty(py);
+        for observable in definitions.observables {
+            let entry = PyDict::new(py);
+            entry.set_item("id", observable.id)?;
+            entry.set_item("measurements", observable.measurements)?;
+            entry.set_item("label", observable.label)?;
+            entry.set_item("pauli", observable.pauli.map(|pauli| pauli.to_string()))?;
+            observables.append(entry)?;
+        }
+        result.set_item("observables", observables)?;
+        Ok(result.unbind())
     }
 
     /// Get the next tick index that will be allocated.

@@ -1,7 +1,7 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Metadata-driven detection-event extraction for surface memory circuits."""
+"""Metadata-driven detection-event extraction for surface circuits."""
 
 from __future__ import annotations
 
@@ -12,6 +12,59 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
 
+class MissingObservableReferenceError(ValueError):
+    """An observable cannot be interpreted as a flip without its noiseless reference."""
+
+
+def _validate_observable_reference(
+    obs: dict[str, object],
+    entry_index: int,
+    *,
+    require_reference: bool = True,
+) -> None:
+    """Require an integer id and, when requested or present, an integer reference bit."""
+    entry = f"observable entry {entry_index}"
+    if "id" in obs:
+        entry += f" (id={obs['id']})"
+    if require_reference and "reference" not in obs:
+        msg = (
+            f"{entry} is missing 'reference'; this metadata carries no reference, "
+            "so a flip cannot be derived without one. "
+            "Surface producers LogicalCircuitBuilder.to_tick_circuit and TickCircuitRenderer "
+            "(via build_memory_circuit or generate_tick_circuit_from_patch) currently emit it."
+        )
+        raise MissingObservableReferenceError(msg)
+    if "id" not in obs:
+        msg = f"{entry} is missing 'id'"
+        raise MissingObservableReferenceError(msg)
+    observable_id = obs["id"]
+    if isinstance(observable_id, bool) or not isinstance(observable_id, int):
+        msg = f"{entry} has invalid 'id' {observable_id!r}; expected an integer"
+        raise MissingObservableReferenceError(msg)
+    if "reference" not in obs:
+        return
+    reference = obs["reference"]
+    if isinstance(reference, bool) or not isinstance(reference, int) or reference not in (0, 1):
+        msg = f"{entry} has invalid 'reference' {reference!r}; expected integer 0 or 1"
+        raise MissingObservableReferenceError(msg)
+
+
+def _validate_observable_references(
+    observables: list[dict[str, object]],
+    *,
+    require_reference: bool = True,
+) -> None:
+    """Validate observable entries and require unique declared integer ids."""
+    seen = set()
+    for entry_index, obs in enumerate(observables):
+        _validate_observable_reference(obs, entry_index, require_reference=require_reference)
+        observable_id = obs["id"]
+        if observable_id in seen:
+            msg = f"observable entry {entry_index} has duplicate 'id' {observable_id!r}"
+            raise MissingObservableReferenceError(msg)
+        seen.add(observable_id)
+
+
 class _TickCircuitLike(Protocol):
     def get_meta(self, key: str) -> str | None:
         """Return metadata stored under ``key`` when available."""
@@ -19,6 +72,7 @@ class _TickCircuitLike(Protocol):
 
 
 def _record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
+    """Return Stim-style negative record offsets for a metadata entry."""
     records = entry.get("records")
     if records is not None:
         return [int(record) for record in records]  # type: ignore[union-attr]
@@ -33,12 +87,24 @@ def extract_detection_events_and_observables(
     tick_circuit: _TickCircuitLike,
     results: Iterable[Sequence[int]],
 ) -> tuple[list[list[int]], list[list[int]]]:
-    """Extract fired detectors and observables from flat measurement rows."""
+    """Extract fired detector positions and reference-relative observable ids.
+
+    Each observable's raw record parity is XORed with its noiseless ``reference``
+    bit. Unlike ``pecos.testing.simulate_tick_circuit``, a clean shot therefore
+    has no observable flips, even when its signed raw parity is one.
+
+    Raises:
+        MissingObservableReferenceError: An observable entry lacks a unique integer ``id``
+            or an integer ``reference`` bit (0 or 1). Booleans are not accepted.
+        ValueError: Measurement count metadata is missing or a row has the wrong length.
+    """
     detectors_json = tick_circuit.get_meta("detectors")
     detectors = json.loads(detectors_json) if detectors_json else []
 
     observables_json = tick_circuit.get_meta("observables")
     observables = json.loads(observables_json) if observables_json else []
+
+    _validate_observable_references(observables)
 
     num_meas_meta = tick_circuit.get_meta("num_measurements")
     if num_meas_meta is None or num_meas_meta == "":
@@ -66,14 +132,14 @@ def extract_detection_events_and_observables(
         detection_events_per_shot.append(fired_detectors)
 
         flipped_observables: list[int] = []
-        for obs_idx, obs in enumerate(observables):
-            val = 0
+        for obs in observables:
+            val = obs["reference"]
             for rec in _record_offsets(obs, num_meas):
                 idx = num_meas + rec
                 if 0 <= idx < num_meas:
                     val ^= int(row[idx])
             if val:
-                flipped_observables.append(obs_idx)
+                flipped_observables.append(obs["id"])
         observable_flips_per_shot.append(flipped_observables)
 
     return detection_events_per_shot, observable_flips_per_shot

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE, transform_two_patch_pauli
 
+from pecos.qec._replay import _replay_measurements
 from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
 
@@ -1201,11 +1202,13 @@ class LogicalCircuitBuilder:
         Clifford maps the readout Pauli back onto the prepared eigenstate:
         positive gives zero, negative gives one. With folds it can be one
         noiselessly, including SZ/SZ before X readout, SZ/SZ/H before Z readout,
-        and SZdg pairs through a CX. The metadata has no sign field;
-        raw-parity consumers pecos.testing.simulate_tick_circuit and
-        pecos.qec.surface.extract_detection_events_and_observables must
-        account for that reference. A readout with no supported logical
-        image, as under a physical SZ layer, produces no observable at all.
+        and SZdg pairs through a CX. Observable metadata carries this bit as
+        ``reference``. pecos.testing.simulate_tick_circuit retains raw signed
+        parity for gate-correctness checks; its callers must account for the
+        reference. pecos.qec.surface.extract_detection_events_and_observables
+        applies it and returns flipped observable ids. A readout with no
+        supported logical image, as under a physical SZ layer, produces no
+        observable at all.
         """
         self._require_available_patch(label)
         self._operations.append(self._fold_sz_operation(label, dagger=dagger))
@@ -2842,11 +2845,13 @@ class _CircuitGenerator:
             }
             for d in self._det_json
         ]
+        reference_measurements = _replay_measurements(self.tc, total) if self._obs_json else []
         obs_out = [
             {
                 "id": o["id"],
                 "records": [idx - total for idx in o["abs_records"]],
                 "meas_ids": o["abs_records"],
+                "reference": sum(reference_measurements[idx] for idx in o["abs_records"]) % 2,
             }
             for o in self._obs_json
         ]

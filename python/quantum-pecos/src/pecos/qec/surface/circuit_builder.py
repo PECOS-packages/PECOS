@@ -19,9 +19,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import pecos._traced_circuit as _traced_circuit
+from pecos.qec._replay import _replay_measurements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -45,6 +46,12 @@ from pecos.qec.surface._check_plan import (
 )
 from pecos.qec.surface._clifford_deformation import (
     resolve_surface_clifford_frame,
+)
+from pecos.qec.surface._detection_events import (
+    _record_offsets as _metadata_record_offsets,
+)
+from pecos.qec.surface._detection_events import (
+    _validate_observable_references,
 )
 
 # Stabilizer geometry helpers live in the low-level patch module (single
@@ -100,10 +107,15 @@ class SurfaceDetectorDescriptor(TypedDict):
 
 
 class SurfaceObservableDescriptor(TypedDict):
-    """Public observable descriptor derived from TickCircuit metadata."""
+    """Public observable descriptor, preserving the noiseless reference when supplied.
+
+    Legacy metadata remains readable; only measurement-to-flip extraction
+    requires the reference.
+    """
 
     id: int
     observable_id: int
+    reference: NotRequired[int]
     basis: str
     records: list[int]
     logical_type: str
@@ -1705,11 +1717,13 @@ def _build_observable_descriptors(
     basis: str,
 ) -> list[SurfaceObservableDescriptor]:
     """Build enriched logical observable descriptors from TickCircuit metadata."""
+    _validate_observable_references(observables, require_reference=False)
     logical = patch.get_logical_descriptor(basis.upper())
     return [
         {
             "id": int(obs["id"]),
             "observable_id": int(obs["id"]),
+            **({"reference": obs["reference"]} if "reference" in obs else {}),
             "basis": basis.upper(),
             "records": [int(value) for value in obs["records"]],
             "logical_type": logical["logical_type"],
@@ -2131,6 +2145,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.
+
+    This renderer computes a reference for the observable it is given and trusts
+    the caller to establish determinism. ``build_surface_code_circuit`` supplies
+    a pure memory experiment whose logical readout is deterministic by construction.
+    A hand-assembled step list with an undetermined terminal readout gets a
+    reference for a quantity that has none; validation belongs at that boundary.
     """
 
     def __init__(
@@ -2176,7 +2196,7 @@ class TickCircuitRenderer(CircuitRenderer):
         Metadata is stored at three levels:
         - Circuit-level (preserved in DagCircuit):
             - 'detectors': JSON list of {id, coords, records}
-            - 'observables': JSON list of {id, records}
+            - 'observables': JSON list of {id, records, reference}
             - 'num_measurements', 'num_detectors', 'basis'
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
@@ -2756,10 +2776,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
             # Logical observable
             logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
+            reference_measurements = _replay_measurements(circuit, meas_count) if logical_rec_offsets else []
             observables = [
                 {
                     "id": 0,
                     "records": logical_rec_offsets,
+                    "reference": sum(reference_measurements[rec] for rec in logical_rec_offsets) % 2,
                 },
             ]
 
@@ -3019,7 +3041,7 @@ def generate_tick_circuit_from_patch(
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata:
     - 'detectors': JSON list of {id, coords, records}
-    - 'observables': JSON list of {id, records}
+    - 'observables': JSON list of {id, records, reference}
     - 'num_measurements': total measurement count
     - 'num_detectors': number of detectors
 
@@ -3124,7 +3146,9 @@ def get_observable_descriptors_from_tick_circuit(
 
     cached = tick_circuit.get_meta("observable_descriptors")
     if cached:
-        return json.loads(cached)
+        descriptors = json.loads(cached)
+        _validate_observable_references(descriptors, require_reference=False)
+        return descriptors
 
     observables = json.loads(tick_circuit.get_meta("observables") or "[]")
     basis = tick_circuit.get_meta("basis") or "Z"
@@ -3941,20 +3965,6 @@ def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
             if entry.get("records"):
                 return True
     return False
-
-
-def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
-    """Return Stim-style negative record offsets for a metadata entry."""
-    records = entry.get("records")
-    if records is not None:
-        return [int(record) for record in records]  # type: ignore[union-attr]
-
-    meas_ids = entry.get("meas_ids")
-    if meas_ids is not None:
-        return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
-
-    msg = "detector/observable metadata entry must define either 'records' or 'meas_ids'"
-    raise ValueError(msg)
 
 
 def generate_dem_from_tick_circuit(

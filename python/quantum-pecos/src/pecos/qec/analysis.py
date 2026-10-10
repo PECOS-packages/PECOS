@@ -16,6 +16,8 @@ from importlib import import_module
 from itertools import combinations
 from typing import TYPE_CHECKING
 
+from pecos.qec.surface._detection_events import _record_offsets, extract_detection_events_and_observables
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -565,7 +567,10 @@ def empirical_correlation_table(
 
     Runs ``sim_neo`` with the given noise model, extracts detector events
     per shot, and computes k-body joint detection rates. Same output format
-    as :func:`exact_correlation_table` from the Heisenberg walk.
+    as :func:`exact_correlation_table` from the Heisenberg walk. Observable
+    rates here are reference-relative flips keyed by declared observable ids;
+    ``exact_correlation_table`` reports raw parity. They diverge for observables
+    whose noiseless reference is one.
 
     Args:
         tick_circuit: A ``TickCircuit`` with detector metadata.
@@ -581,6 +586,10 @@ def empirical_correlation_table(
     Returns:
         List of ``(detector_indices_tuple, probability)`` pairs, same format
         as ``exact_correlation_table``.
+
+    Raises:
+        MissingObservableReferenceError: Observable metadata lacks a unique integer
+            id or an integer reference bit (0 or 1).
 
     Example::
 
@@ -628,38 +637,7 @@ def empirical_correlation_table(
             msg,
         )
 
-    det_json = json.loads(tick_circuit.get_meta("detectors"))
-    obs_json_str = tick_circuit.get_meta("observables")
-    obs_json = json.loads(obs_json_str) if obs_json_str else []
-    num_meas = int(tick_circuit.get_meta("num_measurements"))
-    len(det_json)
-
-    # Extract fired detectors and observables per shot
-    fired_per_shot: list[list[int]] = []
-    obs_per_shot: list[list[int]] = []
-    for r in results:
-        meas = list(r)
-        fired: list[int] = []
-        for i, det in enumerate(det_json):
-            val = 0
-            for rec in det["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                fired.append(i)
-        fired_per_shot.append(fired)
-
-        obs_fired: list[int] = []
-        for i, obs in enumerate(obs_json):
-            val = 0
-            for rec in obs["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                obs_fired.append(i)
-        obs_per_shot.append(obs_fired)
+    fired_per_shot, obs_per_shot = extract_detection_events_and_observables(tick_circuit, results)
 
     # Compute detector k-body rates with string labels
     inv_shots = 1.0 / shots
@@ -798,7 +776,7 @@ def fit_dem_from_simulation(
         meas = list(r)
         for i, det in enumerate(det_json):
             val = 0
-            for rec in det["records"]:
+            for rec in _record_offsets(det, num_meas):
                 idx = num_meas + rec
                 if 0 <= idx < len(meas):
                     val ^= meas[idx]

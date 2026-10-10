@@ -14,8 +14,9 @@
 //!
 //! At first order (l=1), only S-type generators contribute (H-type contributes
 //! at second order). The S-type α is:
-//!   α(x, S_P, ψ) = [x⊕a ∈ support(ψ)] - [x ∈ support(ψ)]
-//! where a is the X-component of P.
+//!   α(x, S_P, ψ) = [x ∈ support(ψ)] - [x⊕a ∈ support(ψ)]
+//! where a is the X-component of P, using the PECOS convention
+//! S_P[rho] = rho - P rho P (physical coefficients are negative).
 
 use crate::Bm;
 use crate::circuit::PropagatedEeg;
@@ -41,9 +42,10 @@ pub struct OutcomeProbability {
 /// The generators should be propagated to the end of the expanded circuit.
 ///
 /// At first order, only S-type generators contribute:
-///   α(x, S_P, ψ) = [x⊕a ∈ support] - [x ∈ support]
+///   α(x, S_P, ψ) = [x ∈ support] - [x⊕a ∈ support]
 /// where a is the X-component of P and "support" is the set of computational
-/// basis states with nonzero amplitude in |ψ⟩.
+/// basis states with nonzero amplitude in |ψ⟩. This uses the PECOS convention
+/// S_P[rho] = rho - P rho P, with negative physical coefficients.
 ///
 /// For a stabilizer state |ψ⟩ on n qubits: x is in the support iff
 /// all stabilizer generators have eigenvalue +1 on |x⟩.
@@ -79,7 +81,7 @@ pub fn outcome_probability(
         0.0
     };
 
-    // First-order S-type corrections: α(x, S_P, ψ) = [x⊕a ∈ support] - [x ∈ support]
+    // First-order S-type corrections: α(x, S_P, ψ) = [x ∈ support] - [x⊕a ∈ support]
     let mut s_correction = 0.0;
     let scale = if zeta > 0 {
         1.0 / (1u64 << zeta) as f64
@@ -96,7 +98,7 @@ pub fn outcome_probability(
         let flipped_in_support = is_in_support(&x_flipped, stabilizers);
 
         let alpha =
-            (if flipped_in_support { 1.0 } else { 0.0 }) - (if x_in_support { 1.0 } else { 0.0 });
+            (if x_in_support { 1.0 } else { 0.0 }) - (if flipped_in_support { 1.0 } else { 0.0 });
 
         s_correction += scale * alpha * g.coeff;
     }
@@ -447,12 +449,13 @@ mod tests {
         // p(0) ≈ 1 - 0.01 = 0.99 (S_X moves probability from 0 to 1)
         // p(1) ≈ 0 + 0.01 = 0.01
         assert!((p0.noiseless - 1.0).abs() < 1e-10);
-        assert!((p0.s_correction - 0.01).abs() < 1e-10);
+        assert!((p0.s_correction + 0.01).abs() < 1e-10);
         assert!((p0.h_correction).abs() < 1e-10); // no H generators
-        assert!((p0.total - 0.99).abs() < 0.02);
+        assert!((p0.total - 0.99).abs() < 1e-10);
 
         assert!((p1.noiseless - 0.0).abs() < 1e-10);
-        assert!((p1.s_correction + 0.01).abs() < 1e-10);
+        assert!((p1.s_correction - 0.01).abs() < 1e-10);
+        assert!((p1.total - 0.01).abs() < 1e-10);
     }
 
     #[test]

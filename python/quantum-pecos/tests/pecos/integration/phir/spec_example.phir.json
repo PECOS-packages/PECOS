@@ -10,7 +10,7 @@
   "ops": [
     {"//": "qreg q[2];"},
     {"//": "qreg w[3];"},
-    {"//": "qreg d[5];"},
+    {"//": "qreg qd[5];"},
     {
       "data": "qvar_define",
       "data_type": "qubits",
@@ -26,7 +26,7 @@
     {
       "data": "qvar_define",
       "data_type": "qubits",
-      "variable": "d",
+      "variable": "qd",
       "size": 5
     },
 
@@ -187,22 +187,22 @@
     },
 
 
-    {"//": "if(a[3]==1) h d;"},
+    {"//": "if(a[3]==1) h qd;"},
     {
       "block": "if",
       "condition": {"cop": "==", "args": [ ["a", 3], 1]},
       "true_branch": [
         {
           "qop": "H",
-          "args": [ ["d", 0], ["d", 1], ["d", 2], ["d", 3], ["d", 4] ]
+          "args": [ ["qd", 0], ["qd", 1], ["qd", 2], ["qd", 3], ["qd", 4] ]
         }
       ]
     },
 
-    {"//": "measure d -> f;"},
+    {"//": "measure qd -> f;"},
     {
       "qop": "Measure",
-      "args": [ ["d", 0], ["d", 1], ["d", 2], ["d", 3], ["d", 4] ],
+      "args": [ ["qd", 0], ["qd", 1], ["qd", 2], ["qd", 3], ["qd", 4] ],
       "returns": [ ["f", 0], ["f", 1], ["f", 2], ["f", 3], ["f", 4] ]
     },
 

@@ -3200,6 +3200,26 @@ mod tests {
     }
 
     #[test]
+    fn test_review_failed_comptime_scope() {
+        let source = "pub fn main(c: bool) -> unit { mut q := qalloc(1); pz q; n := 0.125; a := blk: { n := 0.25; c }; rz(n turns) q[0]; return unit; }";
+        let slr = compile_to_slr(source).unwrap();
+        let gate = slr
+            .body
+            .iter()
+            .find_map(|stmt| match stmt {
+                SlrStatement::Gate(gate) => Some(gate),
+                _ => None,
+            })
+            .unwrap();
+        let SlrExpression::Literal(angle) = &gate.params[0] else {
+            panic!("expected angle");
+        };
+        assert!(
+            matches!(angle.value, SlrLiteralValue::Angle(0.125)),
+            "{angle:?}"
+        );
+    }
+    #[test]
     fn test_gate_info_covers_every_lowered_gate_kind() {
         for kind in GateKind::ALL {
             if *kind == GateKind::PZ {

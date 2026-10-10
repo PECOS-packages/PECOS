@@ -46,6 +46,15 @@ use pecos_num::z2_linalg::z2_rank_from_records;
 use pecos_random::RngProbabilityExt;
 use rand_core::Rng;
 
+/// Errors when sampling detector events into a decoder batch.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SampleShotsError {
+    /// Raw measurements cannot be represented as detector events.
+    #[error("sample_shots requires detector-event mode, not raw measurements")]
+    RawMeasurements,
+}
+
 /// Errors from detector definition validation.
 #[derive(Debug, Clone)]
 pub enum DetectorValidationError {
@@ -859,7 +868,11 @@ impl DemSampler {
         (outputs, dem_outputs)
     }
 
-    /// Sample multiple shots.
+    /// Sample multiple shots as shot-major rows of detector and observable flips.
+    ///
+    /// To decode the shots, use [`Self::sample_shots`], which returns a
+    /// [`SampleBatch`](pecos_decoders::batch::SampleBatch) ready for
+    /// `pecos_decoders::batch` decoding.
     #[must_use]
     pub fn sample_batch<R: Rng>(
         &self,
@@ -880,6 +893,43 @@ impl DemSampler {
         (all_outputs, all_dem_outputs)
     }
 
+    /// Sample detector events and all standard `L<n>` observables into a decoder batch.
+    ///
+    /// Uses the same geometric, column-packed draw as [`Self::sample_batch_geometric`],
+    /// preserving observable IDs and excluding tracked Paulis. With zero shots,
+    /// retains detector and observable widths as empty columns without consuming RNG.
+    /// This is named `sample_shots` because [`Self::sample_batch`] returns shot-major rows.
+    ///
+    /// # Errors
+    ///
+    /// Raw-measurement mode returns [`SampleShotsError::RawMeasurements`] for every
+    /// shot count, including zero, before consuming RNG. A batch carries detector
+    /// events and has no raw-measurement flag.
+    ///
+    /// # Panics
+    ///
+    /// Like [`Self::sample_batch_geometric`], panics if the sampler was built
+    /// with [`SamplingEngine::from_mechanisms`] from mechanism indices outside
+    /// its declared widths. The geometric columns always satisfy the batch's
+    /// validation, so building the batch itself does not panic.
+    pub fn sample_shots<R: Rng>(
+        &self,
+        num_shots: usize,
+        rng: &mut R,
+    ) -> Result<pecos_decoders::batch::SampleBatch, SampleShotsError> {
+        if self.mode == OutputMode::RawMeasurements {
+            return Err(SampleShotsError::RawMeasurements);
+        }
+        let (det_columns, obs_columns) = self.sample_batch_geometric(num_shots, rng);
+        // The geometric sampler sizes every column to num_shots.div_ceil(64)
+        // words and sets bits only for shots below num_shots, which is exactly
+        // what the batch validates.
+        Ok(
+            pecos_decoders::batch::SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+                .expect("geometric sampler columns are canonical for the shot count"),
+        )
+    }
+
     /// Batch sample using geometric skip — O(fired) instead of O(all mechanisms).
     ///
     /// Returns columnar bit-packed data:
@@ -888,6 +938,8 @@ impl DemSampler {
     ///
     /// Much faster than `sample_batch` at low error rates where few mechanisms fire.
     /// Only available in detector-event mode (not raw measurement mode).
+    /// [`Self::sample_shots`] draws the same columns and wraps them in a
+    /// [`SampleBatch`](pecos_decoders::batch::SampleBatch) for decoding.
     ///
     /// # Panics
     ///
@@ -1588,7 +1640,10 @@ impl<'a> DemSamplerBuilder<'a> {
 /// Compute per-location total error probabilities from noise config.
 ///
 /// For T1/T2 idle noise, returns the sum of biased Pauli probabilities.
-/// For all other gates, returns the gate-type probability.
+/// For all other supported gates, returns the gate-type probability.
+///
+/// # Panics
+/// Panics for unsupported controlled non-Clifford gate locations.
 pub(crate) fn compute_location_probs_from_noise(
     locations: &[super::super::propagator::dag::DagSpacetimeLocation],
     noise: &NoiseConfig,
@@ -1598,6 +1653,13 @@ pub(crate) fn compute_location_probs_from_noise(
         .map(|loc| {
             #[allow(clippy::match_same_arms)]
             match loc.gate_type {
+                GateType::CCZ | GateType::CS | GateType::CSdg | GateType::CCX => {
+                    panic!(
+                        "DEM location probabilities do not support {:?}",
+                        loc.gate_type
+                    )
+                }
+
                 gate_type if is_supported_prep_gate(gate_type) => noise.p_prep,
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
                 gate_type if is_two_qubit_noise_gate(gate_type) => {
@@ -1633,6 +1695,27 @@ pub(crate) fn gate_location_prob_from_locations(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagonal_gates_cannot_reach_location_probability_defaults() {
+        use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = pecos_core::Gate::simple(
+                gt,
+                (0..gt.quantum_arity())
+                    .map(pecos_core::QubitId)
+                    .collect::<Vec<_>>(),
+            );
+            let loc = DagSpacetimeLocation::new(0, gate.qubits.to_vec(), false, &gate);
+            assert!(
+                std::panic::catch_unwind(|| compute_location_probs_from_noise(
+                    &[loc],
+                    &NoiseConfig::uniform(0.1)
+                ))
+                .is_err()
+            );
+        }
+    }
+
     /// The reviewer's happy-path witness for the rewritten detector mapping:
     /// `detector_records_abs` must hold absolute raw-measurement indices, so a
     /// single-measurement detector's event equals that measurement's flip on

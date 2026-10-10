@@ -5,14 +5,15 @@
 //! Python bindings for EEG DEM builder.
 
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Angle64, Gate, GateAngles, GateParams, QubitId};
+use pecos_core::{Angle64, Gate, GateAngles, GateParams, MeasId, QubitId};
 use pecos_eeg::Bm;
 use pecos_eeg::circuit::{self, NoiseModel};
 use pecos_eeg::correlation_table::CorrelationTableInput;
 use pecos_eeg::dem_mapping::{DemEntry, Detector, Observable};
 use pecos_eeg::noise_characterization::NoiseCharacterizationInput;
-use pecos_qec::fault_tolerance::dem_builder::{
-    parse_detectors_json, parse_observables_json, record_offset_to_absolute_index,
+use pecos_qec::fault_tolerance::circuit_definitions::{
+    AnnotationDefinition, CircuitDefinitions, DefinitionKind, check_measurement_count,
+    resolve_definitions,
 };
 use pyo3::prelude::*;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -21,12 +22,6 @@ use std::collections::BTreeMap;
 type PyDemEvent = (f64, Vec<usize>, Vec<usize>);
 type PyEegEventDiagnostic = (Vec<usize>, usize, usize, Vec<f64>, f64);
 type MeasurementRecordDefinition = (usize, Vec<usize>, Vec<i32>);
-
-struct MetadataDefinition {
-    id: usize,
-    meas_ids: Vec<usize>,
-    records: Vec<i32>,
-}
 
 /// Build a DEM using forward EEG analysis (perturbative, fast).
 ///
@@ -122,7 +117,7 @@ pub fn eeg_summary(
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
-    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
     let h = result
         .generators
         .iter()
@@ -161,7 +156,7 @@ pub fn eeg_event_diagnostics(
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
-    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     // Group H generators by DEM event, tracking labels
     let mut h_events: BTreeMap<Vec<usize>, BTreeMap<Bm, f64>> = BTreeMap::new();
@@ -228,7 +223,7 @@ pub fn eeg_per_detector(
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
-    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     let expanded_pre_readout = exclude_final_mz(&expanded.gates);
     let stab_group = pecos_eeg::stabilizer::StabilizerGroup::from_circuit(
@@ -418,7 +413,7 @@ pub fn exact_detection_rates(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     // Build initial stabilizer group: Z on each original qubit
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -500,7 +495,7 @@ pub fn exact_pairwise_rates(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
         .map(|q| pecos_eeg::expand::make_gate(pecos_core::gate_type::GateType::PZ, &[q]))
@@ -587,7 +582,7 @@ pub fn coherent_dem_exact(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
     let gate_index = pecos_eeg::expand::GateIndex::build(
         &expanded.gates,
         expanded.num_qubits,
@@ -687,7 +682,7 @@ pub fn coherent_dem_decomposed(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
     let gate_index = pecos_eeg::expand::GateIndex::build(
         &expanded.gates,
         expanded.num_qubits,
@@ -805,7 +800,7 @@ pub fn exact_correlation_table(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
         .map(|q| pecos_eeg::expand::make_gate(pecos_core::gate_type::GateType::PZ, &[q]))
@@ -871,7 +866,7 @@ pub fn correlation_matching_dem(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
         .map(|q| pecos_eeg::expand::make_gate(pecos_core::gate_type::GateType::PZ, &[q]))
@@ -970,17 +965,33 @@ pub fn noise_characterization(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let det_defs = extract_meas_id_defs(tick_circuit, "detectors")?;
-    let obs_defs = extract_meas_id_defs(tick_circuit, "observables")?;
-    let (detectors, observables) = resolve_definitions(&det_defs, &obs_defs, &expanded)?;
-    let to_records = |definitions: &[MetadataDefinition]| -> Vec<MeasurementRecordDefinition> {
-        definitions
+    let (definitions, emission) = extract_definitions(tick_circuit, &gates)?;
+    let (detectors, observables) = definitions_to_aux(&definitions, &expanded)?;
+    let to_records = |id: u32, positions: &[usize]| -> PyResult<MeasurementRecordDefinition> {
+        let meas_ids = positions
             .iter()
-            .map(|entry| (entry.id, entry.meas_ids.clone(), entry.records.clone()))
-            .collect()
+            .map(|&position| emission[position].map(MeasId::index))
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
+        let records = positions
+            .iter()
+            .map(|&position| {
+                i32::try_from(position as i128 - emission.len() as i128)
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+            })
+            .collect::<PyResult<_>>()?;
+        Ok((id as usize, meas_ids, records))
     };
-    let det_meas_ids = to_records(&det_defs);
-    let obs_meas_ids = to_records(&obs_defs);
+    let det_meas_ids = definitions
+        .detectors
+        .iter()
+        .map(|entry| to_records(entry.id, &entry.measurements))
+        .collect::<PyResult<Vec<_>>>()?;
+    let obs_meas_ids = definitions
+        .observables
+        .iter()
+        .map(|entry| to_records(entry.id, &entry.measurements))
+        .collect::<PyResult<Vec<_>>>()?;
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
         .map(|q| pecos_eeg::expand::make_gate(pecos_core::gate_type::GateType::PZ, &[q]))
@@ -1070,7 +1081,7 @@ fn run_eeg(
         pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     // Step 3: Build detectors using expanded circuit mapping
-    let (detectors, observables) = extract_detectors_expanded(py_tc, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(py_tc, &gates, &expanded)?;
 
     // Step 4: Compute stabilizer group from EXPANDED circuit (pre-readout).
     // Use expanded frame directly — no lossy original-frame mapping.
@@ -1124,7 +1135,7 @@ fn run_eeg_decomposable(
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result =
         pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
-    let (detectors, observables) = extract_detectors_expanded(py_tc, &expanded)?;
+    let (detectors, observables) = extract_detectors_expanded(py_tc, &gates, &expanded)?;
     let expanded_pre_readout = exclude_final_mz(&expanded.gates);
     let stab_group = pecos_eeg::stabilizer::StabilizerGroup::from_circuit(
         &expanded_pre_readout,
@@ -1258,9 +1269,8 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                 _ => {
                     let gt = match name.as_str() {
                         "MZ" => pecos_core::gate_type::GateType::MZ,
-                        // Preserved, NOT normalized to MZ: the MZ-only EEG
-                        // expansion must see and refuse it, or its measurement
-                        // record silently vanishes.
+                        // Expansion lowers MeasureFree to MZ, preserving its
+                        // record; the free is resource bookkeeping.
                         "MeasureFree" => pecos_core::gate_type::GateType::MeasureFree,
                         "RZ" => pecos_core::gate_type::GateType::RZ,
                         "Idle" => pecos_core::gate_type::GateType::Idle,
@@ -1316,133 +1326,135 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
 
 fn extract_detectors_expanded(
     py_tc: &Bound<'_, PyAny>,
+    gates: &[Gate],
     expanded: &pecos_eeg::expand::ExpandedCircuit,
 ) -> PyResult<(Vec<Detector>, Vec<Observable>)> {
-    let detectors = extract_meas_id_defs(py_tc, "detectors")?;
-    let observables = extract_meas_id_defs(py_tc, "observables")?;
-    resolve_definitions(&detectors, &observables, expanded)
+    let (definitions, _) = extract_definitions(py_tc, gates)?;
+    definitions_to_aux(&definitions, expanded)
 }
 
-/// Read each metadata key once with the canonical parser, retaining declared ids.
-fn extract_meas_id_defs(py_tc: &Bound<'_, PyAny>, key: &str) -> PyResult<Vec<MetadataDefinition>> {
-    let value = py_tc.call_method1("get_meta", (key,))?;
-    if value.is_none() {
-        return Ok(Vec::new());
-    }
-    let json = value.extract::<String>().map_err(|_| {
-        pyo3::exceptions::PyValueError::new_err(format!(
-            "{key} metadata must be a JSON string; pass a JSON string"
-        ))
-    })?;
-    let mut definitions: Vec<MetadataDefinition> = if key == "detectors" {
-        parse_detectors_json(&json)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
-            .into_iter()
-            .map(|entry| MetadataDefinition {
-                id: entry.id as usize,
-                meas_ids: entry.meas_ids,
-                records: entry.records,
-            })
-            .collect()
-    } else {
-        parse_observables_json(&json)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
-            .into_iter()
-            .map(|entry| MetadataDefinition {
-                id: entry.id as usize,
-                meas_ids: entry.meas_ids,
-                records: entry.records,
-            })
-            .collect()
-    };
-    definitions.sort_unstable_by_key(|entry| entry.id);
-    for pair in definitions.windows(2) {
-        if pair[0].id == pair[1].id {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "duplicate {key} id {}",
-                pair[0].id
-            )));
+/// Read each metadata key once, and resolve against the gates actually expanded.
+fn extract_definitions(
+    py_tc: &Bound<'_, PyAny>,
+    gates: &[Gate],
+) -> PyResult<(CircuitDefinitions, Vec<Option<MeasId>>)> {
+    let metadata = |key: &str| -> PyResult<Option<String>> {
+        let value = py_tc.call_method1("get_meta", (key,))?;
+        if value.is_none() {
+            return Ok(None);
         }
+        value.extract::<String>().map(Some).map_err(|_| {
+            let format = if key == "num_measurements" {
+                "decimal count string"
+            } else {
+                "JSON string"
+            };
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "{key} metadata must be a {format}; pass a {format}"
+            ))
+        })
+    };
+    let detectors = metadata("detectors")?;
+    let observables = metadata("observables")?;
+    let count = metadata("num_measurements")?;
+    // Expansion visits these same gates and their qubits in order, allocating
+    // one auxiliary per record. Unsupported measurement bases fail expansion.
+    let emission: Vec<_> = gates
+        .iter()
+        .filter(|gate| gate.gate_type.consumes_measurement_record())
+        .flat_map(|gate| (0..gate.qubits.len()).map(|index| gate.meas_ids.get(index).copied()))
+        .collect();
+    check_measurement_count(count.as_deref(), emission.len())
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+    let mut annotations = Vec::new();
+    for entry in py_tc
+        .call_method0("annotations")?
+        .extract::<Vec<Bound<'_, pyo3::types::PyDict>>>()?
+    {
+        let kind = entry
+            .get_item("kind")?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("annotation is missing kind"))?
+            .extract::<String>()?;
+        let kind = match kind.as_str() {
+            "detector" => DefinitionKind::Detector { coords: Vec::new() },
+            "observable" => DefinitionKind::Observable,
+            "tracked_pauli" => continue,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown annotation kind {kind:?}"
+                )));
+            }
+        };
+        let measurement_ids = entry
+            .get_item("measurement_ids")?
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("annotation is missing measurement_ids")
+            })?
+            .extract::<Vec<usize>>()?
+            .into_iter()
+            .map(MeasId::from_raw)
+            .collect();
+        let label = entry
+            .get_item("label")?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("annotation is missing label"))?
+            .extract::<Option<String>>()?;
+        annotations.push(AnnotationDefinition {
+            kind,
+            measurement_ids,
+            label,
+            pauli: None,
+        });
     }
-    Ok(definitions)
+    let definitions = resolve_definitions(
+        detectors.as_deref(),
+        observables.as_deref(),
+        &annotations,
+        &emission,
+    )
+    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+    Ok((definitions, emission))
 }
 
-fn resolve_definitions(
-    detectors: &[MetadataDefinition],
-    observables: &[MetadataDefinition],
+fn definitions_to_aux(
+    definitions: &CircuitDefinitions,
     expanded: &pecos_eeg::expand::ExpandedCircuit,
 ) -> PyResult<(Vec<Detector>, Vec<Observable>)> {
-    let detectors = detectors
+    if definitions.num_measurements != expanded.measurement_qubit.len() {
+        let err = pecos_eeg::expand::EegBuildError::MeasurementCountMismatch {
+            definition_count: definitions.num_measurements,
+            expanded_count: expanded.measurement_qubit.len(),
+        };
+        return Err(pyo3::exceptions::PyValueError::new_err(err.to_string()));
+    }
+    let bitmask = |positions: &[usize]| -> PyResult<Bm> {
+        let mut bitmask = Bm::default();
+        for &position in positions {
+            let qubit = expanded
+                .aux_qubit_for_record(position)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            bitmask.z_bits.xor_bit(qubit);
+        }
+        Ok(bitmask)
+    };
+    let detectors = definitions
+        .detectors
         .iter()
-        .map(|definition| {
+        .map(|entry| {
             Ok(Detector {
-                id: definition.id,
-                stabilizer: resolve_definition(definition, "detector", expanded)?,
+                id: entry.id as usize,
+                stabilizer: bitmask(&entry.measurements)?,
             })
         })
         .collect::<PyResult<_>>()?;
-    let observables = observables
+    let observables = definitions
+        .observables
         .iter()
-        .map(|definition| {
+        .map(|entry| {
             Ok(Observable {
-                id: definition.id,
-                pauli: resolve_definition(definition, "observable", expanded)?,
+                id: entry.id as usize,
+                pauli: bitmask(&entry.measurements)?,
             })
         })
         .collect::<PyResult<_>>()?;
     Ok((detectors, observables))
-}
-
-fn resolve_definition(
-    definition: &MetadataDefinition,
-    kind: &str,
-    expanded: &pecos_eeg::expand::ExpandedCircuit,
-) -> PyResult<Bm> {
-    let MetadataDefinition {
-        id,
-        meas_ids,
-        records,
-    } = definition;
-    let num_meas = expanded.measurement_qubit.len();
-    let mut record_qubits = records
-        .iter()
-        .map(|&record| {
-            let index = record_offset_to_absolute_index(num_meas, record).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "{kind} {id} references record offset {record}, which does not \
-                     resolve against {num_meas} measurements"
-                ))
-            })?;
-            expanded
-                .aux_qubit_for_record(index)
-                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    let mut id_qubits = meas_ids
-        .iter()
-        .map(|&meas_id| {
-            expanded
-                .aux_qubit_for_id(pecos_core::MeasId::from_raw(meas_id))
-                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    if !records.is_empty() && !meas_ids.is_empty() {
-        record_qubits.sort_unstable();
-        id_qubits.sort_unstable();
-        if record_qubits != id_qubits {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "{kind} {id} has records and meas_ids that reference different auxiliary qubits"
-            )));
-        }
-    }
-    let qubits = if records.is_empty() {
-        id_qubits
-    } else {
-        record_qubits
-    };
-    let mut bitmask = Bm::default();
-    for qubit in qubits {
-        bitmask.z_bits.xor_bit(qubit);
-    }
-    Ok(bitmask)
 }

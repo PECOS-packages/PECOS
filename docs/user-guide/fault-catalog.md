@@ -82,8 +82,8 @@ circuit.tick().h([0])
 circuit.tick().mz([0])
 
 circuit.set_meta("num_measurements", "1")
-circuit.set_meta("detectors", '[{"records":[-1]}]')
-circuit.set_meta("observables", '[{"records":[-1]}]')
+circuit.set_meta("detectors", '[{"records":[-1],"id":0}]')
+circuit.set_meta("observables", '[{"records":[-1],"id":0}]')
 
 # Structural -- all locations, zero probabilities:
 catalog = fault_catalog(circuit)
@@ -95,11 +95,15 @@ catalog.with_noise(p1=0.03, p2=0.0, p_meas=0.01, p_prep=0.0)
 catalog = fault_catalog(circuit, p1=0.03, p2=0.0, p_meas=0.01, p_prep=0.0)
 ```
 
-The circuit must have detector and observable metadata (`num_measurements`,
-`detectors`, `observables`). The catalog uses this metadata to map raw
-measurement flips into detector and observable flips. Without metadata,
-structural fields like `affected_detectors` will be empty, but
-`affected_measurements` are still computed from Pauli propagation.
+Detectors and observables come from the circuit's `detectors` / `observables`
+metadata (each entry needs an `id`, plus `records` and/or `meas_ids`) and from
+annotations declared with `TickCircuit.detector(...)` / `.observable(...)`.
+When both sources define a kind they must agree. A `num_measurements`
+attribute, if present, must equal the circuit's measurement count. The catalog
+uses these definitions to map raw measurement flips into detector and
+observable flips. Without any definitions, structural fields like
+`affected_detectors` are empty, but `affected_measurements` are still computed
+from Pauli propagation.
 
 ## Re-parameterization
 
@@ -392,11 +396,11 @@ circuit.tick().mz(&[0]);
 circuit.set_meta("num_measurements", Attribute::String("1".into()));
 circuit.set_meta(
     "detectors",
-    Attribute::String(r#"[{"records":[-1]}]"#.into()),
+    Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
 );
 circuit.set_meta(
     "observables",
-    Attribute::String(r#"[{"records":[-1]}]"#.into()),
+    Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
 );
 
 // Structural catalog (no noise):

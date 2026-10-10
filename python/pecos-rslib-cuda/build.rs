@@ -26,8 +26,10 @@ fn main() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
         }
 
-        // cuTensor (transitive dependency of cuTensorNet)
-        if let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor()
+        // cuTensor (transitive dependency of cuTensorNet). It is a CUDA library, so
+        // only install it when a CUDA toolkit is present.
+        if pecos_build::cuda::find_cuda().is_some()
+            && let Ok(cutensor_path) = pecos_build::cutensor::ensure_cutensor()
             && let Some(lib_dir) = pecos_build::cutensor::get_lib_dir(&cutensor_path)
         {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());

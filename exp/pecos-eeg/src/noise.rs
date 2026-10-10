@@ -216,6 +216,9 @@ impl UniformNoise {
         let mut depolarizing = Vec::new();
 
         match gate_type {
+            GateType::CS | GateType::CSdg | GateType::CCZ => {
+                panic!("EEG noise does not support {gate_type:?}")
+            }
             // Two-qubit gates: idle RZ + depolarizing
             GateType::CX
             | GateType::CZ
@@ -379,6 +382,25 @@ fn inject_depol_2q(qa: usize, qb: usize, prob: f64, out: &mut Vec<NoiseInjection
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagonal_gates_are_rejected_by_noise() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            for representation in [
+                DepolarizingRepresentation::Generators,
+                DepolarizingRepresentation::Channels,
+            ] {
+                assert!(
+                    std::panic::catch_unwind(|| UniformNoise::coherent_only(0.0).gate_noise(
+                        gt,
+                        &(0..gt.quantum_arity()).collect::<Vec<_>>(),
+                        representation
+                    ))
+                    .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn label_qubits_spans_storage_words() {

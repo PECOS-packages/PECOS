@@ -302,7 +302,10 @@ impl OperationProcessor {
         // Create the variable if it doesn't exist
         if !self.environment.has_variable(name) {
             // Add but allow failure if it already exists
-            match self.environment.add_variable(name, DataType::I32, 31) {
+            match self
+                .environment
+                .ensure_classical_variable(name, DataType::I32, 31)
+            {
                 Ok(()) => log::debug!("Created new variable: {name} in environment"),
                 Err(e) => log::warn!(
                     "Could not create variable in environment: {name}. Will try to update anyway: {e}"
@@ -884,23 +887,9 @@ impl OperationProcessor {
     /// # Errors
     /// Returns an error if the variable already exists or cannot be added.
     pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
-        if self.environment.has_variable(variable) {
-            let info = self.environment.get_variable_info(variable)?;
-            if info.data_type != DataType::Qubits || info.size != size {
-                return Err(PecosError::Input(format!(
-                    "Conflicting definition for variable '{variable}': existing {:?} size {}, \
-                     new qubits size {size}",
-                    info.data_type, info.size
-                )));
-            }
-            log::debug!(
-                "Quantum variable '{variable}' already exists in environment, skipping creation"
-            );
-        } else {
-            self.environment
-                .add_variable(variable, DataType::Qubits, size)?;
-            log::debug!("Defined quantum variable {variable} of size {size}");
-        }
+        self.environment
+            .add_variable(variable, DataType::Qubits, size)?;
+        log::debug!("Defined quantum variable {variable} of size {size}");
         Ok(())
     }
 
@@ -918,17 +907,9 @@ impl OperationProcessor {
         // Convert string data type to DataType enum
         let dt = data_type.parse::<DataType>()?;
 
-        // Only add to environment if it doesn't already exist
-        // This is important for compatibility with test programs that might redefine variables
-        if self.environment.has_variable(variable) {
-            log::debug!("Variable '{variable}' already exists in environment, skipping creation");
-        } else {
-            // Propagate definition errors (e.g. a register whose declared width
-            // does not fit its backing integer type) so they fail fast with a
-            // useful message rather than surfacing later as "variable not found".
-            self.environment.add_variable(variable, dt, size)?;
-            log::debug!("Added classical variable {variable} of type {data_type} and size {size}");
-        }
+        self.environment
+            .add_classical_variable(variable, dt, size)?;
+        log::debug!("Added classical variable {variable} of type {data_type} and size {size}");
 
         Ok(())
     }
@@ -1103,7 +1084,8 @@ impl OperationProcessor {
 
                     // Make sure variable exists in environment and update it
                     if !self.environment.has_variable(&var) {
-                        self.environment.add_variable(&var, DataType::I32, 31)?;
+                        self.environment
+                            .ensure_classical_variable(&var, DataType::I32, 31)?;
                     }
                     // Convert to u64 safely - we're working with raw bit patterns
                     #[allow(clippy::cast_sign_loss)]
@@ -1243,7 +1225,7 @@ impl OperationProcessor {
                                                                 {
                                                                     let _ = self
                                                                         .environment
-                                                                        .add_variable(
+                                                                        .ensure_classical_variable(
                                                                             var,
                                                                             DataType::I32,
                                                                             31,
@@ -1269,7 +1251,7 @@ impl OperationProcessor {
                                                                 {
                                                                     let _ = self
                                                                         .environment
-                                                                        .add_variable(
+                                                                        .ensure_classical_variable(
                                                                             var,
                                                                             DataType::I32,
                                                                             31,
@@ -1343,7 +1325,7 @@ impl OperationProcessor {
                                                                     {
                                                                         let _ = self
                                                                             .environment
-                                                                            .add_variable(
+                                                                            .ensure_classical_variable(
                                                                                 var,
                                                                                 DataType::I32,
                                                                                 31,
@@ -1370,7 +1352,7 @@ impl OperationProcessor {
                                                                     {
                                                                         let _ = self
                                                                             .environment
-                                                                            .add_variable(
+                                                                            .ensure_classical_variable(
                                                                                 var,
                                                                                 DataType::I32,
                                                                                 31,
@@ -1450,7 +1432,11 @@ impl OperationProcessor {
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
                                         // Create if needed
-                                        self.environment.add_variable(var, DataType::I32, 31)?;
+                                        self.environment.ensure_classical_variable(
+                                            var,
+                                            DataType::I32,
+                                            31,
+                                        )?;
                                     }
 
                                     // Set value in environment (single source of truth)
@@ -1464,7 +1450,11 @@ impl OperationProcessor {
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
                                         // Create if needed
-                                        self.environment.add_variable(var, DataType::I32, 31)?;
+                                        self.environment.ensure_classical_variable(
+                                            var,
+                                            DataType::I32,
+                                            31,
+                                        )?;
                                     }
 
                                     // Set bit in environment (single source of truth)
@@ -1810,7 +1800,7 @@ impl OperationProcessor {
             // a signed `i32` could not hold e.g. bit index 31 (size 32).
             let var_size = std::cmp::max(var_idx + 1, 32);
             self.environment
-                .add_variable(var_name, DataType::U64, var_size)?;
+                .ensure_classical_variable(var_name, DataType::U64, var_size)?;
             log::debug!("Created variable {var_name} with size {var_size}");
         }
 
@@ -1862,7 +1852,7 @@ impl OperationProcessor {
             let prefixed_name = format!("{MEASUREMENT_PREFIX}{result_id}");
             if !self.environment.has_variable(&prefixed_name) {
                 self.environment
-                    .add_variable(&prefixed_name, DataType::I32, 31)?;
+                    .ensure_classical_variable(&prefixed_name, DataType::I32, 31)?;
             }
             self.environment.set(&prefixed_name, u64::from(*outcome))?;
             log::debug!("Stored measurement result: {prefixed_name} = {outcome}");
@@ -2015,7 +2005,7 @@ impl OperationProcessor {
                             })
                     };
                     self.environment
-                        .add_variable(&dst_name, var_type, var_size)?;
+                        .ensure_classical_variable(&dst_name, var_type, var_size)?;
                 }
 
                 // Store the value in the destination, failing loudly on error
@@ -2206,25 +2196,24 @@ mod tests {
         );
     }
 
-    // A conflicting re-definition (same name, different type or size) is a
-    // genuine definition error; only an identical re-definition is a no-op.
+    // All redeclarations are errors, including identical definitions.
     #[test]
     fn test_conflicting_quantum_variable_definition_fails() {
         let mut processor = OperationProcessor::new();
         processor.add_quantum_variable("q", 2).unwrap();
         processor
             .add_quantum_variable("q", 2)
-            .expect("identical re-definition is a no-op");
+            .expect_err("identical re-definition must be rejected");
         let err = processor
             .add_quantum_variable("q", 3)
             .expect_err("conflicting size must be rejected");
-        assert!(err.to_string().contains("Conflicting definition"));
+        assert!(err.to_string().contains("cannot redeclare as quantum"));
 
         processor.add_classical_variable("c", "u32", 4).unwrap();
         let err = processor
             .add_quantum_variable("c", 4)
             .expect_err("classical/quantum name collision must be rejected");
-        assert!(err.to_string().contains("Conflicting definition"));
+        assert!(err.to_string().contains("cannot redeclare as quantum"));
     }
 
     // Issue #345 finding 3: no-return measurements split across batches must not

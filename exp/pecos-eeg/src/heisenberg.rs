@@ -2875,10 +2875,10 @@ mod tests {
                     let mut inj = exact_test_injection(eeg_type, label, rate);
                     inj.label2 = Some(Bm::z(0));
                     let noise = ExactTestNoise(vec![(0, inj)]);
-                    assert_eq!(
+                    assert!(matches!(
                         heisenberg_exact_from_circuit(&gates, &[0], &noise, 1),
-                        Err(expand::EegBuildError::UnsupportedExactNoise { eeg_type })
-                    );
+                        Err(expand::EegBuildError::UnsupportedExactNoise { eeg_type: actual }) if actual == eeg_type
+                    ));
                 }
             }
         }
@@ -2919,23 +2919,23 @@ mod tests {
         // Expansion adds one aux qubit, so qubit 2 lies outside the circuit.
         for eeg_type in [crate::eeg::EegType::H, crate::eeg::EegType::S] {
             let noise = ExactTestNoise(vec![(0, exact_test_injection(eeg_type, Bm::x(2), -0.1))]);
-            assert_eq!(
+            assert!(matches!(
                 heisenberg_exact_from_circuit(&gates, &[0], &noise, 1),
                 Err(expand::EegBuildError::ExactLabelOutOfRange {
                     qubit: 2,
                     num_qubits: 2
                 })
-            );
+            ));
         }
 
         // A categorical channel past the circuit is reported the same way.
-        assert_eq!(
+        assert!(matches!(
             heisenberg_exact_from_circuit(&gates, &[0], &FarChannel, 1),
             Err(expand::EegBuildError::ExactLabelOutOfRange {
                 qubit: 5,
                 num_qubits: 2
             })
-        );
+        ));
     }
 
     #[test]
@@ -2948,10 +2948,10 @@ mod tests {
                 unsupported,
                 gate(GateType::MZ, &[0]),
             ];
-            assert_eq!(
+            assert!(matches!(
                 heisenberg_exact_from_circuit(&gates, &[0], &ExactTestNoise(vec![]), 2),
-                Err(expand::EegBuildError::UnsupportedExactGate { gate_type })
-            );
+                Err(expand::EegBuildError::UnsupportedExactGate { gate_type: actual }) if actual == gate_type
+            ));
         }
 
         // A CX on an odd number of qubits is not a valid gate at all.

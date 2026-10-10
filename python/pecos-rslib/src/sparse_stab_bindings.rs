@@ -1,7 +1,8 @@
 // Copyright 2026 The PECOS Developers
 use crate::prelude::*;
 use crate::simulator_utils::{
-    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+    SymbolEntry, extract_angle, extract_angles, extract_forced_outcome, supports_exact,
+    validate_supported_symbol,
 };
 use pecos_core::BitSet;
 use pecos_simulators::clifford_rotation::CliffordRotation;
@@ -26,9 +27,54 @@ pub struct PySparseStab {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    PySparseStab::new(2, None)
-});
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { PySparseStab::new(2, None) },
+    supports_forcing = true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_mz_matches_aliases,
+    |seed| PySparseStab::new(2, Some(seed)),
+    "MZ",
+    &["Measure", "measure Z", "Measure +Z", "MZForced"],
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_pz_matches_aliases,
+    |seed| PySparseStab::new(2, Some(seed)),
+    "PZ",
+    &[
+        "Init",
+        "Init +Z",
+        "init |0>",
+        "leak",
+        "leak |0>",
+        "unleak |0>",
+        "PZForced"
+    ],
+    false
+);
+
+#[cfg(test)]
+crate::simulator_utils::random_z_surface_test!(
+    random_z_measurement_sentinel,
+    |seed| PySparseStab::new(2, Some(seed)),
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::random_z_surface_test!(
+    random_z_preparation_sentinel,
+    |seed| PySparseStab::new(2, Some(seed)),
+    false
+);
+
+#[cfg(test)]
+crate::simulator_utils::invalid_forced_z_surface_test!(PySparseStab::new(2, Some(0)));
 
 fn supports(entry: &SymbolEntry) -> bool {
     supports_exact! { entry;
@@ -210,35 +256,8 @@ impl PySparseStab {
                 self.inner.f4dg(q);
                 Ok(None)
             }
-            "PZ" => {
-                self.inner.pz(q);
-                Ok(None)
-            }
-            "PZForced" => {
-                let forced_value = params
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>("PZForced requires params")
-                    })?
-                    .get_item("forced_outcome")?
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "PZForced requires a 'forced_outcome' parameter",
-                        )
-                    })?
-                    .call_method0("__bool__")?
-                    .extract::<bool>()?;
-                // pz_forced is an inherent method still using old API
-                self.inner.pz_forced(location, forced_value);
-                Ok(None)
-            }
-            "MZ" | "MX" | "MY" | "MZForced" => {
+            "MX" | "MY" => {
                 let result = match symbol {
-                    "MZ" => self
-                        .inner
-                        .mz(q)
-                        .into_iter()
-                        .next()
-                        .expect("single-qubit measurement returned no result"),
                     "MX" => self
                         .inner
                         .mx(q)
@@ -251,24 +270,6 @@ impl PySparseStab {
                         .into_iter()
                         .next()
                         .expect("single-qubit measurement returned no result"),
-                    "MZForced" => {
-                        let forced_value = params
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "MZForced requires params",
-                                )
-                            })?
-                            .get_item("forced_outcome")?
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "MZForced requires a 'forced_outcome' parameter",
-                                )
-                            })?
-                            .call_method0("__bool__")?
-                            .extract::<bool>()?;
-                        // mz_forced is an inherent method still using old API
-                        self.inner.mz_forced(location, forced_value)
-                    }
                     _ => unreachable!(),
                 };
                 Ok(Some(u8::from(result.outcome)))
@@ -334,25 +335,18 @@ impl PySparseStab {
                 Ok(None)
             }
             // Initialization aliases
-            "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
-                // Check if forced_outcome parameter is provided
-                // If so, do forced measurement + correction (matches old Python behavior)
-                if let Some(params) = params
-                    && let Ok(Some(forced_item)) = params.get_item("forced_outcome")
+            "PZ" | "PZForced" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>"
+            | "unleak |0>" => {
+                if let Some(forced_value) =
+                    extract_forced_outcome(params, symbol, symbol == "PZForced")?
                 {
-                    let forced_int: i32 = forced_item.extract()?;
-                    if forced_int != -1 {
-                        // Use forced measurement approach (inherent method)
-                        let forced_value = forced_int != 0;
-                        let result = self.inner.mz_forced(location, forced_value);
-                        // If measured |1>, flip to |0>
-                        if result.outcome {
-                            self.inner.x(q);
-                        }
-                        return Ok(None);
+                    // Select the measurement branch, then prepare |0>.
+                    let result = self.inner.mz_forced(location, forced_value);
+                    if result.outcome {
+                        self.inner.x(q);
                     }
+                    return Ok(None);
                 }
-                // No forced_outcome or forced_outcome==-1, use native preparation
                 self.inner.pz(q);
                 Ok(None)
             }
@@ -377,18 +371,13 @@ impl PySparseStab {
                 Ok(None)
             }
             // Measurement aliases
-            "Measure" | "measure Z" | "Measure +Z" => {
-                // Check if forced_outcome parameter is provided
-                if let Some(params) = params
-                    && let Ok(Some(forced_item)) = params.get_item("forced_outcome")
+            "MZ" | "MZForced" | "Measure" | "measure Z" | "Measure +Z" => {
+                if let Some(forced_value) =
+                    extract_forced_outcome(params, symbol, symbol == "MZForced")?
                 {
-                    // Has forced_outcome, use forced measurement (inherent method)
-                    let forced_int: i32 = forced_item.extract()?;
-                    let forced_value = forced_int != 0;
                     let result = self.inner.mz_forced(location, forced_value);
                     return Ok(Some(u8::from(result.outcome)));
                 }
-                // No forced_outcome, use regular measurement
                 let result = self
                     .inner
                     .mz(q)

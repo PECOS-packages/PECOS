@@ -1,3 +1,4 @@
+use super::declarations::{DeclarationKind, Declarations};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
@@ -473,6 +474,7 @@ pub struct Environment {
     /// Declaration-order global qubit ranges, separate from classical storage.
     quantum_registers: BTreeMap<String, Range<usize>>,
     num_qubits: usize,
+    declarations: Declarations,
 }
 
 impl Environment {
@@ -486,6 +488,7 @@ impl Environment {
             mappings: Vec::new(),
             quantum_registers: BTreeMap::new(),
             num_qubits: 0,
+            declarations: Declarations::default(),
         }
     }
 
@@ -521,12 +524,62 @@ impl Environment {
         size: usize,
         metadata: Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<(), PecosError> {
-        if self.name_to_index.contains_key(name) {
-            return Err(PecosError::Input(format!(
-                "Variable '{name}' already exists"
-            )));
-        }
+        let kind = if data_type == DataType::Qubits {
+            DeclarationKind::Quantum
+        } else {
+            DeclarationKind::Classical
+        };
+        self.register_variable(name, data_type, size, metadata, kind)
+    }
 
+    pub(crate) fn add_classical_variable(
+        &mut self,
+        name: &str,
+        data_type: DataType,
+        size: usize,
+    ) -> Result<(), PecosError> {
+        self.register_variable(name, data_type, size, None, DeclarationKind::Classical)
+    }
+
+    fn register_variable(
+        &mut self,
+        name: &str,
+        data_type: DataType,
+        size: usize,
+        metadata: Option<BTreeMap<String, serde_json::Value>>,
+        kind: DeclarationKind,
+    ) -> Result<(), PecosError> {
+        self.declarations.ensure_available(name, kind)?;
+        Self::validate_variable_size(name, &data_type, size)?;
+
+        if data_type == DataType::Qubits {
+            self.add_quantum_register_with_kind(name, size, kind)?;
+        } else {
+            self.declarations.register(name, kind)?;
+        }
+        self.insert_variable_storage(name, data_type, size, metadata);
+        Ok(())
+    }
+
+    /// Ensure classical runtime storage without making a PHIR-JSON declaration.
+    pub(crate) fn ensure_classical_variable(
+        &mut self,
+        name: &str,
+        data_type: DataType,
+        size: usize,
+    ) -> Result<(), PecosError> {
+        if !self.has_variable(name) {
+            Self::validate_variable_size(name, &data_type, size)?;
+            self.insert_variable_storage(name, data_type, size, None);
+        }
+        Ok(())
+    }
+
+    fn validate_variable_size(
+        name: &str,
+        data_type: &DataType,
+        size: usize,
+    ) -> Result<(), PecosError> {
         // A signed size-S register is an `i(S+1)` integer (S data bits + a sign
         // bit), so `S + 1` must fit the backing width N. An unsigned size-S
         // register is a `u(S)` and needs `S <= N`. Fail fast otherwise.
@@ -552,10 +605,16 @@ impl Environment {
             }
         }
 
-        if data_type == DataType::Qubits {
-            self.add_quantum_register(name, size)?;
-        }
+        Ok(())
+    }
 
+    fn insert_variable_storage(
+        &mut self,
+        name: &str,
+        data_type: DataType,
+        size: usize,
+        metadata: Option<BTreeMap<String, serde_json::Value>>,
+    ) {
         let index = self.values.len();
         self.name_to_index.insert(name.to_string(), index);
 
@@ -568,27 +627,29 @@ impl Environment {
             size,
             metadata,
         });
-
-        Ok(())
     }
 
     /// Define a quantum register without adding classical value storage.
-    /// The interpreter keeps quantum and classical names in separate namespaces.
+    /// Quantum and classical declarations share one program-wide namespace.
     pub(crate) fn add_quantum_register(
         &mut self,
         name: &str,
         size: usize,
     ) -> Result<(), PecosError> {
-        if self.quantum_registers.contains_key(name) {
-            // Python allocates another block and overwrites the name mapping.
-            // PECOS deliberately rejects duplicates instead of remapping qubits.
-            return Err(PecosError::Input(format!(
-                "Quantum register '{name}' already exists"
-            )));
-        }
+        self.add_quantum_register_with_kind(name, size, DeclarationKind::Quantum)
+    }
+
+    fn add_quantum_register_with_kind(
+        &mut self,
+        name: &str,
+        size: usize,
+        kind: DeclarationKind,
+    ) -> Result<(), PecosError> {
+        self.declarations.ensure_available(name, kind)?;
         let end = self.num_qubits.checked_add(size).ok_or_else(|| {
             PecosError::Input(format!("Qubit count overflow defining register '{name}'"))
         })?;
+        self.declarations.register(name, kind)?;
         self.quantum_registers
             .insert(name.to_string(), self.num_qubits..end);
         self.num_qubits = end;
@@ -881,6 +942,17 @@ impl Default for Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quantum_redeclaration_precedes_count_overflow() {
+        let mut env = Environment::new();
+        env.add_quantum_register("a", 1).unwrap();
+        let error = env.add_quantum_register("a", usize::MAX).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Input error: Variable 'a' is already declared as quantum; cannot redeclare as quantum"
+        );
+    }
 
     #[test]
     fn test_environment_basic_operations() {

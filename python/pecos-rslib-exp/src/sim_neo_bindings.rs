@@ -32,28 +32,6 @@ use pecos_neo::tool::sim_neo;
 use pecos_simulators::measurement_sampler::SampleResult;
 use pyo3::prelude::*;
 
-#[derive(serde::Deserialize)]
-struct RecDef {
-    /// DEM-style negative record offsets. Alternative to `meas_ids`.
-    #[serde(default)]
-    records: Vec<i32>,
-    /// Stable measurement ids. Alternative to `records`; the traced-QIS
-    /// pipeline emits only this field.
-    #[serde(default)]
-    meas_ids: Vec<usize>,
-}
-
-fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usize> {
-    let idx = if record < 0 {
-        i32::try_from(num_measurements).ok()?.checked_add(record)?
-    } else {
-        record
-    };
-    usize::try_from(idx)
-        .ok()
-        .filter(|&idx| idx < num_measurements)
-}
-
 // ============================================================================
 // Columnar raw measurement result (stays in Rust memory)
 // ============================================================================
@@ -1383,7 +1361,7 @@ impl PySimNeoBuilder {
             p_prep: noise_config.p_prep,
         };
         let mechanisms = fault_sampler::build_fault_table(&self.tick_circuit, &noise)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let plan = RawMeasurementPlan::new(&history, mechanisms);
         let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
@@ -1393,6 +1371,7 @@ impl PySimNeoBuilder {
     }
 
     /// Coherent path: EEG DemGenerator with measurement synthesis.
+    /// The reader infers the measurement count and validates metadata when present.
     fn run_coherent_meas_sampling(
         &self,
         noise_config: &PyNoiseModelBuilder,
@@ -1401,56 +1380,22 @@ impl PySimNeoBuilder {
         use pecos_eeg::dem_generator::select_generator;
         use pecos_eeg::dem_simulator::{CircuitMeasurementMeta, run_dem_simulation};
 
-        // Extract metadata from stored TickCircuit
-        let num_meas_attr = self
-            .tick_circuit
-            .get_meta("num_measurements")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    s.parse::<usize>().ok()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "TickCircuit missing num_measurements metadata",
-                )
-            })?;
-        let det_json = self
-            .tick_circuit
-            .get_meta("detectors")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "[]".to_string());
-        let obs_json = self
-            .tick_circuit
-            .get_meta("observables")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "[]".to_string());
+        use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
 
-        let det_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&det_json)
-            .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
-            .unwrap_or_default();
-        let obs_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&obs_json)
-            .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
-            .unwrap_or_default();
-
+        let definitions = definitions_from_tick_circuit(&self.tick_circuit)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let meta = CircuitMeasurementMeta {
-            num_measurements: num_meas_attr,
-            detector_records: det_records,
-            observable_records: obs_records,
+            num_measurements: definitions.num_measurements,
+            detector_measurements: definitions
+                .detectors
+                .into_iter()
+                .map(|d| d.measurements)
+                .collect(),
+            observable_measurements: definitions
+                .observables
+                .into_iter()
+                .map(|o| o.measurements)
+                .collect(),
         };
 
         let noise = pecos_eeg::noise::UniformNoise {
@@ -1580,18 +1525,16 @@ pub fn neo_fallback_native_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Lower
 
 /// Reconstruct TickCircuit from Python gate iteration, preserving tick structure.
 ///
-/// Respects the original tick boundaries: all gates from the same Python tick
-/// go into the same Rust tick. Uses typed .mz() for measurements and .pz() for
-/// prep within each tick (these consume the TickHandle, so we process them after
-/// other gates in the tick).
+/// Within each source tick, emits prep, other gates, then measurements. Source
+/// measurement batches retain their order and stamped ids; unstamped batches
+/// allocate ids from the rebuilt circuit's measurement counter.
 fn build_rust_tick_circuit_from_gates(
     py_tc: &Bound<'_, PyAny>,
 ) -> PyResult<pecos_quantum::TickCircuit> {
-    use pecos_quantum::{Attribute, TickMeasRef};
+    use pecos_quantum::Attribute;
 
     let num_ticks: usize = py_tc.call_method0("num_ticks")?.extract()?;
     let mut tc = pecos_quantum::TickCircuit::default();
-    let mut all_meas_refs: Vec<TickMeasRef> = Vec::new();
 
     for tick_idx in 0..num_ticks {
         let py_tick = py_tc.call_method1("get_tick", (tick_idx,))?;
@@ -1599,7 +1542,7 @@ fn build_rust_tick_circuit_from_gates(
         let gates: Vec<Bound<'_, PyAny>> = py_gates.extract()?;
 
         // Separate gates by type: MZ, PZ, and other
-        let mut mz_qubits: Vec<pecos_core::QubitId> = Vec::new();
+        let mut mz_batches = Vec::new();
         let mut pz_qubits: Vec<pecos_core::QubitId> = Vec::new();
         let mut other_gate_stages: Vec<Vec<pecos_core::Gate>> = vec![Vec::new()];
 
@@ -1620,7 +1563,21 @@ fn build_rust_tick_circuit_from_gates(
                 // MeasureFree lowers to MZ here: record-bearing, and the free
                 // has no stabilizer effect. The expansion accepts it either way.
                 "MZ" | "Measure" | "MeasureFree" => {
-                    mz_qubits.extend(qubit_ids);
+                    let mut measurement = Gate::mz(&qubit_ids);
+                    // sim_neo also accepts minimal duck-typed circuits (gate
+                    // objects exposing only `gate_type`, `qubits` and
+                    // `angles`); their measurements carry no stamped ids. An
+                    // absent attribute or an empty list both request the usual
+                    // sequential allocation.
+                    if gate.hasattr("meas_ids")? {
+                        measurement.meas_ids = gate
+                            .getattr("meas_ids")?
+                            .extract::<Vec<usize>>()?
+                            .into_iter()
+                            .map(pecos_core::MeasId::from_raw)
+                            .collect();
+                    }
+                    mz_batches.push(measurement);
                 }
 
                 "QAlloc" | "PZ" | "Prep" => {
@@ -1685,32 +1642,24 @@ fn build_rust_tick_circuit_from_gates(
         }
 
         // Add MZ last (measure after other gates)
-        if !mz_qubits.is_empty() {
-            let refs = tc.tick().mz(&mz_qubits);
-            all_meas_refs.extend(refs);
-        }
+        append_measurement_batches(&mut tc, mz_batches)?;
     }
 
-    // Copy metadata from Python TickCircuit
-    if let Ok(num_meas) = py_tc.call_method1("get_meta", ("num_measurements",))
-        && let Ok(s) = num_meas.extract::<String>()
-    {
-        tc.set_meta("num_measurements", Attribute::String(s));
+    // Minimal duck-typed circuits need not expose metadata.
+    if py_tc.hasattr("get_meta")? {
+        for attribute in ["num_measurements", "detectors", "observables"] {
+            let value = py_tc.call_method1("get_meta", (attribute,))?;
+            if !value.is_none() {
+                let value = value.extract::<String>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "attribute {attribute:?} must be a string, got {value:?}"
+                    ))
+                })?;
+                tc.set_meta(attribute, Attribute::String(value));
+            }
+        }
     }
-    if let Ok(det_json) = py_tc.call_method1("get_meta", ("detectors",))
-        && let Ok(s) = det_json.extract::<String>()
-    {
-        // Create structured annotations from JSON
-        create_annotations_from_json(&mut tc, &s, &all_meas_refs, true)?;
-        tc.set_meta("detectors", Attribute::String(s));
-    }
-    if let Ok(obs_json) = py_tc.call_method1("get_meta", ("observables",))
-        && let Ok(s) = obs_json.extract::<String>()
-    {
-        create_annotations_from_json(&mut tc, &s, &all_meas_refs, false)?;
-        tc.set_meta("observables", Attribute::String(s));
-    }
-    copy_tracked_pauli_annotations_from_python(py_tc, &mut tc)?;
+    copy_annotations_from_python(py_tc, &mut tc)?;
 
     // Compact for performance
     tc.compact_ticks();
@@ -1718,17 +1667,101 @@ fn build_rust_tick_circuit_from_gates(
     Ok(tc)
 }
 
-fn copy_tracked_pauli_annotations_from_python(
+/// Preserve source stamps and reserve subsequent ids before inserting the
+/// measurement batches together, in their original emission order.
+fn append_measurement_batches(
+    tc: &mut pecos_quantum::TickCircuit,
+    mut batches: Vec<Gate>,
+) -> PyResult<()> {
+    for gate in &mut batches {
+        gate.validate()
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        if let Some(highest) = gate.meas_ids.iter().map(|id| id.index()).max() {
+            let past_highest = highest.checked_add(1).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "meas_ids contains the largest representable id, leaving no room for a later id",
+                )
+            })?;
+            let current = tc.num_measurements();
+            if past_highest > current {
+                tc.try_advance_meas_counter(past_highest - current)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            }
+        } else {
+            let base = tc
+                .try_advance_meas_counter(gate.qubits.len())
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            gate.meas_ids.extend(
+                (0..gate.qubits.len()).map(|offset| pecos_core::MeasId::from_raw(base + offset)),
+            );
+        }
+    }
+    if !batches.is_empty() {
+        let mut tick = tc.tick();
+        for gate in batches {
+            tick.try_add_gate(gate)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_annotations_from_python(
     py_tc: &pyo3::Bound<'_, pyo3::PyAny>,
     tc: &mut pecos_quantum::TickCircuit,
 ) -> PyResult<()> {
-    let Ok(annotations) = py_tc.call_method0("annotations") else {
-        return Ok(());
-    };
+    let annotations = py_tc.call_method0("annotations")?;
+
+    let mut refs_by_id = std::collections::BTreeMap::new();
+    for (tick, batch) in tc.iter_gate_batches_with_tick() {
+        if batch.gate_type.consumes_measurement_record() {
+            for &qubit in &batch.qubits {
+                let reference = tc
+                    .meas_ref(tick, batch.batch_index(), qubit)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("rebuilt measurement has no id")
+                    })?;
+                if refs_by_id
+                    .insert(reference.meas_id.index(), reference)
+                    .is_some()
+                {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "measurement id {} occurs more than once in the rebuilt circuit",
+                        reference.meas_id.index()
+                    )));
+                }
+            }
+        }
+    }
 
     for ann in annotations.try_iter()? {
         let ann = ann?;
         let kind: String = ann.get_item("kind")?.extract()?;
+        if kind == "detector" || kind == "observable" {
+            let ids: Vec<usize> = ann.get_item("measurement_ids")?.extract()?;
+            let refs = ids
+                .into_iter()
+                .map(|id| {
+                    refs_by_id.get(&id).copied().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "{kind} annotation references measurement id {id}, which is not in the rebuilt circuit"
+                        ))
+                    })
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            let label: Option<String> = ann.get_item("label")?.extract()?;
+            // Python annotations() does not expose detector coordinates.
+            // The Rust annotation API leaves them empty; agreement concerns
+            // measurement sets and labels, not coordinates.
+            let result = match (kind.as_str(), label.as_deref()) {
+                ("detector", Some(label)) => tc.detector_labeled(label, &refs),
+                ("detector", None) => tc.detector(&refs),
+                (_, Some(label)) => tc.observable_labeled(label, &refs),
+                (_, None) => tc.observable(&refs),
+            };
+            result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            continue;
+        }
         if kind != "tracked_pauli" {
             continue;
         }
@@ -1807,66 +1840,6 @@ fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExp
         ops.push((probability, pecos_core::UnitaryRep::from(pauli_string)));
     }
     Ok(ChannelExpr::MixedUnitary(ops))
-}
-
-/// Create detector or observable annotations from JSON metadata.
-/// Malformed JSON and unresolvable record offsets are errors: a dropped or
-/// thinned annotation silently weakens the DEM.
-fn create_annotations_from_json(
-    tc: &mut pecos_quantum::TickCircuit,
-    json_str: &str,
-    all_meas_refs: &[pecos_quantum::TickMeasRef],
-    is_detector: bool,
-) -> PyResult<()> {
-    let kind = if is_detector {
-        "detector"
-    } else {
-        "observable"
-    };
-    let num_meas = all_meas_refs.len();
-    let defs: Vec<RecDef> = serde_json::from_str(json_str).map_err(|err| {
-        pyo3::exceptions::PyValueError::new_err(format!("malformed {kind} JSON metadata: {err}"))
-    })?;
-    let ref_by_id: std::collections::BTreeMap<usize, pecos_quantum::TickMeasRef> = all_meas_refs
-        .iter()
-        .map(|r| (r.meas_id.index(), *r))
-        .collect();
-    for (def_idx, def) in defs.iter().enumerate() {
-        if def.records.is_empty() && def.meas_ids.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "{kind} {def_idx} carries neither records nor meas_ids"
-            )));
-        }
-        let mut refs: Vec<pecos_quantum::TickMeasRef> =
-            Vec::with_capacity(def.records.len() + def.meas_ids.len());
-        for &rec in &def.records {
-            let mref = measurement_record_index(rec, num_meas)
-                .and_then(|abs_idx| all_meas_refs.get(abs_idx).copied())
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "{kind} {def_idx} references record offset {rec}, which does \
-                         not resolve among the circuit's {num_meas} measurement(s)"
-                    ))
-                })?;
-            refs.push(mref);
-        }
-        for &meas_id in &def.meas_ids {
-            let mref = ref_by_id.get(&meas_id).copied().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "{kind} {def_idx} references MeasId({meas_id}), which no \
-                     measurement in the circuit holds"
-                ))
-            })?;
-            refs.push(mref);
-        }
-        let result = if is_detector {
-            tc.detector(&refs)
-        } else {
-            tc.observable(&refs)
-        };
-        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    }
-    Ok(())
 }
 
 /// Build a pecos_core::Gate from a Python gate object.
@@ -2790,7 +2763,7 @@ pub fn fault_catalog(
 
     let tc = build_rust_tick_circuit(tick_circuit)?;
     let mut catalog = FaultCatalog::from_circuit(&tc)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     if noise.is_some() || p1.is_some() || p2.is_some() || p_meas.is_some() || p_prep.is_some() {
         let noise_params = stochastic_params_from_inputs(noise, p1, p2, p_meas, p_prep);
         catalog.with_noise(&noise_params);

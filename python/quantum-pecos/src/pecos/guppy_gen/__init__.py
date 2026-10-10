@@ -39,6 +39,16 @@ from pecos.guppy_gen.surface import (
     get_surface_code_module,
     make_surface_code,
 )
+from pecos.guppy_gen.surface_hook_injection import (
+    load_surface_hook_injection_module,
+    make_surface_hook_injection,
+    render_surface_hook_injection_module,
+)
+from pecos.guppy_gen.surface_teleportation import (
+    load_surface_t_teleportation_module,
+    make_surface_t_teleportation,
+    render_surface_t_teleportation_module,
+)
 from pecos.guppy_gen.transversal import (
     CSSCodeType,
     get_transversal_num_qubits,
@@ -54,6 +64,9 @@ from pecos.guppy_gen.transversal import (
 from pecos.guppy_gen.variant import variant_scoped
 
 __all__ = [
+    "load_surface_hook_injection_module",
+    "make_surface_hook_injection",
+    "render_surface_hook_injection_module",
     # Surface code
     "generate_guppy_source",
     "generate_memory_experiment",
@@ -64,6 +77,9 @@ __all__ = [
     "make_surface_memory",
     "render_surface_protocol_module",
     "load_surface_protocol_module",
+    "make_surface_t_teleportation",
+    "render_surface_t_teleportation_module",
+    "load_surface_t_teleportation_module",
     # Color code
     "generate_color_code_module",
     "generate_color_code_source",

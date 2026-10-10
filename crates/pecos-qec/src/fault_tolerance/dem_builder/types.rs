@@ -5237,7 +5237,61 @@ pub type MechanismTuple = (f64, Vec<u32>, Vec<u32>);
 /// Detector-coordinate tuple: `(detector_id, coordinates)`.
 pub type DetectorCoordinateTuple = (u32, Vec<f64>);
 
+type TerminalObservableTable = BTreeMap<Vec<u32>, SmallVec<[u32; 2]>>;
+
+/// A terminal projection cannot assign consistent observable labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalDecompositionError {
+    /// No pairing of the effect's terminals respects the labels already emitted.
+    InconsistentEffect(FaultMechanism),
+    /// The bounded search could not establish a consistent pairing or optimum.
+    SearchLimitExceeded(FaultMechanism),
+    /// The final rendered output failed the independent observable-label check.
+    InvalidOutput(String),
+    /// Two standalone graphlike mechanisms already disagree on observables.
+    ConflictingStandalone {
+        /// The conflicting detector and observable effect.
+        effect: FaultMechanism,
+        /// The observable indices previously seen on this detector set.
+        previous_observables: Vec<u32>,
+    },
+}
+
+impl fmt::Display for TerminalDecompositionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InconsistentEffect(effect) => write!(
+                f,
+                "no observable-consistent terminal pairing for effect {}",
+                format_mechanism_targets(effect)
+            ),
+            Self::SearchLimitExceeded(effect) => write!(
+                f,
+                "terminal pairing search limit exceeded for effect {}",
+                format_mechanism_targets(effect)
+            ),
+            Self::InvalidOutput(error) => write!(f, "inconsistent terminal output: {error}"),
+            Self::ConflictingStandalone {
+                effect,
+                previous_observables,
+            } => write!(
+                f,
+                "conflicting standalone observable labels for effect {}; previous observables {previous_observables:?}",
+                format_mechanism_targets(effect)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TerminalDecompositionError {}
+
 impl DetectorErrorModel {
+    /// Build a detector-event sampler, preserving observable and tracked-Pauli metadata.
+    #[must_use]
+    pub fn to_sampler(&self) -> super::sampler::DemSampler {
+        super::sampler::DemSampler::from_detector_error_model(self)
+    }
+
     /// Creates a new empty DEM.
     #[must_use]
     pub fn new() -> Self {
@@ -6541,179 +6595,263 @@ impl DetectorErrorModel {
     }
 
     fn min_coordinate_terminal_pairs(
-        detectors: &[u32],
+        effect: &FaultMechanism,
         detector_coords: &BTreeMap<u32, [f64; 3]>,
-    ) -> (Vec<(u32, u32)>, Vec<u32>) {
-        /// (total cost, chosen terminal pairs, unpaired detectors).
-        type PairingSolution = (f64, Vec<(u32, u32)>, Vec<u32>);
-        type PairingMemo = BTreeMap<u64, PairingSolution>;
+        standalone: &TerminalObservableTable,
+        max_visits: usize,
+    ) -> Result<Option<Vec<Vec<u32>>>, TerminalDecompositionError> {
+        type Required = Option<SmallVec<[u32; 2]>>;
+        type Solution = (f64, Vec<Vec<u32>>);
+        type Memo = BTreeMap<(Vec<u32>, Required), Option<Solution>>;
 
-        fn solve(
-            mask: u64,
-            detectors: &[u32],
-            detector_coords: &BTreeMap<u32, [f64; 3]>,
-            memo: &mut PairingMemo,
-        ) -> PairingSolution {
-            if let Some(cached) = memo.get(&mask) {
-                return cached.clone();
+        // Bound both work and retained states. Exceeding a limit is an explicit
+        // refusal, never an approximate answer presented as a minimum.
+        const MAX_MEMO: usize = 4_096;
+        const MAX_TERMINALS: usize = 256;
+        struct Search<'a> {
+            coords: &'a BTreeMap<u32, [f64; 3]>,
+            labels: &'a TerminalObservableTable,
+            greedy: bool,
+            memo: Memo,
+            visits: usize,
+            max_visits: usize,
+        }
+        impl Search<'_> {
+            // This necessary condition is cheap compared with enumerating pairings.
+            // If every available support is known, their union must contain every
+            // required bit. An unknown support can carry an arbitrary remainder.
+            fn feasible(&self, remaining: &[u32], required: &Required) -> bool {
+                let Some(required) = required.as_ref().filter(|mask| !mask.is_empty()) else {
+                    return true;
+                };
+                let mut available = BTreeSet::new();
+                for (i, &a) in remaining.iter().enumerate() {
+                    if remaining.len() % 2 == 1 {
+                        let Some(mask) = self.labels.get([a].as_slice()) else {
+                            return true;
+                        };
+                        available.extend(mask.iter().copied());
+                    }
+                    for &b in &remaining[i + 1..] {
+                        let Some(mask) = self.labels.get([a, b].as_slice()) else {
+                            return true;
+                        };
+                        available.extend(mask.iter().copied());
+                    }
+                }
+                required.iter().all(|bit| available.contains(bit))
             }
 
-            let count = mask.count_ones();
-            let result = if count == 0 {
-                (0.0, Vec::new(), Vec::new())
-            } else if count == 1 {
-                let index = mask.trailing_zeros() as usize;
-                (0.0, Vec::new(), vec![detectors[index]])
-            } else if count % 2 == 1 {
-                let mut best: Option<PairingSolution> = None;
-                for index in 0..detectors.len() {
-                    if mask & (1_u64 << index) == 0 {
-                        continue;
-                    }
-                    let rest = mask & !(1_u64 << index);
-                    let (cost, pairs, mut singles) = solve(rest, detectors, detector_coords, memo);
-                    singles.push(detectors[index]);
-                    if best
+            fn solve(
+                &mut self,
+                remaining: &[u32],
+                required: &Required,
+            ) -> Result<Option<Solution>, ()> {
+                if self.visits == self.max_visits {
+                    return Err(());
+                }
+                self.visits += 1;
+                let key = (remaining.to_vec(), required.clone());
+                if let Some(cached) = self.memo.get(&key) {
+                    return Ok(cached.clone());
+                }
+                if remaining.is_empty() {
+                    return Ok(required
                         .as_ref()
-                        .is_none_or(|(best_cost, _, _)| cost < *best_cost)
-                    {
-                        best = Some((cost, pairs, singles));
+                        .is_none_or(SmallVec::is_empty)
+                        .then_some((0.0, Vec::new())));
+                }
+
+                if !self.feasible(remaining, required) {
+                    return Ok(None);
+                }
+                let odd = remaining.len() % 2 == 1;
+                let mut candidates: Vec<usize> = if odd {
+                    (0..remaining.len()).collect()
+                } else {
+                    (1..remaining.len()).collect()
+                };
+                if self.greedy {
+                    if odd {
+                        // Preserve the old fallback's most isolated singleton,
+                        // choosing the largest detector id on a distance tie.
+                        let nearest = |index: usize| {
+                            remaining
+                                .iter()
+                                .enumerate()
+                                .filter(|(other, _)| *other != index)
+                                .map(|(_, &other)| {
+                                    DetectorErrorModel::detector_coordinate_distance(
+                                        remaining[index],
+                                        other,
+                                        self.coords,
+                                    )
+                                })
+                                .fold(f64::INFINITY, f64::min)
+                        };
+                        candidates
+                            .sort_by(|&a, &b| nearest(b).total_cmp(&nearest(a)).then(b.cmp(&a)));
+                    } else {
+                        candidates.sort_by(|&a, &b| {
+                            DetectorErrorModel::detector_coordinate_distance(
+                                remaining[0],
+                                remaining[a],
+                                self.coords,
+                            )
+                            .total_cmp(&DetectorErrorModel::detector_coordinate_distance(
+                                remaining[0],
+                                remaining[b],
+                                self.coords,
+                            ))
+                            .then(a.cmp(&b))
+                        });
                     }
                 }
-                best.expect("odd non-empty mask must have a singleton candidate")
-            } else {
-                let first = mask.trailing_zeros() as usize;
-                let rest_without_first = mask & !(1_u64 << first);
-                let mut best: Option<PairingSolution> = None;
-                for second in first + 1..detectors.len() {
-                    if rest_without_first & (1_u64 << second) == 0 {
+
+                let mut best: Option<Solution> = None;
+                for index in candidates {
+                    let piece = if odd {
+                        vec![remaining[index]]
+                    } else {
+                        vec![remaining[0], remaining[index]]
+                    };
+                    let rest: Vec<_> = remaining
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, _)| i != index && (odd || i != 0))
+                        .map(|(_, &d)| d)
+                        .collect();
+                    // None means a non-table piece can absorb any remaining mask.
+                    let next_required = required.as_ref().and_then(|mask| {
+                        self.labels
+                            .get(&piece)
+                            .map(|known| symmetric_difference(mask, known))
+                    });
+                    let Some((sub_cost, mut parts)) = self.solve(&rest, &next_required)? else {
                         continue;
-                    }
-                    let rest = rest_without_first & !(1_u64 << second);
-                    let (sub_cost, mut pairs, singles) =
-                        solve(rest, detectors, detector_coords, memo);
-                    let pair = (detectors[first], detectors[second]);
+                    };
                     let cost = sub_cost
-                        + DetectorErrorModel::detector_coordinate_distance(
-                            pair.0,
-                            pair.1,
-                            detector_coords,
-                        );
-                    pairs.insert(0, pair);
-                    if best
-                        .as_ref()
-                        .is_none_or(|(best_cost, _, _)| cost < *best_cost)
-                    {
-                        best = Some((cost, pairs, singles));
+                        + if odd {
+                            0.0
+                        } else {
+                            DetectorErrorModel::detector_coordinate_distance(
+                                piece[0],
+                                piece[1],
+                                self.coords,
+                            )
+                        };
+                    if odd {
+                        parts.push(piece);
+                    } else {
+                        parts.insert(0, piece);
+                    }
+                    if best.as_ref().is_none_or(|(best_cost, _)| cost < *best_cost) {
+                        best = Some((cost, parts));
+                    }
+                    if self.greedy {
+                        break;
                     }
                 }
-                best.expect("even mask with at least two bits must have a pair candidate")
-            };
-
-            memo.insert(mask, result.clone());
-            result
+                if self.memo.len() < MAX_MEMO {
+                    self.memo.insert(key, best.clone());
+                }
+                Ok(best)
+            }
         }
-
-        if detectors.len() > 20 {
-            return Self::greedy_coordinate_terminal_pairs(detectors, detector_coords);
+        if effect.detectors.len() > MAX_TERMINALS {
+            return Err(TerminalDecompositionError::SearchLimitExceeded(
+                effect.clone(),
+            ));
         }
-
-        let mut memo = BTreeMap::new();
-        let mask = (1_u64 << detectors.len()) - 1;
-        let (_, pairs, singles) = solve(mask, detectors, detector_coords, &mut memo);
-        (pairs, singles)
-    }
-
-    fn greedy_coordinate_terminal_pairs(
-        detectors: &[u32],
-        detector_coords: &BTreeMap<u32, [f64; 3]>,
-    ) -> (Vec<(u32, u32)>, Vec<u32>) {
-        let mut remaining: BTreeSet<u32> = detectors.iter().copied().collect();
-        let mut pairs = Vec::new();
-        let mut singles = Vec::new();
-
-        if remaining.len() % 2 == 1 {
-            let singleton = remaining
-                .iter()
-                .copied()
-                .max_by(|left, right| {
-                    let left_nearest = remaining
-                        .iter()
-                        .copied()
-                        .filter(|candidate| candidate != left)
-                        .map(|candidate| {
-                            Self::detector_coordinate_distance(*left, candidate, detector_coords)
-                        })
-                        .fold(f64::INFINITY, f64::min);
-                    let right_nearest = remaining
-                        .iter()
-                        .copied()
-                        .filter(|candidate| candidate != right)
-                        .map(|candidate| {
-                            Self::detector_coordinate_distance(*right, candidate, detector_coords)
-                        })
-                        .fold(f64::INFINITY, f64::min);
-                    left_nearest
-                        .partial_cmp(&right_nearest)
-                        .unwrap_or(Ordering::Equal)
-                })
-                .expect("odd non-empty detector set should have a singleton");
-            remaining.remove(&singleton);
-            singles.push(singleton);
+        Search {
+            coords: detector_coords,
+            labels: standalone,
+            greedy: effect.detectors.len() > 20,
+            memo: BTreeMap::new(),
+            visits: 0,
+            max_visits,
         }
-
-        while let Some(left) = remaining.pop_first() {
-            let Some(right) = remaining.iter().copied().min_by(|a, b| {
-                let da = Self::detector_coordinate_distance(left, *a, detector_coords);
-                let db = Self::detector_coordinate_distance(left, *b, detector_coords);
-                da.partial_cmp(&db)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| a.cmp(b))
-            }) else {
-                singles.push(left);
-                break;
-            };
-            remaining.remove(&right);
-            pairs.push((left, right));
-        }
-
-        (pairs, singles)
+        .solve(&effect.detectors, &Some(effect.dem_outputs.clone()))
+        .map(|solution| solution.map(|(_, parts)| parts))
+        .map_err(|()| TerminalDecompositionError::SearchLimitExceeded(effect.clone()))
     }
 
     fn terminal_graphlike_parts(
         effect: &FaultMechanism,
         detector_coords: &BTreeMap<u32, [f64; 3]>,
-    ) -> Vec<FaultMechanism> {
-        let (pairs, singles) =
-            Self::min_coordinate_terminal_pairs(&effect.detectors, detector_coords);
-        let mut parts: Vec<FaultMechanism> = pairs
-            .into_iter()
-            .map(|(left, right)| FaultMechanism::from_unsorted([left, right], []))
-            .collect();
-        parts.extend(
-            singles
-                .into_iter()
-                .map(|detector| FaultMechanism::from_unsorted([detector], [])),
-        );
-
-        if parts.is_empty() {
-            if !effect.dem_outputs.is_empty() {
-                parts.push(FaultMechanism::from_unsorted(
-                    std::iter::empty(),
-                    effect.dem_outputs.iter().copied(),
-                ));
-            }
-        } else if !effect.dem_outputs.is_empty() {
-            let last = parts
-                .last_mut()
-                .expect("non-empty parts checked before attaching observables");
-            last.dem_outputs.clone_from(&effect.dem_outputs);
+        standalone: &TerminalObservableTable,
+    ) -> Result<Vec<FaultMechanism>, TerminalDecompositionError> {
+        if effect.detectors.is_empty() {
+            return Ok(vec![effect.clone()]);
         }
-
-        parts
+        let supports =
+            Self::min_coordinate_terminal_pairs(effect, detector_coords, standalone, 100_000)?
+                .ok_or_else(|| TerminalDecompositionError::InconsistentEffect(effect.clone()))?;
+        let mut remainder = effect.dem_outputs.clone();
+        let mut last_unknown = None;
+        let mut parts = Vec::with_capacity(supports.len());
+        for detectors in supports {
+            let observables = if let Some(known) = standalone.get(&detectors) {
+                remainder = symmetric_difference(&remainder, known);
+                known.clone()
+            } else {
+                last_unknown = Some(parts.len());
+                SmallVec::new()
+            };
+            parts.push(FaultMechanism::from_unsorted(detectors, observables));
+        }
+        if let Some(index) = last_unknown {
+            parts[index].dem_outputs = remainder;
+        } else if !remainder.is_empty() {
+            return Err(TerminalDecompositionError::InconsistentEffect(
+                effect.clone(),
+            ));
+        }
+        Ok(parts)
     }
 
-    /// Converts the DEM to a terminal-only graphlike projection.
+    // This invariant belongs to our coordinate projection, not to arbitrary
+    // decoder inputs, whose labels may instead identify physical corrections.
+    fn validate_terminal_output(text: &str) -> Result<(), TerminalDecompositionError> {
+        use pecos_decoder_core::dem::grammar::{Kind, parse_line, target_indices};
+
+        let mut labels = BTreeMap::new();
+        for line in text.lines() {
+            let Some(instruction) = parse_line(line)
+                .map_err(|error| TerminalDecompositionError::InvalidOutput(error.to_string()))?
+            else {
+                continue;
+            };
+            if instruction.kind != Kind::Error {
+                continue;
+            }
+            for component in instruction.components() {
+                let (detectors, observables) = target_indices(component).map_err(|error| {
+                    TerminalDecompositionError::InvalidOutput(error.to_string())
+                })?;
+                if detectors.is_empty() {
+                    continue;
+                }
+                if let Some(previous) = labels.insert(detectors.clone(), observables.clone())
+                    && previous != observables
+                {
+                    let effect = FaultMechanism::from_unsorted(detectors, observables);
+                    return Err(TerminalDecompositionError::InvalidOutput(format!(
+                        "conflicting observable labels for component {}; previous observables {previous:?}",
+                        format_mechanism_targets(&effect)
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Converts the DEM to a coordinate-based graphlike approximation.
+    ///
+    /// Prefer [`Self::to_string_source_graphlike_decomposed`] for graph matchers:
+    /// its components use source provenance. This terminal projection invents
+    /// components from coordinates, so consistent labels do not imply physical
+    /// mechanisms or decoding accuracy comparable to the source decomposition.
     ///
     /// Contributions are first grouped into the same raw mechanisms as
     /// [`Self::to_string`]. Each grouped effect is then rendered as graphlike
@@ -6721,10 +6859,26 @@ impl DetectorErrorModel {
     /// Pair components use only detectors present in the raw effect. Ordinary
     /// low-weight effects use the exact minimum-total-distance pairing from
     /// detector coordinates; unusually large effects use a deterministic
-    /// nearest-neighbor fallback to avoid exponential render time. This is a
-    /// decoder-facing projection for graph matchers; it is not source proof.
-    #[must_use]
-    pub fn to_string_terminal_graphlike_decomposed(&self) -> String {
+    /// nearest-neighbor search with consistency backtracking.
+    ///
+    /// Seed the label table with standalone graphlike mechanisms, then process
+    /// effects by descending grouped probability (ties retain effect order).
+    /// Every emitted support is added to the table, so later effects preserve
+    /// its mask. The last non-table component receives the remaining XOR mask. Distance ties
+    /// retain the first pairing in detector order (singleton first, then pairs).
+    /// Above 20 detectors, try nearest neighbors in deterministic order and
+    /// backtrack only when required for consistency; this need not minimize distance.
+    /// Per effect, search visits at most 100,000 states, caches at most 4,096,
+    /// and accepts at most 256 terminals. Exhaustion returns a distinct error.
+    /// The rendered output is independently checked for conflicting labels.
+    ///
+    /// # Errors
+    /// Returns [`TerminalDecompositionError`] for conflicting standalone labels
+    /// or an effect with no consistent terminal pairing, search exhaustion, or
+    /// a conflicting label in the independently validated output.
+    pub fn to_string_terminal_graphlike_decomposed(
+        &self,
+    ) -> Result<String, TerminalDecompositionError> {
         let mut lines = Vec::new();
 
         for det in &self.detectors {
@@ -6747,23 +6901,52 @@ impl DetectorErrorModel {
                 .or_insert(contrib.probability);
         }
 
+        let mut standalone = TerminalObservableTable::new();
+        for (effect, &probability) in &by_effect {
+            if probability <= 0.0 || !(1..=2).contains(&effect.detectors.len()) {
+                continue;
+            }
+            if let Some(previous) =
+                standalone.insert(effect.detectors.to_vec(), effect.dem_outputs.clone())
+                && previous != effect.dem_outputs
+            {
+                return Err(TerminalDecompositionError::ConflictingStandalone {
+                    effect: effect.clone(),
+                    previous_observables: previous.to_vec(),
+                });
+            }
+        }
         let detector_coords = self.detector_coordinate_map();
-        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
-        for (effect, total_prob) in by_effect {
+        let mut rendered_effects = BTreeMap::new();
+        // Give the most probable grouped effects first choice of new labels.
+        // Stable sorting retains the BTreeMap effect order for probability ties.
+        let mut effects: Vec<_> = by_effect.into_iter().collect();
+        effects.sort_by(|(_, a), (_, b)| b.total_cmp(a));
+        for (effect, total_prob) in effects {
             if effect.is_standard_empty() || total_prob <= 0.0 {
                 continue;
             }
 
-            let targets = Self::format_decomposed_parts(Self::terminal_graphlike_parts(
-                &effect,
-                &detector_coords,
-            ));
-            if !targets.is_empty() {
-                by_targets
-                    .entry(targets)
-                    .and_modify(|p| *p = combine_independent_probs(*p, total_prob))
-                    .or_insert(total_prob);
+            let parts = Self::terminal_graphlike_parts(&effect, &detector_coords, &standalone)?;
+            for part in &parts {
+                if !part.detectors.is_empty() {
+                    standalone.insert(part.detectors.to_vec(), part.dem_outputs.clone());
+                }
             }
+            let targets = Self::format_decomposed_parts(parts);
+            if !targets.is_empty() {
+                rendered_effects.insert(effect, (targets, total_prob));
+            }
+        }
+
+        // Preserve the original effect order for probability merging, including
+        // its floating-point evaluation order, independently of label assignment.
+        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
+        for (targets, total_prob) in rendered_effects.into_values() {
+            by_targets
+                .entry(targets)
+                .and_modify(|p| *p = combine_independent_probs(*p, total_prob))
+                .or_insert(total_prob);
         }
 
         for (targets, total_prob) in by_targets {
@@ -6776,7 +6959,9 @@ impl DetectorErrorModel {
             }
         }
 
-        lines.join("\n")
+        let text = lines.join("\n");
+        Self::validate_terminal_output(&text)?;
+        Ok(text)
     }
 
     fn collect_singleton_index(&self) -> SingletonDecompositionIndex {
@@ -7768,6 +7953,8 @@ mod tests {
                 GateType::SZZdg,
                 GateType::SWAP,
                 GateType::CH,
+                GateType::CS,
+                GateType::CSdg,
                 GateType::RXX,
                 GateType::RYY,
                 GateType::RZZ,
@@ -8946,6 +9133,235 @@ mod tests {
     }
 
     #[test]
+    fn terminal_output_check_rejects_conflicting_components() {
+        let error = DetectorErrorModel::validate_terminal_output(
+            "error(0.1) D0 D1 ^ D2 L0\nerror(0.2) D0 D1 L0",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            TerminalDecompositionError::InvalidOutput(_)
+        ));
+        assert!(error.to_string().contains("D0 D1 L0"));
+        DetectorErrorModel::validate_terminal_output(
+            "error(0.1) D0 D1 L0 ^ D2 L0\nerror(0.2) D0 D1 L0",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn terminal_consistency_across_effects() {
+        let mut dem = DetectorErrorModel::new();
+        for (id, x) in [0.0, 1.0, 10.0, 11.0, 12.0].into_iter().enumerate() {
+            dem.add_detector(
+                DetectorDef::new(u32::try_from(id).unwrap()).with_coords([x, 0.0, 0.0]),
+            );
+        }
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([2, 4], [0]), 0.02);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 4], []), 0.01);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 3], []), 0.03);
+        let text = dem.to_string_terminal_graphlike_decomposed().unwrap();
+        DetectorErrorModel::validate_terminal_output(&text).unwrap();
+        assert!(text.contains("error(0.01) D0 D2 ^ D1 D4"), "{text}");
+        assert!(text.contains("error(0.03) D0 D1 ^ D2 D3"), "{text}");
+    }
+
+    #[test]
+    fn terminal_consistency_prunes_unavailable_observable() {
+        let mut dem = DetectorErrorModel::new();
+        let mut observable = 0;
+        for a in 0..16 {
+            for b in a + 1..16 {
+                dem.add_direct_contribution(
+                    FaultMechanism::from_unsorted([a, b], [observable]),
+                    0.01,
+                );
+                observable += 1;
+            }
+        }
+        dem.add_direct_contribution(FaultMechanism::from_unsorted(0..16, [120]), 0.02);
+        let start = std::time::Instant::now();
+        let error = dem.to_string_terminal_graphlike_decomposed().unwrap_err();
+        assert!(matches!(
+            error,
+            TerminalDecompositionError::InconsistentEffect(_)
+        ));
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn terminal_consistency_search_limit_is_distinct_from_infeasibility() {
+        // Even an unconstrained feasible problem must refuse if the visit
+        // budget is exhausted before establishing the minimum distance.
+        let effect = FaultMechanism::from_unsorted(0..16, [0]);
+        assert!(matches!(
+            DetectorErrorModel::min_coordinate_terminal_pairs(
+                &effect,
+                &BTreeMap::new(),
+                &TerminalObservableTable::new(),
+                40
+            ),
+            Err(TerminalDecompositionError::SearchLimitExceeded(_))
+        ));
+
+        let mut large = DetectorErrorModel::new();
+        large.add_direct_contribution(FaultMechanism::from_unsorted(0..257, [0]), 0.01);
+        assert!(matches!(
+            large.to_string_terminal_graphlike_decomposed(),
+            Err(TerminalDecompositionError::SearchLimitExceeded(_))
+        ));
+    }
+
+    #[test]
+    fn terminal_consistency_chooses_alternative_pairing() {
+        let mut dem = DetectorErrorModel::new();
+        for (id, x) in [0.0, 1.0, 10.0, 11.0].into_iter().enumerate() {
+            dem.add_detector(
+                DetectorDef::new(u32::try_from(id).unwrap()).with_coords([x, 0.0, 0.0]),
+            );
+        }
+        for pair in [[0, 1], [2, 3]] {
+            dem.add_direct_contribution(FaultMechanism::from_unsorted(pair, []), 0.02);
+        }
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 3], [0]), 0.01);
+        let text = dem.to_string_terminal_graphlike_decomposed().unwrap();
+        assert!(text.contains("error(0.01) D0 D2 ^ D1 D3 L0"), "{text}");
+    }
+
+    #[test]
+    fn terminal_consistency_refuses_impossible_effect() {
+        let mut dem = DetectorErrorModel::new();
+        for a in 0..4 {
+            for b in a + 1..4 {
+                dem.add_direct_contribution(FaultMechanism::from_unsorted([a, b], []), 0.02);
+            }
+        }
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 3], [0]), 0.01);
+        let result = dem.to_string_terminal_graphlike_decomposed();
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("D0 D1 D2 D3 L0"), "{error}");
+    }
+
+    #[test]
+    fn terminal_consistency_refuses_standalone_disagreement() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1], []), 0.02);
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1], [0]), 0.01);
+        let result = dem.to_string_terminal_graphlike_decomposed();
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("D0 D1"), "{error}");
+    }
+
+    #[test]
+    fn terminal_consistency_property_over_graphlike_fixture_effects() {
+        // Reuse the direct, Y-component and terminal fixture shapes with every
+        // one-observable assignment to their standalone graphlike pieces.
+        for supports in [vec![vec![0, 1], vec![2]], vec![vec![0, 2], vec![1, 3]]] {
+            for assignment in 0..4 {
+                let mut dem = DetectorErrorModel::new();
+                for (index, &detector) in supports.iter().flatten().enumerate() {
+                    let x = [0.0, 1.0, 10.0, 11.0][index];
+                    dem.add_detector(DetectorDef::new(detector).with_coords([x, 0.0, 0.0]));
+                }
+                let mut whole = FaultMechanism::new();
+                let mut standalone = BTreeMap::new();
+                for (index, detectors) in supports.iter().enumerate() {
+                    let effect = FaultMechanism::from_unsorted(
+                        detectors.iter().copied(),
+                        (assignment & (1 << index) != 0).then_some(0),
+                    );
+                    whole = whole.xor(&effect);
+                    standalone.insert(detectors.clone(), effect.dem_outputs.to_vec());
+                    dem.add_direct_contribution(effect, 0.02);
+                }
+                dem.add_direct_contribution(whole, 0.01);
+                let text = dem.to_string_terminal_graphlike_decomposed().unwrap();
+                let parsed = super::super::ParsedDem::parse(&text).unwrap();
+                for part in parsed.mechanisms.iter().flat_map(|m| &m.components) {
+                    if let Some(expected) = standalone.get(&part.detectors) {
+                        assert_eq!(&part.observables, expected, "{text}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_consistency_in_tree_surface_dems() {
+        use pecos_decoder_core::dem::grammar::{Kind, parse_line};
+
+        for text in [
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../examples/surface_code_circuits/surface_code_d3_x_pecos.dem"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../examples/surface_code_circuits/surface_code_d3_z_pecos.dem"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../examples/surface_code_circuits/surface_code_d5_z_pecos.dem"
+            )),
+        ] {
+            let mut dem = DetectorErrorModel::new();
+            let mut standalone = BTreeMap::new();
+            for line in text.lines() {
+                let Some(instruction) = parse_line(line).unwrap() else {
+                    continue;
+                };
+                if instruction.kind == Kind::Error {
+                    let (detectors, observables) = instruction.effect().unwrap();
+                    if (1..=2).contains(&detectors.len())
+                        && let Some(previous) =
+                            standalone.insert(detectors.clone(), observables.clone())
+                    {
+                        assert_eq!(previous, observables, "standalone conflict in fixture");
+                    }
+                    dem.add_direct_contribution(
+                        FaultMechanism::from_unsorted(detectors, observables),
+                        instruction.args[0],
+                    );
+                } else if instruction.kind == Kind::Detector {
+                    let (detectors, _) = instruction.effect().unwrap();
+                    let mut coords = [0.0; 3];
+                    for (target, &value) in coords.iter_mut().zip(&instruction.args) {
+                        *target = value;
+                    }
+                    dem.add_detector(DetectorDef::new(detectors[0]).with_coords(coords));
+                }
+            }
+            let rendered = dem.to_string_terminal_graphlike_decomposed().unwrap();
+            DetectorErrorModel::validate_terminal_output(&rendered).unwrap();
+            let parsed = super::super::ParsedDem::parse(&rendered).unwrap();
+            for part in parsed.mechanisms.iter().flat_map(|m| &m.components) {
+                if let Some(expected) = standalone.get(&part.detectors) {
+                    assert_eq!(&part.observables, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_consistency_large_effect_backtracks_deterministically() {
+        let mut dem = DetectorErrorModel::new();
+        for detector in 0..22 {
+            dem.add_detector(DetectorDef::new(detector).with_coords([
+                f64::from(detector),
+                0.0,
+                0.0,
+            ]));
+        }
+        for left in (0..22).step_by(2) {
+            dem.add_direct_contribution(FaultMechanism::from_unsorted([left, left + 1], []), 0.02);
+        }
+        dem.add_direct_contribution(FaultMechanism::from_unsorted(0..22, [70]), 0.01);
+        let text = dem.to_string_terminal_graphlike_decomposed().unwrap();
+        assert!(text.contains("D18 D20 ^ D19 D21 L70"), "{text}");
+        assert_eq!(text, dem.to_string_terminal_graphlike_decomposed().unwrap());
+    }
+
+    #[test]
     fn test_terminal_graphlike_decomposed_uses_min_coordinate_terminal_pairs() {
         let mut dem = DetectorErrorModel::new();
 
@@ -8955,7 +9371,7 @@ mod tests {
         dem.add_detector(DetectorDef::new(3).with_coords([11.0, 0.0, 0.0]));
         dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 3], []), 0.01);
 
-        let projected = dem.to_string_terminal_graphlike_decomposed();
+        let projected = dem.to_string_terminal_graphlike_decomposed().unwrap();
 
         assert!(projected.contains("error(0.01) D0 D2 ^ D1 D3"));
         assert!(!projected.contains("D0 D1 ^ D2 D3"));
@@ -8971,7 +9387,7 @@ mod tests {
         dem.add_dem_output(DemOutput::new(0));
         dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2], [0]), 0.01);
 
-        let projected = dem.to_string_terminal_graphlike_decomposed();
+        let projected = dem.to_string_terminal_graphlike_decomposed().unwrap();
 
         assert!(projected.contains("logical_observable L0"));
         assert!(projected.contains("error(0.01) D0 D1 ^ D2 L0"));

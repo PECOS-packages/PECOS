@@ -35,7 +35,7 @@ def build_two_round_x_check():
 
     # Detector: m0 XOR m1 should be 0 in noiseless case
     tc.set_meta("num_measurements", "2")
-    tc.set_meta("detectors", json.dumps([{"records": [-1, -2]}]))
+    tc.set_meta("detectors", json.dumps([{"id": 0, "records": [-1, -2]}]))
     tc.set_meta("observables", "[]")
     return tc
 
@@ -54,8 +54,8 @@ def build_three_round_z_check():
         "detectors",
         json.dumps(
             [
-                {"records": [-2, -3]},  # m0 XOR m1
-                {"records": [-1, -2]},  # m1 XOR m2
+                {"id": 0, "records": [-2, -3]},  # m0 XOR m1
+                {"id": 1, "records": [-1, -2]},  # m1 XOR m2
             ],
         ),
     )

@@ -2130,10 +2130,10 @@ def generate_circuit_level_dem_from_builder(
             but it is not an exact raw DEM serialization.
         dem_decomposition: Which native graphlike projection to use when
             ``decompose_errors=True``. ``"source_graphlike"`` preserves the
-            existing source-informed decomposition. ``"terminal_graphlike"``
-            groups raw mechanisms first, then pairs only detector terminals
-            present in each raw effect by coordinate distance. Both modes are
-            decoder-facing approximations of raw hyperedge mechanisms.
+            source-informed decomposition and is preferred for graph matchers.
+            ``"terminal_graphlike"`` groups raw mechanisms first, then pairs
+            detector terminals by coordinate distance. It can invent nonphysical
+            components and decode less accurately despite consistent labels.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -3715,7 +3715,7 @@ def surface_code_memory(
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> SimulationResult:
-    """Run the recommended native surface-code memory workflow.
+    """Run native surface-code memory sampling and decoding.
 
     This helper keeps the quick-start path short while using PECOS's Rust-backed
     circuit-level DEM sampler and decoder machinery internally.
@@ -3732,8 +3732,10 @@ def surface_code_memory(
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Typed decoder specification or legacy decoder string
             passed to ``SampleBatch.decode``. PyMatching-family decoders use
-            PECOS's terminal graphlike DEM projection for this recommended
-            workflow.
+            PECOS's coordinate-based terminal approximation in this helper.
+            For source-informed graph matching, build a DetectorErrorModel and
+            pass its ``to_string_source_graphlike_decomposed()`` output to
+            ``SampleBatch.decode``.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.

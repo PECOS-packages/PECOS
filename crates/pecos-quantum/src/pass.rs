@@ -347,12 +347,15 @@ fn is_self_inverse(gt: GateType) -> bool {
             | GateType::CZ
             | GateType::SWAP
             | GateType::CCX
+            | GateType::CCZ
     )
 }
 
 /// Returns the named inverse of a gate type, if one exists.
 fn named_inverse(gt: GateType) -> Option<GateType> {
     match gt {
+        GateType::CS => Some(GateType::CSdg),
+        GateType::CSdg => Some(GateType::CS),
         GateType::SX => Some(GateType::SXdg),
         GateType::SXdg => Some(GateType::SX),
         GateType::SY => Some(GateType::SYdg),
@@ -1669,6 +1672,31 @@ mod tests {
     use pecos_core::MeasId;
 
     // ==================== simplify_rotation unit tests ====================
+
+    #[test]
+    fn diagonal_named_inverses_cancel_in_both_circuit_forms() {
+        for (gt, inverse) in [
+            (GateType::CS, GateType::CSdg),
+            (GateType::CSdg, GateType::CS),
+            (GateType::CCZ, GateType::CCZ),
+        ] {
+            let qubits: Vec<_> = (0..gt.quantum_arity()).map(QubitId).collect();
+            let mut tick = TickCircuit::new();
+            tick.tick()
+                .try_add_gate(Gate::simple(gt, qubits.clone()))
+                .unwrap();
+            tick.tick()
+                .try_add_gate(Gate::simple(inverse, qubits.clone()))
+                .unwrap();
+            let mut dag = DagCircuit::new();
+            dag.add_gate_auto_wire(Gate::simple(gt, qubits.clone()));
+            dag.add_gate_auto_wire(Gate::simple(inverse, qubits));
+            CancelInverses.apply_tick(&mut tick);
+            CancelInverses.apply_dag(&mut dag);
+            assert_eq!(tick.gate_count(), 0);
+            assert_eq!(dag.gate_count(), 0);
+        }
+    }
 
     #[test]
     fn simplify_rz_quarter_turn_to_sz() {

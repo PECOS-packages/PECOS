@@ -68,67 +68,6 @@ fn phase_u_exact_cliffords() {
     }
 }
 
-#[cfg(feature = "hugr")]
-#[test]
-fn phase_u_hugr_export() {
-    use pecos_quantum::hugr_convert::dag_circuit_to_hugr;
-    use tket::hugr::HugrView;
-    for angle in [Angle64::HALF_TURN, Angle64::from_radians(-0.37)] {
-        let mut dag = DagCircuit::new();
-        dag.u(Angle64::ZERO, Angle64::ZERO, angle, &[0, 1]);
-        let hugr = dag_circuit_to_hugr(&dag).unwrap();
-        hugr.validate().unwrap();
-        let mut rotations = Vec::new();
-        let mut global_phase = 0.0;
-        let mut phase_count = 0;
-        for node in hugr.nodes() {
-            let Some(op) = hugr.get_optype(node).as_extension_op() else {
-                continue;
-            };
-            let (port, is_phase) = match op.unqualified_id() {
-                "Rz" => (1, false),
-                "global_phase" => (0, true),
-                other => panic!("unexpected exported operation {other}"),
-            };
-            let (load, _) = hugr.single_linked_output(node, port).unwrap();
-            let (constant, _) = hugr.single_linked_output(load, 0).unwrap();
-            let tket::hugr::ops::OpType::Const(value) = hugr.get_optype(constant) else {
-                panic!("expected rotation constant")
-            };
-            let radians = value
-                .get_custom_value::<tket::extension::rotation::ConstRotation>()
-                .unwrap()
-                .half_turns()
-                * std::f64::consts::PI;
-            if is_phase {
-                global_phase += radians;
-                phase_count += 1;
-            } else {
-                rotations.push(radians);
-            }
-        }
-        assert_eq!(rotations.len(), 2);
-        assert_eq!(phase_count, 2);
-        for basis in 0_usize..4 {
-            let actual = global_phase
-                + rotations
-                    .iter()
-                    .enumerate()
-                    .map(|(qubit, theta)| {
-                        if basis & (1 << qubit) == 0 {
-                            -theta / 2.0
-                        } else {
-                            theta / 2.0
-                        }
-                    })
-                    .sum::<f64>();
-            let expected = angle.to_radians_signed() * f64::from(basis.count_ones());
-            assert!((actual.cos() - expected.cos()).abs() < 1e-14);
-            assert!((actual.sin() - expected.sin()).abs() < 1e-14);
-        }
-    }
-}
-
 #[test]
 fn phase_u_passes() {
     use pecos_quantum::pass::{

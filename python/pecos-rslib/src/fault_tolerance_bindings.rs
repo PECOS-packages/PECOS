@@ -2688,10 +2688,16 @@ impl PyDetectorErrorModel {
     ///
     /// Raw mechanisms are first grouped exactly as in `to_string()`. Each raw
     /// effect is then projected to graphlike terminal components using detector
-    /// coordinates. This is a decoder-facing representation for graph matchers,
-    /// not source-proof decomposition.
-    fn to_string_terminal_graphlike_decomposed(&self) -> String {
-        self.inner.to_string_terminal_graphlike_decomposed()
+    /// coordinates. Prefer `to_string_source_graphlike_decomposed()` for graph
+    /// matchers; this coordinate-based approximation can invent nonphysical
+    /// components and decode less accurately. Raises `ValueError` if observable labels
+    /// conflict, no consistent terminal pairing exists, or the bounded search
+    /// is exhausted. Effects are processed by descending grouped probability;
+    /// emitted labels constrain later effects, and the output is checked again.
+    fn to_string_terminal_graphlike_decomposed(&self) -> PyResult<String> {
+        self.inner
+            .to_string_terminal_graphlike_decomposed()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Convert the DEM using the explicit historical graphlike-search renderer.
@@ -2775,9 +2781,7 @@ impl PyDetectorErrorModel {
 
     /// Build a `DemSampler` directly from this DEM — no string round-trip.
     fn to_sampler(&self) -> PyResult<PyDemSampler> {
-        use pecos_qec::fault_tolerance::dem_builder::DemSampler;
-
-        let inner = DemSampler::from_detector_error_model(&self.inner);
+        let inner = self.inner.to_sampler();
         Ok(PyDemSampler { inner })
     }
 
@@ -3302,9 +3306,17 @@ impl PySampleBatch {
         num_shots: usize,
         seed: Option<u64>,
     ) -> Self {
-        Self {
-            samples: SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+        Self::from_samples(
+            SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
                 .expect("sampler columns match the shot count"),
+            seed,
+        )
+    }
+
+    /// Wrap validated detector events with their resolved sampling seed.
+    fn from_samples(samples: SampleBatch, seed: Option<u64>) -> Self {
+        Self {
+            samples,
             raw_measurements: false,
             seed,
             dem: None,
@@ -4289,8 +4301,11 @@ impl PyDemSampler {
                 Some(actual_seed),
             );
         }
-        let (det_columns, obs_columns) = self.inner.sample_batch_geometric(num_shots, &mut rng);
-        PySampleBatch::from_columnar(det_columns, obs_columns, num_shots, Some(actual_seed))
+        let samples = self
+            .inner
+            .sample_shots(num_shots, &mut rng)
+            .expect("raw-measurement mode returned above, so detector sampling cannot fail");
+        PySampleBatch::from_samples(samples, Some(actual_seed))
     }
 
     /// Sample multiple shots and XOR a known Pauli-frame mask into the outputs.

@@ -69,7 +69,8 @@ pub struct CompressedNoise {
 /// The result is a generator approximation, not an exact replacement channel.
 ///
 /// # Panics
-/// Panics if the provenance flags do not match the gate count.
+/// Panics if the provenance flags do not match the gate count, or a noise
+/// label encounters an unsupported gate during propagation.
 pub fn compress_noise_to_boundaries(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -246,6 +247,10 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
     // For non-self-adjoint: pass the adjoint gate type.
 
     let adjoint_type = match gate.gate_type {
+        GateType::CS | GateType::CSdg | GateType::CCZ => panic!(
+            "EEG noise compression does not support {:?}",
+            gate.gate_type
+        ),
         GateType::SZ => GateType::SZdg,
         GateType::SZdg => GateType::SZ,
         GateType::SX => GateType::SXdg,
@@ -336,6 +341,21 @@ impl NoiseSpec for CompressedNoiseSpec {
 mod tests {
     use super::*;
     use crate::noise::UniformNoise;
+
+    #[test]
+    fn diagonal_gates_are_rejected_by_compression() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = Gate::simple(
+                gt,
+                (0..gt.quantum_arity())
+                    .map(pecos_core::QubitId)
+                    .collect::<Vec<_>>(),
+            );
+            assert!(
+                std::panic::catch_unwind(|| forward_conjugate_label(&mut Bm::x(0), &gate)).is_err()
+            );
+        }
+    }
 
     #[test]
     fn forward_conjugation_acts_on_every_batched_pair() {

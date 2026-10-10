@@ -97,9 +97,12 @@ pub use equivalence::{
     compare_dems_statistical, verify_dem_equivalence,
 };
 pub use mem_builder::MemBuilder;
+/// The batch type [`DemSampler::sample_shots`] returns, so it can be named from
+/// this crate without a separate `pecos-decoders` dependency.
+pub use pecos_decoders::batch::SampleBatch;
 pub use sampler::{
     DemSampler, DemSamplerBuilder, DetectorValidationError, DualSampleResult, OutputMode,
-    SamplerLabels,
+    SampleShotsError, SamplerLabels,
 };
 pub use slice::{
     ComposedDem, ComposedDetectorAddress, DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind,
@@ -115,8 +118,8 @@ pub use types::{
     MeasurementNoiseChannelResidual, MeasurementNoiseModel, NoiseChannelError, NoiseChannelKind,
     NoiseChannelResidual, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
     PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
-    ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,
-    omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
+    ReplacementBranchImpact, TerminalDecompositionError, TwoDetectorDirectRenderPolicy,
+    combine_probabilities, omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
 };
 
 #[cfg(test)]

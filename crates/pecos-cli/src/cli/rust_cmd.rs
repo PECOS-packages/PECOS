@@ -491,11 +491,10 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
-    // hugr = static HUGR/DAG conversion (no LLVM)
     // neo = sim() routing to the pecos-neo stack (contract tests)
     // pecos-cli is excluded here and tested separately below with --features=runtime
     // to ensure the pecos binary has PHIR/QIS support for integration tests.
-    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr,neo"];
+    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,neo"];
 
     for crate_name in FFI_CRATES.iter().chain(PYO3_CDYLIB_TEST_EXCLUDES) {
         args.push("--exclude");

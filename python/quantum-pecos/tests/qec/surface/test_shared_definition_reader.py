@@ -178,3 +178,161 @@ def test_descriptor_cache_is_returned_without_rereading(scrambled):
     patch = SurfacePatch.create(distance=3)
     assert get_detector_descriptors_from_tick_circuit(scrambled, patch) == [{"cached": "detector"}]
     assert get_observable_descriptors_from_tick_circuit(scrambled, patch) == [{"cached": "observable"}]
+
+
+@pytest.mark.parametrize("records", [[-2], [0], [-1]])
+def test_dem_nonpositional_ids_need_no_measurement_order(records):
+    from pecos.qec.surface import generate_dem_from_tick_circuit
+
+    # Only qubit 0 is prepared, so only the measurement stamped 17 sees the
+    # preparation error and the two measurements give different DEMs.
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz_with_ids([0, 1], [17, 9])
+    circuit.set_meta("num_measurements", "2")
+
+    def dem(references):
+        circuit.set_meta("detectors", json.dumps([{"id": 0, **references}]))
+        circuit.set_meta("observables", json.dumps([{"id": 0, **references}]))
+        return generate_dem_from_tick_circuit(circuit, p_meas=0.125, p_prep=0.25)
+
+    # Emission order is [17, 9]: -2 and 0 name id 17, and -1 names id 9.
+    meas_id, other_id = (9, 17) if records == [-1] else (17, 9)
+    records_dem = dem({"records": records})
+    assert dem({"meas_ids": [other_id]}) != dem({"meas_ids": [meas_id]})
+    assert records_dem == dem({"meas_ids": [meas_id]})
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_surface_dems_match_pre_removal_baseline(basis):
+    from pecos.qec.surface import NoiseParameters, generate_dem_from_tick_circuit
+    from pecos.qec.surface.decode import build_native_sampler, generate_circuit_level_dem_from_builder
+
+    expected = json.loads((Path(__file__).parent / "data" / "reader_dem_baseline.json").read_text())[basis]
+    patch = SurfacePatch.create(distance=3)
+    params = {"p1": 0.001, "p2": 0.002, "p_meas": 0.003, "p_prep": 0.004}
+    noise = NoiseParameters(**params)
+    circuit = generate_tick_circuit_from_patch(patch, num_rounds=2, basis=basis, ancilla_budget=2)
+    assert generate_dem_from_tick_circuit(circuit, **params) == expected["direct"]
+    assert generate_circuit_level_dem_from_builder(patch, 2, noise, basis, ancilla_budget=2) == expected["cached"]
+    assert build_native_sampler(patch, 2, noise, basis, ancilla_budget=2).dem_string == expected["sampler"]
+
+
+def test_logical_dem_matches_pre_removal_baseline(monkeypatch):
+    from pecos.qec.surface import LogicalCircuitBuilder
+
+    expected = json.loads((Path(__file__).parent / "data" / "reader_dem_baseline.json").read_text())["logical"]
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(distance=3), "A")
+    builder.add_memory("A", rounds=2, basis="Z")
+    monkeypatch.setattr(builder, "_build_structured_dem_from_cached_slices", lambda **_kwargs: None)
+    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == expected
+
+
+@pytest.mark.parametrize("references", [{"records": [0]}, {"meas_ids": [17]}, {"records": [0], "meas_ids": [17]}])
+def test_audit_schema_uses_resolved_positions(scrambled, references):
+    from pecos.qec.dem_spec import _resolved_schema_from_validated_json
+
+    detectors = json.dumps([{"id": "D8", "records": [-1, -1]}, {"detector_id": "D3", **references}])
+    observables = json.dumps([{"observable_id": "L4", **references}])
+    scrambled.set_meta("detectors", detectors)
+    scrambled.set_meta("observables", observables)
+    schema = _resolved_schema_from_validated_json(detectors, observables, circuit=scrambled, result_traces=[])
+    assert schema.detector_meas_ids == ((17,), (9, 9))
+    assert schema.observable_meas_ids == ((4, (17,)),)
+    assert [(entry.meas_id, entry.runtime_record_index) for entry in schema.ledger] == [(17, 0), (9, 1)]
+
+
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+def test_remap_requires_definition_and_position(scrambled, kind):
+    from pecos.qec.surface.decode import _copy_surface_tick_circuit_metadata
+
+    scrambled.set_meta(kind, '[{"id":0,"meas_ids":[9]}]')
+    target = TickCircuit()
+    with pytest.raises(ValueError, match="emission position 1 is missing"):
+        _copy_surface_tick_circuit_metadata(scrambled, target, measurement_index_remap={0: 100})
+    descriptor_key = "detector_descriptors" if kind == "detectors" else "observable_descriptors"
+    scrambled.set_meta(descriptor_key, '[{"id":1,"records":[-1]}]')
+    with pytest.raises(ValueError, match="entry id 1 has no source definition"):
+        _copy_surface_tick_circuit_metadata(scrambled, target, measurement_index_remap={0: 100, 1: 200})
+
+
+def test_remap_descriptors_use_annotation_definitions(scrambled):
+    from pecos.qec.surface.decode import _copy_surface_tick_circuit_metadata
+
+    scrambled.detector([(0, 0, 1)])
+    scrambled.observable([(0, 0, 0)])
+    scrambled.set_meta("detector_descriptors", '[{"id":0,"records":[99],"weight":2}]')
+    scrambled.set_meta("observable_descriptors", '[{"id":0,"meas_ids":[99],"basis":"Z"}]')
+    target = TickCircuit()
+    _copy_surface_tick_circuit_metadata(scrambled, target, measurement_index_remap={0: 100, 1: 200})
+    assert json.loads(target.get_meta("detector_descriptors")) == [{"id": 0, "meas_ids": [200], "weight": 2}]
+    assert json.loads(target.get_meta("observable_descriptors")) == [{"id": 0, "meas_ids": [100], "basis": "Z"}]
+
+
+@pytest.mark.parametrize("consumer", ["remap", "audit", "topology"])
+def test_decode_readers_reject_disagreeing_sources(scrambled, consumer, monkeypatch):
+    from pecos.qec.dem_spec import _resolved_schema_from_validated_json
+    from pecos.qec.surface import decode
+
+    scrambled.detector([(0, 0, 1)])
+    scrambled.set_meta("detectors", '[{"id":0,"records":[0]}]')
+    monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: scrambled)
+    from pecos.qec.surface.decode import (
+        _copy_surface_tick_circuit_metadata,
+        _surface_native_topology,
+        _surface_patch_cache_key,
+    )
+
+    patch_key = _surface_patch_cache_key(SurfacePatch.create(distance=3))
+    function, args, kwargs = {
+        "remap": (
+            _copy_surface_tick_circuit_metadata,
+            (scrambled, TickCircuit()),
+            {"measurement_index_remap": {0: 100, 1: 200}},
+        ),
+        "audit": (
+            _resolved_schema_from_validated_json,
+            (scrambled.get_meta("detectors"), "[]"),
+            {"circuit": scrambled, "result_traces": []},
+        ),
+        "topology": (_surface_native_topology, (patch_key, 1, "Z", None, "abstract", False), {}),
+    }[consumer]
+    with pytest.raises(ValueError, match="differ from annotation positions"):
+        function(*args, **kwargs)
+
+
+def test_native_topology_passes_resolved_offsets_to_pauli_lookup(scrambled, monkeypatch):
+    from types import SimpleNamespace
+
+    from pecos.qec.surface import decode
+    from pecos.qec.surface._twirl_config import TwirlConfig
+    from pecos_rslib import qec
+
+    scrambled.set_meta("detectors", '[{"id":1,"records":[0,0]},{"id":0,"meas_ids":[9]}]')
+    scrambled.set_meta("observables", '[{"id":0,"records":[0],"meas_ids":[17]}]')
+    expected_detectors = [[-1], [-2, -2]]
+    lookup_calls = []
+
+    def capture_lookup(_dag, detectors, observables):
+        lookup_calls.append((detectors, observables))
+        return SimpleNamespace(num_pauli_sites=0)
+
+    monkeypatch.setattr(qec, "PauliFrameLookup", SimpleNamespace(from_circuit=capture_lookup))
+    monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: scrambled)
+    patch = SurfacePatch.create(distance=3)
+    from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
+
+    topology = _surface_native_topology(
+        _surface_patch_cache_key(patch),
+        1,
+        "Z",
+        None,
+        "abstract",
+        False,
+        twirl=TwirlConfig(),
+    )
+    assert lookup_calls == [(expected_detectors, [[-2]])]
+    assert topology.num_measurements == 2
+    assert topology.num_detectors == len(expected_detectors)
+    assert topology.num_observables == 1

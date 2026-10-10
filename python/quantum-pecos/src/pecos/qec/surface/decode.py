@@ -588,7 +588,6 @@ class _CachedNativeSurfaceTopology:
     pauli_frame_lookup: Any | None
     detectors_json: str
     observables_json: str
-    measurement_order: tuple[int, ...]
     num_measurements: int
     num_detectors: int
     num_observables: int
@@ -897,9 +896,6 @@ def _copy_surface_tick_circuit_metadata(
     measurement_index_remap: dict[int, int] | None = None,
 ) -> None:
     """Copy the surface-level metadata needed by the native DEM/sampler builders."""
-    num_measurements_text = source_tc.get_meta("num_measurements")
-    num_measurements = int(num_measurements_text) if num_measurements_text is not None else None
-
     for key in (
         "basis",
         "detectors",
@@ -918,13 +914,11 @@ def _copy_surface_tick_circuit_metadata(
                 "detector_descriptors",
                 "observable_descriptors",
             ):
-                if num_measurements is None:
-                    msg = "Cannot remap surface metadata without num_measurements"
-                    raise ValueError(msg)
                 value = _remap_surface_record_metadata_json(
                     value,
                     measurement_index_remap=measurement_index_remap,
-                    num_measurements=num_measurements,
+                    source_tc=source_tc,
+                    definition_kind="detectors" if key in ("detectors", "detector_descriptors") else "observables",
                 )
             target_tc.set_meta(key, value)
 
@@ -972,40 +966,34 @@ def _measurement_index_remap_for_orders(
 def _remap_surface_record_metadata_json(
     metadata_json: str,
     *,
+    source_tc: Any,
+    definition_kind: Literal["detectors", "observables"],
     measurement_index_remap: dict[int, int],
-    num_measurements: int,
 ) -> str:
-    """Bind abstract measurement refs to runtime-stable ``meas_ids``.
+    """Bind source definitions to runtime-stable ``meas_ids``.
 
-    ``measurement_index_remap`` maps abstract measurement indices to the
-    stable result ids emitted by the runtime trace. Those ids are not
-    positional record offsets, so remapped runtime metadata must use
-    ``meas_ids`` and must drop stale ``records``.
+    ``measurement_index_remap`` maps abstract emission positions to runtime
+    result ids. Metadata and cached descriptors use the resolved definition
+    of the same kind and id; their other fields are preserved.
     """
     import json
 
-    entries = json.loads(metadata_json)
+    definitions = {entry["id"]: entry for entry in source_tc.circuit_definitions()[definition_kind]}
+    id_key, prefix = ("detector_id", "D") if definition_kind == "detectors" else ("observable_id", "L")
+    entries = json.loads(metadata_json) if metadata_json.strip() else []
     for entry in entries:
-        records = entry.pop("records", None)
-        if records is not None:
-            abstract_indices = []
-            for record in records:
-                abstract_index = num_measurements + int(record)
-                if abstract_index not in measurement_index_remap:
-                    msg = f"Surface metadata record {record!r} is out of range for remapping"
-                    raise ValueError(msg)
-                abstract_indices.append(abstract_index)
-        elif "meas_ids" in entry:
-            abstract_indices = [int(meas_id) for meas_id in entry["meas_ids"]]
-        else:
-            continue
-
+        raw_id = entry["id"] if "id" in entry else entry[id_key]
+        definition_id = int(raw_id.removeprefix(prefix)) if isinstance(raw_id, str) else int(raw_id)
+        if definition_id not in definitions:
+            msg = f"Surface {definition_kind} entry id {definition_id} has no source definition"
+            raise ValueError(msg)
         remapped_meas_ids = []
-        for abstract_index in abstract_indices:
-            if abstract_index not in measurement_index_remap:
-                msg = f"Surface metadata meas_id {abstract_index!r} is out of range for remapping"
+        for position in definitions[definition_id]["measurements"]:
+            if position not in measurement_index_remap:
+                msg = f"Surface metadata emission position {position} is missing from the measurement remap"
                 raise ValueError(msg)
-            remapped_meas_ids.append(int(measurement_index_remap[abstract_index]))
+            remapped_meas_ids.append(measurement_index_remap[position])
+        entry.pop("records", None)
         entry["meas_ids"] = remapped_meas_ids
     return json.dumps(entries)
 
@@ -1730,14 +1718,7 @@ def _surface_native_topology(
     max_hosted_tick_separation: int | None = None,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
-    import json
-
-    from pecos.qec.surface.circuit_builder import (
-        _build_canonical_dem_influence_map,
-        _metadata_record_offsets,
-        _metadata_uses_record_offsets,
-        get_measurement_order_from_tick_circuit,
-    )
+    from pecos.qec.surface.circuit_builder import _build_canonical_dem_influence_map
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
     require_current_surface_check_plan_renderer(
@@ -1778,22 +1759,15 @@ def _surface_native_topology(
 
     detectors_json = tc.get_meta("detectors") or "[]"
     observables_json = tc.get_meta("observables") or "[]"
-    measurement_order = (
-        tuple(get_measurement_order_from_tick_circuit(tc))
-        if _metadata_uses_record_offsets(detectors_json, observables_json)
-        else ()
-    )
-    num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
-    det_records = (
-        [_metadata_record_offsets(detector, num_measurements) for detector in json.loads(detectors_json)]
-        if detectors_json
-        else []
-    )
-    obs_records = (
-        [_metadata_record_offsets(observable, num_measurements) for observable in json.loads(observables_json)]
-        if observables_json
-        else []
-    )
+    definitions = tc.circuit_definitions()
+    num_measurements = definitions["num_measurements"]
+    det_records = [
+        [position - num_measurements for position in detector["measurements"]] for detector in definitions["detectors"]
+    ]
+    obs_records = [
+        [position - num_measurements for position in observable["measurements"]]
+        for observable in definitions["observables"]
+    ]
 
     pauli_frame_lookup = None
     num_pauli_sites = 0
@@ -1814,7 +1788,6 @@ def _surface_native_topology(
         pauli_frame_lookup=pauli_frame_lookup,
         detectors_json=detectors_json,
         observables_json=observables_json,
-        measurement_order=measurement_order,
         num_measurements=num_measurements,
         num_detectors=len(det_records),
         num_observables=len(obs_records),
@@ -1884,8 +1857,6 @@ def _dem_string_from_cached_surface_topology(
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
 
     builder = builder.with_num_measurements(topology.num_measurements)
-    if topology.measurement_order:
-        builder = builder.with_measurement_order(list(topology.measurement_order))
     dem = (
         builder.with_detectors_json(topology.detectors_json)
         .with_observables_json(
@@ -2065,8 +2036,6 @@ def _build_native_sampler_from_cached_surface_topology(
             .with_detectors_json(topology.detectors_json)
             .with_observables_json(topology.observables_json)
         )
-        if topology.measurement_order:
-            sampler_builder = sampler_builder.with_measurement_order(list(topology.measurement_order))
         sampler = sampler_builder.build()
         # Remap sampling_model for NativeSampler dispatch
         sampling_model = "influence_dem"

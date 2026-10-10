@@ -18,6 +18,7 @@ import warnings
 from typing import TYPE_CHECKING
 
 from pecos.circuits.quantum_circuit import QuantumCircuit
+from pecos.slr.gen_codes._permutation import reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.vars import SymbolicElem
 
@@ -113,6 +114,8 @@ class QuantumCircuitGenerator(Generator):
         previous_scope = self.enter_block(block)
 
         block_name = type(block).__name__
+        if block_name in ("If", "While"):
+            reject_permute_in_region(block, "QuantumCircuitGenerator")
 
         if block_name == "While":
             # While loops cannot be statically unrolled in QuantumCircuit format

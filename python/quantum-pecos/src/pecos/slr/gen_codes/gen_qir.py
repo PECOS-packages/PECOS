@@ -26,6 +26,7 @@ from pecos.slr.cops import (
     BinOp,
     UnaryOp,
 )
+from pecos.slr.gen_codes._permutation import reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.gen_codes.qir_gate_mapping import QIRGateMetadata
 from pecos.slr.misc import Barrier, Comment, Permute
@@ -388,6 +389,8 @@ class QIRGenerator(Generator):
 
         block (Block): the current SLR block to convert into a QIR block."""
 
+        if type(block).__name__ in ("If", "While", "For"):
+            reject_permute_in_region(block, "QIRGenerator", classical_runtime=isinstance(block, If))
         self._current_block = block
         repeat_times = block.cond if isinstance(block, Repeat) else 1
 
@@ -395,6 +398,7 @@ class QIRGenerator(Generator):
             for block_or_op in block.ops:
                 match block_or_op:
                     case If():
+                        reject_permute_in_region(block_or_op, "QIRGenerator", classical_runtime=True)
                         pred = self._convert_cond_to_pred(block_or_op.cond)
                         if block_or_op.else_block:
                             with self._builder.if_else(pred) as (then, otherwise):
@@ -1022,37 +1026,20 @@ class QIRGenerator(Generator):
                     if len(cycle) > 1:
                         cycles.append(cycle)
 
-                # Create a temporary bit if needed
-                if cycles:
-                    temp_var = "_bit_swap"
-                    if temp_var not in self._creg_dict:
-                        temp_ptr = self._creg_funcs.create_creg_func.create_call(
-                            self._builder,
-                            [ir.Constant(self._types.int_type, 1)],
-                            temp_var,
-                        )
-                        self._creg_dict[temp_var] = (temp_ptr, False)
-                    else:
-                        temp_ptr = self._creg_dict[temp_var][0]
-
                 # Process each cycle
                 for cycle in cycles:
-                    # Use the temporary bit for all cycles
+                    # Keep the saved value in SSA within this branch. A
+                    # cached temporary register allocated in another branch
+                    # would not dominate its uses here.
                     first = cycle[0]
                     first_ptr = self._creg_dict[first.reg.sym][0]
 
-                    # Save the first element's value to the temporary bit
+                    # Save the first element's value before overwriting it.
                     first_val = self._creg_funcs.get_creg_bit_func.create_call(
                         self._builder,
                         [first_ptr, ir.Constant(self._types.int_type, first.index)],
                         "",
                     )
-                    self._creg_funcs.set_creg_bit_func.create_call(
-                        self._builder,
-                        [temp_ptr, ir.Constant(self._types.int_type, 0), first_val],
-                        "",
-                    )
-
                     # Move each element's value to its predecessor in the cycle
                     for i in range(len(cycle) - 1):
                         curr = cycle[i]
@@ -1078,20 +1065,15 @@ class QIRGenerator(Generator):
                             "",
                         )
 
-                    # Assign the temporary bit to the last element
+                    # Assign the saved value to the last element
                     last = cycle[-1]
                     last_ptr = self._creg_dict[last.reg.sym][0]
-                    temp_val = self._creg_funcs.get_creg_bit_func.create_call(
-                        self._builder,
-                        [temp_ptr, ir.Constant(self._types.int_type, 0)],
-                        "",
-                    )
                     self._creg_funcs.set_creg_bit_func.create_call(
                         self._builder,
                         [
                             last_ptr,
                             ir.Constant(self._types.int_type, last.index),
-                            temp_val,
+                            first_val,
                         ],
                         "",
                     )

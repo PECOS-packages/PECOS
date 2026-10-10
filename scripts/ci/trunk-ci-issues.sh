@@ -5,7 +5,8 @@
 # run there must not go unnoticed. For each watched workflow and branch this
 # reads push and schedule runs separately, deferring active reruns: failures open
 # issues (or comment when the failing run is new); successes close them. Daily
-# schedules also get a missing-run backstop, and recent release tags are tracked:
+# schedules also get a missing-run backstop; a newly listed or changed schedule
+# gets 36 hours before it can raise "Nightly missing". Recent release tags are tracked:
 #   Trunk CI red: ${name} on ${branch} (nightly)
 #   Nightly missing: ${name} on dev
 #   Release tag CI red: ${name} on ${tag}
@@ -53,7 +54,9 @@ superseded_ok=(julia-release.yml python-release.yml)
 
 # Only workflows with a daily cron belong here; a missing run is independent
 # of whether the latest completed nightly passed. Allow 36 hours because
-# schedules can arrive 5-9 hours late without a dropped day.
+# schedules can arrive 5-9 hours late without a dropped day. A newly listed or
+# changed schedule gets 36 hours from its workflow file's last change on dev
+# before it can raise "Nightly missing".
 daily_workflows=(
   cargo-deny.yml
   codeql.yml
@@ -178,7 +181,8 @@ check_class() {
 }
 
 check_nightly() {
-  local name="$1" runs="$2" run created url issue title summary
+  local workflow="$1" name="$2" runs="$3" run created url issue title summary
+  local commits changed changed_epoch
   # Reuse page 1, including queued/running runs that prove the schedule fired.
   run="$(jq -c '.workflow_runs | first // empty' <<<"$runs")" || return 1
   title="Nightly missing: ${name} on dev"
@@ -197,6 +201,14 @@ check_nightly() {
       echo "closed #${issue}: ${title}"
     fi
   elif [ -z "$issue" ]; then
+    # Only a prospective missing issue needs the schedule's establishment time.
+    commits="$(gh api "repos/{owner}/{repo}/commits?path=.github/workflows/${workflow}&sha=dev&per_page=1")" || return 1
+    changed="$(jq -er '.[0].commit.committer.date | strings | select(length > 0)' <<<"$commits")" || return 1
+    changed_epoch="$(date -u -d "$changed" +%s)" || return 1
+    if [ "$changed_epoch" -ge "$nightly_cutoff" ]; then
+      echo "nightly check held off for ${name}: schedule changed at ${changed}"
+      return 0
+    fi
     gh issue create --title "$title" --label bug --label github_actions --label severity:high \
       --body "No scheduled run was created in the last 36 hours. ${summary}
 
@@ -312,7 +324,7 @@ for workflow in "${workflows[@]}"; do
     done
   done
   if [[ " ${daily_workflows[*]} " == *" $workflow "* ]] && [ -n "$schedule_first_page" ]; then
-    if ! check_nightly "$name" "$schedule_first_page"; then
+    if ! check_nightly "$workflow" "$name" "$schedule_first_page"; then
       echo "::error::cannot reconcile nightly staleness for ${workflow}"
       status=1
     fi

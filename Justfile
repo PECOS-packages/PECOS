@@ -799,16 +799,18 @@ python-ci-perf: (python-ci-build-test "release")
 pytest-slow:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "slow"
 
-# Build first with `just build-cuda`. CI has no GPU: its cuda-python-stub job covers only
-# the SDK-free contracts, so run this before merging CUDA changes. It fails when the
-# GPU stack is unusable and when any test skips, so a broken setup cannot pass quietly.
-# New CUDA test files must be added to the list in the recipe.
+# Build first with `just build-cuda` and install the CUDA Python packages (see
+# docs/user-guide/cuda-setup.md). CI has no GPU: its cuda-python-stub job covers only the
+# SDK-free contracts, so run this before merging CUDA changes. It never syncs the
+# environment (a manually pinned cuQuantum, as V100 needs, stays as installed), ignores
+# PYTEST_ADDOPTS, runs serially, and fails when the GPU stack is unusable or any test
+# skips. New CUDA test files must be added to the list in the recipe.
 # Run every CUDA execution test (needs an NVIDIA GPU and the cuQuantum SDK)
 [group('test')]
-pytest-cuda cuda="cuda13":
+pytest-cuda:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run --frozen --group {{cuda}} python - <<'PY'
+    uv run --frozen --no-sync python - <<'PY'
     import sys
 
     problems = []
@@ -833,14 +835,15 @@ pytest-cuda cuda="cuda13":
         problems.append(f"pytket-cutensornet is not installed ({error})")
     if problems:
         print("The CUDA test environment is not ready:", *problems, sep="\n  - ")
-        print("Run `just build-cuda` and `uv sync --group {{cuda}} --inexact` on a machine with an NVIDIA GPU.")
+        print("Run `just build-cuda` and install the CUDA Python packages (docs/user-guide/cuda-setup.md).")
         sys.exit(1)
     PY
     report="$(mktemp)"
     trap 'rm -f "$report"' EXIT
-    # Serial: parallel workers contend for GPU memory. The missing-SDK test belongs to
-    # the stub lane and skips by design when the SDK is present.
-    uv run --frozen --group {{cuda}} pytest -p no:cacheprovider -rs --junitxml="$report" \
+    # Serial (-p no:xdist): parallel workers contend for GPU memory. PYTEST_ADDOPTS is
+    # cleared so inherited -k/-m/-n options cannot shrink or parallelize the run. The
+    # missing-SDK test belongs to the stub lane and skips by design when the SDK is present.
+    env -u PYTEST_ADDOPTS uv run --frozen --no-sync pytest -p no:xdist -p no:cacheprovider -rs --junitxml="$report" \
         python/pecos-rslib-cuda/tests \
         python/quantum-pecos/tests/pecos/integration/state_sim_tests/test_cuda_simulators.py \
         python/quantum-pecos/tests/pecos/integration/state_sim_tests/test_statevec.py \
@@ -853,7 +856,7 @@ pytest-cuda cuda="cuda13":
         python/quantum-pecos/tests/pecos/unit/test_mps_pytket_rxyxy2q.py \
         python/quantum-pecos/tests/pecos/unit/test_quantum_simulator.py \
         --deselect python/pecos-rslib-cuda/tests/test_basic.py::test_constructors_report_missing_sdk
-    uv run --frozen python - "$report" <<'PY'
+    uv run --frozen --no-sync python - "$report" <<'PY'
     import sys
     import xml.etree.ElementTree as ET
 

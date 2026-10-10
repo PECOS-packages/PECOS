@@ -229,11 +229,11 @@ except Exception as e:
 ```bash
 # Build with the CUDA backend, install the CUDA Python packages, and run every CUDA test
 just build-cuda
-uv sync --group cuda13 --inexact   # or cuda12
-just pytest-cuda                   # just pytest-cuda cuda12 for CUDA 12
+uv sync --group cuda13 --inexact   # or cuda12; on V100 install the Volta pin above instead
+just pytest-cuda
 ```
 
-`just pytest-cuda` fails if the GPU, cuQuantum, CuPy or pytket-cutensornet is not usable, and fails if any CUDA test skips. CI has no GPU, so run it before merging changes to the CUDA backends.
+`just pytest-cuda` uses the environment as installed (it never syncs, so a manual V100 pin is kept). It fails if the GPU, cuQuantum, CuPy or pytket-cutensornet is not usable, and fails if any CUDA test skips. CI has no GPU, so run it before merging changes to the CUDA backends.
 
 ## Package Versions
 

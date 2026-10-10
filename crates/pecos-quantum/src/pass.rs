@@ -572,48 +572,53 @@ impl CircuitPass for SimplifyRotations {
             {
                 let qubits = gate.qubits.clone();
 
-                // Collect predecessor/successor nodes *before* removal
-                // (remove_gate deletes edges too).
-                let mut pred_map = Vec::new();
-                let mut succ_map = Vec::new();
+                // Save each wire position before removal bridges over it.
+                let mut positions = Vec::new();
                 for &q in &qubits {
-                    pred_map.push((q, circuit.predecessor_on_qubit(node, q)));
-                    succ_map.push((q, circuit.successor_on_qubit(node, q)));
+                    let pred = circuit.predecessor_on_qubit(node, q);
+                    let succ = circuit.successor_on_qubit(node, q);
+                    let existing_bridge =
+                        pred.zip(succ).and_then(|(p, s)| circuit.find_wire(p, s, q));
+                    positions.push((
+                        q,
+                        pred,
+                        succ,
+                        existing_bridge,
+                        circuit.is_qubit_head(node, q),
+                    ));
                 }
 
-                // Remove the two-qubit gate (and its edges).
-                circuit.remove_gate(node);
-
-                // Add two single-qubit gates and rewire.
-                for pair in qubits.chunks(2) {
-                    if pair.len() < 2 {
-                        continue;
+                let replacements = circuit.replace_gate_unwired(
+                    node,
+                    qubits
+                        .iter()
+                        .map(|&q| Gate::simple(pauli, smallvec::smallvec![q])),
+                );
+                for ((q, pred, succ, existing_bridge, was_head), replacement) in
+                    positions.into_iter().zip(replacements)
+                {
+                    // Replace the newly created bridge with a path through the
+                    // replacement. Preserve any pre-existing manual bypass.
+                    if existing_bridge.is_none()
+                        && let Some((p, s)) = pred.zip(succ)
+                    {
+                        let edge = circuit
+                            .find_wire(p, s, q)
+                            .expect("removal bridges the old gate's wire");
+                        circuit.remove_wire(edge);
                     }
-                    let node_a =
-                        circuit.add_gate(Gate::simple(pauli, smallvec::smallvec![pair[0]]));
-                    let node_b =
-                        circuit.add_gate(Gate::simple(pauli, smallvec::smallvec![pair[1]]));
-
-                    // Rewire predecessors -> new nodes.
-                    for &(q, pred) in &pred_map {
-                        if let Some(pred) = pred {
-                            if q == pair[0] {
-                                let _ = circuit.connect(pred, node_a, q);
-                            } else if q == pair[1] {
-                                let _ = circuit.connect(pred, node_b, q);
-                            }
-                        }
+                    if let Some(pred) = pred {
+                        circuit
+                            .connect(pred, replacement, q)
+                            .expect("replacement preserves the old gate's wire order");
                     }
-
-                    // Rewire new nodes -> successors.
-                    for &(q, succ) in &succ_map {
-                        if let Some(succ) = succ {
-                            if q == pair[0] {
-                                let _ = circuit.connect(node_a, succ, q);
-                            } else if q == pair[1] {
-                                let _ = circuit.connect(node_b, succ, q);
-                            }
-                        }
+                    if let Some(succ) = succ {
+                        circuit
+                            .connect(replacement, succ, q)
+                            .expect("replacement preserves the old gate's wire order");
+                    }
+                    if was_head {
+                        circuit.restore_replacement_head(replacement, q);
                     }
                 }
                 continue;
@@ -655,19 +660,7 @@ fn remove_matching_dag_gates(circuit: &mut DagCircuit, predicate: impl Fn(&Gate)
         if !predicate(gate) {
             continue;
         }
-        let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-        let mut rewire = Vec::new();
-        for &qubit in &qubits {
-            let predecessor = circuit.predecessor_on_qubit(node, qubit);
-            let successor = circuit.successor_on_qubit(node, qubit);
-            rewire.push((qubit, predecessor, successor));
-        }
         circuit.remove_gate(node);
-        for (qubit, predecessor, successor) in rewire {
-            if let (Some(predecessor), Some(successor)) = (predecessor, successor) {
-                let _ = circuit.connect(predecessor, successor, qubit);
-            }
-        }
     }
 }
 
@@ -768,21 +761,8 @@ impl CircuitPass for CancelInverses {
                 continue;
             }
 
-            let mut rewire = Vec::new();
-            for &q in &qubits {
-                let pred = circuit.predecessor_on_qubit(node, q);
-                let succ_succ = circuit.successor_on_qubit(succ, q);
-                rewire.push((q, pred, succ_succ));
-            }
-
             circuit.remove_gate(node);
             circuit.remove_gate(succ);
-
-            for (q, pred, succ_succ) in rewire {
-                if let (Some(p), Some(s)) = (pred, succ_succ) {
-                    let _ = circuit.connect(p, s, q);
-                }
-            }
         }
     }
 }
@@ -875,24 +855,11 @@ impl CircuitPass for MergeAdjacentRotations {
 
                 let succ_angle = succ_gate.angles[index];
 
-                // Save succ-of-successor for rewiring.
-                let mut rewire = Vec::new();
-                for &q in &qubits {
-                    let succ_succ = circuit.successor_on_qubit(succ, q);
-                    rewire.push((q, succ_succ));
-                }
-
                 // Merge angle and remove successor.
                 circuit
                     .update_gate(node, |gate| gate.angles[index] += succ_angle)
                     .expect("merging rotation angles must preserve a valid gate");
                 circuit.remove_gate(succ);
-
-                for (q, succ_succ) in rewire {
-                    if let Some(ss) = succ_succ {
-                        let _ = circuit.connect(node, ss, q);
-                    }
-                }
             }
         }
     }
@@ -1031,9 +998,7 @@ impl CircuitPass for PeepholeOptimize {
 
                 let gate = circuit.gate(node).expect("node must exist in circuit");
                 if let Some((new_gt, new_qubits)) = peephole_conjugation(gate, q) {
-                    // Rewire around the two H gates.
-                    let h_pred = circuit.predecessor_on_qubit(pred, q);
-                    let h_succ = circuit.successor_on_qubit(succ, q);
+                    // Removal bridges around the two H gates.
                     circuit.remove_gate(pred);
                     circuit.remove_gate(succ);
                     // Update the middle gate in place.
@@ -1043,13 +1008,6 @@ impl CircuitPass for PeepholeOptimize {
                             gate.qubits = new_qubits;
                         })
                         .expect("peephole replacement must preserve a valid gate");
-                    // Rewire: h_pred -> node, node -> h_succ
-                    if let Some(hp) = h_pred {
-                        let _ = circuit.connect(hp, node, q);
-                    }
-                    if let Some(hs) = h_succ {
-                        let _ = circuit.connect(node, hs, q);
-                    }
                     break; // gate changed, move to next node
                 }
             }
@@ -1207,22 +1165,7 @@ impl CircuitPass for AbsorbBasisGates {
         to_remove.sort_unstable();
         to_remove.dedup();
         for &node in &to_remove {
-            let Some(gate) = circuit.gate(node) else {
-                continue;
-            };
-            let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
-            let mut rewire = Vec::new();
-            for &q in &qubits {
-                let pred = circuit.predecessor_on_qubit(node, q);
-                let succ = circuit.successor_on_qubit(node, q);
-                rewire.push((q, pred, succ));
-            }
             circuit.remove_gate(node);
-            for (q, pred, succ) in rewire {
-                if let (Some(p), Some(s)) = (pred, succ) {
-                    let _ = circuit.connect(p, s, q);
-                }
-            }
         }
     }
 }
@@ -1671,6 +1614,85 @@ mod tests {
     use super::*;
     use pecos_core::MeasId;
 
+    #[test]
+    fn append_state_simplification_replaces_bridges_and_preserves_tails() {
+        for with_successors in [false, true] {
+            let mut dag = DagCircuit::new();
+            dag.h(&[0, 1]);
+            dag.rzz(Angle64::HALF_TURN, &[(0, 1)]);
+            if with_successors {
+                dag.x(&[0, 1]).h(&[0, 1]);
+            }
+            SimplifyRotations.apply_dag(&mut dag);
+            for q in [QubitId(0), QubitId(1)] {
+                let timeline = dag.qubit_timeline(q);
+                let tail = *timeline.last().unwrap();
+                let appended = dag.add_gate_auto_wire(Gate::h(&[q]));
+                assert_eq!(dag.predecessor_on_qubit(appended, q), Some(tail));
+                let mut expected: Vec<_> = timeline
+                    .windows(2)
+                    .map(|pair| (pair[0], pair[1], q))
+                    .collect();
+                expected.push((tail, appended, q));
+                expected.sort_unstable();
+                let mut actual: Vec<_> = dag
+                    .wires()
+                    .into_iter()
+                    .filter(|&(_, _, qubit)| qubit == q)
+                    .collect();
+                actual.sort_unstable();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn append_state_removal_passes_leave_single_wire_chains() {
+        let cases: Vec<(&dyn CircuitPass, Vec<Gate>)> = vec![
+            (&StripIdentities, vec![Gate::i(&[0])]),
+            (&StripIdles, vec![Gate::idle(1.0, vec![QubitId(0)])]),
+            (&CancelInverses, vec![Gate::x(&[0]), Gate::x(&[0])]),
+            (
+                &MergeAdjacentRotations,
+                vec![
+                    Gate::rz(Angle64::QUARTER_TURN, &[0]),
+                    Gate::rz(Angle64::QUARTER_TURN, &[0]),
+                ],
+            ),
+            (
+                &PeepholeOptimize,
+                vec![Gate::h(&[0]), Gate::cx(&[(1, 0)]), Gate::h(&[0])],
+            ),
+            (&AbsorbBasisGates, vec![Gate::pz(&[0]), Gate::z(&[0])]),
+        ];
+        for (pass, gates) in cases {
+            for with_successor in [false, true] {
+                let mut dag = DagCircuit::new();
+                dag.sx(&[0]);
+                for gate in &gates {
+                    dag.add_gate_auto_wire(gate.clone());
+                }
+                if with_successor {
+                    dag.sy(&[0]);
+                }
+                pass.apply_dag(&mut dag);
+                let timeline = dag.qubit_timeline(QubitId(0));
+                let tail = *timeline.last().unwrap();
+                let appended = dag.add_gate_auto_wire(Gate::h(&[0]));
+                assert_eq!(dag.predecessor_on_qubit(appended, QubitId(0)), Some(tail));
+                let mut expected: Vec<_> = timeline
+                    .windows(2)
+                    .map(|pair| (pair[0], pair[1], QubitId(0)))
+                    .collect();
+                expected.push((tail, appended, QubitId(0)));
+                expected.sort_unstable();
+                let mut actual = dag.wires();
+                actual.sort_unstable();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
     // ==================== simplify_rotation unit tests ====================
 
     #[test]
@@ -2009,6 +2031,66 @@ mod tests {
     }
 
     // ==================== DagCircuit pass tests ====================
+
+    #[test]
+    fn dag_replacement_history_after_h() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]).rzz(Angle64::HALF_TURN, &[(0, 1)]);
+        SimplifyRotations.apply_dag(&mut dag);
+        let last = dag.last_added_node().unwrap();
+        assert_eq!(dag.gate(last).unwrap().gate_type, GateType::Z);
+        assert_eq!(dag.gate(last).unwrap().qubits.as_slice(), &[QubitId(1)]);
+        dag.meta("replacement", Attribute::Bool(true));
+        assert_eq!(
+            dag.get_gate_attr(last, "replacement"),
+            Some(&Attribute::Bool(true))
+        );
+        dag.remove_gate(last);
+        let first = dag.last_added_node().unwrap();
+        assert_eq!(dag.gate(first).unwrap().gate_type, GateType::Z);
+        dag.remove_gate(first);
+        assert_eq!(dag.last_added_node(), Some(0));
+    }
+
+    #[test]
+    fn dag_replacement_history_only_rzz() {
+        let mut dag = DagCircuit::new();
+        dag.rzz(Angle64::HALF_TURN, &[(0, 1)]);
+        SimplifyRotations.apply_dag(&mut dag);
+        dag.meta("replacement", Attribute::Bool(true));
+        let last = dag.last_added_node().unwrap();
+        assert_eq!(dag.gate(last).unwrap().qubits.as_slice(), &[QubitId(1)]);
+        assert_eq!(
+            dag.get_gate_attr(last, "replacement"),
+            Some(&Attribute::Bool(true))
+        );
+        dag.remove_gate(last);
+        let first = dag.last_added_node().unwrap();
+        dag.remove_gate(first);
+        assert_eq!(dag.last_added_node(), None);
+    }
+
+    #[test]
+    fn dag_replacement_history_interior_and_unwired() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]).rzz(Angle64::HALF_TURN, &[(0, 1)]).h(&[1]);
+        let tail = dag.last_added_node().unwrap();
+        dag.add_gate(Gate::rzz(Angle64::HALF_TURN, &[(2, 3)]));
+        SimplifyRotations.apply_dag(&mut dag);
+        assert_eq!(dag.last_added_node(), Some(tail));
+        let mut cloned = dag.clone();
+        cloned.remove_gate(tail);
+        let last = cloned.last_added_node().unwrap();
+        assert_eq!(cloned.gate(last).unwrap().qubits.as_slice(), &[QubitId(1)]);
+        cloned.remove_gate(last);
+        let first = cloned.last_added_node().unwrap();
+        cloned.remove_gate(first);
+        assert_eq!(cloned.last_added_node(), Some(0));
+        cloned.remove_gate(0);
+        assert_eq!(cloned.last_added_node(), None);
+        assert_eq!(cloned.nodes().len(), 2);
+        assert_eq!(dag.last_added_node(), Some(tail));
+    }
 
     #[test]
     fn dag_simplify_rz_quarter_to_sz() {

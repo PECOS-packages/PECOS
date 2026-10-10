@@ -3698,7 +3698,8 @@ impl TryFrom<&TickCircuit> for DagCircuit {
     /// Convert a `TickCircuit` to a `DagCircuit`.
     ///
     /// Gates are added in tick order, with qubit wires connecting
-    /// consecutive gates on the same qubit.
+    /// consecutive gates on the same qubit. The same insertion primitive as
+    /// the DAG builders maintains append heads and the last metadata target.
     ///
     /// # Example
     ///
@@ -3724,9 +3725,6 @@ impl TryFrom<&TickCircuit> for DagCircuit {
     fn try_from(tc: &TickCircuit) -> Result<Self, Self::Error> {
         let mut dag = DagCircuit::new();
 
-        // Track the last node for each qubit to connect wires
-        let mut last_node: BTreeMap<QubitId, usize> = BTreeMap::new();
-
         for (tick_idx, tick) in tc.iter_ticks() {
             for batch in tick.iter_gate_batches() {
                 // DagCircuit stores individual gate applications. Use the
@@ -3745,20 +3743,12 @@ impl TryFrom<&TickCircuit> for DagCircuit {
                 let mut split_nodes = Vec::with_capacity(split_gates.len());
                 for split_gate in &split_gates {
                     let node =
-                        dag.try_add_gate(split_gate.clone())
+                        dag.try_add_gate_auto_wire(split_gate.clone())
                             .map_err(|reason| TickToDagError {
                                 tick: tick_idx,
                                 reason: reason.to_string(),
                             })?;
                     split_nodes.push(node);
-
-                    // Connect wires from previous gates on the same qubits
-                    for qubit in &split_gate.qubits {
-                        if let Some(&prev_node) = last_node.get(qubit) {
-                            let _ = dag.connect(prev_node, node, *qubit);
-                        }
-                        last_node.insert(*qubit, node);
-                    }
                 }
 
                 // Copy batch-level gate attributes to every split gate.

@@ -371,12 +371,55 @@ pub struct MeasRef {
     pub meas_id: MeasId,
 }
 
+/// A rejected circuit wire. Unlike a cycle, duplicate or missing endpoints
+/// indicate an invalid manual edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DagWireError {
+    /// The edge would introduce a cycle.
+    WouldCycle(DagWouldCycleError),
+    /// This labeled edge is already present.
+    Duplicate {
+        from: usize,
+        to: usize,
+        qubit: QubitId,
+    },
+    /// An endpoint is not a live gate in the graph.
+    MissingGate { node: usize },
+}
+
+impl fmt::Display for DagWireError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WouldCycle(error) => error.fmt(f),
+            Self::Duplicate { from, to, qubit } => write!(
+                f,
+                "Wire {from} -> {to} on qubit {} already exists",
+                qubit.index()
+            ),
+            Self::MissingGate { node } => write!(f, "DAG node {node} is not a live gate"),
+        }
+    }
+}
+
+impl std::error::Error for DagWireError {}
+
 /// Error when trying to add or update a gate in a DAG circuit.
 ///
 /// This mirrors [`crate::TickGateError::InvalidGate`]: both circuit
 /// representations validate a complete temporary gate before storing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DagGateError {
+    /// Auto-wiring was rejected by the underlying DAG.
+    Wiring {
+        /// Predecessor from which the wire was attempted.
+        from: usize,
+        /// Gate that would receive the wire, absent during insertion preflight.
+        to: Option<usize>,
+        /// Qubit carried by the attempted wire.
+        qubit: QubitId,
+        /// Reason the wire was rejected.
+        source: DagWireError,
+    },
     /// The gate payload itself is invalid for insertion or replacement.
     InvalidGate {
         /// Validation error from [`Gate::validate`] or a DAG identity rule.
@@ -389,6 +432,16 @@ pub enum DagGateError {
 impl fmt::Display for DagGateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Wiring {
+                from,
+                to,
+                qubit,
+                source,
+            } => write!(
+                f,
+                "Cannot wire DAG node {from} to {to:?} on qubit {}: {source}",
+                qubit.index()
+            ),
             Self::InvalidGate {
                 message,
                 node: Some(node),
@@ -401,7 +454,14 @@ impl fmt::Display for DagGateError {
     }
 }
 
-impl std::error::Error for DagGateError {}
+impl std::error::Error for DagGateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Wiring { source, .. } => Some(source),
+            Self::InvalidGate { .. } => None,
+        }
+    }
+}
 
 impl From<MeasRef> for usize {
     fn from(m: MeasRef) -> usize {
@@ -587,10 +647,24 @@ pub struct DagCircuit {
     gates: Vec<Option<Gate>>,
     /// Qubit labels for each edge, indexed by edge ID.
     edge_qubits: BTreeMap<usize, QubitId>,
-    /// Tracks the most recent gate on each qubit for auto-wiring in builder mode.
+    /// Tail of each qubit's wire chain. Auto-wired insertion advances the
+    /// tail; unwired insertion changes nothing. Connecting from a tail follows
+    /// the destination's chain. Removal follows the incoming qubit wire.
+    /// Manual wire removal leaves the tail in place even if disconnected.
+    /// Raw graph access through `as_dag_mut` bypasses these invariants.
     qubit_heads: BTreeMap<QubitId, usize>,
-    /// Tracks the last added node for `.meta()` calls.
+    /// Reverse head index, including manually labeled wires outside a gate's
+    /// support, so removing a node need not scan every qubit in the circuit.
+    head_qubits: Vec<Vec<QubitId>>,
+    /// Tail of auto-wired insertion history, for `.meta()` and `.metas()`.
+    /// Pass replacements inherit the replaced gate's position in that history.
+    /// Unwired insertion and manual connection do not change this target.
     last_node: Option<usize>,
+    /// Doubly linked insertion history indexed by stable node slot. Only
+    /// auto-wired gates and their replacements participate. Unlinking takes constant time;
+    /// neither recycled indices nor mid-circuit rewrites imply recency.
+    /// Derived `Clone` copies these links and both head indices with the graph.
+    insertion_links: Vec<Option<(Option<usize>, Option<usize>)>>,
     /// Number of classical bits addressable by measurement targets and conditions.
     num_cbits: usize,
     /// Classical destination for each measurement node.
@@ -653,6 +727,8 @@ impl DagCircuit {
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
+            insertion_links: Vec::new(),
+            head_qubits: Vec::new(),
             num_cbits: 0,
             measurement_targets: BTreeMap::new(),
             conditions: BTreeMap::new(),
@@ -680,6 +756,8 @@ impl DagCircuit {
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
+            insertion_links: Vec::with_capacity(gates),
+            head_qubits: Vec::with_capacity(gates),
             num_cbits: 0,
             measurement_targets: BTreeMap::new(),
             conditions: BTreeMap::new(),
@@ -699,6 +777,7 @@ impl DagCircuit {
     /// Returns the node index of the newly added gate.
     /// The gate is not connected to any other gates yet - use [`connect`](Self::connect)
     /// to add qubit wires.
+    /// Append heads and the last auto-wired metadata target are unchanged.
     ///
     /// # Arguments
     ///
@@ -714,7 +793,9 @@ impl DagCircuit {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
-    /// Try to add a validated gate to the circuit.
+    /// Try to add a validated, unwired gate to the circuit.
+    /// This does not change append heads or the metadata target; use
+    /// [`try_add_gate_auto_wire`](Self::try_add_gate_auto_wire) for an append.
     ///
     /// # Errors
     ///
@@ -916,6 +997,8 @@ impl DagCircuit {
         // Ensure gates vector is large enough
         if node_idx >= self.gates.len() {
             self.gates.resize(node_idx + 1, None);
+            self.insertion_links.resize(node_idx + 1, None);
+            self.head_qubits.resize_with(node_idx + 1, Vec::new);
         }
         // Update max_qubit tracking
         for q in &gate.qubits {
@@ -925,9 +1008,63 @@ impl DagCircuit {
         node_idx
     }
 
+    /// Remove a gate and insert unwired replacements in the supplied order.
+    /// Replacements inherit its insertion-history position only if it had one;
+    /// replacing an interior gate does not move the metadata target to the end.
+    /// Removal still bridges wires. The caller must reconnect the replacements
+    /// and restore any affected qubit heads, as with ordinary unwired insertion.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the original gate is absent or any replacement is invalid.
+    pub(crate) fn replace_gate_unwired(
+        &mut self,
+        node: usize,
+        replacements: impl IntoIterator<Item = Gate>,
+    ) -> Vec<usize> {
+        let position = self.insertion_links.get(node).copied().flatten();
+        self.remove_gate(node)
+            .expect("replacement requires a live gate");
+        let nodes: Vec<_> = replacements
+            .into_iter()
+            .map(|gate| self.add_gate(gate))
+            .collect();
+        if let Some((mut previous, next)) = position {
+            for &replacement in &nodes {
+                self.insertion_links[replacement] = Some((previous, next));
+                if let Some(previous) = previous {
+                    self.insertion_links[previous]
+                        .as_mut()
+                        .expect("linked predecessor")
+                        .1 = Some(replacement);
+                }
+                previous = Some(replacement);
+            }
+            if let Some(next) = next {
+                self.insertion_links[next]
+                    .as_mut()
+                    .expect("linked successor")
+                    .0 = previous;
+            } else {
+                self.last_node = previous;
+            }
+        }
+        nodes
+    }
+
     /// Removes a gate from the circuit.
     ///
-    /// Also removes all qubit wires connected to this gate.
+    /// Removes incident wires, then bridges incoming and outgoing paths carrying
+    /// the same qubit, unless that exact `(predecessor, successor, qubit)` wire
+    /// already exists. Removing a gate from an auto-wired chain
+    /// therefore preserves the order of its surviving gates.
+    ///
+    /// If this gate is a qubit's head, restore its incoming-wire predecessor,
+    /// or forget that head if no predecessor exists. Explicit manual wire
+    /// removal may have disconnected an earlier gate from this chain.
+    /// The metadata target becomes the tail of auto-wired insertion history,
+    /// including pass replacements, even on an unrelated qubit: `.meta()`
+    /// follows insertion history, not wire order.
     ///
     /// A removed measurement's [`MeasId`] stays reserved: an id names one
     /// measurement for the life of the circuit, so handing it to a different one
@@ -936,15 +1073,74 @@ impl DagCircuit {
     /// # Returns
     ///
     /// The removed gate if it existed, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying graph violates its DAG invariants. Bridging
+    /// an existing directed path cannot create a cycle in a valid DAG.
     pub fn remove_gate(&mut self, node: usize) -> Option<Gate> {
-        // Remove edge qubit mappings for edges connected to this node
-        let in_edges = self.dag.in_edges(node);
-        let out_edges = self.dag.out_edges(node);
-        for edge_id in in_edges.iter().chain(out_edges.iter()) {
-            self.edge_qubits.remove(edge_id);
+        self.gate(node)?;
+        let incoming = self.dag.in_edges(node);
+        let outgoing = self.dag.out_edges(node);
+        // Gate operand order matches pass reconnection order. Include manual
+        // wire labels outside the gate support afterwards, deterministically.
+        let mut qubits = self.gate(node)?.qubits.clone();
+        for &edge in incoming.iter().chain(&outgoing) {
+            if let Some(&q) = self.edge_qubits.get(&edge)
+                && !qubits.contains(&q)
+            {
+                qubits.push(q);
+            }
         }
-
-        self.dag.remove_node(node);
+        let mut paths = smallvec::SmallVec::<[(usize, usize); 2]>::new();
+        let mut labels = smallvec::SmallVec::<[QubitId; 2]>::new();
+        let mut endpoints = BTreeSet::new();
+        for q in qubits {
+            for &input in incoming
+                .iter()
+                .filter(|&&edge| self.edge_qubits.get(&edge) == Some(&q))
+            {
+                let from = self.dag.edge_endpoints(input).expect("live wire").0;
+                for &output in outgoing
+                    .iter()
+                    .filter(|&&edge| self.edge_qubits.get(&edge) == Some(&q))
+                {
+                    let to = self.dag.edge_endpoints(output).expect("live wire").1;
+                    if self.find_wire(from, to, q).is_none() && endpoints.insert((from, to, q)) {
+                        paths.push((input, output));
+                        labels.push(q);
+                    }
+                }
+            }
+        }
+        for q in self.head_qubits[node].clone() {
+            let predecessor = incoming
+                .iter()
+                .find(|&&edge| self.edge_qubits.get(&edge) == Some(&q))
+                .map(|&edge| self.dag.edge_endpoints(edge).expect("live wire").0);
+            self.set_head(q, predecessor);
+        }
+        if let Some((previous, next)) = self.insertion_links[node].take() {
+            if let Some(previous) = previous {
+                self.insertion_links[previous]
+                    .as_mut()
+                    .expect("linked predecessor")
+                    .1 = next;
+            }
+            if let Some(next) = next {
+                self.insertion_links[next]
+                    .as_mut()
+                    .expect("linked successor")
+                    .0 = previous;
+            } else {
+                self.last_node = previous;
+            }
+        }
+        for &edge in incoming.iter().chain(&outgoing) {
+            self.edge_qubits.remove(&edge);
+        }
+        let edges = self.dag.remove_node_with_bridges(node, &paths);
+        self.edge_qubits.extend(edges.into_iter().zip(labels));
         self.measurement_targets.remove(&node);
         self.conditions.remove(&node);
         if node < self.gates.len() {
@@ -976,8 +1172,9 @@ impl DagCircuit {
     /// Qubit support and measurement IDs identify graph wiring and measurement
     /// records, so they cannot be changed through this API. Qubits may be
     /// reordered when a replacement changes their operand roles. A gate also
-    /// cannot change whether it consumes a measurement record; such a change
-    /// requires removing and inserting a gate so the circuit can allocate or
+    /// retains its insertion position and append heads, since its support is
+    /// unchanged. It cannot change whether it consumes a measurement record;
+    /// such a change requires removing and inserting a gate so the circuit can allocate or
     /// retire IDs.
     ///
     /// # Errors
@@ -1083,6 +1280,10 @@ impl DagCircuit {
     ///
     /// Creates an edge from `from` to `to` representing the given qubit
     /// flowing between the gates.
+    /// If this qubit has no head or `from` is its append head, advance it through
+    /// `to`'s existing successor chain. This also supports inserting a newly
+    /// added gate into an earlier position during a rewrite. Insertion order
+    /// (and thus the metadata target) is unchanged.
     ///
     /// # Arguments
     ///
@@ -1096,16 +1297,81 @@ impl DagCircuit {
     ///
     /// # Errors
     ///
-    /// Returns [`DagWouldCycleError`] if adding this wire would create a cycle.
+    /// Returns [`DagWireError`] for a cycle, duplicate wire, or missing gate.
+    /// Removal already bridges wires; reconnecting that bridge is an error.
     pub fn connect(
         &mut self,
         from: usize,
         to: usize,
         qubit: QubitId,
-    ) -> Result<usize, DagWouldCycleError> {
-        let edge_id = self.dag.add_edge(from, to)?;
-        self.edge_qubits.insert(edge_id, qubit);
+    ) -> Result<usize, DagWireError> {
+        self.validate_wire(from, to, qubit)?;
+        let edge_id = self.add_wire(from, to, qubit)?;
+        if !self.qubit_heads.contains_key(&qubit) || self.qubit_heads.get(&qubit) == Some(&from) {
+            let mut head = to;
+            while let Some(successor) = self.successor_on_qubit(head, qubit) {
+                head = successor;
+            }
+            self.set_head(qubit, Some(head));
+        }
         Ok(edge_id)
+    }
+
+    /// Store a labeled edge without changing the append frontier. Callers
+    /// decide whether this extends a chain (`connect`) or shortens an existing
+    /// path (`remove_gate`).
+    fn add_wire(&mut self, from: usize, to: usize, qubit: QubitId) -> Result<usize, DagWireError> {
+        let edge = self
+            .dag
+            .add_edge(from, to)
+            .map_err(DagWireError::WouldCycle)?;
+        self.edge_qubits.insert(edge, qubit);
+        Ok(edge)
+    }
+
+    fn validate_wire(&self, from: usize, to: usize, qubit: QubitId) -> Result<(), DagWireError> {
+        for node in [from, to] {
+            if self.gate(node).is_none() || self.dag.node_attrs(node).is_none() {
+                return Err(DagWireError::MissingGate { node });
+            }
+        }
+        if self.find_wire(from, to, qubit).is_some() {
+            return Err(DagWireError::Duplicate { from, to, qubit });
+        }
+        Ok(())
+    }
+
+    fn set_head(&mut self, qubit: QubitId, node: Option<usize>) {
+        if let Some(old) = self.qubit_heads.remove(&qubit) {
+            self.head_qubits[old].retain(|&q| q != qubit);
+        }
+        if let Some(node) = node {
+            self.qubit_heads.insert(qubit, node);
+            self.head_qubits[node].push(qubit);
+        }
+    }
+
+    /// Restore the selected wire head during a pass without making an unwired
+    /// insertion an append operation. The caller saves whether the removed
+    /// gate was the head before rewriting it.
+    pub(crate) fn restore_replacement_head(&mut self, node: usize, qubit: QubitId) {
+        assert!(
+            self.gate(node)
+                .is_some_and(|gate| gate.qubits.contains(&qubit))
+        );
+        self.set_head(qubit, Some(node));
+    }
+
+    pub(crate) fn is_qubit_head(&self, node: usize, qubit: QubitId) -> bool {
+        self.qubit_heads.get(&qubit) == Some(&node)
+    }
+
+    /// Find a wire by both endpoints and its qubit, including parallel wires.
+    pub(crate) fn find_wire(&self, from: usize, to: usize, qubit: QubitId) -> Option<usize> {
+        self.dag.out_edges(from).into_iter().find(|&edge| {
+            self.edge_qubits.get(&edge) == Some(&qubit)
+                && self.dag.edge_endpoints(edge) == Some((from, to))
+        })
     }
 
     /// Connects two gates on all shared qubits.
@@ -1118,13 +1384,18 @@ impl DagCircuit {
     ///
     /// # Errors
     ///
-    /// Returns [`DagWouldCycleError`] if any connection would create a cycle.
+    /// Returns [`DagWireError`] for a cycle, duplicate wire, or missing gate.
     /// In case of error, no connections are made.
     pub fn connect_all(
         &mut self,
         from: usize,
         to: usize,
-    ) -> Result<Vec<(QubitId, usize)>, DagWouldCycleError> {
+    ) -> Result<Vec<(QubitId, usize)>, DagWireError> {
+        for node in [from, to] {
+            if self.gate(node).is_none() || self.dag.node_attrs(node).is_none() {
+                return Err(DagWireError::MissingGate { node });
+            }
+        }
         let from_qubits: BTreeSet<QubitId> = self
             .gate(from)
             .map(|g| g.qubits.iter().copied().collect())
@@ -1137,6 +1408,9 @@ impl DagCircuit {
 
         let shared: Vec<QubitId> = from_qubits.intersection(&to_qubits).copied().collect();
 
+        for &qubit in &shared {
+            self.validate_wire(from, to, qubit)?;
+        }
         let mut results = Vec::with_capacity(shared.len());
         for qubit in shared {
             let edge_id = self.connect(from, to, qubit)?;
@@ -1146,6 +1420,11 @@ impl DagCircuit {
     }
 
     /// Removes a wire (edge) by its edge ID.
+    ///
+    /// This is an explicit manual edit: it leaves append heads and insertion
+    /// order unchanged. The latest gate remains the append target even when
+    /// its chain is disconnected. Removing that gate later follows its then
+    /// current incoming wires, possibly leaving no head on that qubit.
     ///
     /// # Returns
     ///
@@ -1170,13 +1449,11 @@ impl DagCircuit {
     /// Returns all wires as (from, to, qubit) tuples.
     #[must_use]
     pub fn wires(&self) -> Vec<(usize, usize, QubitId)> {
-        self.dag
-            .edges()
-            .into_iter()
-            .filter_map(|(from, to, _weight)| {
-                let edge_id = self.dag.find_edge(from, to)?;
-                let qubit = self.edge_qubits.get(&edge_id)?;
-                Some((from, to, *qubit))
+        self.edge_qubits
+            .iter()
+            .filter_map(|(&edge, &qubit)| {
+                let (from, to) = self.dag.edge_endpoints(edge)?;
+                Some((from, to, qubit))
             })
             .collect()
     }
@@ -1576,28 +1853,58 @@ impl DagCircuit {
     ///
     /// # Errors
     ///
-    /// Returns an error if [`try_add_gate`](Self::try_add_gate) rejects the gate.
+    /// Returns an error if [`try_add_gate`](Self::try_add_gate) rejects the gate
+    /// or an append head is not live. All predecessors are checked before any
+    /// mutation. Wires into a fresh node cannot form cycles or duplicates, so
+    /// a wiring rejection leaves the circuit (including measurement IDs) unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if internal insertion-history links are inconsistent.
     pub fn try_add_gate_auto_wire(&mut self, gate: Gate) -> Result<usize, DagGateError> {
+        let predecessors: Vec<_> = gate
+            .qubits
+            .iter()
+            .filter_map(|&qubit| self.qubit_heads.get(&qubit).map(|&head| (qubit, head)))
+            .collect();
+        for &(qubit, from) in &predecessors {
+            if self.gate(from).is_none() || self.dag.node_attrs(from).is_none() {
+                return Err(DagGateError::Wiring {
+                    from,
+                    to: None,
+                    qubit,
+                    source: DagWireError::MissingGate { node: from },
+                });
+            }
+        }
         let qubits = gate.qubits.clone();
         let node = self.try_add_gate(gate)?;
-
-        // Connect to previous gates on each qubit
-        for qubit in &qubits {
-            if let Some(&prev_node) = self.qubit_heads.get(qubit) {
-                // Connect previous gate to this gate on this qubit
-                let _ = self.connect(prev_node, node, *qubit);
-            }
-            // Update the head for this qubit
-            self.qubit_heads.insert(*qubit, node);
+        for (qubit, from) in predecessors {
+            self.connect(from, node, qubit)
+                .map_err(|source| DagGateError::Wiring {
+                    from,
+                    to: Some(node),
+                    qubit,
+                    source,
+                })?;
         }
 
-        // Track last added node for .meta() calls
+        for qubit in qubits {
+            self.set_head(qubit, Some(node));
+        }
+        self.insertion_links[node] = Some((self.last_node, None));
+        if let Some(previous) = self.last_node {
+            self.insertion_links[previous]
+                .as_mut()
+                .expect("last wired gate")
+                .1 = Some(node);
+        }
         self.last_node = Some(node);
-
         Ok(node)
     }
 
-    /// Add metadata to the last added gate.
+    /// Add metadata to the tail of auto-wired insertion history.
+    /// Pass replacements take the original gate's place in this history.
     ///
     /// This allows attaching attributes to gates in a chainable way:
     /// ```
@@ -1611,16 +1918,17 @@ impl DagCircuit {
     ///
     /// # Panics
     ///
-    /// Panics if called before any gate has been added.
+    /// Panics if no auto-wired gates or their replacements remain in the circuit.
     pub fn meta(&mut self, key: &str, value: impl Into<Attribute>) -> &mut Self {
         let node = self
             .last_node
-            .expect("meta() called before any gate was added");
+            .expect("meta() called with no gates in auto-wired insertion history");
         self.set_gate_attr(node, key, value.into());
         self
     }
 
-    /// Add multiple metadata attributes to the last added gate.
+    /// Add multiple metadata attributes to the tail of auto-wired insertion history.
+    /// Pass replacements take the original gate's place in this history.
     ///
     /// This allows attaching multiple attributes at once in a chainable way:
     /// ```
@@ -1637,16 +1945,18 @@ impl DagCircuit {
     ///
     /// # Panics
     ///
-    /// Panics if called before any gate has been added.
+    /// Panics if no auto-wired gates or their replacements remain in the circuit.
     pub fn metas(&mut self, attrs: BTreeMap<String, Attribute>) -> &mut Self {
         let node = self
             .last_node
-            .expect("metas() called before any gate was added");
+            .expect("metas() called with no gates in auto-wired insertion history");
         self.set_gate_attrs(node, attrs);
         self
     }
 
-    /// Returns the node index of the last added gate, if any.
+    /// Returns the tail of auto-wired insertion history, if any.
+    /// Pass replacements take the original gate's place in this history.
+    /// Wire edits do not affect this insertion-order metadata target.
     #[must_use]
     pub fn last_added_node(&self) -> Option<usize> {
         self.last_node
@@ -2651,8 +2961,9 @@ impl DagCircuit {
     ///
     /// # Warning
     ///
-    /// Modifying the DAG directly can break invariants if gates and
-    /// `edge_qubits` are not kept in sync. Use with caution.
+    /// Raw structural edits bypass gate storage, wire labels, append heads,
+    /// and insertion-order bookkeeping. This is the one mutation path outside
+    /// `DagCircuit`'s invariant maintenance; use circuit APIs for mutations.
     pub fn as_dag_mut(&mut self) -> &mut DAG {
         &mut self.dag
     }
@@ -2925,7 +3236,307 @@ impl CircuitMut for DagCircuit {
 mod tests {
     use super::*;
     use pecos_core::Angle64;
+    use pecos_random::{PecosRng, RngExt};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+
+    #[test]
+    fn review_unwired_insert_does_not_move_frontier() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]).h(&[0]).h(&[0]);
+        circuit.add_gate(Gate::t(&[0]));
+        assert_eq!(circuit.last_added_node(), Some(2));
+        circuit.mz(&[0]);
+        assert_eq!(circuit.predecessor_on_qubit(4, QubitId(0)), Some(2));
+        circuit.remove_gate(4);
+        assert_eq!(circuit.last_added_node(), Some(2));
+    }
+
+    #[test]
+    fn review_duplicate_connect_rejected_without_mutation() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[0]).h(&[0]);
+        circuit.remove_gate(1);
+        let before = format!("{circuit:?}");
+        let error = circuit.connect(0, 2, QubitId(0)).unwrap_err();
+        assert!(error.to_string().contains("already exists"));
+        assert_eq!(format!("{circuit:?}"), before);
+    }
+
+    #[test]
+    fn review_manual_connect_seeds_a_chain_and_duplicate_batch_is_atomic() {
+        let mut circuit = DagCircuit::new();
+        let first = circuit.add_gate(Gate::cx(&[(0, 1)]));
+        let second = circuit.add_gate(Gate::cx(&[(0, 1)]));
+        circuit.connect(first, second, QubitId(1)).unwrap();
+        let before = format!("{circuit:?}");
+        assert!(circuit.connect_all(first, second).is_err());
+        assert_eq!(format!("{circuit:?}"), before);
+        circuit.h(&[1]);
+        assert_eq!(circuit.predecessor_on_qubit(2, QubitId(1)), Some(second));
+        assert!(
+            circuit
+                .connect(42, second, QubitId(0))
+                .unwrap_err()
+                .to_string()
+                .contains("not a live gate")
+        );
+    }
+
+    #[test]
+    fn review_auto_wire_error_is_atomic() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]);
+        circuit.qubit_heads.insert(QubitId(1), 1);
+        let before = format!("{circuit:?}");
+        assert!(circuit.try_add_gate_auto_wire(Gate::mz(&[0, 1])).is_err());
+        assert_eq!(format!("{circuit:?}"), before);
+    }
+
+    #[test]
+    fn append_state_vacant_head_does_not_panic() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[1]);
+        circuit.remove_gate(0);
+        circuit.remove_gate(1);
+        circuit.h(&[0]);
+        assert_eq!(circuit.wires(), []);
+        assert_eq!(circuit.qubit_heads, BTreeMap::from([(QubitId(0), 1)]));
+    }
+
+    #[test]
+    fn append_state_recycled_head_does_not_make_false_wire() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]);
+        circuit.mz(&[1]);
+        circuit.remove_gate(0);
+        circuit.h(&[5]);
+        let appended = circuit.mz(&[0])[0].node;
+        assert_eq!(appended, 2);
+        assert_eq!(circuit.wires(), []);
+    }
+
+    #[test]
+    fn append_state_recycled_own_slot_uses_surviving_predecessor() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[0]);
+        circuit.remove_gate(1);
+        circuit.h(&[0]);
+        assert_eq!(circuit.wires(), vec![(0, 1, QubitId(0))]);
+        assert_eq!(circuit.topological_order(), vec![0, 1]);
+    }
+
+    #[test]
+    fn append_state_removal_bridges_then_restores_head() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[0]).h(&[0]);
+        circuit.remove_gate(1);
+        assert_eq!(circuit.wires(), vec![(0, 2, QubitId(0))]);
+        circuit.remove_gate(2);
+        assert_eq!(circuit.qubit_heads.get(&QubitId(0)), Some(&0));
+        assert_eq!(circuit.last_added_node(), Some(0));
+        circuit.h(&[0]);
+        assert_eq!(circuit.wires(), vec![(0, 2, QubitId(0))]);
+    }
+
+    #[test]
+    fn append_state_tick_conversions_seed_heads_and_last_node() {
+        let mut ticks = crate::TickCircuit::new();
+        ticks.tick().x(&[0]);
+        ticks.tick().mz(&[0]);
+        for mut circuit in [
+            DagCircuit::try_from(&ticks).unwrap(),
+            DagCircuit::try_from(ticks).unwrap(),
+        ] {
+            assert_eq!(circuit.last_added_node(), Some(1));
+            circuit.h(&[0]);
+            assert!(circuit.wires().contains(&(1, 2, QubitId(0))));
+            assert_eq!(circuit.topological_order(), vec![0, 1, 2]);
+        }
+    }
+
+    #[test]
+    fn append_state_last_node_uses_insertion_order_after_slot_reuse() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[1]).h(&[2]);
+        circuit.remove_gate(0);
+        circuit.h(&[3]); // Reuses slot 0, but is newer than slots 1 and 2.
+        circuit.h(&[4]);
+        circuit.remove_gate(3);
+        assert_eq!(circuit.last_added_node(), Some(0));
+        circuit.meta("survivor", Attribute::Bool(true));
+        assert_eq!(
+            circuit.gate_attrs(0).unwrap().get("survivor"),
+            Some(&Attribute::Bool(true))
+        );
+        circuit.remove_gate(0);
+        assert_eq!(circuit.last_added_node(), Some(2));
+        circuit.remove_gate(2);
+        circuit.remove_gate(1);
+        assert_eq!(circuit.last_added_node(), None);
+    }
+
+    #[test]
+    fn append_state_manual_wire_removal_keeps_head_until_gate_removal() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[0]);
+        let edge = circuit.incoming_wires(1)[0].0;
+        circuit.remove_wire(edge);
+        assert_eq!(circuit.qubit_heads.get(&QubitId(0)), Some(&1));
+        circuit.remove_gate(1);
+        assert!(!circuit.qubit_heads.contains_key(&QubitId(0)));
+        assert_eq!(circuit.last_added_node(), Some(0));
+    }
+
+    #[test]
+    fn append_state_wiring_errors_are_reported() {
+        let mut circuit = DagCircuit::new();
+        // Simulate corrupt bookkeeping pointing at the next allocated slot.
+        // Ordinary mutations must never produce this state.
+        circuit.qubit_heads.insert(QubitId(0), 0);
+        let error = circuit.try_add_gate_auto_wire(Gate::h(&[0])).unwrap_err();
+        assert!(error.to_string().contains("wire"));
+        assert!(error.to_string().contains("not a live gate"));
+    }
+
+    #[test]
+    fn append_state_bridging_deduplicates_by_endpoints_and_qubit() {
+        let mut circuit = DagCircuit::new();
+        for _ in 0..3 {
+            circuit.cx(&[(0, 1)]);
+        }
+        circuit.connect(0, 2, QubitId(0)).unwrap();
+        circuit.remove_gate(1);
+        let mut wires = circuit.wires();
+        wires.sort_unstable();
+        assert_eq!(wires, vec![(0, 2, QubitId(0)), (0, 2, QubitId(1))]);
+        assert_eq!(circuit.wire_count(), 2);
+    }
+
+    #[test]
+    fn append_state_manual_insertion_follows_successor_chain() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).h(&[0]);
+        let inserted = circuit.add_gate(Gate::x(&[0]));
+        circuit.connect(inserted, 0, QubitId(0)).unwrap();
+        circuit.h(&[0]);
+        assert_eq!(circuit.predecessor_on_qubit(3, QubitId(0)), Some(1));
+        assert_eq!(circuit.last_added_node(), Some(3));
+        circuit.remove_gate(3);
+        assert_eq!(circuit.last_added_node(), Some(1));
+
+        // The manual wire API permits labels outside a gate's support.
+        // Even those heads must be repaired before the slot can be reused.
+        let mut manual = DagCircuit::new();
+        manual.h(&[0]).h(&[1]);
+        manual.connect(0, 1, QubitId(0)).unwrap();
+        manual.remove_gate(1);
+        manual.h(&[0]);
+        assert_eq!(manual.wires(), vec![(0, 1, QubitId(0))]);
+
+        // On a manually branched wire, removing one branch's head restores
+        // its predecessor. Bridging elsewhere must leave that head alone.
+        let mut branched = DagCircuit::new();
+        for _ in 0..3 {
+            branched.add_gate(Gate::h(&[0]));
+        }
+        branched.h(&[0]);
+        for (from, to) in [(0, 1), (1, 2), (0, 3)] {
+            branched.connect(from, to, QubitId(0)).unwrap();
+        }
+        branched.remove_gate(3);
+        assert_eq!(branched.qubit_heads.get(&QubitId(0)), Some(&0));
+        branched.remove_gate(1);
+        assert_eq!(branched.qubit_heads.get(&QubitId(0)), Some(&0));
+        assert_eq!(branched.wires(), [(0, 2, QubitId(0))]);
+    }
+
+    fn assert_append_state(circuit: &DagCircuit, surviving: &[(usize, Vec<QubitId>)]) {
+        let mut heads = BTreeMap::new();
+        let mut expected_wires = BTreeSet::new();
+        for (node, qubits) in surviving {
+            assert!(circuit.gate(*node).is_some());
+            for &qubit in qubits {
+                if let Some(previous) = heads.insert(qubit, *node) {
+                    expected_wires.insert((previous, *node, qubit));
+                }
+            }
+        }
+        assert_eq!(circuit.qubit_heads, heads);
+        for (node, qubits) in circuit.head_qubits.iter().enumerate() {
+            for q in qubits {
+                assert_eq!(heads.get(q), Some(&node));
+            }
+        }
+        for (position, (node, _)) in surviving.iter().enumerate() {
+            let previous = position.checked_sub(1).map(|i| surviving[i].0);
+            let next = surviving.get(position + 1).map(|(node, _)| *node);
+            assert_eq!(circuit.insertion_links[*node], Some((previous, next)));
+        }
+        assert_eq!(circuit.last_node, surviving.last().map(|(node, _)| *node));
+        assert_eq!(circuit.gate_count(), surviving.len());
+        let wires = circuit.wires();
+        assert_eq!(circuit.wire_count(), wires.len());
+        assert_eq!(wires.len(), expected_wires.len());
+        assert_eq!(wires.into_iter().collect::<BTreeSet<_>>(), expected_wires);
+        // Inspect actual edge IDs as well: parallel qubit wires must each
+        // have the right label and connect live nodes in insertion order.
+        let positions: BTreeMap<_, _> = surviving
+            .iter()
+            .enumerate()
+            .map(|(position, (node, _))| (*node, position))
+            .collect();
+        for &node in &circuit.nodes() {
+            for (edge, qubit) in circuit.outgoing_wires(node) {
+                let (from, to) = circuit.dag.edge_endpoints(edge).unwrap();
+                assert!(positions[&from] < positions[&to]);
+                assert!(expected_wires.contains(&(from, to, qubit)));
+            }
+        }
+    }
+
+    #[test]
+    fn append_state_randomized_surviving_insertion_order() {
+        for seed in [0, 1, 42, 0xdeca_fbad] {
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut circuit = DagCircuit::new();
+            let mut surviving = Vec::new();
+            for _ in 0..500 {
+                match rng.random_range(0..6) {
+                    0..=2 => {
+                        let q = rng.random_range(0..6);
+                        let gate = if rng.random_range(0..3) == 0 {
+                            Gate::cx(&[(q, (q + 1) % 6)])
+                        } else {
+                            Gate::h(&[q])
+                        };
+                        let qubits = gate.qubits.to_vec();
+                        let node = circuit.try_add_gate_auto_wire(gate).unwrap();
+                        surviving.push((node, qubits));
+                    }
+                    3 if !surviving.is_empty() => {
+                        let index = rng.random_range(0..surviving.len());
+                        let (node, _) = surviving.remove(index);
+                        circuit.remove_gate(node).unwrap();
+                    }
+                    4 => circuit = circuit.clone(),
+                    5 if !surviving.is_empty() => {
+                        let (node, qubits) = &surviving[rng.random_range(0..surviving.len())];
+                        circuit
+                            .update_gate(*node, |gate| {
+                                if qubits.len() == 2 {
+                                    gate.qubits.reverse();
+                                } else {
+                                    gate.gate_type = GateType::X;
+                                }
+                            })
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+                assert_append_state(&circuit, &surviving);
+            }
+        }
+    }
 
     fn dag_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
         let mut circuit = DagCircuit::new();

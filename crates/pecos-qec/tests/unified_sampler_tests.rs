@@ -45,6 +45,7 @@ fn build_influence_map(
     circuit: &DagCircuit,
 ) -> pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap {
     InfluenceBuilder::new(circuit)
+        .unwrap()
         .with_z(&[0, 1, 2])
         .build()
         .expect("circuit is replayable")
@@ -458,7 +459,7 @@ fn circuit_annotation_dual_output() {
     // from_influence_map gives raw-measurement-level output suitable for
     // user-defined detector XOR.
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Build sampler from annotations
     let sampler = DemSamplerBuilder::new(&influence_map)

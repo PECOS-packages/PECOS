@@ -13,15 +13,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 import stim
-from pecos.qec.surface import get_measurement_order_from_tick_circuit
 
 if TYPE_CHECKING:
-    from pecos.quantum import DagCircuit, TickCircuit
-
-
-def extract_measurement_order(tc: "TickCircuit") -> list[int]:
-    """Extract measurement order from TickCircuit."""
-    return get_measurement_order_from_tick_circuit(tc)
+    from pecos.quantum import DagCircuit
 
 
 def parse_dem_string(dem_str: str) -> dict[tuple, float]:
@@ -214,13 +208,11 @@ class TestDemSamplerVsStim:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         pecos_sampler = builder.build()
 
         # Build Stim DEM sampler
@@ -291,13 +283,11 @@ class TestDemSamplerVsStim:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         pecos_sampler = builder.build()
 
         # Build Stim sampler
@@ -356,13 +346,11 @@ class TestDemSamplerMultiRound:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         pecos_sampler = builder.build()
 
         # Build Stim sampler
@@ -411,13 +399,11 @@ class TestDemSamplerHigherDistance:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         sampler = builder.build()
 
         stats = sampler.sample_statistics(100_000, seed=789)
@@ -505,7 +491,6 @@ class TestXBasisMemory:
         builder.with_observables_json(
             tc.get_meta("observables") or "[]",
         )
-        builder.with_measurement_order(extract_measurement_order(tc))
         pecos_sampler = builder.build()
 
         # Build Stim sampler

@@ -65,7 +65,8 @@ impl<'a> EegDemBuilder<'a> {
     /// (including malformed metadata, unresolved references, and disagreement
     /// between metadata and annotations). Also rejects a declared measurement
     /// count or definition emission count that disagrees with the circuit's
-    /// measurements or expansion, respectively.
+    /// measurements or expansion, respectively, and S flip probabilities
+    /// outside `[0, 0.5)` that have no finite real forward generator.
     pub fn build(&self) -> Result<Vec<DemEntry>, EegBuildError> {
         let gates: Vec<pecos_core::Gate> = self
             .tc
@@ -74,7 +75,7 @@ impl<'a> EegDemBuilder<'a> {
             .collect();
         let expanded = expand::expand_circuit(&gates)?;
         let result =
-            circuit::analyze_expanded(&expanded.gates, &self.noise, &expanded.expansion_gates);
+            circuit::analyze_expanded(&expanded.gates, &self.noise, &expanded.expansion_gates)?;
         let (detectors, observables) = build_detectors(self.tc, &expanded)?;
 
         // Compute stabilizer group from the EXPANDED circuit (pre-readout).
@@ -111,7 +112,7 @@ impl<'a> EegDemBuilder<'a> {
             .collect();
         let expanded = expand::expand_circuit(&gates)?;
         let result =
-            circuit::analyze_expanded(&expanded.gates, &self.noise, &expanded.expansion_gates);
+            circuit::analyze_expanded(&expanded.gates, &self.noise, &expanded.expansion_gates)?;
         let (detectors, observables) = build_detectors(self.tc, &expanded)?;
 
         let expanded_pre = exclude_final_mz(&expanded.gates);
@@ -519,7 +520,8 @@ mod tests {
             .map(|batch| batch.as_gate().clone())
             .collect();
         let expanded = expand::expand_circuit(&gates).expect("MZ-only circuit");
-        let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+        let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+            .expect("valid forward noise");
 
         let expanded_pre = exclude_final_mz(&expanded.gates);
         let stab_group = StabilizerGroup::from_circuit(&expanded_pre, expanded.num_qubits);

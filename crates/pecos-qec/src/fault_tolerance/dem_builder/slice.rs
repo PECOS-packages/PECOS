@@ -2155,7 +2155,9 @@ mod tests {
             );
         }
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let detector_entries = (0..rounds)
             .map(|round| {
                 if round == 0 {
@@ -2886,7 +2888,9 @@ mod tests {
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         assert!(
             !influence_map.locations.is_empty(),
             "influence map must contain fault locations"
@@ -3002,7 +3006,9 @@ mod tests {
                 Attribute::Int(round),
             );
         }
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let reference = DemBuilder::new(&influence_map)
             .with_noise(0.0, 0.05, 0.0, 0.0)
             .with_detectors_json(

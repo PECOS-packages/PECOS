@@ -52,7 +52,7 @@ fn phase_u_dem_inherits_rz_rate_overrides() {
     dag.pz(&[0]);
     dag.u(Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN, &[0]);
     dag.mz(&[0]);
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     for rate in [0.0, 0.3] {
         let noise = NoiseConfig::new(0.6, 0.0, 0.0, 0.0).set_p1_gate_rate(GateType::RZ, rate);
         let dem = DemBuilder::new(&influence)

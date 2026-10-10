@@ -17,7 +17,10 @@ fn auto_detectors_and_measurements_follow_emission_order() {
     let dag = independent_measurements();
     // DFS visits the q1 chain first; keyed emission is [0, 1, 2, 3].
     assert_eq!(dag.topological_order(), [1, 3, 0, 2]);
-    let map = InfluenceBuilder::new(&dag).build().unwrap();
+    let map = InfluenceBuilder::new(&dag)
+        .expect("supported circuit")
+        .build()
+        .unwrap();
     assert_eq!(map.measurements, [(2, 0, 0), (3, 1, 0)]);
     assert_eq!(
         map.meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
@@ -41,8 +44,13 @@ fn auto_detectors_and_measurements_follow_emission_order() {
 fn location_order_stays_in_lockstep() {
     let dag = independent_measurements();
     assert_eq!(dag.topological_order(), [1, 3, 0, 2]);
-    let replay = InfluenceBuilder::new(&dag).build().unwrap();
-    let analyzer = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let replay = InfluenceBuilder::new(&dag)
+        .expect("supported circuit")
+        .build()
+        .unwrap();
+    let analyzer = DagFaultAnalyzer::new(&dag)
+        .build_influence_map()
+        .expect("supported circuit");
     assert_eq!(replay.locations, analyzer.locations);
 }
 
@@ -56,7 +64,10 @@ fn correlated_measurements_preserve_detector_row_space() {
         for q in order {
             dag.mz(&[q]);
         }
-        let map = InfluenceBuilder::new(&dag).build().unwrap();
+        let map = InfluenceBuilder::new(&dag)
+            .expect("supported circuit")
+            .build()
+            .unwrap();
         // Physical columns are (q0, first measurement), (q1, first), (q2, first),
         // regardless of insertion order. All three GHZ readouts share one bit.
         let rows = map
@@ -94,6 +105,7 @@ fn tracked_paulis_pair_with_their_own_meta_nodes() {
     assert_eq!(dfs, [1, 4, 5, 0, 2, 3]);
 
     let map = InfluenceBuilder::new(&dag)
+        .expect("supported circuit")
         .with_circuit_annotations()
         .unwrap()
         .build()

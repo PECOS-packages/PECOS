@@ -85,7 +85,7 @@ Works at Level 3 (circuits). Propagates Pauli errors through gates to determine 
 ```rust
 use pecos_qec::PauliPropChecker;
 
-let checker = PauliPropChecker::new(&circuit);
+let checker = PauliPropChecker::new(&circuit).unwrap();
 let analysis = checker.analyze_decoder_requirements(z_ancillas, x_ancillas, logicals);
 ```
 
@@ -108,7 +108,7 @@ Runs full stabilizer simulation with fault injection. Most accurate but slowest.
 use pecos_qec::FaultChecker;
 use pecos_simulators::SparseStab;
 
-let checker = FaultChecker::new(&circuit);
+let checker = FaultChecker::new(&circuit).unwrap();
 let result = checker.check(
     |sim: &SparseStab| check_for_failure(sim),  // Failure detection
     || SparseStab::new(n_qubits),                // Fresh simulator
@@ -117,7 +117,7 @@ let result = checker.check(
 
 **Strengths**:
 - Exact simulation
-- Can handle non-Clifford elements (with appropriate simulator)
+- Rejects gates that cannot be Pauli-propagated
 - Validates actual circuit behavior
 - Can include preparation errors via `with_initial_locations(true)`
 
@@ -146,7 +146,7 @@ let config = GadgetConfig::builder()
     .x_ancillas(vec![10, 11, 12])
     .build();
 
-let checker = GadgetChecker::new(&circuit, config);
+let checker = GadgetChecker::new(&circuit, config).unwrap();
 let analysis = checker.analyze_fault_tolerance(1); // t=1
 ```
 

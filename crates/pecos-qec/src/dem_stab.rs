@@ -210,8 +210,17 @@ impl DemStabSimBuilder {
         self
     }
 
-    /// Set the measurement order mapping from a `TickCircuit` (advanced).
+    /// Map record positions to influence-map positions by qubit and occurrence.
+    ///
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     #[must_use]
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
+    )]
     pub fn measurement_order(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
         self
@@ -226,7 +235,7 @@ impl DemStabSimBuilder {
         let dag = self.circuit.ok_or(DemStabError::MissingCircuit)?;
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map_diagnostic();
 
         let detector_records: Vec<Vec<i32>> =
             self.detectors.iter().map(|d| d.records.to_vec()).collect();
@@ -250,7 +259,7 @@ impl DemStabSimBuilder {
             .with_observable_records(observable_records);
 
         if let Some(order) = self.measurement_order {
-            builder = builder.with_measurement_order(order);
+            builder = builder.set_measurement_order_internal(order);
         }
 
         let detectors = self.detectors.clone();

@@ -1045,10 +1045,9 @@ impl PyDagFaultAnalyzer {
     ///     ValueError: The circuit contains a gate Pauli propagation cannot represent.
     fn build_influence_map(&self) -> PyResult<PyDagFaultInfluenceMap> {
         let analyzer = RustDagFaultAnalyzer::new(&self.dag);
-        let inner = analyzer.build_influence_map();
-        if let Some(error) = inner.unsupported_gate() {
-            return Err(pyo3::exceptions::PyValueError::new_err(error.to_string()));
-        }
+        let inner = analyzer
+            .build_influence_map()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         Ok(PyDagFaultInfluenceMap { inner })
     }
 
@@ -1216,11 +1215,13 @@ impl PyInfluenceBuilder {
     ///     `DagFaultInfluenceMap` with proper detector definitions and tracked Paulis.
     ///
     /// Raises:
-    ///     ValueError: A circuit annotation cannot be resolved -- an observable
+    ///     ValueError: A circuit gate cannot be Pauli-propagated, symbolic replay
+    ///         cannot represent a gate, or a circuit annotation cannot be resolved -- an observable
     ///         referencing a missing node or a non-measurement gate, or a
     ///         tracked Pauli with no meta gate.
     fn build(&self) -> PyResult<PyDagFaultInfluenceMap> {
-        let mut builder = RustInfluenceBuilder::new(&self.dag);
+        let mut builder = RustInfluenceBuilder::new(&self.dag)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         if !self.tracked_x_qubits.is_empty() {
             builder = builder.with_x(&self.tracked_x_qubits);
@@ -3080,25 +3081,24 @@ impl PyDemBuilder {
         slf
     }
 
-    /// Set the measurement order from the original circuit.
+    /// Map record positions to influence-map positions by qubit and occurrence.
     ///
-    /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
-    /// between record offsets (which use `TickCircuit` order) and influence map
-    /// indices (which may use a different order based on DAG topology).
-    ///
-    /// Args:
-    ///     order: List of qubit indices in measurement execution order.
-    ///            order[i] is the qubit measured at `TickCircuit` measurement index i.
-    ///
-    /// Returns:
-    ///     Self for method chaining.
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     fn with_measurement_order(
         mut slf: PyRefMut<'_, Self>,
         order: Vec<usize>,
-    ) -> PyRefMut<'_, Self> {
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        PyErr::warn(
+            slf.py(),
+            &slf.py().get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"with_measurement_order is deprecated: Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata.",
+            1,
+        )?;
         slf.measurement_order = Some(order);
-        slf
+        Ok(slf)
     }
 
     /// Attach the original circuit for exact replacement-branch replay.
@@ -3137,7 +3137,11 @@ impl PyDemBuilder {
         }
 
         if let Some(ref order) = self.measurement_order {
-            builder = builder.with_measurement_order(order.clone());
+            // Forwards the deprecated Python API.
+            #[allow(deprecated)]
+            {
+                builder = builder.with_measurement_order(order.clone());
+            }
         }
 
         if let Some(ref json) = self.detectors_json {
@@ -4755,13 +4759,24 @@ impl PyDemSamplerBuilder {
         slf
     }
 
-    /// Set the measurement order mapping from `TickCircuit`.
+    /// Map record positions to influence-map positions by qubit and occurrence.
+    ///
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     fn with_measurement_order(
         mut slf: PyRefMut<'_, Self>,
         order: Vec<usize>,
-    ) -> PyRefMut<'_, Self> {
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        PyErr::warn(
+            slf.py(),
+            &slf.py().get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"with_measurement_order is deprecated: Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata.",
+            1,
+        )?;
         slf.measurement_order = Some(order);
-        slf
+        Ok(slf)
     }
 
     /// Build the `DemSampler`.
@@ -4782,7 +4797,11 @@ impl PyDemSamplerBuilder {
         }
 
         if let Some(ref order) = self.measurement_order {
-            builder = builder.with_measurement_order(order.clone());
+            // Forwards the deprecated Python API.
+            #[allow(deprecated)]
+            {
+                builder = builder.with_measurement_order(order.clone());
+            }
         }
 
         let inner = builder
@@ -7141,7 +7160,7 @@ fn logical_slices(logicals: &[(Vec<usize>, Vec<usize>)]) -> Vec<(&[usize], &[usi
 ///
 /// The analyzer owns a clone of the supplied circuit. Rust's ``PauliPropChecker`` and
 /// ``FaultChecker`` intentionally borrow a circuit, so each method constructs a fresh checker;
-/// checker construction only extracts circuit locations and is cheap at these analysis scales.
+/// checker construction validates the circuit and extracts locations before analysis.
 #[pyclass(name = "CircuitFaultAnalyzer", module = "pecos_rslib.qec")]
 pub struct PyCircuitFaultAnalyzer {
     circuit: pecos_quantum::TickCircuit,
@@ -7160,6 +7179,9 @@ impl PyCircuitFaultAnalyzer {
     ///
     /// With no Pauli-selection keyword, X, Y, and Z faults are all included. Setting any of
     /// ``x_only``, ``y_only``, or ``z_only`` restricts enumeration to the selected union.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (data_qubits, z_ancillas, x_ancillas, logicals, min_data_weight, *, x_only=false, y_only=false, z_only=false))]
     fn hook_errors(
         &self,
@@ -7171,13 +7193,14 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> PyHookErrorReport {
+    ) -> PyResult<PyHookErrorReport> {
         // Checkers borrow TickCircuit by design. The Python owner retains a clone and checker
-        // construction (location extraction) is cheap enough to repeat for each method call.
+        // construction validates the owned circuit before each method call.
         let checker = PauliPropChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
         let logicals = logical_slices(&logicals);
-        checker
+        Ok(checker
             .diagnose_hook_errors(
                 &data_qubits,
                 &z_ancillas,
@@ -7185,10 +7208,13 @@ impl PyCircuitFaultAnalyzer {
                 &logicals,
                 min_data_weight,
             )
-            .into()
+            .into())
     }
 
     /// Verify the propagated-fault part of the Chao-Reichardt t-flag condition.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (data_qubits, flag_qubits, measured_stabilizer, t, *, x_only=false, y_only=false, z_only=false))]
     fn flag_fault_condition(
         &self,
@@ -7199,20 +7225,24 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> PyFlagFaultToleranceReport {
+    ) -> PyResult<PyFlagFaultToleranceReport> {
         let checker = PauliPropChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
-        checker
+        Ok(checker
             .verify_flag_fault_tolerance(
                 &data_qubits,
                 &flag_qubits,
                 (&measured_stabilizer.0, &measured_stabilizer.1),
                 t,
             )
-            .into()
+            .into())
     }
 
     /// Find the minimum undetectable logical fault weight through ``max_weight``.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
     fn fault_distance(
         &self,
@@ -7223,16 +7253,20 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> Option<PyCircuitDistanceResult> {
+    ) -> PyResult<Option<PyCircuitDistanceResult>> {
         let checker = FaultChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
         let logicals = logical_slices(&logicals);
-        checker
+        Ok(checker
             .circuit_fault_distance(&z_ancillas, &x_ancillas, &logicals, max_weight)
-            .map(PyCircuitDistanceResult::from)
+            .map(PyCircuitDistanceResult::from))
     }
 
     /// Find one fault distance result for each supplied logical operator.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
     fn per_logical_fault_distances(
         &self,
@@ -7243,15 +7277,16 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> Vec<Option<PyCircuitDistanceResult>> {
+    ) -> PyResult<Vec<Option<PyCircuitDistanceResult>>> {
         let checker = FaultChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
         let logicals = logical_slices(&logicals);
-        checker
+        Ok(checker
             .per_logical_circuit_fault_distances(&z_ancillas, &x_ancillas, &logicals, max_weight)
             .into_iter()
             .map(|result| result.map(PyCircuitDistanceResult::from))
-            .collect()
+            .collect())
     }
 
     fn __repr__(&self) -> String {

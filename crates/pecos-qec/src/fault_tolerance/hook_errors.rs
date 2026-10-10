@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn amplifying_ancilla_fault_reports_responsible_cx_and_data_support() {
         let circuit = control_ancilla_ladder();
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         let report = checker.diagnose_hook_errors(&[2, 0, 1], &[3], &[], &[], 2);
 
         let hook = find_hook(&report, 1, &[1, 0])
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn ancilla_fault_after_final_cx_is_not_reported() {
         let circuit = control_ancilla_ladder();
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         let report = checker.diagnose_hook_errors(&[0, 1, 2], &[3], &[], &[], 2);
 
         assert!(find_hook(&report, 3, &[1, 0]).is_none());
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn weight_two_fault_with_weight_two_data_support_is_not_a_hook() {
         let circuit = control_ancilla_ladder();
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         let analyzed_xx = checker
             .analyze_all_faults(&[3], &[], &[])
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn detected_and_logical_fields_use_propagated_error() {
         let detected_circuit = control_ancilla_ladder();
-        let detected_checker = PauliPropChecker::new(&detected_circuit);
+        let detected_checker = PauliPropChecker::new(&detected_circuit).unwrap();
         let detected_logicals: &[(&[usize], &[usize])] = &[(&[], &[1, 2])];
         let detected_report =
             detected_checker.diagnose_hook_errors(&[0, 1, 2], &[3], &[], detected_logicals, 2);
@@ -224,7 +224,7 @@ mod tests {
         undetected_circuit.tick().cx(&[(1, 3)]);
         undetected_circuit.tick().cx(&[(2, 3)]);
         undetected_circuit.tick().mz(&[3]);
-        let undetected_checker = PauliPropChecker::new(&undetected_circuit);
+        let undetected_checker = PauliPropChecker::new(&undetected_circuit).unwrap();
         let undetected_logicals: &[(&[usize], &[usize])] = &[(&[1], &[])];
         let undetected_report =
             undetected_checker.diagnose_hook_errors(&[0, 1, 2], &[3], &[], undetected_logicals, 2);
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn diagnosis_order_is_deterministic() {
         let circuit = control_ancilla_ladder();
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         let first = checker.diagnose_hook_errors(&[0, 1, 2], &[3], &[], &[], 2);
         let second = checker.diagnose_hook_errors(&[0, 1, 2], &[3], &[], &[], 2);
@@ -264,6 +264,7 @@ mod tests {
     fn higher_minimum_data_weight_reports_strictly_fewer_hooks() {
         let circuit = control_ancilla_ladder();
         let checker = PauliPropChecker::new(&circuit)
+            .unwrap()
             .with_config(FaultCheckConfig::new().with_weight(1).all_paulis());
 
         let weight_two = checker.diagnose_hook_errors(&[0, 1, 2], &[3], &[], &[], 2);

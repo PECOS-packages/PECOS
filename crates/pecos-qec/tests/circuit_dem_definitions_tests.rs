@@ -28,7 +28,7 @@ fn analyzer_positions_equal_emission_for_scrambled_batched_measurements() {
     })
     .unwrap();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let map = analyzer.build_influence_map();
+    let map = analyzer.build_influence_map().expect("supported circuit");
     // The first node emits q2 then q0 in its qubit-list order, then MX emits
     // q1. The supplied ids 17,9 reserve the next minted id, 18.
     assert_eq!(
@@ -53,11 +53,19 @@ fn analyzer_positions_equal_emission_for_scrambled_batched_measurements() {
     // All three propagation entry points must attach effects to the same
     // ordinal, including the forest's separate per-wire time ordering.
     let mut serial = BucketRecorder::new(map.locations.len());
-    analyzer.propagate_all(&mut serial);
+    analyzer
+        .propagate_all(&mut serial)
+        .expect("supported circuit");
     let serial = serial.into_soa();
     for other in [
-        analyzer.propagate_all_parallel().into_soa(),
-        analyzer.propagate_all_forest().into_soa(),
+        analyzer
+            .propagate_all_parallel()
+            .expect("supported circuit")
+            .into_soa(),
+        analyzer
+            .propagate_all_forest()
+            .expect("supported circuit")
+            .into_soa(),
     ] {
         assert_eq!(serial.detectors_x.data, other.detectors_x.data);
         assert_eq!(serial.detectors_x.offsets, other.detectors_x.offsets);
@@ -76,7 +84,9 @@ fn analyzer_emission_handles_reused_nodes() {
     assert_eq!(later.node, removed.node);
     // Reusing the smaller free index puts q2 before independent q1 in the
     // keyed emission walk, although q2's minted id is larger.
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag)
+        .build_influence_map()
+        .expect("supported circuit");
     assert_eq!(map.measurements, [(later.node, 2, 0), (earlier.node, 1, 0)]);
     assert_eq!(map.meas_ids, [later.meas_id, earlier.meas_id]);
     assert_eq!(

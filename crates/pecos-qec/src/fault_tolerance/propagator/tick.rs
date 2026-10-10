@@ -21,7 +21,8 @@
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, MeasurementId, TrackedPauliId};
 use super::{
     Direction, PauliPropagationOutcome, SpacetimeLocation, UnsupportedGateError,
-    UnsupportedGateLocation, apply_gate, extract_spacetime_locations, is_supported_prep_gate,
+    UnsupportedGateLocation, apply_gate, apply_gate_unchecked, extract_spacetime_locations,
+    is_supported_prep_gate,
 };
 use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
@@ -63,6 +64,9 @@ pub(crate) fn first_unsupported_tick_gate(circuit: &TickCircuit) -> Option<Unsup
 ///
 /// For better performance on large circuits, consider using [`DagFaultAnalyzer`](super::DagFaultAnalyzer)
 /// which provides 5-50x speedup through true sparse DAG traversal.
+///
+/// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct TickFaultAnalyzer<'a> {
     circuit: &'a TickCircuit,
     /// Fault locations extracted from the circuit.
@@ -75,8 +79,11 @@ pub struct TickFaultAnalyzer<'a> {
 
 impl<'a> TickFaultAnalyzer<'a> {
     /// Creates a new backward propagator for the given circuit.
-    #[must_use]
-    pub fn new(circuit: &'a TickCircuit) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn new(circuit: &'a TickCircuit) -> Result<Self, UnsupportedGateError> {
+        super::validate_tick_circuit(circuit)?;
         let locations = extract_spacetime_locations(circuit, false);
 
         // Build tick index for O(1) lookup
@@ -98,12 +105,12 @@ impl<'a> TickFaultAnalyzer<'a> {
             }
         }
 
-        Self {
+        Ok(Self {
             circuit,
             locations,
             tick_locations,
             max_qubit,
-        }
+        })
     }
 
     /// Builds the complete fault influence map.
@@ -509,7 +516,9 @@ impl<'a> TickFaultAnalyzer<'a> {
             return;
         }
 
-        let _outcome = apply_gate(prop, gate, Direction::Backward);
+        // TickFaultAnalyzer::new preflights the whole circuit.
+        let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+        debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
     }
 
     /// Builds reverse maps (detector -> faults, tracked Pauli -> faults).

@@ -132,6 +132,7 @@ fn repetition_code_fault_enumeration() {
 
     // Build influence map (InfluenceBuilder handles annotations)
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -298,6 +299,7 @@ fn repetition_code_fault_enumeration() {
 fn repetition_code_labels() {
     let dag = build_repetition_code(1); // 1 round for simplicity
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -340,6 +342,7 @@ fn repetition_code_labels() {
 fn repetition_code_lookup_table() {
     let dag = build_repetition_code(3);
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -385,6 +388,7 @@ fn repetition_code_ml_decoder() {
 
     // Build influence map
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -464,6 +468,7 @@ fn decoder_empty_syndrome() {
     let dag = build_repetition_code(1);
     let noise = NoiseConfig::uniform(0.01);
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -490,6 +495,7 @@ fn decoder_table_size_and_truncation() {
     let dag = build_repetition_code(1);
     let noise = NoiseConfig::uniform(0.001);
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -668,6 +674,7 @@ fn code_422_fault_enumeration() {
 
     // Build influence map
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -745,6 +752,7 @@ fn code_422_ml_decoder() {
     let noise = NoiseConfig::uniform(0.001);
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()

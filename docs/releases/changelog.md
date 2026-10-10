@@ -6,6 +6,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+### Deprecations
+
+- Deprecated `DemBuilder::with_measurement_order`,
+  `DemSamplerBuilder::with_measurement_order`, `SamplingEngineBuilder::with_measurement_order`,
+  `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`, and
+  `MemStabSimBuilder::measurement_order`, plus the Python `DemBuilder.with_measurement_order`
+  and `DemSamplerBuilder.with_measurement_order` methods. Circuit-built influence maps
+  already use emission order; express a different record frame with `meas_ids` in metadata.
+  Existing mapping behavior and validation remain unchanged.
+
 ### Decoder changes
 
 - `windowed` specs with a buffer previously returned the result of a monolithic

@@ -596,31 +596,15 @@ def _resolved_schema_from_validated_json(
     detector_entries = json.loads(detectors_json) if detectors_json.strip() else []
     observable_entries = json.loads(observables_json) if observables_json.strip() else []
 
-    def normalized_id(raw_id: Any, *, prefix: str) -> int:
-        if isinstance(raw_id, str) and raw_id.startswith(prefix):
-            return int(raw_id[len(prefix) :])
-        return int(raw_id)
-
-    def entry_meas_ids(entry: Mapping[str, Any]) -> tuple[int, ...]:
-        records = entry.get("records", ())
-        if records:
-            return tuple(runtime_order[len(runtime_order) + int(record)] for record in records)
-        return tuple(int(meas_id) for meas_id in entry["meas_ids"])
-
-    resolved_detectors = sorted(
-        (
-            normalized_id(entry["id"] if "id" in entry else entry["detector_id"], prefix="D"),
-            entry_meas_ids(entry),
-        )
-        for entry in detector_entries
-    )
-    resolved_observables = sorted(
-        (
-            normalized_id(entry["id"] if "id" in entry else entry["observable_id"], prefix="L"),
-            entry_meas_ids(entry),
-        )
-        for entry in observable_entries
-    )
+    definitions = circuit.circuit_definitions()
+    resolved_detectors = [
+        (entry["id"], tuple(runtime_order[position] for position in entry["measurements"]))
+        for entry in definitions["detectors"]
+    ]
+    resolved_observables = [
+        (entry["id"], tuple(runtime_order[position] for position in entry["measurements"]))
+        for entry in definitions["observables"]
+    ]
     result_ids_by_tag = tuple(
         (
             tag,

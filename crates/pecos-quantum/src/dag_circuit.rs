@@ -74,6 +74,52 @@ pub struct DagTraversalIndex {
 }
 
 impl DagTraversalIndex {
+    /// Whether this index describes the current circuit's nodes, dependencies,
+    /// and per-qubit gate order.
+    ///
+    /// Checks existing arrays in linear time without rebuilding the index or
+    /// recomputing a topological sort. Gate payload changes are compatible when
+    /// they preserve the indexed qubit support and dependency order.
+    #[must_use]
+    pub fn is_valid_for(&self, circuit: &DagCircuit) -> bool {
+        if self.topo_order.len() != circuit.gate_node_count() || self.max_qubit != circuit.max_qubit
+        {
+            return false;
+        }
+        let mut qubit_positions = vec![0; self.qubit_gates.len()];
+        for (position, &node) in self.topo_order.iter().enumerate() {
+            let Some(gate) = circuit.gate(node) else {
+                return false;
+            };
+            for qubit in &gate.qubits {
+                let qubit = qubit.index();
+                let Some(next) = qubit_positions.get_mut(qubit) else {
+                    return false;
+                };
+                if self.qubit_gates[qubit].get(*next) != Some(&(position, node)) {
+                    return false;
+                }
+                *next += 1;
+            }
+        }
+        if qubit_positions
+            .iter()
+            .zip(&self.qubit_gates)
+            .any(|(&count, gates)| count != gates.len())
+        {
+            return false;
+        }
+        circuit.dag.edges().iter().all(|&(source, target, _)| {
+            match (
+                self.topo_positions.get(source),
+                self.topo_positions.get(target),
+            ) {
+                (Some(&source), Some(&target)) => source < target,
+                _ => false,
+            }
+        })
+    }
+
     /// Returns the topological order of nodes.
     #[inline]
     #[must_use]

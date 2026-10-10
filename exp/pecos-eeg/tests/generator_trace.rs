@@ -89,7 +89,8 @@ fn trace_d2_zbasis_generators() {
     let gates = build_d2_zbasis();
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(0.01);
-    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     eprintln!(
         "Expanded: {} qubits ({} orig + {} aux), {} measurements",

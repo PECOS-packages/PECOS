@@ -1,9 +1,27 @@
 # PECOS Frontier bare-WebAssembly adapter
 
 This crate compiles the PECOS Frontier decoder into a WebAssembly module with
-no imports. Its exported functions use only `i32` parameters and at most one
-`i32` result. That lowest-common-denominator ABI allows the same module to run
-on Quantinuum hardware, which requires those integer-only signatures.
+no imports. The original API uses `i32` parameters and results. Helios callers
+must instead use the explicit `i64` streaming wrappers below: the H2-style
+32-bit boundary is not compatible with the Helios call interface.
+
+### Helios streaming boundary
+
+Use `WasmPlatform.Helios` in Guppy and `WasmFileHandler(..., int_size=64)`
+when uploading. Call `frontier_stream_push_i64` and
+`frontier_stream_finish_round_i64` with five `i64` arguments and an `i64`
+result; query `frontier_status_i64`. Read correction words with
+`frontier_result_0_i64..3_i64`; observables 32 and above are only available
+there. The no-argument, no-result `init`,
+`frontier_stream_begin`, and `frontier_reset` exports are shared.
+
+These wrappers preserve the decoder's existing 32-bit packed-word layout.
+Both sign-extended `i32` and zero-extended `u32` words are accepted; values
+outside those ranges return -1, set status 3, and clear correction words.
+`frontier_stream_finish_round_i64` returns successful corrections zero-extended
+to `0..=u32::MAX`, so every negative result is unambiguously an error. The
+original `i32` exports remain available for existing callers. Use only the
+`_i64` integer-valued exports from a Helios HUGR.
 
 ## Build
 
@@ -138,6 +156,9 @@ times every selected hardware shot exactly once.
   call. A return of -1 can mean failure **or a valid all-ones correction**;
   always check `frontier_status()`. This is the preferred hardware latency boundary.
 - `frontier_result_0..3() -> i32`: four observable-mask words.
+- `frontier_stream_push_i64`, `frontier_stream_finish_round_i64`,
+  `frontier_status_i64`, `frontier_result_0_i64..3_i64`: Helios `i64`
+  counterparts described above; correction words are zero-extended.
 - `frontier_status() -> i32`: 0 success, 1 model error, 2 model too wide,
   3 decode error, 4 replay error.
 - `frontier_reset() -> ()`: clears per-shot output.
@@ -175,6 +196,23 @@ state between shots. Quantinuum requires this reset for in-memory Wasm state.
 
 ## Hardware latency
 
+The streaming input path uses a fixed-size stack buffer for each detector
+block. The shared trellis branch emitter checks closing-detector compatibility
+before copying a rejected state, and skips that check when no detectors close.
+These changes preserve branch arrival order and probability arithmetic; they
+do not reduce the beam or introduce approximate pruning. Validate every
+correction against a frozen reference for the target dataset before deploying
+a rebuilt module. Faster mean latency alone does not establish a hardware
+deadline: report push and final-call tails separately, excluding initialization.
+
+The binary floating-point kernel also precomputes per-column closing checks
+and stores only the contiguous span of live detector words in each state.
+Omitted words are exactly zero, including when a detector word becomes live
+again. Detector-word order, branch arrival order, floating-point accumulation,
+and pruning tie-breaks are preserved. This changes the state representation,
+not the noise model, beam size, or decoding approximation. The integer and
+general N-ary kernels retain their full-width representation.
+
 Before running a production model on hardware, tune the decoder configuration
 and re-measure its latency on the target system. In a 2,000-shot Wasmtime JIT
 benchmark on a fast desktop, a rotated-memory-Z model at physical error rate
@@ -183,3 +221,15 @@ rounds, and 57.9 ms median / 124.8 ms p99 / 158 ms maximum at distance 5 with
 five rounds. The latter is close enough to Quantinuum's approximately 250 ms
 per-call hardware limit that desktop measurements should not be treated as a
 hardware safety margin.
+
+For a reproducible native throughput comparison on a checked-in public model,
+run the same command at the base and candidate revisions:
+
+```console
+cargo run --release -p pecos-frontier --example public_dem_benchmark -- \
+  examples/surface_code_circuits/surface_code_d7_z_stim.dem 256 5 24301
+```
+
+The output includes the model dimensions, seed, failures, and prediction
+checksum alongside mean decode time. Treat it as a throughput probe rather
+than a hardware-latency measurement.

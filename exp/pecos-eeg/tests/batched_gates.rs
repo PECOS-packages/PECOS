@@ -170,7 +170,8 @@ fn forward_eeg_propagates_through_every_operand() {
         &gates,
         &InjectionAfterFirstGate(Bm::x(2)),
         &vec![false; gates.len()],
-    );
+    )
+    .expect("valid forward noise");
     assert_eq!(result.generators.len(), 1);
     assert_eq!(result.generators[0].label, Bm::x(2).multiply(&Bm::x(3)));
 
@@ -184,7 +185,8 @@ fn forward_eeg_propagates_through_every_operand() {
         &gates,
         &InjectionAfterFirstGate(Bm::x(0)),
         &vec![false; gates.len()],
-    );
+    )
+    .expect("valid forward noise");
     assert_eq!(result.generators[0].label, Bm::z(0).multiply(&Bm::z(1)));
 }
 
@@ -197,7 +199,8 @@ fn forward_eeg_multiplies_the_signs_of_batched_groups() {
         &gates,
         &InjectionAfterFirstGate(zz.clone()),
         &vec![false; gates.len()],
-    );
+    )
+    .expect("valid forward noise");
     assert_eq!(result.generators[0].label, zz);
     assert!(
         (result.generators[0].coeff - 0.1).abs() < 1e-15,
@@ -245,7 +248,8 @@ fn forward_eeg_rejects_a_two_qubit_gate_on_an_odd_qubit_count() {
         &gates,
         &InjectionAfterFirstGate(Bm::x(0)),
         &vec![false; gates.len()],
-    );
+    )
+    .expect("valid forward noise");
 }
 
 #[test]

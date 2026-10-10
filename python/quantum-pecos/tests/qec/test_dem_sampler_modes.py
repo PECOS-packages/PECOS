@@ -294,3 +294,24 @@ def test_sampler_configuration_error_is_value_error() -> None:
     message = str(exc_info.value)
     assert message.startswith("Invalid DEM configuration: ")
     assert "Invalid detector/observable metadata" not in message
+
+
+@pytest.mark.parametrize("gate", ["RZ", "T"])
+def test_pauli_propagation_dag_entries_reject_unsupported_gate(gate: str) -> None:
+    """Analyzer and Pauli-frame lookup preserve the offending DAG coordinate."""
+    from pecos.qec import InfluenceBuilder, PauliFrameLookup
+
+    dag = DagCircuit()
+    dag.h([0])
+    if gate == "RZ":
+        dag.rz(0.3, [0])
+    else:
+        dag.t([0])
+    dag.mz([0])
+    message = rf"unsupported gate {gate}.* at DAG node 1 on qubits \[0\]"
+    with pytest.raises(ValueError, match=message):
+        DagFaultAnalyzer(dag).build_influence_map()
+    with pytest.raises(ValueError, match=message):
+        PauliFrameLookup.from_circuit(dag, [], [])
+    with pytest.raises(ValueError, match=message):
+        InfluenceBuilder(dag).build()

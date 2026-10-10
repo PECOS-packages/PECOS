@@ -33,10 +33,14 @@ fn error_text<T, E: std::fmt::Display>(result: Result<T, E>) -> String {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn incomplete_measurement_orders_fail_at_all_build_boundaries() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     for order in [vec![0], vec![0, 0], vec![]] {
         let uncovered = if order.is_empty() { 2 } else { 1 };
         let dem_error = error_text(
@@ -96,7 +100,9 @@ fn incomplete_measurement_orders_fail_at_all_build_boundaries() {
 #[test]
 fn sampler_json_ids_select_output_channels() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     let json = r#"[{"id":1,"records":[0]},{"id":0,"records":[1]}]"#;
     let sampler = DemSamplerBuilder::new(&map)
         .with_noise(0.3, 0.0, 0.0, 0.0)
@@ -127,7 +133,9 @@ fn sampler_json_ids_select_output_channels() {
 #[test]
 fn sampler_json_ids_must_be_unique_and_dense() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     for (json, expected) in [
         (r#"[{"id":0,"records":[0]},{"id":0,"records":[1]}]"#, "id 0"),
         (
@@ -167,10 +175,14 @@ fn sampler_json_ids_must_be_unique_and_dense() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn sampler_stamped_ids_resolve_to_final_tc_order() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     // q0 is map position 0 / stamp 0, but TC position 1 under [1, 0].
     for json in [
         r#"[{"id":0,"meas_ids":[0]}]"#,
@@ -265,7 +277,9 @@ fn sampler_stamped_ids_resolve_to_final_tc_order() {
 #[test]
 fn raw_sampler_records_are_validated_before_use() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     for record in [-3, 2, 5] {
         let refs = vec![vec![record]];
         for error in [
@@ -327,7 +341,9 @@ fn raw_sampler_records_are_validated_before_use() {
 #[test]
 fn dual_output_records_are_bounded_in_map_order() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     for index in [2, 5, usize::MAX] {
         let error = error_text(
             DemSamplerBuilder::new(&map)
@@ -387,6 +403,8 @@ fn dem_stab_rejects_out_of_range_user_records() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn sampler_determinism_and_annotations_follow_measurement_order() {
     // Annotation observables use map positions even when an order is set later.
@@ -395,7 +413,9 @@ fn sampler_determinism_and_annotations_follow_measurement_order() {
     circuit.x(&[0]);
     let named = circuit.mz(&[0]);
     circuit.mz(&[1]);
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     circuit.observable(&named).unwrap();
     let sampler = DemSamplerBuilder::new(&map)
         .with_noise(0.3, 0.0, 0.0, 0.0)
@@ -414,6 +434,7 @@ fn sampler_determinism_and_annotations_follow_measurement_order() {
     circuit.h(&[1]);
     circuit.mz(&[0, 1]);
     let map = crate::fault_tolerance::influence_builder::InfluenceBuilder::new(&circuit)
+        .expect("supported circuit")
         .build()
         .unwrap();
     assert!(
@@ -435,7 +456,9 @@ fn sampler_determinism_and_annotations_follow_measurement_order() {
 #[test]
 fn sampler_record_setters_replace_pending_json() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     let json = r#"[{"id":0,"records":[1]}]"#;
     let sampler = DemSamplerBuilder::new(&map)
         .with_noise(0.3, 0.0, 0.0, 0.0)
@@ -464,12 +487,16 @@ fn sampler_record_setters_replace_pending_json() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn mem_builder_requires_a_complete_measurement_order() {
     use super::mem_builder::MemBuilder;
 
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit");
     // An uncovered measurement used to bind silently to TC index 0.
     for order in [vec![0], vec![0, 0], vec![]] {
         let uncovered = if order.is_empty() { 2 } else { 1 };

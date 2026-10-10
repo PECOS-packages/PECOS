@@ -307,12 +307,13 @@ def test_dem_sampler_builder_rejects_inconsistent_measurement_order() -> None:
     dag.set_attr("num_measurements", "3")
     im = DagFaultAnalyzer(dag).build_influence_map()
 
-    builder = (
-        DemSamplerBuilder(im)
-        .with_noise(**_NOISE)
-        .with_detectors_json('[{"id": 0, "records": [-3]}]')
-        .with_measurement_order([0, 1])  # only 2 of 3 measurements
-    )
+    with pytest.warns(DeprecationWarning, match="deprecated.*meas_ids"):
+        builder = (
+            DemSamplerBuilder(im)
+            .with_noise(**_NOISE)
+            .with_detectors_json('[{"id": 0, "records": [-3]}]')
+            .with_measurement_order([0, 1])  # only 2 of 3 measurements
+        )
     with pytest.raises(ValueError, match=r"measurement_order|cover every measurement"):
         builder.build()
 
@@ -522,11 +523,12 @@ def test_sampler_json_output_indices_are_declared_ids() -> None:
 @pytest.mark.parametrize("order", [[0], [0, 0]])
 def test_map_only_incomplete_measurement_order_is_rejected(order: list[int]) -> None:
     for builder_type in (DemBuilder, DemSamplerBuilder):
-        builder = (
-            builder_type(_two_measurement_map())
-            .with_measurement_order(order)
-            .with_detectors_json('[{"id":0,"records":[-1]}]')
-        )
+        with pytest.warns(DeprecationWarning, match="deprecated.*meas_ids"):
+            builder = (
+                builder_type(_two_measurement_map())
+                .with_measurement_order(order)
+                .with_detectors_json('[{"id":0,"records":[-1]}]')
+            )
         with pytest.raises(ValueError, match=r"1 of 2 measurement\(s\) uncovered"):
             builder.build()
 
@@ -534,12 +536,24 @@ def test_map_only_incomplete_measurement_order_is_rejected(order: list[int]) -> 
 @pytest.mark.parametrize("references", ['"meas_ids":[0]', '"records":[1],"meas_ids":[0]'])
 def test_sampler_json_resolves_stamps_after_measurement_order(references: str) -> None:
     definitions = f'[{{"id":0,{references}}}]'
-    sampler = (
-        DemSamplerBuilder(_two_measurement_map())
-        .with_noise(p1=0.3, p2=0.0, p_meas=0.0, p_prep=0.0)
-        .with_detectors_json(definitions)
-        .with_observables_json(definitions)
-        .with_measurement_order([1, 0])
-        .build()
-    )
+    with pytest.warns(DeprecationWarning, match="deprecated.*meas_ids"):
+        sampler = (
+            DemSamplerBuilder(_two_measurement_map())
+            .with_noise(p1=0.3, p2=0.0, p_meas=0.0, p_prep=0.0)
+            .with_detectors_json(definitions)
+            .with_observables_json(definitions)
+            .with_measurement_order([1, 0])
+            .build()
+        )
     assert "D0 L0" in sampler.to_detector_error_model().to_string()
+
+
+@pytest.mark.parametrize("builder_type", [DemBuilder, DemSamplerBuilder])
+def test_measurement_order_deprecation_points_at_caller(builder_type: type) -> None:
+    """Both deprecated bindings warn at the Python caller and preserve chaining."""
+    builder = builder_type(_two_measurement_map())
+    with pytest.warns(DeprecationWarning, match="deprecated.*emission order.*meas_ids") as warnings:
+        result = builder.with_measurement_order([0, 1])
+    assert result is builder
+    assert len(warnings) == 1
+    assert warnings[0].filename == __file__

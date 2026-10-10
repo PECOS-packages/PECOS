@@ -131,7 +131,10 @@ fn raw_rejection_preserves_rng_even_for_zero_shots() {
     circuit.pz(&[0]);
     circuit.h(&[0]);
     circuit.mz(&[0]);
-    let influence = InfluenceBuilder::new(&circuit).build().unwrap();
+    let influence = InfluenceBuilder::new(&circuit)
+        .expect("supported circuit")
+        .build()
+        .unwrap();
     let sampler = DemSamplerBuilder::new(&influence)
         .with_noise(0.1, 0.1, 0.1, 0.1)
         .raw_measurements()

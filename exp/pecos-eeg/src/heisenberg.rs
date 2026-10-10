@@ -1569,8 +1569,9 @@ pub fn heisenberg_detection_probability_from_circuit(
     let mut detector = Bm::default();
     for &m in detector_meas_indices {
         // Single resolver: an out-of-range record is an error, never a
-        // silently thinner detector.
-        detector.z_bits.set_bit(expanded.aux_qubit_for_record(m)?);
+        // silently thinner detector. A detector is a parity, so a repeated
+        // measurement cancels.
+        detector.z_bits.xor_bit(expanded.aux_qubit_for_record(m)?);
     }
 
     let init_gates: Vec<Gate> = (0..num_original_qubits)
@@ -2373,7 +2374,8 @@ mod tests {
 
         // For comparison: forward EEG
         let eeg_result =
-            crate::circuit::analyze_with_noise(&expanded.gates, &noise, &expanded.expansion_gates);
+            crate::circuit::analyze_with_noise(&expanded.gates, &noise, &expanded.expansion_gates)
+                .expect("valid forward noise");
         let dets = vec![
             crate::dem_mapping::Detector {
                 id: 1,
@@ -3532,5 +3534,38 @@ mod tests {
                 t_sparse.as_secs_f64() * 1000.0
             );
         }
+    }
+
+    /// A detector is the parity of its measurements, so a repeated
+    /// measurement cancels, as it does in the dense reference.
+    #[test]
+    fn repeated_detector_measurements_cancel() {
+        use crate::expand::make_gate;
+        // Two rounds of a weight-2 Z check measured on qubit 2.
+        let round = [
+            make_gate(GateType::PZ, &[2]),
+            make_gate(GateType::H, &[2]),
+            make_gate(GateType::CX, &[2, 0]),
+            make_gate(GateType::CX, &[2, 1]),
+            make_gate(GateType::H, &[2]),
+            make_gate(GateType::MZ, &[2]),
+        ];
+        let mut gates = vec![make_gate(GateType::PZ, &[0]), make_gate(GateType::PZ, &[1])];
+        gates.extend(round.iter().cloned());
+        gates.extend(round.iter().cloned());
+        let noise = UniformNoise::depolarizing(0.02);
+        let probability = |records: &[usize]| {
+            heisenberg_detection_probability_from_circuit(&gates, records, &noise, 3, 0.0)
+                .expect("supported circuit")
+        };
+        let first_round = probability(&[0]);
+        assert!(
+            (first_round - probability(&[0, 1])).abs() > 1e-6,
+            "the two detectors must differ for the check to mean anything"
+        );
+        assert!((probability(&[0, 1, 1]) - first_round).abs() < 1e-12);
+        let dense = heisenberg_exact_from_circuit(&gates, &[0, 1, 1], &noise, 3)
+            .expect("supported circuit");
+        assert!((probability(&[0, 1, 1]) - dense).abs() < 1e-9);
     }
 }

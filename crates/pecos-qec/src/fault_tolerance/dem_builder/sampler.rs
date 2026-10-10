@@ -522,11 +522,11 @@ impl DemSampler {
         let definitions =
             crate::fault_tolerance::circuit_definitions::definitions_from_dag_circuit(circuit)
                 .map_err(super::DemBuilderError::from)?;
-        let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
+        let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(DetectorValidationError::UnsupportedGate(error.clone()));
         }
-        let annotation_map = InfluenceBuilder::new(circuit)
+        let annotation_map = InfluenceBuilder::new(circuit)?
             .with_circuit_annotations()
             .map_err(|err| DetectorValidationError::InvalidMetadata {
                 message: err.to_string(),
@@ -1347,12 +1347,22 @@ impl<'a> DemSamplerBuilder<'a> {
         Ok(self)
     }
 
-    /// Set the measurement order for legacy circuits without `MeasId` on gates.
+    /// Map record positions to influence-map positions by qubit and occurrence.
     ///
-    /// **Not needed for circuits built with `TickCircuit.mz()`** — the `MeasId`
-    /// values on gates ensure correct ordering automatically.
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     #[must_use]
-    pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
+    )]
+    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
+        self.set_measurement_order_internal(order)
+    }
+
+    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
         self
     }
@@ -1583,7 +1593,7 @@ impl<'a> DemSamplerBuilder<'a> {
         }
 
         if let Some(order) = self.measurement_order {
-            builder = builder.with_measurement_order(order);
+            builder = builder.set_measurement_order_internal(order);
         }
 
         let inner = builder.build()?;
@@ -1738,8 +1748,9 @@ mod tests {
         let named = dag.mz(&[1]); // raw measurement 1 -- the detector's target
         dag.detector(&named).expect("refs are from this circuit");
 
-        let im =
-            crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag).build_influence_map();
+        let im = crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag)
+            .build_influence_map()
+            .unwrap();
         let sampler = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.3)
             .raw_measurements()
@@ -1786,8 +1797,9 @@ mod tests {
             },
             label: None,
         });
-        let im =
-            crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag).build_influence_map();
+        let im = crate::fault_tolerance::propagator::DagFaultAnalyzer::new(&dag)
+            .build_influence_map()
+            .unwrap();
 
         let err = DemSamplerBuilder::new(&im)
             .with_uniform_noise(0.01)
@@ -1828,6 +1840,7 @@ mod tests {
     fn raw_mode_output_length_matches_measurements() {
         let circuit = repetition_code(2);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");
@@ -1849,6 +1862,7 @@ mod tests {
     fn zero_noise_raw_mode_deterministic_measurements_are_zero() {
         let circuit = repetition_code(3);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");
@@ -1871,6 +1885,7 @@ mod tests {
     fn raw_mode_matches_dem_sampler_from_influence_map() {
         let circuit = repetition_code(3);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");
@@ -1904,6 +1919,7 @@ mod tests {
     fn detector_mode_output_length_matches_definitions() {
         let circuit = repetition_code(3);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -1929,6 +1945,7 @@ mod tests {
     fn detector_mode_accepts_observable_aliases() {
         let circuit = repetition_code(3);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -1998,6 +2015,7 @@ mod tests {
         circuit.mz(&[0]);
 
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
             .build()
@@ -2033,6 +2051,7 @@ mod tests {
             .expect("refs are from this circuit");
 
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
             .build()
@@ -2181,6 +2200,7 @@ mod tests {
         assert_eq!(sample_once(&from_dem), (vec![true], vec![true]));
 
         let influence_map = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_circuit_annotations()
             .expect("annotations resolve against the circuit")
             .build()
@@ -2269,6 +2289,7 @@ mod tests {
         circuit.h(&[0]);
         circuit.mz(&[0]);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2369,6 +2390,7 @@ mod tests {
     fn high_noise_produces_nonzero_rates_both_modes() {
         let circuit = repetition_code(2);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");
@@ -2407,6 +2429,7 @@ mod tests {
     fn dual_output_returns_none_without_definitions() {
         let circuit = repetition_code(2);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");
@@ -2425,6 +2448,7 @@ mod tests {
     fn dual_output_produces_both_views() {
         let circuit = repetition_code(3);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");
@@ -2452,6 +2476,7 @@ mod tests {
     fn dual_output_detector_events_consistent_with_raw() {
         let circuit = repetition_code(3);
         let im = InfluenceBuilder::new(&circuit)
+            .unwrap()
             .with_z(&[0, 1, 2])
             .build()
             .expect("circuit is replayable");

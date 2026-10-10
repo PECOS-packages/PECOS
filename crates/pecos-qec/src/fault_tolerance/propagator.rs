@@ -42,7 +42,7 @@
 //!
 //! // Build the fault influence map
 //! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let map = analyzer.build_influence_map();
+//! let map = analyzer.build_influence_map().unwrap();
 //!
 //! // O(1) lookup: which detector/non-detector outputs does a fault at location L flip?
 //! let (has_syndrome, _flips_non_detector_output) = map.classify_fault(0, 1); // loc 0, X fault
@@ -88,7 +88,7 @@
 //! circuit.tick().cx(&[(1, 2)]);
 //! circuit.tick().mz(&[2]);
 //!
-//! let propagator = TickFaultAnalyzer::new(&circuit);
+//! let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
 //! let influence_map = propagator.build_influence_map();
 //! ```
 
@@ -257,6 +257,34 @@ impl std::fmt::Display for UnsupportedGateError {
 }
 
 impl std::error::Error for UnsupportedGateError {}
+
+/// Apply one gate and attach its source coordinates to a rejection.
+pub(crate) fn apply_gate_at(
+    prop: &mut PauliProp,
+    gate: &pecos_core::Gate,
+    direction: Direction,
+    location: UnsupportedGateLocation,
+) -> Result<(), UnsupportedGateError> {
+    if apply_gate(prop, gate, direction) == PauliPropagationOutcome::Unsupported {
+        return Err(UnsupportedGateError {
+            gate_type: gate.gate_type,
+            angles: gate.angles.to_vec(),
+            location,
+            qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
+        });
+    }
+    Ok(())
+}
+
+/// Whole-circuit preflight for tick-based fault analysis.
+pub(crate) fn validate_tick_circuit(
+    circuit: &pecos_quantum::TickCircuit,
+) -> Result<(), UnsupportedGateError> {
+    match first_unsupported_tick_gate(circuit) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
 
 // ============================================================================
 // DAG-Based Sparse Propagation Infrastructure
@@ -505,6 +533,11 @@ impl InfluenceRecorder for CountingRecorder {
 // DAG Propagator
 // ============================================================================
 
+/// An externally supplied traversal index does not describe the supplied DAG.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("traversal index does not describe the supplied DAG")]
+pub struct TraversalIndexMismatchError;
+
 /// Pre-computed index for efficient DAG-based Pauli propagation.
 ///
 /// This struct pre-computes data structures needed for sparse propagation,
@@ -526,13 +559,20 @@ impl InfluenceRecorder for CountingRecorder {
 /// // Propagate multiple times efficiently
 /// let mut prop = PauliProp::new();
 /// prop.track_z(&[0]);
-/// propagator.propagate_sparse(&mut prop, Direction::Forward);
+/// propagator.propagate_sparse(&mut prop, Direction::Forward).unwrap();
 /// ```
+///
+/// Construction also supports traversal and inspection of unsupported circuits,
+/// including through `DagFaultAnalyzer::propagator`. Propagation methods therefore
+/// check cached gate eligibility for their traversed region and return errors.
+/// The immutable DAG borrow keeps the construction-time eligibility cache valid.
 pub struct DagPropagator<'a> {
     /// Reference to the underlying DAG circuit.
     dag: &'a DagCircuit,
     /// Pre-computed traversal index from `DagCircuit`.
     index: DagTraversalIndex,
+    /// Unsupported gates in topological order, with their positions.
+    unsupported_gates: Vec<(usize, UnsupportedGateError)>,
 }
 
 impl<'a> DagPropagator<'a> {
@@ -541,16 +581,72 @@ impl<'a> DagPropagator<'a> {
     /// This is O(V + E) where V is the number of gates and E is the number of edges.
     #[must_use]
     pub fn new(dag: &'a DagCircuit) -> Self {
-        let index = dag.build_traversal_index();
-        Self { dag, index }
+        Self::from_valid_index(dag, dag.build_traversal_index())
     }
 
     /// Creates a `DagPropagator` from an existing traversal index.
     ///
-    /// Use this when you already have a `DagTraversalIndex` to avoid recomputing it.
-    #[must_use]
-    pub fn with_index(dag: &'a DagCircuit, index: DagTraversalIndex) -> Self {
-        Self { dag, index }
+    /// Checks compatibility without rebuilding the index or sorting the DAG.
+    /// Gate eligibility is then computed once, as in [`Self::new`].
+    ///
+    /// # Errors
+    /// Returns [`TraversalIndexMismatchError`] if the index does not describe
+    /// the current DAG's nodes, dependencies, and qubit gate lists.
+    pub fn with_index(
+        dag: &'a DagCircuit,
+        index: DagTraversalIndex,
+    ) -> Result<Self, TraversalIndexMismatchError> {
+        if !index.is_valid_for(dag) {
+            return Err(TraversalIndexMismatchError);
+        }
+        Ok(Self::from_valid_index(dag, index))
+    }
+
+    fn from_valid_index(dag: &'a DagCircuit, index: DagTraversalIndex) -> Self {
+        let mut unsupported_gates = Vec::new();
+        let mut scratch = PauliProp::new();
+        for (position, &node) in index.topo_order().iter().enumerate() {
+            if let Some(gate) = dag.gate(node)
+                && let Err(error) = apply_gate_at(
+                    &mut scratch,
+                    gate,
+                    Direction::Forward,
+                    UnsupportedGateLocation::DagNode { node },
+                )
+            {
+                unsupported_gates.push((position, error));
+            }
+        }
+        Self {
+            dag,
+            index,
+            unsupported_gates,
+        }
+    }
+
+    pub(crate) fn first_unsupported_gate(&self) -> Option<&UnsupportedGateError> {
+        self.unsupported_gates.first().map(|(_, error)| error)
+    }
+
+    fn check_supported(&self, direction: Direction) -> Result<(), UnsupportedGateError> {
+        let unsupported = match direction {
+            Direction::Forward => self.unsupported_gates.first(),
+            Direction::Backward => self.unsupported_gates.last(),
+        };
+        match unsupported {
+            Some((_, error)) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
+    fn check_supported_before(&self, end_position: usize) -> Result<(), UnsupportedGateError> {
+        let end = self
+            .unsupported_gates
+            .partition_point(|(position, _)| *position <= end_position);
+        match self.unsupported_gates[..end].last() {
+            Some((_, error)) => Err(error.clone()),
+            None => Ok(()),
+        }
     }
 
     /// Returns a reference to the traversal index.
@@ -643,7 +739,20 @@ impl<'a> DagPropagator<'a> {
     /// This is significantly faster than dense propagation for circuits with
     /// local connectivity (like surface codes), where Paulis only touch a
     /// small subset of qubits.
-    pub fn propagate_sparse(&self, prop: &mut PauliProp, direction: Direction) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate in traversal order, even for empty Pauli support.
+    pub fn propagate_sparse(
+        &self,
+        prop: &mut PauliProp,
+        direction: Direction,
+    ) -> Result<(), UnsupportedGateError> {
+        self.check_supported(direction)?;
+        if prop.weight() == 0 {
+            return Ok(());
+        }
+
         // Find initial active qubits
         let max_qubit = self.max_qubit();
         let mut active_qubits: BTreeSet<usize> = (0..=max_qubit)
@@ -651,7 +760,7 @@ impl<'a> DagPropagator<'a> {
             .collect();
 
         if active_qubits.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Process nodes in topological order (forward) or reverse (backward)
@@ -671,7 +780,9 @@ impl<'a> DagPropagator<'a> {
 
                 if touches_active {
                     // Apply the gate
-                    let _outcome = apply_gate(prop, gate, direction);
+                    // DagPropagator::from_valid_index preflights gates; cached region checks reject unsupported gates.
+                    let outcome = apply_gate_unchecked(prop, gate, direction);
+                    debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
 
                     // Update active qubits
                     for q in &gate.qubits {
@@ -685,13 +796,23 @@ impl<'a> DagPropagator<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Dense propagation through the entire DAG (visits all gates).
     ///
     /// Use `propagate_sparse` instead for better performance when Paulis
     /// only touch a subset of qubits.
-    pub fn propagate_dense(&self, prop: &mut PauliProp, direction: Direction) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate in traversal order, even for empty Pauli support.
+    pub fn propagate_dense(
+        &self,
+        prop: &mut PauliProp,
+        direction: Direction,
+    ) -> Result<(), UnsupportedGateError> {
+        self.check_supported(direction)?;
         let topo = self.topo_order();
         let node_iter: Box<dyn Iterator<Item = &usize>> = match direction {
             Direction::Forward => Box::new(topo.iter()),
@@ -700,17 +821,32 @@ impl<'a> DagPropagator<'a> {
 
         for &node in node_iter {
             if let Some(gate) = self.gate(node) {
-                let _outcome = apply_gate(prop, gate, direction);
+                // DagPropagator::from_valid_index preflights gates; cached region checks reject unsupported gates.
+                let outcome = apply_gate_unchecked(prop, gate, direction);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
             }
         }
+        Ok(())
     }
 
     /// Propagate backward from a specific node, stopping at prep gates.
     ///
     /// This is useful for tracking what faults affect a measurement:
     /// start with the measurement's observable and propagate backward.
-    pub fn propagate_backward_from(&self, prop: &mut PauliProp, start_node: usize) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate in traversal order, even for empty Pauli support.
+    pub fn propagate_backward_from(
+        &self,
+        prop: &mut PauliProp,
+        start_node: usize,
+    ) -> Result<(), UnsupportedGateError> {
         let start_pos = self.topo_position(start_node);
+        self.check_supported_before(start_pos)?;
+        if prop.weight() == 0 {
+            return Ok(());
+        }
         let max_qubit = self.max_qubit();
 
         // Track active qubits
@@ -747,7 +883,9 @@ impl<'a> DagPropagator<'a> {
                         }
                     } else {
                         // Apply gate backward
-                        let _outcome = apply_gate(prop, gate, Direction::Backward);
+                        // DagPropagator::from_valid_index preflights gates; cached region checks reject unsupported gates.
+                        let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                        debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
 
                         // Update active qubits
                         for q in &gate.qubits {
@@ -762,6 +900,7 @@ impl<'a> DagPropagator<'a> {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -773,27 +912,51 @@ impl<'a> DagPropagator<'a> {
 ///
 /// This is a convenience function that creates a temporary `DagPropagator`.
 /// For repeated propagations, create a `DagPropagator` once and reuse it.
-pub fn propagate_sparse_dag(dag: &DagCircuit, prop: &mut PauliProp, direction: Direction) {
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+pub fn propagate_sparse_dag(
+    dag: &DagCircuit,
+    prop: &mut PauliProp,
+    direction: Direction,
+) -> Result<(), UnsupportedGateError> {
     let propagator = DagPropagator::new(dag);
-    propagator.propagate_sparse(prop, direction);
+    propagator.propagate_sparse(prop, direction)
 }
 
 /// Propagates a Pauli through a DAG circuit (dense traversal).
 ///
 /// This visits all gates in topological order. For sparse circuits,
 /// use `propagate_sparse_dag` instead.
-pub fn propagate_through_dag(dag: &DagCircuit, prop: &mut PauliProp, direction: Direction) {
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+pub fn propagate_through_dag(
+    dag: &DagCircuit,
+    prop: &mut PauliProp,
+    direction: Direction,
+) -> Result<(), UnsupportedGateError> {
     let propagator = DagPropagator::new(dag);
-    propagator.propagate_dense(prop, direction);
+    propagator.propagate_dense(prop, direction)
 }
 
 /// Propagates a Pauli backward from a specific node in a DAG circuit.
 ///
 /// This is useful for understanding what observable is being measured,
 /// or what faults affect a specific location.
-pub fn propagate_backward_from_node(dag: &DagCircuit, prop: &mut PauliProp, start_node: usize) {
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+pub fn propagate_backward_from_node(
+    dag: &DagCircuit,
+    prop: &mut PauliProp,
+    start_node: usize,
+) -> Result<(), UnsupportedGateError> {
     let propagator = DagPropagator::new(dag);
-    propagator.propagate_backward_from(prop, start_node);
+    propagator.propagate_backward_from(prop, start_node)
 }
 
 // ============================================================================
@@ -856,7 +1019,7 @@ mod tests {
     #[test]
     fn test_extract_measurements() {
         let circuit = simple_syndrome_circuit();
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         assert_eq!(map.measurements.len(), 1);
@@ -868,7 +1031,7 @@ mod tests {
     #[test]
     fn test_build_influence_map() {
         let circuit = simple_syndrome_circuit();
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         // Should have fault locations
@@ -890,7 +1053,7 @@ mod tests {
     #[test]
     fn test_x_error_flips_z_measurement() {
         let circuit = simple_syndrome_circuit();
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         // An X error on data qubit 0 before the first CNOT should flip the measurement
@@ -917,7 +1080,7 @@ mod tests {
     #[test]
     fn test_z_error_no_syndrome() {
         let circuit = simple_syndrome_circuit();
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         // A Z error on data qubits should NOT flip the Z-measurement
@@ -937,7 +1100,7 @@ mod tests {
     #[test]
     fn test_influence_based_checker() {
         let circuit = simple_syndrome_circuit();
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         let checker = InfluenceBasedChecker::new(&map);
@@ -965,7 +1128,9 @@ mod tests {
         prop.track_z(&[0]);
 
         // Propagate backward through H: Z -> X
-        propagator.propagate_sparse(&mut prop, Direction::Backward);
+        propagator
+            .propagate_sparse(&mut prop, Direction::Backward)
+            .unwrap();
 
         // After H backward, Z becomes X
         assert!(prop.contains_x(0));
@@ -982,14 +1147,18 @@ mod tests {
         // Test 1: X on control spreads to target
         let mut prop = PauliProp::new();
         prop.track_x(&[0]);
-        propagator.propagate_sparse(&mut prop, Direction::Forward);
+        propagator
+            .propagate_sparse(&mut prop, Direction::Forward)
+            .unwrap();
         assert!(prop.contains_x(0));
         assert!(prop.contains_x(1));
 
         // Test 2: Z on target spreads to control
         let mut prop2 = PauliProp::new();
         prop2.track_z(&[1]);
-        propagator.propagate_sparse(&mut prop2, Direction::Backward);
+        propagator
+            .propagate_sparse(&mut prop2, Direction::Backward)
+            .unwrap();
         assert!(prop2.contains_z(0));
         assert!(prop2.contains_z(1));
     }
@@ -1003,7 +1172,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Should have locations and detectors
         assert!(
@@ -1025,12 +1194,12 @@ mod tests {
         // Forward: X -> Z
         let mut forward = PauliProp::new();
         forward.track_x(&[0]);
-        propagate_through_circuit(&circuit, &mut forward, Direction::Forward);
+        propagate_through_circuit(&circuit, &mut forward, Direction::Forward).unwrap();
 
         // Backward: Z -> X
         let mut backward = PauliProp::new();
         backward.track_z(&[0]);
-        propagate_through_circuit(&circuit, &mut backward, Direction::Backward);
+        propagate_through_circuit(&circuit, &mut backward, Direction::Backward).unwrap();
 
         // Forward X->Z, Backward Z->X
         assert!(forward.contains_z(0));
@@ -1046,7 +1215,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Check that we have locations
         assert!(
@@ -1070,7 +1239,7 @@ mod tests {
         }
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Should have locations and detectors
         assert!(
@@ -1136,8 +1305,8 @@ mod tests {
             // (This is not exactly identity due to how we track things, but structure should match)
             let mut prop = PauliProp::new();
             prop.track_x(&[0]);
-            propagate_through_circuit(&circuit, &mut prop, Direction::Forward);
-            propagate_through_circuit(&circuit, &mut prop, Direction::Backward);
+            propagate_through_circuit(&circuit, &mut prop, Direction::Forward).unwrap();
+            propagate_through_circuit(&circuit, &mut prop, Direction::Backward).unwrap();
 
             // After forward then backward, we should get back something consistent
             // (exact check depends on circuit structure)
@@ -1156,7 +1325,7 @@ mod tests {
         // Define a simple tracked Z Pauli = Z0 Z1
         let tracked_paulis: &[(&[usize], &[usize])] = &[(&[], &[0, 1])];
 
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map_with_tracked_paulis(tracked_paulis);
 
         // Check that tracked-Pauli propagation is populated
@@ -1188,7 +1357,7 @@ mod tests {
         circuit.tick().h(&[0]);
         circuit.tick().mz(&[0, 1, 2, 3]);
 
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         // Should have multiple measurements
@@ -1214,7 +1383,7 @@ mod tests {
             // Measure all
             circuit.tick().mz(&qubits);
 
-            let propagator = TickFaultAnalyzer::new(&circuit);
+            let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
             let map = propagator.build_influence_map();
 
             assert_eq!(map.measurements.len(), size);
@@ -1234,7 +1403,7 @@ mod tests {
 
         circuit.tick().mz(&[0, 1]);
 
-        let propagator = TickFaultAnalyzer::new(&circuit);
+        let propagator = TickFaultAnalyzer::new(&circuit).unwrap();
         let map = propagator.build_influence_map();
 
         assert!(map.num_fault_locations() > 0);
@@ -1258,7 +1427,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Should have 2 measurements (2 rounds)
         assert_eq!(map.detectors.len(), 2);
@@ -1368,7 +1537,7 @@ mod tests {
         add_standard_clifford_gate(&mut circuit, gate_type);
 
         let mut prop = pauli_prop_from_signature(&input);
-        propagate_through_circuit(&circuit, &mut prop, Direction::Forward);
+        propagate_through_circuit(&circuit, &mut prop, Direction::Forward).unwrap();
 
         assert_eq!(
             pauli_signature(&prop, &[0, 1]),
@@ -1443,11 +1612,11 @@ mod tests {
 
         let mut rotated_prop = PauliProp::new();
         rotated_prop.track_x(&[0]);
-        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward);
+        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward).unwrap();
 
         let mut simplified_prop = PauliProp::new();
         simplified_prop.track_x(&[0]);
-        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward);
+        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward).unwrap();
 
         assert_eq!(
             pauli_signature(&rotated_prop, &[0]),
@@ -1469,11 +1638,11 @@ mod tests {
 
         let mut rotated_prop = PauliProp::new();
         rotated_prop.track_z(&[0]);
-        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward);
+        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward).unwrap();
 
         let mut simplified_prop = PauliProp::new();
         simplified_prop.track_z(&[0]);
-        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward);
+        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward).unwrap();
 
         assert_eq!(
             pauli_signature(&rotated_prop, &[0]),
@@ -1493,15 +1662,334 @@ mod tests {
 
         let mut rotated_prop = PauliProp::new();
         rotated_prop.track_x(&[0]);
-        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward);
+        propagate_through_circuit(&rotated, &mut rotated_prop, Direction::Forward).unwrap();
 
         let mut simplified_prop = PauliProp::new();
         simplified_prop.track_x(&[0]);
-        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward);
+        propagate_through_circuit(&simplified, &mut simplified_prop, Direction::Forward).unwrap();
 
         assert_eq!(
             pauli_signature(&rotated_prop, &[0, 1]),
             pauli_signature(&simplified_prop, &[0, 1])
         );
+    }
+}
+
+#[cfg(test)]
+mod reusable_validation_tests {
+    use super::*;
+
+    #[test]
+    fn stale_index_cannot_hide_unsupported_gates() {
+        for sparse in [true, false] {
+            let mut dag = DagCircuit::new();
+            dag.h(&[0]);
+            let index = dag.build_traversal_index();
+            dag.t(&[0]);
+            assert!(matches!(
+                DagPropagator::with_index(&dag, index.clone()),
+                Err(TraversalIndexMismatchError)
+            ));
+            let mut prop = PauliProp::new();
+            prop.track_z(&[0]);
+            let result = DagPropagator::with_index(&dag, index)
+                .map_err(|_| ())
+                .and_then(|walker| {
+                    if sparse {
+                        walker.propagate_sparse(&mut prop, Direction::Forward)
+                    } else {
+                        walker.propagate_dense(&mut prop, Direction::Forward)
+                    }
+                    .map_err(|_| ())
+                });
+            assert!(
+                result.is_err(),
+                "stale index must not skip T (sparse={sparse})"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_reused_index_preserves_propagation() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        let index = dag.build_traversal_index();
+        let walker = DagPropagator::with_index(&dag, index).unwrap();
+        for sparse in [true, false] {
+            let mut prop = PauliProp::new();
+            prop.track_z(&[0]);
+            if sparse {
+                walker
+                    .propagate_sparse(&mut prop, Direction::Forward)
+                    .unwrap();
+            } else {
+                walker
+                    .propagate_dense(&mut prop, Direction::Forward)
+                    .unwrap();
+            }
+            assert!(prop.contains_x(0));
+            assert!(!prop.contains_z(0));
+        }
+    }
+
+    #[test]
+    fn supported_dag_empty_calls_do_no_validation() {
+        let mut dag = DagCircuit::new();
+        for _ in 0..10_000 {
+            dag.h(&[0]);
+        }
+        pauli::GATE_VALIDATIONS.set(0);
+        let walker = DagPropagator::new(&dag);
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 10_000);
+        pauli::GATE_VALIDATIONS.set(0);
+        for _ in 0..1_000 {
+            walker
+                .propagate_sparse(&mut PauliProp::new(), Direction::Forward)
+                .unwrap();
+            walker
+                .propagate_sparse(&mut PauliProp::new(), Direction::Backward)
+                .unwrap();
+            walker
+                .propagate_backward_from(&mut PauliProp::new(), 9_999)
+                .unwrap();
+        }
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
+    }
+
+    #[test]
+    fn supported_dag_nonempty_calls_do_no_validation() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        let walker = DagPropagator::new(&dag);
+        pauli::GATE_VALIDATIONS.set(0);
+        for _ in 0..10 {
+            let mut prop = PauliProp::new();
+            prop.track_z(&[0]);
+            walker
+                .propagate_sparse(&mut prop, Direction::Forward)
+                .unwrap();
+            walker
+                .propagate_dense(&mut prop, Direction::Backward)
+                .unwrap();
+            walker.propagate_backward_from(&mut prop, 1).unwrap();
+        }
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
+    }
+
+    #[test]
+    fn validated_tick_checkers_do_no_per_fault_validation() {
+        use crate::fault_tolerance::{
+            ErrorCorrectionChecker, FaultCheckConfig, FaultChecker, GadgetChecker,
+            LookupTableDecoder, PauliPropChecker,
+        };
+        let mut circuit = pecos_quantum::TickCircuit::new();
+        circuit.tick().h(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        let pauli = PauliPropChecker::new(&circuit).unwrap();
+        let gadget = GadgetChecker::from_circuit(&circuit).unwrap();
+        let faults = FaultChecker::new(&circuit).unwrap();
+        let tick = TickFaultAnalyzer::new(&circuit).unwrap();
+        let correction = ErrorCorrectionChecker::new(&circuit).unwrap();
+        let mut decoder = LookupTableDecoder::three_qubit_bitflip();
+        pauli::GATE_VALIDATIONS.set(0);
+        for _ in 0..10 {
+            let _ = pauli.analyze_all_faults(&[], &[], &[]);
+            let _ = gadget.analyze(1);
+            let _ = faults.check_output_weight_expansion(&[0, 1], 2);
+            correction
+                .check(&mut decoder, FaultCheckConfig::default(), false)
+                .unwrap();
+            let _ = tick.build_influence_map_with_tracked_paulis(&[(&[0], &[])]);
+        }
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
+    }
+
+    #[test]
+    fn reused_index_checks_nodes_qubits_and_dependency_order() {
+        let mut removed = DagCircuit::new();
+        removed.h(&[0]);
+        removed.h(&[0]);
+        let index = removed.build_traversal_index();
+        removed.remove_gate(0);
+        assert!(!index.is_valid_for(&removed));
+        assert!(matches!(
+            DagPropagator::with_index(&removed, index),
+            Err(TraversalIndexMismatchError)
+        ));
+
+        let mut original = DagCircuit::new();
+        original.h(&[0]);
+        original.h(&[1]);
+        let mut other = DagCircuit::new();
+        other.h(&[1]);
+        other.h(&[0]);
+        assert!(matches!(
+            DagPropagator::with_index(&other, original.build_traversal_index()),
+            Err(TraversalIndexMismatchError)
+        ));
+
+        let mut reordered = DagCircuit::new();
+        reordered.add_gate(pecos_core::Gate::h(&[0]));
+        reordered.add_gate(pecos_core::Gate::h(&[0]));
+        let index = reordered.build_traversal_index();
+        let nodes = index.topo_order();
+        reordered
+            .connect(nodes[1], nodes[0], pecos_core::QubitId(0))
+            .unwrap();
+        assert!(matches!(
+            DagPropagator::with_index(&reordered, index),
+            Err(TraversalIndexMismatchError)
+        ));
+    }
+
+    #[test]
+    fn compatible_reused_index_classifies_current_gate_payloads() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        let index = dag.build_traversal_index();
+        dag.update_gate(0, |gate| gate.gate_type = GateType::T)
+            .unwrap();
+        assert!(index.is_valid_for(&dag));
+        let walker = DagPropagator::with_index(&dag, index).unwrap();
+        let error = walker
+            .propagate_sparse(&mut PauliProp::new(), Direction::Forward)
+            .unwrap_err();
+        assert_eq!(error.gate_type, GateType::T);
+        assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 0 });
+    }
+
+    #[test]
+    fn cached_errors_follow_direction_and_backward_region() {
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        dag.t(&[0]);
+        dag.h(&[0]);
+        dag.rz(pecos_core::Angle64::from_radians(0.3), &[0]);
+        dag.h(&[0]);
+        let walker = DagPropagator::new(&dag);
+        pauli::GATE_VALIDATIONS.set(0);
+        for empty in [true, false] {
+            let mut prop = PauliProp::new();
+            if !empty {
+                prop.track_z(&[0]);
+            }
+            for direction in [Direction::Forward, Direction::Backward] {
+                let node = if direction == Direction::Forward {
+                    1
+                } else {
+                    3
+                };
+                let sparse = walker
+                    .propagate_sparse(&mut prop.clone(), direction)
+                    .unwrap_err();
+                let dense = walker
+                    .propagate_dense(&mut prop.clone(), direction)
+                    .unwrap_err();
+                assert_eq!(sparse, dense);
+                assert_eq!(sparse.location, UnsupportedGateLocation::DagNode { node });
+            }
+            walker
+                .propagate_backward_from(&mut prop.clone(), 0)
+                .unwrap();
+            for (start, node) in [(1, 1), (2, 1), (3, 3), (4, 3)] {
+                let error = walker
+                    .propagate_backward_from(&mut prop.clone(), start)
+                    .unwrap_err();
+                assert_eq!(error.location, UnsupportedGateLocation::DagNode { node });
+            }
+        }
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
+    }
+
+    #[test]
+    fn dag_analyzer_and_influence_builder_reuse_construction_preflight() {
+        use super::dag::PropagationBuffers;
+        use crate::fault_tolerance::InfluenceBuilder;
+        let mut dag = DagCircuit::new();
+        dag.h(&[0]);
+        dag.cx(&[(0, 1)]);
+        dag.mz(&[0]);
+        pauli::GATE_VALIDATIONS.set(0);
+        let analyzer = DagFaultAnalyzer::new(&dag);
+        assert_eq!(
+            pauli::GATE_VALIDATIONS.get(),
+            3,
+            "the analyzer must reuse its propagator's preflight"
+        );
+        let builder = InfluenceBuilder::new(&dag).unwrap();
+        assert_eq!(
+            pauli::GATE_VALIDATIONS.get(),
+            6,
+            "each object preflights exactly once"
+        );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let validations = pool.install(|| {
+            pauli::GATE_VALIDATIONS.set(0);
+            for _ in 0..10 {
+                analyzer
+                    .propagate_all(&mut CountingRecorder::default())
+                    .unwrap();
+                analyzer.propagate_all_parallel().unwrap();
+                analyzer.propagate_all_forest().unwrap();
+                analyzer.build_influence_map().unwrap();
+                let mut recorder = CountingRecorder::default();
+                let mut work = PropagationBuffers {
+                    visited: vec![false; 3],
+                    active_qubits: vec![false; 2],
+                    heap: BinaryHeap::new(),
+                };
+                analyzer
+                    .propagate_from_measurement_generic(2, 0, 0, 0, &mut recorder, &mut work)
+                    .unwrap();
+                builder.build().unwrap();
+            }
+            pauli::GATE_VALIDATIONS.get()
+        });
+        assert_eq!(validations, 0);
+    }
+
+    #[test]
+    fn dem_builder_reuses_exact_context_preflight() {
+        use crate::fault_tolerance::dem_builder::DemBuilder;
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
+        let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
+        let builder = DemBuilder::new(&map).with_exact_branch_replay_context(&dag);
+        pauli::GATE_VALIDATIONS.set(0);
+        builder.build().unwrap();
+        builder.build().unwrap();
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
+    }
+
+    #[test]
+    fn replacing_dem_context_refreshes_its_cached_diagnostic() {
+        use crate::fault_tolerance::dem_builder::{DemBuilder, DemBuilderError};
+        let mut valid = DagCircuit::new();
+        valid.h(&[0]);
+        valid.mz(&[0]);
+        let mut invalid = DagCircuit::new();
+        invalid.h(&[0]);
+        invalid.t(&[0]);
+        invalid.mz(&[0]);
+        let map = DagFaultAnalyzer::new(&valid).build_influence_map().unwrap();
+        let builder = DemBuilder::new(&map).with_exact_branch_replay_context(&invalid);
+        pauli::GATE_VALIDATIONS.set(0);
+        for _ in 0..2 {
+            let DemBuilderError::UnsupportedGate(error) = builder.build().unwrap_err() else {
+                panic!("expected the replay context's unsupported gate");
+            };
+            assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 1 });
+        }
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
+        let builder = builder.with_exact_branch_replay_context(&valid);
+        pauli::GATE_VALIDATIONS.set(0);
+        builder.build().unwrap();
+        assert_eq!(pauli::GATE_VALIDATIONS.get(), 0);
     }
 }

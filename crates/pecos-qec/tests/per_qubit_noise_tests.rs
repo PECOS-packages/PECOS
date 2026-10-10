@@ -96,7 +96,7 @@ fn per_qubit_cx_rate_affects_mechanism_probabilities() {
     // Total aggregated error probability should reflect the override.
     let dag = build_circuit_with_two_cxs();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let q0 = QubitId::from(0usize);
     let q4 = QubitId::from(4usize);
@@ -142,7 +142,7 @@ fn per_qubit_path_uses_per_gate_type_rates_without_overrides() {
     // should still produce mechanisms from the per-gate-type rates.
     let dag = build_circuit_with_two_cxs();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::uniform(0.0))
         .with_2q_rates(GateType::CX, [1e-3; 15]);

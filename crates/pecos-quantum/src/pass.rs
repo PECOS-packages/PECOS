@@ -1532,11 +1532,12 @@ impl CircuitPass for SimplifySingleQubitCliffordChains {
     }
 }
 
-/// ASAP-schedule gates to minimise tick count, then drop empty ticks.
+/// ASAP-schedule gates to reduce tick count, then drop empty ticks.
 ///
 /// For each gate (processed in original tick order), the pass assigns it to
 /// the earliest tick where none of its qubits are still occupied.  The
-/// resulting circuit has the same gate order per qubit but fewer ticks.
+/// resulting circuit preserves gate order per qubit and measurement emission
+/// order while reducing tick count.
 ///
 /// This is a `TickCircuit`-only optimisation; `apply_dag` is a no-op because
 /// a DAG already represents the dependency graph without fixed time slots.
@@ -1565,14 +1566,19 @@ impl CircuitPass for CompactTicks {
         let mut qubit_ready: HashMap<QubitId, usize> = HashMap::new();
         let mut assignments: Vec<usize> = Vec::with_capacity(entries.len());
         let mut num_ticks: usize = 0;
+        let mut last_measurement_tick = 0;
 
         for (gate, _) in &entries {
-            let earliest = gate
+            let mut earliest = gate
                 .qubits
                 .iter()
                 .map(|q| qubit_ready.get(q).copied().unwrap_or(0))
                 .max()
                 .unwrap_or(0);
+            if gate.gate_type.consumes_measurement_record() {
+                earliest = earliest.max(last_measurement_tick);
+                last_measurement_tick = earliest;
+            }
             assignments.push(earliest);
             for &q in &gate.qubits {
                 qubit_ready.insert(q, earliest + 1);
@@ -1596,10 +1602,8 @@ impl CircuitPass for CompactTicks {
             let tick = circuit
                 .get_tick_mut(ti)
                 .expect("tick index must exist in circuit");
-            let gi = tick.add_gate(gate);
-            if !attrs.is_empty() {
-                tick.set_gate_attrs(gi, attrs);
-            }
+            tick.try_add_gate_preserving_emission(gate, Some(&attrs))
+                .unwrap_or_else(|err| panic!("{err}"));
         }
 
         if !saved_attrs.is_empty() {

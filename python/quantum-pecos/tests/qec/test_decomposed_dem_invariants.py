@@ -116,7 +116,6 @@ def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20) -> obj
         NoiseParameters,
         SurfacePatch,
         generate_tick_circuit_from_patch,
-        get_measurement_order_from_tick_circuit,
     )
 
     patch = SurfacePatch.create(distance=distance)
@@ -129,7 +128,6 @@ def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20) -> obj
     builder = DemBuilder(influence_map)
     builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
     builder.with_num_measurements(int(tc.get_meta("num_measurements") or "0"))
-    builder.with_measurement_order(get_measurement_order_from_tick_circuit(tc))
     builder.with_detectors_json(tc.get_meta("detectors"))
     observables_json = tc.get_meta("observables")
     if observables_json:
@@ -145,7 +143,6 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
         SurfacePatch,
         generate_tick_circuit_from_patch,
         get_detector_descriptors_from_tick_circuit,
-        get_measurement_order_from_tick_circuit,
         get_observable_descriptors_from_tick_circuit,
     )
 
@@ -160,7 +157,6 @@ def test_dem_builder_accepts_public_surface_descriptor_json() -> None:
         builder = DemBuilder(influence_map)
         builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
         builder.with_num_measurements(int(tc.get_meta("num_measurements") or "0"))
-        builder.with_measurement_order(get_measurement_order_from_tick_circuit(tc))
         builder.with_detectors_json(detectors_json)
         if observables_json:
             builder.with_observables_json(observables_json)

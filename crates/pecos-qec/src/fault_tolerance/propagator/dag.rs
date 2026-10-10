@@ -65,7 +65,7 @@
 //! dag.mz(&[2]);       // Measure ancilla
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let map = analyzer.build_influence_map();
+//! let map = analyzer.build_influence_map().unwrap();
 //!
 //! // O(1) fault classification
 //! let (has_syndrome, _flips_non_detector_output) = map.classify_fault(0, 1); // loc 0, X fault
@@ -73,8 +73,7 @@
 
 use super::{
     DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli,
-    PauliPropagationOutcome, UnsupportedGateError, UnsupportedGateLocation, apply_gate,
-    apply_gate_unchecked, is_supported_prep_gate,
+    PauliPropagationOutcome, UnsupportedGateError, apply_gate_unchecked, is_supported_prep_gate,
 };
 use pecos_core::gate_type::GateType;
 use pecos_core::{CliffordLowering, Gate, PauliString, QuarterPhase, QubitId};
@@ -1879,7 +1878,7 @@ impl InfluenceRecorder for BucketRecorder {
 ///
 /// // Build the fault influence map using sparse propagation
 /// let propagator = DagFaultAnalyzer::new(&dag);
-/// let influence_map = propagator.build_influence_map();
+/// let influence_map = propagator.build_influence_map().unwrap();
 /// ```
 pub struct DagFaultAnalyzer<'a> {
     /// Base propagator for traversal infrastructure.
@@ -1904,7 +1903,7 @@ impl<'a> DagFaultAnalyzer<'a> {
             locations: FaultLocations::new(),
             unsupported_gate: None,
         };
-        analyzer.unsupported_gate = analyzer.scan_for_unsupported_gate();
+        analyzer.unsupported_gate = analyzer.propagator.first_unsupported_gate().cloned();
         if analyzer.unsupported_gate.is_none() {
             analyzer.locations = Self::extract_locations(&analyzer.propagator, dag);
         }
@@ -2009,14 +2008,25 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// dag.mz(&[2]);
     ///
     /// let propagator = DagFaultAnalyzer::new(&dag);
-    /// let map = propagator.build_influence_map();
+    /// let map = propagator.build_influence_map().unwrap();
     ///
     /// // Check memory usage
     /// let stats = map.memory_stats();
     /// println!("Total bytes: {}", stats.total_bytes);
     /// ```
-    #[must_use]
-    pub fn build_influence_map(&self) -> DagFaultInfluenceMap {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the construction preflight.
+    pub fn build_influence_map(&self) -> Result<DagFaultInfluenceMap, UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        Ok(self.build_influence_map_diagnostic())
+    }
+
+    /// Retain the diagnostic for internal DEM builders that already check the map preflight.
+    pub(crate) fn build_influence_map_diagnostic(&self) -> DagFaultInfluenceMap {
         let num_locations = self.locations.len();
         let mut map = DagFaultInfluenceMap::with_capacity(num_locations);
         map.unsupported_gate.clone_from(&self.unsupported_gate);
@@ -2049,7 +2059,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         // qubit reuse. The forest shortcut groups by measured qubit ID and is
         // only valid when that physical qubit represents one fixed measurement
         // stream, not a reusable ancilla slot.
-        let recorder = self.propagate_all_parallel();
+        let recorder = self.propagate_all_parallel_validated();
 
         // Convert buckets to SoA format (O(n) flattening)
         map.influences = recorder.into_soa();
@@ -2061,31 +2071,6 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// as classified once at construction.
     pub(crate) fn first_unsupported_gate(&self) -> Option<UnsupportedGateError> {
         self.unsupported_gate.clone()
-    }
-
-    /// Classifies every circuit gate through the propagation primitive and
-    /// returns the first unsupported gate, if any.
-    ///
-    /// This deliberately calls [`apply_gate`] instead of maintaining another
-    /// gate list. The scratch Pauli state is irrelevant to the classification.
-    fn scan_for_unsupported_gate(&self) -> Option<UnsupportedGateError> {
-        let mut scratch = PauliProp::new();
-        for &node in self.propagator.topo_order() {
-            let Some(gate) = self.propagator.gate(node) else {
-                continue;
-            };
-            if apply_gate(&mut scratch, gate, Direction::Forward)
-                == PauliPropagationOutcome::Unsupported
-            {
-                return Some(UnsupportedGateError {
-                    angles: gate.angles.to_vec(),
-                    gate_type: gate.gate_type,
-                    location: UnsupportedGateLocation::DagNode { node },
-                    qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
-                });
-            }
-        }
-        None
     }
 
     /// Extracts measurements in emission order: keyed topological node order,
@@ -2144,7 +2129,34 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// * `visited` - Work buffer for visited nodes (reusable)
     /// * `active_qubits` - Work buffer for active qubits (reusable)
     /// * `heap` - Work heap for traversal (reusable)
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
     pub fn propagate_from_measurement_generic<R: InfluenceRecorder>(
+        &self,
+        meas_node: usize,
+        meas_qubit: usize,
+        basis: u8,
+        detector_idx: usize,
+        recorder: &mut R,
+        work: &mut PropagationBuffers,
+    ) -> Result<(), UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        self.propagate_from_measurement_generic_validated(
+            meas_node,
+            meas_qubit,
+            basis,
+            detector_idx,
+            recorder,
+            work,
+        );
+        Ok(())
+    }
+
+    fn propagate_from_measurement_generic_validated<R: InfluenceRecorder>(
         &self,
         meas_node: usize,
         meas_qubit: usize,
@@ -2221,7 +2233,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                 }
 
                 // Apply gate backward
-                let _outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
 
                 // Check before=true locations
                 self.record_at_node_generic(node, &prop, detector_idx, recorder, true);
@@ -2360,7 +2374,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     return Some(pz_topo);
                 }
 
-                let _outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
                 self.record_at_node_generic(node, prop, request.detector_idx, recorder, true);
 
                 let node_topo_pos = self.propagator.topo_position(node);
@@ -2430,7 +2446,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                let _outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
                 self.record_at_node_generic(node, prop, detector_idx, recorder, true);
 
                 let node_topo = self.propagator.topo_position(node);
@@ -2493,7 +2511,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                let _outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
                 self.record_at_node_generic(node, prop, detector_idx, recorder, true);
             }
         }
@@ -2507,8 +2527,18 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// measured physical qubit represents one fixed logical measurement stream.
     /// It must not be used for circuits that reuse one physical measurement
     /// qubit for multiple logical checks.
-    #[must_use]
-    pub fn propagate_all_forest(&self) -> BucketRecorder {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
+    pub fn propagate_all_forest(&self) -> Result<BucketRecorder, UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        Ok(self.propagate_all_forest_validated())
+    }
+
+    fn propagate_all_forest_validated(&self) -> BucketRecorder {
         use rayon::prelude::*;
 
         let (measurements, _meas_ids) = self.extract_measurements();
@@ -2617,10 +2647,25 @@ impl<'a> DagFaultAnalyzer<'a> {
     ///
     /// // Use a counting recorder to count influences
     /// let mut recorder = CountingRecorder::default();
-    /// propagator.propagate_all(&mut recorder);
+    /// propagator.propagate_all(&mut recorder).unwrap();
     /// println!("Total influences: {}", recorder.count);
     /// ```
-    pub fn propagate_all<R: InfluenceRecorder>(&self, recorder: &mut R) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
+    pub fn propagate_all<R: InfluenceRecorder>(
+        &self,
+        recorder: &mut R,
+    ) -> Result<(), UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        self.propagate_all_validated(recorder);
+        Ok(())
+    }
+
+    fn propagate_all_validated<R: InfluenceRecorder>(&self, recorder: &mut R) {
         let (measurements, _) = self.extract_measurements();
 
         let mut work = PropagationBuffers {
@@ -2630,7 +2675,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         };
 
         for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
-            self.propagate_from_measurement_generic(
+            self.propagate_from_measurement_generic_validated(
                 node,
                 qubit,
                 basis,
@@ -2643,8 +2688,18 @@ impl<'a> DagFaultAnalyzer<'a> {
 
     /// Parallel version: propagates from all measurements using rayon.
     /// Each thread gets its own `BucketRecorder`, results are merged.
-    #[must_use]
-    pub fn propagate_all_parallel(&self) -> BucketRecorder {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
+    pub fn propagate_all_parallel(&self) -> Result<BucketRecorder, UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        Ok(self.propagate_all_parallel_validated())
+    }
+
+    fn propagate_all_parallel_validated(&self) -> BucketRecorder {
         use rayon::prelude::*;
 
         let (measurements, _) = self.extract_measurements();
@@ -2665,7 +2720,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 };
 
                 for (i, &(node, qubit, basis)) in chunk.iter().enumerate() {
-                    self.propagate_from_measurement_generic(
+                    self.propagate_from_measurement_generic_validated(
                         node,
                         qubit,
                         basis,
@@ -2693,8 +2748,138 @@ impl<'a> DagFaultAnalyzer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::UnsupportedGateLocation;
     use super::*;
     use pecos_quantum::DagCircuit;
+
+    #[test]
+    fn bare_t_is_rejected_by_every_influence_map_dem_entry_point() {
+        use crate::fault_tolerance::dem_builder::{
+            DemBuilder, DemBuilderError, DemSampler, DemSamplerBuilder, DetectorValidationError,
+            MemBuilder, NoiseConfig, SamplingEngine,
+        };
+        fn assert_dem_error(
+            error: DemBuilderError,
+            gate_type: GateType,
+            location: UnsupportedGateLocation,
+        ) {
+            let DemBuilderError::UnsupportedGate(error) = error else {
+                panic!("expected structured unsupported-gate error, got {error:?}");
+            };
+            assert_eq!(error.gate_type, gate_type);
+            assert_eq!(error.location, location);
+            assert_eq!(error.qubits, [0]);
+        }
+
+        fn assert_sampler_error(
+            error: DetectorValidationError,
+            gate_type: GateType,
+            location: UnsupportedGateLocation,
+        ) {
+            let DetectorValidationError::UnsupportedGate(error) = error else {
+                panic!("expected structured unsupported-gate error, got {error:?}");
+            };
+            assert_eq!(error.gate_type, gate_type);
+            assert_eq!(error.location, location);
+            assert_eq!(error.qubits, [0]);
+        }
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.t(&[0]);
+        circuit.mz(&[0]);
+        let map = DagFaultAnalyzer::new(&circuit).build_influence_map_diagnostic();
+        let probabilities = vec![0.0; map.locations.len()];
+        let location = UnsupportedGateLocation::DagNode { node: 1 };
+
+        assert_dem_error(
+            DemBuilder::new(&map).build().unwrap_err(),
+            GateType::T,
+            location,
+        );
+        assert_dem_error(
+            DemBuilder::new(&map).try_build().unwrap_err(),
+            GateType::T,
+            location,
+        );
+
+        let mem_error = MemBuilder::new(&map).build().unwrap_err();
+        assert_dem_error(mem_error, GateType::T, location);
+
+        assert_sampler_error(
+            DemSamplerBuilder::new(&map).build().unwrap_err(),
+            GateType::T,
+            location,
+        );
+        assert_sampler_error(
+            DemSamplerBuilder::new(&map)
+                .with_detector_records(Vec::new())
+                .build()
+                .unwrap_err(),
+            GateType::T,
+            location,
+        );
+        assert_sampler_error(
+            DemSampler::from_influence_map(&map, &probabilities).unwrap_err(),
+            GateType::T,
+            location,
+        );
+
+        let engine_error =
+            SamplingEngine::from_influence_map(&map, &probabilities, &NoiseConfig::default())
+                .unwrap_err();
+        assert_dem_error(engine_error, GateType::T, location);
+    }
+
+    #[test]
+    fn internal_rxyxy2q_diagnostic_reaches_dem_and_mem() {
+        use crate::fault_tolerance::dem_builder::{DemBuilder, DemBuilderError, MemBuilder};
+        use pecos_core::Angle64;
+        fn rxyxy2q_circuit(gate: Gate) -> DagCircuit {
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&[0, 1]);
+            circuit.add_gate_auto_wire(gate.clone());
+            circuit.add_gate_auto_wire(gate);
+            circuit.mz(&[0]);
+            circuit.mz(&[1]);
+            circuit.set_attr(
+                "detectors",
+                pecos_quantum::Attribute::String(
+                    r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#.to_string(),
+                ),
+            );
+            circuit
+        }
+
+        let non_clifford = Angle64::from_radians(0.123);
+        for gate in [
+            Gate::rxyxy2q(Angle64::QUARTER_TURN, non_clifford, &[(0, 1)]),
+            Gate::rxyxy2q(non_clifford, Angle64::ZERO, &[(0, 1)]),
+            Gate::rxxryyrzz(non_clifford, Angle64::ZERO, Angle64::ZERO, &[(0, 1)]),
+            Gate::u2q(
+                [[Angle64::ZERO; 3]; 2],
+                [non_clifford, Angle64::ZERO, Angle64::ZERO],
+                [[Angle64::ZERO; 3]; 2],
+                &[(0, 1)],
+            ),
+            Gate::ch(&[(0, 1)]),
+        ] {
+            let circuit = rxyxy2q_circuit(gate.clone());
+            let map = DagFaultAnalyzer::new(&circuit).build_influence_map_diagnostic();
+            for error in [
+                DemBuilder::new(&map).build().unwrap_err(),
+                MemBuilder::new(&map).build().unwrap_err(),
+            ] {
+                let DemBuilderError::UnsupportedGate(error) = error else {
+                    panic!("expected unsupported gate: {error:?}")
+                };
+                assert_eq!(error.gate_type, gate.gate_type);
+                assert_eq!(error.qubits, [0, 1]);
+                assert_eq!(error.angles, gate.angles.as_slice());
+                assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 2 });
+            }
+        }
+    }
 
     // =========================================================================
     // Helper Functions
@@ -2784,7 +2969,7 @@ mod tests {
             dag.add_gate_auto_wire(gate);
         }
 
-        let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+        let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
         assert_eq!(
             map.meas_index_of(MeasId::from_raw(7)),
             Some(0),
@@ -2847,11 +3032,17 @@ mod tests {
     }
 
     fn build_parallel_map(analyzer: &DagFaultAnalyzer<'_>) -> DagFaultInfluenceMap {
-        build_map_with_influences(analyzer, analyzer.propagate_all_parallel().into_soa())
+        build_map_with_influences(
+            analyzer,
+            analyzer.propagate_all_parallel().unwrap().into_soa(),
+        )
     }
 
     fn build_forest_map(analyzer: &DagFaultAnalyzer<'_>) -> DagFaultInfluenceMap {
-        build_map_with_influences(analyzer, analyzer.propagate_all_forest().into_soa())
+        build_map_with_influences(
+            analyzer,
+            analyzer.propagate_all_forest().unwrap().into_soa(),
+        )
     }
 
     fn build_map_with_influences(
@@ -3049,7 +3240,7 @@ mod tests {
         let dag = reused_physical_ancilla_circuit();
         let analyzer = DagFaultAnalyzer::new(&dag);
 
-        let built = analyzer.build_influence_map();
+        let built = analyzer.build_influence_map().unwrap();
         let parallel = build_parallel_map(&analyzer);
         let forest = build_forest_map(&analyzer);
 
@@ -3171,6 +3362,7 @@ mod tests {
         dag.h(&[0]);
 
         let map = crate::fault_tolerance::InfluenceBuilder::new(&dag)
+            .unwrap()
             .with_z(&[0])
             .build()
             .expect("circuit is replayable");
@@ -3289,7 +3481,7 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Find the CX gate locations
         let cx_locations: Vec<_> = map
@@ -3328,7 +3520,7 @@ mod tests {
         // Test CZ gates have per-qubit fault locations
         let dag = cz_syndrome_circuit();
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Find CZ gate locations
         let cz_locations: Vec<_> = map
@@ -3356,7 +3548,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // X error on target qubit 2 after CX should flip the measurement
         let mut found_target_influence = false;
@@ -3385,7 +3577,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Find a CX location and check all Pauli influences
         let cx_idx = map
@@ -3406,7 +3598,7 @@ mod tests {
         // Verify all locations have single qubits (per-qubit fault model)
         let dag = surface_code_circuit(3); // d=3 has multi-qubit CX gates
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // All locations should have exactly 1 qubit in per-qubit model
         for loc in &map.locations {
@@ -3443,7 +3635,7 @@ mod tests {
         for seed in 0..num_tests {
             let dag = random_dag_circuit(5, 15, seed);
             let analyzer = DagFaultAnalyzer::new(&dag);
-            let map = analyzer.build_influence_map();
+            let map = analyzer.build_influence_map().unwrap();
 
             if map.measurements.is_empty() {
                 continue; // Skip circuits without measurements
@@ -3474,7 +3666,7 @@ mod tests {
                     }
 
                     // Propagate forward from this location
-                    propagate_sparse_dag(&dag, &mut prop, Direction::Forward);
+                    propagate_sparse_dag(&dag, &mut prop, Direction::Forward).unwrap();
 
                     // Check if propagated error anticommutes with any measurement
                     let mut fwd_has_syndrome = false;
@@ -3535,7 +3727,7 @@ mod tests {
                 let analyzer = DagFaultAnalyzer::new(&dag);
 
                 // Should not panic
-                let map = analyzer.build_influence_map();
+                let map = analyzer.build_influence_map().unwrap();
 
                 // Basic sanity checks
                 assert!(
@@ -3554,7 +3746,7 @@ mod tests {
     fn test_surface_code_d3() {
         let dag = surface_code_circuit(3);
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // d=3 has 9 data qubits and 8 ancillas
         assert_eq!(map.detectors.len(), 8, "d=3 should have 8 detectors");
@@ -3568,7 +3760,7 @@ mod tests {
     fn test_surface_code_d5() {
         let dag = surface_code_circuit(5);
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // d=5 has 25 data qubits and 24 ancillas
         assert_eq!(map.detectors.len(), 24, "d=5 should have 24 detectors");
@@ -3579,7 +3771,7 @@ mod tests {
         // Verify that surface code circuits have proper per-qubit fault coverage
         let dag = surface_code_circuit(3);
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // All locations should have exactly 1 qubit in per-qubit model
         for loc in &map.locations {
@@ -3650,7 +3842,7 @@ mod tests {
 
         // Use propagate_all with a custom recorder
         let mut recorder = super::super::CountingRecorder::default();
-        analyzer.propagate_all(&mut recorder);
+        analyzer.propagate_all(&mut recorder).unwrap();
 
         assert!(recorder.count > 0, "Should record some influences");
     }

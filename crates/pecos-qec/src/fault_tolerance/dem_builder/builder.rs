@@ -28,8 +28,8 @@ use crate::fault_tolerance::circuit_definitions::{
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
-    DagFaultInfluenceMap, Direction, Pauli, apply_gate_unchecked,
-    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+    DagFaultInfluenceMap, Direction, Pauli, is_supported_noop_or_metadata_gate,
+    is_supported_prep_gate,
 };
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
@@ -147,6 +147,8 @@ pub struct DemBuilder<'a> {
     measurement_order: Option<Vec<usize>>,
     /// Optional circuit context for future exact replacement-branch replay.
     exact_branch_context: Option<ExactBranchReplayContext<'a>>,
+    /// The immutable replay circuit is preflighted when its context is attached.
+    exact_branch_unsupported_gate: Option<crate::fault_tolerance::UnsupportedGateError>,
     /// Ideal symbolic measurement history shared by exact branch replays.
     exact_ideal_history_cache: RefCell<Option<Rc<ExactIdealReplay>>>,
     /// Record-position translation shared by ordinary and exact paths.
@@ -351,6 +353,7 @@ impl<'a> DemBuilder<'a> {
             num_measurements: influence_map.measurements.len(),
             measurement_order: None,
             exact_branch_context: None,
+            exact_branch_unsupported_gate: None,
             exact_ideal_history_cache: RefCell::new(None),
             tc_to_influence_cache: RefCell::new(None),
             exact_branch_cache: RefCell::new(BTreeMap::new()),
@@ -377,11 +380,19 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
+    /// Attach the immutable circuit used for exact branch replay.
+    ///
+    /// Its gate eligibility is cached here; build methods report the diagnostic
+    /// without repeating this preflight. Replacing the context refreshes the cache.
     #[must_use]
     pub fn with_exact_branch_replay_context(
         mut self,
         circuit: &'a pecos_quantum::DagCircuit,
     ) -> Self {
+        self.exact_branch_unsupported_gate =
+            crate::fault_tolerance::propagator::DagPropagator::new(circuit)
+                .first_unsupported_gate()
+                .cloned();
         self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
         self.clear_exact_branch_cache();
         self
@@ -506,26 +517,22 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
-    /// Sets the measurement order from the original circuit.
+    /// Map record positions to influence-map positions by qubit and occurrence.
     ///
-    /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
-    /// between record offsets (which use `TickCircuit` order) and influence map
-    /// indices (which may use a different order based on DAG topology).
-    ///
-    /// # Arguments
-    /// Set the measurement order for legacy circuits without `MeasId` on gates.
-    ///
-    /// **Not needed for circuits built with `TickCircuit.mz()`** — the `MeasId`
-    /// values on gates ensure correct ordering automatically.
-    ///
-    /// Only use this for circuits where MZ gates lack `meas_ids` (e.g.,
-    /// circuits imported from external formats without measurement IDs).
-    ///
-    /// * `order` - List of qubit indices in measurement execution order.
-    ///   `order[i]` is the qubit measured at `TickCircuit` measurement index `i`.
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     #[must_use]
-    pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
+    )]
+    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
+        self.set_measurement_order_internal(order)
+    }
+
+    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
         self.clear_exact_branch_cache();
         self
@@ -927,11 +934,9 @@ impl<'a> DemBuilder<'a> {
                 )));
             }
         }
-        // A supplied order feeds the qubit-occurrence heuristic, which needs
-        // per-qubit chronology on both sides. Minted (positional) ids keep it
-        // -- that combination is routine in the surface pipeline -- but
-        // external non-positional ids can reorder a qubit's measurements in
-        // the map, and no heuristic can recover the caller's record order.
+        // The deprecated qubit-occurrence API refuses non-positional stamps.
+        // Circuit-built maps use emission order independently of stamped IDs, so
+        // this guard can also reject an identity order.
         if self.measurement_order.is_some() && !stamped_ids_are_positional(self.influence_map) {
             return Err(DemBuilderError::ConfigurationError(
                 "measurement_order cannot be combined with a circuit whose stable \
@@ -966,12 +971,8 @@ impl<'a> DemBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
-        if let Some(context) = self.exact_branch_context
-            && let Some(error) =
-                crate::fault_tolerance::propagator::DagFaultAnalyzer::new(context.circuit)
-                    .first_unsupported_gate()
-        {
-            return Err(DemBuilderError::UnsupportedGate(error));
+        if let Some(error) = &self.exact_branch_unsupported_gate {
+            return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
         Ok(())
     }
@@ -1357,7 +1358,13 @@ impl<'a> DemBuilder<'a> {
             })?;
         for &node in topo_order[payload_pos + 1..].iter().rev() {
             if let Some(gate) = context.circuit.gate(node) {
-                let _outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
+                super::super::propagator::apply_gate_at(
+                    &mut prop,
+                    gate,
+                    Direction::Backward,
+                    super::super::propagator::UnsupportedGateLocation::DagNode { node },
+                )
+                .map_err(DemBuilderError::UnsupportedGate)?;
             }
         }
 
@@ -1486,6 +1493,7 @@ impl<'a> DemBuilder<'a> {
 
         let ideal_history = self.exact_ideal_measurement_history(context)?;
         let branch_info = InfluenceBuilder::new(branch)
+            .map_err(DemBuilderError::UnsupportedGate)?
             .run_symbolic_simulation()
             .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
@@ -1539,6 +1547,7 @@ impl<'a> DemBuilder<'a> {
         }
 
         let info = InfluenceBuilder::new(context.circuit)
+            .map_err(DemBuilderError::UnsupportedGate)?
             .run_symbolic_simulation()
             .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         let influence_to_history = self.influence_map.measurements
@@ -1582,7 +1591,7 @@ impl<'a> DemBuilder<'a> {
         let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
         let base_effect =
             self.exact_omitted_branch_base_effect_for_branch(context, request, &branch)?;
-        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map_diagnostic();
         let branch_locs = identity_location_pair_for_request(
             request,
             &self.influence_map.locations,
@@ -2850,7 +2859,7 @@ pub(crate) fn sampler_measurement_mapping(
 ) -> Result<Option<Vec<usize>>, DemBuilderError> {
     let mut builder = DemBuilder::new(map);
     if let Some(order) = order {
-        builder = builder.with_measurement_order(order.to_vec());
+        builder = builder.set_measurement_order_internal(order.to_vec());
     }
     builder.validate_measurement_count()?;
     if order.is_none() || map.measurements.is_empty() {
@@ -3405,7 +3414,7 @@ impl ExactBranchReplayContext<'_> {
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 
         let branch = circuit_with_omitted_two_qubit_gate(self.circuit, request.gate_node)?;
-        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map_diagnostic();
         identity_location_pair_for_request(request, original_locations, &branch_map.locations)
     }
 }
@@ -3550,11 +3559,12 @@ fn build_dem_from_circuit(
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
     let definitions = definitions_from_dag_circuit(circuit)?;
 
-    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
+    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
     if let Some(error) = influence_map.unsupported_gate() {
         return Err(DemBuilderError::UnsupportedGate(error.clone()));
     }
     let annotation_map = InfluenceBuilder::new(circuit)
+        .map_err(DemBuilderError::UnsupportedGate)?
         .with_circuit_annotations()
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
         .build()
@@ -3950,6 +3960,8 @@ mod tests {
         assert!(error.contains("meas_id 0, which is not present"), "{error}");
     }
 
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn map_only_redundancy_uses_measurement_order() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
@@ -4072,6 +4084,7 @@ mod tests {
         circuit.pz(&[0]);
         circuit.mz(&[0]);
         let info = InfluenceBuilder::new(&circuit)
+            .expect("supported circuit")
             .run_symbolic_simulation()
             .unwrap();
         // The first mapping has no node for position 0; the second names a
@@ -4084,6 +4097,8 @@ mod tests {
         }
     }
 
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn exact_reference_translation_preserves_legacy_ids_and_multiplicity() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
@@ -5339,7 +5354,9 @@ mod tests {
         circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
         circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let requests = ExactBranchReplayContext { circuit: &circuit }
             .replacement_branch_requests(&influence_map.locations)
             .expect("two-qubit branch requests should be recoverable");
@@ -5371,7 +5388,9 @@ mod tests {
         let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
         circuit.mz(&[1]);
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let context = ExactBranchReplayContext { circuit: &circuit };
         let request = context
             .replacement_branch_requests(&influence_map.locations)
@@ -5403,7 +5422,9 @@ mod tests {
         let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
         circuit.mz(&[1]);
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let context = ExactBranchReplayContext { circuit: &circuit };
         let request = context
             .replacement_branch_requests(&influence_map.locations)
@@ -5539,10 +5560,12 @@ mod tests {
         );
     }
 
+    // exercises the deprecated measurement-order API
     /// The stamped branch of `build_measurement_mappings` must use the
     /// resolved index directly: it is already an influence-map index, and
     /// composing it with the tick-to-influence occurrence mapping re-binds
     /// annotations whenever the two orders differ.
+    #[allow(deprecated)]
     #[test]
     fn stamped_meas_id_mapping_is_not_recomposed_through_the_order() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
@@ -5567,8 +5590,10 @@ mod tests {
         );
     }
 
-    /// Positional (minted) ids with a supplied order is the routine surface
-    /// pipeline combination and must keep building.
+    /// Positional (minted) ids with a supplied order remain accepted by the
+    /// deprecated API's existing guard.
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn measurement_order_is_accepted_with_positional_ids() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
@@ -5588,6 +5613,8 @@ mod tests {
         );
     }
 
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn test_validate_measurement_count_rejects_order_with_stamped_ids() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
@@ -5603,8 +5630,8 @@ mod tests {
             .try_build();
         assert!(
             result.is_err(),
-            "measurement_order on a stamped-id circuit silently mis-binds; it \
-             must fail loud",
+            "the deprecated measurement-order guard rejects non-positional \
+             stamped ids",
         );
     }
 

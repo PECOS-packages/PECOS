@@ -150,6 +150,10 @@ let xz_analysis = checker.analyze_weight_with_types(1, true, false, true);
 
 `PauliPropChecker` propagates Pauli errors through a specific syndrome extraction circuit. This verifies whether a particular circuit implementation is fault-tolerant.
 
+Checker construction validates the entire circuit and returns an error identifying
+any unsupported gate. Once constructed, a checker borrows the validated circuit
+immutably, so its analysis methods are infallible.
+
 ```rust
 use pecos_qec::PauliPropChecker;
 use pecos_quantum::TickCircuit;
@@ -161,7 +165,7 @@ circuit.tick().cx(&[(0, 3), (1, 4)]);    // CNOT: data -> ancilla
 circuit.tick().cx(&[(1, 3), (2, 4)]);    // Second round of CNOTs
 circuit.tick().mz(&[3, 4]);              // Measure ancillas
 
-let checker = PauliPropChecker::new(&circuit);
+let checker = PauliPropChecker::new(&circuit).unwrap();
 
 // Define syndrome ancillas and logical operators
 let z_ancillas = &[3, 4];
@@ -211,7 +215,7 @@ let config = GadgetConfig::syndrome_extraction()
     .with_z_ancillas(&[3, 4])        // For syndrome extraction
     .with_logical_z(&[], &[0, 1, 2]); // Z logical operator
 
-let checker = GadgetChecker::new(&circuit, config);
+let checker = GadgetChecker::new(&circuit, config).unwrap();
 let analysis = checker.analyze(1); // Check 1-fault tolerance
 
 println!("Is 1-FT: {}", analysis.is_fault_tolerant());
@@ -262,7 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;

@@ -116,7 +116,8 @@ pub fn eeg_summary(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
     let h = result
         .generators
@@ -155,7 +156,8 @@ pub fn eeg_event_diagnostics(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     // Group H generators by DEM event, tracking labels
@@ -222,7 +224,8 @@ pub fn eeg_per_detector(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+    let result = circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, _observables) = extract_detectors_expanded(tick_circuit, &gates, &expanded)?;
 
     let expanded_pre_readout = exclude_final_mz(&expanded.gates);
@@ -895,8 +898,8 @@ pub fn correlation_matching_dem(
 /// faults with the same effective Pauli label. Measurement and prep
 /// noise kept at original positions. Returns compression statistics.
 ///
-/// This compresses the forward generator approximation; it does not preserve
-/// categorical channel exclusivity or exact finite-probability composition.
+/// Stochastic (S) flips compose exactly; coherent (H) sources compose to first
+/// order, and categorical channel exclusivity is not preserved.
 ///
 /// Returns (original_count, compressed_count, boundary_noise_labels).
 #[pyfunction]
@@ -1078,7 +1081,8 @@ fn run_eeg(
 
     // Step 2: Propagate through expanded circuit
     let result =
-        pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+        pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
     // Step 3: Build detectors using expanded circuit mapping
     let (detectors, observables) = extract_detectors_expanded(py_tc, &gates, &expanded)?;
@@ -1134,7 +1138,8 @@ fn run_eeg_decomposable(
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let result =
-        pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+        pecos_eeg::circuit::analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(py_tc, &gates, &expanded)?;
     let expanded_pre_readout = exclude_final_mz(&expanded.gates);
     let stab_group = pecos_eeg::stabilizer::StabilizerGroup::from_circuit(

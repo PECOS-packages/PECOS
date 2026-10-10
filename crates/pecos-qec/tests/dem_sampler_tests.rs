@@ -65,7 +65,7 @@ fn build_repetition_code_circuit() -> DagCircuit {
 fn test_zero_noise_produces_no_errors() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
 
@@ -95,8 +95,8 @@ fn test_mechanism_count_scales_with_circuit() {
     let analyzer1 = DagFaultAnalyzer::new(&dag1);
     let analyzer2 = DagFaultAnalyzer::new(&dag2);
 
-    let im1 = analyzer1.build_influence_map();
-    let im2 = analyzer2.build_influence_map();
+    let im1 = analyzer1.build_influence_map().unwrap();
+    let im2 = analyzer2.build_influence_map().unwrap();
 
     let sampler1 = DemSamplerBuilder::new(&im1)
         .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -123,7 +123,7 @@ fn test_mechanism_count_scales_with_circuit() {
 fn test_deterministic_sampling_with_seed() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
 
@@ -149,7 +149,7 @@ fn test_deterministic_sampling_with_seed() {
 fn test_different_seeds_produce_different_results() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
 
@@ -178,7 +178,7 @@ fn test_different_seeds_produce_different_results() {
 fn test_syndrome_rate_scales_with_noise() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
 
@@ -214,7 +214,7 @@ fn test_syndrome_rate_scales_with_noise() {
 fn test_syndrome_rate_reasonable_magnitude() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
     let p = 0.01;
@@ -248,7 +248,7 @@ fn test_syndrome_rate_reasonable_magnitude() {
 fn test_observable_tracking() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
     // Observable tracking the measurement (will flip when measurement errors occur)
@@ -283,7 +283,7 @@ fn test_observable_tracking() {
 fn test_empty_detector_definitions() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -311,7 +311,7 @@ fn test_single_qubit_circuit() {
     dag.mz(&[0]);
 
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -334,7 +334,7 @@ fn test_single_qubit_circuit() {
 fn test_only_measurement_noise() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_noise(0.0, 0.0, 0.1, 0.0) // Only measurement noise
@@ -362,7 +362,7 @@ fn test_only_measurement_noise() {
 fn test_only_two_qubit_noise() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_noise(0.0, 0.1, 0.0, 0.0) // Only two-qubit noise
@@ -394,7 +394,7 @@ fn test_only_two_qubit_noise() {
 fn test_dem_sampler_vs_mnm_mechanism_structure() {
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let p1 = 0.01;
     let p2 = 0.01;
@@ -425,7 +425,7 @@ fn test_dem_sampler_vs_mnm_mechanism_structure() {
 fn test_multi_detector_circuit() {
     let dag = build_repetition_code_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[
         {"id": 0, "records": [-2]},
@@ -460,7 +460,7 @@ fn test_multi_detector_circuit() {
 fn test_batch_sampling_performance() {
     let dag = build_repetition_code_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let sampler = DemSamplerBuilder::new(&influence_map)
         .with_noise(0.01, 0.01, 0.01, 0.01)
@@ -491,7 +491,7 @@ fn test_statistics_vs_batch_consistency() {
     // statistically equivalent but not bit-identical results, even with the same seed.
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
     let observables_json = r#"[{"id": 0, "records": [-1]}]"#;

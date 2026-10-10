@@ -2610,10 +2610,6 @@ impl TickCircuit {
 
         for tick in old_ticks {
             let mut placed = false;
-            let emits_records = tick
-                .gate_batches
-                .iter()
-                .any(|gate| gate.gate_type.consumes_measurement_record());
 
             // Try to merge into the latest existing tick where all qubits are free.
             // Walk backwards to find the latest valid target (ASAP scheduling).
@@ -2628,17 +2624,11 @@ impl TickCircuit {
                     // Check that no tick between target+1..end uses any of these qubits
                     // (would violate ordering).
                     let all_clear = (target_idx + 1..compacted.len()).all(|between| {
-                        let crosses_records = emits_records
-                            && compacted[between]
-                                .gate_batches
+                        tick.gate_batches.iter().all(|gate| {
+                            gate.qubits
                                 .iter()
-                                .any(|gate| gate.gate_type.consumes_measurement_record());
-                        !crosses_records
-                            && tick.gate_batches.iter().all(|gate| {
-                                gate.qubits
-                                    .iter()
-                                    .all(|q| !compacted[between].uses_qubit(*q))
-                            })
+                                .all(|q| !compacted[between].uses_qubit(*q))
+                        })
                     });
 
                     if all_clear {

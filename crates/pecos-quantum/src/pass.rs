@@ -1532,7 +1532,7 @@ impl CircuitPass for SimplifySingleQubitCliffordChains {
     }
 }
 
-/// ASAP-schedule gates to minimise tick count, then drop empty ticks.
+/// ASAP-schedule gates to reduce tick count, then drop empty ticks.
 ///
 /// For each gate (processed in original tick order), the pass assigns it to
 /// the earliest tick where none of its qubits are still occupied.  The

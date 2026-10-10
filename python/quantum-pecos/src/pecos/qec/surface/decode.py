@@ -1147,8 +1147,8 @@ def _is_surface_sideband_result_tag(name: str) -> bool:
 def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
     """Return one result-tag reference per record, in shared-reader emission order.
 
-    A batched ``final[i]`` label starts at array element i and follows the
-    gate's qubit-list order. Scalar syndrome labels require a single record.
+    Each label (``sx..``/``sz..`` or ``final[i]``) names exactly one measurement,
+    so a labelled measurement gate must measure a single qubit.
     """
     refs: list[tuple[str, str] | tuple[str, str, int]] = []
     measured_qubits: list[int] = []
@@ -1165,10 +1165,13 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
             qubits = list(gate.qubits)
             measured_qubits.extend(qubits)
             label = str(abstract_tc.get_gate_meta(tick_index, gate_index, "label") or "")
+            if len(qubits) != 1:
+                msg = (
+                    f"surface measurement label {label!r} names one measurement but its gate "
+                    f"measures {len(qubits)} qubits"
+                )
+                raise ValueError(msg)
             if label.startswith(("sx", "sz")):
-                if len(qubits) != 1:
-                    msg = f"scalar surface measurement label {label!r} requires a single-qubit gate"
-                    raise ValueError(msg)
                 round_value = abstract_tc.get_gate_meta(tick_index, gate_index, "syndrome_round")
                 if round_value is None:
                     msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
@@ -1180,8 +1183,7 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
                 refs.append(("scalar", f"{label}:{phase}:{measurement_index}"))
                 continue
             if label.startswith("final[") and label.endswith("]"):
-                first_element = int(label.removeprefix("final[").removesuffix("]"))
-                refs.extend(("array", "final", first_element + element) for element in range(len(qubits)))
+                refs.append(("array", "final", int(label.removeprefix("final[").removesuffix("]"))))
                 continue
             msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
             raise ValueError(msg)

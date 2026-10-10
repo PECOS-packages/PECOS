@@ -444,8 +444,9 @@ def test_abstract_result_refs_follow_all_measurement_emissions(gate_type):
     ) == [{"id": 0, "meas_ids": [0]}]
 
 
+@pytest.mark.parametrize("label", ["sx0", "final[3]"])
 @pytest.mark.parametrize("gate_type", ["MZ", "MeasureFree", "MX", "MPZ"])
-def test_abstract_result_refs_expand_array_labels_in_qubit_order(gate_type):
+def test_abstract_result_refs_reject_labelled_multi_qubit_gates(gate_type, label):
     from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
     from pecos_rslib.quantum import DagCircuit, Gate
 
@@ -456,30 +457,8 @@ def test_abstract_result_refs_expand_array_labels_in_qubit_order(gate_type):
     dag = DagCircuit()
     dag.add_gate(Gate(template.get_tick(0).gate_batches()[0].gate_type, qubits=[4, 2]))
     circuit = dag.to_tick_circuit()
-    circuit.set_gate_meta(0, 0, "label", "final[3]")
-    circuit.tick().mz([1])
-    circuit.set_gate_meta(1, 0, "label", "final[5]")
-    assert [qubit for qubit, _ in circuit.measurement_emission()] == [4, 2, 1]
-    assert _surface_abstract_measurement_result_refs(circuit) == [
-        ("array", "final", 3),
-        ("array", "final", 4),
-        ("array", "final", 5),
-    ]
-
-
-@pytest.mark.parametrize("gate_type", ["MZ", "MeasureFree", "MX", "MPZ"])
-def test_abstract_result_refs_reject_batched_scalar_labels(gate_type):
-    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
-    from pecos_rslib.quantum import DagCircuit, Gate
-
-    # The name-based TickHandle API broadcasts into single-qubit batches.
-    # A DAG gate preserves the multi-qubit batch on conversion to ticks.
-    template = TickCircuit()
-    template.tick().add_gate(gate_type, [4])
-    dag = DagCircuit()
-    dag.add_gate(Gate(template.get_tick(0).gate_batches()[0].gate_type, qubits=[4, 2]))
-    circuit = dag.to_tick_circuit()
-    circuit.set_gate_meta(0, 0, "label", "sx0")
+    # A label names one measurement; nothing ties qubit order to array order.
+    circuit.set_gate_meta(0, 0, "label", label)
     circuit.set_gate_meta(0, 0, "syndrome_round", 0)
-    with pytest.raises(ValueError, match="scalar surface measurement label 'sx0' requires a single-qubit gate"):
+    with pytest.raises(ValueError, match="names one measurement but its gate measures 2 qubits"):
         _surface_abstract_measurement_result_refs(circuit)

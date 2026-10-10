@@ -373,7 +373,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register types submodule containing core data types
     types_module::register_types_module(m)?;
 
-    // Register experimental submodule (symbolic HUGR execution)
+    // Register experimental submodule (symbolic circuit execution)
     experimental_bindings::register_experimental_module(m)?;
 
     // Register QEC fault tolerance submodule

@@ -29,28 +29,7 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         parent.getattr("DagCircuitWouldCycleError")?,
     )?;
 
-    // Add HUGR conversion functions and exception
-    quantum.add(
-        "HugrConversionError",
-        parent.getattr("HugrConversionError")?,
-    )?;
     quantum.add("QubitConflictError", parent.getattr("QubitConflictError")?)?;
-    quantum.add(
-        "hugr_to_dag_circuit",
-        parent.getattr("hugr_to_dag_circuit")?,
-    )?;
-    quantum.add(
-        "hugr_op_to_gate_type",
-        parent.getattr("hugr_op_to_gate_type")?,
-    )?;
-    quantum.add(
-        "gate_type_to_hugr_op",
-        parent.getattr("gate_type_to_hugr_op")?,
-    )?;
-    quantum.add(
-        "is_quantum_operation",
-        parent.getattr("is_quantum_operation")?,
-    )?;
 
     // Add factory functions (references to the engine builders)
     quantum.add("state_vector", parent.getattr("state_vector")?)?;

@@ -118,8 +118,8 @@ pub use types::{
     MeasurementNoiseChannelResidual, MeasurementNoiseModel, NoiseChannelError, NoiseChannelKind,
     NoiseChannelResidual, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
     PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
-    ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,
-    omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
+    ReplacementBranchImpact, TerminalDecompositionError, TwoDetectorDirectRenderPolicy,
+    combine_probabilities, omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
 };
 
 #[cfg(test)]

@@ -1738,19 +1738,11 @@ class LogicalCircuitBuilder:
         obs_json = tc.get_meta("observables")
         num_meas = int(tc.get_meta("num_measurements"))
 
-        meas_order = []
-        for tick_idx in range(tc.num_ticks()):
-            tick = tc.get_tick(tick_idx)
-            for gate in tick.gate_batches():
-                if gate.gate_type.name == "MZ":
-                    meas_order.extend(int(q) for q in gate.qubits)
-
         dem_builder = DemBuilder(influence_map)
         dem_builder = dem_builder.with_noise(p1, p2, p_meas, p_prep)
         dem_builder = dem_builder.with_detectors_json(det_json)
         dem_builder = dem_builder.with_observables_json(obs_json)
         dem_builder = dem_builder.with_num_measurements(num_meas)
-        dem_builder = dem_builder.with_measurement_order(meas_order)
 
         return dem_builder.build(), influence_map, dc
 

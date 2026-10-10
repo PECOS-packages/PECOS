@@ -125,3 +125,44 @@ class TestInvalidBackend:
         tc, noise = d3_circuit_and_noise
         with pytest.raises(ValueError, match=r"Unknown backend.*'nope'"):
             fit_dem_from_simulation(tc, noise, shots=10, backend="nope")
+
+
+def test_empirical_absolute_records_keep_declared_ids():
+    """A deterministic one is read at absolute position zero and labeled by id."""
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().pz([0])
+    tc.tick().x([0])
+    tc.tick().mz_with_ids([0], [17])
+    tc.set_meta("detectors", '[{"id":5,"records":[0]}]')
+    tc.set_meta("observables", '[{"id":3,"records":[0]}]')
+    tc.set_meta("num_measurements", "1")
+    assert empirical_correlation_table(tc, depolarizing(), shots=4) == [
+        (("D5",), 1.0),
+        (("D5", "L3"), 1.0),
+        (("L3",), 1.0),
+    ]
+
+
+def test_fit_empirical_marginals_use_positions_and_ids(monkeypatch):
+    """Sparse, unordered detector ids index the fitter's dense marginal vector."""
+    import pecos_rslib.qec as qec
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().pz([0, 1])
+    tc.tick().x([1])
+    tc.tick().mz_with_ids([0, 1], [17, 9])
+    tc.set_meta("detectors", '[{"id":5,"records":[1]},{"id":2,"records":[0]}]')
+    tc.set_meta("observables", "[]")
+    tc.set_meta("num_measurements", "2")
+    marginals_seen = []
+
+    def capture_marginals(mechanisms, marginals):
+        marginals_seen.append(marginals)
+        return mechanisms, []
+
+    monkeypatch.setattr(qec, "fit_dem_to_marginals", capture_marginals)
+    fit_dem_from_simulation(tc, depolarizing(), shots=4)
+    assert marginals_seen == [[0.0, 0.0, 0.0, 0.0, 0.0, 1.0]]

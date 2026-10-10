@@ -9,22 +9,37 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Tests for the Guppy -> HUGR -> symbolic execution -> sampling pipeline."""
+"""Tests for the Guppy -> QIS trace -> DagCircuit -> symbolic execution -> sampling pipeline."""
 
 from __future__ import annotations
 
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, cy, cz, h, measure, qubit, s, x, y, z
+from pecos import Guppy, trace_program_to_tick_circuit
 from pecos.experimental import (
     NoisySymbolicExecutionResult,
     SymbolicExecutionResult,
     execute_dag_circuit_symbolic,
     execute_dag_circuit_symbolic_noisy,
-    execute_hugr_symbolic,
-    execute_hugr_symbolic_noisy,
 )
-from pecos_rslib import hugr_to_dag_circuit
+from pecos.quantum import DagCircuit
+
+
+def execute_guppy_symbolic(program: object, num_qubits: int) -> SymbolicExecutionResult:
+    """Trace native QIS gates and execute their DAG symbolically."""
+    circuit = trace_program_to_tick_circuit(Guppy(program), num_qubits, seed=1)
+    return execute_dag_circuit_symbolic(circuit.to_dag_circuit(), num_qubits=num_qubits)
+
+
+def execute_guppy_symbolic_noisy(
+    program: object,
+    num_qubits: int,
+    **noise: float,
+) -> NoisySymbolicExecutionResult:
+    """Attach noise to the native gates in the QIS trace."""
+    circuit = trace_program_to_tick_circuit(Guppy(program), num_qubits, seed=1)
+    return execute_dag_circuit_symbolic_noisy(circuit.to_dag_circuit(), num_qubits=num_qubits, **noise)
 
 
 def outcome_to_tuple(outcome: bytes) -> tuple[bool, ...]:
@@ -33,7 +48,7 @@ def outcome_to_tuple(outcome: bytes) -> tuple[bool, ...]:
 
 
 class TestBasicSymbolicExecution:
-    """Tests for basic Guppy -> HUGR -> symbolic execution."""
+    """Tests for basic Guppy -> QIS trace -> DagCircuit -> symbolic execution."""
 
     def test_single_qubit_h_measure(self) -> None:
         """Test single qubit with H gate - should be random."""
@@ -44,7 +59,7 @@ class TestBasicSymbolicExecution:
             h(q)
             return measure(q).read()
 
-        result = execute_hugr_symbolic(single_h.compile().to_bytes())
+        result = execute_guppy_symbolic(single_h, 1)
 
         assert isinstance(result, SymbolicExecutionResult)
         assert result.num_measurements == 1
@@ -59,7 +74,7 @@ class TestBasicSymbolicExecution:
             q = qubit()
             return measure(q).read()
 
-        result = execute_hugr_symbolic(no_gate.compile().to_bytes())
+        result = execute_guppy_symbolic(no_gate, 1)
 
         assert result.num_measurements == 1
         assert result.num_deterministic == 1
@@ -82,7 +97,7 @@ class TestBasicSymbolicExecution:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(bell_state.compile().to_bytes())
+        result = execute_guppy_symbolic(bell_state, 2)
 
         assert result.num_measurements == 2
         assert result.num_nondeterministic == 1  # Only one random bit
@@ -109,7 +124,7 @@ class TestBasicSymbolicExecution:
             cx(q1, q2)
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_hugr_symbolic(ghz_state.compile().to_bytes())
+        result = execute_guppy_symbolic(ghz_state, 3)
 
         assert result.num_measurements == 3
         assert result.num_nondeterministic == 1  # Only one random bit
@@ -136,7 +151,7 @@ class TestTwoQubitGates:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(cx_circuit.compile().to_bytes())
+        result = execute_guppy_symbolic(cx_circuit, 2)
         counts = result.sample_counts(10000)
 
         # Bell state: only |00> and |11>
@@ -162,7 +177,7 @@ class TestTwoQubitGates:
             h(q1)  # Convert phase to amplitude correlation
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(cz_bell.compile().to_bytes())
+        result = execute_guppy_symbolic(cz_bell, 2)
 
         # This creates Bell-like correlations
         counts = result.sample_counts(10000)
@@ -181,7 +196,7 @@ class TestTwoQubitGates:
             cy(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(cy_circuit.compile().to_bytes())
+        result = execute_guppy_symbolic(cy_circuit, 2)
 
         # CY also creates correlations like CX
         counts = result.sample_counts(10000)
@@ -200,7 +215,7 @@ class TestSingleQubitGates:
             x(q)
             return measure(q).read()
 
-        result = execute_hugr_symbolic(x_gate.compile().to_bytes())
+        result = execute_guppy_symbolic(x_gate, 1)
         counts = result.sample_counts(100)
         # X flips |0> to |1>
         assert counts == {b"\x01": 100}
@@ -211,7 +226,7 @@ class TestSingleQubitGates:
             z(q)
             return measure(q).read()
 
-        result = execute_hugr_symbolic(z_gate.compile().to_bytes())
+        result = execute_guppy_symbolic(z_gate, 1)
         counts = result.sample_counts(100)
         # Z on |0> is still |0>
         assert counts == {b"\x00": 100}
@@ -222,7 +237,7 @@ class TestSingleQubitGates:
             y(q)
             return measure(q).read()
 
-        result = execute_hugr_symbolic(y_gate.compile().to_bytes())
+        result = execute_guppy_symbolic(y_gate, 1)
         counts = result.sample_counts(100)
         # Y flips |0> to i|1>
         assert counts == {b"\x01": 100}
@@ -238,7 +253,7 @@ class TestSingleQubitGates:
             h(q)
             return measure(q).read()
 
-        result = execute_hugr_symbolic(s_gate.compile().to_bytes())
+        result = execute_guppy_symbolic(s_gate, 1)
         # H-S-H is equivalent to sqrt(X), deterministic
         assert result.num_measurements == 1
 
@@ -257,7 +272,7 @@ class TestSamplingMethods:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(bell.compile().to_bytes())
+        result = execute_guppy_symbolic(bell, 2)
         samples = result.sample(10)
 
         assert isinstance(samples, list)
@@ -278,7 +293,7 @@ class TestSamplingMethods:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(bell.compile().to_bytes())
+        result = execute_guppy_symbolic(bell, 2)
         counts = result.sample_counts(1000)
 
         assert isinstance(counts, dict)
@@ -298,7 +313,7 @@ class TestSamplingMethods:
             cx(q1, q2)
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_hugr_symbolic(ghz.compile().to_bytes())
+        result = execute_guppy_symbolic(ghz, 3)
 
         # Should handle 1M samples without issue
         counts = result.sample_counts(1_000_000)
@@ -323,7 +338,7 @@ class TestMeasurementStructure:
             x(q2)  # Flip to |1>
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_hugr_symbolic(all_deterministic.compile().to_bytes())
+        result = execute_guppy_symbolic(all_deterministic, 3)
 
         assert result.num_measurements == 3
         assert result.num_deterministic == 3
@@ -345,7 +360,7 @@ class TestMeasurementStructure:
             h(q2)
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_hugr_symbolic(all_random.compile().to_bytes())
+        result = execute_guppy_symbolic(all_random, 3)
 
         assert result.num_measurements == 3
         assert result.num_nondeterministic == 3
@@ -368,7 +383,7 @@ class TestMeasurementStructure:
             # q2 stays |0> - deterministic
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_hugr_symbolic(mixed.compile().to_bytes())
+        result = execute_guppy_symbolic(mixed, 3)
 
         assert result.num_measurements == 3
         assert result.num_nondeterministic == 1
@@ -376,9 +391,22 @@ class TestMeasurementStructure:
 
         counts = result.sample_counts(1000)
         assert len(counts) == 2
-        # q1=True, q2=False always; q0 varies
+        # Circuit measurement order is q0, q1, q2: q0 varies; q1=True, q2=False
         assert b"\x00\x01\x00" in counts
         assert b"\x01\x01\x00" in counts
+
+    def test_measurements_keep_program_order(self) -> None:
+        """Independent measurements retain their runtime positions."""
+
+        @guppy
+        def asymmetric() -> tuple[bool, bool, bool]:
+            q0, q1, q2 = qubit(), qubit(), qubit()
+            x(q0)
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
+
+        result = execute_guppy_symbolic(asymmetric, 3)
+        assert str(result) == "[m0=1, m1=0, m2=0]"
+        assert result.sample_counts(100) == {b"\x01\x00\x00": 100}
 
 
 class TestRepetitionCode:
@@ -412,7 +440,7 @@ class TestRepetitionCode:
 
             return (s0, s1, measure(d0).read(), measure(d1).read(), measure(d2).read())
 
-        result = execute_hugr_symbolic(repetition_code.compile().to_bytes())
+        result = execute_guppy_symbolic(repetition_code, 5)
 
         assert result.num_measurements == 5
 
@@ -441,8 +469,7 @@ class TestDagCircuitSymbolicExecution:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        hugr_bytes = bell.compile().to_bytes()
-        dag = hugr_to_dag_circuit(hugr_bytes)
+        dag = trace_program_to_tick_circuit(Guppy(bell), 2, seed=1).to_dag_circuit()
 
         result = execute_dag_circuit_symbolic(dag)
 
@@ -452,8 +479,8 @@ class TestDagCircuitSymbolicExecution:
         assert b"\x00\x00" in counts
         assert b"\x01\x01" in counts
 
-    def test_dag_circuit_matches_hugr(self) -> None:
-        """Test that DagCircuit execution matches direct HUGR execution."""
+    def test_dag_circuit_matches_named_cliffords(self) -> None:
+        """Test that traced native gates match a named Clifford GHZ circuit."""
 
         @guppy
         def ghz() -> tuple[bool, bool, bool]:
@@ -465,19 +492,21 @@ class TestDagCircuitSymbolicExecution:
             cx(q1, q2)
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        hugr_bytes = ghz.compile().to_bytes()
-
-        # Execute via HUGR
-        result_hugr = execute_hugr_symbolic(hugr_bytes)
+        named = DagCircuit()
+        named.h([0]).cx([(0, 1)]).cx([(1, 2)])
+        named.mz([0])
+        named.mz([1])
+        named.mz([2])
+        result_named = execute_dag_circuit_symbolic(named, num_qubits=3)
 
         # Execute via DagCircuit
-        dag = hugr_to_dag_circuit(hugr_bytes)
+        dag = trace_program_to_tick_circuit(Guppy(ghz), 3, seed=1).to_dag_circuit()
         result_dag = execute_dag_circuit_symbolic(dag)
 
         # Should have same structure
-        assert result_hugr.num_measurements == result_dag.num_measurements
-        assert result_hugr.num_deterministic == result_dag.num_deterministic
-        assert result_hugr.num_nondeterministic == result_dag.num_nondeterministic
+        assert result_named.num_measurements == result_dag.num_measurements
+        assert result_named.num_deterministic == result_dag.num_deterministic
+        assert result_named.num_nondeterministic == result_dag.num_nondeterministic
 
 
 class TestResultStringRepresentation:
@@ -494,7 +523,7 @@ class TestResultStringRepresentation:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic(bell.compile().to_bytes())
+        result = execute_guppy_symbolic(bell, 2)
 
         str_repr = str(result)
         assert isinstance(str_repr, str)
@@ -517,14 +546,15 @@ class TestNoisySymbolicExecution:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic_noisy(
-            bell.compile().to_bytes(),
+        result = execute_guppy_symbolic_noisy(
+            bell,
+            2,
             p1=0.01,  # 1% single-qubit error
         )
 
         assert isinstance(result, NoisySymbolicExecutionResult)
         assert result.num_measurements == 2
-        # Should have faults from the H gate (3 Pauli types)
+        # Should have faults from the native single-qubit rotations
         assert result.num_faults > 0
 
     def test_noiseless_execution_has_no_faults(self) -> None:
@@ -538,8 +568,9 @@ class TestNoisySymbolicExecution:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        result = execute_hugr_symbolic_noisy(
-            bell.compile().to_bytes(),
+        result = execute_guppy_symbolic_noisy(
+            bell,
+            2,
             p1=0.0,
             p2=0.0,
             p_meas=0.0,
@@ -560,18 +591,17 @@ class TestNoisySymbolicExecution:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        hugr_bytes = bell.compile().to_bytes()
-
         # Noiseless: only |00> and |11>
-        noiseless = execute_hugr_symbolic(hugr_bytes)
+        noiseless = execute_guppy_symbolic(bell, 2)
         noiseless_counts = noiseless.sample_counts(10000)
         assert len(noiseless_counts) == 2
         assert b"\x00\x01" not in noiseless_counts
         assert b"\x01\x00" not in noiseless_counts
 
         # With significant noise: should see some |01> and |10>
-        noisy = execute_hugr_symbolic_noisy(
-            hugr_bytes,
+        noisy = execute_guppy_symbolic_noisy(
+            bell,
+            2,
             p1=0.1,  # 10% single-qubit error (high for demonstration)
             p2=0.1,
         )
@@ -590,8 +620,9 @@ class TestNoisySymbolicExecution:
             return measure(q).read()
 
         # With 100% measurement noise, all outcomes should flip from 0 to 1
-        result = execute_hugr_symbolic_noisy(
-            deterministic_zero.compile().to_bytes(),
+        result = execute_guppy_symbolic_noisy(
+            deterministic_zero,
+            1,
             p_meas=1.0,  # 100% measurement flip
         )
 
@@ -612,8 +643,7 @@ class TestNoisySymbolicExecution:
             cx(q0, q1)
             return (measure(q0).read(), measure(q1).read())
 
-        hugr_bytes = bell.compile().to_bytes()
-        dag = hugr_to_dag_circuit(hugr_bytes)
+        dag = trace_program_to_tick_circuit(Guppy(bell), 2, seed=1).to_dag_circuit()
 
         result = execute_dag_circuit_symbolic_noisy(
             dag,
@@ -634,8 +664,9 @@ class TestNoisySymbolicExecution:
             h(q)
             return measure(q).read()
 
-        result = execute_hugr_symbolic_noisy(
-            single_measure.compile().to_bytes(),
+        result = execute_guppy_symbolic_noisy(
+            single_measure,
+            1,
             p1=0.01,
         )
 

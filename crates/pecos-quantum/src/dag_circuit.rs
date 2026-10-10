@@ -624,9 +624,10 @@ pub enum AnnotationKind {
 /// are all Pauli strings tracked for flipping via backward propagation.
 ///
 /// - **Detectors** are stabilizer checks that should be +1 (noiseless).
-///   Their Pauli is Z on the measured qubits.
+///   Their Pauli is the measured Pauli (X for MX, Z otherwise) on the
+///   measured qubits.
 /// - **Observables** are logical operators read out via measurements.
-///   Their Pauli is Z on the measured qubits.
+///   Their Pauli is the measured Pauli on the measured qubits.
 /// - **Tracked Paulis** are arbitrary Pauli strings with no measurement readout.
 ///   Their Pauli is user-specified and their position comes from a meta-gate node.
 #[derive(Debug, Clone)]
@@ -645,13 +646,22 @@ pub struct DagCircuit {
     dag: DAG,
     /// Gates stored by node index.
     gates: Vec<Option<Gate>>,
+    /// Single source of insertion order, indexed by stable node slot. Ordinary
+    /// insertions receive `[sequence]`. Replacing a gate with key `p` assigns
+    /// `p + [1]`, `p + [2]`, ... in replacement order. Repeated replacements
+    /// extend the path again, so live keys stay unique and lexicographically
+    /// ordered without renumbering other gates. Slots overwrite removed keys.
+    /// Two inline components avoid allocation for ordinary gates and one rewrite.
+    gate_insertion_keys: Vec<smallvec::SmallVec<[usize; 2]>>,
+    /// Next insertion sequence; removal never rewinds it and cloning preserves it.
+    next_insertion_sequence: usize,
     /// Qubit labels for each edge, indexed by edge ID.
     edge_qubits: BTreeMap<usize, QubitId>,
     /// Tail of each qubit's wire chain. Auto-wired insertion advances the
     /// tail; unwired insertion changes nothing. Connecting from a tail follows
     /// the destination's chain. Removal follows the incoming qubit wire.
     /// Manual wire removal leaves the tail in place even if disconnected.
-    /// Raw graph access through `as_dag_mut` bypasses these invariants.
+    /// Graph access is read-only; structural edits go through these operations.
     qubit_heads: BTreeMap<QubitId, usize>,
     /// Reverse head index, including manually labeled wires outside a gate's
     /// support, so removing a node need not scan every qubit in the circuit.
@@ -660,9 +670,11 @@ pub struct DagCircuit {
     /// Pass replacements inherit the replaced gate's position in that history.
     /// Unwired insertion and manual connection do not change this target.
     last_node: Option<usize>,
-    /// Doubly linked insertion history indexed by stable node slot. Only
-    /// auto-wired gates and their replacements participate. Unlinking takes constant time;
-    /// neither recycled indices nor mid-circuit rewrites imply recency.
+    /// Cached linked index of `gate_insertion_keys` restricted to auto-wired
+    /// gates and their replacements, maintained by the same insertion/removal
+    /// events. This is not an independent ordering: replacement splices match
+    /// their inherited keys. Links make removal and metadata lookup O(1),
+    /// without a second sorted map or a scan of all surviving gates.
     /// Derived `Clone` copies these links and both head indices with the graph.
     insertion_links: Vec<Option<(Option<usize>, Option<usize>)>>,
     /// Number of classical bits addressable by measurement targets and conditions.
@@ -724,6 +736,8 @@ impl DagCircuit {
         Self {
             dag: DAG::new(),
             gates: Vec::new(),
+            gate_insertion_keys: Vec::new(),
+            next_insertion_sequence: 0,
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
@@ -752,6 +766,8 @@ impl DagCircuit {
         Self {
             dag: DAG::with_capacity(gates, wires),
             gates: Vec::with_capacity(gates),
+            gate_insertion_keys: Vec::with_capacity(gates),
+            next_insertion_sequence: 0,
             // BTreeMap doesn't support with_capacity - it allocates as needed
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
@@ -993,13 +1009,21 @@ impl DagCircuit {
     }
 
     fn add_gate_unchecked(&mut self, gate: Gate) -> usize {
+        let sequence = self.next_insertion_sequence;
+        self.next_insertion_sequence = sequence
+            .checked_add(1)
+            .expect("gate insertion sequence exhausted");
         let node_idx = self.dag.add_node();
         // Ensure gates vector is large enough
         if node_idx >= self.gates.len() {
             self.gates.resize(node_idx + 1, None);
             self.insertion_links.resize(node_idx + 1, None);
             self.head_qubits.resize_with(node_idx + 1, Vec::new);
+            self.gate_insertion_keys
+                .resize_with(node_idx + 1, Default::default);
         }
+        // StableGraph can reuse a removed node index; insertion sequences cannot.
+        self.gate_insertion_keys[node_idx] = smallvec::smallvec![sequence];
         // Update max_qubit tracking
         for q in &gate.qubits {
             self.max_qubit = self.max_qubit.max(q.index());
@@ -1023,12 +1047,22 @@ impl DagCircuit {
         replacements: impl IntoIterator<Item = Gate>,
     ) -> Vec<usize> {
         let position = self.insertion_links.get(node).copied().flatten();
+        let key = self
+            .gate_insertion_keys
+            .get(node)
+            .cloned()
+            .expect("replacement requires a live gate");
         self.remove_gate(node)
             .expect("replacement requires a live gate");
         let nodes: Vec<_> = replacements
             .into_iter()
             .map(|gate| self.add_gate(gate))
             .collect();
+        for (index, &replacement) in nodes.iter().enumerate() {
+            let mut replacement_key = key.clone();
+            replacement_key.push(index + 1);
+            self.gate_insertion_keys[replacement] = replacement_key;
+        }
         if let Some((mut previous, next)) = position {
             for &replacement in &nodes {
                 self.insertion_links[replacement] = Some((previous, next));
@@ -1595,6 +1629,32 @@ impl DagCircuit {
     #[must_use]
     pub fn topological_order(&self) -> Vec<usize> {
         self.dag.topological_sort()
+    }
+
+    /// Returns a topological order with ready ties broken by gate insertion order.
+    ///
+    /// Each ordinary insertion receives a fresh key `[sequence]`. Removing
+    /// gates never reuses or rewinds that sequence, even when a node index is
+    /// recycled. Cloning preserves the sequences and their counter; updating a
+    /// gate in place preserves its position. Dependencies still take precedence.
+    /// Gates removed and re-added by a pass (e.g. `SimplifyRotations` decompositions)
+    /// inherit the original key, extended by their one-based replacement index.
+    /// Further replacements extend that path again. Lexicographic comparison
+    /// keeps every replacement at the original position relative to other gates,
+    /// including independent measurements, without renumbering surviving gates.
+    /// `MeasId`s remain the stable identities when measurements themselves change.
+    /// This preserves insertion order for independent measurements. Use it when
+    /// measurement record positions must match circuit insertion order, as in
+    /// symbolic execution. Prefer
+    /// [`Self::topological_order`] when any valid execution order suffices.
+    ///
+    /// Costs O(E + D V log V), where D is the maximum key length (one plus
+    /// replacement nesting depth). For bounded depth this is O(E + V log V),
+    /// rather than the O(V + E) cost of [`Self::topological_order`].
+    #[must_use]
+    pub fn insertion_stable_topological_order(&self) -> Vec<usize> {
+        self.dag
+            .lexicographical_topological_sort(|node| self.gate_insertion_keys[node].as_slice())
     }
 
     /// Returns an iterator over circuit layers.
@@ -2650,8 +2710,9 @@ impl DagCircuit {
     /// Annotate a detector: a set of measurements whose XOR should be
     /// deterministic in the noiseless case.
     ///
-    /// The Pauli string is Z on each referenced measurement's own qubit --
-    /// referencing one measurement of a batched gate touches only that qubit.
+    /// The Pauli string is the Pauli each referenced measurement reads (X for
+    /// MX, Z otherwise) on that measurement's own qubit -- referencing one
+    /// measurement of a batched gate touches only that qubit.
     ///
     /// Returns the annotation index.
     ///
@@ -2707,7 +2768,8 @@ impl DagCircuit {
     /// Annotate a logical observable: a set of measurements whose XOR
     /// defines whether a logical operator flipped.
     ///
-    /// The Pauli string is Z on each referenced measurement's own qubit.
+    /// The Pauli string is the Pauli each referenced measurement reads (X for
+    /// MX, Z otherwise) on that measurement's own qubit.
     ///
     /// Returns the annotation index.
     ///
@@ -2955,17 +3017,6 @@ impl DagCircuit {
     #[must_use]
     pub fn as_dag(&self) -> &DAG {
         &self.dag
-    }
-
-    /// Provides mutable access to the underlying DAG.
-    ///
-    /// # Warning
-    ///
-    /// Raw structural edits bypass gate storage, wire labels, append heads,
-    /// and insertion-order bookkeeping. This is the one mutation path outside
-    /// `DagCircuit`'s invariant maintenance; use circuit APIs for mutations.
-    pub fn as_dag_mut(&mut self) -> &mut DAG {
-        &mut self.dag
     }
 
     // ==================== Attributes ====================
@@ -3538,6 +3589,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn dag_circuit_refuses_rotation_without_angle() {
+        let mut dag = DagCircuit::new();
+        let node = dag.add_gate(Gate::rz(Angle64::ZERO, &[QubitId(0)]));
+        let before = dag.gate(node).cloned().expect("RZ node");
+        let error = dag
+            .update_gate(node, |gate| gate.angles.clear())
+            .expect_err("RZ without an angle must be refused");
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
+        );
+        assert_eq!(dag.gate(node), Some(&before));
+    }
+
     fn dag_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
         let mut circuit = DagCircuit::new();
         if basis & 1 != 0 {
@@ -3859,6 +3926,203 @@ mod tests {
 
         let order = circuit.topological_order();
         assert_eq!(order, vec![h, t, cx]);
+    }
+
+    #[test]
+    fn insertion_stable_topological_order_breaks_ready_ties_by_insertion_order() {
+        let mut circuit = DagCircuit::new();
+        circuit.x(&[0]);
+        circuit.mz(&[0]);
+        circuit.mz(&[1]);
+        circuit.mz(&[2]);
+        // m0 becomes ready after X, while m1 and m2 were ready from the start.
+        let order = circuit.insertion_stable_topological_order();
+        assert_eq!(order, vec![0, 1, 2, 3]);
+        let measured: Vec<_> = order
+            .into_iter()
+            .filter_map(|node| circuit.gate(node))
+            .filter(|gate| gate.gate_type == GateType::MZ)
+            .map(|gate| gate.qubits[0].index())
+            .collect();
+        assert_eq!(measured, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn removed_node_reuse_preserves_insertion_order() {
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().z(&[2]).x(&[0]);
+        tick.tick().mz(&[0, 1]);
+        let converted = DagCircuit::try_from(&tick).unwrap();
+        for mut circuit in [
+            DagCircuit::new(),
+            DagCircuit::with_capacity(4, 2),
+            converted,
+        ] {
+            if circuit.gate_count() == 0 {
+                circuit.z(&[2]).x(&[0]);
+                circuit.mz(&[0]);
+                circuit.mz(&[1]);
+            }
+            assert_eq!(circuit.gate(0).unwrap().gate_type, GateType::Z);
+            circuit.remove_gate(0).unwrap();
+            assert!(!circuit.qubit_heads.contains_key(&QubitId(2)));
+            // A clone must retain insertion history even after node removal.
+            for mut circuit in [circuit.clone(), circuit] {
+                let appended = circuit.try_add_gate_auto_wire(Gate::mz(&[2])).unwrap();
+                assert_eq!(appended, 0, "exercise StableGraph's recycled slot");
+                assert_eq!(
+                    circuit.insertion_stable_topological_order(),
+                    vec![1, 2, 3, 0]
+                );
+                assert_eq!(circuit.wires(), vec![(1, 2, QubitId(0))]);
+                let next = circuit.try_add_gate_auto_wire(Gate::h(&[2])).unwrap();
+                assert_eq!(
+                    circuit.predecessor_on_qubit(next, QubitId(2)),
+                    Some(appended)
+                );
+                assert_eq!(circuit.wire_count(), 2);
+                assert_eq!(
+                    circuit.insertion_stable_topological_order(),
+                    vec![1, 2, 3, 0, next]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reused_head_slot_wires_from_surviving_predecessor() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]).z(&[0]);
+        circuit.remove_gate(1).unwrap();
+        let replacement = circuit.try_add_gate_auto_wire(Gate::mz(&[0])).unwrap();
+        assert_eq!(replacement, 1);
+        assert_eq!(circuit.wires(), vec![(0, 1, QubitId(0))]);
+        assert_eq!(circuit.insertion_stable_topological_order(), vec![0, 1]);
+        assert_eq!(circuit.gate_insertion_keys[replacement].as_slice(), &[2]);
+    }
+
+    #[test]
+    fn insertion_sequences_survive_updates_and_removing_all_gates() {
+        let mut circuit = DagCircuit::with_capacity(4, 0);
+        let nodes = [
+            circuit.add_gate(Gate::z(&[0])),
+            circuit.try_add_gate(Gate::z(&[1])).unwrap(),
+            CircuitMut::add_gate(&mut circuit, Gate::z(&[2])),
+            circuit.try_add_gate_auto_wire(Gate::z(&[3])).unwrap(),
+        ];
+        circuit
+            .update_gate(nodes[0], |gate| gate.gate_type = GateType::H)
+            .unwrap();
+        assert_eq!(circuit.insertion_stable_topological_order(), nodes);
+        let next_sequence = circuit.next_insertion_sequence;
+        for node in nodes {
+            circuit.remove_gate(node).unwrap();
+        }
+        let mut copy = circuit.clone();
+        let node = copy.add_gate_auto_wire(Gate::mz(&[0]));
+        assert_eq!(copy.gate_insertion_keys[node].as_slice(), &[next_sequence]);
+        assert_eq!(copy.next_insertion_sequence, next_sequence + 1);
+    }
+
+    fn assert_history_matches_keys(circuit: &DagCircuit) {
+        let nodes = circuit.nodes();
+        let keys: BTreeSet<_> = nodes
+            .iter()
+            .map(|&node| &circuit.gate_insertion_keys[node])
+            .collect();
+        assert_eq!(keys.len(), nodes.len(), "live keys must be unique");
+        let mut expected: Vec<_> = nodes
+            .into_iter()
+            .filter(|&node| circuit.insertion_links[node].is_some())
+            .collect();
+        expected.sort_unstable_by(|&a, &b| {
+            circuit.gate_insertion_keys[a].cmp(&circuit.gate_insertion_keys[b])
+        });
+        assert_eq!(circuit.last_node, expected.last().copied());
+        for (index, &node) in expected.iter().enumerate() {
+            let previous = index.checked_sub(1).map(|i| expected[i]);
+            let next = expected.get(index + 1).copied();
+            assert_eq!(circuit.insertion_links[node], Some((previous, next)));
+        }
+        let traversal: Vec<_> = circuit
+            .insertion_stable_topological_order()
+            .into_iter()
+            .filter(|&node| circuit.insertion_links[node].is_some())
+            .collect();
+        assert_eq!(traversal, expected);
+    }
+
+    #[test]
+    fn auto_wired_history_agrees_with_insertion_sequences() {
+        use crate::pass::{CircuitPass, SimplifyRotations};
+
+        for seed in [0, 1, 42, 0xdeca_fbad] {
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut circuit = DagCircuit::new();
+            for _ in 0..500 {
+                let nodes = circuit.nodes();
+                match rng.random_range(0..6) {
+                    0 => {
+                        let q = rng.random_range(0..6);
+                        circuit.add_gate(Gate::rzz(Angle64::HALF_TURN, &[(q, (q + 1) % 6)]));
+                    }
+                    1 => {
+                        let q = rng.random_range(0..6);
+                        circuit.rzz(Angle64::HALF_TURN, &[(q, (q + 1) % 6)]);
+                    }
+                    2 if !nodes.is_empty() => {
+                        circuit.remove_gate(nodes[rng.random_range(0..nodes.len())]);
+                    }
+                    3 if !nodes.is_empty() => {
+                        circuit
+                            .update_gate(nodes[rng.random_range(0..nodes.len())], |gate| {
+                                if gate.qubits.len() == 1 {
+                                    gate.gate_type = GateType::X;
+                                } else {
+                                    gate.qubits.reverse();
+                                }
+                            })
+                            .unwrap();
+                    }
+                    4 => SimplifyRotations.apply_dag(&mut circuit),
+                    _ => circuit = circuit.clone(),
+                }
+                assert_history_matches_keys(&circuit);
+            }
+        }
+    }
+
+    #[test]
+    fn replacement_keys_preserve_first_middle_last_and_nested_positions() {
+        // Exercise the history operation directly, including deeper rewrites
+        // than SimplifyRotations currently produces. Gates are independent.
+        for position in 0..4 {
+            let mut circuit = DagCircuit::new();
+            circuit.h(&[0, 1, 2]);
+            circuit.add_gate(Gate::h(&[3]));
+            let original_key = circuit.gate_insertion_keys[position].clone();
+            let replacements =
+                circuit.replace_gate_unwired(position, [Gate::h(&[4]), Gate::h(&[5])]);
+            assert_history_matches_keys(&circuit);
+            for (index, replacement) in replacements.into_iter().enumerate() {
+                let mut key = original_key.clone();
+                key.push(index + 1);
+                assert_eq!(circuit.gate_insertion_keys[replacement], key);
+                let nested =
+                    circuit.replace_gate_unwired(replacement, [Gate::h(&[6]), Gate::h(&[7])]);
+                for (nested_index, node) in nested.into_iter().enumerate() {
+                    let mut nested_key = key.clone();
+                    nested_key.push(nested_index + 1);
+                    assert_eq!(circuit.gate_insertion_keys[node], nested_key);
+                }
+                assert_history_matches_keys(&circuit);
+            }
+            let mut copy = circuit.clone();
+            while let Some(node) = copy.last_added_node() {
+                copy.remove_gate(node);
+                assert_history_matches_keys(&copy);
+            }
+        }
     }
 
     #[test]

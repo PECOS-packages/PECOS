@@ -44,7 +44,7 @@ fn test_workflows_guppy_dem_decoding_rust_2() -> Result<(), Box<dyn std::error::
     }
 
 
-    let terminal_graphlike_text =
+    let source_graphlike_text =
         std::fs::read_to_string("guppy_dem_decoding_graphlike.dem")?;
     let pymatching = DecoderSpec::PyMatching(PyMatchingConfig {
         correlated: true,
@@ -56,7 +56,7 @@ fn test_workflows_guppy_dem_decoding_rust_2() -> Result<(), Box<dyn std::error::
         ..Default::default()
     });
 
-    let pymatching_result = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&source_graphlike_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
     let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 
@@ -101,7 +101,7 @@ fn test_workflows_guppy_dem_decoding_rust_3() -> Result<(), Box<dyn std::error::
     }
 
 
-    let terminal_graphlike_text =
+    let source_graphlike_text =
         std::fs::read_to_string("guppy_dem_decoding_graphlike.dem")?;
     let pymatching = DecoderSpec::PyMatching(PyMatchingConfig {
         correlated: true,
@@ -113,7 +113,7 @@ fn test_workflows_guppy_dem_decoding_rust_3() -> Result<(), Box<dyn std::error::
         ..Default::default()
     });
 
-    let pymatching_result = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&source_graphlike_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
     let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 

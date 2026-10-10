@@ -15,13 +15,13 @@ def _probe():
     return circuit, first, second
 
 
-def _sample(circuit):
+def _sample(circuit, p_meas=0.0):
     return [
         list(row)
         for row in (
             exp.sim_neo(circuit)
             .quantum(exp.meas_sampling())
-            .noise(exp.depolarizing().idle_rz(0.125))
+            .noise(exp.depolarizing().p_meas(p_meas).idle_rz(0.125))
             .sampling(exp.monte_carlo(128))
             .seed(1046)
             .run()
@@ -32,16 +32,23 @@ def _sample(circuit):
 @pytest.mark.parametrize("reference", [{"records": [-2]}, {"meas_ids": [17]}, {"records": [0]}])
 def test_coherent_detector_references_constrain_raw_rows(reference):
     circuit, _, _ = _probe()
-    # Z rotations leave q0 in |0>; q1 is unconstrained. Honouring D0=m0
-    # therefore gives m0=0 in every row, while ignoring D0 makes m0 a coin.
+    # Measurement noise reaches a raw measurement only through a definition
+    # that covers it, so the noiseless 0 on q0 flips only when the reference
+    # resolves to the first measurement.
     circuit.set_meta("detectors", json.dumps([{"id": 7, **reference}]))
-    rows = _sample(circuit)
-    assert {row[0] for row in rows} == {0}
-    assert {row[1] for row in rows} == {0, 1}
+    rows = _sample(circuit, p_meas=0.25)
+    assert {row[0] for row in rows} == {0, 1}
 
     equivalent, _, _ = _probe()
     equivalent.set_meta("detectors", '[{"id":7,"records":[-2]}]')
-    assert rows == _sample(equivalent)
+    assert rows == _sample(equivalent, p_meas=0.25)
+
+
+@pytest.mark.parametrize("reference", [{"records": [-1]}, {"meas_ids": [9]}, {"records": [1]}])
+def test_coherent_measurement_outside_definitions_keeps_noiseless_value(reference):
+    circuit, _, _ = _probe()
+    circuit.set_meta("detectors", json.dumps([{"id": 7, **reference}]))
+    assert {row[0] for row in _sample(circuit, p_meas=0.25)} == {0}
 
 
 @pytest.mark.parametrize("empty_metadata", [None, "", "[]"])
@@ -50,12 +57,14 @@ def test_coherent_annotation_only_detector_constrains_raw_rows(empty_metadata):
     circuit.detector([first])
     if empty_metadata is not None:
         circuit.set_meta("detectors", empty_metadata)
-    assert {row[0] for row in _sample(circuit)} == {0}
+    assert {row[0] for row in _sample(circuit, p_meas=0.25)} == {0, 1}
 
 
-def test_coherent_unconstrained_measurement_is_a_coin():
+def test_coherent_unconstrained_zero_state_measurement_is_zero():
     circuit, _, _ = _probe()
-    assert {row[0] for row in _sample(circuit)} == {0, 1}
+    # With no injection, Z rotations leave |0> unchanged. Omitting a detector
+    # does not turn a deterministic noiseless measurement into a random coin.
+    assert {row[0] for row in _sample(circuit)} == {0}
 
 
 @pytest.mark.parametrize("attribute", ["detectors", "observables"])

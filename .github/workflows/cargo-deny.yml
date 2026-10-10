@@ -5,6 +5,7 @@ permissions:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'Cargo.toml'
@@ -23,7 +24,7 @@ on:
       - 'deny.toml'
       - '.github/workflows/cargo-deny.yml'
   schedule:
-    - cron: "17 5 * * 3"
+    - cron: "47 4 * * *"
   workflow_dispatch:
 
 concurrency:

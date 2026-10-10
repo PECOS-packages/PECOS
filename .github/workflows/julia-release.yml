@@ -28,8 +28,7 @@ on:
       - dev
       - development
       - master
-    tags:
-      - 'jl-*'  # Trigger on Julia-specific tags
+    tags: [ "py-*", "jl-*", "rs-*" ]
   # No `paths:` filter: GitHub applies it to label events too, so adding
   # ci:julia could never start a run on a PR that leaves julia/ alone. The
   # check_pr_push job decides instead (scripts/ci/pr-lane-should-run.sh).
@@ -45,14 +44,18 @@ on:
       sha:
         description: Commit SHA to build (manual runs build and test; only a jl-* tag push publishes)
         type: string
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
+  schedule:
+    - cron: "7 19 * * *"
 
 concurrency:
   # Pull requests cancel superseded runs. Elsewhere a started build finishes
   # (cancelling it on each merge threw away the macOS builds) and a newer push
-  # replaces only an older pending one; a manual dispatch gets its own group so
-  # a merge cannot drop it while it waits.
+  # replaces only an older pending one; schedules and manual dispatches get
+  # their own groups so a merge cannot drop their validation while they wait.
   # Unrelated label events must not cancel an active run.
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.run_id || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:julia' && github.run_id || 'validation' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -62,11 +65,10 @@ defaults:
 jobs:
   check_pr_push:
     runs-on: ubuntu-latest
+    # The push trigger limits refs; every non-PR event validates the full matrix.
     if: |
       github.event_name == 'pull_request' && github.event.action != 'closed' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:julia') ||
-      github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/jl-') ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name != 'pull_request'
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
@@ -86,19 +88,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
           TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
-          # Always run on manual dispatch (build and test only; publish_release
-          # needs a jl-* tag push)
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          # Always run on tag pushes (jl-* tags trigger releases)
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/jl-* ]]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          # Always run on pushes to main branches
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
+          # Branch/tag pushes, schedules and dispatches validate the full matrix.
+          # Only a jl-* tag push can enter publish_release.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # For PRs, check the TRIGGER_ON_PR_PUSH setting, then the ci:julia
           # label / julia/ changes. Assign on its own line so a git failure

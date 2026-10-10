@@ -17,13 +17,15 @@ permissions:
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]
-    # The tag check below only means something when a release tag is what triggered the run.
-    tags: [ "jl-*" ]
+    # All release families validate metadata; the tag/version check applies only to jl-*.
+    tags: [ "py-*", "jl-*", "rs-*" ]
   # No `paths:` filter: the julia-changes job decides (see julia-test.yml).
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
+  schedule:
+    - cron: "39 5 * * *"
 
 jobs:
   julia-changes:

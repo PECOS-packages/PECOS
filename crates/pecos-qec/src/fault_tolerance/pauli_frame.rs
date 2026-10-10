@@ -18,6 +18,7 @@
 //! user-supplied Pauli mask by XOR-ing precomputed detector/observable rows into
 //! sampled shots.
 
+use super::circuit_definitions::dag_circuit_emission_order;
 use super::dem_builder::record_offset_to_absolute_index;
 use super::propagator::{Direction, apply_gate, is_supported_prep_gate};
 use pecos_core::gate_type::GateType;
@@ -44,14 +45,6 @@ pub enum PauliFrameLookupError {
         "tracked-Pauli annotation references DAG node {meta_node}, which is missing or not a TrackedPauliMeta gate"
     )]
     MetaNodeNotTrackedPauliMeta { meta_node: usize },
-
-    /// A measurement gate has malformed measurement IDs.
-    #[error("measurement node {node} has {meas_ids} measurement id(s) for {qubits} qubit(s)")]
-    MalformedMeasurementIds {
-        node: usize,
-        meas_ids: usize,
-        qubits: usize,
-    },
 
     /// Detector/observable metadata references a measurement record outside the
     /// circuit's measurement range.
@@ -166,7 +159,7 @@ impl PauliFrameLookup {
             .enumerate()
             .map(|(pos, &node)| (node, pos))
             .collect();
-        let (measurement_records, num_measurements) = measurement_records_by_node(dag)?;
+        let (measurement_records, num_measurements) = measurement_records_by_node(dag);
         let detectors_by_measurement =
             outputs_by_measurement(num_measurements, detector_records, "detector")?;
         let observables_by_measurement =
@@ -401,48 +394,33 @@ fn xor_row(row: &mut [bool], indices: &[u32]) {
     }
 }
 
-fn measurement_records_by_node(
-    dag: &DagCircuit,
-) -> Result<(MeasurementRecordMap, usize), PauliFrameLookupError> {
+fn measurement_records_by_node(dag: &DagCircuit) -> (MeasurementRecordMap, usize) {
+    // Records are emission positions, the coordinates detector and observable
+    // record offsets count in. Stamped `MeasId` values are identities, not
+    // positions, and the unkeyed topological order can put an independent later
+    // measurement first, so number records along the shared emission order.
     let mut by_node = BTreeMap::new();
-    let mut next_record = 0usize;
     let mut num_measurements = 0usize;
-
-    for node in dag.topological_order() {
+    for node in dag_circuit_emission_order(dag) {
         let Some(gate) = dag.gate(node) else {
             continue;
         };
-        // `MeasureLeaked` consumes no measurement record. Including it here
-        // numbered it positionally while real measurements were numbered by
-        // their `MeasId`, so a leaked measurement and a real one could claim the
-        // same record.
+        // `MeasureLeaked` consumes no measurement record.
         if !gate.gate_type.consumes_measurement_record() {
             continue;
         }
-        if !gate.meas_ids.is_empty() && gate.meas_ids.len() != gate.qubits.len() {
-            return Err(PauliFrameLookupError::MalformedMeasurementIds {
-                node,
-                meas_ids: gate.meas_ids.len(),
-                qubits: gate.qubits.len(),
-            });
-        }
-
-        let mut entries = Vec::with_capacity(gate.qubits.len());
-        for (idx, qubit) in gate.qubits.iter().enumerate() {
-            let record = if gate.meas_ids.is_empty() {
-                let record = next_record;
-                next_record += 1;
-                record
-            } else {
-                gate.meas_ids[idx].index()
-            };
-            num_measurements = num_measurements.max(record + 1);
-            entries.push((qubit.index(), record));
-        }
+        let entries = gate
+            .qubits
+            .iter()
+            .map(|qubit| {
+                let record = num_measurements;
+                num_measurements += 1;
+                (qubit.index(), record)
+            })
+            .collect();
         by_node.insert(node, entries);
     }
-
-    Ok((by_node, num_measurements.max(next_record)))
+    (by_node, num_measurements)
 }
 
 fn outputs_by_measurement(
@@ -610,7 +588,7 @@ mod tests {
                 .iter()
                 .position(|&n| n == start)
                 .expect("meta node is in the order");
-            let (records, _) = measurement_records_by_node(&dag).expect("mapping succeeds");
+            let (records, _) = measurement_records_by_node(&dag);
             let affected = propagate_tracked_pauli_forward(
                 &dag,
                 &topo_order,
@@ -650,8 +628,7 @@ mod tests {
         let freed = dag.add_gate_auto_wire(Gate::mz_free(&[0usize]));
         let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
 
-        let (by_node, num_measurements) =
-            measurement_records_by_node(&dag).expect("mapping succeeds");
+        let (by_node, num_measurements) = measurement_records_by_node(&dag);
 
         assert_eq!(
             by_node.get(&freed).map(Vec::as_slice),
@@ -666,10 +643,8 @@ mod tests {
 
     /// `MeasureLeaked` must not consume a measurement record here.
     ///
-    /// It used to, and because `DagCircuit` mints no id for it, it took the
-    /// positional branch and claimed record 0 -- the same record the first real
-    /// measurement holds by its `MeasId`. Two different measurements then mapped
-    /// to one record.
+    /// It once did and claimed record 0, the record the first real measurement
+    /// holds, so two different measurements mapped to one record.
     #[test]
     fn measure_leaked_does_not_claim_a_measurement_record() {
         let mut dag = DagCircuit::new();
@@ -677,8 +652,7 @@ mod tests {
         let leaked = dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
         let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
 
-        let (by_node, num_measurements) =
-            measurement_records_by_node(&dag).expect("mapping succeeds");
+        let (by_node, num_measurements) = measurement_records_by_node(&dag);
 
         assert!(
             !by_node.contains_key(&leaked),
@@ -690,5 +664,73 @@ mod tests {
             "the real measurement keeps record 0"
         );
         assert_eq!(num_measurements, 1);
+    }
+
+    /// Measure qubits 0 and 1 in one gate, stamped with the given ids.
+    fn stamped_measurement_dag(meas_ids: [usize; 2]) -> DagCircuit {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        for pauli in [
+            PauliString::xs(&[0usize]),
+            PauliString::ys(&[0usize]),
+            PauliString::zs(&[0usize]),
+        ] {
+            dag.tracked_pauli(pauli);
+        }
+        let mut measure = Gate::mz(&[0usize, 1]);
+        measure.meas_ids = meas_ids
+            .into_iter()
+            .map(pecos_core::MeasId::from_raw)
+            .collect();
+        dag.add_gate_auto_wire(measure);
+        dag
+    }
+
+    /// Records are emission positions, not stamped `MeasId` values.
+    ///
+    /// Qubit 0 is measured first but stamped id 1, so `rec[-2]` names qubit 0.
+    /// Numbering records by id put qubit 0 at record 1, and a tracked X on
+    /// qubit 0 missed the detector that reads it.
+    #[test]
+    fn records_follow_emission_order_not_measurement_ids() {
+        let dag = stamped_measurement_dag([1, 0]);
+        let lookup = PauliFrameLookup::from_circuit(&dag, &[vec![-2], vec![-1]], &[])
+            .expect("lookup builds");
+        // Tracked rows 0, 1, 2 are X, Y and Z on qubit 0. X and Y flip qubit 0's
+        // Z measurement, which is detector 0; nothing reaches detector 1.
+        let detectors = |row| lookup.row_effects(row).expect("row exists").0.to_vec();
+        assert_eq!(detectors(0), vec![0]);
+        assert_eq!(detectors(1), vec![0]);
+        assert_eq!(detectors(2), Vec::<u32>::new());
+    }
+
+    /// The record count is the number of emitted records, not the largest id.
+    #[test]
+    fn sparse_measurement_ids_do_not_inflate_the_record_count() {
+        let dag = stamped_measurement_dag([17, 9]);
+        let (by_node, num_measurements) = measurement_records_by_node(&dag);
+        assert_eq!(num_measurements, 2);
+        let records: Vec<_> = by_node.values().flatten().copied().collect();
+        assert_eq!(records, vec![(0, 0), (1, 1)]);
+    }
+
+    /// Records follow the keyed emission order across separate gates.
+    ///
+    /// Qubit 0 is measured first in program order but sits behind a longer
+    /// chain, so an unkeyed topological sweep reaches qubit 1's measurement first.
+    #[test]
+    fn records_follow_emission_order_across_gates() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        dag.h(&[0]);
+        dag.h(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
+
+        let (by_node, num_measurements) = measurement_records_by_node(&dag);
+        assert_eq!(num_measurements, 2);
+        let records: Vec<_> = by_node.values().flatten().copied().collect();
+        assert_eq!(records, vec![(0, 0), (1, 1)]);
     }
 }

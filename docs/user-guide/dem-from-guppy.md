@@ -580,10 +580,24 @@ error model. The export itself has no extra dependency.
 `dem.to_string_decomposed()` uses decomposition components attached to the
 original fault source, writing `^`-separated components when that provenance
 is available. It preserves residual hyperedges when a true hyperedge has no
-source-attached decomposition. Graph matchers instead need
-`dem.to_string_terminal_graphlike_decomposed()`, an explicitly lossy
-hyperedge-to-edge projection based on detector terminals rather than a proof
-of source provenance.
+source-attached decomposition. For graph matchers, prefer
+`dem.to_string_source_graphlike_decomposed()`: it uses source provenance to
+choose graphlike components. Any residual hyperedges still require a decoder
+that supports them.
+
+`dem.to_string_terminal_graphlike_decomposed()` is a coordinate-based
+approximation. It invents graphlike components that need not be physical error
+mechanisms, so consistent labels do not imply accuracy comparable to source
+decomposition. It seeds a label table with standalone graphlike mechanisms,
+then decomposes effects by descending grouped probability (ties use effect order).
+Every emitted detector set keeps the same observable label in later effects. The
+last component absent from the table receives the remaining observable XOR.
+Pairings minimize coordinate distance up to 20 detectors; larger effects use
+deterministic nearest-neighbor search with consistency backtracking. Each effect
+allows at most 100,000 search visits, 4,096 cached states, and 256 terminals.
+Conflicting standalone labels, impossible pairings, and search exhaustion raise
+`ValueError`. A final check also rejects any conflicting labels in the output.
+The Rust method returns `Result<String, TerminalDecompositionError>`.
 
 <!--test-name: dem_from_guppy_stim_export-->
 ```python
@@ -618,7 +632,7 @@ dem = DetectorErrorModel.from_guppy(
 
 raw_text = dem.to_string()
 source_decomposed_text = dem.to_string_decomposed()
-graphlike_text = dem.to_string_terminal_graphlike_decomposed()
+graphlike_text = dem.to_string_source_graphlike_decomposed()
 
 print(raw_text)
 print(source_decomposed_text)
@@ -664,7 +678,7 @@ dem = DetectorErrorModel.from_guppy(
 
 stim.DetectorErrorModel(dem.to_string())
 stim.DetectorErrorModel(dem.to_string_decomposed())
-stim.DetectorErrorModel(dem.to_string_terminal_graphlike_decomposed())
+stim.DetectorErrorModel(dem.to_string_source_graphlike_decomposed())
 ```
 
 ## Decoding: PyMatching, Tesseract, and BP-OSD
@@ -705,7 +719,7 @@ dem = DetectorErrorModel.from_guppy(
 batch = dem.to_sampler().sample_batch(1000, 0)
 error_counts = {
     "pymatching": batch.decode(
-        dem.to_string_terminal_graphlike_decomposed(),
+        dem.to_string_source_graphlike_decomposed(),
         pymatching(correlated=True),
     ).num_errors,
     "tesseract": batch.decode(
@@ -732,8 +746,9 @@ assert bp_osd_result.observable_flips.mask >= 0
 For direct PyMatching construction, use the
 `PyMatchingDecoder.from_dem(...)` pattern in the
 [surface-memory example](#surface-code-memory-dem). That DEM's source-attached
-decomposition is already graph-like; in general, matching decoders require the
-terminal-decomposed graph-like projection. Tesseract and BP-OSD can consume the
+decomposition is already graph-like. Prefer the source-informed graphlike
+decomposition for matching decoders, checking that no residual hyperedges remain.
+Tesseract and BP-OSD can consume the
 raw hyperedge DEM directly; the batch comparison above uses the established
 source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
 

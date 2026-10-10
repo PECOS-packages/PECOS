@@ -174,7 +174,7 @@ observable_masks = [mask for _, mask in evaluated]
 batch = SampleBatch(detector_events, observable_masks)
 
 pymatching_errors = batch.decode(
-    dem.to_string_terminal_graphlike_decomposed(),
+    dem.to_string_source_graphlike_decomposed(),
     pymatching(correlated=True),
 ).num_errors
 tesseract_errors = batch.decode(

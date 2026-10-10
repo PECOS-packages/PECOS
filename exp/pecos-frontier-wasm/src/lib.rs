@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn helios_result_words_are_zero_extended() {
         STATE.with_borrow_mut(|state| {
-            state.initialize("error(0.1) D0 L31 L32 L33 L66 L96 L127");
+            state.initialize("error(0.1) D0 L31 L32 L33 L63 L66 L95 L96 L127");
         });
 
         frontier_stream_begin();
@@ -751,7 +751,7 @@ mod tests {
                 frontier_result_2_i64(),
                 frontier_result_3_i64(),
             ],
-            [0x8000_0000, 0b11, 0b100, 0x8000_0001]
+            [0x8000_0000, 0x8000_0003, 0x8000_0004, 0x8000_0001]
         );
     }
 

@@ -3904,19 +3904,6 @@ def _build_canonical_dem_influence_map(
     return influence_map
 
 
-def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
-    """Return whether detector/observable metadata uses positional records."""
-    import json
-
-    for metadata_json in metadata_jsons:
-        if not metadata_json:
-            continue
-        for entry in json.loads(metadata_json):
-            if entry.get("records"):
-                return True
-    return False
-
-
 def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
     """Return Stim-style negative record offsets for a metadata entry."""
     records = entry.get("records")
@@ -4029,12 +4016,6 @@ def generate_dem_from_tick_circuit(
 
     num_measurements = int(tc.get_meta("num_measurements") or "0")
 
-    # Extract measurement order from TickCircuit: list of qubits in measurement execution order
-    # This allows proper mapping between record offsets (TickCircuit order) and
-    # influence map indices (DAG topological order).
-    measurement_order = get_measurement_order_from_tick_circuit(tc)
-    metadata_uses_records = _metadata_uses_record_offsets(detectors_json, observables_json)
-
     # Convert TickCircuit to DagCircuit and build influence map
     dag = tc.to_dag_circuit()
     influence_map = _build_canonical_dem_influence_map(dag)
@@ -4067,8 +4048,6 @@ def generate_dem_from_tick_circuit(
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(dag)
     builder.with_num_measurements(num_measurements)
-    if metadata_uses_records:
-        builder.with_measurement_order(measurement_order)
     builder.with_detectors_json(detectors_json)
     if observables_json:
         builder.with_observables_json(observables_json)

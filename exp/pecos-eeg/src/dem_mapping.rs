@@ -503,8 +503,8 @@ fn build_dem_inner(
 
     // S-only events: exact formula
     // p_D = (1/2)(1 - exp(2 * sum_rates))
-    // Note: S rates are negative (e.g., -p/3), so 2*sum is negative,
-    // exp(2*sum) < 1, and p_D > 0.
+    // Note: forward S coefficients are negative (0.5 ln(1 - 2p) for a flip
+    // probability p), so 2*sum is negative, exp(2*sum) < 1, and p_D > 0.
     for (event, rates) in &s_events {
         let sum_rate: f64 = rates.iter().sum();
         let prob = (1.0 - (2.0 * sum_rate).exp()) / 2.0;

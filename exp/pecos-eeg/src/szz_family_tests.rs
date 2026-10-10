@@ -302,10 +302,7 @@ fn forward_rejects_other_resets_and_measurements() {
             kind: EegType::H,
         };
         assert!(
-            std::panic::catch_unwind(
-                || analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise")
-            )
-            .is_err(),
+            std::panic::catch_unwind(|| analyze_with_noise(&gates, &noise, &[false; 2])).is_err(),
             "{gate:?}"
         );
     }

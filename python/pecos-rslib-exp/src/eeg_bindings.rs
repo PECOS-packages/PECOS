@@ -894,8 +894,8 @@ pub fn correlation_matching_dem(
 /// faults with the same effective Pauli label. Measurement and prep
 /// noise kept at original positions. Returns compression statistics.
 ///
-/// This compresses the forward generator approximation; it does not preserve
-/// categorical channel exclusivity or exact finite-probability composition.
+/// Stochastic (S) flips compose exactly; coherent (H) sources compose to first
+/// order, and categorical channel exclusivity is not preserved.
 ///
 /// Returns (original_count, compressed_count, boundary_noise_labels).
 #[pyfunction]

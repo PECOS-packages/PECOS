@@ -227,11 +227,13 @@ except Exception as e:
 ### Run PECOS Tests
 
 ```bash
-# Run tests for GPU simulators
-uv run pytest python/quantum-pecos/tests/pecos/integration/state_sim_tests/test_statevec.py -v
-
-# Tests with CuStateVec and MPS should pass (not skip)
+# Build with the CUDA backend, install the CUDA Python packages, and run every CUDA test
+just build-cuda
+uv sync --group cuda13 --inexact   # or cuda12; on V100 install the Volta pin above instead
+just pytest-cuda
 ```
+
+`just pytest-cuda` uses the environment as installed (it never syncs, so a manual V100 pin is kept). It fails if the GPU, cuQuantum, CuPy or pytket-cutensornet is not usable, and fails if any CUDA test skips. CI has no GPU, so run it before merging changes to the CUDA backends.
 
 ## Package Versions
 

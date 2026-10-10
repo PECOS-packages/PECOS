@@ -10,13 +10,13 @@ and syndrome processing.
 
 from __future__ import annotations
 
-from pecos.qec.surface._detection_events import extract_detection_events_and_observables
-
 import json
 import math
 from importlib import import_module
 from itertools import combinations
 from typing import TYPE_CHECKING
+
+from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -504,19 +504,10 @@ impl PyBitInt {
         })
     }
 
-    pub fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.size().hash(&mut hasher);
-        true.hash(&mut hasher); // signed = true
-        if let Some(val) = self.inner.to_i64() {
-            val.hash(&mut hasher);
-        } else {
-            for word in self.inner.inner_words() {
-                word.hash(&mut hasher);
-            }
-        }
-        hasher.finish()
+    pub fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+        // Python integers provide a canonical, width-independent mathematical
+        // value, including negative values spanning multiple storage words.
+        self.__int__(py)?.hash()
     }
 
     pub fn __str__(&self) -> String {

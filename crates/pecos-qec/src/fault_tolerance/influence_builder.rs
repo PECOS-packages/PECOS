@@ -1309,6 +1309,7 @@ mod tests {
         dag.mz(&[1]);
 
         let map = InfluenceBuilder::new(&dag)
+            .expect("supported circuit")
             .build()
             .expect("circuit is replayable");
 

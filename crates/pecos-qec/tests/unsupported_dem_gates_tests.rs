@@ -99,7 +99,14 @@ fn assert_rotation_rejected_by_every_dem_family(
         .unwrap_err();
     assert_eq!(error.gate_type, gate_type);
     assert_eq!(error.location, dag_location);
-    assert_eq!(error.qubits, [0]);
+    let gate_qubits: Vec<usize> = circuit
+        .gate(1)
+        .expect("gate under test is node 1")
+        .qubits
+        .iter()
+        .map(|qubit| qubit.index())
+        .collect();
+    assert_eq!(error.qubits, gate_qubits);
 
     assert_dem_error(
         DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap_err(),

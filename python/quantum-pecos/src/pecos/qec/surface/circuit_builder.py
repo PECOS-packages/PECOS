@@ -22,6 +22,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, TypedDict
 
 import pecos._traced_circuit as _traced_circuit
+from pecos.qec._replay import _replay_measurements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -2182,7 +2183,7 @@ class TickCircuitRenderer(CircuitRenderer):
         Metadata is stored at three levels:
         - Circuit-level (preserved in DagCircuit):
             - 'detectors': JSON list of {id, coords, records}
-            - 'observables': JSON list of {id, records}
+            - 'observables': JSON list of {id, records, reference}
             - 'num_measurements', 'num_detectors', 'basis'
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
@@ -2762,10 +2763,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
             # Logical observable
             logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
+            reference_measurements = _replay_measurements(circuit, meas_count) if logical_rec_offsets else []
             observables = [
                 {
                     "id": 0,
                     "records": logical_rec_offsets,
+                    "reference": sum(reference_measurements[rec] for rec in logical_rec_offsets) % 2,
                 },
             ]
 
@@ -3025,7 +3028,7 @@ def generate_tick_circuit_from_patch(
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata:
     - 'detectors': JSON list of {id, coords, records}
-    - 'observables': JSON list of {id, records}
+    - 'observables': JSON list of {id, records, reference}
     - 'num_measurements': total measurement count
     - 'num_detectors': number of detectors
 
@@ -3118,6 +3121,8 @@ def get_observable_descriptors_from_tick_circuit(
     patch: SurfacePatch,
 ) -> list[SurfaceObservableDescriptor]:
     """Return structured logical observable descriptors for a TickCircuit.
+
+    The reference belongs to the observable definition in ``circuit_definitions()``, not to descriptors.
 
     Example:
         >>> from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch

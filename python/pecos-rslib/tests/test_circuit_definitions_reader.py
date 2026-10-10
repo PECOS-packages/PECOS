@@ -72,7 +72,15 @@ def test_resolved_definition_shape(scrambled, references, positions):
     assert scrambled.circuit_definitions() == {
         "num_measurements": 2,
         "detectors": [{"id": 8, "measurements": positions, "coords": None, "label": None}],
-        "observables": [{"id": 3, "measurements": positions, "label": "readout", "pauli": None}],
+        "observables": [
+            {
+                "id": 3,
+                "measurements": positions,
+                "label": "readout",
+                "pauli": None,
+                "reference": None,
+            }
+        ],
     }
 
 
@@ -82,7 +90,15 @@ def test_annotation_only_and_agreeing_metadata(scrambled):
     expected = {
         "num_measurements": 2,
         "detectors": [{"id": 0, "measurements": [1], "coords": None, "label": "syndrome"}],
-        "observables": [{"id": 0, "measurements": [0], "label": "logical", "pauli": "+Z"}],
+        "observables": [
+            {
+                "id": 0,
+                "measurements": [0],
+                "label": "logical",
+                "pauli": "+Z",
+                "reference": None,
+            }
+        ],
     }
     assert scrambled.circuit_definitions() == expected
     scrambled.set_meta("detectors", '[{"id":0,"records":[-1],"coords":[1,2,3]}]')

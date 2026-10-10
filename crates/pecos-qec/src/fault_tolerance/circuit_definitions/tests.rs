@@ -381,12 +381,14 @@ fn metadata_only_observables() {
         result.observables,
         vec![
             ResolvedObservable {
+                reference: None,
                 id: 3,
                 label: None,
                 pauli: None,
                 measurements: vec![0]
             },
             ResolvedObservable {
+                reference: None,
                 id: 9,
                 label: Some("last".into()),
                 pauli: None,

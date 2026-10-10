@@ -80,6 +80,8 @@ pub struct ResolvedDetector {
 pub struct ResolvedObservable {
     /// Declared metadata id or index among annotations of this kind.
     pub id: u32,
+    /// Noiseless value supplied only by metadata, never applied by the reader.
+    pub reference: Option<u8>,
     /// Optional human-readable name.
     pub label: Option<String>,
     /// Optional Pauli string supplied by the annotation source.
@@ -189,6 +191,7 @@ pub enum DefinitionError {
 }
 
 struct Definition {
+    reference: Option<u8>,
     measurements: Vec<usize>,
     coords: Option<Vec<f64>>,
     label: Option<String>,
@@ -329,6 +332,7 @@ fn merge(
         definition.coords = definition.coords.take().or(annotation.coords);
         definition.label = definition.label.take().or(annotation.label);
         definition.pauli = annotation.pauli;
+        // Keep the metadata reference: annotations cannot supply a noiseless value.
     }
     Ok(metadata)
 }
@@ -377,6 +381,7 @@ pub fn resolve_definitions(
                 &entry.records,
                 &entry.meas_ids,
             )?,
+            reference: None,
             coords: entry.coords.map(Vec::from),
             label: entry.label,
             pauli: None,
@@ -401,6 +406,7 @@ pub fn resolve_definitions(
                 &entry.meas_ids,
             )?,
             coords: None,
+            reference: entry.reference,
             label: entry.label,
             pauli: None,
         };
@@ -429,6 +435,7 @@ pub fn resolve_definitions(
                     annotation.measurement_ids.iter().map(|id| id.index()),
                 )?,
                 coords,
+                reference: None,
                 label: annotation.label.clone(),
                 pauli: annotation.pauli.clone(),
             },
@@ -448,6 +455,7 @@ pub fn resolve_definitions(
             .into_iter()
             .map(|(id, d)| ResolvedObservable {
                 id,
+                reference: d.reference,
                 label: d.label,
                 pauli: d.pauli,
                 measurements: d.measurements,

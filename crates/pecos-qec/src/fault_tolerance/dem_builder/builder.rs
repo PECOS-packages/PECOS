@@ -76,6 +76,8 @@ pub struct ParsedObservable {
     /// it, but it used to be parsed and dropped, leaving circuit annotations as
     /// the only way to get a label onto an observable.
     pub label: Option<String>,
+    /// Noiseless observable value from metadata; fault effects do not apply it.
+    pub reference: Option<u8>,
 }
 
 // ============================================================================
@@ -617,6 +619,7 @@ impl<'a> DemBuilder<'a> {
                 Ok(ParsedObservable {
                     id: observable.id,
                     label: observable.label,
+                    reference: observable.reference,
                     records: records(observable.measurements)?,
                     meas_ids: Vec::new(),
                 })
@@ -639,6 +642,7 @@ impl<'a> DemBuilder<'a> {
                 records,
                 meas_ids: Vec::new(),
                 label: None,
+                reference: None,
             })
             .collect();
         self.clear_exact_branch_cache();
@@ -2801,11 +2805,25 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
     let label = extract_definition_label(object, "observable")?;
 
+    let reference = match object.get("reference") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(0) => Some(0),
+            Some(1) => Some(1),
+            _ => {
+                return Err(DemBuilderError::ParseError(format!(
+                    "observable {id} has invalid 'reference' {value}; expected integer 0 or 1 or null"
+                )));
+            }
+        },
+    };
+
     Ok(ParsedObservable {
         id,
         records,
         meas_ids,
         label,
+        reference,
     })
 }
 

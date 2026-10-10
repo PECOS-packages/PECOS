@@ -2332,6 +2332,7 @@ impl PyTickCircuit {
             entry.set_item("measurements", observable.measurements)?;
             entry.set_item("label", observable.label)?;
             entry.set_item("pauli", observable.pauli.map(|pauli| pauli.to_string()))?;
+            entry.set_item("reference", observable.reference)?;
             observables.append(entry)?;
         }
         result.set_item("observables", observables)?;

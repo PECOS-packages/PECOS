@@ -6,6 +6,7 @@
 import json
 import re
 from itertools import product
+from types import SimpleNamespace
 
 import pytest
 import stim
@@ -29,7 +30,21 @@ from pecos.qec.surface.circuit_builder import (
 )
 from pecos.qec.surface.logical_circuit import LogicalGateType
 from pecos.testing import simulate_tick_circuit
+from pecos_rslib.quantum import TickCircuit
 from pecos_rslib_exp import depolarizing
+
+
+def definition_probe(observables):
+    """Exercise the helper's validation independently of the reader's JSON schema."""
+    return SimpleNamespace(
+        circuit_definitions=lambda: {"observables": observables, "detectors": [], "num_measurements": 1},
+    )
+
+
+def single_measurement_circuit():
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([0], [0])
+    return tc
 
 
 class ReferenceProbe(LogicalCircuitBuilder):
@@ -167,8 +182,7 @@ def test_sparse_observable_id():
 
 @pytest.mark.parametrize("rows", [[], [[0]]])
 def test_missing_reference_names_entry(rows):
-    tc = build_memory_circuit(distance=3, rounds=1)
-    tc.set_meta("num_measurements", "1")
+    tc = single_measurement_circuit()
     tc.set_meta("observables", json.dumps([{"id": 7, "records": [-1]}]))
     with pytest.raises(
         MissingObservableReferenceError,
@@ -189,7 +203,8 @@ def test_memory_reference(basis, distance):
 
 
 @pytest.mark.parametrize("reference", [None, 0, 1])
-def test_descriptors_preserve_reference_without_requiring_it(reference):
+@pytest.mark.parametrize("cached", [False, True])
+def test_descriptors_do_not_project_reference(reference, cached):
     patch = SurfacePatch.create(3)
     tc = reference_builder("X", ("SZ", "SZ"), "X").to_tick_circuit()
     observables = json.loads(tc.get_meta("observables"))
@@ -198,17 +213,15 @@ def test_descriptors_preserve_reference_without_requiring_it(reference):
     else:
         observables[0]["reference"] = reference
     tc.set_meta("observables", json.dumps(observables))
-    for _ in range(2):  # Exercise conversion and its cached result.
-        descriptor = get_observable_descriptors_from_tick_circuit(tc, patch)[0]
-        assert ("reference" in descriptor) == (reference is not None)
-        if reference is not None:
-            assert descriptor["reference"] == reference
+    if cached:
+        get_observable_descriptors_from_tick_circuit(tc, patch)
+    descriptor = get_observable_descriptors_from_tick_circuit(tc, patch)[0]
+    assert "reference" not in descriptor
 
 
 @pytest.mark.parametrize("field", ["records", "meas_ids"])
 def test_extraction_metadata_reference_formats(field):
-    tc = build_memory_circuit(distance=3, rounds=1)
-    tc.set_meta("num_measurements", "1")
+    tc = single_measurement_circuit()
     tc.set_meta("detectors", "[]")
     tc.set_meta("observables", json.dumps([{"id": 4, field: [-1] if field == "records" else [0], "reference": 1}]))
     assert extract_detection_events_and_observables(tc, [[1], [0]])[1] == [[], [4]]
@@ -266,16 +279,16 @@ def test_replay_measurement_count_mismatch(monkeypatch, consumer, count_delta):
         "signed": lambda: simulate_tick_circuit(tc),
     }[consumer]
 
-    monkeypatch.setattr("pecos.qec._replay._replay_tick_circuit", replay_wrong_count)
-    with pytest.raises(ValueError, match=r"^Replay measurement count disagrees with circuit metadata$"):
+    target = "pecos.testing" if consumer == "signed" else "pecos.qec._replay"
+    monkeypatch.setattr(f"{target}._replay_tick_circuit", replay_wrong_count)
+    source = "definitions" if consumer == "signed" else "metadata"
+    with pytest.raises(ValueError, match=rf"^Replay measurement count disagrees with circuit {source}$"):
         build()
 
 
 @pytest.mark.parametrize("rows", [[], [[0]]])
 def test_missing_reference_and_id_names_entry(rows):
-    tc = build_memory_circuit(distance=3, rounds=1)
-    tc.set_meta("num_measurements", "1")
-    tc.set_meta("observables", json.dumps([{"id": 0, "records": [-1], "reference": 0}, {"records": [-1]}]))
+    tc = definition_probe([{"id": 0, "measurements": [0], "reference": 0}, {"measurements": [0]}])
     with pytest.raises(
         MissingObservableReferenceError,
         match=r"^observable entry 1 is missing 'reference';.*carries no reference.*flip cannot be derived without one",
@@ -306,30 +319,17 @@ def test_analysis_sparse_observable_id(field, order):
 
 @pytest.mark.parametrize("rows", [[], [[0]], [[1]]])
 def test_missing_id_names_entry(rows):
-    tc = build_memory_circuit(distance=3, rounds=1)
-    tc.set_meta("num_measurements", "1")
-    tc.set_meta("detectors", "[]")
-    tc.set_meta("observables", json.dumps([{"records": [-1], "reference": 0}]))
+    tc = definition_probe([{"measurements": [0], "reference": 0}])
     with pytest.raises(MissingObservableReferenceError, match=r"observable entry 0 is missing 'id'"):
         extract_detection_events_and_observables(tc, rows)
 
 
-@pytest.mark.parametrize("reference", [2, "0", None, 0.0])
-@pytest.mark.parametrize("consumer", ["extraction", "descriptors", "cached-descriptors"])
-def test_invalid_reference_names_value(reference, consumer):
-    patch = SurfacePatch.create(3)
-    tc = build_memory_circuit(patch=patch, rounds=1)
-    metadata = [{"id": 7, "records": [-1], "reference": reference}]
-    key = "observable_descriptors" if consumer == "cached-descriptors" else "observables"
-    tc.set_meta(key, json.dumps(metadata))
+@pytest.mark.parametrize("reference", [2, "0", 0.0, True])
+def test_invalid_reference_names_value(reference):
+    tc = definition_probe([{"id": 7, "measurements": [0], "reference": reference}])
     pattern = rf"observable entry 0 \(id=7\).*invalid 'reference' {re.escape(repr(reference))};"
-    consume = (
-        (lambda: extract_detection_events_and_observables(tc, []))
-        if consumer == "extraction"
-        else (lambda: get_observable_descriptors_from_tick_circuit(tc, patch))
-    )
     with pytest.raises(MissingObservableReferenceError, match=pattern):
-        consume()
+        extract_detection_events_and_observables(tc, [])
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -395,38 +395,28 @@ def test_reference_replay_count(monkeypatch, consumer, has_observables):
     assert len(calls) == int(has_observables)
 
 
-def consume_observable_metadata(tc, consumer, rows):
-    """Exercise the public metadata boundaries, including the descriptor cache."""
-    if consumer == "extraction":
-        extract_detection_events_and_observables(tc, rows)
-    elif consumer == "empirical":
-        empirical_correlation_table(tc, depolarizing(), shots=1)
-    else:
-        get_observable_descriptors_from_tick_circuit(tc, SurfacePatch.create(3))
-
-
 @pytest.mark.parametrize("observable_id", ["a", None, 1.5, True])
-@pytest.mark.parametrize("consumer", ["extraction", "empirical", "descriptors", "cached-descriptors"])
 @pytest.mark.parametrize("rows", [[], [[1]]])
-def test_invalid_observable_id(observable_id, consumer, rows):
-    tc = build_memory_circuit(distance=3, rounds=1)
-    metadata = [{"id": observable_id, "records": [-1], "reference": 0}]
-    key = "observable_descriptors" if consumer == "cached-descriptors" else "observables"
-    tc.set_meta(key, json.dumps(metadata))
+def test_invalid_observable_id(observable_id, rows):
+    tc = definition_probe([{"id": observable_id, "measurements": [0], "reference": 0}])
     pattern = rf"observable entry 0.*invalid 'id' {re.escape(repr(observable_id))}; expected an integer"
     with pytest.raises(MissingObservableReferenceError, match=pattern):
-        consume_observable_metadata(tc, consumer, rows)
+        extract_detection_events_and_observables(tc, rows)
 
 
-@pytest.mark.parametrize("consumer", ["extraction", "empirical", "descriptors", "cached-descriptors"])
 @pytest.mark.parametrize("rows", [[], [[1]]])
-def test_duplicate_observable_id(consumer, rows):
-    tc = build_memory_circuit(distance=3, rounds=1)
-    metadata = [{"id": 7, "records": [-1], "reference": 0}] * 2
-    key = "observable_descriptors" if consumer == "cached-descriptors" else "observables"
-    tc.set_meta(key, json.dumps(metadata))
+def test_duplicate_observable_id(rows):
+    tc = definition_probe([{"id": 7, "measurements": [0], "reference": 0}] * 2)
     with pytest.raises(MissingObservableReferenceError, match=r"observable entry 1 has duplicate 'id' 7"):
-        consume_observable_metadata(tc, consumer, rows)
+        extract_detection_events_and_observables(tc, rows)
+
+
+@pytest.mark.parametrize("reference", [{}, {"reference": None}])
+@pytest.mark.parametrize("rows", [[], [[0]]])
+def test_helper_missing_or_null_reference(reference, rows):
+    tc = definition_probe([{"id": 7, "measurements": [0], **reference}])
+    with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\).*carries no reference"):
+        extract_detection_events_and_observables(tc, rows)
 
 
 @pytest.mark.parametrize("field", ["records", "meas_ids"])
@@ -453,3 +443,62 @@ def test_fit_dem_record_formats(backend):
             entry["meas_ids"] = [num_meas + rec for rec in entry.pop("records")]
         tc.set_meta(key, json.dumps(entries))
     assert fit_dem_from_simulation(tc, noise, shots=256, backend=backend) == expected
+
+
+@pytest.mark.parametrize("producer", ["logical", "memory"])
+@pytest.mark.parametrize("reference", [0, 1])
+def test_reader_round_trip_reference(producer, reference):
+    if producer == "logical":
+        word = ("SZ", "SZ") if reference else ("SZ", "SZdg")
+        tc = reference_builder("X", word, "X").to_tick_circuit()
+    else:
+        patch = SurfacePatch.create(3)
+        steps, allocation = build_surface_code_circuit(patch, 1, "Z")
+        if reference:
+            final = next(i for i, step in enumerate(steps) if step.label == "final[0]")
+            steps.insert(final, SurfaceCircuitStep(OpType.X, [allocation.data_qubits[0]]))
+        tc = TickCircuitRenderer().render(steps, allocation, patch, 1, "Z")
+    metadata = json.loads(tc.get_meta("observables"))
+    resolved = tc.circuit_definitions()["observables"]
+    assert {obs["id"]: obs["reference"] for obs in metadata} == {0: reference}
+    assert {obs["id"]: obs["reference"] for obs in resolved} == {0: reference}
+
+
+@pytest.mark.parametrize("metadata_reference", [{}, {"reference": None}])
+def test_reader_absent_reference(metadata_reference):
+    tc = TickCircuit()
+    tc.tick().mz([0])
+    tc.set_meta("observables", json.dumps([{"id": 7, "records": [-1], **metadata_reference}]))
+    assert tc.circuit_definitions()["observables"][0]["reference"] is None
+    with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\).*carries no reference"):
+        extract_detection_events_and_observables(tc, [])
+
+
+@pytest.mark.parametrize("reference", [2, -1, 1.5, "1", True])
+def test_reader_rejects_invalid_reference(reference):
+    tc = TickCircuit()
+    tc.tick().mz([0])
+    tc.set_meta("observables", json.dumps([{"id": 7, "records": [-1], "reference": reference}]))
+    with pytest.raises(ValueError, match=rf"observable 7.*invalid 'reference' {re.escape(json.dumps(reference))}"):
+        tc.circuit_definitions()
+
+
+@pytest.mark.parametrize("consumer", ["dem", "sampler"])
+def test_rust_fault_effects_ignore_reference(consumer):
+    from pecos_rslib.qec import DemSampler, DetectorErrorModel
+
+    tc = reference_builder("X", ("SZ", "SZ"), "X").to_tick_circuit()
+    metadata = json.loads(tc.get_meta("observables"))
+    assert metadata[0]["reference"] == 1
+    noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.03}
+
+    def effects():
+        if consumer == "dem":
+            return DetectorErrorModel.from_circuit(tc, **noise).to_string()
+        sampler = DemSampler.from_circuit(tc, **noise)
+        return [sampler.sample(seed=seed) for seed in range(32)]
+
+    expected = effects()
+    metadata[0]["reference"] = 0
+    tc.set_meta("observables", json.dumps(metadata))
+    assert effects() == expected

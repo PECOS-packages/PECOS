@@ -128,7 +128,7 @@ class TestInvalidBackend:
 
 
 def test_empirical_absolute_records_keep_declared_ids():
-    """A deterministic one is read at absolute position zero and labeled by id."""
+    """An explicit zero reference turns the measured one at position zero into a flip labeled by id."""
     from pecos_rslib.quantum import TickCircuit
 
     tc = TickCircuit()
@@ -136,7 +136,7 @@ def test_empirical_absolute_records_keep_declared_ids():
     tc.tick().x([0])
     tc.tick().mz_with_ids([0], [17])
     tc.set_meta("detectors", '[{"id":5,"records":[0]}]')
-    tc.set_meta("observables", '[{"id":3,"records":[0]}]')
+    tc.set_meta("observables", '[{"id":3,"records":[0],"reference":0}]')
     tc.set_meta("num_measurements", "1")
     assert empirical_correlation_table(tc, depolarizing(), shots=4) == [
         (("D5",), 1.0),

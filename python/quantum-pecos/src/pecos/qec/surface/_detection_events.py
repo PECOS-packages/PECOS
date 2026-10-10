@@ -28,10 +28,11 @@ def _validate_observable_references(
             entry += f" (id={obs['id']})"
         if obs.get("reference") is None:
             msg = (
-                f"{entry} is missing 'reference'; this metadata carries no reference, "
-                "so a flip cannot be derived without one. "
+                f"{entry} has no 'reference', so a flip cannot be derived from its raw parity. "
+                "An observable carried only by a circuit annotation has no noiseless reference; "
+                "neither does metadata written before the field existed. "
                 "Surface producers LogicalCircuitBuilder.to_tick_circuit and TickCircuitRenderer "
-                "(via build_memory_circuit or generate_tick_circuit_from_patch) currently emit it."
+                "(via build_memory_circuit or generate_tick_circuit_from_patch) emit it."
             )
             raise MissingObservableReferenceError(msg)
         if "id" not in obs:

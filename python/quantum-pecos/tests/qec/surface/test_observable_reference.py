@@ -187,8 +187,8 @@ def test_missing_reference_names_entry(rows):
     with pytest.raises(
         MissingObservableReferenceError,
         match=(
-            r"entry 0 \(id=7\).*missing 'reference'.*carries no reference.*flip cannot be derived without one.*"
-            r"LogicalCircuitBuilder.to_tick_circuit.*TickCircuitRenderer.*currently emit it"
+            r"entry 0 \(id=7\).*has no 'reference'.*flip cannot be derived from its raw parity.*"
+            r"LogicalCircuitBuilder.to_tick_circuit.*TickCircuitRenderer.*emit it"
         ),
     ):
         extract_detection_events_and_observables(tc, rows)
@@ -291,7 +291,7 @@ def test_missing_reference_and_id_names_entry(rows):
     tc = definition_probe([{"id": 0, "measurements": [0], "reference": 0}, {"measurements": [0]}])
     with pytest.raises(
         MissingObservableReferenceError,
-        match=r"^observable entry 1 is missing 'reference';.*carries no reference.*flip cannot be derived without one",
+        match=r"^observable entry 1 has no 'reference'.*flip cannot be derived from its raw parity",
     ):
         extract_detection_events_and_observables(tc, rows)
 
@@ -415,7 +415,7 @@ def test_duplicate_observable_id(rows):
 @pytest.mark.parametrize("rows", [[], [[0]]])
 def test_helper_missing_or_null_reference(reference, rows):
     tc = definition_probe([{"id": 7, "measurements": [0], **reference}])
-    with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\).*carries no reference"):
+    with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\) has no 'reference'"):
         extract_detection_events_and_observables(tc, rows)
 
 
@@ -470,7 +470,7 @@ def test_reader_absent_reference(metadata_reference):
     tc.tick().mz([0])
     tc.set_meta("observables", json.dumps([{"id": 7, "records": [-1], **metadata_reference}]))
     assert tc.circuit_definitions()["observables"][0]["reference"] is None
-    with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\).*carries no reference"):
+    with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\) has no 'reference'"):
         extract_detection_events_and_observables(tc, [])
 
 

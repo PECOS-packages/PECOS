@@ -45,6 +45,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   now attaches to each native QIS gate: for example, one Guppy `h` becomes two
   native gates. Measurement records follow the circuit's measurement order
   (runtime order for a traced program), including independent measurements.
+- `extract_detection_events_and_observables` no longer treats an observable with no
+  noiseless reference as having a reference of zero, and raises instead. This includes
+  an observable carried only by a circuit annotation, such as one added with
+  `TickCircuit.observable`, since an annotation has no reference slot. Previously such
+  an observable extracted flips from its raw parity, which is wrong whenever its
+  noiseless value is one.
 - `extract_detection_events_and_observables` now returns declared observable ids
   rather than positions in the metadata list. Callers using these ids as array
   indices need a width of maximum observable id plus one, not the entry count.

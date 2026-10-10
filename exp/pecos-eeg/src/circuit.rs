@@ -11,6 +11,7 @@
 
 use crate::Bm;
 use crate::eeg::EegType;
+use crate::expand::EegBuildError;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::{
     BitmaskStorage, Conjugated, conjugate_cx, conjugate_cy, conjugate_cz, conjugate_h,
@@ -83,7 +84,8 @@ pub struct PropagatedEeg {
     pub label: Bm,
     /// Second Pauli label for C and A types (None for H and S).
     pub label2: Option<Bm>,
-    /// Coefficient (rate). For H: includes sign from conjugation. For S: always negative.
+    /// Generator coefficient. For H: includes sign from conjugation.
+    /// For S: `0.5 * ln(1 - 2p)` for the injected flip probability p.
     pub coeff: f64,
     /// Physical noise source that produced this generator (for sensitivity analysis).
     pub source: Option<NoiseSource>,
@@ -119,11 +121,16 @@ impl EegAnalysisResult {
 
 /// Analyze the expanded circuit with a flexible noise specification.
 ///
-/// For each gate, calls `noise.noise_after_gate()` to get generators,
-/// using the first-order generator representation of categorical channels,
-/// then propagates them to the end via Clifford conjugation.
+/// For each gate, calls `noise.noise_after_gate()` to get physical injections,
+/// converts S flip probabilities to generator coefficients, then propagates
+/// them to the end via Clifford conjugation. Categorical channels use the
+/// independent-flip approximation supplied by the noise specification.
 ///
 /// Gates marked in `expansion_gates` are skipped for noise injection.
+///
+/// # Errors
+/// Returns [`EegBuildError::InvalidStochasticProbability`] for S probabilities
+/// outside `[0, 0.5)`, which have no finite real generator coefficient.
 ///
 /// # Panics
 /// Panics if the provenance flags do not match the gate count.
@@ -131,7 +138,7 @@ pub fn analyze_with_noise(
     gates: &[Gate],
     noise: &dyn crate::noise::NoiseSpec,
     expansion_gates: &[bool],
-) -> EegAnalysisResult {
+) -> Result<EegAnalysisResult, EegBuildError> {
     crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
 
     let mut generators = Vec::new();
@@ -162,12 +169,19 @@ pub fn analyze_with_noise(
                         });
                     }
                     EegType::S => {
+                        let p = -inj.rate;
+                        if !(0.0..0.5).contains(&p) {
+                            return Err(EegBuildError::InvalidStochasticProbability {
+                                gate_index: i,
+                                probability: p,
+                            });
+                        }
                         let (pl, _) = propagate_s(inj.label, remaining);
                         generators.push(PropagatedEeg {
                             eeg_type: EegType::S,
                             label: pl,
                             label2: None,
-                            coeff: inj.rate,
+                            coeff: 0.5 * (-2.0 * p).ln_1p(),
                             source: None,
                         });
                     }
@@ -214,24 +228,27 @@ pub fn analyze_with_noise(
         }
     }
 
-    EegAnalysisResult {
+    Ok(EegAnalysisResult {
         generators,
         num_measurements,
-    }
+    })
 }
 
 /// Analyze the expanded circuit with the legacy NoiseModel.
 ///
 /// Delegates to `analyze_with_noise` using a `UniformNoise` specification.
 ///
+/// # Errors
+/// Returns [`EegBuildError::InvalidStochasticProbability`] for S probabilities
+/// outside `[0, 0.5)`, which have no finite real generator coefficient.
+///
 /// # Panics
 /// Panics if the provenance flags do not match the gate count.
-#[must_use]
 pub fn analyze_expanded(
     gates: &[Gate],
     noise: &NoiseModel,
     expansion_gates: &[bool],
-) -> EegAnalysisResult {
+) -> Result<EegAnalysisResult, EegBuildError> {
     let uniform = crate::noise::UniformNoise {
         idle_rz: noise.idle_rz,
         p1: noise.p1,
@@ -435,7 +452,8 @@ mod tests {
         // because RZ(theta) = exp(-i*theta*Z/2) → H_Z with rate theta/2
         let gates = vec![gate(GateType::CX, &[0, 1])];
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         let h_gens: Vec<_> = result
             .generators
@@ -464,7 +482,8 @@ mod tests {
             &gates,
             &NoiseModel::coherent_only(0.0),
             &vec![false; gates.len()],
-        );
+        )
+        .expect("valid forward noise");
 
         assert_eq!(result.generators.len(), 1);
         let generator = &result.generators[0];
@@ -478,7 +497,8 @@ mod tests {
         // H_Z after H gate: Z → X, sign positive
         let gates = vec![gate(GateType::CX, &[0, 1]), gate(GateType::H, &[0])];
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         let q0_gen = result
             .generators
@@ -496,7 +516,8 @@ mod tests {
         // SX on qubit 1 after CX: Z1 → -Y1 (sign flip)
         let gates = vec![gate(GateType::CX, &[0, 1]), gate(GateType::SX, &[1])];
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         // H_Z(1) propagated through SX(1): Z→-Y, coeff flips sign
         let q1_gen = result
@@ -524,7 +545,8 @@ mod tests {
         // CY after CX: Z on target propagates like CX (Z_t → Z_c Z_t)
         let gates = vec![gate(GateType::CX, &[0, 1]), gate(GateType::CY, &[0, 1])];
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         // H_Z(1) from CX, propagated through CY: Z_t → Z_c Z_t
         let zz_gen = result
@@ -540,7 +562,8 @@ mod tests {
         // SY: X→-Z, Z→X. So H_Z through SY gives H_X with no sign flip
         let gates = vec![gate(GateType::CX, &[0, 1]), gate(GateType::SY, &[1])];
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         // H_Z(1) through SY(1): Z→X, no sign flip
         let q1_gen = result
@@ -563,7 +586,8 @@ mod tests {
             gate(GateType::PZ, &[1]), // Reset qubit 1
         ];
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         // H_Z(1) should be cleared by PZ(1)
         let q1_gens: Vec<_> = result
@@ -588,7 +612,8 @@ mod tests {
     fn test_no_noise_no_generators() {
         let gates = vec![gate(GateType::CX, &[0, 1]), gate(GateType::H, &[0])];
         let noise = NoiseModel::coherent_only(0.0);
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
         assert!(result.generators.is_empty());
     }
 
@@ -603,7 +628,8 @@ mod tests {
             p_meas: 0.0,
             p_prep: 0.0,
         };
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         let s_gens: Vec<_> = result
             .generators
@@ -617,8 +643,8 @@ mod tests {
         );
         for g in &s_gens {
             assert!(
-                (g.coeff + 0.01).abs() < 1e-10,
-                "Rate should be -p/3 = -0.01"
+                (g.coeff - 0.5 * 0.98_f64.ln()).abs() < 1e-10,
+                "Coefficient should be 0.5 ln(0.98) for p/3 = 0.01"
             );
         }
     }
@@ -634,7 +660,8 @@ mod tests {
             p_meas: 0.0,
             p_prep: 0.0,
         };
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         let s_gens: Vec<_> = result
             .generators
@@ -648,8 +675,8 @@ mod tests {
         );
         for g in &s_gens {
             assert!(
-                (g.coeff + 0.01).abs() < 1e-10,
-                "Rate should be -p/15 = -0.01"
+                (g.coeff - 0.5 * 0.98_f64.ln()).abs() < 1e-10,
+                "Coefficient should be 0.5 ln(0.98) for p/15 = 0.01"
             );
         }
     }
@@ -665,7 +692,8 @@ mod tests {
             p_meas: 0.05,
             p_prep: 0.0,
         };
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         let s_gens: Vec<_> = result
             .generators
@@ -674,7 +702,7 @@ mod tests {
             .collect();
         assert_eq!(s_gens.len(), 1);
         assert_eq!(s_gens[0].label, Bm::x(0));
-        assert!((s_gens[0].coeff + 0.05).abs() < 1e-10);
+        assert!((s_gens[0].coeff - 0.5 * 0.90_f64.ln()).abs() < 1e-10);
     }
 
     #[test]
@@ -688,7 +716,8 @@ mod tests {
             p_meas: 0.0,
             p_prep: 0.03,
         };
-        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()]);
+        let result = analyze_expanded(&gates, &noise, &vec![false; gates.len()])
+            .expect("valid forward noise");
 
         let s_gens: Vec<_> = result
             .generators
@@ -696,7 +725,7 @@ mod tests {
             .filter(|g| g.eeg_type == EegType::S)
             .collect();
         assert_eq!(s_gens.len(), 1);
-        assert!((s_gens[0].coeff + 0.03).abs() < 1e-10);
+        assert!((s_gens[0].coeff - 0.5 * 0.94_f64.ln()).abs() < 1e-10);
     }
 
     #[test]
@@ -733,7 +762,8 @@ mod tests {
             p_meas: 0.0,
             p_prep: 0.1,
         };
-        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+            .expect("valid forward noise");
 
         let prep_gens: Vec<_> = result
             .generators
@@ -769,7 +799,8 @@ mod tests {
         ];
         let expanded = crate::expand::expand_circuit(&gates).expect("MZ-only circuit");
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
+        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+            .expect("valid forward noise");
 
         let h_gens: Vec<_> = result
             .generators

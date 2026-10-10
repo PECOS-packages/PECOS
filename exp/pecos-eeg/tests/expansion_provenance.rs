@@ -244,7 +244,8 @@ fn inserted_reset_skips_noise() {
 #[test]
 fn forward_eeg_keeps_user_cx_generators() {
     let expanded = expand_circuit(&reproducer()).unwrap();
-    let result = analyze_with_noise(&expanded.gates, &p2_noise(0.3), &expanded.expansion_gates);
+    let result = analyze_with_noise(&expanded.gates, &p2_noise(0.3), &expanded.expansion_gates)
+        .expect("valid forward noise");
     assert_eq!(result.generators.len(), 15);
 }
 

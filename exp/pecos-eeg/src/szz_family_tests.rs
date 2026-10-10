@@ -77,7 +77,8 @@ fn szz_family_forward_injections_and_adjoint_walks() {
                     label: p.clone(),
                     kind: EegType::H,
                 };
-                let result = analyze_with_noise(&gates, &noise, &[false; 2]);
+                let result =
+                    analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise");
                 assert_eq!(result.generators.len(), 1);
                 assert_eq!(result.generators[0].label, expected.label, "{gate:?} {p:?}");
                 let sign = if expected.sign_negative { -1.0 } else { 1.0 };
@@ -162,7 +163,7 @@ fn szz_family_reversed_operands_reproducer() {
         label: Bm::y(0),
         kind: EegType::H,
     };
-    let result = analyze_with_noise(&gates, &noise, &[false; 3]);
+    let result = analyze_with_noise(&gates, &noise, &[false; 3]).expect("valid forward noise");
     let first = forward(&noise.label, GateType::SZZ, 1, 0);
     let second = forward(&first.label, GateType::SXX, 1, 0);
     assert_eq!(result.generators[0].label, second.label);
@@ -182,7 +183,7 @@ fn forward_rejects_unsupported_clifford() {
         label: Bm::x(0),
         kind: EegType::H,
     };
-    analyze_with_noise(&gates, &noise, &[false; 2]);
+    analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise");
 }
 
 #[test]
@@ -214,7 +215,7 @@ fn forward_listed_noops_preserve_injections() {
             label: Bm::y(0),
             kind: EegType::H,
         };
-        let result = analyze_with_noise(&gates, &noise, &[false; 2]);
+        let result = analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise");
         assert_eq!(
             result.generators.len(),
             1 + usize::from(gate == GateType::RZ),
@@ -271,7 +272,7 @@ fn szz_family_forward_detection_matches_walk() {
     };
     // The final noiseless stabilizer is Y0 Z1, obtained from X0 by SZZ.
     let detector = forward(&Bm::x(0), GateType::SZZ, 0, 1).label;
-    let result = analyze_with_noise(&gates, &noise, &[false; 2]);
+    let result = analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise");
     let entries = build_dem_configured(
         &result.generators,
         &[Detector {
@@ -301,7 +302,10 @@ fn forward_rejects_other_resets_and_measurements() {
             kind: EegType::H,
         };
         assert!(
-            std::panic::catch_unwind(|| analyze_with_noise(&gates, &noise, &[false; 2])).is_err(),
+            std::panic::catch_unwind(
+                || analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise")
+            )
+            .is_err(),
             "{gate:?}"
         );
     }
@@ -336,7 +340,7 @@ fn tracked_pauli_marker_is_a_noop_everywhere() {
         label: Bm::y(0),
         kind: EegType::H,
     };
-    let result = analyze_with_noise(&gates, &noise, &[false; 2]);
+    let result = analyze_with_noise(&gates, &noise, &[false; 2]).expect("valid forward noise");
     assert_eq!(result.generators.len(), 1);
     assert_eq!(result.generators[0].label, noise.label);
 

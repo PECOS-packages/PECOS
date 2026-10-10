@@ -70,7 +70,7 @@ pub trait DemGenerator: Send + Sync {
 /// Coherent DEM generator (backward Heisenberg mechanism extraction, approximate probabilities).
 ///
 /// Fast. Handles coherent noise (idle_rz). Approximate probabilities
-/// (sin^2 for H-type, (1-exp(2s))/2 for S-type).
+/// (sin^2 for H-type, exact independent-flip composition for S-type).
 pub struct CoherentApprox;
 
 impl DemGenerator for CoherentApprox {

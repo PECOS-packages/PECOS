@@ -265,7 +265,7 @@ fn classify_xz(
 /// Build a DEM from propagated EEG generators.
 ///
 /// Groups generators by DEM event class, then computes probabilities:
-/// - **S-only event**: p = (1/2)(1 - exp(-2 * sum_rates)) [exact]
+/// - **S-only event**: p = (1/2)(1 - exp(2 * sum_coefficients)) [exact]
 /// - **H-only event**: p = sum_j h_j^2 [leading order, diagonal terms]
 ///   (Off-diagonal coherent interference captured at second order via beta)
 /// - **Mixed**: S at O(epsilon) + H^2 at O(epsilon^2)
@@ -1340,7 +1340,7 @@ mod tests {
 
     #[test]
     fn test_s_only_probability() {
-        // Single S_X with rate -0.01 → p ≈ 0.00995
+        // Single S_X generator coefficient -0.01 → (1 - e^{-0.02})/2 ≈ 0.0099007
         let gens = vec![PropagatedEeg {
             eeg_type: EegType::S,
             label: Bm::x(0),

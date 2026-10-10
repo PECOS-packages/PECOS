@@ -16,6 +16,13 @@ use pecos_core::{Gate, QubitId};
 /// Why an EEG DEM could not be built from the circuit.
 #[derive(Debug, Clone)]
 pub enum EegBuildError {
+    /// An S injection cannot be represented by a finite real forward generator.
+    InvalidStochasticProbability {
+        /// Position of the injection gate in the expanded circuit.
+        gate_index: usize,
+        /// Independent Pauli flip probability (`-rate`).
+        probability: f64,
+    },
     /// Invalid detector or observable definitions.
     Definitions(pecos_qec::fault_tolerance::circuit_definitions::DefinitionError),
     /// Definition emission and expansion disagree on the measurement count.
@@ -77,6 +84,13 @@ pub enum EegBuildError {
 impl std::fmt::Display for EegBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidStochasticProbability {
+                gate_index,
+                probability,
+            } => write!(
+                f,
+                "S injection at gate {gate_index} has flip probability {probability}; forward EEG requires 0 <= p < 0.5"
+            ),
             Self::Definitions(source) => source.fmt(f),
             Self::MeasurementCountMismatch {
                 definition_count,

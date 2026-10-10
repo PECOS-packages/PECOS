@@ -4,7 +4,7 @@
 
 //! Noise model specification for EEG analysis.
 //!
-//! Defines the [`NoiseSpec`] trait for specifying how noise generators are
+//! Defines the [`NoiseSpec`] trait for specifying how noise channels are
 //! injected at each gate in the circuit. The built-in [`UniformNoise`]
 //! applies the same rates to all gates of each type (matching the original
 //! `NoiseModel`). Users can implement custom noise for per-gate control.
@@ -13,7 +13,7 @@ use crate::Bm;
 use crate::eeg::EegType;
 use pecos_core::gate_type::GateType;
 
-/// A noise generator to inject at a specific point in the circuit.
+/// A noise channel to inject at a specific point in the circuit.
 #[derive(Clone, Debug)]
 pub struct NoiseInjection {
     /// EEG type of the generator.
@@ -22,7 +22,8 @@ pub struct NoiseInjection {
     pub label: Bm,
     /// Second label for C/A types.
     pub label2: Option<Bm>,
-    /// Rate (coefficient).
+    /// Physical parameter: rotation angle for H, negative independent Pauli
+    /// flip probability (`-p`) for S, generator coefficient for C/A.
     pub rate: f64,
 }
 
@@ -56,8 +57,8 @@ impl DepolarizingChannel {
     }
 }
 
-/// Physical noise for a Heisenberg walk, distinct from a forward EEG's
-/// approximate generator representation of categorical channels.
+/// Physical noise for a Heisenberg walk, including exact categorical channels
+/// in addition to the injections shared with the forward EEG view.
 /// In forward time, injections act in list order, then categorical channels
 /// act in list order. Backward walks apply the adjoints in reverse order.
 #[derive(Clone, Debug, Default)]
@@ -103,20 +104,22 @@ pub(crate) fn label_qubits(label: &Bm) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-/// Trait for noise models that produce EEG generators at each gate.
+/// Trait for noise models that produce physical injections at each gate.
 ///
 /// Implement this to specify arbitrary per-gate noise. The EEG analysis
 /// calls `noise_after_gate` for each gate in the expanded circuit,
-/// propagates the returned generators to the end, and accumulates them.
+/// converts injections to generators, propagates them to the end, and accumulates them.
 ///
 /// The built-in [`UniformNoise`] applies the same rates to all gates of
 /// each type. For per-gate or per-qubit noise, implement this trait
 /// with a custom struct.
 pub trait NoiseSpec: Send + Sync {
-    /// Return the generator view used by forward EEG and mechanism extraction.
-    /// The returned list is in forward-time application order.
-    /// `UniformNoise` represents categorical depolarizing to first order with
-    /// S coefficients `-p/3` or `-p/15`; these are not an exact channel composition.
+    /// Return physical injections for forward EEG and mechanism extraction.
+    /// The returned list is in forward-time application order. S rates are
+    /// negative independent flip probabilities in both noise views; forward
+    /// EEG converts them to generator coefficients at its ingress.
+    /// `UniformNoise` rates `-p/3` or `-p/15` mean independent flips of p/3 or
+    /// p/15, an approximation to the categorical depolarizing channel.
     ///
     /// The `qubits` are the qubit indices of the gate. For 2-qubit gates,
     /// idle coherent noise is typically injected on both qubits.
@@ -132,7 +135,7 @@ pub trait NoiseSpec: Send + Sync {
     /// Return physical channels for the backward Heisenberg walk.
     /// The returned lists are in forward-time application order: injections, then channels.
     ///
-    /// The default preserves custom models: each returned S injection is an
+    /// The default forwards injections exactly: each returned S injection is an
     /// independent Pauli flip at probability `-rate`. Equal rates or a count of
     /// three/fifteen injections never imply a categorical channel. Override
     /// this method to provide explicit categorical depolarizing channels.

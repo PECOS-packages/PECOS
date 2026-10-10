@@ -18,8 +18,9 @@
 //! and computes mechanism probabilities.
 //!
 //! For H-type (coherent) noise: amplitudes add, probability = sin²(total).
-//! For S-type (stochastic) noise: rates add, probability = (1-exp(2·total))/2.
-//! This uses the forward generator approximation of categorical depolarizing.
+//! For S-type (stochastic) noise: independent flips compose with
+//! probability = (1 - product(1 - 2p))/2, where p = -rate.
+//! Categorical depolarizing uses an independent-flip approximation.
 //! Exact Heisenberg targets use the separate physical channel view.
 
 use crate::Bm;
@@ -160,8 +161,8 @@ pub fn build_coherent_dem(
     // coherently. Different labels (e.g., Z on qubit 1 vs Z on qubit 2)
     // are separate mechanisms even if they flip the same detectors.
     //
-    // For S-type: use independent mechanisms as an approximation to the
-    // generator view, including exclusive choices from categorical channels.
+    // For S-type: compose independent flips exactly. The injection view
+    // approximates exclusive choices from categorical channels.
     //
     // After coherent accumulation per label, mechanisms with the same
     // detector set are combined independently (product formula).
@@ -186,7 +187,8 @@ pub fn build_coherent_dem(
                 *h_groups.entry(key).or_insert(0.0) += contrib.value;
             }
             EegType::S => {
-                *s_groups.entry(key).or_insert(0.0) += contrib.value;
+                let p = -contrib.value;
+                *s_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
             }
             _ => {}
         }
@@ -205,12 +207,12 @@ pub fn build_coherent_dem(
         }
     }
 
-    for ((event, _label), total_s) in &s_groups {
-        let prob = (1.0 - (2.0 * total_s).exp()) / 2.0;
-        if prob.abs() > 1e-15 {
+    for ((event, _label), product) in &s_groups {
+        let prob = (1.0 - product) / 2.0;
+        if prob > 1e-15 {
             entries.push(DemEntry {
                 event: event.clone(),
-                probability: prob.abs(),
+                probability: prob,
             });
         }
     }
@@ -386,15 +388,20 @@ pub fn build_coherent_dem_decomposable(
         };
 
         let key = (event.clone(), contrib.label.clone());
-        let groups = match contrib.eeg_type {
-            EegType::H => &mut h_groups,
-            EegType::S => &mut s_groups,
-            _ => continue,
-        };
-        groups
-            .entry(key)
-            .and_modify(|(val, _, _)| *val += contrib.value)
-            .or_insert((contrib.value, x_event, z_event));
+        match contrib.eeg_type {
+            EegType::H => {
+                h_groups
+                    .entry(key)
+                    .and_modify(|(val, _, _)| *val += contrib.value)
+                    .or_insert((contrib.value, x_event, z_event));
+            }
+            EegType::S => {
+                let p = -contrib.value;
+                let (product, _, _) = s_groups.entry(key).or_insert((1.0, x_event, z_event));
+                *product *= 1.0 - 2.0 * p;
+            }
+            _ => {}
+        }
     }
 
     // Step 4: Compute probabilities with decomposition info
@@ -414,14 +421,14 @@ pub fn build_coherent_dem_decomposable(
         }
     }
 
-    for ((event, _label), (total_s, x_ev, z_ev)) in &s_groups {
-        let prob = (1.0 - (2.0 * total_s).exp()) / 2.0;
-        if prob.abs() > 1e-15 {
+    for ((event, _label), (product, x_ev, z_ev)) in &s_groups {
+        let prob = (1.0 - product) / 2.0;
+        if prob > 1e-15 {
             let has_x = !x_ev.detectors.is_empty() || !x_ev.observables.is_empty();
             let has_z = !z_ev.detectors.is_empty() || !z_ev.observables.is_empty();
             entries.push(DecomposableDemEntry {
                 event: event.clone(),
-                probability: prob.abs(),
+                probability: prob,
                 x_component: if has_x { Some(x_ev.clone()) } else { None },
                 z_component: if has_z { Some(z_ev.clone()) } else { None },
             });

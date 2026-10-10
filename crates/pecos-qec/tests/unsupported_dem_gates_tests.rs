@@ -104,7 +104,7 @@ fn assert_rotation_rejected_by_every_dem_family(
         .expect("gate under test is node 1")
         .qubits
         .iter()
-        .map(|qubit| qubit.index())
+        .map(pecos_core::QubitId::index)
         .collect();
     assert_eq!(error.qubits, gate_qubits);
 

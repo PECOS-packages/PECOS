@@ -106,6 +106,7 @@ pub fn eeg_summary(
     p_meas: f64,
     p_prep: f64,
 ) -> PyResult<(usize, usize, usize, usize)> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -146,6 +147,7 @@ pub fn eeg_event_diagnostics(
     p_meas: f64,
     p_prep: f64,
 ) -> PyResult<Vec<PyEegEventDiagnostic>> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -214,6 +216,7 @@ pub fn eeg_per_detector(
     p_prep: f64,
     h_formula: &str,
 ) -> PyResult<Vec<(usize, f64)>> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -575,6 +578,7 @@ pub fn coherent_dem_exact(
     p_prep: f64,
     prune: f64,
 ) -> PyResult<String> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -675,6 +679,7 @@ pub fn coherent_dem_decomposed(
     p_prep: f64,
     prune: f64,
 ) -> PyResult<(String, String)> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -895,7 +900,8 @@ pub fn correlation_matching_dem(
 /// noise kept at original positions. Returns compression statistics.
 ///
 /// Stochastic (S) flips compose exactly; coherent (H) sources compose to first
-/// order, and categorical channel exclusivity is not preserved.
+/// order. Independent flips exactly represent categorical depolarizing for
+/// p1 <= 3/4 and p2 <= 15/16; larger positive values raise ValueError.
 ///
 /// Returns (original_count, compressed_count, boundary_noise_labels).
 #[pyfunction]
@@ -908,6 +914,7 @@ pub fn compress_noise(
     p_meas: f64,
     p_prep: f64,
 ) -> PyResult<(usize, usize)> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -954,6 +961,7 @@ pub fn noise_characterization(
     prune: f64,
     compress: bool,
 ) -> PyResult<(String, String, String)> {
+    validate_generator_depolarizing(p1, p2)?;
     let base_noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -1040,6 +1048,21 @@ pub fn noise_characterization(
 
 // -- Internal --
 
+/// Validate the independent-flip domain before any generator-view computation.
+/// Channel-only callers deliberately do not use this check.
+pub(crate) fn validate_generator_depolarizing(p1: f64, p2: f64) -> PyResult<()> {
+    for (name, probability, limit, fraction) in
+        [("p1", p1, 0.75, "3/4"), ("p2", p2, 0.9375, "15/16")]
+    {
+        if probability > limit {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "UniformNoise generator view requires {name} <= {fraction}; independent flips cannot represent a negative depolarizing eigenvalue ({name}={probability})"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn parse_h_formula(s: &str) -> PyResult<pecos_eeg::dem_mapping::HFormula> {
     match s {
         "taylor" => Ok(pecos_eeg::dem_mapping::HFormula::Taylor),
@@ -1062,6 +1085,7 @@ fn run_eeg(
     h_formula: &str,
     bch_order: u32,
 ) -> PyResult<Vec<DemEntry>> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -1123,6 +1147,7 @@ fn run_eeg_decomposable(
     Vec<DemEntry>,
     Vec<pecos_eeg::dem_mapping::DecomposableDemEntry>,
 )> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,

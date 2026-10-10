@@ -1382,6 +1382,12 @@ impl PySimNeoBuilder {
 
         use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
 
+        // run_dem_simulation reaches EEG generators only with coherent noise;
+        // its purely stochastic path retains the full categorical domain.
+        if noise_config.idle_rz_angle.abs() > 1e-15 {
+            crate::eeg_bindings::validate_generator_depolarizing(noise_config.p1, noise_config.p2)?;
+        }
+
         let definitions = definitions_from_tick_circuit(&self.tick_circuit)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let meta = CircuitMeasurementMeta {

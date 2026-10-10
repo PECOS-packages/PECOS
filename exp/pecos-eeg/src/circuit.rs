@@ -123,8 +123,9 @@ impl EegAnalysisResult {
 ///
 /// For each gate, calls `noise.noise_after_gate()` to get physical injections,
 /// converts S flip probabilities to generator coefficients, then propagates
-/// them to the end via Clifford conjugation. Categorical channels use the
-/// independent-flip approximation supplied by the noise specification.
+/// them to the end via Clifford conjugation. `UniformNoise` independent flips
+/// exactly represent categorical depolarizing for `p1 <= 3/4`, `p2 <= 15/16`;
+/// equality produces `q = 1/2`, rejected here by the finite-coefficient check.
 ///
 /// Gates marked in `expansion_gates` are skipped for noise injection.
 ///
@@ -643,8 +644,8 @@ mod tests {
         );
         for g in &s_gens {
             assert!(
-                (g.coeff - 0.5 * 0.98_f64.ln()).abs() < 1e-10,
-                "Coefficient should be 0.5 ln(0.98) for p/3 = 0.01"
+                (g.coeff - (1.0 - 4.0 * noise.p1 / 3.0).ln() / 4.0).abs() < 1e-12,
+                "Coefficient is ln(lambda)/4: two anticommuting flips, each exp(2*coeff)"
             );
         }
     }
@@ -675,8 +676,8 @@ mod tests {
         );
         for g in &s_gens {
             assert!(
-                (g.coeff - 0.5 * 0.98_f64.ln()).abs() < 1e-10,
-                "Coefficient should be 0.5 ln(0.98) for p/15 = 0.01"
+                (g.coeff - (1.0 - 16.0 * noise.p2 / 15.0).ln() / 16.0).abs() < 1e-12,
+                "Coefficient is ln(lambda)/16: eight anticommuting flips, each exp(2*coeff)"
             );
         }
     }

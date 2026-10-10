@@ -32,8 +32,8 @@ use pecos_qec::fault_tolerance::propagator::{
     GateNoiseKind, gate_noise_kind, is_supported_noop_or_metadata_gate,
 };
 use pecos_quantum::{
-    Attribute, DagCircuit, Gate, GateType, PHYSICAL_DURATION_META_KEY, QubitId, Tick, TickCircuit,
-    TickGateError,
+    Attribute, DagCircuit, DagWireError, Gate, GateType, PHYSICAL_DURATION_META_KEY, QubitId, Tick,
+    TickCircuit, TickGateError,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -1090,7 +1090,7 @@ impl PyDagCircuit {
         }
     }
 
-    /// Add a gate to the circuit.
+    /// Add an unwired gate, leaving append heads and the metadata target unchanged.
     ///
     /// Returns the node index of the newly added gate.
     fn add_gate(&mut self, gate: PyGate) -> PyResult<usize> {
@@ -1101,6 +1101,7 @@ impl PyDagCircuit {
 
     /// Remove a gate from the circuit.
     ///
+    /// Bridges its incoming and outgoing qubit wires and repairs append state.
     /// Returns the removed gate if it existed.
     fn remove_gate(&mut self, node: usize) -> Option<PyGate> {
         self.inner.remove_gate(node).map(PyGate::from)
@@ -1128,12 +1129,16 @@ impl PyDagCircuit {
     ///
     /// Returns the edge ID of the new wire.
     ///
-    /// Raises `DagCircuitWouldCycleError` if adding this wire would create a cycle.
+    /// Raises `DagCircuitWouldCycleError` for cycles, `ValueError` for duplicate
+    /// wires or missing gates. Gate removal already bridges incident wires.
     fn connect(&mut self, from_node: usize, to_node: usize, qubit: usize) -> PyResult<usize> {
         self.inner
             .connect(from_node, to_node, QubitId::from(qubit))
-            .map_err(|_| {
-                PyErr::new::<DagCircuitWouldCycleError, _>("Adding this wire would create a cycle")
+            .map_err(|error| match error {
+                DagWireError::WouldCycle(_) => {
+                    PyErr::new::<DagCircuitWouldCycleError, _>(error.to_string())
+                }
+                _ => pyo3::exceptions::PyValueError::new_err(error.to_string()),
             })
     }
 
@@ -1149,13 +1154,18 @@ impl PyDagCircuit {
                     .map(|(q, e)| (usize::from(q), e))
                     .collect()
             })
-            .map_err(|_| {
-                PyErr::new::<DagCircuitWouldCycleError, _>("Adding this wire would create a cycle")
+            .map_err(|error| match error {
+                DagWireError::WouldCycle(_) => {
+                    PyErr::new::<DagCircuitWouldCycleError, _>(error.to_string())
+                }
+                _ => pyo3::exceptions::PyValueError::new_err(error.to_string()),
             })
     }
 
     /// Remove a wire by its edge ID.
     ///
+    /// This manual edit leaves append heads unchanged. Later gate removal
+    /// follows the remaining incoming wires, even if the chain is disconnected.
     /// Returns the qubit that was carried by this wire.
     fn remove_wire(&mut self, edge_id: usize) -> Option<usize> {
         self.inner.remove_wire(edge_id).map(usize::from)
@@ -1309,6 +1319,18 @@ impl PyDagCircuit {
     /// Apply a Pauli-Z gate.
     fn z(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
         slf.borrow_mut(py).inner.z(&qubits);
+        slf
+    }
+
+    /// Apply a sqrt(X) gate.
+    fn sx(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.sx(&qubits);
+        slf
+    }
+
+    /// Apply a sqrt(X)-dagger gate.
+    fn sxdg(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
+        slf.borrow_mut(py).inner.sxdg(&qubits);
         slf
     }
 
@@ -1606,7 +1628,8 @@ impl PyDagCircuit {
 
     // ==================== Metadata ====================
 
-    /// Add metadata to the last added gate.
+    /// Add metadata to the tail of auto-wired insertion history.
+    /// Pass replacements take the original gate's place in this history.
     ///
     /// Args:
     ///     key: The attribute name.
@@ -1622,7 +1645,8 @@ impl PyDagCircuit {
         Ok(slf)
     }
 
-    /// Add multiple metadata attributes to the last added gate.
+    /// Add multiple metadata attributes to the tail of auto-wired insertion history.
+    /// Pass replacements take the original gate's place in this history.
     ///
     /// Args:
     ///     attrs: A dictionary of attribute names to values.

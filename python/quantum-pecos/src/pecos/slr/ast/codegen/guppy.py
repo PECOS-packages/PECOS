@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from pecos.slr.ast.codegen._block_flatten import validate_unique_block_decl_names
+from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.codegen.guppy_linearity import (
     GuppyLinearityState,
@@ -1112,6 +1113,7 @@ class AstToGuppy:
         if isinstance(stmt, ForStmt):
             return self._emit_for(stmt)
         if isinstance(stmt, WhileStmt):
+            reject_permute_in_region(stmt, "Guppy", quantum_registers=self.context.root_allocators)
             msg = "AST -> Guppy v1 does not support While loops"
             raise GuppyCodegenError(msg)
         if isinstance(stmt, ParallelBlock):
@@ -1325,6 +1327,7 @@ class AstToGuppy:
         return [f"{self.context.indent()}# {line.strip()}" for line in node.text.splitlines()]
 
     def _emit_if(self, node: IfStmt) -> list[str]:
+        reject_permute_in_region(node, "Guppy", quantum_registers=self.context.root_allocators)
         linearity = self._linearity()
         before = linearity.snapshot()
 
@@ -1351,6 +1354,7 @@ class AstToGuppy:
         return lines
 
     def _emit_repeat(self, node: RepeatStmt) -> list[str]:
+        reject_permute_in_region(node, "Guppy", quantum_registers=self.context.root_allocators)
         linearity = self._linearity()
         before = linearity.snapshot()
         lines = [f"{self.context.indent()}for _ in range({node.count}):"]
@@ -1365,6 +1369,7 @@ class AstToGuppy:
         return lines
 
     def _emit_for(self, node: ForStmt) -> list[str]:
+        reject_permute_in_region(node, "Guppy", quantum_registers=self.context.root_allocators)
         linearity = self._linearity()
         start = self._render_expression(node.start)
         stop = self._render_expression(node.stop)

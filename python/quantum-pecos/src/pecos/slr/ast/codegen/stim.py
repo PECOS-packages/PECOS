@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -468,6 +469,7 @@ class AstToStim:
         not a single measured bit compared with 0 or 1) raises: emitting
         the body unconditionally would be a silent miscompile.
         """
+        reject_permute_in_region(node, "Stim")
         if node.else_body:
             msg = (
                 "Stim codegen: If with an else-body is not supported (Stim "
@@ -571,7 +573,7 @@ class AstToStim:
         miscompile. Fail LOUD instead (same decision as the QIR backend;
         real While is out of scope).
         """
-        _ = node
+        reject_permute_in_region(node, "Stim")
         msg = (
             "Stim codegen does not support While loops (Stim has no "
             "runtime loop; a single-pass approximation would be a silent "
@@ -615,6 +617,15 @@ class AstToStim:
         import stim  # noqa: PLC0415
 
         if node.count <= 0:
+            return
+
+        # A relabel must be applied once per executed iteration. Reuse the
+        # same statement dispatch as the static For unroller, in the outer
+        # measurement frame so records and invalidations advance normally.
+        if any(iter_permutes(node)):
+            for _ in range(node.count):
+                for stmt in node.body:
+                    self._process_statement(stmt)
             return
 
         # Build sub-circuit for repeat body. The body is its own measurement

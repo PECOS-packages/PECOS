@@ -661,3 +661,43 @@ class TestDecomposedGuppyGates:
             Return(c),
         )
         assert all(r["measurement_0"] == 1 for r in self._bits(cry)), "X q0; H q1; CRY(pi); H q1 -> 1"
+
+
+def test_conditional_classical_permute_executes_in_selected_branch() -> None:
+    """Guppy's runtime mem_swap preserves both taken and untaken branch semantics."""
+    for flag_value in (0, 1):
+        for branch in ("then", "else"):
+            c, flag = CReg("c", 2), CReg("flag", 1)
+            swap = Permute([c[0], c[1]], [c[1], c[0]])
+            conditional = If(flag[0]).Then(swap) if branch == "then" else If(flag[0]).Then().Else(swap)
+            program = Main(c, flag, c[0].set(1), flag[0].set(flag_value), conditional, Return(c))
+            swapped = (flag_value == 1) == (branch == "then")
+            records = run_ast_guppy_via_selene(program, shots=4)
+            assert all(record["measurement_0"] == int(not swapped) for record in records)
+            assert all(record["measurement_1"] == int(swapped) for record in records)
+
+
+def test_conditional_permute_block_call_rebinds_returned_qubits() -> None:
+    """A Guppy function's permuted return is a faithful runtime rebinding at its call."""
+    from typing import ClassVar
+
+    from pecos.slr import Block
+
+    class SwapSlots(Block):
+        block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+        def __init__(self, q: QReg) -> None:
+            super().__init__()
+            self.q = q
+            self.extend(Permute([q[0], q[1]], [q[1], q[0]]))
+
+    for flag_value in (0, 1):
+        for branch in ("then", "else"):
+            q, c, flag = QReg("q", 2), CReg("c", 2), CReg("flag", 1)
+            swap = SwapSlots(q)
+            conditional = If(flag[0]).Then(swap) if branch == "then" else If(flag[0]).Then().Else(swap)
+            program = Main(q, c, flag, qb.X(q[0]), flag[0].set(flag_value), conditional, Measure(q) > c, Return(c))
+            swapped = (flag_value == 1) == (branch == "then")
+            records = run_ast_guppy_via_selene(program, shots=4)
+            assert all(record["measurement_0"] == int(not swapped) for record in records)
+            assert all(record["measurement_1"] == int(swapped) for record in records)

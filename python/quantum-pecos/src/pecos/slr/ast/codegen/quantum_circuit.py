@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -459,6 +460,7 @@ class AstToQuantumCircuit:
 
     def _process_if(self, node: IfStmt) -> None:
         """Process an if statement."""
+        reject_permute_in_region(node, "QuantumCircuit")
         # QuantumCircuit doesn't support conditionals directly
         # Process both branches
         self._flush_tick()
@@ -473,6 +475,7 @@ class AstToQuantumCircuit:
 
     def _process_while(self, node: WhileStmt) -> None:
         """Process a while loop."""
+        reject_permute_in_region(node, "QuantumCircuit")
         msg = (
             "While loops cannot be converted to QuantumCircuit format as they require "
             "runtime condition evaluation. Use For or Repeat blocks with static bounds instead."

@@ -121,13 +121,19 @@ impl From<crate::expand::EegBuildError> for DemSimulationError {
     }
 }
 
+/// Whether the coherent idle angle routes DEM simulation through EEG generators.
+#[must_use]
+pub fn uses_eeg_path(idle_rz: f64) -> bool {
+    idle_rz.abs() > 1e-15
+}
+
 /// Run DEM-based simulation: build DEM, sample, produce measurement bitstrings.
 ///
 /// Two modes:
-/// 1. **Stochastic path** (idle_rz == 0): builds a TickCircuit from gates + metadata,
+/// 1. **Stochastic path** (`uses_eeg_path(idle_rz)` is false): builds a TickCircuit from gates + metadata,
 ///    samples the symbolic measurement history with `RawMeasurementPlan`, and
 ///    overlays the stochastic fault table using geometric fault sampling.
-/// 2. **Coherent path** (idle_rz > 0): uses EEG DemGenerator for DEM, then
+/// 2. **Coherent path** (`uses_eeg_path(idle_rz)` is true): uses EEG DemGenerator for DEM, then
 ///    ParsedDem sampler + measurement synthesis (EEG handles coherent noise).
 ///
 /// # Arguments
@@ -146,7 +152,7 @@ pub fn run_dem_simulation(
     seed: u64,
 ) -> Result<DemSimulationResult, DemSimulationError> {
     // Coherent noise: use EEG path (Heisenberg walks handle idle_rz)
-    if noise.idle_rz.abs() > 1e-15 {
+    if uses_eeg_path(noise.idle_rz) {
         return run_eeg_path(gates, noise, meta, generator, shots, seed);
     }
 

@@ -52,11 +52,23 @@ def test_generator_bindings_reject_out_of_domain_before_reading_circuit(function
     ],
 )
 def test_channel_only_bindings_accept_negative_eigenvalues(function):
-    result = function(_circuit(), p1=0.9, p2=1.0)
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1])
+    circuit.tick().h([0])
+    circuit.tick().h([0])
+    circuit.tick().cx([(0, 1)])
+    circuit.tick().mz([0])
+    circuit.set_meta("detectors", '[{"id":0,"records":[-1]}]')
+    circuit.set_meta("num_measurements", "1")
+    p1, p2 = 0.9, 1.0
+    result = function(circuit, p1=p1, p2=p2)
     if function is exp.exact_detection_rates:
-        # Two H locations attenuate Z by lambda^2, lambda = 1 - 4*p1/3.
-        expected = (1 - (1 - 4 * 0.9 / 3) ** 2) / 2
-        assert dict(result)[0] == pytest.approx(expected, abs=1e-12)
+        # H,H,CX preserve |00>. Backward Z0 has nonidentity support at
+        # both H locations and the CX: <Z0> = lambda1^2 * lambda2.
+        lambda1 = 1 - 4 * p1 / 3
+        lambda2 = 1 - 16 * p2 / 15
+        expected = (1 - lambda1**2 * lambda2) / 2
+        assert dict(result)[0] == pytest.approx(expected, rel=0, abs=1e-12)
 
 
 @pytest.mark.parametrize("method", ["auto", "coherent", "coherent_approx", "coherent_exact"])

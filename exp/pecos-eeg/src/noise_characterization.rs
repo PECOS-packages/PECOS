@@ -417,7 +417,7 @@ mod tests {
                 .product();
             let marginal = (1.0 - product) / 2.0;
             assert!(
-                (marginal - expected).abs() < 1e-5,
+                (marginal - expected).abs() < 1e-12,
                 "{label}: {marginal} != {expected}"
             );
         }

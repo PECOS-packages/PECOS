@@ -32,6 +32,11 @@ type MeasurementRecordDefinition = (usize, Vec<usize>, Vec<i32>);
 /// For exact probabilities, use `coherent_dem_decomposed`.
 ///
 /// h_formula: "taylor" (default), "sin_squared", "exact_commuting", or "exact_subset"
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor", bch_order=1))]
 pub fn perturbative_dem(
@@ -61,6 +66,11 @@ pub fn perturbative_dem(
 }
 
 /// Build perturbative DEM and return structured events: list of (prob, [det_ids], [obs_ids]).
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor", bch_order=1))]
 pub fn perturbative_dem_events(
@@ -96,6 +106,11 @@ pub fn perturbative_dem_events(
 }
 
 /// Return (num_h_generators, num_s_generators, num_detectors, numobservables).
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0))]
 pub fn eeg_summary(
@@ -137,6 +152,11 @@ pub fn eeg_summary(
 ///
 /// Returns list of (det_ids, num_labels, num_same_label_groups, rates_by_label, max_combined_rate)
 /// This helps understand why perturbative formulas are inaccurate.
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0))]
 pub fn eeg_event_diagnostics(
@@ -205,6 +225,11 @@ pub fn eeg_event_diagnostics(
 /// computation misses.
 ///
 /// Returns list of (detector_id, probability).
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor"))]
 pub fn eeg_per_detector(
@@ -1051,14 +1076,8 @@ pub fn noise_characterization(
 /// Validate the independent-flip domain before any generator-view computation.
 /// Channel-only callers deliberately do not use this check.
 pub(crate) fn validate_generator_depolarizing(p1: f64, p2: f64) -> PyResult<()> {
-    for (name, probability, limit, fraction) in
-        [("p1", p1, 0.75, "3/4"), ("p2", p2, 0.9375, "15/16")]
-    {
-        if probability > limit {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "UniformNoise generator view requires {name} <= {fraction}; independent flips cannot represent a negative depolarizing eigenvalue ({name}={probability})"
-            )));
-        }
+    if let Some(message) = pecos_eeg::noise::generator_depolarizing_violation(p1, p2) {
+        return Err(pyo3::exceptions::PyValueError::new_err(message));
     }
     Ok(())
 }

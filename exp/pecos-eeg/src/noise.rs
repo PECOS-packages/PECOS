@@ -210,6 +210,23 @@ impl UniformNoise {
     }
 }
 
+/// Explain why depolarizing probabilities cannot use the independent-flip view.
+/// Returns `None` within the domain, including its fully depolarizing boundaries.
+/// Nonpositive values and NaN retain the noise view's existing guard behavior.
+#[must_use]
+pub fn generator_depolarizing_violation(p1: f64, p2: f64) -> Option<String> {
+    for (name, probability, limit, fraction) in
+        [("p1", p1, 0.75, "3/4"), ("p2", p2, 0.9375, "15/16")]
+    {
+        if probability > limit {
+            return Some(format!(
+                "UniformNoise generator view requires {name} <= {fraction}; independent flips cannot represent a negative depolarizing eigenvalue ({name}={probability})"
+            ));
+        }
+    }
+    None
+}
+
 #[derive(Clone, Copy)]
 enum DepolarizingRepresentation {
     Generators,
@@ -223,21 +240,10 @@ impl UniformNoise {
         qubits: &[usize],
         representation: DepolarizingRepresentation,
     ) -> GateNoise {
-        if matches!(representation, DepolarizingRepresentation::Generators) {
-            if self.p1 > 0.0 {
-                assert!(
-                    self.p1 <= 0.75,
-                    "UniformNoise generator view requires p1 <= 3/4; independent flips cannot represent a negative depolarizing eigenvalue (p1={})",
-                    self.p1
-                );
-            }
-            if self.p2 > 0.0 {
-                assert!(
-                    self.p2 <= 0.9375,
-                    "UniformNoise generator view requires p2 <= 15/16; independent flips cannot represent a negative depolarizing eigenvalue (p2={})",
-                    self.p2
-                );
-            }
+        if matches!(representation, DepolarizingRepresentation::Generators)
+            && let Some(message) = generator_depolarizing_violation(self.p1, self.p2)
+        {
+            panic!("{message}");
         }
         let mut injections = Vec::new();
         let mut depolarizing = Vec::new();
@@ -370,7 +376,8 @@ impl NoiseSpec for UniformNoise {
 fn inject_depol_1q(q: usize, prob: f64, out: &mut Vec<NoiseInjection>) {
     // Two flips anticommute with each nonidentity Pauli. ln_1p/exp_m1
     // avoid cancellation in (sqrt(1 - 4p/3) - 1)/2 for small p.
-    let rate = 0.5 * (0.5 * (-4.0 * prob / 3.0).ln_1p()).exp_m1();
+    let log_eigenvalue = (-4.0 * prob / 3.0).ln_1p();
+    let rate = 0.5 * (log_eigenvalue / 2.0).exp_m1();
     for pf in [Bm::x, Bm::y, Bm::z] {
         out.push(NoiseInjection {
             eeg_type: EegType::S,
@@ -384,7 +391,8 @@ fn inject_depol_1q(q: usize, prob: f64, out: &mut Vec<NoiseInjection>) {
 fn inject_depol_2q(qa: usize, qb: usize, prob: f64, out: &mut Vec<NoiseInjection>) {
     // Eight flips anticommute with each nonidentity Pauli. ln_1p/exp_m1
     // avoid cancellation in ((1 - 16p/15)^(1/8) - 1)/2 for small p.
-    let rate = 0.5 * ((-16.0 * prob / 15.0).ln_1p() / 8.0).exp_m1();
+    let log_eigenvalue = (-16.0 * prob / 15.0).ln_1p();
+    let rate = 0.5 * (log_eigenvalue / 8.0).exp_m1();
     let pfs = [Bm::x, Bm::y, Bm::z];
     for &pa in &pfs {
         out.push(NoiseInjection {

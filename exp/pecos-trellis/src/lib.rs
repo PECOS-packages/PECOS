@@ -455,10 +455,11 @@ struct Column {
     compact: CompactColumn,
 }
 
-/// Losslessly omit zero detector words outside each column's live span.
-/// Word order within the span is unchanged, preserving numeric tie-breaks.
+/// Parent-word index for a detector word outside the parent span, which reads as zero.
 const IMPLICIT_ZERO_WORD: usize = usize::MAX;
 
+/// Losslessly omit zero detector words outside each column's live span.
+/// Word order within the span is unchanged, preserving numeric tie-breaks.
 #[derive(Clone, Debug)]
 struct CompactColumn {
     first_word: usize,

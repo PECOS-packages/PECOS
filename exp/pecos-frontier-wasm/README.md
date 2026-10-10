@@ -10,7 +10,9 @@ must instead use the explicit `i64` streaming wrappers below: the H2-style
 Use `WasmPlatform.Helios` in Guppy and `WasmFileHandler(..., int_size=64)`
 when uploading. Call `frontier_stream_push_i64` and
 `frontier_stream_finish_round_i64` with five `i64` arguments and an `i64`
-result; query `frontier_status_i64`. The no-argument, no-result `init`,
+result; query `frontier_status_i64`. Read correction words with
+`frontier_result_0_i64..3_i64`; observables 32 and above are only available
+there. The no-argument, no-result `init`,
 `frontier_stream_begin`, and `frontier_reset` exports are shared.
 
 These wrappers preserve the decoder's existing 32-bit packed-word layout.
@@ -154,6 +156,9 @@ times every selected hardware shot exactly once.
   call. A return of -1 can mean failure **or a valid all-ones correction**;
   always check `frontier_status()`. This is the preferred hardware latency boundary.
 - `frontier_result_0..3() -> i32`: four observable-mask words.
+- `frontier_stream_push_i64`, `frontier_stream_finish_round_i64`,
+  `frontier_status_i64`, `frontier_result_0_i64..3_i64`: Helios `i64`
+  counterparts described above; correction words are zero-extended.
 - `frontier_status() -> i32`: 0 success, 1 model error, 2 model too wide,
   3 decode error, 4 replay error.
 - `frontier_reset() -> ()`: clears per-shot output.

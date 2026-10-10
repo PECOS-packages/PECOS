@@ -18,6 +18,7 @@ use pecos_decoder_core::dem::SparseDem;
 use pecos_frontier::{FrontierConfig, FrontierDecoder};
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
+use std::hash::{DefaultHasher, Hasher};
 use std::time::Instant;
 
 fn main() {
@@ -65,14 +66,15 @@ fn main() {
     }
 
     let started = Instant::now();
-    let mut checksum = 0_u64;
+    // Order-sensitive digest of every prediction, for comparing revisions.
+    let mut checksum = DefaultHasher::new();
     let mut failures = 0_usize;
     for _ in 0..repeats {
         for syndrome in &syndromes {
             match decoder.decode(syndrome) {
                 Ok(result) => {
                     for &word in result.predicted.words() {
-                        checksum = checksum.rotate_left(7) ^ word;
+                        checksum.write_u64(word);
                     }
                 }
                 Err(_) => failures += 1,
@@ -86,9 +88,10 @@ fn main() {
     println!(
         "model={path} detectors={} mechanisms={} shots={shots} repeats={repeats} seed={seed} \
          build_ms={:.3} decode_us_per_shot={microseconds_per_shot:.3} failures={failures} \
-         checksum={checksum:016x}",
+         checksum={:016x}",
         dem.num_detectors,
         dem.mechanisms.len(),
         build_seconds * 1_000.0,
+        checksum.finish(),
     );
 }

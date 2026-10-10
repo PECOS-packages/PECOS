@@ -488,6 +488,30 @@ pub extern "C" fn frontier_status_i64() -> i64 {
     i64::from(frontier_status())
 }
 
+/// Helios-compatible correction word 0, zero-extended from u32.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_result_0_i64() -> i64 {
+    i64::from(frontier_result_0().cast_unsigned())
+}
+
+/// Helios-compatible correction word 1, zero-extended from u32.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_result_1_i64() -> i64 {
+    i64::from(frontier_result_1().cast_unsigned())
+}
+
+/// Helios-compatible correction word 2, zero-extended from u32.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_result_2_i64() -> i64 {
+    i64::from(frontier_result_2().cast_unsigned())
+}
+
+/// Helios-compatible correction word 3, zero-extended from u32.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_result_3_i64() -> i64 {
+    i64::from(frontier_result_3().cast_unsigned())
+}
+
 /// Return the number of hardware shots compiled into this module.
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
@@ -704,6 +728,31 @@ mod tests {
             i64::from(u32::MAX)
         );
         assert_eq!(frontier_status_i64(), i64::from(STATUS_OK));
+
+        // A decoder error must stay negative rather than zero-extending -1.
+        frontier_stream_begin();
+        assert_eq!(frontier_stream_finish_round_i64(1, 2, 0, 0, 0), -1);
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_DECODE_ERROR));
+    }
+
+    #[test]
+    fn helios_result_words_are_zero_extended() {
+        STATE.with_borrow_mut(|state| {
+            state.initialize("error(0.1) D0 L31 L32 L33 L66 L96 L127");
+        });
+
+        frontier_stream_begin();
+        assert_eq!(frontier_stream_finish_round_i64(1, 1, 0, 0, 0), 0x8000_0000);
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_OK));
+        assert_eq!(
+            [
+                frontier_result_0_i64(),
+                frontier_result_1_i64(),
+                frontier_result_2_i64(),
+                frontier_result_3_i64(),
+            ],
+            [0x8000_0000, 0b11, 0b100, 0x8000_0001]
+        );
     }
 
     #[test]

@@ -61,7 +61,7 @@ jobs:
         run: rustup show
 
       - name: Test the workflow parsers the integrity check relies on
-        run: uv run --frozen pytest -q scripts/ci/test_cache_guard.py scripts/ci/test_workflow_permissions.py scripts/ci/test_check_selene_wheels.py
+        run: uv run --frozen pytest -q -n auto scripts/ci/test_cache_guard.py scripts/ci/test_workflow_permissions.py scripts/ci/test_check_selene_wheels.py scripts/ci/test_trunk_ci_issues.py
 
       - name: Run dependency integrity checks
         run: ./scripts/dependency-integrity-check.sh

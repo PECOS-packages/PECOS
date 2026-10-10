@@ -103,7 +103,7 @@ fn parity_with_raw_pipeline() {
     // Path 2: raw pipeline, identical inputs + identical RNG seed.
     let dag = repetition_code_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
     let det_records: Vec<Vec<i32>> = detectors().iter().map(|d| d.records.to_vec()).collect();
     let obs_records: Vec<Vec<i32>> = observables().iter().map(|o| o.records.to_vec()).collect();
     let sampler = DemSamplerBuilder::new(&influence_map)

@@ -41,7 +41,7 @@ fn per_gate_uniform_equivalent_matches_scalar_path() {
     // builders should produce identical mechanism sets.
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let p = 0.01;
     let scalar = DemSamplerBuilder::new(&influence)
@@ -70,7 +70,7 @@ fn per_gate_override_changes_cx_rate() {
     // scalar baseline with small p2.
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     // Scalar baseline: small p2.
     let small = DemSamplerBuilder::new(&influence)
@@ -108,7 +108,7 @@ fn per_gate_base_noise_used_for_unmapped_gate_types() {
     // Specify H explicitly (rates[X, Y, Z]); CX uses the base noise model.
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::uniform(0.01))
         .with_1q_rates(GateType::H, [0.001, 0.001, 0.001]);
@@ -131,7 +131,7 @@ fn per_gate_asymmetric_2q_rates() {
     // sparse rate path (only one of 15 pair rates nonzero) works.
     let dag = build_parity_check_circuit();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let mut rates_2q = [0.0; 15];
     rates_2q[0] = 0.005; // IX

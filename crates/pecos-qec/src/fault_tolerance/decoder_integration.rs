@@ -56,13 +56,25 @@
 //! assert_eq!(syndrome.len(), 2);
 //! ```
 
+use super::propagator::UnsupportedGateError;
 use super::{
     FaultCheckConfig, FaultConfiguration, PauliFaultIterator, SpacetimeLocation,
-    anticommutes_with_logical, propagate_faults,
+    anticommutes_with_logical,
 };
 use ndarray::{Array1, ArrayView1};
 use pecos_decoder_core::{Decoder, DecodingResultTrait};
 use pecos_simulators::PauliProp;
+
+/// Failure while propagating a circuit or decoding its syndrome.
+#[derive(Debug, thiserror::Error)]
+pub enum ErrorCorrectionError<E> {
+    /// The circuit contains a gate Pauli propagation cannot represent.
+    #[error(transparent)]
+    UnsupportedGate(#[from] super::propagator::UnsupportedGateError),
+    /// The decoder failed.
+    #[error("decoder failed: {0}")]
+    Decoder(E),
+}
 
 /// Configuration for error correction checking.
 #[derive(Debug, Clone)]
@@ -274,8 +286,23 @@ pub fn check_logical_errors_after_recovery(
 /// The correction result including whether a logical error occurred.
 ///
 /// # Errors
-/// Returns the decoder's error type if decoding fails.
+/// Returns the first unsupported gate with its circuit location, or the decoder error.
 pub fn run_correction_cycle<D>(
+    circuit: &pecos_quantum::TickCircuit,
+    fault: &FaultConfiguration,
+    ec_config: &ErrorCorrectionConfig,
+    decoder: &mut D,
+) -> Result<CorrectionResult, ErrorCorrectionError<D::Error>>
+where
+    D: Decoder,
+    D::Result: DecodingResultTrait,
+{
+    super::propagator::validate_tick_circuit(circuit)?;
+    run_correction_cycle_validated(circuit, fault, ec_config, decoder)
+        .map_err(ErrorCorrectionError::Decoder)
+}
+
+fn run_correction_cycle_validated<D>(
     circuit: &pecos_quantum::TickCircuit,
     fault: &FaultConfiguration,
     ec_config: &ErrorCorrectionConfig,
@@ -286,7 +313,7 @@ where
     D::Result: DecodingResultTrait,
 {
     // Step 1: Propagate fault through syndrome extraction
-    let mut prop = propagate_faults(circuit, fault);
+    let mut prop = super::pauli_prop_checker::propagate_faults_validated(circuit, fault);
 
     // Step 2: Extract syndrome
     let syndrome = extract_syndrome(&prop, &ec_config.z_ancillas, &ec_config.x_ancillas);
@@ -327,6 +354,9 @@ where
 }
 
 /// Error correction checker that tests fault tolerance with decoding.
+///
+/// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct ErrorCorrectionChecker<'a> {
     circuit: &'a pecos_quantum::TickCircuit,
     ec_config: ErrorCorrectionConfig,
@@ -335,14 +365,17 @@ pub struct ErrorCorrectionChecker<'a> {
 
 impl<'a> ErrorCorrectionChecker<'a> {
     /// Creates a new error correction checker.
-    #[must_use]
-    pub fn new(circuit: &'a pecos_quantum::TickCircuit) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn new(circuit: &'a pecos_quantum::TickCircuit) -> Result<Self, UnsupportedGateError> {
+        super::propagator::validate_tick_circuit(circuit)?;
         let locations = super::circuit_runner::extract_spacetime_locations(circuit, false);
-        Self {
+        Ok(Self {
             circuit,
             ec_config: ErrorCorrectionConfig::new(),
             locations,
-        }
+        })
     }
 
     /// Sets the error correction configuration.
@@ -410,7 +443,7 @@ impl<'a> ErrorCorrectionChecker<'a> {
     /// The error correction result.
     ///
     /// # Errors
-    /// Returns the decoder's error type if any decoding step fails.
+    /// Returns the decoder error if decoding fails.
     pub fn check<D>(
         &self,
         decoder: &mut D,
@@ -432,7 +465,8 @@ impl<'a> ErrorCorrectionChecker<'a> {
         for fault in fault_iter {
             total_tested += 1;
 
-            let result = run_correction_cycle(self.circuit, &fault, &self.ec_config, decoder)?;
+            let result =
+                run_correction_cycle_validated(self.circuit, &fault, &self.ec_config, decoder)?;
 
             if result.logical_error {
                 logical_errors += 1;
@@ -632,6 +666,7 @@ mod tests {
         let mut decoder = LookupTableDecoder::three_qubit_bitflip();
 
         let checker = ErrorCorrectionChecker::new(&circuit)
+            .unwrap()
             .with_z_ancillas(&[3, 4])
             .with_data_qubits(&[0, 1, 2])
             .with_logical_z(&[], &[0, 1, 2]); // Logical Z = Z0Z1Z2

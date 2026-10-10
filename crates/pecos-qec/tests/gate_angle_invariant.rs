@@ -53,7 +53,7 @@ fn infallible_bad_literal_cannot_reach_dag_propagation() {
         constructed = true;
         let mut dag = DagCircuit::new();
         dag.add_gate_auto_wire(gate);
-        propagate_through_dag(&dag, &mut PauliProp::new(), Direction::Forward);
+        propagate_through_dag(&dag, &mut PauliProp::new(), Direction::Forward).unwrap();
     }))
     .expect_err("the malformed literal must fail at construction");
     assert!(!constructed, "the malformed Gate must never be constructed");
@@ -72,15 +72,15 @@ fn rejected_update_leaves_all_dag_propagation_entries_safe() {
 
     let mut dense = PauliProp::new();
     dense.track_x(&[0]);
-    propagate_through_dag(&dag, &mut dense, Direction::Forward);
+    propagate_through_dag(&dag, &mut dense, Direction::Forward).unwrap();
 
     let mut sparse = PauliProp::new();
     sparse.track_x(&[0]);
-    propagate_sparse_dag(&dag, &mut sparse, Direction::Forward);
+    propagate_sparse_dag(&dag, &mut sparse, Direction::Forward).unwrap();
 
     let mut backward = PauliProp::new();
     backward.track_x(&[0]);
-    propagate_backward_from_node(&dag, &mut backward, rotation);
+    propagate_backward_from_node(&dag, &mut backward, rotation).unwrap();
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn rejected_update_leaves_all_dag_fault_analyzer_entries_safe() {
 
     let analyzer = DagFaultAnalyzer::new(&dag);
     let mut recorder = CountingRecorder::default();
-    analyzer.propagate_all(&mut recorder);
-    let _parallel = analyzer.propagate_all_parallel();
-    let _forest = analyzer.propagate_all_forest();
+    analyzer.propagate_all(&mut recorder).unwrap();
+    let _parallel = analyzer.propagate_all_parallel().unwrap();
+    let _forest = analyzer.propagate_all_forest().unwrap();
 }

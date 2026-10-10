@@ -15,7 +15,10 @@
 //! This module provides functions for propagating Pauli operators forward and backward
 //! through quantum circuits. This is the foundation of fault tolerance analysis.
 
-use super::{PauliFault, is_supported_noop_or_metadata_gate, is_supported_prep_gate};
+use super::{
+    PauliFault, UnsupportedGateError, UnsupportedGateLocation, apply_gate_at,
+    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+};
 use pecos_core::gate_type::GateType;
 use pecos_core::{CliffordLowering, try_lower_rotation_to_clifford};
 use pecos_quantum::TickCircuit;
@@ -102,11 +105,18 @@ pub fn apply_gate(
     gate: &pecos_core::Gate,
     direction: Direction,
 ) -> PauliPropagationOutcome {
+    #[cfg(test)]
+    GATE_VALIDATIONS.set(GATE_VALIDATIONS.get() + 1);
     if gate.validate().is_err() {
         return PauliPropagationOutcome::Unsupported;
     }
 
     apply_gate_unchecked(prop, gate, direction)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static GATE_VALIDATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Apply a gate after a circuit-level preflight has validated its payload.
@@ -410,27 +420,25 @@ fn apply_named_gate(
 /// * `circuit` - The circuit to propagate through
 /// * `prop` - The `PauliProp` to propagate (modified in place)
 /// * `direction` - Forward or Backward propagation
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
 pub fn propagate_through_circuit(
     circuit: &TickCircuit,
     prop: &mut PauliProp,
     direction: Direction,
-) {
-    match direction {
-        Direction::Forward => {
-            for tick in circuit.ticks() {
-                for gate in tick.iter_gate_batches() {
-                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
-                }
-            }
-        }
-        Direction::Backward => {
-            for tick in circuit.ticks().iter().rev() {
-                for gate in tick.iter_gate_batches() {
-                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
-                }
-            }
-        }
+) -> Result<(), UnsupportedGateError> {
+    if circuit.ticks().is_empty() {
+        return Ok(());
     }
+    propagate_tick_range(
+        circuit,
+        prop,
+        0,
+        circuit.ticks().len().saturating_sub(1),
+        direction,
+    )
 }
 
 /// Propagates a `PauliProp` through a range of ticks in the specified direction.
@@ -444,13 +452,17 @@ pub fn propagate_through_circuit(
 ///
 /// For Forward: propagates from `start_tick` to `end_tick`
 /// For Backward: propagates from `end_tick` to `start_tick`
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
 pub fn propagate_tick_range(
     circuit: &TickCircuit,
     prop: &mut PauliProp,
     start_tick: usize,
     end_tick: usize,
     direction: Direction,
-) {
+) -> Result<(), UnsupportedGateError> {
     let num_ticks = circuit.ticks().len();
     let start = start_tick.min(num_ticks.saturating_sub(1));
     let end = end_tick.min(num_ticks.saturating_sub(1));
@@ -460,7 +472,15 @@ pub fn propagate_tick_range(
             for tick_idx in start..=end {
                 let tick = &circuit.ticks()[tick_idx];
                 for gate in tick.iter_gate_batches() {
-                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
+                    apply_gate_at(
+                        prop,
+                        gate.as_gate(),
+                        direction,
+                        UnsupportedGateLocation::Tick {
+                            tick: tick_idx,
+                            gate_in_tick: gate.batch_index(),
+                        },
+                    )?;
                 }
             }
         }
@@ -468,11 +488,20 @@ pub fn propagate_tick_range(
             for tick_idx in (start..=end).rev() {
                 let tick = &circuit.ticks()[tick_idx];
                 for gate in tick.iter_gate_batches() {
-                    let _outcome = apply_gate(prop, gate.as_gate(), direction);
+                    apply_gate_at(
+                        prop,
+                        gate.as_gate(),
+                        direction,
+                        UnsupportedGateLocation::Tick {
+                            tick: tick_idx,
+                            gate_in_tick: gate.batch_index(),
+                        },
+                    )?;
                 }
             }
         }
     }
+    Ok(())
 }
 
 // ============================================================================
@@ -503,18 +532,22 @@ pub fn propagate_tick_range(
 /// // Start with Z at the measurement (tick 2) and propagate backward
 /// let mut prop = PauliProp::new();
 /// prop.track_z(&[0]);
-/// propagate_backward_from_tick(&circuit, &mut prop, 2);
+/// propagate_backward_from_tick(&circuit, &mut prop, 2).unwrap();
 ///
 /// // After H gate backward propagation, Z becomes X
 /// assert!(prop.contains_x(0));
 /// assert!(!prop.contains_z(0));
 /// ```
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
 pub fn propagate_backward_from_tick(
     circuit: &TickCircuit,
     prop: &mut PauliProp,
     start_tick: usize,
-) {
-    propagate_tick_range(circuit, prop, 0, start_tick, Direction::Backward);
+) -> Result<(), UnsupportedGateError> {
+    propagate_tick_range(circuit, prop, 0, start_tick, Direction::Backward)
 }
 
 /// Propagates a fault backward through a circuit.
@@ -554,12 +587,18 @@ pub fn propagate_backward_from_tick(
 /// };
 /// let fault = PauliFault::new(loc, vec![3]); // Z fault
 ///
-/// let prop = propagate_fault_backward(&circuit, &fault);
+/// let prop = propagate_fault_backward(&circuit, &fault).unwrap();
 /// // Z propagated backward through H becomes X
 /// assert!(prop.contains_x(0));
 /// ```
-#[must_use]
-pub fn propagate_fault_backward(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+pub fn propagate_fault_backward(
+    circuit: &TickCircuit,
+    fault: &PauliFault,
+) -> Result<PauliProp, UnsupportedGateError> {
     let mut prop = init_pauli_prop_with_fault(fault);
     let fault_tick = fault.location.tick;
 
@@ -574,8 +613,8 @@ pub fn propagate_fault_backward(circuit: &TickCircuit, fault: &PauliFault) -> Pa
         fault_tick
     };
 
-    propagate_tick_range(circuit, &mut prop, 0, end_tick, Direction::Backward);
-    prop
+    propagate_tick_range(circuit, &mut prop, 0, end_tick, Direction::Backward)?;
+    Ok(prop)
 }
 
 /// Propagates an observable backward through the circuit.
@@ -591,13 +630,16 @@ pub fn propagate_fault_backward(circuit: &TickCircuit, fault: &PauliFault) -> Pa
 ///
 /// # Returns
 /// A `PauliProp` representing the backward-propagated observable.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
 pub fn propagate_observable_backward(
     circuit: &TickCircuit,
     x_positions: &[usize],
     z_positions: &[usize],
     start_tick: usize,
-) -> PauliProp {
+) -> Result<PauliProp, UnsupportedGateError> {
     let mut prop = PauliProp::new();
 
     for &q in x_positions {
@@ -607,8 +649,8 @@ pub fn propagate_observable_backward(
         prop.track_z(&[q]);
     }
 
-    propagate_backward_from_tick(circuit, &mut prop, start_tick);
-    prop
+    propagate_backward_from_tick(circuit, &mut prop, start_tick)?;
+    Ok(prop)
 }
 
 /// Initialize a `PauliProp` with the given fault.
@@ -686,7 +728,10 @@ mod batched_pair_tests {
                         let mut prop = seeded(seed);
                         let gate =
                             Gate::simple(gate_type, vec![0.into(), 1.into(), 2.into(), 3.into()]);
-                        let _outcome = apply_gate(&mut prop, &gate, direction);
+                        assert_eq!(
+                            apply_gate(&mut prop, &gate, direction),
+                            super::PauliPropagationOutcome::Propagated
+                        );
                         signature(&prop)
                     };
                     let split = {
@@ -694,7 +739,10 @@ mod batched_pair_tests {
                         for pair in [[0usize, 1], [2, 3]] {
                             let gate =
                                 Gate::simple(gate_type, vec![pair[0].into(), pair[1].into()]);
-                            let _outcome = apply_gate(&mut prop, &gate, direction);
+                            assert_eq!(
+                                apply_gate(&mut prop, &gate, direction),
+                                super::PauliPropagationOutcome::Propagated
+                            );
                         }
                         signature(&prop)
                     };
@@ -729,7 +777,10 @@ mod batched_pair_tests {
                 let mut prop = seeded(seed);
                 let before = signature(&prop);
                 let gate = Gate::simple(gate_type, vec![2.into(), 3.into()]);
-                let _outcome = apply_gate(&mut prop, &gate, Direction::Forward);
+                assert_eq!(
+                    apply_gate(&mut prop, &gate, Direction::Forward),
+                    super::PauliPropagationOutcome::Propagated
+                );
                 signature(&prop) != before
             });
             assert!(

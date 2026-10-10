@@ -68,11 +68,13 @@ fn scrambled_ids_build_the_same_influence_relations_as_positional_ids() {
     let scrambled = parity_check_with_ids([9, 4, 7]);
 
     let map_pos = InfluenceBuilder::new(&positional)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
         .expect("circuit is replayable");
     let map_scr = InfluenceBuilder::new(&scrambled)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -148,6 +150,7 @@ fn scrambled_ids_influence_the_same_named_measurements() {
 
     let build = |dag: &DagCircuit| {
         InfluenceBuilder::new(dag)
+            .unwrap()
             .with_circuit_annotations()
             .expect("annotations resolve")
             .build()
@@ -223,6 +226,7 @@ fn scrambled_ids_dual_output_xors_the_named_raw_channels() {
     dag.detector(&[target]).expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -277,7 +281,7 @@ fn dag_update_refuses_duplicate_measurement_ids() {
         .expect_err("measurement IDs are DAG-owned identity data");
     assert!(error.to_string().contains("cannot change measurement IDs"));
 
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     DemSamplerBuilder::new(&map)
         .with_uniform_noise(0.01)
         .raw_measurements()
@@ -292,6 +296,7 @@ fn dag_update_refuses_duplicate_measurement_ids() {
 fn measurement_order_is_refused_on_a_stamped_id_circuit() {
     let dag = parity_check_with_ids([9, 4, 7]);
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -359,6 +364,7 @@ fn a_reference_to_a_removed_measurement_is_a_removed_error() {
     });
 
     let err = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .map(|_| ())
         .expect_err("the measurement was removed");
@@ -430,6 +436,7 @@ fn a_huge_sparse_id_causes_no_id_sized_allocation() {
     dag.detector(&[mref]).expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()

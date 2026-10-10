@@ -20,7 +20,9 @@ fn exact_replay_rejects_missing_measurement_nodes() {
 
     let dag = circuit(false, false);
     for node in [0, usize::MAX] {
-        let mut map = DagFaultAnalyzer::new(&dag).build_influence_map();
+        let mut map = DagFaultAnalyzer::new(&dag)
+            .build_influence_map()
+            .expect("supported circuit");
         // Node 0 is a preparation, and MAX is beyond the replay's node vector.
         map.measurements[0].0 = node;
         let error = DemBuilder::new(&map)
@@ -50,7 +52,9 @@ fn exact_crosstalk_translates_non_identity_measurement_order() {
     dag.add_gate_auto_wire(Gate::meas_crosstalk_global_payload(&[1usize]));
     dag.add_gate_auto_wire(Gate::i(&[0usize, 1usize]));
     dag.mz(&[0, 1]);
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag)
+        .build_influence_map()
+        .expect("supported circuit");
     let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_measurement_crosstalk_global_rate(0.25)
         .set_measurement_crosstalk_transition_model(MeasurementCrosstalkTransitionModel::bit_flip(
@@ -120,7 +124,9 @@ fn exact_replay_with_out_of_order_stamps() {
 #[test]
 fn exact_replay_translates_non_identity_measurement_order() {
     let dag = circuit(false, false);
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag)
+        .build_influence_map()
+        .expect("supported circuit");
     for stamped in [false, true] {
         let (detectors, observables) = if stamped {
             // Stamps already resolve into map positions and must not be translated.
@@ -201,7 +207,7 @@ fn circuit(spectator_first: bool, use_ids: bool) -> DagCircuit {
     );
     let analyzer = DagFaultAnalyzer::new(&circuit);
     let (measurements, _) = analyzer.extract_measurements();
-    let map = analyzer.build_influence_map();
+    let map = analyzer.build_influence_map().expect("supported circuit");
     println!(
         "  influence measurements={measurements:?}, meas_ids={:?}",
         map.meas_ids
@@ -289,7 +295,10 @@ fn exact_pauli_replacement_uses_emission_positions_with_influence_builder_map() 
         gate.meas_ids = smallvec::smallvec![MeasId::from_raw(id)];
         dag.add_gate_auto_wire(gate);
     }
-    let map = InfluenceBuilder::new(&dag).build().unwrap();
+    let map = InfluenceBuilder::new(&dag)
+        .expect("supported circuit")
+        .build()
+        .unwrap();
     let noise = NoiseConfig::new(0.0, 0.125, 0.0, 0.0)
         .set_p2_weights(PauliWeights::with_replacement(
             [],

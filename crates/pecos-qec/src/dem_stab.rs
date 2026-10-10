@@ -226,7 +226,7 @@ impl DemStabSimBuilder {
         let dag = self.circuit.ok_or(DemStabError::MissingCircuit)?;
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map_diagnostic();
 
         let detector_records: Vec<Vec<i32>> =
             self.detectors.iter().map(|d| d.records.to_vec()).collect();

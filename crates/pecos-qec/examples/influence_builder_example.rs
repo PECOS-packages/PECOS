@@ -55,7 +55,7 @@ fn main() {
     // =========================================================================
     // Build influence map with InfluenceBuilder
     // =========================================================================
-    let builder = InfluenceBuilder::new(&circuit).with_z(&[0, 1, 2]); // Z logical on all data qubits
+    let builder = InfluenceBuilder::new(&circuit).unwrap().with_z(&[0, 1, 2]); // Z logical on all data qubits
 
     let influence_map = builder.build().expect("circuit is replayable");
 

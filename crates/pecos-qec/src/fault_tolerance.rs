@@ -46,8 +46,9 @@ pub use circuit_runner::{
     run_circuit_with_faults,
 };
 pub use decoder_integration::{
-    CorrectionResult, ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionResult,
-    LookupTableDecoder, apply_recovery, extract_syndrome, run_correction_cycle,
+    CorrectionResult, ErrorCorrectionChecker, ErrorCorrectionConfig, ErrorCorrectionError,
+    ErrorCorrectionResult, LookupTableDecoder, apply_recovery, extract_syndrome,
+    run_correction_cycle,
 };
 pub use fault_distance::{
     FaultDistanceError, FaultDistanceResult, connected_cluster_fault_distance,
@@ -81,10 +82,10 @@ pub use propagator::{
     DagFaultAnalyzer, DagFaultInfluenceMap, DagPropagator, DagSpacetimeLocation, DemOutputKind,
     DemOutputMetadata, DetectorId, Direction, FaultInfluence, FaultInfluenceMap,
     InfluenceBasedChecker, MeasurementId, PauliPropagationOutcome, TickFaultAnalyzer,
-    TrackedPauliId, UnsupportedGateError, UnsupportedGateLocation, apply_gate,
-    propagate_backward_from_node, propagate_backward_from_tick, propagate_fault_backward,
-    propagate_observable_backward, propagate_sparse_dag, propagate_through_circuit,
-    propagate_through_dag, propagate_tick_range,
+    TrackedPauliId, TraversalIndexMismatchError, UnsupportedGateError, UnsupportedGateLocation,
+    apply_gate, propagate_backward_from_node, propagate_backward_from_tick,
+    propagate_fault_backward, propagate_observable_backward, propagate_sparse_dag,
+    propagate_through_circuit, propagate_through_dag, propagate_tick_range,
 };
 pub use stabilizer_flip_checker::{
     ErrorClass, StabilizerFlipAnalysis, StabilizerFlipChecker, StabilizerFlips,

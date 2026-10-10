@@ -50,7 +50,7 @@ fn an_x_before_a_repeated_mz_flips_both_measurements() {
     dag.pz(&[0]);
     let m1 = dag.mz(&[0]);
     let m2 = dag.mz(&[0]);
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
 
     let i1 = u32::try_from(
         map.meas_index_of(m1[0].meas_id)
@@ -94,7 +94,7 @@ fn a_z_before_a_collapse_does_not_haunt_a_later_rotated_measurement() {
     let m1 = dag.mz(&[0]);
     dag.h(&[0]);
     let m2 = dag.mz(&[0]);
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
 
     let i1 = u32::try_from(
         map.meas_index_of(m1[0].meas_id)
@@ -142,6 +142,7 @@ fn a_detector_over_repeated_measurements_keeps_between_faults() {
     dag.detector(&[m0[0], m1[0]])
         .expect("refs are from this circuit");
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -186,7 +187,7 @@ fn an_sx_rotated_repeated_measurement_keeps_the_z_component() {
     let m1 = dag.mz(&[0]);
     dag.sx(&[0]);
     let m2 = dag.mz(&[0]);
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
 
     let i1 = u32::try_from(
         map.meas_index_of(m1[0].meas_id)
@@ -227,7 +228,7 @@ fn a_measure_free_stops_propagation_where_a_plain_mz_does_not() {
         dag.try_add_gate_auto_wire(leading_gate)
             .expect("gate is valid");
         let m2 = dag.mz(&[0]);
-        let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+        let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
         let i2 = u32::try_from(
             map.meas_index_of(m2[0].meas_id)
                 .expect("measurement 2 is in the map"),
@@ -260,7 +261,7 @@ fn an_mpz_records_its_flip_and_stops_propagation() {
     dag.pz(&[0]);
     let m1 = dag.mpz(&[0]);
     let m2 = dag.mz(&[0]);
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
 
     let i1 = u32::try_from(
         map.meas_index_of(m1[0].meas_id)
@@ -295,7 +296,7 @@ fn the_tick_analyzer_extracts_mpz_measurements() {
     tc.tick().pz(&[0]);
     tc.tick().mpz(&[0]);
     tc.tick().mz(&[0]);
-    let map = TickFaultAnalyzer::new(&tc).build_influence_map();
+    let map = TickFaultAnalyzer::new(&tc).unwrap().build_influence_map();
     assert_eq!(
         map.measurements.len(),
         2,
@@ -317,6 +318,7 @@ fn an_mpz_record_takes_measurement_noise_in_the_sampler_lane() {
     let m = dag.mpz(&[0]);
     dag.detector(&[m[0]]).expect("refs are from this circuit");
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()

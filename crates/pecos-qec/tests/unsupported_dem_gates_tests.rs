@@ -7,7 +7,6 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DemBuilder, DemBuilderError, DemSampler, DemSamplerBuilder, DetectorValidationError,
     MemBuilder, NoiseConfig, SamplingEngine,
 };
-use pecos_qec::fault_tolerance::influence_builder::InfluenceBuildError;
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer, Direction, PauliPropagationOutcome, UnsupportedGateLocation, apply_gate,
     is_supported_noop_or_metadata_gate, is_supported_prep_gate,
@@ -90,36 +89,24 @@ fn assert_rotation_rejected_by_every_dem_family(
     // Non-Clifford rejection tests pin the preflight, not the symbolic replay error mapping.
     let dag_location = UnsupportedGateLocation::DagNode { node: 1 };
 
-    assert!(matches!(
-        InfluenceBuilder::new(&circuit).build().unwrap_err(),
-        InfluenceBuildError::UnsupportedPauliPropagation(_)
-    ));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
-    let probabilities = vec![0.0; map.locations.len()];
-    assert_dem_error(
-        DemBuilder::new(&map).build().unwrap_err(),
-        gate_type,
-        dag_location,
-    );
-    assert_dem_error(
-        MemBuilder::new(&map).build().unwrap_err(),
-        gate_type,
-        dag_location,
-    );
-    assert_sampler_error(
-        DemSamplerBuilder::new(&map).build().unwrap_err(),
-        gate_type,
-        dag_location,
-    );
-    assert_sampler_error(
-        DemSampler::from_influence_map(&map, &probabilities).unwrap_err(),
-        gate_type,
-        dag_location,
-    );
-    let engine_error =
-        SamplingEngine::from_influence_map(&map, &probabilities, &NoiseConfig::default())
-            .unwrap_err();
-    assert_dem_error(engine_error, gate_type, dag_location);
+    let error = InfluenceBuilder::new(&circuit)
+        .err()
+        .expect("constructor must reject");
+    assert_eq!(error.gate_type, gate_type);
+    assert_eq!(error.location, dag_location);
+    let error = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap_err();
+    assert_eq!(error.gate_type, gate_type);
+    assert_eq!(error.location, dag_location);
+    let gate_qubits: Vec<usize> = circuit
+        .gate(1)
+        .expect("gate under test is node 1")
+        .qubits
+        .iter()
+        .map(pecos_core::QubitId::index)
+        .collect();
+    assert_eq!(error.qubits, gate_qubits);
 
     assert_dem_error(
         DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap_err(),
@@ -164,9 +151,11 @@ fn assert_rotation_rejected_by_every_dem_family(
 }
 
 fn assert_all_dem_entry_points_build(circuit: &DagCircuit) {
-    InfluenceBuilder::new(circuit).build().unwrap();
+    InfluenceBuilder::new(circuit).unwrap().build().unwrap();
 
-    let map = DagFaultAnalyzer::new(circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(circuit)
+        .build_influence_map()
+        .unwrap();
     assert!(map.unsupported_gate().is_none());
     let probabilities = vec![0.0; map.locations.len()];
 
@@ -312,49 +301,13 @@ fn malformed_gate_payloads_are_unsupported() {
 }
 
 #[test]
-fn bare_t_is_rejected_by_every_influence_map_dem_entry_point() {
+fn bare_t_is_rejected_before_public_influence_map_construction() {
     let circuit = t_dag();
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
-    let probabilities = vec![0.0; map.locations.len()];
-    let location = UnsupportedGateLocation::DagNode { node: 1 };
-
-    assert_dem_error(
-        DemBuilder::new(&map).build().unwrap_err(),
-        GateType::T,
-        location,
-    );
-    assert_dem_error(
-        DemBuilder::new(&map).try_build().unwrap_err(),
-        GateType::T,
-        location,
-    );
-
-    let mem_error = MemBuilder::new(&map).build().unwrap_err();
-    assert_dem_error(mem_error, GateType::T, location);
-
-    assert_sampler_error(
-        DemSamplerBuilder::new(&map).build().unwrap_err(),
-        GateType::T,
-        location,
-    );
-    assert_sampler_error(
-        DemSamplerBuilder::new(&map)
-            .with_detector_records(Vec::new())
-            .build()
-            .unwrap_err(),
-        GateType::T,
-        location,
-    );
-    assert_sampler_error(
-        DemSampler::from_influence_map(&map, &probabilities).unwrap_err(),
-        GateType::T,
-        location,
-    );
-
-    let engine_error =
-        SamplingEngine::from_influence_map(&map, &probabilities, &NoiseConfig::default())
-            .unwrap_err();
-    assert_dem_error(engine_error, GateType::T, location);
+    let error = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap_err();
+    assert_eq!(error.gate_type, GateType::T);
+    assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 1 });
 }
 
 #[test]
@@ -362,10 +315,11 @@ fn bare_t_is_rejected_by_every_circuit_dem_entry_point() {
     let circuit = t_dag();
     let dag_location = UnsupportedGateLocation::DagNode { node: 1 };
 
-    assert!(matches!(
-        InfluenceBuilder::new(&circuit).build().unwrap_err(),
-        InfluenceBuildError::UnsupportedPauliPropagation(_)
-    ));
+    let error = InfluenceBuilder::new(&circuit)
+        .err()
+        .expect("constructor must reject");
+    assert_eq!(error.gate_type, GateType::T);
+    assert_eq!(error.location, dag_location);
     assert_dem_error(
         DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap_err(),
         GateType::T,
@@ -502,7 +456,7 @@ fn independent_exact_replay_context_is_validated() {
     let mut base = DagCircuit::new();
     base.pz(&[0]);
     base.mz(&[0]);
-    let map = DagFaultAnalyzer::new(&base).build_influence_map();
+    let map = DagFaultAnalyzer::new(&base).build_influence_map().unwrap();
 
     let replay = t_dag();
     assert_dem_error(
@@ -558,6 +512,7 @@ fn leaked_measurement_replay_error_is_an_unsupported_gate() {
     assert!(
         DagFaultAnalyzer::new(&circuit)
             .build_influence_map()
+            .unwrap()
             .unsupported_gate()
             .is_none()
     );
@@ -630,14 +585,20 @@ fn clifford_rotation_replay_matches_named_gates(
     };
     let raw = make_circuit(Some(rotation.clone()));
     let lowered = make_circuit(Some(named));
-    let raw_map = InfluenceBuilder::new(&raw).with_z(&[0, 1]).build().unwrap();
+    let raw_map = InfluenceBuilder::new(&raw)
+        .unwrap()
+        .with_z(&[0, 1])
+        .build()
+        .unwrap();
     let lowered_map = InfluenceBuilder::new(&lowered)
+        .unwrap()
         .with_z(&[0, 1])
         .build()
         .unwrap();
     if distinguishes_identity {
         let removed = make_circuit(None);
         let removed_map = InfluenceBuilder::new(&removed)
+            .unwrap()
             .with_z(&[0, 1])
             .build()
             .unwrap();
@@ -815,7 +776,9 @@ fn replacement_branches_match_lowered_clifford_rotations() {
         let mut noise = replacement_noise();
         noise.p2_replacement_approximation = approximation;
         let circuit = replacement_circuit(gate);
-        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let dem = DemBuilder::new(&map)
             .with_noise_config(noise.clone())
             .with_detectors_json(r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#)
@@ -873,7 +836,9 @@ fn replacement_branches_match_lowered_clifford_rotations() {
 fn zero_rotation_replacement_entries_have_identity_twirl() {
     use pecos_qec::fault_tolerance::dem_builder::ReplacementBranchApproximation;
     let circuit = replacement_circuit(Gate::rzz(Angle64::ZERO, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     for approximation in [
         ReplacementBranchApproximation::PauliTwirlOmittedGate,
         ReplacementBranchApproximation::BranchImpact,
@@ -897,7 +862,9 @@ fn zero_rotation_replacement_entries_have_identity_twirl() {
 fn replacement_map_without_twirl() -> pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap {
     use pecos_core::CliffordLowering;
     let circuit = replacement_circuit(Gate::rzz(Angle64::ZERO, &[(0, 1)]));
-    let mut map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let mut map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     // A malformed external map must not silently discard replacement branches.
     for loc in &mut map.locations {
         if loc.gate_type == GateType::RZZ {
@@ -978,7 +945,9 @@ fn replacement_sampling_engines_match_lowered_rotations() {
     ] {
         let dems = |gate| {
             let circuit = replacement_circuit(gate);
-            let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+            let map = DagFaultAnalyzer::new(&circuit)
+                .build_influence_map()
+                .unwrap();
             let mut noise = replacement_noise();
             noise.p2_replacement_approximation = approximation;
             let raw =
@@ -1019,7 +988,9 @@ fn per_qubit_replacement_twirl_matches_exact_pauli_channel() {
         "detectors",
         pecos_quantum::Attribute::String(detectors.to_string()),
     );
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     for approximation in [
         ReplacementBranchApproximation::PauliTwirlOmittedGate,
         ReplacementBranchApproximation::BranchImpact,
@@ -1074,8 +1045,9 @@ fn sampler_configuration_errors_retain_their_category() {
 fn unsupported_rotation_diagnostic_includes_angles() {
     let mut circuit = DagCircuit::new();
     circuit.add_gate_auto_wire(Gate::rzz(Angle64::from_turns(0.125), &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
-    let error = map.unsupported_gate().unwrap();
+    let error = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap_err();
     assert_eq!(error.angles, vec![Angle64::from_turns(0.125)]);
     assert_eq!(
         error.to_string(),
@@ -1086,7 +1058,9 @@ fn unsupported_rotation_diagnostic_includes_angles() {
 #[test]
 fn invalid_sampling_channel_probabilities_return_configuration_errors() {
     let circuit = replacement_circuit(Gate::szz(&[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     let noise = NoiseConfig::new(0.0, 2.0, 0.0, 0.0);
     assert!(matches!(
         SamplingEngine::from_influence_map(&map, &vec![2.0; map.locations.len()], &noise),
@@ -1104,7 +1078,9 @@ fn invalid_sampling_channel_probabilities_return_configuration_errors() {
 #[test]
 fn mem_builder_invalid_probabilities_return_configuration_error() {
     let circuit = replacement_circuit(Gate::szz(&[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     assert!(matches!(
         MemBuilder::new(&map)
             .with_noise_config(NoiseConfig::new(0.0, 4.0, 0.0, 0.0))
@@ -1176,7 +1152,9 @@ fn gate_rate_key_mismatch_rejected_by_consuming_builders() {
     noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
     let check = |error| assert_gate_rate_configuration_error(error, "p2_gate_rates", "SZZ", "RZZ");
     check(DemBuilder::try_from_circuit_with_noise_config(&circuit, noise.clone()).unwrap_err());
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     check(
         DemBuilder::new(&map)
             .with_noise_config(noise.clone())
@@ -1318,7 +1296,9 @@ fn assert_per_gate_rate_mismatch(
     scheduled: &str,
 ) {
     let circuit = replacement_circuit(gate);
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     assert_gate_rate_configuration_error(
         DemBuilder::new(&map)
             .with_per_gate_noise(noise.clone())
@@ -1424,7 +1404,9 @@ fn gate_rate_per_gate_base_mismatch() {
 fn gate_rate_zero_pauli_tables_are_ignored() {
     use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     let noise = PerGateTypeNoise::default()
         .with_1q_rates(GateType::SZZ, [0.0; 3])
         .with_2q_rates(GateType::SZZ, [0.0; 15])
@@ -1478,7 +1460,9 @@ fn gate_rate_named_remedy_uses_scheduled_arity() {
 fn gate_rate_per_gate_noise_supersedes_scalar_config_on_dem_builder() {
     use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     let mut noise = NoiseConfig::uniform(0.001);
     noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
     DemBuilder::new(&map)
@@ -1498,7 +1482,9 @@ fn gate_rate_per_gate_noise_supersedes_scalar_config_on_dem_builder() {
 fn gate_rate_raw_mode_rejects_per_gate_noise() {
     use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     for noise in [
         PerGateTypeNoise::default(),
         PerGateTypeNoise::default().with_2q_rates(GateType::SZZ, [0.001; 15]),
@@ -1521,7 +1507,9 @@ fn gate_rate_absent_qubit_keys_are_allowed() {
     use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
     let mut circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     circuit.add_gate_auto_wire(Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     for noise in [
         PerGateTypeNoise::default().with_1q_rates_for_qubit(
             GateType::SX,
@@ -1566,7 +1554,9 @@ fn gate_rate_absent_qubit_keys_are_allowed() {
 #[test]
 fn gate_rate_mem_builder_honors_nonzero_tables() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
 
     let baseline: f64 = MemBuilder::new(&map)
         .with_noise_config(NoiseConfig::uniform(0.001))
@@ -1599,7 +1589,9 @@ fn gate_rate_mem_builder_honors_nonzero_tables() {
 #[test]
 fn gate_rate_mem_builder_rejects_clifford_action_keys_like_dem() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
 
     // SZZ is the Clifford action of the scheduled RZZ, not a scheduled gate.
     let mut noise = NoiseConfig::uniform(0.001);
@@ -1646,7 +1638,9 @@ fn gate_rate_mem_builder_inherits_dem_strictness_for_mixed_scheduled_gates() {
     circuit.h(&[0]);
     circuit.mz(&[0]);
     circuit.mz(&[1]);
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
 
     // Both gates are scheduled and both carry an explicit rate, so nothing is
     // ambiguous -- yet the shared validator still rejects.
@@ -1668,7 +1662,9 @@ fn gate_rate_mem_builder_inherits_dem_strictness_for_mixed_scheduled_gates() {
 #[test]
 fn gate_rate_mem_builder_allows_zero_tables() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
-    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let map = DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .unwrap();
     let mut noise = NoiseConfig::uniform(0.001);
     noise.p1_gate_rates.insert(GateType::X, 0.0);
     noise.p2_gate_rates.insert(GateType::SZZ, 0.0);
@@ -1723,8 +1719,12 @@ fn rxyxy2q_dem_mem_and_noise_locations_match_ryy() {
     assert_eq!(effects(&catalog), effects(&expected_catalog));
     assert_eq!(effects(&catalog).len(), 2);
 
-    let map = DagFaultAnalyzer::new(&actual).build_influence_map();
-    let reference = DagFaultAnalyzer::new(&expected).build_influence_map();
+    let map = DagFaultAnalyzer::new(&actual)
+        .build_influence_map()
+        .unwrap();
+    let reference = DagFaultAnalyzer::new(&expected)
+        .build_influence_map()
+        .unwrap();
     let locations = |map: &pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap| {
         map.locations
             .iter()
@@ -1770,19 +1770,13 @@ fn rxyxy2q_non_clifford_dem_preflight_is_structured() {
         Gate::ch(&[(0, 1)]),
     ] {
         let circuit = rxyxy2q_circuit(gate.clone());
-        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
-        for error in [
-            DemBuilder::new(&map).build().unwrap_err(),
-            MemBuilder::new(&map).build().unwrap_err(),
-        ] {
-            let DemBuilderError::UnsupportedGate(error) = error else {
-                panic!("expected unsupported gate: {error:?}")
-            };
-            assert_eq!(error.gate_type, gate.gate_type);
-            assert_eq!(error.qubits, [0, 1]);
-            assert_eq!(error.angles, gate.angles.as_slice());
-            assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 2 });
-        }
+        let error = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap_err();
+        assert_eq!(error.gate_type, gate.gate_type);
+        assert_eq!(error.qubits, [0, 1]);
+        assert_eq!(error.angles, gate.angles.as_slice());
+        assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 2 });
     }
 }
 

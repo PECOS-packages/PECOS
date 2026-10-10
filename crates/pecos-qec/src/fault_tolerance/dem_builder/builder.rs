@@ -28,8 +28,8 @@ use crate::fault_tolerance::circuit_definitions::{
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
-    DagFaultInfluenceMap, Direction, Pauli, apply_gate_unchecked,
-    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+    DagFaultInfluenceMap, Direction, Pauli, is_supported_noop_or_metadata_gate,
+    is_supported_prep_gate,
 };
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
@@ -145,6 +145,8 @@ pub struct DemBuilder<'a> {
     measurement_order: Option<Vec<usize>>,
     /// Optional circuit context for future exact replacement-branch replay.
     exact_branch_context: Option<ExactBranchReplayContext<'a>>,
+    /// The immutable replay circuit is preflighted when its context is attached.
+    exact_branch_unsupported_gate: Option<crate::fault_tolerance::UnsupportedGateError>,
     /// Ideal symbolic measurement history shared by exact branch replays.
     exact_ideal_history_cache: RefCell<Option<Rc<ExactIdealReplay>>>,
     /// Record-position translation shared by ordinary and exact paths.
@@ -349,6 +351,7 @@ impl<'a> DemBuilder<'a> {
             num_measurements: influence_map.measurements.len(),
             measurement_order: None,
             exact_branch_context: None,
+            exact_branch_unsupported_gate: None,
             exact_ideal_history_cache: RefCell::new(None),
             tc_to_influence_cache: RefCell::new(None),
             exact_branch_cache: RefCell::new(BTreeMap::new()),
@@ -375,11 +378,19 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
+    /// Attach the immutable circuit used for exact branch replay.
+    ///
+    /// Its gate eligibility is cached here; build methods report the diagnostic
+    /// without repeating this preflight. Replacing the context refreshes the cache.
     #[must_use]
     pub fn with_exact_branch_replay_context(
         mut self,
         circuit: &'a pecos_quantum::DagCircuit,
     ) -> Self {
+        self.exact_branch_unsupported_gate =
+            crate::fault_tolerance::propagator::DagPropagator::new(circuit)
+                .first_unsupported_gate()
+                .cloned();
         self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
         self.clear_exact_branch_cache();
         self
@@ -962,12 +973,8 @@ impl<'a> DemBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
-        if let Some(context) = self.exact_branch_context
-            && let Some(error) =
-                crate::fault_tolerance::propagator::DagFaultAnalyzer::new(context.circuit)
-                    .first_unsupported_gate()
-        {
-            return Err(DemBuilderError::UnsupportedGate(error));
+        if let Some(error) = &self.exact_branch_unsupported_gate {
+            return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
         Ok(())
     }
@@ -1353,7 +1360,13 @@ impl<'a> DemBuilder<'a> {
             })?;
         for &node in topo_order[payload_pos + 1..].iter().rev() {
             if let Some(gate) = context.circuit.gate(node) {
-                let _outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
+                super::super::propagator::apply_gate_at(
+                    &mut prop,
+                    gate,
+                    Direction::Backward,
+                    super::super::propagator::UnsupportedGateLocation::DagNode { node },
+                )
+                .map_err(DemBuilderError::UnsupportedGate)?;
             }
         }
 
@@ -1482,6 +1495,7 @@ impl<'a> DemBuilder<'a> {
 
         let ideal_history = self.exact_ideal_measurement_history(context)?;
         let branch_info = InfluenceBuilder::new(branch)
+            .map_err(DemBuilderError::UnsupportedGate)?
             .run_symbolic_simulation()
             .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
@@ -1535,6 +1549,7 @@ impl<'a> DemBuilder<'a> {
         }
 
         let info = InfluenceBuilder::new(context.circuit)
+            .map_err(DemBuilderError::UnsupportedGate)?
             .run_symbolic_simulation()
             .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         let influence_to_history = self.influence_map.measurements
@@ -1578,7 +1593,7 @@ impl<'a> DemBuilder<'a> {
         let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
         let base_effect =
             self.exact_omitted_branch_base_effect_for_branch(context, request, &branch)?;
-        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map_diagnostic();
         let branch_locs = identity_location_pair_for_request(
             request,
             &self.influence_map.locations,
@@ -3387,7 +3402,7 @@ impl ExactBranchReplayContext<'_> {
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 
         let branch = circuit_with_omitted_two_qubit_gate(self.circuit, request.gate_node)?;
-        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map_diagnostic();
         identity_location_pair_for_request(request, original_locations, &branch_map.locations)
     }
 }
@@ -3532,11 +3547,12 @@ fn build_dem_from_circuit(
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
     let definitions = definitions_from_dag_circuit(circuit)?;
 
-    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
+    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
     if let Some(error) = influence_map.unsupported_gate() {
         return Err(DemBuilderError::UnsupportedGate(error.clone()));
     }
     let annotation_map = InfluenceBuilder::new(circuit)
+        .map_err(DemBuilderError::UnsupportedGate)?
         .with_circuit_annotations()
         .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
         .build()
@@ -4054,6 +4070,7 @@ mod tests {
         circuit.pz(&[0]);
         circuit.mz(&[0]);
         let info = InfluenceBuilder::new(&circuit)
+            .expect("supported circuit")
             .run_symbolic_simulation()
             .unwrap();
         // The first mapping has no node for position 0; the second names a
@@ -5321,7 +5338,9 @@ mod tests {
         circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
         circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let requests = ExactBranchReplayContext { circuit: &circuit }
             .replacement_branch_requests(&influence_map.locations)
             .expect("two-qubit branch requests should be recoverable");
@@ -5353,7 +5372,9 @@ mod tests {
         let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
         circuit.mz(&[1]);
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let context = ExactBranchReplayContext { circuit: &circuit };
         let request = context
             .replacement_branch_requests(&influence_map.locations)
@@ -5385,7 +5406,9 @@ mod tests {
         let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
         circuit.mz(&[1]);
 
-        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let influence_map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
         let context = ExactBranchReplayContext { circuit: &circuit };
         let request = context
             .replacement_branch_requests(&influence_map.locations)

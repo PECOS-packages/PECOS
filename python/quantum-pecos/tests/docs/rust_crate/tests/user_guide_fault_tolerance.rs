@@ -128,7 +128,7 @@ fn test_user_guide_fault_tolerance_rust_6() {
     circuit.tick().cx(&[(1, 3), (2, 4)]);    // Second round of CNOTs
     circuit.tick().mz(&[3, 4]);              // Measure ancillas
 
-    let checker = PauliPropChecker::new(&circuit);
+    let checker = PauliPropChecker::new(&circuit).unwrap();
 
     // Define syndrome ancillas and logical operators
     let z_ancillas = &[3, 4];
@@ -162,7 +162,7 @@ fn test_user_guide_fault_tolerance_rust_7() {
         .with_z_ancillas(&[3, 4])        // For syndrome extraction
         .with_logical_z(&[], &[0, 1, 2]); // Z logical operator
 
-    let checker = GadgetChecker::new(&circuit, config);
+    let checker = GadgetChecker::new(&circuit, config).unwrap();
     let analysis = checker.analyze(1); // Check 1-fault tolerance
 
     println!("Is 1-FT: {}", analysis.is_fault_tolerant());
@@ -186,7 +186,7 @@ fn test_user_guide_fault_tolerance_rust_8() -> Result<(), Box<dyn std::error::Er
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
@@ -221,7 +221,7 @@ fn test_user_guide_fault_tolerance_rust_9() -> Result<(), Box<dyn std::error::Er
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
@@ -274,7 +274,7 @@ fn test_user_guide_fault_tolerance_rust_10() -> Result<(), Box<dyn std::error::E
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
@@ -317,7 +317,7 @@ fn test_user_guide_fault_tolerance_rust_11() -> Result<(), Box<dyn std::error::E
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
@@ -356,7 +356,7 @@ calculate_distance, DistanceSearchConfig,
 
     // Analyze faults to build influence map
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     // Define detectors and observables
     let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;

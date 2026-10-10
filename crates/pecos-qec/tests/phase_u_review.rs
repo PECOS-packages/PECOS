@@ -16,7 +16,7 @@ fn phase_circuit() -> DagCircuit {
 #[test]
 fn phase_u_measurement_noise_resolves_operation_rate() {
     let dag = phase_circuit();
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     for (base, rz, expected) in [(0.3, 0.0, 0.0), (0.0, 0.3, 0.2)] {
         let noise = NoiseConfig::new(base, 0.0, 0.0, 0.0).set_p1_gate_rate(GateType::RZ, rz);
         let mem = MemBuilder::new(&influence)
@@ -35,7 +35,7 @@ fn phase_u_measurement_noise_resolves_operation_rate() {
 fn phase_u_explicit_scheduled_override_takes_precedence() {
     use pecos_qec::fault_tolerance::dem_builder::DemSamplerBuilder;
     let dag = phase_circuit();
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     let base = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_p1_gate_rate(GateType::RZ, 0.0);
     for noise in [
         PerGateTypeNoise::from_base_noise(base.clone()).with_1q_rates_for_qubit(
@@ -163,7 +163,7 @@ fn neo_ones(noise: &PerGateTypeNoise, theta: Angle64, noiseless_set: bool) -> us
 #[test]
 fn phase_u_neo_and_dem_agree_on_noise() {
     let dag = phase_circuit();
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     let base = PerGateTypeNoise::from_base_noise(NoiseConfig::new(1.0, 0.0, 0.0, 0.0));
     let exempt = base.clone().with_1q_rates(GateType::RZ, [0.0; 3]);
     let dem = DemBuilder::new(&influence)
@@ -195,7 +195,7 @@ fn measurement_noise_shares_two_qubit_rates_and_idle_policy() {
     dag.pz(&[0, 1]);
     dag.cx(&[(0, 1)]);
     dag.mz(&[0, 1]);
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_p2_gate_rate(GateType::CX, 0.3)
         .set_p2_weights(PauliWeights::from([(X(1), 1.0)]));
@@ -209,7 +209,7 @@ fn measurement_noise_shares_two_qubit_rates_and_idle_policy() {
     idle.pz(&[0]);
     idle.idle(1_u64, &[0]);
     idle.mz(&[0]);
-    let influence = DagFaultAnalyzer::new(&idle).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&idle).build_influence_map().unwrap();
     let mem = MemBuilder::new(&influence)
         .with_noise(0.3, 0.0, 0.0, 0.0)
         .build()
@@ -225,7 +225,7 @@ fn measurement_noise_rejects_unrepresented_replacement_branches() {
     dag.pz(&[0, 1]);
     dag.cx(&[(0, 1)]);
     dag.mz(&[0, 1]);
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     let mut omitted_modes = Vec::new();
     for mode in [
         ReplacementBranchApproximation::BranchImpact,

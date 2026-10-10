@@ -180,7 +180,7 @@ impl MemStabSimBuilder {
         let dag = self.circuit.ok_or(MemStabError::MissingCircuit)?;
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map_diagnostic();
 
         // Forward the whole configuration. Unpacking it into the four scalars
         // rebuilds a fresh `NoiseConfig` and drops everything else the caller

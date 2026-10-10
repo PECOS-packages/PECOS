@@ -3703,10 +3703,13 @@ def surface_code_memory(
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Typed decoder specification or legacy decoder string
             passed to ``SampleBatch.decode``. PyMatching-family decoders use
-            PECOS's coordinate-based terminal approximation in this helper.
-            For source-informed graph matching, build a DetectorErrorModel and
-            pass its ``to_string_source_graphlike_decomposed()`` output to
-            ``SampleBatch.decode``.
+            the terminal graphlike decomposition of this helper's builder DEM:
+            with shots sampled from the raw model, it decodes at least as well
+            as the source-informed decomposition for d = 3, 5, 7 in both bases
+            at p = 0.002 and 0.004 (fewer or equal logical errors in every
+            case). Which decomposition decodes better depends on how a DEM was
+            built, so DEMs from other paths should be compared rather than
+            assumed.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.

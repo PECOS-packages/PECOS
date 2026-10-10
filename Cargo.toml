@@ -73,7 +73,6 @@ inkwell = { version = "0.9", features = ["llvm21-1-prefer-dynamic"] }
 
 # --- HUGR / tket ---
 tket = { version = "0.21", default-features = false }
-tket-qsystem = { version = "0.27", default-features = false }
 
 # --- WebAssembly ---
 wasmtime = { version = "48.0.5", default-features = false, features = [
@@ -210,7 +209,6 @@ pecos-frontier = { version = "0.2.0-dev.0", path = "exp/pecos-frontier" }
 pecos-trellis = { version = "0.2.0-dev.0", path = "exp/pecos-trellis" }
 pecos-fusion-blossom = { version = "0.2.0-dev.0", path = "crates/pecos-fusion-blossom" }
 pecos-gpu-sims = { version = "0.2.0-dev.0", path = "crates/pecos-gpu-sims" }
-pecos-hugr = { version = "0.2.0-dev.0", path = "crates/pecos-hugr" }
 pecos-ldpc-decoders = { version = "0.2.0-dev.0", path = "crates/pecos-ldpc-decoders" }
 pecos-lindblad = { version = "0.2.0-dev.0", path = "exp/pecos-lindblad" }
 pecos-llvm = { version = "0.2.0-dev.0", path = "crates/pecos-llvm" }

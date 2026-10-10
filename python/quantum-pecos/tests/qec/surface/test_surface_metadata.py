@@ -27,17 +27,10 @@ from pecos.qec.surface import (
     get_stabilizer_touch_label,
 )
 from pecos.qec.surface.circuit_builder import _metadata_record_offsets
+from pecos_rslib.quantum import TickCircuit
 
 if TYPE_CHECKING:
     from pecos.qec.surface import SurfacePatchDescriptor
-
-
-class _MetadataOnlyTickCircuit:
-    def __init__(self, metadata: dict[str, str]) -> None:
-        self._metadata = metadata
-
-    def get_meta(self, key: str) -> str | None:
-        return self._metadata.get(key)
 
 
 def test_metadata_record_offsets_require_records_or_meas_ids() -> None:
@@ -48,7 +41,9 @@ def test_metadata_record_offsets_require_records_or_meas_ids() -> None:
     with pytest.raises(ValueError, match=r"records.*meas_ids"):
         _metadata_record_offsets({"id": 0}, 3)
 
-    tick_circuit = _MetadataOnlyTickCircuit(
+    tick_circuit = TickCircuit()
+    tick_circuit.tick().mz([0])
+    tick_circuit.metas(
         {
             "detectors": json.dumps([{"id": 0, "coords": [0, 0, 0]}]),
             "observables": "[]",

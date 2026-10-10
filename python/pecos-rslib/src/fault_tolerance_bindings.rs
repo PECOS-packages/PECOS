@@ -2689,10 +2689,16 @@ impl PyDetectorErrorModel {
     ///
     /// Raw mechanisms are first grouped exactly as in `to_string()`. Each raw
     /// effect is then projected to graphlike terminal components using detector
-    /// coordinates. This is a decoder-facing representation for graph matchers,
-    /// not source-proof decomposition.
-    fn to_string_terminal_graphlike_decomposed(&self) -> String {
-        self.inner.to_string_terminal_graphlike_decomposed()
+    /// coordinates. Prefer `to_string_source_graphlike_decomposed()` for graph
+    /// matchers; this coordinate-based approximation can invent nonphysical
+    /// components and decode less accurately. Raises `ValueError` if observable labels
+    /// conflict, no consistent terminal pairing exists, or the bounded search
+    /// is exhausted. Effects are processed by descending grouped probability;
+    /// emitted labels constrain later effects, and the output is checked again.
+    fn to_string_terminal_graphlike_decomposed(&self) -> PyResult<String> {
+        self.inner
+            .to_string_terminal_graphlike_decomposed()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Convert the DEM using the explicit historical graphlike-search renderer.

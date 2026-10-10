@@ -53,8 +53,8 @@ M 5
 M 6
 M 7
 M 8
-DETECTOR(4, 1, 0) rec[-6] rec[-3]
-DETECTOR(5, 1, 0) rec[-9] rec[-8] rec[-6] rec[-5]
-DETECTOR(6, 1, 0) rec[-5] rec[-4] rec[-2] rec[-1]
-DETECTOR(7, 1, 0) rec[-7] rec[-4]
+DETECTOR(4.0, 1.0, 0.0) rec[-6] rec[-3]
+DETECTOR(5.0, 1.0, 0.0) rec[-9] rec[-8] rec[-6] rec[-5]
+DETECTOR(6.0, 1.0, 0.0) rec[-5] rec[-4] rec[-2] rec[-1]
+DETECTOR(7.0, 1.0, 0.0) rec[-7] rec[-4]
 OBSERVABLE_INCLUDE(0) rec[-9] rec[-8] rec[-7]

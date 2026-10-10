@@ -41,6 +41,6 @@ TICK
 M 0
 M 1
 M 2
-DETECTOR(0, 0, 0) rec[-5] rec[-7]
-DETECTOR(1, 0, 0) rec[-4] rec[-6]
+DETECTOR(0.0, 0.0, 0.0) rec[-5] rec[-7]
+DETECTOR(1.0, 0.0, 0.0) rec[-4] rec[-6]
 OBSERVABLE_INCLUDE(0) rec[-3] rec[-2] rec[-1]

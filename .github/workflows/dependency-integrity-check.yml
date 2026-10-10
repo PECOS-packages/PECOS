@@ -2,6 +2,7 @@ name: Dependency Integrity Check
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
@@ -61,7 +62,7 @@ jobs:
         run: rustup show
 
       - name: Test the workflow parsers the integrity check relies on
-        run: uv run --frozen pytest -q scripts/ci/test_cache_guard.py scripts/ci/test_workflow_permissions.py
+        run: uv run --frozen pytest -q -n auto scripts/ci/test_cache_guard.py scripts/ci/test_workflow_permissions.py scripts/ci/test_check_selene_wheels.py scripts/ci/test_trunk_ci_issues.py scripts/ci/test_release_tag_status.py scripts/ci/test_validation_guards.py
 
       - name: Run dependency integrity checks
         run: ./scripts/dependency-integrity-check.sh

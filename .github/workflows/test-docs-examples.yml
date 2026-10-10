@@ -5,6 +5,7 @@ permissions:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
@@ -23,6 +24,8 @@ on:
       - 'Justfile'
       - '.github/workflows/test-docs-examples.yml'
   workflow_dispatch:
+  schedule:
+    - cron: "11 4 * * *"
 
 env:
   RUSTFLAGS: -C debuginfo=0

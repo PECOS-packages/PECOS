@@ -13,7 +13,7 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0057"
 # fxhash@0.2.1 -- unmaintained.
-# Chain: hugr-passes -> hugr -> tket -> pecos-hugr.
+# Chain: hugr-passes -> hugr -> tket -> zlup.
 # Upstream owner: https://github.com/CQCL/hugr (awaiting rustc-hash/ahash swap).
 reason = "Transitive via hugr/tket; unmaintained-crate warning, no exploit path in PECOS."
 
@@ -34,7 +34,7 @@ reason = "Transitive via fusion-blossom and mwpf; unmaintained-crate warning, no
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0384"
 # instant@0.1.13 -- unmaintained; replaced by web-time.
-# Chain: hugr-passes/ascent -> ... -> pecos-hugr.
+# Chain: hugr-passes/ascent -> ... -> zlup.
 # Upstream owner: https://github.com/CQCL/hugr (ascent is a transitive build-graph helper).
 reason = "Transitive via hugr-passes/ascent; unmaintained-crate warning, no Wasm target."
 
@@ -118,8 +118,8 @@ reason = "Transitive via rustpython-parser in the experimental zlup frontend; un
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0196"
 # cgmath@0.18.0 -- unmaintained; 0.18.0 is the latest release (no fix exists).
-# Chains: cgmath -> hugr-core -> hugr -> tket -> pecos-hugr, and
-#         cgmath -> tket (dev-dependency) -> pecos-hugr.
+# Chains: cgmath -> hugr-core -> hugr -> tket -> zlup, and
+#         cgmath -> tket (dev-dependency) -> zlup.
 # Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2
 # (awaiting a maintained geometry dep).
 reason = "Transitive via hugr-core and tket; unmaintained-crate warning, no exploit path in PECOS."
@@ -128,7 +128,7 @@ reason = "Transitive via hugr-core and tket; unmaintained-crate warning, no expl
 id = "RUSTSEC-2026-0197"
 # cgmath@0.18.0 -- unsound Matrix{2,3,4}::swap_columns(a, a): identical indices
 # create aliasing mutable refs passed to ptr::swap -> UB. No patched release.
-# Chains: cgmath -> hugr-core -> hugr -> tket -> pecos-hugr, and
-#         cgmath -> tket (dev-dependency) -> pecos-hugr.
+# Chains: cgmath -> hugr-core -> hugr -> tket -> zlup, and
+#         cgmath -> tket (dev-dependency) -> zlup.
 # Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2.
 reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.29.3/tket 0.21.2 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."

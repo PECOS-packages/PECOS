@@ -64,3 +64,16 @@ def test_custatevec_bell_state(pecos_rslib_cuda) -> None:
 
     # Should be 100% correlated
     assert correlations == trials
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [("CuStateVec", (4,)), ("CuTensorNet", ()), ("CuDensityMat", (2,))],
+)
+def test_constructors_report_missing_sdk(pecos_rslib_cuda, name, args) -> None:
+    """Without the cuQuantum SDK, every simulator constructor fails with the not-available error."""
+    if pecos_rslib_cuda.is_cuquantum_available():
+        pytest.skip("cuQuantum is available, so the missing-SDK error cannot occur")
+
+    with pytest.raises(RuntimeError, match="cuQuantum SDK not available"):
+        getattr(pecos_rslib_cuda, name)(*args)

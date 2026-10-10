@@ -22,8 +22,7 @@ on:
       - dev
       - development
       - master
-    tags:
-      - 'py-*'
+    tags: [ "py-*", "jl-*", "rs-*" ]
     paths:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
@@ -39,10 +38,18 @@ on:
       sha:
         description: Commit SHA
         type: string
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
+  schedule:
+    - cron: "7 20 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish a started build: cancelling it on each merge threw away 49-minute
+  # Intel and 27-minute arm macOS builds. A newer push still replaces an older
+  # pending one. Schedules and manual dispatches get their own groups so a
+  # merge cannot drop their validation while they wait.
+  group: ${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.run_id || github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -51,10 +58,8 @@ defaults:
 jobs:
   resolve_release_mode:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-') ||
-      github.event_name == 'workflow_dispatch'
+    # The push trigger limits refs; every admitted event builds and tests all artifacts.
+    if: github.event_name != 'pull_request'
     outputs:
       full_release: ${{ steps.mode.outputs.full_release }}
     steps:
@@ -67,14 +72,9 @@ jobs:
         id: mode
         env:
           EVENT_NAME: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
-            echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
+          # Branch/tag pushes, schedules and dispatches all validate the full matrix.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "full_release=true" >> $GITHUB_OUTPUT
           else
             echo "full_release=false" >> $GITHUB_OUTPUT
@@ -505,7 +505,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.12', '3.13', '3.14']
         platform:
           - runner: ubuntu-latest
             os: ubuntu-latest
@@ -533,11 +532,6 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.inputs.sha || github.sha }}
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Download pecos-rslib abi3 wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -550,9 +544,48 @@ jobs:
           name: wheel-pecos-rslib-llvm-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-llvm-wheel
 
-      - name: Test abi3 wheels with Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Test abi3 wheels with Python 3.12
         run: |
-          echo "Testing abi3 wheels with Python ${{ matrix.python-version }}"
+          echo "Testing abi3 wheels with Python 3.12"
+          python --version
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Set up Python 3.13
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Test abi3 wheels with Python 3.13
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Testing abi3 wheels with Python 3.13"
+          python --version
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Set up Python 3.14
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Test abi3 wheels with Python 3.14
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Testing abi3 wheels with Python 3.14"
           python --version
           python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'

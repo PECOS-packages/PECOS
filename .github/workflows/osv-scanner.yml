@@ -7,9 +7,10 @@ permissions:
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
   schedule:
-    - cron: "41 4 * * 2"
+    - cron: "13 5 * * *"
   workflow_dispatch:
 
 concurrency:

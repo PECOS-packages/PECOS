@@ -2164,40 +2164,96 @@ def test_copy_surface_metadata_propagates_descriptors() -> None:
     assert len(obs_desc) > 0
 
 
-def test_surface_metadata_records_bind_to_runtime_meas_ids() -> None:
-    remap = _measurement_index_remap_for_orders(
-        [0, 1, 0, 2],
-        [1, 0, 2, 0],
-    )
-    assert remap == {0: 1, 1: 0, 2: 3, 3: 2}
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+def test_surface_metadata_records_bind_to_runtime_meas_ids(kind) -> None:
+    from pecos_rslib.quantum import TickCircuit
 
-    metadata = json.dumps(
-        [
-            {"id": 0, "records": [-4, -2]},
-            {"id": 1, "records": [-3]},
-        ],
+    source = generate_tick_circuit_from_patch(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        add_typed_annotations=False,
     )
-    remapped = json.loads(
-        _remap_surface_record_metadata_json(
-            metadata,
-            measurement_index_remap=remap,
-            num_measurements=4,
+    # 4 prep checks + 2 * 8 counted checks + 9 data readouts = 29.
+    # Absolute record 0 and relative record -29 name position 0; -1 names 28.
+    entries = [
+        {"id": 3, "records": [0, 28], "label": "absolute", "extra": {"keep": True}},
+        {"id": 0, "meas_ids": [1, 27], "label": "ids"},
+        {"id": 1, "records": [-29, -1], "meas_ids": [0, 28], "label": "dual"},
+    ]
+    source.set_meta(kind, json.dumps(entries))
+    descriptor_key = "detector_descriptors" if kind == "detectors" else "observable_descriptors"
+    # Deliberately stale refs and a different entry order: only the id binds a descriptor.
+    source.set_meta(
+        descriptor_key,
+        json.dumps(
+            [
+                {"id": 1, "records": [999], "weight": 2},
+                {"id": 3, "meas_ids": [999], "weight": 3},
+                {"id": 0, "records": [], "extra": "cached"},
+            ],
         ),
     )
-    assert remapped == [
+    remap = {position: 100 + 2 * position for position in range(29)}
+    expected = [
+        {"id": 3, "meas_ids": [100, 156], "label": "absolute", "extra": {"keep": True}},
+        {"id": 0, "meas_ids": [102, 154], "label": "ids"},
+        {"id": 1, "meas_ids": [100, 156], "label": "dual"},
+    ]
+    assert (
+        json.loads(
+            _remap_surface_record_metadata_json(
+                source.get_meta(kind),
+                source_tc=source,
+                definition_kind=kind,
+                measurement_index_remap=remap,
+            ),
+        )
+        == expected
+    )
+    target = TickCircuit()
+    _copy_surface_tick_circuit_metadata(source, target, measurement_index_remap=remap)
+    assert json.loads(target.get_meta(kind)) == expected
+    assert json.loads(target.get_meta(descriptor_key)) == [
+        {"id": 1, "meas_ids": [100, 156], "weight": 2},
+        {"id": 3, "meas_ids": [100, 156], "weight": 3},
+        {"id": 0, "meas_ids": [102, 154], "extra": "cached"},
+    ]
+    assert json.loads(source.get_meta(kind)) == entries
+    assert target.get_meta("ancilla_budget") == source.get_meta("ancilla_budget")
+
+
+def test_surface_metadata_remap_preserves_qubit_occurrences() -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    remap = _measurement_index_remap_for_orders([0, 1, 0, 2], [1, 0, 2, 0])
+    assert remap == {0: 1, 1: 0, 2: 3, 3: 2}
+    source = TickCircuit()
+    source.tick().mz_with_ids([0, 1], [17, 9])
+    source.tick().mz_with_ids([0, 2], [31, 8])
+    source.set_meta(
+        "detectors",
+        json.dumps(
+            [
+                {"id": 0, "records": [-4, -2]},
+                {"id": 1, "records": [-3]},
+                {"id": 2, "meas_ids": [17, 8]},
+            ],
+        ),
+    )
+    assert json.loads(
+        _remap_surface_record_metadata_json(
+            source.get_meta("detectors"),
+            source_tc=source,
+            definition_kind="detectors",
+            measurement_index_remap=remap,
+        ),
+    ) == [
         {"id": 0, "meas_ids": [1, 3]},
         {"id": 1, "meas_ids": [0]},
+        {"id": 2, "meas_ids": [1, 2]},
     ]
-
-    existing_meas_ids = json.dumps([{"id": 2, "meas_ids": [0, 3]}])
-    rebound = json.loads(
-        _remap_surface_record_metadata_json(
-            existing_meas_ids,
-            measurement_index_remap=remap,
-            num_measurements=4,
-        ),
-    )
-    assert rebound == [{"id": 2, "meas_ids": [1, 2]}]
 
 
 def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
@@ -2361,28 +2417,15 @@ def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
 
 
 def test_result_tag_remap_validation_rejects_duplicate_traced_meas_ids() -> None:
-    # `mz_with_ids` rejects a repeated id, so a duplicate has to be supplied
-    # directly to reach this validator.
-    class FakeGate:
-        gate_type = "MZ"
-        qubits: ClassVar[list[int]] = [0, 1]
-        meas_ids: ClassVar[list[int]] = [7, 7]
+    from pecos_rslib.quantum import TickCircuit
 
-    class FakeTick:
-        def gate_batches(self):
-            return [FakeGate()]
-
-    class FakeCircuit:
-        def num_ticks(self) -> int:
-            return 1
-
-        def get_tick(self, tick_idx: int):
-            assert tick_idx == 0
-            return FakeTick()
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([0], [7])
+    tc.tick().mz_with_ids([1], [7])
 
     with pytest.raises(ValueError, match="duplicate measured MeasId"):
         _validate_result_tag_remap_against_traced_measurements(
-            FakeCircuit(),
+            tc,
             {0: 7, 1: 8},
             expected_measurements=2,
         )
@@ -2403,26 +2446,14 @@ def test_result_tag_remap_validation_rejects_unbound_traced_meas_ids() -> None:
 
 
 def test_result_tag_remap_validation_rejects_unstamped_measurements() -> None:
-    class FakeGate:
-        gate_type = "MZ"
-        qubits: ClassVar[list[int]] = [0]
-        meas_ids: ClassVar[list[int]] = []
+    from pecos_rslib.quantum import TickCircuit
 
-    class FakeTick:
-        def gate_batches(self):
-            return [FakeGate()]
+    tc = TickCircuit()
+    tc.tick().add_gate("MZ", [0])
 
-    class FakeCircuit:
-        def num_ticks(self) -> int:
-            return 1
-
-        def get_tick(self, tick_idx: int):
-            assert tick_idx == 0
-            return FakeTick()
-
-    with pytest.raises(ValueError, match="carries 0 MeasId"):
+    with pytest.raises(ValueError, match="emission position 0 carries no MeasId"):
         _validate_result_tag_remap_against_traced_measurements(
-            FakeCircuit(),
+            tc,
             {0: 0},
             expected_measurements=1,
         )

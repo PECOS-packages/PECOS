@@ -176,17 +176,19 @@ print(f"detectors: {dem.num_detectors}, mechanisms: {dem.to_string().count('erro
 
 The DEM has several text forms, one per decoder appetite. `to_string()` returns
 Stim-format text with raw hyperedges, which BP+OSD and Tesseract consume
-directly. PyMatching requires a graph-like model, so it gets the terminal
-projection from `to_string_terminal_graphlike_decomposed()`; the source-informed
-`to_string_source_graphlike_decomposed()` form is used for Tesseract below.
+directly. For graph matchers such as PyMatching, prefer the source-informed
+`to_string_source_graphlike_decomposed()` form, also used for Tesseract below.
+Check that it has no residual hyperedges before passing it to a graph matcher.
+The terminal projection from `to_string_terminal_graphlike_decomposed()` is a
+coordinate-based approximation that can invent nonphysical components and decode
+less accurately, even when its component labels are consistent.
 
 <!--continuation-->
 ```python
 raw_text = dem.to_string()
-terminal_graphlike_text = dem.to_string_terminal_graphlike_decomposed()
 source_graphlike_text = dem.to_string_source_graphlike_decomposed()
 
-assert all("error(" in text for text in (raw_text, terminal_graphlike_text, source_graphlike_text))
+assert all("error(" in text for text in (raw_text, source_graphlike_text))
 ```
 
 <div hidden>
@@ -197,7 +199,7 @@ from pathlib import Path
 
 for text, filename in (
     (raw_text, "guppy_dem_decoding.dem"),
-    (terminal_graphlike_text, "guppy_dem_decoding_graphlike.dem"),
+    (source_graphlike_text, "guppy_dem_decoding_graphlike.dem"),
 ):
     fixture = Path("docs/assets/test-data") / filename
     # The fixture is a text file, so it ends with one newline the DEM text lacks.
@@ -353,7 +355,7 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
     from pecos.decoders import bp_osd, bp_trellis, frontier, pymatching, tesseract
 
     pymatching_result = batch.decode(
-        terminal_graphlike_text,
+        source_graphlike_text,
         pymatching(correlated=True),
     )
     tesseract_result = batch.decode(
@@ -406,7 +408,7 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
     use pecos_decoders::batch::{DecodeOptions, ExecutionPath};
     use pecos_decoders::spec::{BpOsdConfig, PyMatchingConfig};
 
-    let terminal_graphlike_text =
+    let source_graphlike_text =
         std::fs::read_to_string("guppy_dem_decoding_graphlike.dem")?;
     let pymatching = DecoderSpec::PyMatching(PyMatchingConfig {
         correlated: true,
@@ -418,7 +420,7 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
         ..Default::default()
     });
 
-    let pymatching_result = batch.decode(&terminal_graphlike_text, &pymatching)?;
+    let pymatching_result = batch.decode(&source_graphlike_text, &pymatching)?;
     let options = DecodeOptions::default().workers(4).predictions(true);
     let bp_osd_result = batch.decode_with(&raw_text, &bp_osd, &options)?;
 
@@ -490,7 +492,7 @@ sim_batch = SampleBatch(
     [observable_mask for _, observable_mask in sim_shots],
 )
 sim_results = {
-    "pymatching": sim_batch.decode(terminal_graphlike_text, pymatching(correlated=True)),
+    "pymatching": sim_batch.decode(source_graphlike_text, pymatching(correlated=True)),
     "tesseract": sim_batch.decode(source_graphlike_text, tesseract(preset="fast", pqlimit=50_000)),
     "bp_osd": sim_batch.decode(raw_text, bp_osd(max_iter=10, osd_order=1)),
     "frontier": sim_batch.decode(raw_text, frontier(k=64), workers=4),
@@ -595,7 +597,7 @@ lines of each tab do.
 
 Frontier consumes the raw model directly, so unlike the matching decoders it
 needs no graph-like projection — `raw_text` rather than
-`terminal_graphlike_text`. See [Experimental Decoders](../experimental/decoders.md)
+`source_graphlike_text`. See [Experimental Decoders](../experimental/decoders.md)
 for the full result surface, including what `status` and `dropped_log_mass` say
 about whether pruning affected the answer.
 

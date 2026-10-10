@@ -32,13 +32,6 @@ use pecos_neo::tool::sim_neo;
 use pecos_simulators::measurement_sampler::SampleResult;
 use pyo3::prelude::*;
 
-#[derive(serde::Deserialize)]
-struct RecDef {
-    /// Record offsets for the coherent sampling path.
-    #[serde(default)]
-    records: Vec<i32>,
-}
-
 // ============================================================================
 // Columnar raw measurement result (stays in Rust memory)
 // ============================================================================
@@ -1378,6 +1371,7 @@ impl PySimNeoBuilder {
     }
 
     /// Coherent path: EEG DemGenerator with measurement synthesis.
+    /// The reader infers the measurement count and validates metadata when present.
     fn run_coherent_meas_sampling(
         &self,
         noise_config: &PyNoiseModelBuilder,
@@ -1386,56 +1380,22 @@ impl PySimNeoBuilder {
         use pecos_eeg::dem_generator::select_generator;
         use pecos_eeg::dem_simulator::{CircuitMeasurementMeta, run_dem_simulation};
 
-        // Extract metadata from stored TickCircuit
-        let num_meas_attr = self
-            .tick_circuit
-            .get_meta("num_measurements")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    s.parse::<usize>().ok()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "TickCircuit missing num_measurements metadata",
-                )
-            })?;
-        let det_json = self
-            .tick_circuit
-            .get_meta("detectors")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "[]".to_string());
-        let obs_json = self
-            .tick_circuit
-            .get_meta("observables")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "[]".to_string());
+        use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
 
-        let det_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&det_json)
-            .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
-            .unwrap_or_default();
-        let obs_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&obs_json)
-            .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
-            .unwrap_or_default();
-
+        let definitions = definitions_from_tick_circuit(&self.tick_circuit)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let meta = CircuitMeasurementMeta {
-            num_measurements: num_meas_attr,
-            detector_records: det_records,
-            observable_records: obs_records,
+            num_measurements: definitions.num_measurements,
+            detector_measurements: definitions
+                .detectors
+                .into_iter()
+                .map(|d| d.measurements)
+                .collect(),
+            observable_measurements: definitions
+                .observables
+                .into_iter()
+                .map(|o| o.measurements)
+                .collect(),
         };
 
         let noise = pecos_eeg::noise::UniformNoise {
@@ -1685,21 +1645,19 @@ fn build_rust_tick_circuit_from_gates(
         append_measurement_batches(&mut tc, mz_batches)?;
     }
 
-    // Copy metadata from Python TickCircuit
-    if let Ok(num_meas) = py_tc.call_method1("get_meta", ("num_measurements",))
-        && let Ok(s) = num_meas.extract::<String>()
-    {
-        tc.set_meta("num_measurements", Attribute::String(s));
-    }
-    if let Ok(det_json) = py_tc.call_method1("get_meta", ("detectors",))
-        && let Ok(s) = det_json.extract::<String>()
-    {
-        tc.set_meta("detectors", Attribute::String(s));
-    }
-    if let Ok(obs_json) = py_tc.call_method1("get_meta", ("observables",))
-        && let Ok(s) = obs_json.extract::<String>()
-    {
-        tc.set_meta("observables", Attribute::String(s));
+    // Minimal duck-typed circuits need not expose metadata.
+    if py_tc.hasattr("get_meta")? {
+        for attribute in ["num_measurements", "detectors", "observables"] {
+            let value = py_tc.call_method1("get_meta", (attribute,))?;
+            if !value.is_none() {
+                let value = value.extract::<String>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "attribute {attribute:?} must be a string, got {value:?}"
+                    ))
+                })?;
+                tc.set_meta(attribute, Attribute::String(value));
+            }
+        }
     }
     copy_annotations_from_python(py_tc, &mut tc)?;
 

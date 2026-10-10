@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run python
+#!/usr/bin/env -S uv run --frozen python
 """Regenerate result-tag HUGR fixtures with the pinned Guppy version."""
 
 from pathlib import Path
@@ -67,7 +67,8 @@ def main() -> None:
         "arr.hugr": arr,
         "funcdecl.hugr": funcdecl,
     }
-    output_dir = Path("crates/pecos-hugr/tests/fixtures")
+    output_dir = Path(__file__).resolve().parents[1] / "python/quantum-pecos/tests/qec/fixtures/result_tags"
+    output_dir.mkdir(parents=True, exist_ok=True)
     for filename, program in fixtures.items():
         output_path = output_dir / filename
         output_path.write_text(f"{program.compile().to_str()}\n")

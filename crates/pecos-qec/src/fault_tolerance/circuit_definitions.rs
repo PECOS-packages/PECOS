@@ -8,7 +8,7 @@
 use super::dem_builder::{
     DemBuilderError, parse_detectors_json, parse_observables_json, record_offset_to_absolute_index,
 };
-use pecos_core::{MeasId, PauliString};
+use pecos_core::{MeasId, PauliString, QubitId};
 use pecos_quantum::{AnnotationKind, Attribute, DagCircuit, PauliAnnotation, TickCircuit};
 use std::collections::BTreeMap;
 
@@ -514,23 +514,45 @@ fn resolve_circuit<'a>(
     resolve_definitions(detectors, observables, &annotations, emission)
 }
 
+/// One emitted measurement record, including its qubit and optional identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeasurementEmission {
+    /// The measured qubit.
+    pub qubit: QubitId,
+    /// The stamped identity, if present.
+    pub meas_id: Option<MeasId>,
+}
+
 /// A tick circuit's measurement records in emission order: tick, batch storage
 /// order, instance, then qubit-list order.
 ///
 /// A batch's qubit list is its instances' qubit lists in instance order, and
 /// `Gate::validate` holds every measurement gate to either no ids or one per
 /// qubit, so walking each batch's qubits visits the records in emission order.
-/// Entries are `None` for measurements that carry no id.
+/// Ids are `None` for measurements that carry no id.
 #[must_use]
-pub fn tick_circuit_emission(circuit: &TickCircuit) -> Vec<Option<MeasId>> {
+pub fn tick_circuit_measurement_emission(circuit: &TickCircuit) -> Vec<MeasurementEmission> {
     let mut emission = Vec::new();
     for batch in circuit.iter_gate_batches() {
         if batch.gate_type.consumes_measurement_record() {
-            emission
-                .extend((0..batch.qubits.len()).map(|index| batch.meas_ids.get(index).copied()));
+            emission.extend(batch.qubits.iter().enumerate().map(|(index, &qubit)| {
+                MeasurementEmission {
+                    qubit,
+                    meas_id: batch.meas_ids.get(index).copied(),
+                }
+            }));
         }
     }
     emission
+}
+
+/// A tick circuit's measurement identities in emission order, including absent ids.
+#[must_use]
+pub fn tick_circuit_emission(circuit: &TickCircuit) -> Vec<Option<MeasId>> {
+    tick_circuit_measurement_emission(circuit)
+        .into_iter()
+        .map(|record| record.meas_id)
+        .collect()
 }
 
 /// Return DAG nodes in emission order: topological order keyed by node index.

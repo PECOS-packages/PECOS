@@ -16,13 +16,10 @@
 //! This module provides the pure Rust implementation of DEM-based simulation.
 //! Given a circuit (as `Vec<Gate>`) and noise parameters, it:
 //! 1. Builds a DEM via the EEG coherent backward mechanism extraction
-//! 2. Samples detection events from the DEM
-//! 3. Synthesizes physical measurement bitstrings matching the circuit's output
-//!
-//! # Performance
-//!
-//! The sampling step uses `ParsedDem::sample()` which is O(mechanisms) per shot.
-//! For bulk sampling, use `to_dem_sampler()` for columnar bit-packed SIMD sampling.
+//! 2. Samples detection events from the DEM with `ParsedDem::to_dem_sampler()`
+//! 3. Synthesizes physical measurement bitstrings matching the circuit's output:
+//!    the noiseless row from the symbolic measurement history, XOR a flip
+//!    vector that reproduces the sampled detector and observable events
 
 use crate::dem_generator::{DemContext, DemGenerator};
 use crate::expand::{ExpandedCircuit, GateIndex};
@@ -34,7 +31,7 @@ use pecos_qec::fault_tolerance::dem_builder::ParsedDem;
 use pecos_qec::fault_tolerance::fault_sampler::{
     RawMeasurementPlan, StochasticNoiseParams, symbolic_measurement_history,
 };
-use pecos_quantum::TickCircuit;
+use pecos_quantum::{F2Matrix, TickCircuit};
 use pecos_random::PecosRng;
 
 /// Metadata needed for measurement synthesis.
@@ -66,6 +63,20 @@ pub enum DemSimulationError {
     History(pecos_qec::fault_tolerance::fault_sampler::MeasurementHistoryError),
     /// Expanded records cannot be bound to the resolved emission positions.
     MeasurementCountMismatch { metadata: usize, expanded: usize },
+    /// The symbolic history does not match the declared measurement count.
+    HistoryMeasurementCountMismatch { metadata: usize, history: usize },
+    /// A gate could not be added to the rebuilt circuit.
+    TickGate(pecos_quantum::TickGateError),
+    /// The generated DEM could not be parsed.
+    DemParse(pecos_qec::fault_tolerance::dem_builder::DemParseError),
+    /// A DEM detector or observable id exceeds the corresponding definitions.
+    EventCountMismatch {
+        kind: &'static str,
+        definitions: usize,
+        events: usize,
+    },
+    /// A sampled event pattern violates a dependent row of the parity matrix.
+    InconsistentEvents { shot: usize, row: usize },
     /// The fault table could not be built.
     FaultTable(String),
 }
@@ -78,6 +89,24 @@ impl std::fmt::Display for DemSimulationError {
             Self::MeasurementCountMismatch { metadata, expanded } => write!(
                 f,
                 "DEM simulation: metadata declares {metadata} measurements, but EEG expansion produced {expanded} measurement records"
+            ),
+            Self::HistoryMeasurementCountMismatch { metadata, history } => write!(
+                f,
+                "DEM simulation: metadata declares {metadata} measurements, but symbolic history produced {history} measurement records"
+            ),
+            Self::TickGate(err) => write!(f, "DEM simulation: {err}"),
+            Self::DemParse(err) => write!(f, "DEM simulation: {err}"),
+            Self::EventCountMismatch {
+                kind,
+                definitions,
+                events,
+            } => write!(
+                f,
+                "DEM simulation: DEM has {events} {kind} slots, but only {definitions} definitions"
+            ),
+            Self::InconsistentEvents { shot, row } => write!(
+                f,
+                "DEM simulation: inconsistent events at shot {shot}, dependent row {row}"
             ),
             Self::FaultTable(msg) => write!(f, "DEM simulation: fault table: {msg}"),
         }
@@ -96,8 +125,8 @@ impl From<crate::expand::EegBuildError> for DemSimulationError {
 ///
 /// Two modes:
 /// 1. **Stochastic path** (idle_rz == 0): builds a TickCircuit from gates + metadata,
-///    uses `DemSampler::from_tick_circuit` with `OutputMode::RawMeasurements` for
-///    proper non-deterministic handling and maximum performance.
+///    samples the symbolic measurement history with `RawMeasurementPlan`, and
+///    overlays the stochastic fault table using geometric fault sampling.
 /// 2. **Coherent path** (idle_rz > 0): uses EEG DemGenerator for DEM, then
 ///    ParsedDem sampler + measurement synthesis (EEG handles coherent noise).
 ///
@@ -121,7 +150,7 @@ pub fn run_dem_simulation(
         return run_eeg_path(gates, noise, meta, generator, shots, seed);
     }
 
-    // Stochastic: use proper DemSampler with raw measurement output
+    // Stochastic: sample the symbolic history and physical fault mechanisms
     stochastic_path(gates, noise, meta, shots, seed)
 }
 
@@ -193,7 +222,7 @@ fn resolve_measurement_ref(
 /// # Errors
 ///
 /// Returns [`DemSimulationError`] when a position does not resolve against
-/// the circuit's measurements.
+/// the circuit's measurements or a gate payload is invalid.
 fn build_tick_circuit(
     gates: &[Gate],
     meta: &CircuitMeasurementMeta,
@@ -203,7 +232,15 @@ fn build_tick_circuit(
     let mut tc = TickCircuit::default();
     let mut all_meas_refs: Vec<TickMeasRef> = Vec::new();
 
-    for gate in gates {
+    for (tick_idx, gate) in gates.iter().enumerate() {
+        // Typed measurement/preparation helpers also validate, but panic on
+        // invalid payloads. Reject them here along with all other gate types.
+        gate.validate().map_err(|message| {
+            DemSimulationError::TickGate(pecos_quantum::TickGateError::InvalidGate {
+                message,
+                tick_idx: Some(tick_idx),
+            })
+        })?;
         match gate.gate_type {
             GateType::MZ => all_meas_refs.extend(tc.tick().mz(&gate.qubits)),
             GateType::MX => all_meas_refs.extend(tc.tick().mx(&gate.qubits)),
@@ -215,7 +252,8 @@ fn build_tick_circuit(
             }
             _ => {
                 let mut tick = tc.tick();
-                let _ = tick.try_add_gate(gate.clone());
+                tick.try_add_gate(gate.clone())
+                    .map_err(DemSimulationError::TickGate)?;
             }
         }
     }
@@ -274,6 +312,12 @@ fn build_tick_circuit(
 ///
 /// Used when coherent noise (idle_rz) is present and the stochastic path
 /// cannot capture the noise accurately.
+///
+/// Each row is the noiseless row `r` XOR a flip vector `f` solving
+/// `[D; L] f = [d; o]` over GF(2), with free measurements set to 0. Every
+/// detector and observable parity is therefore exact, but a measurement that
+/// no detector or observable covers keeps its noiseless value and receives no
+/// noise.
 fn run_eeg_path(
     gates: &[Gate],
     noise: &UniformNoise,
@@ -282,6 +326,13 @@ fn run_eeg_path(
     shots: usize,
     seed: u64,
 ) -> Result<DemSimulationResult, DemSimulationError> {
+    // Keep emission order: compact_ticks can move measurements into earlier
+    // batches. Validate the symbolic history before reaching EEG conjugation,
+    // which can panic on unsupported gates.
+    let tc = build_tick_circuit(gates, meta)?;
+    let history = symbolic_measurement_history(&tc).map_err(DemSimulationError::History)?;
+    let plan = RawMeasurementPlan::new(&history, Vec::new());
+
     // Expand circuit for EEG analysis
     let expanded = crate::expand::expand_circuit(gates)?;
     if expanded.measurement_qubit.len() != meta.num_measurements {
@@ -290,6 +341,15 @@ fn run_eeg_path(
             expanded: expanded.measurement_qubit.len(),
         });
     }
+    if plan.num_measurements != meta.num_measurements {
+        return Err(DemSimulationError::HistoryMeasurementCountMismatch {
+            metadata: meta.num_measurements,
+            history: plan.num_measurements,
+        });
+    }
+    let noiseless = plan.sample(shots, seed);
+    let synthesis = MeasurementFlipSolver::new(meta);
+    let mut events = vec![0; synthesis.num_events().div_ceil(64)];
     let gate_index = GateIndex::build(
         &expanded.gates,
         expanded.num_qubits,
@@ -312,20 +372,22 @@ fn run_eeg_path(
     let output = generator.generate(&ctx, noise);
     let dem_str = crate::dem_mapping::format_dem(&output.entries);
 
-    // Parse DEM and build sampler
-    let parsed_dem: ParsedDem = dem_str.parse().unwrap_or_else(|_| ParsedDem::new());
+    // Validate the DEM's namespaces even when shots == 0.
+    let parsed_dem = parse_dem(&dem_str, meta)?;
     let sampler = parsed_dem.to_dem_sampler();
-
-    // Build measurement synthesis info
-    let synthesis_info = MeasurementSynthesisInfo::build(meta, &expanded);
-
-    // Sample and synthesize
-    let mut rng = PecosRng::seed_from_u64(seed);
+    let mut rng = PecosRng::seed_from_u64(dem_sampling_seed(seed));
     let mut measurements = Vec::with_capacity(shots);
 
-    for _ in 0..shots {
-        let (det_events, obs_flips) = sampler.sample(&mut rng);
-        let meas = synthesis_info.synthesize(&det_events, &obs_flips, &mut rng);
+    for shot in 0..shots {
+        let (mut det_events, mut obs_flips) = sampler.sample(&mut rng);
+        // ParsedDem counts only up to the highest id present in its text.
+        // Definitions untouched by any mechanism still contribute zero events.
+        det_events.resize(meta.detector_measurements.len(), false);
+        obs_flips.resize(meta.observable_measurements.len(), false);
+        let mut meas = (0..meta.num_measurements)
+            .map(|m| u8::from(noiseless.get(shot, m).0))
+            .collect::<Vec<_>>();
+        synthesis.apply(&det_events, &obs_flips, shot, &mut meas, &mut events)?;
         measurements.push(meas);
     }
 
@@ -366,113 +428,128 @@ fn build_observables_from_meta(
     Ok(observables)
 }
 
-/// Precomputed info for synthesizing measurements from detection events.
-/// Only one- and two-reference detectors assign measurements; measurements covered
-/// only by larger detectors remain random coins.
-struct MeasurementSynthesisInfo {
-    num_meas: usize,
-    /// For each measurement: Some((det_idx, other_meas_idx)) if determined by a detector.
-    /// other_meas_idx == usize::MAX means single-record detector.
-    meas_info: Vec<Option<(usize, usize)>>,
-    /// Which measurements are non-deterministic (need random coin).
-    is_non_det: Vec<bool>,
-    /// Observable measurement assignments: (meas_idx, obs_idx).
-    obs_meas_info: Vec<(usize, usize)>,
+/// Keep DEM events independent of RawMeasurementPlan's base stream (seed)
+/// and fault stream (seed + 1), including at the u64 wraparound boundary.
+fn dem_sampling_seed(seed: u64) -> u64 {
+    seed.wrapping_add(2)
 }
 
-impl MeasurementSynthesisInfo {
-    /// Build synthesis info from circuit metadata.
-    fn build(meta: &CircuitMeasurementMeta, _expanded: &ExpandedCircuit) -> Self {
-        let num_meas = meta.num_measurements;
-        let mut meas_info: Vec<Option<(usize, usize)>> = vec![None; num_meas];
+/// Parse the generated DEM text and reject detector or observable ids beyond
+/// the circuit's definition counts.
+fn parse_dem(text: &str, meta: &CircuitMeasurementMeta) -> Result<ParsedDem, DemSimulationError> {
+    let parsed: ParsedDem = text.parse().map_err(DemSimulationError::DemParse)?;
+    for (kind, events, definitions) in [
+        (
+            "detector",
+            parsed.num_detectors as usize,
+            meta.detector_measurements.len(),
+        ),
+        (
+            "observable",
+            parsed.num_observables() as usize,
+            meta.observable_measurements.len(),
+        ),
+    ] {
+        if events > definitions {
+            return Err(DemSimulationError::EventCountMismatch {
+                kind,
+                definitions,
+                events,
+            });
+        }
+    }
+    Ok(parsed)
+}
 
-        // Build detector -> measurement mapping
-        for (det_idx, records) in meta.detector_measurements.iter().enumerate() {
-            if records.len() == 2 {
-                let (earlier, later) = if records[0] < records[1] {
-                    (records[0], records[1])
-                } else {
-                    (records[1], records[0])
-                };
-                if meas_info[later].is_none() {
-                    meas_info[later] = Some((det_idx, earlier));
+/// A particular solution of A f = [d; o], where A contains detector rows
+/// followed by observable rows. Free measurement columns are always zero.
+struct MeasurementFlipSolver {
+    num_detectors: usize,
+    num_observables: usize,
+    /// Pivot columns belonging to A, in reduced row order.
+    pivots: Vec<usize>,
+    /// Packed rows of the transform T extracted from reduced [A | I].
+    transform: Vec<Vec<u64>>,
+}
+
+impl MeasurementFlipSolver {
+    /// Definition positions have already been validated by build_tick_circuit.
+    fn new(meta: &CircuitMeasurementMeta) -> Self {
+        let num_rows = meta.detector_measurements.len() + meta.observable_measurements.len();
+        let mut augmented = F2Matrix::zeros(num_rows, meta.num_measurements + num_rows);
+        for (row, positions) in meta
+            .detector_measurements
+            .iter()
+            .chain(&meta.observable_measurements)
+            .enumerate()
+        {
+            for &column in positions {
+                // Definitions are parities: duplicate positions cancel.
+                augmented.set(row, column, augmented.get(row, column) ^ 1);
+            }
+            augmented.set(row, meta.num_measurements + row, 1);
+        }
+        let (reduced, pivots) = augmented.row_reduce();
+        let pivots = pivots
+            .into_iter()
+            .take_while(|&column| column < meta.num_measurements)
+            .collect();
+        // Reduction may also pivot in the identity block. Such rows have a
+        // zero A block and encode consistency constraints on the event vector.
+        let transform = (0..num_rows)
+            .map(|row| {
+                let mut words = vec![0; num_rows.div_ceil(64)];
+                for column in 0..num_rows {
+                    words[column / 64] |=
+                        u64::from(reduced.get(row, meta.num_measurements + column))
+                            << (column % 64);
                 }
-            } else if records.len() == 1 {
-                let idx = records[0];
-                if meas_info[idx].is_none() {
-                    meas_info[idx] = Some((det_idx, usize::MAX));
-                }
-            }
-        }
-
-        // Identify non-deterministic measurements
-        let mut is_non_det = vec![false; num_meas];
-        for idx in 0..num_meas {
-            if meas_info[idx].is_none() {
-                is_non_det[idx] = true;
-            }
-        }
-        // Also: measurements referenced as "other" by a detector but not assigned themselves
-        for idx in 0..num_meas {
-            if let Some((_, other_idx)) = meas_info[idx]
-                && other_idx != usize::MAX
-                && other_idx < num_meas
-                && meas_info[other_idx].is_none()
-            {
-                is_non_det[other_idx] = true;
-            }
-        }
-
-        // Observable measurement assignments
-        let mut obs_meas_info = Vec::new();
-        for (obs_idx, records) in meta.observable_measurements.iter().enumerate() {
-            for &rec in records {
-                obs_meas_info.push((rec, obs_idx));
-            }
-        }
-
+                words
+            })
+            .collect();
         Self {
-            num_meas,
-            meas_info,
-            is_non_det,
-            obs_meas_info,
+            num_detectors: meta.detector_measurements.len(),
+            num_observables: meta.observable_measurements.len(),
+            pivots,
+            transform,
         }
     }
 
-    /// Synthesize a measurement bitstring from detection events + observable flips.
-    fn synthesize(&self, det_events: &[bool], obs_flips: &[bool], rng: &mut PecosRng) -> Vec<u8> {
-        let mut meas = vec![0u8; self.num_meas];
+    fn num_events(&self) -> usize {
+        self.num_detectors + self.num_observables
+    }
 
-        // Random coins for non-deterministic measurements
-        for (idx, bit) in meas.iter_mut().enumerate().take(self.num_meas) {
-            if self.is_non_det[idx] {
-                *bit = u8::from(rng.random_bool(0.5));
+    /// XOR the particular flip solution into a noiseless row. The packed
+    /// scratch buffer is reused across shots; the per-row product uses popcount.
+    fn apply(
+        &self,
+        detectors: &[bool],
+        observables: &[bool],
+        shot: usize,
+        measurements: &mut [u8],
+        events: &mut [u64],
+    ) -> Result<(), DemSimulationError> {
+        assert_eq!(detectors.len(), self.num_detectors);
+        assert_eq!(observables.len(), self.num_observables);
+        assert_eq!(events.len(), self.num_events().div_ceil(64));
+        events.fill(0);
+        for (column, &value) in detectors.iter().chain(observables).enumerate() {
+            events[column / 64] |= u64::from(value) << (column % 64);
+        }
+        for (row, transform) in self.transform.iter().enumerate() {
+            let value = transform
+                .iter()
+                .zip(events.iter())
+                .fold(0, |parity, (&a, &b)| parity ^ (a & b).count_ones())
+                & 1;
+            if let Some(&pivot) = self.pivots.get(row) {
+                // row_reduce chooses the earliest measurement pivot.
+                measurements[pivot] ^= u8::from(value != 0);
+            } else if value != 0 {
+                return Err(DemSimulationError::InconsistentEvents { shot, row });
             }
         }
-
-        // Assign measurements in index order (time order)
-        for idx in 0..self.num_meas {
-            if let Some((det_idx, other_idx)) = self.meas_info[idx] {
-                if det_idx < det_events.len() && det_events[det_idx] {
-                    if other_idx == usize::MAX {
-                        meas[idx] ^= 1;
-                    } else if other_idx < self.num_meas {
-                        meas[idx] = u8::from(det_events[det_idx]) ^ meas[other_idx];
-                    }
-                } else if other_idx != usize::MAX && other_idx < self.num_meas {
-                    meas[idx] = meas[other_idx];
-                }
-            }
-        }
-
-        // Apply observable flips
-        for &(meas_idx, obs_idx) in &self.obs_meas_info {
-            if obs_idx < obs_flips.len() && obs_flips[obs_idx] {
-                meas[meas_idx] ^= 1;
-            }
-        }
-
-        meas
+        Ok(())
     }
 }
 
@@ -518,24 +595,267 @@ mod tests {
     }
 
     #[test]
-    fn synthesis_uses_absolute_positions() {
-        let expanded = crate::expand::expand_circuit(&[Gate::mz(&[0, 1, 2])]).unwrap();
+    fn synthesis_solves_overlapping_and_dependent_parities() {
+        let gates = [
+            Gate::x(&[0]),
+            Gate::h(&[1]),
+            Gate::cx(&[(1, 2)]),
+            Gate::mz(&[0, 1, 2, 3, 4]),
+        ];
         let meta = CircuitMeasurementMeta {
-            num_measurements: 3,
-            detector_measurements: vec![vec![0], vec![0, 1], vec![2]],
-            observable_measurements: vec![vec![2]],
+            num_measurements: 5,
+            detector_measurements: vec![vec![0, 1, 2], vec![0, 2], vec![1]],
+            observable_measurements: vec![vec![1, 2, 3, 4, 4]],
         };
-        let info = MeasurementSynthesisInfo::build(&meta, &expanded);
-        let mut rng = PecosRng::seed_from_u64(7);
-        // m0 = D0; m1 = m0 XOR D1; m2 = D2 XOR L0.
-        assert_eq!(
-            info.synthesize(&[true, false, false], &[true], &mut rng),
-            vec![1, 1, 1]
+        let circuit = build_tick_circuit(&gates, &meta).unwrap();
+        let history = symbolic_measurement_history(&circuit).unwrap();
+        let noiseless = RawMeasurementPlan::new(&history, Vec::new()).sample(32, 7);
+        let solver = MeasurementFlipSolver::new(&meta);
+        assert_eq!(solver.pivots, vec![0, 1, 2]);
+        for shot in 0..32 {
+            let base = (0..5)
+                .map(|m| u8::from(noiseless.get(shot, m).0))
+                .collect::<Vec<_>>();
+            // Bell pair: r = [1, b, b, 0, 0]. D0=1 and L0=0 noiselessly.
+            assert_eq!(base, vec![1, base[1], base[1], 0, 0]);
+            for (d0, d1, logical) in (0..8).map(|v| (v & 1 != 0, v & 2 != 0, v & 4 != 0)) {
+                let mut row = base.clone();
+                solver
+                    .apply(&[d0, d1, d0 ^ d1], &[logical], shot, &mut row, &mut [0])
+                    .unwrap();
+                // Hand solution with free columns f3=f4=0.
+                assert_eq!(
+                    row,
+                    vec![
+                        1 ^ u8::from(d0 ^ logical),
+                        base[1] ^ u8::from(d0 ^ d1),
+                        base[2] ^ u8::from(d0 ^ d1 ^ logical),
+                        0,
+                        0,
+                    ]
+                );
+                for (positions, event) in meta
+                    .detector_measurements
+                    .iter()
+                    .chain(&meta.observable_measurements)
+                    .zip([d0, d1, d0 ^ d1, logical])
+                {
+                    let parity = |bits: &[u8]| positions.iter().fold(0, |p, &m| p ^ bits[m]);
+                    assert_eq!(parity(&row), parity(&base) ^ u8::from(event));
+                }
+            }
+        }
+        let error = solver
+            .apply(&[false, false, true], &[false], 17, &mut [0; 5], &mut [0])
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DemSimulationError::InconsistentEvents { shot: 17, row: 3 }
+        ));
+        assert!(error.to_string().contains("shot 17, dependent row 3"));
+    }
+
+    #[test]
+    fn synthesis_packed_transform_crosses_word_boundaries() {
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 70,
+            detector_measurements: (0..70).map(|m| vec![m]).collect(),
+            observable_measurements: vec![vec![0, 63, 64, 69]],
+        };
+        let solver = MeasurementFlipSolver::new(&meta);
+        for column in 0..70 {
+            let mut events = vec![false; 70];
+            events[column] = true;
+            let mut row = vec![0; 70];
+            solver
+                .apply(
+                    &events,
+                    &[matches!(column, 0 | 63 | 64 | 69)],
+                    column,
+                    &mut row,
+                    &mut [0; 2],
+                )
+                .unwrap();
+            assert_eq!(row.iter().map(|&v| v != 0).collect::<Vec<_>>(), events);
+        }
+    }
+
+    #[test]
+    fn coherent_empty_dem_preserves_noiseless_rows_with_padding() {
+        struct EmptyDem;
+        impl DemGenerator for EmptyDem {
+            fn generate(
+                &self,
+                ctx: &DemContext<'_>,
+                noise: &dyn crate::noise::NoiseSpec,
+            ) -> crate::dem_generator::DemOutput {
+                let output = crate::dem_generator::CoherentApprox.generate(ctx, noise);
+                assert!(output.entries.is_empty());
+                output
+            }
+            fn name(&self) -> &'static str {
+                "empty"
+            }
+        }
+        let gates = [
+            Gate::pz(&[0, 1]),
+            Gate::h(&[1]),
+            Gate::mz(&[0, 1]),
+            Gate::mz(&[1]),
+            Gate::x(&[0]),
+            Gate::mz(&[0]),
+        ];
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 4,
+            detector_measurements: vec![vec![0], vec![1, 2]],
+            observable_measurements: vec![vec![3]],
+        };
+        let history =
+            symbolic_measurement_history(&build_tick_circuit(&gates, &meta).unwrap()).unwrap();
+        let noiseless = RawMeasurementPlan::new(&history, Vec::new()).sample(128, 7);
+        let rows = run_eeg_path(
+            &gates,
+            &UniformNoise::coherent_only(1e-4),
+            &meta,
+            &EmptyDem,
+            128,
+            7,
+        )
+        .unwrap()
+        .measurements;
+        for (shot, row) in rows.iter().enumerate() {
+            assert_eq!(
+                *row,
+                (0..4)
+                    .map(|m| u8::from(noiseless.get(shot, m).0))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(*row, vec![0, row[1], row[1], 1]);
+        }
+        assert!(rows.iter().any(|row| row[1] == 0));
+        assert!(rows.iter().any(|row| row[1] == 1));
+    }
+
+    #[test]
+    fn coherent_dem_seed_is_independent_of_plan_streams() {
+        for seed in [0, 7, u64::MAX - 1, u64::MAX] {
+            let dem_seed = dem_sampling_seed(seed);
+            assert_ne!(dem_seed, seed);
+            assert_ne!(dem_seed, seed.wrapping_add(1));
+            let mut dem = PecosRng::seed_from_u64(dem_seed);
+            let mut base = PecosRng::seed_from_u64(seed);
+            assert_ne!(dem.next_u64(), base.next_u64());
+        }
+    }
+
+    #[test]
+    fn coherent_noiseless_history_keeps_emission_order() {
+        let gates = [
+            Gate::pz(&[0, 1]),
+            Gate::h(&[0]),
+            Gate::x(&[0]),
+            Gate::mz(&[0]),
+            Gate::mz(&[1]),
+        ];
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 2,
+            detector_measurements: vec![],
+            observable_measurements: vec![],
+        };
+        // Compaction could move the independent MZ(1) before MZ(0), swapping
+        // the deterministic and random columns. No definitions constrain them.
+        let rows = run_eeg_path(
+            &gates,
+            &UniformNoise::coherent_only(1e-4),
+            &meta,
+            &crate::dem_generator::CoherentApprox,
+            128,
+            7,
+        )
+        .unwrap()
+        .measurements;
+        assert!(rows.iter().all(|row| row[1] == 0));
+        assert!(rows.iter().any(|row| row[0] == 0));
+        assert!(rows.iter().any(|row| row[0] == 1));
+    }
+
+    #[test]
+    fn synthesis_handles_empty_and_cancelled_definitions() {
+        let mut meta = CircuitMeasurementMeta {
+            num_measurements: 2,
+            detector_measurements: vec![],
+            observable_measurements: vec![],
+        };
+        let mut row = [1, 0];
+        MeasurementFlipSolver::new(&meta)
+            .apply(&[], &[], 0, &mut row, &mut [])
+            .unwrap();
+        assert_eq!(row, [1, 0]);
+        meta.detector_measurements = vec![vec![], vec![0, 0]];
+        meta.observable_measurements = vec![vec![1, 1]];
+        let solver = MeasurementFlipSolver::new(&meta);
+        solver
+            .apply(&[false, false], &[false], 0, &mut row, &mut [0])
+            .unwrap();
+        assert_eq!(row, [1, 0]);
+        assert!(matches!(
+            solver.apply(&[false, true], &[false], 9, &mut row, &mut [0]),
+            Err(DemSimulationError::InconsistentEvents { shot: 9, .. })
+        ));
+    }
+
+    #[test]
+    fn coherent_dem_rejects_parse_errors_and_excess_ids() {
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 1,
+            detector_measurements: vec![vec![0]],
+            observable_measurements: vec![vec![0]],
+        };
+        assert!(matches!(
+            parse_dem("invalid", &meta),
+            Err(DemSimulationError::DemParse(_))
+        ));
+        for (text, kind) in [
+            ("error(0.1) D1", "detector"),
+            ("error(0.1) L1", "observable"),
+        ] {
+            assert!(
+                matches!(parse_dem(text, &meta), Err(DemSimulationError::EventCountMismatch { kind: actual, definitions: 1, events: 2 }) if actual == kind)
+            );
+        }
+    }
+
+    #[test]
+    fn coherent_unsupported_gate_returns_history_error() {
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 1,
+            detector_measurements: vec![vec![0]],
+            observable_measurements: vec![],
+        };
+        let result = run_eeg_path(
+            &[Gate::t(&[0]), Gate::mz(&[0])],
+            &UniformNoise::coherent_only(0.1),
+            &meta,
+            &crate::dem_generator::CoherentApprox,
+            1,
+            7,
         );
-        assert_eq!(
-            info.synthesize(&[false, true, true], &[true], &mut rng),
-            vec![0, 1, 0]
-        );
+        assert!(matches!(result, Err(DemSimulationError::History(_))));
+    }
+
+    #[test]
+    fn rebuilding_rejects_invalid_gate_payloads() {
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 0,
+            detector_measurements: vec![],
+            observable_measurements: vec![],
+        };
+        for gate in [Gate::h(&[0, 0]), Gate::mz(&[0, 0]), Gate::pz(&[0, 0])] {
+            assert!(matches!(
+                build_tick_circuit(&[gate], &meta),
+                Err(DemSimulationError::TickGate(_))
+            ));
+        }
     }
 
     #[test]

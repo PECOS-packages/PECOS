@@ -37,6 +37,8 @@ fn exact_replay_rejects_missing_measurement_nodes() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn exact_crosstalk_translates_non_identity_measurement_order() {
     use pecos_core::Gate;
@@ -121,6 +123,8 @@ fn exact_replay_with_out_of_order_stamps() {
     );
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn exact_replay_translates_non_identity_measurement_order() {
     let dag = circuit(false, false);

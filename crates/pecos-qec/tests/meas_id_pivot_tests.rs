@@ -289,9 +289,11 @@ fn dag_update_refuses_duplicate_measurement_ids() {
         .expect("the rejected edit must leave distinct measurement IDs");
 }
 
-/// `measurement_order` is a legacy escape hatch for id-less circuits; on a
-/// stamped-id circuit its qubit-occurrence heuristic silently mis-binds, so
-/// the combination is refused outright.
+// exercises the deprecated measurement-order API
+/// The deprecated qubit-occurrence mapping keeps its guard against
+/// non-positional stamped IDs, even when the requested order is the identity.
+/// A different record frame can be expressed with `meas_ids` in metadata.
+#[allow(deprecated)]
 #[test]
 fn measurement_order_is_refused_on_a_stamped_id_circuit() {
     let dag = parity_check_with_ids([9, 4, 7]);

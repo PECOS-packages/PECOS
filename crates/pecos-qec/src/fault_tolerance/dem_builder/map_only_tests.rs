@@ -33,6 +33,8 @@ fn error_text<T, E: std::fmt::Display>(result: Result<T, E>) -> String {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn incomplete_measurement_orders_fail_at_all_build_boundaries() {
     let circuit = two_measurements();
@@ -173,6 +175,8 @@ fn sampler_json_ids_must_be_unique_and_dense() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn sampler_stamped_ids_resolve_to_final_tc_order() {
     let circuit = two_measurements();
@@ -399,6 +403,8 @@ fn dem_stab_rejects_out_of_range_user_records() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn sampler_determinism_and_annotations_follow_measurement_order() {
     // Annotation observables use map positions even when an order is set later.
@@ -481,6 +487,8 @@ fn sampler_record_setters_replace_pending_json() {
     }
 }
 
+// exercises the deprecated measurement-order API
+#[allow(deprecated)]
 #[test]
 fn mem_builder_requires_a_complete_measurement_order() {
     use super::mem_builder::MemBuilder;

@@ -16,7 +16,7 @@ from importlib import import_module
 from itertools import combinations
 from typing import TYPE_CHECKING
 
-from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+from pecos.qec.surface._detection_events import _record_offsets, extract_detection_events_and_observables
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -567,7 +567,10 @@ def empirical_correlation_table(
 
     Runs ``sim_neo`` with the given noise model, extracts detector events
     per shot, and computes k-body joint detection rates. Same output format
-    as :func:`exact_correlation_table` from the Heisenberg walk.
+    as :func:`exact_correlation_table` from the Heisenberg walk. Observable
+    rates here are reference-relative flips keyed by declared observable ids;
+    ``exact_correlation_table`` reports raw parity. They diverge for observables
+    whose noiseless reference is one.
 
     Args:
         tick_circuit: A ``TickCircuit`` with detector metadata.
@@ -583,6 +586,10 @@ def empirical_correlation_table(
     Returns:
         List of ``(detector_indices_tuple, probability)`` pairs, same format
         as ``exact_correlation_table``.
+
+    Raises:
+        MissingObservableReferenceError: Observable metadata lacks a unique integer
+            id or an integer reference bit (0 or 1).
 
     Example::
 
@@ -769,7 +776,7 @@ def fit_dem_from_simulation(
         meas = list(r)
         for i, det in enumerate(det_json):
             val = 0
-            for rec in det["records"]:
+            for rec in _record_offsets(det, num_meas):
                 idx = num_meas + rec
                 if 0 <= idx < len(meas):
                     val ^= meas[idx]

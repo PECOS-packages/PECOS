@@ -19,8 +19,6 @@ Functions:
 
 import warnings
 
-from pecos.qec._replay import ObservableReferenceDisagreementError
-
 # Circuit generation from geometry (unified abstraction)
 from pecos.qec.surface._clifford_deformation import (
     LocalCliffordFrame,
@@ -202,7 +200,6 @@ __all__ = [
     "decode_native_samples",
     "demask_pauli_frame_records",
     "MissingObservableReferenceError",
-    "ObservableReferenceDisagreementError",
     "extract_detection_events_and_observables",
     "generate_circuit_level_dem",
     "generate_dem_from_patch",

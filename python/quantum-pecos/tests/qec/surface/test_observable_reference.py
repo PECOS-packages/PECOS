@@ -9,12 +9,10 @@ from itertools import product
 
 import pytest
 import stim
-from pecos.qec import empirical_correlation_table
+from pecos.qec import MissingObservableReferenceError, empirical_correlation_table, fit_dem_from_simulation
 from pecos.qec._replay import _replay_tick_circuit
 from pecos.qec.surface import (
     LogicalCircuitBuilder,
-    MissingObservableReferenceError,
-    ObservableReferenceDisagreementError,
     SurfacePatch,
     build_memory_circuit,
     extract_detection_events_and_observables,
@@ -175,8 +173,8 @@ def test_missing_reference_names_entry(rows):
     with pytest.raises(
         MissingObservableReferenceError,
         match=(
-            r"entry 0 \(id=7\).*missing 'reference'.*predates the reference field.*"
-            r"LogicalCircuitBuilder.to_tick_circuit.*TickCircuitRenderer"
+            r"entry 0 \(id=7\).*missing 'reference'.*carries no reference.*flip cannot be derived without one.*"
+            r"LogicalCircuitBuilder.to_tick_circuit.*TickCircuitRenderer.*currently emit it"
         ),
     ):
         extract_detection_events_and_observables(tc, rows)
@@ -280,7 +278,10 @@ def test_missing_reference_and_id_names_entry(rows):
     tc.set_meta("observables", json.dumps([{"id": 0, "records": [-1], "reference": 0}, {"records": [-1]}]))
     with pytest.raises(
         MissingObservableReferenceError,
-        match=r"^observable entry 1 is missing 'reference';.*predates the reference field",
+        match=(
+            r"^observable entry 1 is missing 'reference';.*carries no reference.*"
+            r"flip cannot be derived without one"
+        ),
     ):
         extract_detection_events_and_observables(tc, rows)
 
@@ -334,29 +335,124 @@ def test_invalid_reference_names_value(reference, consumer):
         consume()
 
 
-def test_memory_renderer_rejects_reference_disagreement():
-    patch = SurfacePatch.create(3)
-    steps, allocation = build_surface_code_circuit(patch, 1, "Z")
-    final = next(i for i, step in enumerate(steps) if step.label == "final[0]")
-    # Rotate the encoded Z state into the complementary readout basis.
-    steps[final:final] = [SurfaceCircuitStep(OpType.H, [q]) for q in allocation.data_qubits]
-    with pytest.raises(ObservableReferenceDisagreementError, match=r"observable entry 0 reference disagreement"):
-        TickCircuitRenderer().render(steps, allocation, patch, 1, "Z")
+@pytest.mark.parametrize("basis", ["X", "Z"])
+@pytest.mark.parametrize("distance", [2, 3, 4, 5, 7])
+@pytest.mark.parametrize("rounds", [0, 2])
+@pytest.mark.parametrize(
+    "options",
+    [
+        *[
+            pytest.param(
+                {"check_plan": plan, **({"ancilla_budget": 2} if "round_order" in plan else {})},
+                id=plan,
+            )
+            for plan in (
+                "cx_standard_v1",
+                "cx_balanced_data_v1",
+                "szz_current_v1",
+                "szz_boundary_first_v1",
+                "szz_balanced_data_v1",
+                "szz_boundary_first_balanced_data_v1",
+                "szz_balanced_data_round_order_1032_v1",
+                "szz_balanced_data_round_order_3102_v1",
+            )
+        ],
+        *[
+            pytest.param({"interaction_basis": "szz", "clifford_frame_policy": policy}, id=policy)
+            for policy in ("global_axis_cycle_f", "checkerboard_xzzx", "checkerboard_zxxz")
+        ],
+        *[
+            pytest.param({"interaction_basis": interaction, "ancilla_budget": 1}, id=f"{interaction}-reused")
+            for interaction in ("cx", "szz")
+        ],
+        *[
+            pytest.param(
+                {"twirl": TwirlConfig(site_schedule=schedule)},
+                id=f"cx-{schedule}",
+            )
+            for schedule in ("between_rounds", "before_two_qubit_gate")
+        ],
+        pytest.param({"interaction_basis": "szz", "szz_physical_prefixes": True}, id="physical-prefixes"),
+    ],
+)
+def test_memory_observable_determinism_stim_oracle(basis, distance, rounds, options):
+    """Stim's exact backward analysis proves the memory readout is determined."""
+    tc = generate_tick_circuit_from_patch(SurfacePatch.create(distance), rounds, basis, **options)
+    stim.Circuit(tick_circuit_to_stim(tc)).detector_error_model(allow_gauge_detectors=False)
 
 
 @pytest.mark.parametrize("consumer", ["logical", "memory"])
-def test_second_replay_validates_measurement_count(monkeypatch, consumer):
-    def replay_wrong_second_count(circuit, num_ticks, seed):
-        sim, measurements = _replay_tick_circuit(circuit, num_ticks, seed)
-        if seed == 1:
-            measurements.pop()
-        return sim, measurements
+@pytest.mark.parametrize("has_observables", [False, True])
+def test_reference_replay_count(monkeypatch, consumer, has_observables):
+    calls = []
 
-    monkeypatch.setattr("pecos.qec._replay._replay_tick_circuit", replay_wrong_second_count)
-    build = (
-        reference_builder("X", ("SZ", "SZ"), "X").to_tick_circuit
-        if consumer == "logical"
-        else (lambda: build_memory_circuit(distance=3, rounds=1))
-    )
-    with pytest.raises(ValueError, match=r"^Replay measurement count disagrees with circuit metadata$"):
-        build()
+    def replay(circuit, num_ticks, seed):
+        calls.append(seed)
+        return _replay_tick_circuit(circuit, num_ticks, seed)
+
+    monkeypatch.setattr("pecos.qec._replay._replay_tick_circuit", replay)
+    if consumer == "logical":
+        reference_builder("X", (), "X" if has_observables else "Z").to_tick_circuit()
+    else:
+        generate_tick_circuit_from_patch(SurfacePatch.create(3), 1, add_detectors=has_observables)
+    assert len(calls) == int(has_observables)
+
+
+def consume_observable_metadata(tc, consumer, rows):
+    """Exercise the public metadata boundaries, including the descriptor cache."""
+    if consumer == "extraction":
+        extract_detection_events_and_observables(tc, rows)
+    elif consumer == "empirical":
+        empirical_correlation_table(tc, depolarizing(), shots=1)
+    else:
+        get_observable_descriptors_from_tick_circuit(tc, SurfacePatch.create(3))
+
+
+@pytest.mark.parametrize("observable_id", ["a", None, 1.5, True])
+@pytest.mark.parametrize("consumer", ["extraction", "empirical", "descriptors", "cached-descriptors"])
+@pytest.mark.parametrize("rows", [[], [[1]]])
+def test_invalid_observable_id(observable_id, consumer, rows):
+    tc = build_memory_circuit(distance=3, rounds=1)
+    metadata = [{"id": observable_id, "records": [-1], "reference": 0}]
+    key = "observable_descriptors" if consumer == "cached-descriptors" else "observables"
+    tc.set_meta(key, json.dumps(metadata))
+    pattern = rf"observable entry 0.*invalid 'id' {re.escape(repr(observable_id))}; expected an integer"
+    with pytest.raises(MissingObservableReferenceError, match=pattern):
+        consume_observable_metadata(tc, consumer, rows)
+
+
+@pytest.mark.parametrize("consumer", ["extraction", "empirical", "descriptors", "cached-descriptors"])
+@pytest.mark.parametrize("rows", [[], [[1]]])
+def test_duplicate_observable_id(consumer, rows):
+    tc = build_memory_circuit(distance=3, rounds=1)
+    metadata = [{"id": 7, "records": [-1], "reference": 0}] * 2
+    key = "observable_descriptors" if consumer == "cached-descriptors" else "observables"
+    tc.set_meta(key, json.dumps(metadata))
+    with pytest.raises(MissingObservableReferenceError, match=r"observable entry 1 has duplicate 'id' 7"):
+        consume_observable_metadata(tc, consumer, rows)
+
+
+@pytest.mark.parametrize("field", ["records", "meas_ids"])
+def test_signed_oracle_record_formats(field):
+    tc = sparse_observable_circuit()
+    row, _, _ = simulate_tick_circuit(tc)
+    # Use nonzero detector and signed observable parity so skipping either loop fails.
+    record = row.index(1)
+    offsets = [record - len(row)] if field == "records" else [record]
+    tc.set_meta("detectors", json.dumps([{"id": 0, field: offsets}]))
+    tc.set_meta("observables", json.dumps([{"id": 7, field: offsets, "reference": 1}]))
+    assert simulate_tick_circuit(tc) == (row, 1, {7: 1})
+
+
+@pytest.mark.parametrize("backend", ["stabilizer", "meas_sampling"])
+def test_fit_dem_record_formats(backend):
+    tc = generate_tick_circuit_from_patch(SurfacePatch.create(3), 1, add_typed_annotations=False)
+    noise = depolarizing().p_meas(0.1)
+    expected = fit_dem_from_simulation(tc, noise, shots=256, backend=backend)
+    num_meas = int(tc.get_meta("num_measurements"))
+    for key in ("detectors", "observables"):
+        entries = json.loads(tc.get_meta(key))
+        for entry in entries:
+            entry["meas_ids"] = [num_meas + rec for rec in entry.pop("records")]
+        tc.set_meta(key, json.dumps(entries))
+    assert fit_dem_from_simulation(tc, noise, shots=256, backend=backend) == expected

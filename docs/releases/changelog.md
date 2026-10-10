@@ -28,11 +28,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   indices need a width of maximum observable id plus one, not the entry count.
 - `extract_detection_events_and_observables` now raises
   `MissingObservableReferenceError` for observable metadata missing `id` or
-  `reference`, or with a reference other than integer 0 or 1. Metadata predating
-  the reference field is no longer accepted; the surface producers
+  `reference`, with non-integer or duplicate ids, or with a reference other than
+  integer 0 or 1 (booleans are rejected). Metadata carrying no reference is no
+  longer accepted; the surface producers
   `LogicalCircuitBuilder.to_tick_circuit` and `TickCircuitRenderer` (including
-  `build_memory_circuit` and `generate_tick_circuit_from_patch`) emit this field.
-
+  `build_memory_circuit` and `generate_tick_circuit_from_patch`) currently emit this field.
+- `pecos.qec.empirical_correlation_table` now reports reference-relative observable
+  flip rates instead of raw parity rates, uses declared observable ids instead of
+  metadata positions in its keys, and raises `MissingObservableReferenceError`
+  for reference-free metadata that it previously tabulated. Unlike the empirical
+  function, `exact_correlation_table` still reports raw parity rates.
+- `MissingObservableReferenceError` is now exported from `pecos.qec` as well as
+  `pecos.qec.surface`. `ObservableReferenceDisagreementError` has been removed
+  along with the probabilistic two-seed reference check; surface producers
+  establish observable determinism before computing a reference with one replay.
 - `pecos_rslib.Hugr` and `pecos_rslib.programs.Hugr` have been removed. Use
   `pecos.Hugr`/`pecos.Guppy` or
   `pecos_rslib.Qis(pecos_rslib.hugr_lowering.compile_hugr_to_qis(...))`.

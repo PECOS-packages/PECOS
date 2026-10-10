@@ -778,6 +778,10 @@ pub fn coherent_dem_decomposed(
 /// interference. Useful for decoders that can consume raw correlation data.
 /// The p1/p2 parameters specify total categorical depolarizing probabilities.
 ///
+/// Observable rates are raw parity, whereas Python
+/// `pecos.qec.empirical_correlation_table` reports reference-relative flips.
+/// They diverge for observables whose noiseless reference is one.
+///
 /// Returns a list of (detector_indices, probability) pairs.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, max_order=2, prune=1e-12))]

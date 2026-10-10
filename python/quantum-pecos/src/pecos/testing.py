@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 import pecos as pc
 from pecos._traced_circuit import measurement_ids_in_execution_order
 from pecos.qec._replay import _replay_measurements, _replay_tick_circuit
+from pecos.qec.surface._detection_events import _record_offsets
 from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
@@ -268,8 +269,8 @@ def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], in
     observables = json.loads(tc.get_meta("observables") or "[]")
     return (
         flat,
-        sum(parity(det["records"]) for det in detectors),
-        {obs["id"]: parity(obs["records"]) for obs in observables},
+        sum(parity(_record_offsets(det, num_meas)) for det in detectors),
+        {obs["id"]: parity(_record_offsets(obs, num_meas)) for obs in observables},
     )
 
 

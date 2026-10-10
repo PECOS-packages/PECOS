@@ -22,7 +22,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import pecos._traced_circuit as _traced_circuit
-from pecos.qec._replay import _replay_observable_references
+from pecos.qec._replay import _replay_measurements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -47,7 +47,12 @@ from pecos.qec.surface._check_plan import (
 from pecos.qec.surface._clifford_deformation import (
     resolve_surface_clifford_frame,
 )
-from pecos.qec.surface._detection_events import _validate_observable_reference
+from pecos.qec.surface._detection_events import (
+    _record_offsets as _metadata_record_offsets,
+)
+from pecos.qec.surface._detection_events import (
+    _validate_observable_references,
+)
 
 # Stabilizer geometry helpers live in the low-level patch module (single
 # source of truth). Only the two used by the circuit renderer are imported
@@ -1710,9 +1715,7 @@ def _build_observable_descriptors(
     basis: str,
 ) -> list[SurfaceObservableDescriptor]:
     """Build enriched logical observable descriptors from TickCircuit metadata."""
-    for entry_index, obs in enumerate(observables):
-        if "reference" in obs:
-            _validate_observable_reference(obs, entry_index)
+    _validate_observable_references(observables, require_reference=False)
     logical = patch.get_logical_descriptor(basis.upper())
     return [
         {
@@ -2131,6 +2134,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.
+
+    This renderer computes a reference for the observable it is given and trusts
+    the caller to establish determinism. ``build_surface_code_circuit`` supplies
+    a pure memory experiment whose logical readout is deterministic by construction.
+    A hand-assembled step list with an undetermined terminal readout gets a
+    reference for a quantity that has none; validation belongs at that boundary.
     """
 
     def __init__(
@@ -2746,12 +2755,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
             # Logical observable
             logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
-            references = _replay_observable_references(circuit, meas_count, [logical_rec_offsets])
+            reference_measurements = _replay_measurements(circuit, meas_count) if logical_rec_offsets else []
             observables = [
                 {
                     "id": 0,
                     "records": logical_rec_offsets,
-                    "reference": references[0],
+                    "reference": sum(reference_measurements[rec] for rec in logical_rec_offsets) % 2,
                 },
             ]
 
@@ -3117,9 +3126,7 @@ def get_observable_descriptors_from_tick_circuit(
     cached = tick_circuit.get_meta("observable_descriptors")
     if cached:
         descriptors = json.loads(cached)
-        for entry_index, obs in enumerate(descriptors):
-            if "reference" in obs:
-                _validate_observable_reference(obs, entry_index)
+        _validate_observable_references(descriptors, require_reference=False)
         return descriptors
 
     observables = json.loads(tick_circuit.get_meta("observables") or "[]")
@@ -3937,20 +3944,6 @@ def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
             if entry.get("records"):
                 return True
     return False
-
-
-def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
-    """Return Stim-style negative record offsets for a metadata entry."""
-    records = entry.get("records")
-    if records is not None:
-        return [int(record) for record in records]  # type: ignore[union-attr]
-
-    meas_ids = entry.get("meas_ids")
-    if meas_ids is not None:
-        return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
-
-    msg = "detector/observable metadata entry must define either 'records' or 'meas_ids'"
-    raise ValueError(msg)
 
 
 def generate_dem_from_tick_circuit(

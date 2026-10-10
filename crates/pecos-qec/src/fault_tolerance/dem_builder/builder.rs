@@ -504,26 +504,22 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
-    /// Sets the measurement order from the original circuit.
+    /// Map record positions to influence-map positions by qubit and occurrence.
     ///
-    /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
-    /// between record offsets (which use `TickCircuit` order) and influence map
-    /// indices (which may use a different order based on DAG topology).
-    ///
-    /// # Arguments
-    /// Set the measurement order for legacy circuits without `MeasId` on gates.
-    ///
-    /// **Not needed for circuits built with `TickCircuit.mz()`** — the `MeasId`
-    /// values on gates ensure correct ordering automatically.
-    ///
-    /// Only use this for circuits where MZ gates lack `meas_ids` (e.g.,
-    /// circuits imported from external formats without measurement IDs).
-    ///
-    /// * `order` - List of qubit indices in measurement execution order.
-    ///   `order[i]` is the qubit measured at `TickCircuit` measurement index `i`.
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     #[must_use]
-    pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
+    )]
+    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
+        self.set_measurement_order_internal(order)
+    }
+
+    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
         self.clear_exact_branch_cache();
         self
@@ -923,11 +919,9 @@ impl<'a> DemBuilder<'a> {
                 )));
             }
         }
-        // A supplied order feeds the qubit-occurrence heuristic, which needs
-        // per-qubit chronology on both sides. Minted (positional) ids keep it
-        // -- that combination is routine in the surface pipeline -- but
-        // external non-positional ids can reorder a qubit's measurements in
-        // the map, and no heuristic can recover the caller's record order.
+        // Preserve the deprecated API's restriction on non-positional stamps.
+        // Circuit-built maps now use emission order independently of stamped IDs,
+        // so this historical guard can also reject an identity order.
         if self.measurement_order.is_some() && !stamped_ids_are_positional(self.influence_map) {
             return Err(DemBuilderError::ConfigurationError(
                 "measurement_order cannot be combined with a circuit whose stable \
@@ -2832,7 +2826,7 @@ pub(crate) fn sampler_measurement_mapping(
 ) -> Result<Option<Vec<usize>>, DemBuilderError> {
     let mut builder = DemBuilder::new(map);
     if let Some(order) = order {
-        builder = builder.with_measurement_order(order.to_vec());
+        builder = builder.set_measurement_order_internal(order.to_vec());
     }
     builder.validate_measurement_count()?;
     if order.is_none() || map.measurements.is_empty() {
@@ -3932,6 +3926,8 @@ mod tests {
         assert!(error.contains("meas_id 0, which is not present"), "{error}");
     }
 
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn map_only_redundancy_uses_measurement_order() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
@@ -4066,6 +4062,8 @@ mod tests {
         }
     }
 
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn exact_reference_translation_preserves_legacy_ids_and_multiplicity() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
@@ -5525,6 +5523,8 @@ mod tests {
     /// resolved index directly: it is already an influence-map index, and
     /// composing it with the tick-to-influence occurrence mapping re-binds
     /// annotations whenever the two orders differ.
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn stamped_meas_id_mapping_is_not_recomposed_through_the_order() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
@@ -5549,8 +5549,10 @@ mod tests {
         );
     }
 
-    /// Positional (minted) ids with a supplied order is the routine surface
-    /// pipeline combination and must keep building.
+    /// Positional (minted) ids with a supplied order remain accepted by the
+    /// deprecated API's existing guard.
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn measurement_order_is_accepted_with_positional_ids() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
@@ -5570,6 +5572,8 @@ mod tests {
         );
     }
 
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
     #[test]
     fn test_validate_measurement_count_rejects_order_with_stamped_ids() {
         let mut influence_map = DagFaultInfluenceMap::with_capacity(0);

@@ -1347,12 +1347,22 @@ impl<'a> DemSamplerBuilder<'a> {
         Ok(self)
     }
 
-    /// Set the measurement order for legacy circuits without `MeasId` on gates.
+    /// Map record positions to influence-map positions by qubit and occurrence.
     ///
-    /// **Not needed for circuits built with `TickCircuit.mz()`** — the `MeasId`
-    /// values on gates ensure correct ordering automatically.
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     #[must_use]
-    pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
+    )]
+    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
+        self.set_measurement_order_internal(order)
+    }
+
+    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
         self
     }
@@ -1583,7 +1593,7 @@ impl<'a> DemSamplerBuilder<'a> {
         }
 
         if let Some(order) = self.measurement_order {
-            builder = builder.with_measurement_order(order);
+            builder = builder.set_measurement_order_internal(order);
         }
 
         let inner = builder.build()?;

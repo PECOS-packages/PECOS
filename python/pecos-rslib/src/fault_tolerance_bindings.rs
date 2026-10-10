@@ -3080,25 +3080,24 @@ impl PyDemBuilder {
         slf
     }
 
-    /// Set the measurement order from the original circuit.
+    /// Map record positions to influence-map positions by qubit and occurrence.
     ///
-    /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
-    /// between record offsets (which use `TickCircuit` order) and influence map
-    /// indices (which may use a different order based on DAG topology).
-    ///
-    /// Args:
-    ///     order: List of qubit indices in measurement execution order.
-    ///            order[i] is the qubit measured at `TickCircuit` measurement index i.
-    ///
-    /// Returns:
-    ///     Self for method chaining.
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     fn with_measurement_order(
         mut slf: PyRefMut<'_, Self>,
         order: Vec<usize>,
-    ) -> PyRefMut<'_, Self> {
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        PyErr::warn(
+            slf.py(),
+            &slf.py().get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"with_measurement_order is deprecated: Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata.",
+            1,
+        )?;
         slf.measurement_order = Some(order);
-        slf
+        Ok(slf)
     }
 
     /// Attach the original circuit for exact replacement-branch replay.
@@ -3137,7 +3136,11 @@ impl PyDemBuilder {
         }
 
         if let Some(ref order) = self.measurement_order {
-            builder = builder.with_measurement_order(order.clone());
+            // Forwards the deprecated Python API.
+            #[allow(deprecated)]
+            {
+                builder = builder.with_measurement_order(order.clone());
+            }
         }
 
         if let Some(ref json) = self.detectors_json {
@@ -4755,13 +4758,24 @@ impl PyDemSamplerBuilder {
         slf
     }
 
-    /// Set the measurement order mapping from `TickCircuit`.
+    /// Map record positions to influence-map positions by qubit and occurrence.
+    ///
+    /// Deprecated: circuit-built influence maps already order measurements in
+    /// emission order. Express a different record frame with `meas_ids` in metadata.
+    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
+    /// by occurrence. The existing guard against non-positional stamped IDs remains.
     fn with_measurement_order(
         mut slf: PyRefMut<'_, Self>,
         order: Vec<usize>,
-    ) -> PyRefMut<'_, Self> {
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        PyErr::warn(
+            slf.py(),
+            &slf.py().get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"with_measurement_order is deprecated: Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata.",
+            1,
+        )?;
         slf.measurement_order = Some(order);
-        slf
+        Ok(slf)
     }
 
     /// Build the `DemSampler`.
@@ -4782,7 +4796,11 @@ impl PyDemSamplerBuilder {
         }
 
         if let Some(ref order) = self.measurement_order {
-            builder = builder.with_measurement_order(order.clone());
+            // Forwards the deprecated Python API.
+            #[allow(deprecated)]
+            {
+                builder = builder.with_measurement_order(order.clone());
+            }
         }
 
         let inner = builder

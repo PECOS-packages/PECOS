@@ -37,7 +37,7 @@
 //! ```
 
 use crate::bit_uint::BitUInt;
-use crate::expression::{negative, signed_cmp, signed_div_rem};
+use crate::bit_uint::twos_complement::{negative, signed_cmp, signed_div_rem};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};

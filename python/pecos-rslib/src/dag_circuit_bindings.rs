@@ -1782,11 +1782,12 @@ impl PyDagCircuit {
 
     /// Convert this `DagCircuit` to a `TickCircuit`.
     ///
-    /// Each layer of parallel gates in the DAG becomes a tick.
+    /// Gates are scheduled after their predecessors, keeping measurement
+    /// emission order from the topological walk keyed by node index.
     /// Circuit-level and gate-level attributes are preserved.
     ///
     /// Returns:
-    ///     A new `TickCircuit` with the same gates organized by layers.
+    ///     A new `TickCircuit` with the same gates and measurement order.
     fn to_tick_circuit(&self) -> PyTickCircuit {
         PyTickCircuit {
             inner: TickCircuit::from(&self.inner),

@@ -326,9 +326,8 @@ fn run_eeg_path(
     shots: usize,
     seed: u64,
 ) -> Result<DemSimulationResult, DemSimulationError> {
-    // Keep emission order: compact_ticks can move measurements into earlier
-    // batches. Validate the symbolic history before reaching EEG conjugation,
-    // which can panic on unsupported gates.
+    // Use the original tick timing for coherent noise. Validate the symbolic
+    // history before reaching EEG conjugation, which can panic on unsupported gates.
     let tc = build_tick_circuit(gates, meta)?;
     let history = symbolic_measurement_history(&tc).map_err(DemSimulationError::History)?;
     let plan = RawMeasurementPlan::new(&history, Vec::new());
@@ -559,6 +558,32 @@ mod tests {
     use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
 
     #[test]
+    fn stochastic_sampling_keeps_measurement_emission_order_after_compaction() {
+        let gates = [
+            Gate::pz(&[0, 1, 2]),
+            Gate::x(&[0, 2]),
+            Gate::mz(&[0]),
+            Gate::mz_free(&[1]),
+            Gate::mz(&[2]),
+        ];
+        let meta = CircuitMeasurementMeta {
+            num_measurements: 3,
+            detector_measurements: vec![],
+            observable_measurements: vec![],
+        };
+        let result = run_dem_simulation(
+            &gates,
+            &UniformNoise::depolarizing(0.0),
+            &meta,
+            &crate::dem_generator::CoherentApprox,
+            32,
+            1178,
+        )
+        .unwrap();
+        assert_eq!(result.measurements, vec![vec![1, 0, 1]; 32]);
+    }
+
+    #[test]
     fn coherent_sampling_rejects_expanded_measurement_count_mismatch() {
         let gates = [Gate::mz(&[0]), Gate::mz(&[1])];
         let meta = CircuitMeasurementMeta {
@@ -762,8 +787,8 @@ mod tests {
             detector_measurements: vec![],
             observable_measurements: vec![],
         };
-        // Compaction could move the independent MZ(1) before MZ(0), swapping
-        // the deterministic and random columns. No definitions constrain them.
+        // The independent MZ(1) must remain the deterministic second column.
+        // No definitions constrain the random first column.
         let rows = run_eeg_path(
             &gates,
             &UniformNoise::coherent_only(1e-4),

@@ -6,7 +6,7 @@
 import json
 
 import pytest
-from pecos_rslib.quantum import TickCircuit
+from pecos_rslib.quantum import DagCircuit, TickCircuit
 
 
 @pytest.fixture
@@ -123,3 +123,25 @@ def test_invalid_definitions_rejected(scrambled, key, value, message):
     scrambled.set_meta(key, value)
     with pytest.raises(ValueError, match=message):
         scrambled.circuit_definitions()
+
+
+@pytest.mark.parametrize("circuit_type", [TickCircuit, DagCircuit])
+@pytest.mark.parametrize("label", [None, "readout"])
+def test_annotation_definition_ids(circuit_type, label):
+    circuit = circuit_type()
+    measurements = circuit.tick().mz([0, 1]) if circuit_type is TickCircuit else circuit.mz([0, 1])
+    first, second = measurements
+
+    ids = [
+        circuit.observable([second], label=label),
+        circuit.detector([first], label=label),
+        circuit.detector([first, second], label=label),
+        circuit.observable([first], label=label),
+    ]
+    assert ids == [0, 0, 1, 1]
+
+    tick_circuit = circuit if circuit_type is TickCircuit else circuit.to_tick_circuit()
+    definitions = tick_circuit.circuit_definitions()
+    assert [(d["id"], d["measurements"]) for d in definitions["detectors"]] == [(0, [0]), (1, [0, 1])]
+    assert [(o["id"], o["measurements"]) for o in definitions["observables"]] == [(0, [1]), (1, [0])]
+    assert [a["label"] for a in circuit.annotations()] == [label] * 4

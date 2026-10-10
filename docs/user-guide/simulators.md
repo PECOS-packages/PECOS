@@ -334,7 +334,13 @@ NVIDIA cuQuantum-powered state vector simulator.
 ```python
 from pecos.simulators import CuStateVec
 
-results = sim(Qasm(circuit)).quantum(CuStateVec).run(100)
+state = CuStateVec(2)
+state.run_gate("H", {0})
+state.run_gate("CNOT", {(0, 1)})
+measurement = state.run_gate("Measure", {0, 1})
+# Only outcomes of 1 are included: a Bell state gives {} or {0: 1, 1: 1}.
+assert measurement in ({}, {0: 1, 1: 1})
+print(measurement)
 ```
 
 **Requirements:**
@@ -360,7 +366,13 @@ Tensor network simulator for circuits with limited entanglement.
 ```python
 from pecos.simulators import MPS
 
-results = sim(Qasm(circuit)).quantum(MPS).run(100)
+state = MPS(2)
+state.run_gate("H", {0})
+state.run_gate("CNOT", {(0, 1)})
+measurement = state.run_gate("Measure", {0, 1})
+# Only outcomes of 1 are included: a Bell state gives {} or {0: 1, 1: 1}.
+assert measurement in ({}, {0: 1, 1: 1})
+print(measurement)
 ```
 
 **Strengths:**

@@ -6,7 +6,6 @@
 //! - **`sim`**: Quantum simulation (includes core + num)
 //! - **`runtime`**: Full simulation with QASM + PHIR support
 //! - **`qis`**: QIS/LLVM IR execution (requires LLVM 21.1)
-//! - **`hugr`**: Static HUGR/DAG conversion (no LLVM)
 //! - **`quest`/`qulacs`/`cppsparsestab`**: Simulator backends
 //! - **`num`**: Numerical computing (scipy-like)
 //!
@@ -46,11 +45,6 @@ pub mod engines {
 /// Quantum circuit representation and Pauli algebra.
 #[cfg(feature = "quantum")]
 pub mod quantum {
-    #[cfg(feature = "hugr")]
-    pub use pecos_quantum::hugr_convert::{
-        HugrConvertError, NotSimpleError, SimpleHugr, dag_circuit_to_hugr, gate_type_to_hugr_op,
-        hugr_op_to_gate_type, hugr_to_dag_circuit, is_quantum_operation,
-    };
     pub use pecos_quantum::{
         Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagWouldCycleError, Gate,
         GateHandle, GateType, GateView, QubitId, Tick, TickCircuit, TickGateError,

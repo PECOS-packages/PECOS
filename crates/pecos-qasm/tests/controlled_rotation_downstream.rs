@@ -9,7 +9,6 @@ use pecos_phir_json::phir_json_engine;
 use pecos_qasm::{QASMEngine, qasm_engine, qasm_to_phir_json};
 use pecos_qec::fault_tolerance::dem_builder::{DemSampler, NoiseConfig};
 use pecos_quantum::DagCircuit;
-use pecos_quantum::hugr_convert::dag_circuit_to_hugr;
 use pecos_quantum::pass::{CancelInverses, CircuitPass, StripIdentities};
 use std::str::FromStr;
 
@@ -160,17 +159,6 @@ fn qasm_crx_pi_json_executes() {
 #[test]
 fn qasm_cry_pi_json_executes() {
     assert_json_execution("cry");
-}
-
-#[test]
-fn qasm_controlled_rotations_export_to_hugr() {
-    for name in ["crz", "crx", "cry"] {
-        for angle in ["pi", "0.7"] {
-            let dag = controlled_rotation_dag(name, angle);
-            dag_circuit_to_hugr(&dag)
-                .unwrap_or_else(|error| panic!("QASM {name}({angle}) HUGR export failed: {error}"));
-        }
-    }
 }
 
 #[test]

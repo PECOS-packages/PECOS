@@ -585,6 +585,10 @@ pub struct DagCircuit {
     dag: DAG,
     /// Gates stored by node index.
     gates: Vec<Option<Gate>>,
+    /// Insertion sequence for each gate slot, overwritten when a slot is reused.
+    gate_insertion_sequences: Vec<usize>,
+    /// Next insertion sequence; removal never rewinds it and cloning preserves it.
+    next_insertion_sequence: usize,
     /// Qubit labels for each edge, indexed by edge ID.
     edge_qubits: BTreeMap<usize, QubitId>,
     /// Tracks the most recent gate on each qubit for auto-wiring in builder mode.
@@ -650,6 +654,8 @@ impl DagCircuit {
         Self {
             dag: DAG::new(),
             gates: Vec::new(),
+            gate_insertion_sequences: Vec::new(),
+            next_insertion_sequence: 0,
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
@@ -676,6 +682,8 @@ impl DagCircuit {
         Self {
             dag: DAG::with_capacity(gates, wires),
             gates: Vec::with_capacity(gates),
+            gate_insertion_sequences: Vec::with_capacity(gates),
+            next_insertion_sequence: 0,
             // BTreeMap doesn't support with_capacity - it allocates as needed
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
@@ -912,11 +920,18 @@ impl DagCircuit {
     }
 
     fn add_gate_unchecked(&mut self, gate: Gate) -> usize {
+        let sequence = self.next_insertion_sequence;
+        self.next_insertion_sequence = sequence
+            .checked_add(1)
+            .expect("gate insertion sequence exhausted");
         let node_idx = self.dag.add_node();
         // Ensure gates vector is large enough
         if node_idx >= self.gates.len() {
             self.gates.resize(node_idx + 1, None);
+            self.gate_insertion_sequences.resize(node_idx + 1, 0);
         }
+        // StableGraph can reuse a removed node index; insertion sequences cannot.
+        self.gate_insertion_sequences[node_idx] = sequence;
         // Update max_qubit tracking
         for q in &gate.qubits {
             self.max_qubit = self.max_qubit.max(q.index());
@@ -1318,6 +1333,29 @@ impl DagCircuit {
     #[must_use]
     pub fn topological_order(&self) -> Vec<usize> {
         self.dag.topological_sort()
+    }
+
+    /// Returns a topological order with ready ties broken by gate insertion order.
+    ///
+    /// Each gate receives a monotonically increasing sequence when added. Removing
+    /// gates never reuses or rewinds that sequence, even when a node index is
+    /// recycled. Cloning preserves the sequences and their counter; updating a
+    /// gate in place preserves its position. Dependencies still take precedence.
+    /// Gates removed and re-added by a pass (e.g. `SimplifyRotations` decompositions)
+    /// receive new sequences and sort after older gates when dependencies allow.
+    /// Measurement record positions are not stable identities across such rewrites;
+    /// `MeasId`s are.
+    /// This preserves insertion order for independent measurements. Use it when
+    /// measurement record positions must match circuit insertion order, as in
+    /// symbolic execution. Prefer
+    /// [`Self::topological_order`] when any valid execution order suffices.
+    ///
+    /// Costs O(E + V log V), or O(V log V) for circuits with bounded gate arity,
+    /// rather than the O(V + E) cost of [`Self::topological_order`].
+    #[must_use]
+    pub fn insertion_stable_topological_order(&self) -> Vec<usize> {
+        self.dag
+            .lexicographical_topological_sort(|node| self.gate_insertion_sequences[node])
     }
 
     /// Returns an iterator over circuit layers.
@@ -2647,16 +2685,6 @@ impl DagCircuit {
         &self.dag
     }
 
-    /// Provides mutable access to the underlying DAG.
-    ///
-    /// # Warning
-    ///
-    /// Modifying the DAG directly can break invariants if gates and
-    /// `edge_qubits` are not kept in sync. Use with caution.
-    pub fn as_dag_mut(&mut self) -> &mut DAG {
-        &mut self.dag
-    }
-
     // ==================== Attributes ====================
 
     /// Returns a reference to the circuit-level (graph-level) attributes.
@@ -2926,6 +2954,22 @@ mod tests {
     use super::*;
     use pecos_core::Angle64;
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+
+    #[test]
+    fn dag_circuit_refuses_rotation_without_angle() {
+        let mut dag = DagCircuit::new();
+        let node = dag.add_gate(Gate::rz(Angle64::ZERO, &[QubitId(0)]));
+        let before = dag.gate(node).cloned().expect("RZ node");
+        let error = dag
+            .update_gate(node, |gate| gate.angles.clear())
+            .expect_err("RZ without an angle must be refused");
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
+        );
+        assert_eq!(dag.gate(node), Some(&before));
+    }
 
     fn dag_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
         let mut circuit = DagCircuit::new();
@@ -3248,6 +3292,78 @@ mod tests {
 
         let order = circuit.topological_order();
         assert_eq!(order, vec![h, t, cx]);
+    }
+
+    #[test]
+    fn insertion_stable_topological_order_breaks_ready_ties_by_insertion_order() {
+        let mut circuit = DagCircuit::new();
+        circuit.x(&[0]);
+        circuit.mz(&[0]);
+        circuit.mz(&[1]);
+        circuit.mz(&[2]);
+        // m0 becomes ready after X, while m1 and m2 were ready from the start.
+        let order = circuit.insertion_stable_topological_order();
+        assert_eq!(order, vec![0, 1, 2, 3]);
+        let measured: Vec<_> = order
+            .into_iter()
+            .filter_map(|node| circuit.gate(node))
+            .filter(|gate| gate.gate_type == GateType::MZ)
+            .map(|gate| gate.qubits[0].index())
+            .collect();
+        assert_eq!(measured, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn removed_node_reuse_preserves_insertion_order() {
+        let mut tick = crate::TickCircuit::new();
+        tick.tick().z(&[2]).x(&[0]);
+        tick.tick().mz(&[0, 1]);
+        let converted = DagCircuit::try_from(&tick).unwrap();
+        for mut circuit in [
+            DagCircuit::new(),
+            DagCircuit::with_capacity(4, 2),
+            converted,
+        ] {
+            if circuit.gate_count() == 0 {
+                circuit.z(&[2]).x(&[0]);
+                circuit.mz(&[0]);
+                circuit.mz(&[1]);
+            }
+            assert_eq!(circuit.gate(0).unwrap().gate_type, GateType::Z);
+            circuit.remove_gate(0).unwrap();
+            // A clone must retain insertion history even after node removal.
+            for mut circuit in [circuit.clone(), circuit] {
+                let appended = circuit.try_add_gate_auto_wire(Gate::mz(&[2])).unwrap();
+                assert_eq!(appended, 0, "exercise StableGraph's recycled slot");
+                assert_eq!(
+                    circuit.insertion_stable_topological_order(),
+                    vec![1, 2, 3, 0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn insertion_sequences_survive_updates_and_removing_all_gates() {
+        let mut circuit = DagCircuit::with_capacity(4, 0);
+        let nodes = [
+            circuit.add_gate(Gate::z(&[0])),
+            circuit.try_add_gate(Gate::z(&[1])).unwrap(),
+            CircuitMut::add_gate(&mut circuit, Gate::z(&[2])),
+            circuit.try_add_gate_auto_wire(Gate::z(&[3])).unwrap(),
+        ];
+        circuit
+            .update_gate(nodes[0], |gate| gate.gate_type = GateType::H)
+            .unwrap();
+        assert_eq!(circuit.insertion_stable_topological_order(), nodes);
+        let next_sequence = circuit.next_insertion_sequence;
+        for node in nodes {
+            circuit.remove_gate(node).unwrap();
+        }
+        let mut copy = circuit.clone();
+        let node = copy.add_gate_auto_wire(Gate::mz(&[0]));
+        assert_eq!(copy.gate_insertion_sequences[node], next_sequence);
+        assert_eq!(copy.next_insertion_sequence, next_sequence + 1);
     }
 
     #[test]

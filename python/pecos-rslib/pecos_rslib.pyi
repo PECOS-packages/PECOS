@@ -1859,6 +1859,21 @@ class Gate:
     @staticmethod
     def pz(qubits: Sequence[int]) -> Gate: ...
 
+def resolve_result_tags_for_guppy(
+    detectors_json: str,
+    observables_json: str,
+    tag_to_ords: dict[str, list[int | None]],
+    static_meas_count: int,
+    source_meas_ids: list[int],
+    runtime_meas_ids: list[int],
+) -> tuple[str, str]:
+    """Resolve result tags using Python-computed static measurement provenance.
+
+    Occurrences contain measurement ordinals or None for unsupported values.
+    Raises ValueError for runtime loops, unknown tags, or invalid metadata.
+    Returns detector and observable JSON with tags replaced by record offsets.
+    """
+
 class DagCircuit:
     """Directed acyclic graph circuit representation."""
 

@@ -45,13 +45,13 @@ extension-module = [
 # Core PECOS crates (direct deps instead of metacrate)
 pecos-core.workspace = true
 pecos-decoder-core.workspace = true
-pecos-quantum = { workspace = true, features = ["hugr"] }
+pecos-quantum.workspace = true
 pecos-num.workspace = true
 pecos-random.workspace = true
 pecos-simulators.workspace = true
 pecos-engines.workspace = true
 # Unified sim() facade with neo-stack routing (strangler-fig: Python .stack("neo"))
-pecos = { workspace = true, default-features = false, features = ["neo", "hugr"] }
+pecos = { workspace = true, default-features = false, features = ["neo"] }
 pecos-programs.workspace = true
 
 # Program formats
@@ -59,11 +59,10 @@ pecos-qasm.workspace = true
 pecos-phir = { workspace = true }
 pecos-phir-json.workspace = true
 
-# QIS execution and HUGR envelope loading
+# QIS execution
 # The base wheel must not link LLVM. HUGR lowering uses the Python boundary
 # in pecos_rslib.hugr_lowering and Selene's compiler package.
 pecos-qis.workspace = true
-pecos-hugr.workspace = true
 
 # WASM (optional, enabled by default via "wasm" feature)
 pecos-wasm = { workspace = true, optional = true }

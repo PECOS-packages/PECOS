@@ -121,7 +121,7 @@ same measurements):
 - `"meas_ids": [0, 4]` — stable stamped `MeasId`s, resolved against the
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
-  structurally from the compiled HUGR. The tag→measurement binding follows
+  structurally from the compiled HUGR in Python. The tag→measurement binding follows
   **dataflow, not syntax**: `m = measure(q).read()` followed later by
   `result("tag", m)` is fully supported, in any order. Restrictions: the
   tagged value must be a raw scalar measurement (computed, constant, and

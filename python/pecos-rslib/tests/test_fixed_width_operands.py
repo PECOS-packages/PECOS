@@ -384,3 +384,54 @@ def test_set_packet_rows():
     signed = I(8, 0)
     signed.set("1010")
     assert int(signed) == 10
+
+
+class FailingIndex:
+    """An operand that claims integer support but fails to convert."""
+
+    def __index__(self):
+        raise TypeError("inside index")
+
+
+class CountingIndex:
+    """Records how many times the integer protocol is consulted."""
+
+    def __init__(self, value):
+        self.value = value
+        self.calls = 0
+
+    def __index__(self):
+        self.calls += 1
+        return self.value
+
+
+class StrangeEq(int):
+    """An int subclass whose reflected comparisons return non-bool objects."""
+
+    def __eq__(self, other):
+        return ["eq"]
+
+    __hash__ = int.__hash__
+
+
+@pytest.mark.parametrize("cls", [I, U])
+def test_comparison_propagates_index_errors(cls):
+    """Only a missing integer protocol means not comparable; its failures surface."""
+    with pytest.raises(TypeError, match="inside index"):
+        operator.eq(cls(8, 0), FailingIndex())
+
+
+@pytest.mark.parametrize("cls", [I, U])
+@pytest.mark.parametrize("value", [3, 2**100 + 3, -(2**100) + 3])
+def test_shift_count_converts_once(cls, value):
+    """A shift count consults __index__ exactly once, small or wide."""
+    count = CountingIndex(value)
+    assert int(cls(8, 1) << count) == wrap(1 << (value & 65535), 8, cls)
+    assert count.calls == 1
+
+
+@pytest.mark.parametrize("cls", [I, U])
+def test_comparison_returns_bool(cls):
+    """Comparison results are bools even when an int subclass answers oddly."""
+    assert (cls(8, 1) == StrangeEq(1)) is True
+    assert (cls(8, 1) != StrangeEq(2)) is True

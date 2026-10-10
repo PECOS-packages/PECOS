@@ -90,11 +90,12 @@ pub fn operand_to_pyint<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyA
 
 /// Shift counts retain the low sixteen bits of the mathematical value.
 pub fn shift_count(obj: &Bound<'_, PyAny>) -> PyResult<u16> {
-    if let Ok(value) = obj.extract::<i64>() {
-        let [low, high, ..] = value.to_le_bytes();
+    let value = operand_to_pyint(obj)?;
+    if let Ok(small) = value.extract::<i64>() {
+        let [low, high, ..] = small.to_le_bytes();
         return Ok(u16::from_le_bytes([low, high]));
     }
-    operand_to_pyint(obj)?.bitand(u16::MAX)?.extract()
+    value.bitand(u16::MAX)?.extract()
 }
 
 /// Convert `u64` words (little-endian) representing a two's complement value

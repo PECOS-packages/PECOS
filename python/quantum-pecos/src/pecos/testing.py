@@ -281,28 +281,22 @@ def _replay_tick_circuit(tc: TickCircuit, num_ticks: int, seed: int) -> tuple[Sp
 
 def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], int, dict[int, int]]:
     """Replay noiselessly; return measurements, fired detector count, and observables."""
+    definitions = tc.circuit_definitions()
     _, flat = _replay_tick_circuit(tc, tc.num_ticks(), seed)
-    num_meas = int(tc.get_meta("num_measurements"))
-    if len(flat) != num_meas:
-        msg = "Replay measurement count disagrees with circuit metadata"
+    if len(flat) != definitions["num_measurements"]:
+        msg = "Replay measurement count disagrees with circuit definitions"
         raise ValueError(msg)
 
-    def parity(records: list[int]) -> int:
+    def parity(positions: list[int]) -> int:
         value = 0
-        for rec in records:
-            index = num_meas + rec
-            if not 0 <= index < len(flat):
-                msg = f"Invalid measurement record: {rec}"
-                raise ValueError(msg)
-            value ^= flat[index]
+        for position in positions:
+            value ^= flat[position]
         return value
 
-    detectors = json.loads(tc.get_meta("detectors") or "[]")
-    observables = json.loads(tc.get_meta("observables") or "[]")
     return (
         flat,
-        sum(parity(det["records"]) for det in detectors),
-        {obs["id"]: parity(obs["records"]) for obs in observables},
+        sum(parity(det["measurements"]) for det in definitions["detectors"]),
+        {obs["id"]: parity(obs["measurements"]) for obs in definitions["observables"]},
     )
 
 

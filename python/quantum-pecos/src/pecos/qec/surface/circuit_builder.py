@@ -1656,15 +1656,20 @@ def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d
 def _build_detector_descriptors(
     detectors: list[dict[str, object]],
     patch: SurfacePatch,
+    num_measurements: int,
 ) -> list[SurfaceDetectorDescriptor]:
-    """Build enriched detector descriptors from TickCircuit detector metadata."""
+    """Build enriched detector descriptors from resolved circuit definitions."""
+    for det in detectors:
+        if det["coords"] is None:
+            msg = f"Detector {det['id']} requires coordinates for a surface descriptor"
+            raise ValueError(msg)
     num_x_anc = len(patch.x_stabilizers)
     final_round = max((int(det["coords"][2]) for det in detectors), default=-1)
     descriptors: list[SurfaceDetectorDescriptor] = []
 
     for det in detectors:
         coords = [int(value) for value in det["coords"]]
-        records = [int(value) for value in det["records"]]
+        records = [position - num_measurements for position in det["measurements"]]
         raw_index = coords[0]
         if coords[1] == 0:
             stab_kind = "X"
@@ -1703,15 +1708,16 @@ def _build_observable_descriptors(
     observables: list[dict[str, object]],
     patch: SurfacePatch,
     basis: str,
+    num_measurements: int,
 ) -> list[SurfaceObservableDescriptor]:
-    """Build enriched logical observable descriptors from TickCircuit metadata."""
+    """Build enriched logical observable descriptors from resolved circuit definitions."""
     logical = patch.get_logical_descriptor(basis.upper())
     return [
         {
             "id": int(obs["id"]),
             "observable_id": int(obs["id"]),
             "basis": basis.upper(),
-            "records": [int(value) for value in obs["records"]],
+            "records": [position - num_measurements for position in obs["measurements"]],
             "logical_type": logical["logical_type"],
             "data_qubits": logical["data_qubits"],
             "data_qubit_positions": logical["data_qubit_positions"],
@@ -3101,8 +3107,8 @@ def get_detector_descriptors_from_tick_circuit(
     if cached:
         return json.loads(cached)
 
-    detectors = json.loads(tick_circuit.get_meta("detectors") or "[]")
-    descriptors = _build_detector_descriptors(detectors, patch)
+    definitions = tick_circuit.circuit_definitions()
+    descriptors = _build_detector_descriptors(definitions["detectors"], patch, definitions["num_measurements"])
     tick_circuit.set_meta("detector_descriptors", json.dumps(descriptors))
     return descriptors
 
@@ -3126,9 +3132,14 @@ def get_observable_descriptors_from_tick_circuit(
     if cached:
         return json.loads(cached)
 
-    observables = json.loads(tick_circuit.get_meta("observables") or "[]")
+    definitions = tick_circuit.circuit_definitions()
     basis = tick_circuit.get_meta("basis") or "Z"
-    descriptors = _build_observable_descriptors(observables, patch, basis)
+    descriptors = _build_observable_descriptors(
+        definitions["observables"],
+        patch,
+        basis,
+        definitions["num_measurements"],
+    )
     tick_circuit.set_meta("observable_descriptors", json.dumps(descriptors))
     return descriptors
 
@@ -3216,7 +3227,6 @@ def tick_circuit_to_stim(
     Returns:
         Stim circuit string
     """
-    import json
     import math
 
     from pecos_rslib import is_supported_noop_or_metadata_gate
@@ -3388,28 +3398,18 @@ def tick_circuit_to_stim(
         if tick_idx < tc.num_ticks() - 1:
             lines.append("TICK")
 
-    # Add DETECTOR annotations from TickCircuit metadata
-    detectors_json = tc.get_meta("detectors")
-    if detectors_json:
-        detectors = json.loads(detectors_json)
-        num_measurements = int(tc.get_meta("num_measurements") or "0")
-        for det in detectors:
-            coords = det["coords"]
-            records = _metadata_record_offsets(det, num_measurements)
-            coord_str = ", ".join(str(c) for c in coords)
-            record_str = " ".join(f"rec[{r}]" for r in records)
-            lines.append(f"DETECTOR({coord_str}) {record_str}")
+    definitions = tc.circuit_definitions()
+    num_measurements = definitions["num_measurements"]
+    for det in definitions["detectors"]:
+        coords = det["coords"]
+        coord_str = "" if coords is None else "(" + ", ".join(str(c) for c in coords) + ")"
+        record_str = " ".join(f"rec[{position - num_measurements}]" for position in det["measurements"])
+        lines.append(f"DETECTOR{coord_str} {record_str}")
 
-    # Add OBSERVABLE_INCLUDE from metadata
-    observables_json = tc.get_meta("observables")
-    if observables_json:
-        observables = json.loads(observables_json)
-        num_measurements = int(tc.get_meta("num_measurements") or "0")
-        for obs in observables:
-            obs_id = obs["id"]
-            records = _metadata_record_offsets(obs, num_measurements)
-            record_str = " ".join(f"rec[{r}]" for r in records)
-            lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
+    for obs in definitions["observables"]:
+        obs_id = obs["id"]
+        record_str = " ".join(f"rec[{position - num_measurements}]" for position in obs["measurements"])
+        lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
 
     return "\n".join(lines)
 
@@ -3465,6 +3465,8 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
 ) -> str:
     """Generate DEM from TickCircuit using pure Python Pauli frame simulation.
 
+    Deprecated: will be removed; use ``DetectorErrorModel.from_circuit``.
+
     This is a PECOS-native DEM generator that does not depend on Stim or Rust.
     It uses Pauli frame simulation to track error propagation through
     the circuit and determine which detectors each error triggers.
@@ -3486,7 +3488,15 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         DEM string in Stim-compatible format
     """
     import json
+    import warnings
     from collections import defaultdict
+
+    warnings.warn(
+        "generate_dem_from_tick_circuit_via_pauli_frame is deprecated and will be removed; "
+        "use DetectorErrorModel.from_circuit instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     # Parse detector and observable annotations from metadata
     detectors_json = tc.get_meta("detectors")
@@ -3811,45 +3821,9 @@ def generate_dem_from_tick_circuit_via_stim(
     return str(dem)
 
 
-def _extract_measurement_order(tc: TickCircuit) -> list[int]:
-    """Extract the measurement order from a TickCircuit.
-
-    Returns a list of qubit indices in the order they were measured.
-    measurement_order[i] is the qubit measured at TickCircuit measurement index i.
-
-    This allows proper mapping between record offsets (which use TickCircuit
-    measurement order) and influence map indices (which use DAG topological order).
-
-    Args:
-        tc: TickCircuit to extract measurement order from.
-
-    Returns:
-        List of qubit indices in measurement execution order.
-    """
-    measurement_order = []
-
-    for tick_idx in range(tc.num_ticks()):
-        tick = tc.get_tick(tick_idx)
-        if tick is None:
-            continue
-        gates = tick.gate_batches()
-        for gate in gates:
-            gate_type = str(gate.gate_type)
-            if "MZ" in gate_type or "MeasureFree" in gate_type:
-                # Add each measured qubit to the order
-                for qubit in gate.qubits:
-                    # Qubit might be an int or a QubitId object
-                    if hasattr(qubit, "index"):
-                        measurement_order.append(qubit.index())
-                    else:
-                        measurement_order.append(int(qubit))
-
-    return measurement_order
-
-
 def get_measurement_order_from_tick_circuit(tc: TickCircuit) -> list[int]:
-    """Public wrapper returning the TickCircuit measurement execution order."""
-    return _extract_measurement_order(tc)
+    """Return measured qubits in the shared reader's emission order."""
+    return [qubit for qubit, _ in tc.measurement_emission()]
 
 
 def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
@@ -4058,7 +4032,7 @@ def generate_dem_from_tick_circuit(
     # Extract measurement order from TickCircuit: list of qubits in measurement execution order
     # This allows proper mapping between record offsets (TickCircuit order) and
     # influence map indices (DAG topological order).
-    measurement_order = _extract_measurement_order(tc)
+    measurement_order = get_measurement_order_from_tick_circuit(tc)
     metadata_uses_records = _metadata_uses_record_offsets(detectors_json, observables_json)
 
     # Convert TickCircuit to DagCircuit and build influence map

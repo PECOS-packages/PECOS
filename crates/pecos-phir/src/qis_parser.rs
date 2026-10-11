@@ -809,15 +809,16 @@ impl QisIrParser {
                     "Call argument {part:?} has no type"
                 )));
             };
-            // The first token is the type and the rest are parameter attributes
-            // such as `noundef`, except that an address-space pointer type spans
-            // two tokens (`%Qubit addrspace(1)*`).
-            let mut tokens = prefix.split_whitespace();
-            let ty = tokens.next().unwrap_or(prefix);
-            let ty = if tokens.next().is_some_and(|t| t.starts_with("addrspace(")) {
+            // A typed pointer may span tokens (`%Qubit addrspace(1)*`,
+            // `void (i64)*`), and only pointer arguments carry a `*` outside
+            // quoted attribute strings (LLVM escapes a quote inside one as `\22`).
+            // Otherwise the first token is the type and the rest are parameter
+            // attributes such as `noundef`.
+            let unquoted: String = prefix.split('"').step_by(2).collect();
+            let ty = if unquoted.contains('*') {
                 "ptr"
             } else {
-                ty
+                prefix.split_whitespace().next().unwrap_or(prefix)
             };
             args.push(self.parse_arg(ty, val.trim())?);
         }

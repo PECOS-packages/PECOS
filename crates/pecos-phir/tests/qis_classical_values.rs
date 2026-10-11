@@ -914,10 +914,14 @@ fn qis_final_measurement_after_consumer_is_delivered() {
 
 #[test]
 fn qis_call_argument_spellings() {
-    // Address-space pointer types span tokens; tabs separate type and value.
+    // Typed pointers may span tokens, a quoted attribute may hold `*`, and
+    // tabs separate type and value.
     for call in [
         "call void @___h(%Qubit addrspace(1)* null)",
         "call void @___h(i8 addrspace(1)* null)",
+        "call void @___h(%Qubit * null)",
+        "call void @___h(%Qubit addrspace (1)* null)",
+        "call void @___h(void (i64)* null)",
         "call void @___rz(i64\t0, double\t1.5)",
         "call void @___rz(i64 0, double \"note\"=\"*\" 1.5)",
     ] {

@@ -812,16 +812,24 @@ def test_region_that_permutes_and_refills_every_slot_rejoins(case: str) -> None:
     assert all(tuple(record.values()) == expected for record in records), records
 
 
-@pytest.mark.parametrize("region", ["If", "Repeat"])
+@pytest.mark.parametrize("region", ["If taken", "If skipped", "Repeat"])
 def test_region_that_refills_and_reconsumes_a_slot_rejoins(region: str) -> None:
-    """Refilling may trade dead locals between consumed slots; joins must not compare those names."""
+    """Refilling may trade dead locals between consumed slots; joins must not compare those names.
+
+    The skipped If runs the code after the join under the names the untaken branch left.
+    """
     q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
     prefix = (qb.X(q[0]), Permute([q[0], q[1]], [q[1], q[0]]), Measure(q) > c)
     body = (qb.PZ(q[0]), qb.X(q[0]), Measure(q[0]) > d[0])
-    block = If(c[1] == 1).Then(*body) if region == "If" else Repeat(2).block(*body)
-    program = Main(q, c, d, *prefix, block, qb.PZ(q), Measure(q) > c, Return(c, d))
+    block = {
+        "If taken": lambda: If(c[1] == 1).Then(*body),
+        "If skipped": lambda: If(c[1] == 0).Then(*body),
+        "Repeat": lambda: Repeat(2).block(*body),
+    }[region]()
+    program = Main(q, c, d, *prefix, block, qb.PZ(q), qb.X(q[1]), Measure(q) > c, Return(c, d))
+    expected = (0, 1, 0 if region == "If skipped" else 1)
     records = run_ast_guppy_via_selene(program, shots=4)
-    assert all(tuple(record.values()) == (0, 0, 1) for record in records), records
+    assert all(tuple(record.values()) == expected for record in records), records
 
 
 def test_block_call_return_does_not_shadow_a_register_named_like_a_slot() -> None:

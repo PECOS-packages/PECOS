@@ -118,10 +118,11 @@ pub(crate) fn label_qubits(label: &Bm) -> impl Iterator<Item = usize> + '_ {
 /// Trait for noise models that produce physical injections at each gate.
 ///
 /// Forward EEG propagates C/A injections carrying `label2`, and `strong_sim`
-/// computes corrections from those generators. Both silently omit C/A entries
-/// without `label2`. `dem_mapping` also omits entries without `label2`, uses C
-/// only with a supplied stabilizer group (taking absolute probability
-/// contributions), and ignores A.
+/// computes their corrections. Both panic if `label2` is missing, even at zero
+/// rate. DEM mapping also requires a stabilizer group for every C/A input.
+/// It folds signed equal-event C/A contributions into the S-rate sum before
+/// exponentiation: C_{P,P}(c) equals S_P(-2c). Negative event probabilities
+/// below -1e-12 panic; values in [-1e-12, 0) are clamped to zero.
 /// Heisenberg walks, coherent DEM builders, and noise compression reject them
 /// with a panic, including zero-rate injections. The exact dense reference
 /// rejects them with `EegBuildError::UnsupportedExactNoise`.

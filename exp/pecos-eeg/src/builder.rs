@@ -67,6 +67,10 @@ impl<'a> EegDemBuilder<'a> {
     /// count or definition emission count that disagrees with the circuit's
     /// measurements or expansion, respectively, and S flip probabilities
     /// outside `[0, 0.5)` that have no finite real forward generator.
+    ///
+    /// # Panics
+    /// Panics for an event probability below -1e-12, or more than 25 H labels
+    /// in an `ExactSubset` event.
     pub fn build(&self) -> Result<Vec<DemEntry>, EegBuildError> {
         let gates: Vec<pecos_core::Gate> = self
             .tc
@@ -97,6 +101,10 @@ impl<'a> EegDemBuilder<'a> {
     /// # Errors
     ///
     /// Same conditions as [`build`](Self::build).
+    ///
+    /// # Panics
+    /// Panics for an event probability below -1e-12, or more than 25 H labels
+    /// in an `ExactSubset` event.
     pub fn build_dem_string(&self) -> Result<String, EegBuildError> {
         Ok(dem_mapping::format_dem(&self.build()?))
     }
@@ -104,6 +112,10 @@ impl<'a> EegDemBuilder<'a> {
     /// # Errors
     ///
     /// Same conditions as [`build`](Self::build).
+    ///
+    /// # Panics
+    /// Panics for an event probability below -1e-12, or more than 25 H labels
+    /// in an `ExactSubset` event.
     pub fn summary(&self) -> Result<EegSummary, EegBuildError> {
         let gates: Vec<pecos_core::Gate> = self
             .tc

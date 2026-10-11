@@ -131,6 +131,35 @@ impl StabilizerGroup {
         Self { sim }
     }
 
+    /// Expectation of an ordered Pauli product in the tracked stabilizer state.
+    ///
+    /// `None` represents zero; otherwise the value is one of ±1 or ±i.
+    /// Both multiplication phases and the canonical Pauli's stabilizer sign
+    /// are retained. The empty product has expectation +1.
+    #[must_use]
+    pub fn product_expectation<'a>(
+        &self,
+        paulis: impl IntoIterator<Item = &'a Bm>,
+    ) -> Option<QuarterPhase> {
+        let mut product = Bm::default();
+        let mut phase = 0;
+        for pauli in paulis {
+            let (next, exponent) = product.multiply_with_phase(pauli);
+            product = next;
+            phase = (phase + exponent) % 4;
+        }
+        if !self.is_stabilizer(&product)? {
+            phase = (phase + 2) % 4;
+        }
+        Some(match phase {
+            0 => QuarterPhase::PlusOne,
+            1 => QuarterPhase::PlusI,
+            2 => QuarterPhase::MinusOne,
+            3 => QuarterPhase::MinusI,
+            _ => unreachable!(),
+        })
+    }
+
     /// Check if Pauli P is in the stabilizer group and return its sign.
     ///
     /// Returns:

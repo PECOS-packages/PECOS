@@ -273,19 +273,19 @@ impl Converter {
                 Operation::Classical(ClassicalOp::ConstInt(0)),
                 vec![],
                 vec![zero_ssa],
-                vec![Type::Int(pecos_phir::types::IntWidth::I64)],
+                vec![Type::UInt(pecos_phir::types::IntWidth::I32)],
             ));
 
             let mut accum = zero_ssa;
 
             for (meas_ssa, bit_idx) in &bits {
-                // Bitcast measurement bit to i64
+                // Bitcast measurement bit to u32
                 let cast_ssa = self.new_ssa();
                 block.add_instruction(Instruction::new(
                     Operation::Classical(ClassicalOp::Bitcast),
                     vec![*meas_ssa],
                     vec![cast_ssa],
-                    vec![Type::Int(pecos_phir::types::IntWidth::I64)],
+                    vec![Type::UInt(pecos_phir::types::IntWidth::I32)],
                 ));
 
                 // Shift left by bit_idx

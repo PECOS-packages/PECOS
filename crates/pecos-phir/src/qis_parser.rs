@@ -544,13 +544,18 @@ impl QisIrParser {
                 return Ok(None);
             }
 
+            // Runtime bookkeeping is erased together with its unused arguments.
+            if normalize_qis_name(&func_name) == "rt_elide" {
+                return Ok(Some(vec![]));
+            }
+
             let args_start = caps
                 .get(0)
                 .expect("regex group 0 always exists on a successful match")
                 .end();
             let args_str = extract_balanced_parens(line, args_start);
 
-            let args = self.parse_call_args(&args_str);
+            let args = self.parse_call_args(&args_str)?;
             let result = result_name.map(|n| self.resolve_value(&n));
 
             return Ok(Some(self.lower_qis_call(&func_name, &args, result)?));
@@ -558,58 +563,70 @@ impl QisIrParser {
 
         // ---- Binary arithmetic: add, sub, mul, and, or, xor, shl, lshr, ashr ----
         let binop_re = Regex::new(
-            r"^(%\S+)\s*=\s*(add|sub|mul|udiv|sdiv|urem|srem|and|or|xor|shl|lshr|ashr)\s+(?:nuw\s+)?(?:nsw\s+)?(?:exact\s+)?\S+\s+(%?\S+),\s*(%?\S+)$",
+            r"^(%\S+)\s*=\s*(add|sub|mul|udiv|sdiv|urem|srem|and|or|xor|shl|lshr|ashr)\s+(?:nuw\s+)?(?:nsw\s+)?(?:exact\s+)?(\S+|\{[^}]*\}|\[[^\]]*\]|<[^>]*>)\s+(%?\S+),\s*(%?\S+)$",
         )
         .expect("valid regex");
         if let Some(caps) = binop_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let op_name = &caps[2];
-            let lhs = self.resolve_or_const(&caps[3]);
-            let rhs = self.resolve_or_const(&caps[4]);
+            let mut out = Vec::new();
+            let ty = &caps[3];
+            let lhs = self.resolve_or_const(&caps[4], ty, &mut out)?;
+            let rhs = self.resolve_or_const(&caps[5], ty, &mut out)?;
             let op = match op_name {
                 "add" => ClassicalOp::Add,
                 "sub" => ClassicalOp::Sub,
                 "mul" => ClassicalOp::Mul,
-                "udiv" | "sdiv" => ClassicalOp::Div,
-                "urem" | "srem" => ClassicalOp::Mod,
+                "udiv" => ClassicalOp::UDiv,
+                "sdiv" => ClassicalOp::Div,
+                "urem" => ClassicalOp::UMod,
+                "srem" => ClassicalOp::Mod,
                 "and" => ClassicalOp::And,
                 "or" => ClassicalOp::Or,
                 "xor" => ClassicalOp::Xor,
                 "shl" => ClassicalOp::Shl(0),
-                "lshr" | "ashr" => ClassicalOp::Shr(0),
+                "lshr" => ClassicalOp::LShr(0),
+                "ashr" => ClassicalOp::Shr(0),
                 _ => unreachable!(),
             };
-            return Ok(Some(vec![Instruction {
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(op),
                 operands: vec![lhs, rhs],
-                result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                result_types: vec![parse_llvm_type(ty)],
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         // ---- Integer comparison: icmp ----
         let icmp_re = Regex::new(
-            r"^(%\S+)\s*=\s*icmp\s+(eq|ne|slt|sle|sgt|sge|ult|ule|ugt|uge)\s+\S+\s+(%?\S+),\s*(%?\S+)$",
+            r"^(%\S+)\s*=\s*icmp\s+(eq|ne|slt|sle|sgt|sge|ult|ule|ugt|uge)\s+(\S+|\{[^}]*\}|\[[^\]]*\]|<[^>]*>)\s+(%?\S+),\s*(%?\S+)$",
         )
         .expect("valid regex");
         if let Some(caps) = icmp_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let pred = &caps[2];
-            let lhs = self.resolve_or_const(&caps[3]);
-            let rhs = self.resolve_or_const(&caps[4]);
+            let mut out = Vec::new();
+            let ty = &caps[3];
+            let lhs = self.resolve_or_const(&caps[4], ty, &mut out)?;
+            let rhs = self.resolve_or_const(&caps[5], ty, &mut out)?;
             let op = match pred {
                 "eq" => ClassicalOp::Eq,
                 "ne" => ClassicalOp::Ne,
-                "slt" | "ult" => ClassicalOp::Lt,
-                "sle" | "ule" => ClassicalOp::Le,
-                "sgt" | "ugt" => ClassicalOp::Gt,
-                "sge" | "uge" => ClassicalOp::Ge,
+                "slt" => ClassicalOp::Lt,
+                "ult" => ClassicalOp::ULt,
+                "sle" => ClassicalOp::Le,
+                "ule" => ClassicalOp::ULe,
+                "sgt" => ClassicalOp::Gt,
+                "ugt" => ClassicalOp::UGt,
+                "sge" => ClassicalOp::Ge,
+                "uge" => ClassicalOp::UGe,
                 _ => unreachable!(),
             };
-            return Ok(Some(vec![Instruction {
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(op),
                 operands: vec![lhs, rhs],
@@ -617,27 +634,32 @@ impl QisIrParser {
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         // ---- Select: %r = select i1 %cond, <ty> %a, <ty> %b ----
-        let select_re =
-            Regex::new(r"^(%\S+)\s*=\s*select\s+i1\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\S+\s+(%?\S+)$")
-                .expect("valid regex");
+        let select_re = Regex::new(
+            r"^(%\S+)\s*=\s*select\s+i1\s+(%?\S+),\s*(\{[^}]*\}|\[[^\]]*\]|<[^>]*>|\S+)\s+(%?\S+),\s*(\{[^}]*\}|\[[^\]]*\]|<[^>]*>|\S+)\s+(%?\S+)$",
+        )
+        .expect("valid regex");
         if let Some(caps) = select_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
-            let cond = self.resolve_or_const(&caps[2]);
-            let true_val = self.resolve_or_const(&caps[3]);
-            let false_val = self.resolve_or_const(&caps[4]);
-            return Ok(Some(vec![Instruction {
+            let mut out = Vec::new();
+            let cond = self.resolve_or_const(&caps[2], "i1", &mut out)?;
+            let ty = &caps[3];
+            let true_val = self.resolve_or_const(&caps[4], ty, &mut out)?;
+            let false_val = self.resolve_or_const(&caps[6], &caps[5], &mut out)?;
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(ClassicalOp::Select),
                 operands: vec![cond, true_val, false_val],
-                result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                result_types: vec![parse_llvm_type(ty)],
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         // ---- Alloca: %r = alloca <type>, align <n> ----
@@ -679,12 +701,13 @@ impl QisIrParser {
         }
 
         // ---- Store: store <type> <val>, <type>* %ptr, align <n> ----
-        let store_re = Regex::new(r"^store\s+\S+\s+(%?\S+),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$")
+        let store_re = Regex::new(r"^store\s+(\{[^}]*\}|\[[^\]]*\]|<[^>]*>|\S+)\s+(%?\S+),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$")
             .expect("valid regex");
         if let Some(caps) = store_re.captures(line) {
-            let val = self.resolve_or_const(&caps[1]);
-            let ptr = self.resolve_value(&caps[2]);
-            return Ok(Some(vec![Instruction {
+            let mut out = Vec::new();
+            let val = self.resolve_or_const(&caps[2], &caps[1], &mut out)?;
+            let ptr = self.resolve_value(&caps[3]);
+            out.push(Instruction {
                 results: vec![],
                 operation: Operation::Memory(crate::ops::MemoryOp::Store),
                 operands: vec![val, ptr],
@@ -692,25 +715,28 @@ impl QisIrParser {
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         // ---- Type casts: trunc, zext, sext, bitcast ----
         let cast_re =
-            Regex::new(r"^(%\S+)\s*=\s*(?:trunc|zext|sext|bitcast)\s+\S+\s+(%\S+)\s+to\s+\S+$")
+            Regex::new(r"^(%\S+)\s*=\s*(?:trunc|zext|sext|bitcast)\s+(\S+)\s+(\S+)\s+to\s+(\S+)$")
                 .expect("valid regex");
         if let Some(caps) = cast_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
-            let src = self.resolve_value(&caps[2]);
-            return Ok(Some(vec![Instruction {
+            let mut out = Vec::new();
+            let src = self.resolve_or_const(&caps[3], &caps[2], &mut out)?;
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(ClassicalOp::Bitcast),
                 operands: vec![src],
-                result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                result_types: vec![parse_llvm_type(&caps[4])],
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         // ---- Aggregate ops: insertvalue, extractvalue ----
@@ -737,8 +763,7 @@ impl QisIrParser {
                 .expect("valid regex");
         if let Some(caps) = insertvalue_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
-            let _agg = self.resolve_or_const(&caps[2]);
-            let _val = self.resolve_or_const(&caps[3]);
+            // The aggregate operands are discarded; do not materialise literals here.
             return Ok(Some(vec![Instruction {
                 results: vec![result],
                 operation: Operation::Classical(ClassicalOp::Assign),
@@ -754,9 +779,9 @@ impl QisIrParser {
     }
 
     /// Parse the comma-separated argument list of a call instruction.
-    fn parse_call_args(&mut self, args_str: &str) -> Vec<Arg> {
+    fn parse_call_args(&mut self, args_str: &str) -> Result<Vec<Arg>> {
         if args_str.trim().is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
 
         let mut args = Vec::new();
@@ -772,37 +797,45 @@ impl QisIrParser {
             if let Some(caps) = inttoptr_re.captures(part)
                 && let Ok(idx) = caps[1].parse::<i64>()
             {
-                args.push(Arg::Int(idx));
+                args.push(Arg::Int(
+                    idx,
+                    crate::types::Type::Int(crate::types::IntWidth::I64),
+                ));
                 continue;
             }
 
-            if let Some((ty, val)) = part.rsplit_once(' ') {
-                let ty = ty.trim();
-                let val = val.trim();
-                args.push(self.parse_arg(ty, val));
-            }
+            let Some((prefix, val)) = part.rsplit_once(char::is_whitespace) else {
+                return Err(PhirError::internal(format!(
+                    "Call argument {part:?} has no type"
+                )));
+            };
+            // A typed pointer may span tokens (`%Qubit addrspace(1)*`,
+            // `void (i64)*`), and only pointer arguments carry a `*` outside
+            // quoted attribute strings (LLVM escapes a quote inside one as `\22`).
+            // Otherwise the first token is the type and the rest are parameter
+            // attributes such as `noundef`.
+            let unquoted: String = prefix.split('"').step_by(2).collect();
+            let ty = if unquoted.contains('*') {
+                "ptr"
+            } else {
+                prefix.split_whitespace().next().unwrap_or(prefix)
+            };
+            args.push(self.parse_arg(ty, val.trim())?);
         }
-        args
+        Ok(args)
     }
 
-    fn parse_arg(&mut self, ty: &str, val: &str) -> Arg {
+    fn parse_arg(&mut self, ty: &str, val: &str) -> Result<Arg> {
         if val.starts_with('%') {
-            Arg::Ssa(self.resolve_value(val))
-        } else if val == "null" || val == "zeroinitializer" {
-            // QIR uses `null` for qubit 0
-            Arg::Int(0)
-        } else if ty.contains("double") || ty.contains("float") {
-            let f = parse_float_literal(val);
-            Arg::Float(f)
-        } else if ty.contains("i1") || ty.contains("i32") || ty.contains("i64") {
-            if let Ok(i) = val.parse::<i64>() {
-                Arg::Int(i)
-            } else {
-                Arg::Ssa(self.resolve_value(val))
-            }
-        } else {
-            Arg::Ssa(self.resolve_value(val))
+            return Ok(Arg::Ssa(self.resolve_value(val)));
         }
+        let (op, ty) = literal_operation(ty, val)?;
+        Ok(match op {
+            ClassicalOp::ConstInt(v) => Arg::Int(v, ty),
+            ClassicalOp::ConstBool(v) => Arg::Bool(v),
+            ClassicalOp::ConstFloat(v) => Arg::Float(v),
+            _ => unreachable!(),
+        })
     }
 
     /// Lower a QIS function call to PHIR instructions.
@@ -1076,47 +1109,56 @@ impl QisIrParser {
         Ok(out)
     }
 
-    /// Resolve a value string to an `SSAValue`. If it looks like a `%name`,
-    /// resolve it in the value map. If it looks like an integer literal, emit
-    /// a `ConstInt` and return the SSA value.
-    fn resolve_or_const(&mut self, val: &str) -> SSAValue {
+    /// Resolve an SSA reference or emit a constant of the operand's LLVM type
+    /// before its consumer. Reject unsupported or out-of-range literal text.
+    fn resolve_or_const(
+        &mut self,
+        val: &str,
+        ty: &str,
+        out: &mut Vec<Instruction>,
+    ) -> Result<SSAValue> {
         let val = val.trim();
         if val.starts_with('%') {
-            return self.resolve_value(val);
+            return Ok(self.resolve_value(val));
         }
-        if val == "true"
-            || val == "false"
-            || val == "null"
-            || val == "undef"
-            || val == "poison"
-            || val == "zeroinitializer"
-        {
-            return self.fresh_value();
-        }
-        if val.parse::<i64>().is_ok() || val.parse::<f64>().is_ok() {
-            return self.fresh_value();
-        }
-        // Unknown -- create a fresh value
-        self.fresh_value()
+        let (op, ty) = literal_operation(ty, val)?;
+        let value = self.fresh_value();
+        out.push(Instruction::new(
+            Operation::Classical(op),
+            vec![],
+            vec![value],
+            vec![ty],
+        ));
+        Ok(value)
     }
 
-    /// Convert an `Arg` to an `SSAValue`, emitting a `ConstFloat`/`ConstInt` if
-    /// the arg is a literal.
+    /// Convert an `Arg` to an `SSAValue`, emitting a float, integer or boolean
+    /// constant if the argument is a literal.
     fn arg_to_ssa(&mut self, arg: &Arg, out: &mut Vec<Instruction>) -> SSAValue {
         match arg {
             Arg::Ssa(v) => *v,
+            Arg::Bool(b) => {
+                let v = self.fresh_value();
+                out.push(Instruction::new(
+                    Operation::Classical(ClassicalOp::ConstBool(*b)),
+                    vec![],
+                    vec![v],
+                    vec![crate::types::Type::Bool],
+                ));
+                v
+            }
             Arg::Float(f) => {
                 let v = self.fresh_value();
                 out.push(emit_const_float(v, *f));
                 v
             }
-            Arg::Int(i) => {
+            Arg::Int(i, ty) => {
                 let v = self.fresh_value();
                 out.push(Instruction {
                     results: vec![v],
                     operation: Operation::Classical(ClassicalOp::ConstInt(*i)),
                     operands: vec![],
-                    result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                    result_types: vec![ty.clone()],
                     regions: vec![],
                     attributes: BTreeMap::new(),
                     location: None,
@@ -1135,7 +1177,8 @@ impl QisIrParser {
 enum Arg {
     Ssa(SSAValue),
     Float(f64),
-    Int(i64),
+    Int(i64, crate::types::Type),
+    Bool(bool),
 }
 
 /// Create a simple `CustomOp` instruction with given operands and results.
@@ -1324,12 +1367,56 @@ fn normalize_qis_name(name: &str) -> String {
     name.to_string()
 }
 
+/// Materialise literals using the LLVM operand type; widths remain 64-bit.
+fn literal_operation(ty: &str, text: &str) -> Result<(ClassicalOp, crate::types::Type)> {
+    use crate::types::{IntWidth, Type};
+    let ty = ty.trim();
+    let aggregate = ty.contains('*') || ty == "ptr" || ty.starts_with(['{', '[', '<']);
+    let zero = matches!(text, "undef" | "poison")
+        || (aggregate && matches!(text, "null" | "zeroinitializer"));
+    if aggregate && zero {
+        return Ok((ClassicalOp::ConstInt(0), Type::Int(IntWidth::I64)));
+    }
+    let result_type = parse_llvm_type(ty);
+    let invalid = || PhirError::internal(format!("Invalid LLVM literal {text:?} for type {ty}"));
+    let op = match &result_type {
+        Type::Bool if zero || matches!(text, "true" | "false") => {
+            ClassicalOp::ConstBool(match text {
+                _ if zero => false,
+                "true" => true,
+                "false" => false,
+                _ => return Err(invalid()),
+            })
+        }
+        Type::Bool | Type::Int(_) => ClassicalOp::ConstInt(if zero {
+            0
+        } else {
+            text.parse::<i64>().map_err(|_| invalid())?
+        }),
+        Type::Float(_) => {
+            if !zero {
+                if let Some(hex) = text.strip_prefix("0x") {
+                    u64::from_str_radix(hex, 16).map_err(|_| invalid())?;
+                } else {
+                    text.parse::<f64>().map_err(|_| invalid())?;
+                }
+            }
+            ClassicalOp::ConstFloat(if zero { 0.0 } else { parse_float_literal(text) })
+        }
+        _ => return Err(invalid()),
+    };
+    Ok((op, result_type))
+}
+
 /// Map an LLVM type string to a PHIR `Type`.
 fn parse_llvm_type(s: &str) -> crate::types::Type {
     let s = s.trim();
     match s {
         "i1" => crate::types::Type::Bool,
-        "i8" | "i16" | "i32" | "i64" | "i128" => {
+        _ if s
+            .strip_prefix('i')
+            .is_some_and(|width| width.parse::<u32>().is_ok()) =>
+        {
             crate::types::Type::Int(crate::types::IntWidth::I64)
         }
         "double" | "float" => crate::types::Type::Float(crate::types::FloatPrecision::F64),

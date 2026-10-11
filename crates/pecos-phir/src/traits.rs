@@ -153,10 +153,17 @@ fn get_classical_traits(c_op: &crate::ops::ClassicalOp) -> BTreeSet<OpTrait> {
         }
         // Non-commutative arithmetic
         ClassicalOp::Sub
+        | ClassicalOp::UDiv
+        | ClassicalOp::UMod
         | ClassicalOp::Div
         | ClassicalOp::Mod
         | ClassicalOp::FSub
-        | ClassicalOp::FDiv => {
+        | ClassicalOp::FDiv
+        | ClassicalOp::LShr(_)
+        | ClassicalOp::ULt
+        | ClassicalOp::ULe
+        | ClassicalOp::UGt
+        | ClassicalOp::UGe => {
             traits.insert(NoSideEffect);
         }
         // Unary operations

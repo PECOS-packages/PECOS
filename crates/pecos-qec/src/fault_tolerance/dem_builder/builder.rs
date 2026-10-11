@@ -637,7 +637,7 @@ impl<'a> DemBuilder<'a> {
     /// (the decoupled/raw builder with an empty influence map), `meas_id` is a
     /// positional measurement index (the legacy escape hatch). Returns the
     /// `0..num_measurements` record index, or `None` if the id is absent.
-    fn resolve_meas_id_to_tc_index(&self, meas_id: usize) -> Option<usize> {
+    fn resolve_meas_id_to_map_index(&self, meas_id: usize) -> Option<usize> {
         if self.influence_map.meas_ids.is_empty() {
             return (meas_id < self.num_measurements).then_some(meas_id);
         }
@@ -648,7 +648,7 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
-        let index = self.resolve_meas_id_to_tc_index(meas_id)?;
+        let index = self.resolve_meas_id_to_map_index(meas_id)?;
         let measurement = i64::try_from(index).ok()?;
         let total = i64::try_from(self.num_measurements).ok()?;
         i32::try_from(measurement - total).ok()
@@ -764,7 +764,7 @@ impl<'a> DemBuilder<'a> {
         meas_ids
             .iter()
             .map(|&meas_id| {
-                self.resolve_meas_id_to_tc_index(meas_id)
+                self.resolve_meas_id_to_map_index(meas_id)
                     .ok_or_else(|| {
                         DemBuilderError::ParseError(format!(
                             "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
@@ -2345,7 +2345,7 @@ impl<'a> DemBuilder<'a> {
         for det in &self.detectors {
             if det.records.is_empty() {
                 for &meas_id in &det.meas_ids {
-                    if let Some(influence_idx) = self.resolve_meas_id_to_tc_index(meas_id) {
+                    if let Some(influence_idx) = self.resolve_meas_id_to_map_index(meas_id) {
                         meas_to_detectors
                             .entry(influence_idx)
                             .or_default()
@@ -2376,7 +2376,7 @@ impl<'a> DemBuilder<'a> {
             }
             if obs.records.is_empty() {
                 for &meas_id in &obs.meas_ids {
-                    if let Some(influence_idx) = self.resolve_meas_id_to_tc_index(meas_id) {
+                    if let Some(influence_idx) = self.resolve_meas_id_to_map_index(meas_id) {
                         meas_to_observables
                             .entry(influence_idx)
                             .or_default()
@@ -2798,7 +2798,7 @@ pub(crate) fn validate_sampler_json(
 /// referencing neither `records` nor `meas_ids`) comes from the shared serde
 /// parser. On top of that, this resolves every reference against the
 /// `influence_map` exactly as `DemBuilder::validate_metadata_refs` /
-/// `resolve_meas_id_to_tc_index` do, and rejects fail-loud:
+/// `resolve_meas_id_to_map_index` do, and rejects fail-loud:
 ///   - a `records` offset that is out of range,
 ///   - a `meas_ids` value that does not resolve (a stamped `MeasId` absent from
 ///     the circuit, or -- when the circuit carries no stable ids -- an
@@ -2883,7 +2883,7 @@ fn reject_duplicate_stamped_meas_ids(
 }
 
 /// Resolve a stamped/positional `meas_id` against the influence map, mirroring
-/// `DemBuilder::resolve_meas_id_to_tc_index`: a stamped stable id when the
+/// `DemBuilder::resolve_meas_id_to_map_index`: a stamped stable id when the
 /// circuit carries them, a positional index only when it does not.
 fn resolve_sampler_meas_id(influence_map: &DagFaultInfluenceMap, meas_id: usize) -> Option<usize> {
     if influence_map.meas_ids.is_empty() {

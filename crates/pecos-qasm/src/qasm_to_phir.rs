@@ -9,7 +9,7 @@ use pecos_phir::Result;
 use pecos_phir::builtin_ops::{BuiltinOp, FuncOp, VarDefineOp};
 use pecos_phir::ops::{ClassicalOp, Operation, QuantumOp, SSAValue};
 use pecos_phir::phir::{AttributeValue, Block, Instruction, Module};
-use pecos_phir::types::{FunctionType, Type};
+use pecos_phir::types::{FunctionType, IntWidth, Type};
 
 use crate::ast::Operation as QasmOp;
 use crate::parser::{Program, QASMParser};
@@ -104,10 +104,21 @@ impl Converter {
             ));
         }
 
-        // 3) Assign SSA values to each qubit (VarDefine handles allocation)
+        // 3) Reserve and define SSA values for each physical qubit index
         let mut qubit_ssa: Vec<SSAValue> = Vec::with_capacity(program.total_qubits);
         for _ in 0..program.total_qubits {
             qubit_ssa.push(self.new_ssa());
+        }
+
+        for (index, &reserved_id) in qubit_ssa.iter().enumerate() {
+            let index = i64::try_from(index)
+                .map_err(|_| pecos_phir::PhirError::internal("Qubit index exceeds I64"))?;
+            block.add_instruction(Instruction::new(
+                Operation::Classical(ClassicalOp::ConstInt(index)),
+                vec![],
+                vec![reserved_id],
+                vec![Type::Int(IntWidth::I64)],
+            ));
         }
 
         // 4) Convert operations (measurements are deferred)

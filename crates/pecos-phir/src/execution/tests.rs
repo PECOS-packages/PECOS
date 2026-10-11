@@ -15,6 +15,15 @@ use pecos_engines::ClassicalEngine;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::BTreeMap;
 
+fn qubit_constant(index: u32) -> Instruction {
+    Instruction::new(
+        Operation::Classical(ClassicalOp::ConstInt(i64::from(index))),
+        vec![],
+        vec![SSAValue::new(index)],
+        vec![Type::Int(crate::types::IntWidth::I64)],
+    )
+}
+
 /// Create a simple PHIR module for testing
 fn create_test_module() -> Module {
     // Create a simple module with an H gate
@@ -31,7 +40,7 @@ fn create_test_module() -> Module {
     let main_block = Block {
         label: None,
         arguments: vec![],
-        operations: vec![h_instruction],
+        operations: vec![qubit_constant(0), h_instruction],
         terminator: None,
         attributes: BTreeMap::new(),
     };
@@ -96,6 +105,8 @@ fn create_bell_state_module() -> Module {
         label: None,
         arguments: vec![],
         operations: vec![
+            qubit_constant(0),
+            qubit_constant(1),
             h_instruction,
             cx_instruction,
             measure1_instruction,
@@ -299,6 +310,9 @@ fn run_instructions(instructions: &[Instruction]) -> PhirProcessor {
 #[test]
 fn test_processor_rz_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let rz_instr = instr(
@@ -319,6 +333,9 @@ fn test_processor_rz_gate() {
 #[test]
 fn test_processor_rxy1q_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let rxy1q_instr = instr(
@@ -339,6 +356,9 @@ fn test_processor_rxy1q_gate() {
 #[test]
 fn test_processor_rx_ry_gates() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let rx_instr = instr(
@@ -371,6 +391,9 @@ fn test_processor_rx_ry_gates() {
 #[test]
 fn test_processor_u3_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let u3_instr = instr(
@@ -398,6 +421,12 @@ fn test_processor_u3_gate() {
 #[test]
 fn test_processor_swap_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
 
     let swap_instr = instr(
@@ -418,6 +447,12 @@ fn test_processor_swap_gate() {
 #[test]
 fn test_processor_rzz_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
 
     let rzz_instr = instr(
@@ -440,6 +475,12 @@ fn test_processor_rzz_gate() {
 #[test]
 fn test_processor_cphase_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
@@ -470,6 +511,12 @@ fn test_processor_cphase_gate() {
 #[test]
 fn test_processor_cz_gate() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
 
     let cz_instr = instr(
@@ -493,6 +540,9 @@ fn test_processor_cz_gate() {
 #[test]
 fn test_processor_named_phase_sensitive_gates() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
@@ -532,6 +582,12 @@ fn test_processor_named_phase_sensitive_gates() {
 #[test]
 fn test_processor_all_named_two_qubit_roots() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
+    processor
+        .ssa_values
+        .insert(1, super::environment::TypedValue::I64(1));
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
@@ -608,6 +664,9 @@ fn test_processor_alloc_dealloc() {
 #[test]
 fn test_processor_reset() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let reset_instr = instr(
@@ -626,6 +685,9 @@ fn test_processor_reset() {
 #[test]
 fn test_processor_init_zero() {
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
 
     let init_instr = instr(
@@ -1853,6 +1915,12 @@ fn test_processor_rxyxy2q_gate() {
     let theta = Angle64::from_radians(-0.73);
     let phi = Angle64::from_radians(0.41);
     let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(2, super::environment::TypedValue::I64(2));
+    processor
+        .ssa_values
+        .insert(0, super::environment::TypedValue::I64(0));
     let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
     let instruction = instr(
         Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),

@@ -852,6 +852,15 @@ impl QisIrParser {
         match qis_name.as_str() {
             // ---- Selene-native ops (direct mapping) ----
             "qalloc" => {
+                if args.len() > 1 {
+                    return Err(PhirError::internal(
+                        "qis.qalloc requires zero or one argument",
+                    ));
+                }
+                let operands = args
+                    .iter()
+                    .map(|arg| self.arg_to_ssa(arg, &mut out))
+                    .collect();
                 let r = result.unwrap_or_else(|| self.fresh_value());
                 out.push(Instruction {
                     results: vec![r],
@@ -861,7 +870,7 @@ impl QisIrParser {
                         vec![],
                         BTreeMap::new(),
                     )),
-                    operands: vec![],
+                    operands,
                     result_types: vec![crate::types::Type::Qubit],
                     regions: vec![],
                     attributes: BTreeMap::new(),

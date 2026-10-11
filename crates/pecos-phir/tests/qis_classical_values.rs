@@ -813,6 +813,7 @@ fn processor_measurement_delivery_validation() {
     use pecos_engines::byte_message::builder::ByteMessageBuilder;
     use pecos_phir::ops::QuantumOp;
     let mut processor = PhirProcessor::new();
+    processor.ssa_values.insert(0, TypedValue::I64(0));
     let mut builder = ByteMessageBuilder::new();
     let mut measurement = classical(ClassicalOp::Assign, 1);
     measurement.operation = Operation::Quantum(QuantumOp::Measure);
@@ -849,6 +850,7 @@ fn processor_measurement_packing_batches() {
     use pecos_phir::execution::environment::DataType;
     use pecos_phir::ops::QuantumOp;
     let mut processor = PhirProcessor::new();
+    processor.ssa_values.insert(0, TypedValue::I64(0));
     processor
         .environment
         .add_variable("register", DataType::U32, 1)

@@ -542,7 +542,15 @@ mod tests {
                 blocks: vec![Block {
                     label: None,
                     arguments: vec![],
-                    operations: vec![h_instr],
+                    operations: vec![
+                        Instruction::new(
+                            Operation::Classical(crate::ops::ClassicalOp::ConstInt(0)),
+                            vec![],
+                            vec![SSAValue::new(0)],
+                            vec![Type::Int(crate::types::IntWidth::I64)],
+                        ),
+                        h_instr,
+                    ],
                     terminator: None,
                     attributes: std::collections::BTreeMap::new(),
                 }],
@@ -581,7 +589,15 @@ mod tests {
                 blocks: vec![Block {
                     label: None,
                     arguments: vec![],
-                    operations: vec![measure_instr],
+                    operations: vec![
+                        Instruction::new(
+                            Operation::Classical(crate::ops::ClassicalOp::ConstInt(0)),
+                            vec![],
+                            vec![SSAValue::new(0)],
+                            vec![Type::Int(crate::types::IntWidth::I64)],
+                        ),
+                        measure_instr,
+                    ],
                     terminator: None,
                     attributes: std::collections::BTreeMap::new(),
                 }],

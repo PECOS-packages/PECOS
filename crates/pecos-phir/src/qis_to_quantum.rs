@@ -90,7 +90,7 @@ fn convert_qis_op(
         "qalloc" => Ok(Some(Instruction {
             results: instr.results.clone(),
             operation: Operation::Quantum(QuantumOp::Alloc),
-            operands: vec![],
+            operands: instr.operands.clone(),
             result_types: vec![crate::types::Type::Qubit],
             regions: vec![],
             attributes: BTreeMap::new(),

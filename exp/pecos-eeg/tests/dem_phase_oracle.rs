@@ -254,7 +254,10 @@ fn h_formulas_with_y_stabilizer_sign() {
     // |0>|+i>: X0Z1 * Y0X1 = -Z0Y1, and Y1 is a +1 stabilizer, so the pair
     // interferes destructively through is_stabilizer's Y correction.
     let gates = [gate(GateType::H, &[1]), gate(GateType::SZ, &[1])];
-    let gens = [generator(H, "XZ", None, 0.1), generator(H, "YX", None, 0.05)];
+    let gens = [
+        generator(H, "XZ", None, 0.1),
+        generator(H, "YX", None, 0.05),
+    ];
     let exact = reference(2, &gates, &gens, &["ZI"]);
     close(exact, 0.05_f64.sin().powi(2), 1e-12);
     close(
@@ -767,4 +770,58 @@ fn exact_subset_validation_counts_bch_generated_labels() {
     let panic = std::panic::catch_unwind(|| build_dem_configured(&gens, &dets, &[], None, &second))
         .unwrap_err();
     assert_eq!(panic.downcast_ref::<String>(), Some(&message));
+}
+
+#[test]
+fn strong_first_order_sweep_matches_reference() {
+    const PAULIS: [&str; 15] = [
+        "XI", "YI", "ZI", "IX", "IY", "IZ", "XX", "XY", "XZ", "YX", "YY", "YZ", "ZX", "ZY", "ZZ",
+    ];
+    // States whose listed canonical generators are all +1, as strong_sim requires;
+    // they include Y stabilizers and generator products that carry a phase.
+    let states = [
+        (
+            vec![gate(GateType::H, &[0]), gate(GateType::CX, &[0, 1])],
+            ["XX", "ZZ"],
+        ),
+        (
+            vec![gate(GateType::H, &[1]), gate(GateType::SZ, &[1])],
+            ["ZI", "IY"],
+        ),
+        (
+            vec![
+                gate(GateType::H, &[0]),
+                gate(GateType::CX, &[0, 1]),
+                gate(GateType::SZ, &[0]),
+            ],
+            ["YX", "ZZ"],
+        ),
+    ];
+    let mut cases = Vec::new();
+    for p in PAULIS {
+        cases.push(generator(S, p, None, 0.001));
+        for q in PAULIS {
+            cases.push(generator(C, p, Some(q), 0.001));
+            cases.push(generator(A, p, Some(q), 0.001));
+        }
+    }
+    for (gates, stabs) in &states {
+        let rho = prepared(2, gates);
+        let stabs: Vec<Bm> = stabs.iter().map(|s| bm(s)).collect();
+        for case in &cases {
+            let first = lindbladian(&rho, std::slice::from_ref(case));
+            for index in 0..4 {
+                let bits = [index & 1 != 0, index & 2 != 0];
+                // strong_sim clamps its total to [0, 1], so clamp the reference too.
+                let expected =
+                    (rho[index * 4 + index].re + first[index * 4 + index].re).clamp(0.0, 1.0);
+                close(
+                    outcome_probability(&propagated(std::slice::from_ref(case)), &bits, &stabs)
+                        .total,
+                    expected,
+                    1e-12,
+                );
+            }
+        }
+    }
 }

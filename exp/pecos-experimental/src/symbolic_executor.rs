@@ -572,6 +572,44 @@ mod tests {
     }
 
     #[test]
+    fn simplify_rotations_preserves_symbolic_record_order() {
+        use pecos_core::Angle64;
+        use pecos_quantum::pass::{CircuitPass, SimplifyRotations};
+
+        let mut original = DagCircuit::new();
+        original.x(&[1]).mz(&[0]);
+        original.rzz(Angle64::HALF_TURN, &[(1, 2)]);
+        original.mz(&[1]);
+        original.mz(&[3]);
+        let mut simplified = original.clone();
+        SimplifyRotations.apply_dag(&mut simplified);
+
+        let mut before = SymbolicSparseStab::new(4);
+        let mut after = SymbolicSparseStab::new(4);
+        execute_circuit_symbolic(&mut before, &original).unwrap();
+        execute_circuit_symbolic(&mut after, &simplified).unwrap();
+        assert_eq!(
+            before.measurement_history().format_all(),
+            "[m0=0, m1=1, m2=0]"
+        );
+        assert_eq!(
+            after.measurement_history().format_all(),
+            before.measurement_history().format_all()
+        );
+        let measurements = |circuit: &DagCircuit| {
+            circuit
+                .insertion_stable_topological_order()
+                .into_iter()
+                .filter_map(|node| {
+                    let gate = circuit.gate(node).unwrap();
+                    (gate.gate_type == GateType::MZ).then(|| gate.meas_ids.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(measurements(&simplified), measurements(&original));
+    }
+
+    #[test]
     fn removed_node_reuse_preserves_insertion_order() {
         let mut circuit = DagCircuit::new();
         circuit.z(&[2]).x(&[0]);

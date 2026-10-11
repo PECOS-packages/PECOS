@@ -1043,10 +1043,8 @@ pub struct DemSamplerBuilder<'a> {
     output_mode: OutputMode,
     detector_records: Option<Vec<Vec<i32>>>,
     observable_records: Option<Vec<Vec<i32>>>,
-    measurement_order: Option<Vec<usize>>,
     detectors_json: Option<String>,
     observables_json: Option<String>,
-    observable_records_in_map_order: bool,
     detector_records_abs: Option<Vec<Vec<usize>>>,
     labels: SamplerLabels,
 }
@@ -1062,10 +1060,8 @@ impl<'a> DemSamplerBuilder<'a> {
             output_mode: OutputMode::RawMeasurements,
             detector_records: None,
             observable_records: None,
-            measurement_order: None,
             detectors_json: None,
             observables_json: None,
-            observable_records_in_map_order: false,
             detector_records_abs: None,
             labels: SamplerLabels::default(),
         }
@@ -1122,7 +1118,6 @@ impl<'a> DemSamplerBuilder<'a> {
         self.observable_records = None;
         self.detectors_json = None;
         self.observables_json = None;
-        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1141,7 +1136,6 @@ impl<'a> DemSamplerBuilder<'a> {
         self.observable_records = Some(observable_records);
         self.detectors_json = None;
         self.observables_json = None;
-        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1162,7 +1156,6 @@ impl<'a> DemSamplerBuilder<'a> {
     pub fn with_observable_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.observable_records = Some(records);
         self.observables_json = None;
-        self.observable_records_in_map_order = false;
         self
     }
 
@@ -1173,7 +1166,7 @@ impl<'a> DemSamplerBuilder<'a> {
     /// # Errors
     /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
     /// references. Agreement between records and ids is checked at build time
-    /// using the final measurement order.
+    /// using influence-map emission positions.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
         super::builder::validate_sampler_json(json, self.influence_map, true)
             .map_err(|err| err.to_string())?;
@@ -1189,12 +1182,11 @@ impl<'a> DemSamplerBuilder<'a> {
     /// # Errors
     /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
     /// references. Agreement between records and ids is checked at build time
-    /// using the final measurement order.
+    /// using influence-map emission positions.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
         super::builder::validate_sampler_json(json, self.influence_map, false)
             .map_err(|err| err.to_string())?;
         self.observables_json = Some(json.to_string());
-        self.observable_records_in_map_order = false;
         Ok(self)
     }
 
@@ -1325,7 +1317,6 @@ impl<'a> DemSamplerBuilder<'a> {
             }
             let records = records;
             self.observable_records = Some(records);
-            self.observable_records_in_map_order = true;
         }
 
         let observable_labels: Vec<Option<String>> =
@@ -1347,26 +1338,6 @@ impl<'a> DemSamplerBuilder<'a> {
         Ok(self)
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
-    )]
-    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
-        self.set_measurement_order_internal(order)
-    }
-
-    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
-        self
-    }
-
     /// Build the sampler.
     ///
     /// # Errors
@@ -1374,55 +1345,32 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Returns an error if detector definitions reference non-deterministic
     /// measurements or are not linearly independent over `Z_2`, or
     /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
-    /// Invalid record ranges and incomplete measurement orders are errors.
-    /// On an empty map, record bounds and order coverage are not checked;
+    /// Invalid record ranges are errors.
+    /// On an empty map, record bounds are not checked;
     /// detector independence and other configuration checks still apply.
     pub fn build(mut self) -> Result<DemSampler, DetectorValidationError> {
-        let im_to_tc = super::builder::sampler_measurement_mapping(
-            self.influence_map,
-            self.measurement_order.as_deref(),
-        )
-        .map_err(|error| match error {
-            super::DemBuilderError::ParseError(message)
-            | super::DemBuilderError::ConfigurationError(message) => {
-                DetectorValidationError::InvalidMetadata { message }
+        super::builder::validate_sampler_measurements(self.influence_map).map_err(|error| {
+            match error {
+                super::DemBuilderError::ParseError(message)
+                | super::DemBuilderError::ConfigurationError(message) => {
+                    DetectorValidationError::InvalidMetadata { message }
+                }
+                other => other.into(),
             }
-            other => other.into(),
         })?;
         if let Some(json) = &self.detectors_json {
             self.detector_records = Some(super::builder::parse_detector_record_vectors(
                 json,
                 self.influence_map,
-                im_to_tc.as_deref(),
             )?);
         }
         if let Some(json) = &self.observables_json {
             self.observable_records = Some(super::builder::parse_observable_record_vectors(
                 json,
                 self.influence_map,
-                im_to_tc.as_deref(),
             )?);
         }
         let num_measurements = self.influence_map.measurements.len();
-        if self.observable_records_in_map_order
-            && let Some(mapping) = &im_to_tc
-        {
-            for records in self.observable_records.iter_mut().flatten() {
-                for record in records {
-                    let im =
-                        super::types::record_offset_to_absolute_index(num_measurements, *record)
-                            .and_then(|index| mapping.get(index))
-                            .ok_or_else(|| DetectorValidationError::InvalidMetadata {
-                                message: format!("record offset {record} is out of range"),
-                            })?;
-                    *record = i32::try_from(*im).map_err(|_| {
-                        DetectorValidationError::InvalidMetadata {
-                            message: format!("resolved measurement index {im} exceeds i32 range"),
-                        }
-                    })?;
-                }
-            }
-        }
         super::builder::validate_sampler_records(
             "Detector",
             self.detector_records.as_deref().unwrap_or_default(),
@@ -1451,7 +1399,7 @@ impl<'a> DemSamplerBuilder<'a> {
 
         match self.output_mode {
             OutputMode::RawMeasurements => self.build_raw(),
-            OutputMode::DetectorEvents => self.build_detector(im_to_tc.as_deref()),
+            OutputMode::DetectorEvents => self.build_detector(),
         }
     }
 
@@ -1526,23 +1474,13 @@ impl<'a> DemSamplerBuilder<'a> {
     ///
     /// Validates detector definitions, then uses `DemSamplerBuilder` to build
     /// the mechanism table in detector coordinates.
-    fn build_detector(
-        self,
-        im_to_tc: Option<&[usize]>,
-    ) -> Result<DemSampler, DetectorValidationError> {
+    fn build_detector(self) -> Result<DemSampler, DetectorValidationError> {
         use super::dem_sampler::SamplingEngineBuilder;
 
         let num_measurements = self.influence_map.measurements.len();
 
         // Validate: check which measurements are deterministic (before partial move)
-        let mut deterministic = self.compute_deterministic_mask();
-        if let Some(mapping) = im_to_tc {
-            let map_mask = deterministic.clone();
-            for (im, &tc) in mapping.iter().enumerate() {
-                deterministic[tc] = map_mask[im];
-            }
-        }
-
+        let deterministic = self.compute_deterministic_mask();
         let detector_records = self.detector_records.unwrap_or_default();
         let observable_records = self.observable_records.unwrap_or_default();
         let num_detectors = detector_records.len();
@@ -1590,10 +1528,6 @@ impl<'a> DemSamplerBuilder<'a> {
 
         if let Some(per_gate) = self.per_gate {
             builder = builder.with_per_gate_noise(per_gate);
-        }
-
-        if let Some(order) = self.measurement_order {
-            builder = builder.set_measurement_order_internal(order);
         }
 
         let inner = builder.build()?;

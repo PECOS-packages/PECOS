@@ -6,17 +6,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
-### Deprecations
-
-- Deprecated `DemBuilder::with_measurement_order`,
-  `DemSamplerBuilder::with_measurement_order`, `SamplingEngineBuilder::with_measurement_order`,
-  `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,
-  `MemStabSimBuilder::measurement_order`, `MeasurementNoiseModel::with_measurement_order`, and
-  `MeasurementNoiseModel::set_measurement_order`, plus the Python `DemBuilder.with_measurement_order`
-  and `DemSamplerBuilder.with_measurement_order` methods. Circuit-built influence maps
-  already use emission order; express a different record frame with `meas_ids` in metadata.
-  Existing mapping behavior and validation remain unchanged.
-
 ### Decoder changes
 
 - `windowed` specs with a buffer previously returned the result of a monolithic
@@ -33,6 +22,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python breaking changes
+
+- Seeded samples change for every engine on the shared Monte Carlo loop (including
+  QIS/Guppy, QASM and PHIR). A seed now determines each shot from its global index,
+  independently of the worker count and random draws in earlier shots.
+
+- Removed `DemBuilder.with_measurement_order` and `DemSamplerBuilder.with_measurement_order`
+  from `pecos_rslib.qec`, including their type stubs. Write detector/observable records
+  in influence-map (emission) order, or reference stamped `meas_ids` in metadata.
+  For a foreign record frame, permute sampled outcomes after sampling.
 
 - `TickCircuit.add_observable` now accepts `reference=0` or `reference=1` to store
   the optional noiseless observable value, with the JSON parser's integer-only validation.
@@ -121,6 +119,22 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust breaking changes
 
+- Seeded samples change for every engine on the shared Monte Carlo loop. Each shot
+  is reseeded from the run seed and its global index before resetting the engine.
+- `WorkerSeedRecord.seed` is replaced by `first_shot`, the worker's first global
+  shot index. `SeedReport.base_seed` now drives replay; `root_seed` is provenance
+  only. Old serialized reports must be regenerated. Shot-seed derivation is stable,
+  but component derivation uses `DefaultHasher`, so seeded samples are not promised
+  stable across Rust releases.
+
+- Removed `DemBuilder::with_measurement_order`,
+  `DemSamplerBuilder::with_measurement_order`, `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,
+  `MemStabSimBuilder::measurement_order`, `MeasurementNoiseModel::with_measurement_order`,
+  `MeasurementNoiseModel::set_measurement_order`, and the public
+  `MeasurementNoiseModel::im_to_tc_order` field. Write detector/observable records in
+  influence-map order (emission order for circuit-built maps), or reference stamped
+  `meas_ids` in metadata. For a foreign record frame, permute sampled outcomes after sampling.
+
 - `DagCircuit::as_dag_mut` has been removed; use the gate APIs to preserve
   circuit bookkeeping.
 - The `pecos-hugr` crate and `pecos_quantum::hugr_convert` module have been
@@ -147,10 +161,31 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   the measured qubit in its X-basis eigenstate, including during fault propagation.
 - Symbolic execution and noisy history building now take `&DagCircuit` and use
   `DagCircuit::insertion_stable_topological_order` to preserve measurement record
-  positions. Gate insertion sequences survive removal and node-index reuse,
-  and are preserved when cloning a circuit. This opt-in traversal costs
-  O(E + V log V); `topological_order` and
+  positions. Gate insertion keys survive removal and node-index reuse,
+  and are preserved when cloning a circuit. Pass replacements inherit the
+  original key with a replacement index appended; nested replacements extend
+  that path again. This preserves their original position relative to other
+  gates and keeps metadata history consistent with the same ordering.
+  This opt-in traversal costs O(E + D V log V), where D is one plus replacement
+  nesting depth (O(E + V log V) for bounded depth); `topological_order` and
   `iter_gates_topo` retain their fast O(V + E) traversal for other consumers.
+- `DagCircuit::connect` and `connect_all` return `DagWireError` (re-exported from
+  `pecos_quantum` and `pecos::quantum`, along with `DagGateError`) instead of
+  `DagWouldCycleError`. Besides cycles, they now reject a missing gate and an
+  exact duplicate `(from, to, qubit)` wire; `connect_all` checks every shared
+  qubit before adding any wire. Python's `DagCircuit.connect` and `connect_all`
+  raise `ValueError` for these.
+- `DagCircuit::remove_gate` bridges each qubit wire through the removed gate,
+  so its predecessor and successor stay ordered. Code that removed a gate and
+  then reconnected its neighbours with `connect` now gets
+  `DagWireError::Duplicate`; drop the reconnection.
+- Auto-wired insertion (`add_gate_auto_wire` and the gate builders) wires each
+  new gate after every gate in its qubits' append frontier. `add_gate` leaves
+  the frontier unchanged; `connect` from a frontier gate moves it to the tails
+  of the destination's chain; removing a frontier gate puts its predecessors
+  back. `.meta()` and `last_added_node` follow auto-wired insertion history,
+  survive removal, and are not moved by unwired insertion. Auto-wiring errors
+  are returned as `DagGateError::Wiring` instead of being discarded.
 - The pecos-phir HUGR functions `compile_hugr_via_phir`,
   `compile_hugr_bytes_via_phir`, `hugr_to_phir_mlir`, and
   `PhirEngineBuilder::from_hugr_bytes` have been removed, along with the
@@ -165,6 +200,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
+- Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
+  a `TickCircuit`, could be placed before existing gates on the same qubit.
+  After a removal an append could also panic, or wire from an unrelated gate
+  that reused the freed slot. Removing a gate also dropped the order between its
+  neighbours.
+- `DagCircuit::wires` reported the same qubit for every parallel wire between
+  two gates.
+- `CancelInverses`, `MergeAdjacentRotations`, and `PeepholeOptimize` no longer
+  rewrite across a manual bypass wire. `SimplifyRotations` rewires every wire of
+  a gate it splits into per-qubit gates, and does not split a gate that has
+  manual wires labeled outside its qubits.
+- The surface-code `DagCircuitRenderer` added SX, SXdg, T, and Tdg without
+  wires, so they could be ordered out of program order. Python `DagCircuit` now
+  has `sx` and `sxdg` builders.
 - Dense rotation-family matrices now use the signed `(-pi, pi]` angle
   representative and agree exactly with the simulators. This changes
   `ToMatrix` output by a global `-1` for stored negative rotation angles,

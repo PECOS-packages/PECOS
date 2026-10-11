@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -700,6 +701,7 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_if(self, node: IfStmt) -> list[str]:
         """Generate conditional statements."""
+        reject_permute_in_region(node, "QASM")
         lines = []
 
         # Render condition
@@ -726,12 +728,14 @@ class AstToQasm(BaseVisitor[list[str]]):
 
         return lines
 
-    def visit_while(self, _node: WhileStmt) -> list[str]:
+    def visit_while(self, node: WhileStmt) -> list[str]:
         """While loops are not supported in QASM 2.0."""
+        reject_permute_in_region(node, "QASM")
         return ["// ERROR: While loops not supported in QASM 2.0"]
 
-    def visit_for(self, _node: ForStmt) -> list[str]:
+    def visit_for(self, node: ForStmt) -> list[str]:
         """For loops are not supported in QASM 2.0."""
+        reject_permute_in_region(node, "QASM")
         return ["// ERROR: For loops not supported in QASM 2.0"]
 
     def visit_repeat(self, node: RepeatStmt) -> list[str]:

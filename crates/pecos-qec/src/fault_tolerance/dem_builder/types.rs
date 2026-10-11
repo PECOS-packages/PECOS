@@ -4988,11 +4988,6 @@ pub struct MeasurementNoiseModel {
     pub mechanisms: BTreeMap<MeasurementMechanism, f64>,
     /// Total number of measurements in the circuit.
     pub num_measurements: usize,
-    /// Optional mapping from influence-map index to original circuit order.
-    ///
-    /// Set only through the deprecated measurement-order setters; it will be
-    /// removed together with them.
-    pub im_to_tc_order: Option<Vec<usize>>,
     /// Quantified approximations introduced by categorical signature conversion.
     pub idle_noise_residuals: Vec<MeasurementNoiseChannelResidual>,
 }
@@ -5004,29 +4999,8 @@ impl MeasurementNoiseModel {
         Self {
             mechanisms: BTreeMap::new(),
             num_measurements,
-            im_to_tc_order: None,
             idle_noise_residuals: Vec::new(),
         }
-    }
-
-    /// Sets the measurement order mapping from influence-map order to circuit order.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Detection events follow the influence map's measurement order, which is emission order for circuit-built maps. Permute sampled outcomes after sampling to use a different record frame."
-    )]
-    pub fn with_measurement_order(mut self, im_to_tc: Vec<usize>) -> Self {
-        self.im_to_tc_order = Some(im_to_tc);
-        self
-    }
-
-    /// Sets the measurement order mapping in place.
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Detection events follow the influence map's measurement order, which is emission order for circuit-built maps. Permute sampled outcomes after sampling to use a different record frame."
-    )]
-    pub fn set_measurement_order(&mut self, im_to_tc: Vec<usize>) {
-        self.im_to_tc_order = Some(im_to_tc);
     }
 
     /// Returns the number of distinct mechanisms.
@@ -5087,19 +5061,7 @@ impl MeasurementNoiseModel {
         outcomes: &[bool],
         detector_records: &[Vec<i32>],
     ) -> Vec<bool> {
-        let tc_outcomes: Vec<bool> = if let Some(ref im_to_tc) = self.im_to_tc_order {
-            let mut reordered = vec![false; outcomes.len()];
-            for (im_idx, &tc_idx) in im_to_tc.iter().enumerate() {
-                if im_idx < outcomes.len() && tc_idx < reordered.len() {
-                    reordered[tc_idx] = outcomes[im_idx];
-                }
-            }
-            reordered
-        } else {
-            outcomes.to_vec()
-        };
-
-        Self::to_detection_events_internal(&tc_outcomes, detector_records)
+        Self::to_detection_events_internal(outcomes, detector_records)
     }
 
     fn to_detection_events_internal(outcomes: &[bool], detector_records: &[Vec<i32>]) -> Vec<bool> {

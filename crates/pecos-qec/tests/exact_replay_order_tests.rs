@@ -37,10 +37,8 @@ fn exact_replay_rejects_missing_measurement_nodes() {
     }
 }
 
-// exercises the deprecated measurement-order API
-#[allow(deprecated)]
 #[test]
-fn exact_crosstalk_translates_non_identity_measurement_order() {
+fn exact_crosstalk_uses_map_positions() {
     use pecos_core::Gate;
     use pecos_qec::fault_tolerance::dem_builder::{
         MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel,
@@ -65,11 +63,10 @@ fn exact_crosstalk_translates_non_identity_measurement_order() {
         .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
     let builder = DemBuilder::new(&map)
         .with_exact_branch_replay_context(&dag)
-        .with_measurement_order(vec![1, 0])
         .with_noise_config(noise)
-        .with_detectors_json(r#"[{"id":0,"records":[1]},{"id":1,"records":[0]}]"#)
+        .with_detectors_json(r#"[{"id":0,"records":[0]},{"id":1,"records":[1]}]"#)
         .unwrap()
-        .with_observables_json(r#"[{"id":0,"records":[1]}]"#)
+        .with_observables_json(r#"[{"id":0,"records":[0]}]"#)
         .unwrap();
     let dem = builder.try_build().unwrap();
     // The hidden q0 measurement is zero; its 0->1 transition has probability
@@ -81,16 +78,6 @@ fn exact_crosstalk_translates_non_identity_measurement_order() {
             .collect::<Vec<_>>(),
         ["error(0.1) D0 L0"]
     );
-    // The target's record has no matching occurrence in this invalid order.
-    // The public build must return a configuration error, not panic downstream.
-    let error = builder
-        .with_measurement_order(vec![1, 1])
-        .try_build()
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        pecos_qec::fault_tolerance::dem_builder::DemBuilderError::ConfigurationError(_)
-    ));
 }
 
 #[test]
@@ -123,10 +110,8 @@ fn exact_replay_with_out_of_order_stamps() {
     );
 }
 
-// exercises the deprecated measurement-order API
-#[allow(deprecated)]
 #[test]
-fn exact_replay_translates_non_identity_measurement_order() {
+fn exact_replay_records_and_stamps_name_the_same_measurements() {
     let dag = circuit(false, false);
     let map = DagFaultAnalyzer::new(&dag)
         .build_influence_map()
@@ -139,15 +124,14 @@ fn exact_replay_translates_non_identity_measurement_order() {
                 r#"[{"id":0,"meas_ids":[0]}]"#,
             )
         } else {
-            // Caller record order is spectator(q2), target(q1), the reverse of
-            // the map. Record 1 therefore names the target for both D0 and L0.
+            // Map emission order is target(q1), spectator(q2). Record 0
+            // names the target for both D0 and L0.
             (
-                r#"[{"id":0,"records":[1]},{"id":1,"records":[0]}]"#,
-                r#"[{"id":0,"records":[1]}]"#,
+                r#"[{"id":0,"records":[0]},{"id":1,"records":[1]}]"#,
+                r#"[{"id":0,"records":[0]}]"#,
             )
         };
         let dem = DemBuilder::new(&map)
-            .with_measurement_order(vec![2, 1])
             .with_exact_branch_replay_context(&dag)
             .with_noise_config(identity_replacement_noise())
             .with_detectors_json(detectors)

@@ -2042,7 +2042,7 @@ class DagCircuitRenderer(CircuitRenderer):
         _basis: str,
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
-        from pecos_rslib import DagCircuit, Gate, GateType
+        from pecos_rslib import DagCircuit
 
         circuit = DagCircuit()
         allocated: set[int] = set()
@@ -2067,10 +2067,10 @@ class DagCircuitRenderer(CircuitRenderer):
                 circuit.h([op.qubits[0]])
 
             elif op.op_type == OpType.SX:
-                circuit.add_gate(Gate(GateType.SX, qubits=[op.qubits[0]]))
+                circuit.sx([op.qubits[0]])
 
             elif op.op_type == OpType.SXDG:
-                circuit.add_gate(Gate(GateType.SXdg, qubits=[op.qubits[0]]))
+                circuit.sxdg([op.qubits[0]])
 
             elif op.op_type == OpType.SZ:
                 circuit.sz([op.qubits[0]])
@@ -2084,8 +2084,11 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.Z:
                 circuit.z([op.qubits[0]])
 
-            elif op.op_type in {OpType.T, OpType.TDG}:
-                circuit.add_gate(Gate(GateType.T if op.op_type == OpType.T else GateType.Tdg, qubits=op.qubits))
+            elif op.op_type == OpType.T:
+                circuit.t(op.qubits)
+
+            elif op.op_type == OpType.TDG:
+                circuit.tdg(op.qubits)
 
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
@@ -3833,7 +3836,7 @@ def generate_dem_from_tick_circuit_via_stim(
 
 
 def get_measurement_order_from_tick_circuit(tc: TickCircuit) -> list[int]:
-    """Return measured qubits in the shared reader's emission order."""
+    """Return one qubit per emitted measurement, retaining repeated measurements."""
     return [qubit for qubit, _ in tc.measurement_emission()]
 
 

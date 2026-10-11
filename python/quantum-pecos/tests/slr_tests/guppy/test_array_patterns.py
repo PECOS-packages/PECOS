@@ -30,9 +30,9 @@ class TestArrayUnpacking:
         to unpack a single qubit, raising UnpackableError.
 
         After the fix, `GuppyContext.populate_slot_locals` builds a
-        single namespace-wide table that is read by both
-        `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
-        the emitter's `_local_name`; colliding candidates get `_`-suffixed
+        single namespace-wide table that is read by
+        `GuppyLinearityState.from_allocators(..., slot_locals=...)`, whose
+        bindings every later rebinding reuses; colliding candidates get `_`-suffixed
         until unique. So `q[0]` becomes `q_0_` (one underscore appended,
         since `q_0` is taken by the other register), and `q_0[0]` stays
         `q_0_0`. The compiled Guppy + HUGR build cleanly.

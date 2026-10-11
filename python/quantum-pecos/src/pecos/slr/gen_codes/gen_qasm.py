@@ -14,6 +14,7 @@ from __future__ import annotations
 import warnings
 
 import pecos as pc
+from pecos.slr.gen_codes._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
 
 
@@ -115,6 +116,8 @@ class QASMGenerator(Generator):
         previous_scope = self.enter_block(block)
 
         block_name = type(block).__name__
+        if block_name in ("If", "While", "For"):
+            reject_permute_in_region(block, "QASMGenerator")
 
         if block_name == "While":
             msg = (
@@ -201,13 +204,7 @@ class QASMGenerator(Generator):
 
     def _contains_permute(self, block) -> bool:
         """Recursively check if a block contains any Permute operations."""
-        for op in block.ops:
-            if type(op).__name__ == "Permute":
-                return True
-            # Recursively check nested blocks
-            if hasattr(op, "ops") and self._contains_permute(op):
-                return True
-        return False
+        return any(iter_permutes(block))
 
     def generate_op(self, op):
         op_name = type(op).__name__

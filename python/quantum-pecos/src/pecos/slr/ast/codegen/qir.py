@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -1034,6 +1035,7 @@ class AstToQir:
 
     def _process_if(self, node: IfStmt) -> None:
         """Process an if statement."""
+        reject_permute_in_region(node, "QIR")
         pred = self._as_i1(self._eval_expression(node.condition))
 
         if node.else_body:
@@ -1059,6 +1061,7 @@ class AstToQir:
         silently dropped the loop condition and all iterations (a
         miscompile qir-qis cannot catch, since one pass is valid QIR).
         """
+        reject_permute_in_region(node, "QIR")
         msg = (
             "QIR codegen does not support While loops (unbounded "
             "iteration / fixed-point linear state is out of scope for "

@@ -289,34 +289,6 @@ fn dag_update_refuses_duplicate_measurement_ids() {
         .expect("the rejected edit must leave distinct measurement IDs");
 }
 
-// exercises the deprecated measurement-order API
-/// The deprecated qubit-occurrence mapping keeps its guard against
-/// non-positional stamped IDs, even when the requested order is the identity.
-/// A different record frame can be expressed with `meas_ids` in metadata.
-#[allow(deprecated)]
-#[test]
-fn measurement_order_is_refused_on_a_stamped_id_circuit() {
-    let dag = parity_check_with_ids([9, 4, 7]);
-    let map = InfluenceBuilder::new(&dag)
-        .unwrap()
-        .with_circuit_annotations()
-        .expect("annotations resolve")
-        .build()
-        .expect("circuit is replayable");
-
-    let err = DemSamplerBuilder::new(&map)
-        .with_uniform_noise(0.01)
-        .raw_measurements()
-        .with_measurement_order(vec![0, 1, 2])
-        .build()
-        .map(|_| ())
-        .expect_err("stamped ids already define the mapping");
-    assert!(matches!(
-        err,
-        pecos_qec::fault_tolerance::dem_builder::DetectorValidationError::InvalidMetadata { .. }
-    ));
-}
-
 /// A detector can reference exactly one measurement of a batched gate --
 /// previously inexpressible, because a node id covered the whole batch. The
 /// annotation Pauli must touch only that measurement's qubit.

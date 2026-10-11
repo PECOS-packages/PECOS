@@ -2104,9 +2104,10 @@ def generate_circuit_level_dem_from_builder(
             source-informed decomposition. ``"terminal_graphlike"`` groups raw
             mechanisms first, then pairs detector terminals by coordinate
             distance; it can invent nonphysical components. Which one decodes
-            better depends on how a DEM was built: on uniform-noise memory DEMs
-            from this function, terminal decoded as well as or better than
-            source with correlated PyMatching (issue #1187), so
+            better depends on how a DEM was built: in the memory experiments of
+            issue #1187 on this function (uniform noise, ``num_rounds`` equal to
+            the distance, default circuit options), terminal decoded as well as
+            or better than source with correlated PyMatching, so
             ``surface_code_memory`` uses it for PyMatching-family decoders.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
@@ -3706,13 +3707,15 @@ def surface_code_memory(
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Typed decoder specification or legacy decoder string
             passed to ``SampleBatch.decode``. PyMatching-family decoders use
-            the terminal graphlike decomposition: on uniform-noise memory DEMs
-            from this helper it decoded as well as or better than the
-            source-informed one with correlated PyMatching (issue #1187).
-            Which decomposition decodes better depends on how a DEM was built,
-            so compare both on DEMs from other paths. For the source-informed
-            decomposition here, call ``generate_circuit_level_dem_from_builder``
-            with ``dem_decomposition="source_graphlike"``.
+            the terminal graphlike decomposition: in the memory experiments of
+            issue #1187 (uniform noise, ``rounds`` equal to ``distance``,
+            default circuit options) it decoded as well as or better than the
+            source-informed one with correlated PyMatching. Which decomposition
+            decodes better depends on how a DEM was built, so compare both on
+            DEMs from other paths. For the source-informed decomposition here,
+            call ``generate_circuit_level_dem_from_builder`` with
+            ``decompose_errors=True`` and
+            ``dem_decomposition="source_graphlike"``.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.

@@ -116,17 +116,19 @@ fn lower_cphase_angle(lambda: Angle64, control: QubitId, target: QubitId) -> [Ga
     ]
 }
 
-/// Lower a phase on zero, one, or two all-one operands to hardware gates.
+/// Lower a phase on the all-one subspace to hardware gates.
 ///
 /// A zero-operand phase is a scalar and is rejected unless its normalized angle
 /// is zero: a `Gate` list has no global-phase carrier. Once a carrier exists,
 /// nontrivial scalars should be emitted instead. A
 /// one-operand phase becomes exactly `U(0, 0, gamma)`. A two-operand phase uses
-/// [`lower_cphase`] so its phase-carrying `U` leg is preserved.
+/// [`lower_cphase`] so its phase-carrying `U` leg is preserved. A three-operand
+/// phase at exactly π lowers to one `CCZ`.
 ///
 /// # Errors
 /// Returns an error if the phase exceeds the two-operand direct hardware lowering
-/// limit (the operator itself is valid), an operand is repeated, or a nontrivial
+/// limit, except for the three-operand π case (the operator itself is valid),
+/// an operand is repeated, or a nontrivial
 /// zero-operand phase cannot be represented.
 pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Result<Vec<Gate>, PhaseGateError> {
     lower_phase_angle(Angle64::from_radians(gamma_radians), qubits)
@@ -146,6 +148,10 @@ pub(crate) fn lower_phase_angle(
         &[control, target] => {
             crate::unitary_rep::validate_phase_qubits(&[control.index(), target.index()])?;
             lower_cphase_angle(gamma, control, target).to_vec()
+        }
+        &[a, b, c] if gamma == Angle64::HALF_TURN => {
+            crate::unitary_rep::validate_phase_qubits(&[a.index(), b.index(), c.index()])?;
+            vec![Gate::ccz(&[(a, b, c)])]
         }
         _ => {
             return Err(PhaseGateError::TooManyQubits {
@@ -178,6 +184,27 @@ mod tests {
             lower_phase(0.37, &[QubitId(7), QubitId(7)]),
             Err(PhaseGateError::DuplicateQubit { qubit: 7 })
         );
+    }
+
+    #[test]
+    fn lower_phase_three_operand_pi_is_ccz() {
+        let qubits = [QubitId(4), QubitId(0), QubitId(2)];
+        assert_eq!(lower_phase(PI, &qubits), Ok(vec![Gate::ccz(&[(4, 0, 2)])]));
+        assert_eq!(
+            lower_phase(PI / 2.0, &qubits),
+            Err(PhaseGateError::TooManyQubits { num_qubits: 3 })
+        );
+        assert_eq!(
+            lower_phase(PI, &[QubitId(4), QubitId(0), QubitId(4)]),
+            Err(PhaseGateError::DuplicateQubit { qubit: 4 })
+        );
+        for num_qubits in [4, 200, 256] {
+            let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
+            assert_eq!(
+                lower_phase(PI, &qubits),
+                Err(PhaseGateError::TooManyQubits { num_qubits })
+            );
+        }
     }
 
     const TOLERANCE: f64 = 1.0e-12;

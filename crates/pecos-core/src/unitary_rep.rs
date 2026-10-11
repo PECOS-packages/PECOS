@@ -217,7 +217,7 @@ impl NamedGate {
 pub enum PhaseGateError {
     /// A gate list has no carrier for a nontrivial global phase.
     UnrepresentableGlobalPhase { phase: Angle64 },
-    /// Direct hardware lowering supports at most two phase operands.
+    /// Direct hardware lowering supports at most two phase operands, except CCZ.
     TooManyQubits { num_qubits: usize },
     /// Operands must be distinct.
     DuplicateQubit { qubit: usize },
@@ -236,7 +236,7 @@ impl std::fmt::Display for PhaseGateError {
             Self::TooManyQubits { num_qubits } => {
                 write!(
                     f,
-                    "Phase direct hardware lowering supports at most two operands, got {num_qubits}"
+                    "Phase direct hardware lowering supports at most two operands (except three-operand pi as CCZ), got {num_qubits}"
                 )
             }
             Self::DuplicateQubit { qubit } => write!(
@@ -2269,7 +2269,8 @@ impl UnitaryRep {
     ///
     /// # Panics
     /// Panics on invalid phase operands, phases exceeding the two-operand hardware
-    /// lowering limit, or a global phase that a `Gate` list cannot represent.
+    /// lowering limit (except three-operand π phases, which lower to CCZ), or a
+    /// global phase that a `Gate` list cannot represent.
     /// Use [`Self::try_decompose`] for caller data.
     #[must_use]
     pub fn decompose(&self) -> Vec<crate::Gate> {
@@ -2286,7 +2287,8 @@ impl UnitaryRep {
     ///
     /// # Errors
     /// Rejects phase descriptors whose operand lists have invalid arity or duplicates,
-    /// or exceed the two-operand direct hardware lowering limit. Also rejects
+    /// or exceed the two-operand direct hardware lowering limit (except three-operand
+    /// π phases, which lower to CCZ). Also rejects
     /// unrepresentable global phases, including errors nested inside composed,
     /// tensor, adjoint, or phased expressions.
     pub fn try_decompose(&self) -> Result<Vec<crate::Gate>, PhaseGateError> {

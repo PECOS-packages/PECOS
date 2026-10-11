@@ -170,6 +170,34 @@ fn allocation_reuses_freed_index() {
 }
 
 #[test]
+fn deallocation_frees_only_its_index() {
+    // Index 3 stays allocated across the free of 0, so dynamic allocation
+    // skips it.
+    let module = module(
+        "call void @___qalloc(i64 3)\n\
+         %a = call i64 @___qalloc()\n\
+         call void @___qfree(i64 %a)\n\
+         %b = call i64 @___qalloc()\n\
+         %c = call i64 @___qalloc()\n\
+         %d = call i64 @___qalloc()\n\
+         %e = call i64 @___qalloc()",
+    );
+    let allocations: Vec<u32> = module.body.blocks[0]
+        .operations
+        .iter()
+        .filter(|op| matches!(op.operation, Operation::Quantum(QuantumOp::Alloc)))
+        .map(|op| op.results[0].id)
+        .collect();
+    let mut engine = PhirEngine::new(module).unwrap();
+    engine.generate_commands().unwrap();
+    let indices: Vec<TypedValue> = allocations
+        .iter()
+        .map(|id| engine.processor.ssa_values[id].clone())
+        .collect();
+    assert_eq!(indices, [3, 0, 0, 1, 2, 4].map(TypedValue::I64));
+}
+
+#[test]
 fn explicit_allocation_index() {
     for spelling in ["___qalloc", "__quantum__rt__qubit_allocate"] {
         let engine = generated(&format!("call void @{spelling}(i64 3)"));

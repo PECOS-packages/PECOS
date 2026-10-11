@@ -1338,11 +1338,12 @@ fn normalize_qis_name(name: &str) -> String {
         return rest.to_string();
     }
 
-    // Runtime qubit management
-    if name.contains("__rt__qubit_allocate") {
+    // Runtime qubit management. The `_array` forms take a register size, not
+    // a qubit, so they must not match.
+    if name.ends_with("__rt__qubit_allocate") {
         return "qalloc".to_string();
     }
-    if name.contains("__rt__qubit_release") {
+    if name.ends_with("__rt__qubit_release") {
         return "qfree".to_string();
     }
 
@@ -1471,6 +1472,12 @@ mod tests {
             "qalloc"
         );
         assert_eq!(normalize_qis_name("__quantum__rt__qubit_release"), "qfree");
+        for array_call in [
+            "__quantum__rt__qubit_allocate_array",
+            "__quantum__rt__qubit_release_array",
+        ] {
+            assert_eq!(normalize_qis_name(array_call), array_call);
+        }
     }
 
     #[test]

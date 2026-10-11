@@ -4989,6 +4989,9 @@ pub struct MeasurementNoiseModel {
     /// Total number of measurements in the circuit.
     pub num_measurements: usize,
     /// Optional mapping from influence-map index to original circuit order.
+    ///
+    /// Set only through the deprecated measurement-order setters; it will be
+    /// removed together with them.
     pub im_to_tc_order: Option<Vec<usize>>,
     /// Quantified approximations introduced by categorical signature conversion.
     pub idle_noise_residuals: Vec<MeasurementNoiseChannelResidual>,
@@ -5008,12 +5011,20 @@ impl MeasurementNoiseModel {
 
     /// Sets the measurement order mapping from influence-map order to circuit order.
     #[must_use]
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Detection events follow the influence map's measurement order, which is emission order for circuit-built maps. Permute sampled outcomes after sampling to use a different record frame."
+    )]
     pub fn with_measurement_order(mut self, im_to_tc: Vec<usize>) -> Self {
         self.im_to_tc_order = Some(im_to_tc);
         self
     }
 
     /// Sets the measurement order mapping in place.
+    #[deprecated(
+        since = "0.2.0-dev.0",
+        note = "Detection events follow the influence map's measurement order, which is emission order for circuit-built maps. Permute sampled outcomes after sampling to use a different record frame."
+    )]
     pub fn set_measurement_order(&mut self, im_to_tc: Vec<usize>) {
         self.im_to_tc_order = Some(im_to_tc);
     }

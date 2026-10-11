@@ -133,7 +133,7 @@ impl<'a> MemBuilder<'a> {
             self.influence_map,
             self.measurement_order.as_deref(),
         )? {
-            mem.set_measurement_order(im_to_tc);
+            mem.im_to_tc_order = Some(im_to_tc);
         }
 
         let locations = &self.influence_map.locations;

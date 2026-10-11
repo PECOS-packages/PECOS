@@ -166,7 +166,6 @@ pub struct DemStabSimBuilder {
     per_gate_noise: Option<PerGateTypeNoise>,
     detectors: Vec<DetectorDef>,
     observables: Vec<DemOutput>,
-    measurement_order: Option<Vec<usize>>,
 }
 
 impl DemStabSimBuilder {
@@ -210,22 +209,6 @@ impl DemStabSimBuilder {
         self
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
-    )]
-    pub fn measurement_order(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
-        self
-    }
-
     /// Build the [`DemStabSim`], consuming the builder.
     ///
     /// # Errors
@@ -257,10 +240,6 @@ impl DemStabSimBuilder {
         builder = builder
             .with_detector_records(detector_records)
             .with_observable_records(observable_records);
-
-        if let Some(order) = self.measurement_order {
-            builder = builder.set_measurement_order_internal(order);
-        }
 
         let detectors = self.detectors.clone();
         let observables = self.observables.clone();

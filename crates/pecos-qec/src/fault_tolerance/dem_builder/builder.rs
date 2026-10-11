@@ -142,17 +142,12 @@ pub struct DemBuilder<'a> {
     observables: Vec<ParsedObservable>,
     /// Total number of measurements in the circuit.
     num_measurements: usize,
-    /// Optional measurement order: maps `TickCircuit` measurement index -> qubit.
-    /// This allows proper mapping between record offsets and influence map indices.
-    measurement_order: Option<Vec<usize>>,
     /// Optional circuit context for future exact replacement-branch replay.
     exact_branch_context: Option<ExactBranchReplayContext<'a>>,
     /// The immutable replay circuit is preflighted when its context is attached.
     exact_branch_unsupported_gate: Option<crate::fault_tolerance::UnsupportedGateError>,
     /// Ideal symbolic measurement history shared by exact branch replays.
     exact_ideal_history_cache: RefCell<Option<Rc<ExactIdealReplay>>>,
-    /// Record-position translation shared by ordinary and exact paths.
-    tc_to_influence_cache: RefCell<Option<Rc<BTreeMap<usize, usize>>>>,
     /// Per-gate cache for exact replacement-branch replay effects.
     exact_branch_cache: RefCell<BTreeMap<usize, ExactBranchReplayAnalysis>>,
 }
@@ -351,11 +346,9 @@ impl<'a> DemBuilder<'a> {
             detectors: Vec::new(),
             observables: Vec::new(),
             num_measurements: influence_map.measurements.len(),
-            measurement_order: None,
             exact_branch_context: None,
             exact_branch_unsupported_gate: None,
             exact_ideal_history_cache: RefCell::new(None),
-            tc_to_influence_cache: RefCell::new(None),
             exact_branch_cache: RefCell::new(BTreeMap::new()),
         }
     }
@@ -363,7 +356,6 @@ impl<'a> DemBuilder<'a> {
     fn clear_exact_branch_cache(&mut self) {
         self.exact_branch_cache.get_mut().clear();
         self.exact_ideal_history_cache.get_mut().take();
-        self.tc_to_influence_cache.get_mut().take();
     }
 
     /// Sets the noise configuration from individual parameters.
@@ -517,27 +509,6 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
-    )]
-    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
-        self.set_measurement_order_internal(order)
-    }
-
-    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
-        self.clear_exact_branch_cache();
-        self
-    }
-
     /// Parses and sets detector definitions from JSON.
     ///
     /// Each object accepts either `"id"` or `"detector_id"` as the identifier key.
@@ -677,17 +648,7 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
-        let resolved = self.resolve_meas_id_to_tc_index(meas_id)?;
-        // A stamped id resolves to an influence-map index, while record offsets
-        // count tick records; with a measurement order the two differ, so map
-        // the index back. Legacy positional ids are already tick indices.
-        let index = if self.influence_map.meas_ids.is_empty() || self.measurement_order.is_none() {
-            resolved
-        } else {
-            self.tc_to_influence()
-                .iter()
-                .find_map(|(&tc, &im)| (im == resolved).then_some(tc))?
-        };
+        let index = self.resolve_meas_id_to_tc_index(meas_id)?;
         let measurement = i64::try_from(index).ok()?;
         let total = i64::try_from(self.num_measurements).ok()?;
         i32::try_from(measurement - total).ok()
@@ -769,75 +730,16 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
-    /// Match record positions to map positions by qubit and occurrence once.
-    fn tc_to_influence(&self) -> Rc<BTreeMap<usize, usize>> {
-        if let Some(cached) = self.tc_to_influence_cache.borrow().as_ref().cloned() {
-            return cached;
-        }
-        // Build a mapping from (qubit, occurrence_index) to influence_map_index
-        // This handles multi-round circuits where the same qubit is measured multiple times
-        let tc_to_influence: BTreeMap<usize, usize> =
-            if let Some(ref order) = self.measurement_order {
-                // Count occurrences of each qubit in TickCircuit order
-                let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
-
-                for &qubit in order {
-                    let count = tc_qubit_counts.entry(qubit).or_insert(0);
-                    tc_qubit_occurrence.push((qubit, *count));
-                    *count += 1;
-                }
-
-                // Count occurrences of each qubit in influence map order
-                let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut im_qubit_occurrence: Vec<(usize, usize)> =
-                    Vec::with_capacity(self.influence_map.measurements.len());
-
-                for &(_, qubit, _) in &self.influence_map.measurements {
-                    let count = im_qubit_counts.entry(qubit).or_insert(0);
-                    im_qubit_occurrence.push((qubit, *count));
-                    *count += 1;
-                }
-
-                // Build (qubit, occurrence) -> influence_map_index mapping
-                let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
-                    .collect();
-
-                // Build TickCircuit index -> influence map index mapping
-                tc_qubit_occurrence
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(tc_idx, &(qubit, occ))| {
-                        qubit_occ_to_im
-                            .get(&(qubit, occ))
-                            .map(|&im_idx| (tc_idx, im_idx))
-                    })
-                    .collect()
-            } else {
-                // No measurement order provided, assume indices match
-                (0..self.num_measurements).map(|i| (i, i)).collect()
-            };
-
-        let mapping = Rc::new(tc_to_influence);
-        *self.tc_to_influence_cache.borrow_mut() = Some(mapping.clone());
-        mapping
-    }
-
     /// Resolve references into influence-map positions. Records and legacy
-    /// positional IDs use the occurrence translation; stamped IDs already name
-    /// map positions and must not be translated a second time.
+    /// positional IDs name emission positions; stamped IDs resolve to map positions.
     fn measurement_indices_from_refs(
         &self,
         records: &[i32],
         meas_ids: &[usize],
     ) -> Result<Vec<usize>, DemBuilderError> {
         let translate = |record_index| {
-            self.tc_to_influence()
-                .get(&record_index)
-                .copied()
+            (record_index < self.num_measurements)
+                .then_some(record_index)
                 .ok_or_else(|| {
                     DemBuilderError::ConfigurationError(format!(
                         "record position {record_index} has no measurement in the influence map"
@@ -914,48 +816,7 @@ impl<'a> DemBuilder<'a> {
                 self.num_measurements
             )));
         }
-        if actual != 0
-            && let Some(order) = &self.measurement_order
-        {
-            let uncovered = actual - self.tc_to_influence().len();
-            if uncovered != 0 {
-                return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement_order leaves {uncovered} of {actual} measurement(s) uncovered"
-                )));
-            }
-            if order.len() != actual {
-                return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement_order has {} entries but the circuit performs {actual} measurement(s); \
-                     a measurement order must cover every measurement so record offsets resolve in the same frame",
-                    order.len()
-                )));
-            }
-        }
-        // Internal-consistency guard: stable MeasIds must be unique. A
-        // duplicate would make stamped-id resolution bind to the wrong
-        // measurement; it indicates a trace/replay bug, not bad caller input.
-        let mut seen = std::collections::HashSet::with_capacity(self.influence_map.meas_ids.len());
-        for mid in &self.influence_map.meas_ids {
-            if !seen.insert(mid.index()) {
-                return Err(DemBuilderError::ParseError(format!(
-                    "duplicate stable MeasId {} in the traced circuit; each \
-                     measurement must have a unique stamped id",
-                    mid.index()
-                )));
-            }
-        }
-        // The deprecated qubit-occurrence API refuses non-positional stamps.
-        // Circuit-built maps use emission order independently of stamped IDs, so
-        // this guard can also reject an identity order.
-        if self.measurement_order.is_some() && !stamped_ids_are_positional(self.influence_map) {
-            return Err(DemBuilderError::ConfigurationError(
-                "measurement_order cannot be combined with a circuit whose stable \
-                 MeasIds are non-positional; the caller's record order is not \
-                 recoverable"
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        reject_duplicate_stamped_meas_ids(self.influence_map)
     }
 
     /// # Errors
@@ -2476,34 +2337,15 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.
-    ///
-    /// When `measurement_order` is provided, this properly maps between
-    /// `TickCircuit` measurement indices (used in record offsets) and influence
-    /// map measurement indices (used in `detector_idx`).
-    ///
-    /// For multi-round circuits where the same qubit is measured multiple times,
-    /// we match measurements by their relative order within each qubit's measurement
-    /// sequence.
     fn build_measurement_mappings(&self) -> (BTreeMap<usize, Vec<u32>>, BTreeMap<usize, Vec<u32>>) {
         let mut meas_to_detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let mut meas_to_observables: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let influence_observable_ids = self.influence_map.observable_ids();
 
-        let tc_to_influence = self.tc_to_influence();
-
         for det in &self.detectors {
             if det.records.is_empty() {
                 for &meas_id in &det.meas_ids {
-                    // Stamped resolution already yields the influence-map
-                    // index; only the legacy positional branch speaks tick
-                    // order and needs the occurrence mapping.
-                    let resolved = self.resolve_meas_id_to_tc_index(meas_id);
-                    let influence_idx = if self.influence_map.meas_ids.is_empty() {
-                        resolved.and_then(|tc_idx| tc_to_influence.get(&tc_idx).copied())
-                    } else {
-                        resolved
-                    };
-                    if let Some(influence_idx) = influence_idx {
+                    if let Some(influence_idx) = self.resolve_meas_id_to_tc_index(meas_id) {
                         meas_to_detectors
                             .entry(influence_idx)
                             .or_default()
@@ -2512,9 +2354,9 @@ impl<'a> DemBuilder<'a> {
                 }
             } else {
                 for &rec in &det.records {
-                    if let Some(tc_meas_idx) =
+                    if let Some(influence_idx) =
                         record_offset_to_absolute_index(self.num_measurements, rec)
-                        && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                            .filter(|&index| index < self.num_measurements)
                     {
                         meas_to_detectors
                             .entry(influence_idx)
@@ -2534,14 +2376,7 @@ impl<'a> DemBuilder<'a> {
             }
             if obs.records.is_empty() {
                 for &meas_id in &obs.meas_ids {
-                    // Same split as the detector branch above.
-                    let resolved = self.resolve_meas_id_to_tc_index(meas_id);
-                    let influence_idx = if self.influence_map.meas_ids.is_empty() {
-                        resolved.and_then(|tc_idx| tc_to_influence.get(&tc_idx).copied())
-                    } else {
-                        resolved
-                    };
-                    if let Some(influence_idx) = influence_idx {
+                    if let Some(influence_idx) = self.resolve_meas_id_to_tc_index(meas_id) {
                         meas_to_observables
                             .entry(influence_idx)
                             .or_default()
@@ -2550,9 +2385,9 @@ impl<'a> DemBuilder<'a> {
                 }
             } else {
                 for &rec in &obs.records {
-                    if let Some(tc_meas_idx) =
+                    if let Some(influence_idx) =
                         record_offset_to_absolute_index(self.num_measurements, rec)
-                        && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                            .filter(|&index| index < self.num_measurements)
                     {
                         meas_to_observables
                             .entry(influence_idx)
@@ -2861,25 +2696,11 @@ fn extract_definition_label(
     }
 }
 
-/// Validate the caller's order and invert the shared TC-to-map occurrence mapping.
-/// Sampler record vectors are read in TC coordinates; raw dual output is in map order.
-pub(crate) fn sampler_measurement_mapping(
+/// Validate measurement counts and unique stamped IDs at sampler and MEM boundaries.
+pub(crate) fn validate_sampler_measurements(
     map: &DagFaultInfluenceMap,
-    order: Option<&[usize]>,
-) -> Result<Option<Vec<usize>>, DemBuilderError> {
-    let mut builder = DemBuilder::new(map);
-    if let Some(order) = order {
-        builder = builder.set_measurement_order_internal(order.to_vec());
-    }
-    builder.validate_measurement_count()?;
-    if order.is_none() || map.measurements.is_empty() {
-        return Ok(None);
-    }
-    let mut mapping = vec![0; map.measurements.len()];
-    for (&tc, &im) in builder.tc_to_influence().iter() {
-        mapping[im] = tc;
-    }
-    Ok(Some(mapping))
+) -> Result<(), DemBuilderError> {
+    DemBuilder::new(map).validate_measurement_count()
 }
 
 /// Validate raw sampler records at the construction boundary. With no measurements,
@@ -2930,8 +2751,8 @@ fn validate_dense_sampler_ids(kind: &str, ids: &[u32]) -> Result<(), DemBuilderE
     Ok(())
 }
 
-/// Check schema, dense ids and each reference at the setter. Redundancy depends
-/// on the final measurement order, so it is checked when the sampler is built.
+/// Check schema, dense ids and each reference at the setter. Co-present record
+/// and ID redundancy is checked when the sampler is built.
 pub(crate) fn validate_sampler_json(
     json: &str,
     map: &DagFaultInfluenceMap,
@@ -2959,10 +2780,10 @@ pub(crate) fn validate_sampler_json(
     validate_dense_sampler_ids(kind, &refs.iter().map(|entry| entry.0).collect::<Vec<_>>())?;
     for (id, records, meas_ids) in refs {
         if map.measurements.is_empty() {
-            resolve_sampler_record_vector(kind, id, &records, &meas_ids, map, None)?;
+            resolve_sampler_record_vector(kind, id, &records, &meas_ids, map)?;
         } else {
-            resolve_sampler_record_vector(kind, id, &records, &[], map, None)?;
-            resolve_sampler_record_vector(kind, id, &[], &meas_ids, map, None)?;
+            resolve_sampler_record_vector(kind, id, &records, &[], map)?;
+            resolve_sampler_record_vector(kind, id, &[], &meas_ids, map)?;
         }
     }
     Ok(())
@@ -2989,8 +2810,8 @@ pub(crate) fn validate_sampler_json(
 /// when it is empty -- matching `DemBuilder`. The returned vector uses the
 /// sampler's storage convention: negative `records` offsets are kept as-is
 /// (preferred when present, like `DemBuilder`), while a `meas_ids`-only entry is
-/// emitted as absolute TC positions (positive ints). Stamped ids pass through
-/// `im_to_tc`; legacy positional ids already name TC positions. Entries are
+/// emitted as absolute map positions (positive ints). Legacy positional ids
+/// already name map positions. Entries are
 /// sorted by declared id, which must be unique and dense from zero.
 ///
 /// An empty influence map (no measurements) keeps the escape hatch: refs are
@@ -2998,7 +2819,6 @@ pub(crate) fn validate_sampler_json(
 pub(crate) fn parse_detector_record_vectors(
     json: &str,
     influence_map: &DagFaultInfluenceMap,
-    im_to_tc: Option<&[usize]>,
 ) -> Result<Vec<Vec<i32>>, DemBuilderError> {
     reject_duplicate_stamped_meas_ids(influence_map)?;
     let mut definitions = parse_detectors_json(json)?;
@@ -3010,14 +2830,7 @@ pub(crate) fn parse_detector_record_vectors(
     definitions
         .iter()
         .map(|d| {
-            resolve_sampler_record_vector(
-                "Detector",
-                d.id,
-                &d.records,
-                &d.meas_ids,
-                influence_map,
-                im_to_tc,
-            )
+            resolve_sampler_record_vector("Detector", d.id, &d.records, &d.meas_ids, influence_map)
         })
         .collect()
 }
@@ -3026,7 +2839,6 @@ pub(crate) fn parse_detector_record_vectors(
 pub(crate) fn parse_observable_record_vectors(
     json: &str,
     influence_map: &DagFaultInfluenceMap,
-    im_to_tc: Option<&[usize]>,
 ) -> Result<Vec<Vec<i32>>, DemBuilderError> {
     reject_duplicate_stamped_meas_ids(influence_map)?;
     let mut definitions = parse_observables_json(json)?;
@@ -3044,27 +2856,9 @@ pub(crate) fn parse_observable_record_vectors(
                 &o.records,
                 &o.meas_ids,
                 influence_map,
-                im_to_tc,
             )
         })
         .collect()
-}
-
-/// Whether the map's stamped ids are exactly the positional set `0..n`.
-///
-/// True for every circuit whose ids were minted by `mz()`; false for external
-/// (Guppy/traced) ids. An empty id list counts as positional -- the legacy
-/// id-less case.
-fn stamped_ids_are_positional(influence_map: &DagFaultInfluenceMap) -> bool {
-    let n = influence_map.meas_ids.len();
-    let mut seen = vec![false; n];
-    for mid in &influence_map.meas_ids {
-        let Some(slot) = seen.get_mut(mid.index()) else {
-            return false;
-        };
-        *slot = true;
-    }
-    seen.into_iter().all(|s| s)
 }
 
 /// Reject a circuit whose stable `MeasId`s are not unique, before resolving any
@@ -3113,7 +2907,6 @@ fn resolve_sampler_record_vector(
     records: &[i32],
     meas_ids: &[usize],
     influence_map: &DagFaultInfluenceMap,
-    im_to_tc: Option<&[usize]>,
 ) -> Result<Vec<i32>, DemBuilderError> {
     let num_measurements = influence_map.measurements.len();
 
@@ -3153,20 +2946,12 @@ fn resolve_sampler_record_vector(
     let meas_ids_abs = meas_ids
         .iter()
         .map(|&meas_id| {
-            resolve_sampler_meas_id(influence_map, meas_id)
-                .map(|index| {
-                    if influence_map.meas_ids.is_empty() {
-                        index
-                    } else {
-                        im_to_tc.map_or(index, |mapping| mapping[index])
-                    }
-                })
-                .ok_or_else(|| {
-                    DemBuilderError::ParseError(format!(
-                        "{kind} {id} references meas_id {meas_id}, which is not present in \
+            resolve_sampler_meas_id(influence_map, meas_id).ok_or_else(|| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} references meas_id {meas_id}, which is not present in \
                      the circuit's {num_measurements} measurement(s)"
-                    ))
-                })
+                ))
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -3970,32 +3755,27 @@ mod tests {
         assert!(error.contains("meas_id 0, which is not present"), "{error}");
     }
 
-    // exercises the deprecated measurement-order API
-    #[allow(deprecated)]
     #[test]
-    fn map_only_redundancy_uses_measurement_order() {
+    fn map_only_redundancy_uses_map_positions() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
         map.measurements = vec![(0, 0, 0), (1, 1, 0)];
-        // Caller record 0 is q1 (map position 1). Legacy id 0 also names q1.
-        // With stamps [0, 1], stamped id 1 names q1 without translation.
+        // Record 1 names q1. Legacy id 1 names that position; stamp 9 names
+        // it independently of the numeric record position.
         for stamped in [false, true] {
             if stamped {
                 map.meas_ids = vec![
-                    pecos_core::MeasId::from_raw(0),
-                    pecos_core::MeasId::from_raw(1),
+                    pecos_core::MeasId::from_raw(4),
+                    pecos_core::MeasId::from_raw(9),
                 ];
             }
-            for (id, accepted) in [(usize::from(stamped), true), (usize::from(!stamped), false)] {
-                let json = format!(r#"[{{"id":0,"records":[0],"meas_ids":[{id}]}}]"#);
+            for (id, accepted) in [
+                (if stamped { 9 } else { 1 }, true),
+                (if stamped { 4 } else { 0 }, false),
+            ] {
+                let json = format!(r#"[{{"id":0,"records":[1],"meas_ids":[{id}]}}]"#);
                 for builder in [
-                    DemBuilder::new(&map)
-                        .with_measurement_order(vec![1, 0])
-                        .with_detectors_json(&json)
-                        .unwrap(),
-                    DemBuilder::new(&map)
-                        .with_measurement_order(vec![1, 0])
-                        .with_observables_json(&json)
-                        .unwrap(),
+                    DemBuilder::new(&map).with_detectors_json(&json).unwrap(),
+                    DemBuilder::new(&map).with_observables_json(&json).unwrap(),
                 ] {
                     let result = builder.try_build();
                     if accepted {
@@ -4006,7 +3786,7 @@ mod tests {
                     }
                     if accepted {
                         assert_eq!(
-                            builder.measurement_indices_from_refs(&[0], &[]).unwrap(),
+                            builder.measurement_indices_from_refs(&[1], &[]).unwrap(),
                             [1]
                         );
                         assert_eq!(
@@ -4107,37 +3887,27 @@ mod tests {
         }
     }
 
-    // exercises the deprecated measurement-order API
-    #[allow(deprecated)]
     #[test]
     fn exact_reference_translation_preserves_legacy_ids_and_multiplicity() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
         map.measurements = vec![(2, 0, 0), (3, 1, 0), (4, 0, 0)];
-        let builder = DemBuilder::new(&map).with_measurement_order(vec![1, 0, 0]);
+        let builder = DemBuilder::new(&map);
         // q1 first, then the first and second q0 measurements. Duplicate
         // references remain duplicate terms, for XOR cancellation downstream.
         assert_eq!(
             builder
-                .measurement_indices_from_refs(&[0, 1, 2, 1], &[])
+                .measurement_indices_from_refs(&[1, 0, 2, 0], &[])
                 .unwrap(),
             [1, 0, 2, 0]
         );
         assert_eq!(
             builder
-                .measurement_indices_from_refs(&[], &[0, 1, 2, 1])
+                .measurement_indices_from_refs(&[], &[1, 0, 2, 0])
                 .unwrap(),
             [1, 0, 2, 0]
         );
-        let first = builder.tc_to_influence();
-        assert!(Rc::ptr_eq(&first, &builder.tc_to_influence()));
-        let builder = builder.with_measurement_order(vec![0, 1, 0]);
-        assert_eq!(
-            builder
-                .measurement_indices_from_refs(&[0, 1, 2], &[])
-                .unwrap(),
-            [0, 1, 2]
-        );
-        assert!(!Rc::ptr_eq(&first, &builder.tc_to_influence()));
+        // Positive record positions must retain the old identity mapping's bound.
+        assert!(builder.measurement_indices_from_refs(&[3], &[]).is_err());
     }
 
     #[test]
@@ -5467,7 +5237,6 @@ mod tests {
         let builder = builder.with_detectors_json("[]").unwrap();
         assert!(builder.exact_branch_cache.borrow().is_empty());
         assert!(builder.exact_ideal_history_cache.borrow().is_none());
-        assert!(builder.tc_to_influence_cache.borrow().is_none());
     }
 
     #[test]
@@ -5567,110 +5336,6 @@ mod tests {
         assert!(
             result.is_err(),
             "a duplicate stable MeasId must fail loud, not bind to the first",
-        );
-    }
-
-    // exercises the deprecated measurement-order API
-    /// The stamped branch of `build_measurement_mappings` must use the
-    /// resolved index directly: it is already an influence-map index, and
-    /// composing it with the tick-to-influence occurrence mapping re-binds
-    /// annotations whenever the two orders differ.
-    #[allow(deprecated)]
-    #[test]
-    fn stamped_meas_id_mapping_is_not_recomposed_through_the_order() {
-        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
-        // Map order disagrees with tick record order: the map holds q1's
-        // measurement (id 1) first, q0's (id 0) second. The id SET is
-        // positional, so the order combination is accepted.
-        influence_map.meas_ids = vec![
-            pecos_core::MeasId::from_raw(1),
-            pecos_core::MeasId::from_raw(0),
-        ];
-        influence_map.measurements = vec![(5, 1, 0), (2, 0, 0)];
-        let builder = DemBuilder::new(&influence_map)
-            .with_measurement_order(vec![0, 1])
-            .with_detectors_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
-            .unwrap();
-        let (meas_to_detectors, _) = builder.build_measurement_mappings();
-        assert_eq!(
-            meas_to_detectors.keys().copied().collect::<Vec<_>>(),
-            vec![0],
-            "id 1 lives at influence index 0; composing through the order \
-             re-bound it to index 1"
-        );
-    }
-
-    /// A stamped id's detector records count tick records, not map positions.
-    ///
-    /// The map holds q1 (id 1) at index 0 and q0 (id 0) at index 1; the order
-    /// puts q0 at tick record 0 and q1 at record 1. `meas_ids: [1]` therefore
-    /// names tick record 1, offset -1, the same as `records: [-1]`.
-    // exercises the deprecated measurement-order API
-    #[allow(deprecated)]
-    #[test]
-    fn stamped_detector_records_use_tick_record_coordinates() {
-        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
-        influence_map.meas_ids = vec![
-            pecos_core::MeasId::from_raw(1),
-            pecos_core::MeasId::from_raw(0),
-        ];
-        influence_map.measurements = vec![(5, 1, 0), (2, 0, 0)];
-        let records = |detectors_json: &str| {
-            let dem = DemBuilder::new(&influence_map)
-                .with_num_measurements(2)
-                .with_measurement_order(vec![0, 1])
-                .with_detectors_json(detectors_json)
-                .unwrap()
-                .build()
-                .expect("the DEM builds");
-            dem.detectors[0].records.to_vec()
-        };
-        assert_eq!(records(r#"[{"id": 0, "meas_ids": [1]}]"#), vec![-1]);
-        assert_eq!(records(r#"[{"id": 0, "records": [-1]}]"#), vec![-1]);
-    }
-
-    /// Positional (minted) ids with a supplied order remain accepted by the
-    /// deprecated API's existing guard.
-    // exercises the deprecated measurement-order API
-    #[allow(deprecated)]
-    #[test]
-    fn measurement_order_is_accepted_with_positional_ids() {
-        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
-        influence_map.meas_ids = vec![
-            pecos_core::MeasId::from_raw(0),
-            pecos_core::MeasId::from_raw(1),
-        ];
-        influence_map.measurements = vec![(2, 0, 0), (5, 1, 0)];
-        let result = DemBuilder::new(&influence_map)
-            .with_measurement_order(vec![0, 1])
-            .with_detectors_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
-            .unwrap()
-            .try_build();
-        assert!(
-            result.is_ok(),
-            "minted ids keep per-qubit chronology; the combination is benign: {result:?}"
-        );
-    }
-
-    // exercises the deprecated measurement-order API
-    #[allow(deprecated)]
-    #[test]
-    fn test_validate_measurement_count_rejects_order_with_stamped_ids() {
-        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
-        influence_map.meas_ids = vec![
-            pecos_core::MeasId::from_raw(9),
-            pecos_core::MeasId::from_raw(4),
-        ];
-        influence_map.measurements = vec![(0, 0, 0), (1, 1, 0)];
-        let result = DemBuilder::new(&influence_map)
-            .with_measurement_order(vec![0, 1])
-            .with_detectors_json(r#"[{"id": 0, "meas_ids": [9]}]"#)
-            .unwrap()
-            .try_build();
-        assert!(
-            result.is_err(),
-            "the deprecated measurement-order guard rejects non-positional \
-             stamped ids",
         );
     }
 

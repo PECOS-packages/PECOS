@@ -3833,7 +3833,7 @@ def generate_dem_from_tick_circuit_via_stim(
 
 
 def get_measurement_order_from_tick_circuit(tc: TickCircuit) -> list[int]:
-    """Return measured qubits in the shared reader's emission order."""
+    """Return one qubit per emitted measurement, retaining repeated measurements."""
     return [qubit for qubit, _ in tc.measurement_emission()]
 
 

@@ -146,7 +146,6 @@ impl MemStabSim {
 pub struct MemStabSimBuilder {
     circuit: Option<DagCircuit>,
     noise: NoiseConfig,
-    measurement_order: Option<Vec<usize>>,
 }
 
 impl MemStabSimBuilder {
@@ -164,22 +163,6 @@ impl MemStabSimBuilder {
         self
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
-    )]
-    pub fn measurement_order(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
-        self
-    }
-
     /// Build the [`MemStabSim`], consuming the builder.
     ///
     /// # Errors
@@ -194,11 +177,7 @@ impl MemStabSimBuilder {
         // Forward the whole configuration. Unpacking it into the four scalars
         // rebuilds a fresh `NoiseConfig` and drops everything else the caller
         // set -- per-gate rate tables above all -- without reporting it.
-        let mut builder = MemBuilder::new(&influence_map).with_noise_config(self.noise);
-
-        if let Some(order) = self.measurement_order {
-            builder = builder.set_measurement_order_internal(order);
-        }
+        let builder = MemBuilder::new(&influence_map).with_noise_config(self.noise);
 
         Ok(MemStabSim {
             mnm: builder.build()?,

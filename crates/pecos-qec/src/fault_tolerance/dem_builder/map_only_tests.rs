@@ -33,70 +33,6 @@ fn error_text<T, E: std::fmt::Display>(result: Result<T, E>) -> String {
     }
 }
 
-// exercises the deprecated measurement-order API
-#[allow(deprecated)]
-#[test]
-fn incomplete_measurement_orders_fail_at_all_build_boundaries() {
-    let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit)
-        .build_influence_map()
-        .expect("supported circuit");
-    for order in [vec![0], vec![0, 0], vec![]] {
-        let uncovered = if order.is_empty() { 2 } else { 1 };
-        let dem_error = error_text(
-            DemBuilder::new(&map)
-                .with_measurement_order(order.clone())
-                .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
-                .unwrap()
-                .try_build(),
-        );
-        let sampler_error = error_text(
-            DemSamplerBuilder::new(&map)
-                .with_measurement_order(order.clone())
-                .with_detector_records(vec![vec![-1]])
-                .build(),
-        );
-        let engine_error = error_text(
-            SamplingEngineBuilder::new(&map)
-                .with_measurement_order(order)
-                .with_detector_records(vec![vec![-1]])
-                .build(),
-        );
-        for error in [dem_error, sampler_error, engine_error] {
-            assert!(
-                error.contains(&format!("{uncovered} of 2 measurement(s) uncovered")),
-                "{error}"
-            );
-        }
-    }
-    // A surplus entry must also fail even if the real measurements all match.
-    assert!(
-        DemBuilder::new(&map)
-            .with_measurement_order(vec![0, 1, 2])
-            .try_build()
-            .is_err()
-    );
-    let empty = DagFaultInfluenceMap::with_capacity(0);
-    assert!(
-        DemBuilder::new(&empty)
-            .with_measurement_order(vec![0])
-            .try_build()
-            .is_ok()
-    );
-    assert!(
-        DemSamplerBuilder::new(&empty)
-            .with_measurement_order(vec![0])
-            .build()
-            .is_ok()
-    );
-    assert!(
-        SamplingEngineBuilder::new(&empty)
-            .with_measurement_order(vec![0])
-            .build()
-            .is_ok()
-    );
-}
-
 #[test]
 fn sampler_json_ids_select_output_channels() {
     let circuit = two_measurements();
@@ -175,80 +111,68 @@ fn sampler_json_ids_must_be_unique_and_dense() {
     }
 }
 
-// exercises the deprecated measurement-order API
-#[allow(deprecated)]
 #[test]
-fn sampler_stamped_ids_resolve_to_final_tc_order() {
+fn sampler_stamped_ids_resolve_to_map_positions() {
     let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit)
+    let mut map = DagFaultAnalyzer::new(&circuit)
         .build_influence_map()
         .expect("supported circuit");
-    // q0 is map position 0 / stamp 0, but TC position 1 under [1, 0].
+    // Non-positional stamps separate identity from record position.
+    map.meas_ids = vec![
+        pecos_core::MeasId::from_raw(9),
+        pecos_core::MeasId::from_raw(4),
+    ];
     for json in [
-        r#"[{"id":0,"meas_ids":[0]}]"#,
-        r#"[{"id":0,"records":[1],"meas_ids":[0]}]"#,
-        r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#,
+        r#"[{"id":0,"meas_ids":[9]}]"#,
+        r#"[{"id":0,"records":[0],"meas_ids":[9]}]"#,
+        r#"[{"id":0,"records":[-2],"meas_ids":[9]}]"#,
     ] {
-        for order_first in [false, true] {
-            let mut sampler = DemSamplerBuilder::new(&map).with_noise(0.3, 0.0, 0.0, 0.0);
-            let mut engine = SamplingEngineBuilder::new(&map).with_noise(0.3, 0.0, 0.0, 0.0);
-            if order_first {
-                sampler = sampler.with_measurement_order(vec![1, 0]);
-                engine = engine.with_measurement_order(vec![1, 0]);
-            }
-            sampler = sampler
-                .with_detectors_json(json)
-                .unwrap()
-                .with_observables_json(json)
-                .unwrap();
-            engine = engine
-                .with_detectors_json(json)
-                .unwrap()
-                .with_observables_json(json)
-                .unwrap();
-            if !order_first {
-                sampler = sampler.with_measurement_order(vec![1, 0]);
-                engine = engine.with_measurement_order(vec![1, 0]);
-            }
-            for dem in [
-                sampler.build().unwrap().to_detector_error_model(),
-                engine.build().unwrap().to_detector_error_model(),
-            ] {
-                assert!(dem.to_string().contains("D0 L0"), "{}", dem.to_string());
-            }
+        let mut sampler = DemSamplerBuilder::new(&map).with_noise(0.3, 0.0, 0.0, 0.0);
+        let mut engine = SamplingEngineBuilder::new(&map).with_noise(0.3, 0.0, 0.0, 0.0);
+        sampler = sampler
+            .with_detectors_json(json)
+            .unwrap()
+            .with_observables_json(json)
+            .unwrap();
+        engine = engine
+            .with_detectors_json(json)
+            .unwrap()
+            .with_observables_json(json)
+            .unwrap();
+        for dem in [
+            sampler.build().unwrap().to_detector_error_model(),
+            engine.build().unwrap().to_detector_error_model(),
+        ] {
+            assert!(dem.to_string().contains("D0 L0"), "{}", dem.to_string());
         }
     }
     for json in [
-        r#"[{"id":0,"records":[0],"meas_ids":[0]}]"#,
-        r#"[{"id":0,"records":[0,1,1],"meas_ids":[0,1,1]}]"#,
+        r#"[{"id":0,"records":[1],"meas_ids":[9]}]"#,
+        r#"[{"id":0,"records":[0,1,1],"meas_ids":[9,9,4]}]"#,
     ] {
         for error in [
             error_text(
                 DemSamplerBuilder::new(&map)
                     .with_detectors_json(json)
                     .unwrap()
-                    .with_measurement_order(vec![1, 0])
                     .build(),
             ),
             error_text(
                 DemSamplerBuilder::new(&map)
                     .with_observables_json(json)
                     .unwrap()
-                    .with_measurement_order(vec![1, 0])
                     .build(),
             ),
             error_text(
                 SamplingEngineBuilder::new(&map)
                     .with_detectors_json(json)
                     .unwrap()
-                    .with_measurement_order(vec![1, 0])
                     .build(),
             ),
             error_text(
                 SamplingEngineBuilder::new(&map)
                     .with_observables_json(json)
                     .unwrap()
-                    .with_measurement_order(vec![1, 0])
                     .build(),
             ),
         ] {
@@ -260,15 +184,14 @@ fn sampler_stamped_ids_resolve_to_final_tc_order() {
             );
         }
     }
-    // Legacy ids already name TC positions. Translation must not apply twice.
+    // Legacy ids name map positions directly.
     let mut legacy = map;
     legacy.meas_ids.clear();
-    let json = r#"[{"id":0,"records":[1],"meas_ids":[1]}]"#;
+    let json = r#"[{"id":0,"records":[0],"meas_ids":[0]}]"#;
     let engine = SamplingEngineBuilder::new(&legacy)
         .with_noise(0.3, 0.0, 0.0, 0.0)
         .with_detectors_json(json)
         .unwrap()
-        .with_measurement_order(vec![1, 0])
         .build()
         .unwrap();
     assert!(engine.to_detector_error_model().to_string().contains("D0"));
@@ -403,11 +326,9 @@ fn dem_stab_rejects_out_of_range_user_records() {
     }
 }
 
-// exercises the deprecated measurement-order API
-#[allow(deprecated)]
 #[test]
-fn sampler_determinism_and_annotations_follow_measurement_order() {
-    // Annotation observables use map positions even when an order is set later.
+fn sampler_determinism_and_annotations_follow_map_positions() {
+    // Annotation observables and explicit detector records name the same map position.
     let mut circuit = DagCircuit::new();
     circuit.pz(&[0, 1]);
     circuit.x(&[0]);
@@ -421,14 +342,13 @@ fn sampler_determinism_and_annotations_follow_measurement_order() {
         .with_noise(0.3, 0.0, 0.0, 0.0)
         .with_circuit_annotations(&circuit)
         .unwrap()
-        .with_detector_records(vec![vec![1]])
-        .with_measurement_order(vec![1, 0])
+        .with_detector_records(vec![vec![0]])
         .build()
         .unwrap();
     let text = sampler.to_detector_error_model().to_string();
     assert!(text.contains("D0 L0"), "{text}");
 
-    // q0 is deterministic; q1 is random. TC order swaps them.
+    // q0 (position 0) is deterministic; q1 (position 1) is random.
     let mut circuit = DagCircuit::new();
     circuit.pz(&[0, 1]);
     circuit.h(&[1]);
@@ -439,15 +359,13 @@ fn sampler_determinism_and_annotations_follow_measurement_order() {
         .unwrap();
     assert!(
         DemSamplerBuilder::new(&map)
-            .with_measurement_order(vec![1, 0])
-            .with_detector_records(vec![vec![1]])
+            .with_detector_records(vec![vec![0]])
             .build()
             .is_ok()
     );
     let error = error_text(
         DemSamplerBuilder::new(&map)
-            .with_measurement_order(vec![1, 0])
-            .with_detector_records(vec![vec![0]])
+            .with_detector_records(vec![vec![1]])
             .build(),
     );
     assert!(error.contains("non-deterministic"), "{error}");
@@ -487,33 +405,24 @@ fn sampler_record_setters_replace_pending_json() {
     }
 }
 
-// exercises the deprecated measurement-order API
-#[allow(deprecated)]
 #[test]
-fn mem_builder_requires_a_complete_measurement_order() {
+fn duplicate_stamped_ids_fail_at_all_build_boundaries() {
     use super::mem_builder::MemBuilder;
+    use pecos_core::MeasId;
 
-    let circuit = two_measurements();
-    let map = DagFaultAnalyzer::new(&circuit)
-        .build_influence_map()
-        .expect("supported circuit");
-    // An uncovered measurement used to bind silently to TC index 0.
-    for order in [vec![0], vec![0, 0], vec![]] {
-        let uncovered = if order.is_empty() { 2 } else { 1 };
-        let error = error_text(MemBuilder::new(&map).with_measurement_order(order).build());
-        assert!(
-            error.contains(&format!("{uncovered} of 2 measurement(s) uncovered")),
-            "{error}"
-        );
+    // Exercise build-time validation without going through JSON or annotations.
+    // Empty maps keep opaque record coordinates, but never ambiguous stamps.
+    for measurements in [vec![], vec![(0, 0, 0), (1, 1, 0)]] {
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = measurements;
+        map.meas_ids = vec![MeasId::from_raw(9), MeasId::from_raw(9)];
+        for error in [
+            error_text(DemBuilder::new(&map).try_build()),
+            error_text(DemSamplerBuilder::new(&map).build()),
+            error_text(SamplingEngineBuilder::new(&map).build()),
+            error_text(MemBuilder::new(&map).build()),
+        ] {
+            assert!(error.contains("duplicate stable MeasId 9"), "{error}");
+        }
     }
-    // The map holds q0 then q1. The order q1, q0 puts map measurement 0 (q0)
-    // at TC index 1 and map measurement 1 (q1) at TC index 0.
-    let mem = MemBuilder::new(&map)
-        .with_measurement_order(vec![1, 0])
-        .build()
-        .unwrap();
-    assert_eq!(mem.im_to_tc_order, Some(vec![1, 0]));
-    // No order: no translation.
-    let mem = MemBuilder::new(&map).build().unwrap();
-    assert_eq!(mem.im_to_tc_order, None);
 }

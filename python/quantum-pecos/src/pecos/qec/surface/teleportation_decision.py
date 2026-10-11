@@ -9,25 +9,33 @@ include executed correction rounds and require a different model. Inputs must
 be canonical, with no pending frame. Decoding is external: XOR the raw decision
 with the decoder's predicted observable flip.
 
-The Clifford stand-in omits seed-chain, seed H and sign-fix gate noise, idle
-noise, and undetectable seed T errors (resource infidelity). Its logical-gate p1
-also differs from Guppy/QIS p1 on every Helios-native gate inside CX, preparation
-and measurement. Hook resources and their acceptance conditioning are excluded.
+The DEM uses a raw native trace of a straight-line Z-seed stand-in, preserving
+noise on every native gate. It omits the sign-fix Z Paulis: these change no fault
+propagation, but their p1 noise is missing (about 2.4% of single-qubit locations
+at d = 3). The resource seed's T and input seed's single-qubit gates are logical,
+not detectable: their X parts flip the observable undetectably, so DEM-sampled
+observable rates miss about 2 p1 of floor; decoding is unaffected. Idle noise,
+hook resources and their acceptance conditioning are excluded.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cached_property
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 from pecos_rslib.qec import SampleBatch
 
+from pecos._traced_circuit import measurement_ids_in_execution_order
 from pecos.qec.dem import DetectorErrorModel
 from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 from pecos.qec.surface.gadgets import default_allocation
 from pecos.qec.surface.logical_circuit import LogicalCircuitBuilder
+from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -36,6 +44,91 @@ if TYPE_CHECKING:
 
     from pecos.decoders import DecoderSpec
     from pecos.qec.surface.patch import SurfacePatch
+
+
+_TRACE_SEED = 712  # Any value works: the stand-in is straight-line, with no measurement-dependent branch.
+_SYNDROME_TAG = re.compile(r"(data|anc):s([xz])(\d+):meas:(\d+)")
+
+
+def _decision_stand_in_source(patch: SurfacePatch, rounds_before: int) -> str:
+    # Guppy generation imports qec.surface; load it only when a DEM is needed.
+    renderer = import_module("pecos.guppy_gen.surface_teleportation")
+    lines = ["", "@guppy", "def decision_stand_in() -> None:"]
+    for register, scope in (("data", "data"), ("resource", "anc")):
+        lines.extend(
+            [
+                f"    {register} = prep_injection_z_seed()",
+                f"    syn = syndrome_extraction_{scope}({register})",
+                '    output("injection_synx", syn.synx)',
+                '    output("injection_synz", syn.synz)',
+            ],
+        )
+    for _ in range(rounds_before):
+        lines.extend(
+            [
+                "    syn_data = syndrome_extraction_data(data)",
+                "    syn_resource = syndrome_extraction_anc(resource)",
+                '    output("data_synx", syn_data.synx)',
+                '    output("data_synz", syn_data.synz)',
+                '    output("resource_synx", syn_resource.synx)',
+                '    output("resource_synz", syn_resource.synz)',
+            ],
+        )
+    lines.extend(["    consume_t_resource(data, resource)", '    output("final_data", measure_z_basis(data))', ""])
+    return renderer.render_surface_t_teleportation_module(patch) + "\n".join(lines)
+
+
+def _decision_measurement_map(
+    patch: SurfacePatch,
+    rounds_before: int,
+    circuit: TickCircuit,
+    result_traces: Sequence[dict],
+) -> dict[int, int]:
+    rounds = []
+    readouts = []
+    for result in result_traces:
+        match = _SYNDROME_TAG.fullmatch(result["name"])
+        if match:
+            scope, family, index, ordinal = match.groups()
+            index, ordinal = int(index), int(ordinal)
+            if ordinal == 0:
+                rounds.append((scope, {"x": {}, "z": {}}))
+            if not rounds or rounds[-1][0] != scope:
+                msg = "Unexpected syndrome scope or missing :meas:0 round boundary"
+                raise ValueError(msg)
+            checks = rounds[-1][1]
+            if ordinal != sum(map(len, checks.values())) or index in checks[family] or len(result["result_ids"]) != 1:
+                msg = "Syndrome round must contain each check exactly once with one result id"
+                raise ValueError(msg)
+            checks[family][index] = result["result_ids"][0]
+        elif result["name"] == "teleportation_resource_readout":
+            readouts.append(result["result_ids"])
+    if [scope for scope, _ in rounds] != ["data", "anc"] * (rounds_before + 1):
+        msg = "Unexpected syndrome scope sequence in decision trace"
+        raise ValueError(msg)
+    for _, checks in rounds:
+        for family in ("x", "z"):
+            if set(checks[family]) != set(range(len(getattr(patch.geometry, f"{family}_stabilizers")))):
+                msg = f"Syndrome round must contain every {family} check exactly once"
+                raise ValueError(msg)
+    if len(readouts) != 1 or len(readouts[0]) != patch.geometry.num_data:
+        msg = "Decision trace must contain one complete resource readout"
+        raise ValueError(msg)
+    keys = json.loads(circuit.get_meta("measurement_keys"))
+    mapping = {}
+    for label, family, index, _segment, occurrence, ordinal in keys["stabilizer"]:
+        scope_index = 0 if label == "D" else 1
+        # Keep X1: the program's feed-forward makes X2 sensitive to X1 errors.
+        # Without the fix, X2 XOR X1 has exactly that same sensitivity.
+        mapping[ordinal] = rounds[2 * occurrence + scope_index][1][family.lower()][index]
+    data_indices = {qubit: index for index, qubit in enumerate(default_allocation(patch).data_qubits)}
+    for label, qubit, ordinal in keys["data"]:
+        if label == "A":
+            mapping[ordinal] = readouts[0][data_indices[qubit]]
+    if len(set(mapping.values())) != len(mapping):
+        msg = "Decision trace result ids must be unique"
+        raise ValueError(msg)
+    return mapping
 
 
 @dataclass(frozen=True)
@@ -50,11 +143,48 @@ class DecodedDecisionRun:
 
 @dataclass(frozen=True)
 class TeleportationDecisionModel:
-    """Decision-time detectors and one resource logical-Z flip observable."""
+    """Decision-time detectors and one resource logical-Z flip observable.
+
+    ``circuit`` is the builder stand-in defining detector ids and program record
+    transcription. ``traced_circuit`` is the lazily cached native DEM source.
+    """
 
     patch: SurfacePatch
     rounds_before: int
     circuit: TickCircuit
+
+    @cached_property
+    def traced_circuit(self) -> TickCircuit:
+        """Raw native trace of a Clifford stand-in with this model's detectors and observable; the DEM source.
+
+        The straight-line Z-seed program omits sign-fix Z Paulis. This changes
+        no fault propagation and avoids sampling a random correction path, but
+        under-counts their p1 noise. Native Clifford chains remain unsimplified.
+        """
+        loader = import_module("pecos.guppy_gen._module_loader")
+        module = loader.load_cached_guppy_source(
+            "teleportation_decision",
+            _decision_stand_in_source(self.patch, self.rounds_before),
+        )
+        traced, results = _trace_program_to_tick_circuit_with_result_traces(
+            module["decision_stand_in"],
+            self.patch.geometry.num_data + self.patch.geometry.num_qubits,
+            seed=_TRACE_SEED,
+        )
+        mapping = _decision_measurement_map(self.patch, self.rounds_before, self.circuit, results)
+        emitted = measurement_ids_in_execution_order(traced)
+        positions = {mid: position for position, mid in enumerate(emitted)}
+        if len(positions) != len(emitted) or not set(mapping.values()) <= positions.keys():
+            msg = "Decision result ids must name unique emitted measurements"
+            raise ValueError(msg)
+        for name in ("detectors", "observables"):
+            entries = json.loads(self.circuit.get_meta(name))
+            for entry in entries:
+                entry["meas_ids"] = [mapping[mid] for mid in entry["meas_ids"]]
+                entry["records"] = [positions[mid] - len(emitted) for mid in entry["meas_ids"]]
+            traced.set_meta(name, json.dumps(entries))
+        traced.set_meta("num_measurements", str(len(emitted)))
+        return traced
 
     def build_dem(
         self,
@@ -64,8 +194,8 @@ class TeleportationDecisionModel:
         p_meas: float = 0.001,
         p_prep: float = 0.0,
     ) -> DetectorErrorModel:
-        """Build the truncated DEM with logical-gate noise rates."""
-        return DetectorErrorModel.from_circuit(self.circuit, p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+        """Build the truncated DEM with native-gate noise rates."""
+        return DetectorErrorModel.from_circuit(self.traced_circuit, p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
 
     def detection_events(self, results: Mapping[str, Sequence]) -> tuple[list[list[int]], list[bool]]:
         """Return fired detector ids and raw decision parity for each shot.

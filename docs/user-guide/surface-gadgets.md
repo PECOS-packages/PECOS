@@ -1250,15 +1250,17 @@ executed by the program. In a program with several T/TDG decisions, only the
 first decision is covered. Later windows include executed correction rounds and
 are out of scope.
 
-The model assumes raw resources and canonical inputs with no pending frame. It
-omits the undetectable seed T error (resource infidelity), noise on the seed
-chain, the seed's H and the sign-fix gates, and idle noise. Single-qubit noise
-also has different meanings: Guppy/QIS applies `p1` to every Helios-native gate
-inside each CX, preparation and measurement, while this logical-gate model has
-no counterpart. At d = 3, `rounds_before = 1`, with `p1 = 0.005` and every other
-channel off, the program fired 2.86 detectors per shot against 0.10 in the
-model. Comparisons should match the two-qubit, measurement and preparation
-channels with `p1=0` until native gate lowering is available.
+The model assumes raw resources and canonical inputs with no pending frame. Its
+DEM source is a native trace (the default Selene runtime's Helios-native lowering)
+of a straight-line Z-seed stand-in, matching the program's noise per native gate.
+It omits the sign-fix Z Paulis, which change no fault propagation but leave their
+single-qubit noise uncounted: a one-sided omission of about 2.4% of single-qubit
+locations at d = 3. The seed's T and the input seed's single-qubit gates are
+logical, not detectable; their X parts flip the observable undetectably, so
+DEM-sampled observable rates miss about `2 * p1` of floor without affecting
+decoding. There is no idle noise. The native trace is built once per model, on
+the first `build_dem`; constructing a model or extracting detection events does
+not trace a program.
 
 This self-contained noiseless example checks the transcription, including the
 raw parity used by the program:
@@ -1271,7 +1273,7 @@ from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
 
 decision_patch = SurfacePatch.create(distance=3)
 decision_model = t_teleportation_decision_model(decision_patch, rounds_before=1)
-decision_dem = decision_model.build_dem(p1=0.0, p2=0.001, p_meas=0.001, p_prep=0.001)
+decision_dem = decision_model.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
 decision_program = make_surface_t_teleportation(decision_patch, rounds_before=1)
 decision_engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
 decision_results = (
@@ -1307,8 +1309,6 @@ and shot index, and QIS operations execute in program order.
 
 This costs two full runs (2x the shots). Only the first decision is decoded;
 later decisions retain their program behavior. Hook resources are unsupported.
-Quote rates with `p1=0` and matched two-qubit, measurement and preparation noise
-until the stand-in is lowered to native gates, as explained above.
 
 This self-contained example runs eight noiseless shots, so the decoder agrees
 with raw parity on every shot. The DEM's rates are the decoder's prior:
@@ -1323,7 +1323,7 @@ from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
 patch = SurfacePatch.create(distance=3)
 model = t_teleportation_decision_model(patch, rounds_before=1)
 p = 0.001
-dem = model.build_dem(p1=0.0, p2=p, p_meas=p, p_prep=p)
+dem = model.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
 
 
 def run(forced):

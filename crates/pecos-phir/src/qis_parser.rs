@@ -1338,8 +1338,10 @@ fn normalize_qis_name(name: &str) -> String {
         return rest.to_string();
     }
 
-    // Runtime qubit management. The `_array` forms take a register size, not
-    // a qubit, so they must not match.
+    // Runtime calls match by suffix: longer names such as the `_array` forms
+    // take different arguments and must not be lowered as these.
+
+    // Runtime qubit management
     if name.ends_with("__rt__qubit_allocate") {
         return "qalloc".to_string();
     }
@@ -1348,18 +1350,18 @@ fn normalize_qis_name(name: &str) -> String {
     }
 
     // Runtime result/output operations -- elide
-    if name.contains("__rt__result_get_one") || name.contains("__rt__result_get_zero") {
+    if name.ends_with("__rt__result_get_one") || name.ends_with("__rt__result_get_zero") {
         return "rt_elide".to_string();
     }
-    if name.contains("__rt__result_allocate") {
+    if name.ends_with("__rt__result_allocate") {
         return "rt_result_allocate".to_string();
     }
-    if name.contains("__rt__result_record_output")
-        || name.contains("__rt__int_record_output")
-        || name.contains("__rt__tuple_start_record_output")
-        || name.contains("__rt__tuple_end_record_output")
-        || name.contains("__rt__result_update_reference_count")
-        || name.contains("__rt__result_equal")
+    if name.ends_with("__rt__result_record_output")
+        || name.ends_with("__rt__int_record_output")
+        || name.ends_with("__rt__tuple_start_record_output")
+        || name.ends_with("__rt__tuple_end_record_output")
+        || name.ends_with("__rt__result_update_reference_count")
+        || name.ends_with("__rt__result_equal")
     {
         return "rt_elide".to_string();
     }
@@ -1475,6 +1477,8 @@ mod tests {
         for array_call in [
             "__quantum__rt__qubit_allocate_array",
             "__quantum__rt__qubit_release_array",
+            "__quantum__rt__result_allocate_array",
+            "__quantum__rt__result_record_output_array",
         ] {
             assert_eq!(normalize_qis_name(array_call), array_call);
         }

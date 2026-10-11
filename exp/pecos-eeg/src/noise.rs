@@ -27,6 +27,17 @@ pub struct NoiseInjection {
     pub rate: f64,
 }
 
+/// Validate injections for consumers that implement only H and S noise.
+pub(crate) fn assert_hs_injections(injections: &[NoiseInjection]) {
+    for injection in injections {
+        assert!(
+            matches!(injection.eeg_type, EegType::H | EegType::S),
+            "unsupported EEG type {:?}: this consumer supports only H and S injections",
+            injection.eeg_type,
+        );
+    }
+}
+
 /// One categorical depolarizing channel: choose at most one nonidentity Pauli
 /// at this location, with total probability `probability`.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +117,15 @@ pub(crate) fn label_qubits(label: &Bm) -> impl Iterator<Item = usize> + '_ {
 
 /// Trait for noise models that produce physical injections at each gate.
 ///
+/// Forward EEG propagates C/A injections carrying `label2`, and `strong_sim`
+/// computes corrections from those generators. Both silently omit C/A entries
+/// without `label2`. `dem_mapping` also omits entries without `label2`, uses C
+/// only with a supplied stabilizer group (taking absolute probability
+/// contributions), and ignores A.
+/// Heisenberg walks, coherent DEM builders, and noise compression reject them
+/// with a panic, including zero-rate injections. The exact dense reference
+/// rejects them with `EegBuildError::UnsupportedExactNoise`.
+///
 /// Implement this to specify arbitrary per-gate noise. The EEG analysis
 /// calls `noise_after_gate` for each gate in the expanded circuit,
 /// converts injections to generators, propagates them to the end, and accumulates them.
@@ -118,8 +138,9 @@ pub trait NoiseSpec: Send + Sync {
     /// The returned list is in forward-time application order. S rates are
     /// negative independent flip probabilities in both noise views; forward
     /// EEG converts them to generator coefficients at its ingress.
-    /// `UniformNoise` rates `-p/3` or `-p/15` mean independent flips of p/3 or
-    /// p/15, an approximation to the categorical depolarizing channel.
+    /// `UniformNoise` independent flips compose exactly to categorical
+    /// depolarizing for `p1 <= 3/4` and `p2 <= 15/16`. Larger positive
+    /// probabilities panic in this view; the channel view has no such restriction.
     ///
     /// The `qubits` are the qubit indices of the gate. For 2-qubit gates,
     /// idle coherent noise is typically injected on both qubits.
@@ -158,6 +179,13 @@ pub trait NoiseSpec: Send + Sync {
 /// Uniform noise model: same rates for all gates of each type.
 ///
 /// This is the original `NoiseModel` wrapped as a `NoiseSpec`.
+/// The injection view exactly represents categorical depolarizing with
+/// `q1 = (1 - sqrt(1 - 4*p1/3))/2` and
+/// `q2 = (1 - (1 - 16*p2/15)^(1/8))/2`, emitted as S rates `-q`.
+/// It panics for `p1 > 3/4` or `p2 > 15/16`; equality gives `q = 1/2`.
+/// Forward EEG separately requires `q < 1/2` for finite generator coefficients.
+/// The channel view retains the full categorical domain. Nonpositive p1/p2
+/// produce no depolarizing noise in either view.
 #[derive(Clone, Debug)]
 pub struct UniformNoise {
     /// Coherent RZ angle (radians) on both qubits after each 2-qubit gate.
@@ -202,6 +230,23 @@ impl UniformNoise {
     }
 }
 
+/// Explain why depolarizing probabilities cannot use the independent-flip view.
+/// Returns `None` within the domain, including its fully depolarizing boundaries.
+/// Nonpositive values and NaN retain the noise view's existing guard behavior.
+#[must_use]
+pub fn generator_depolarizing_violation(p1: f64, p2: f64) -> Option<String> {
+    for (name, probability, limit, fraction) in
+        [("p1", p1, 0.75, "3/4"), ("p2", p2, 0.9375, "15/16")]
+    {
+        if probability > limit {
+            return Some(format!(
+                "UniformNoise generator view requires {name} <= {fraction}; independent flips cannot represent a negative depolarizing eigenvalue ({name}={probability})"
+            ));
+        }
+    }
+    None
+}
+
 #[derive(Clone, Copy)]
 enum DepolarizingRepresentation {
     Generators,
@@ -215,6 +260,11 @@ impl UniformNoise {
         qubits: &[usize],
         representation: DepolarizingRepresentation,
     ) -> GateNoise {
+        if matches!(representation, DepolarizingRepresentation::Generators)
+            && let Some(message) = generator_depolarizing_violation(self.p1, self.p2)
+        {
+            panic!("{message}");
+        }
         let mut injections = Vec::new();
         let mut depolarizing = Vec::new();
 
@@ -344,7 +394,10 @@ impl NoiseSpec for UniformNoise {
 }
 
 fn inject_depol_1q(q: usize, prob: f64, out: &mut Vec<NoiseInjection>) {
-    let rate = -prob / 3.0;
+    // Two flips anticommute with each nonidentity Pauli. ln_1p/exp_m1
+    // avoid cancellation in (sqrt(1 - 4p/3) - 1)/2 for small p.
+    let log_eigenvalue = (-4.0 * prob / 3.0).ln_1p();
+    let rate = 0.5 * (log_eigenvalue / 2.0).exp_m1();
     for pf in [Bm::x, Bm::y, Bm::z] {
         out.push(NoiseInjection {
             eeg_type: EegType::S,
@@ -356,7 +409,10 @@ fn inject_depol_1q(q: usize, prob: f64, out: &mut Vec<NoiseInjection>) {
 }
 
 fn inject_depol_2q(qa: usize, qb: usize, prob: f64, out: &mut Vec<NoiseInjection>) {
-    let rate = -prob / 15.0;
+    // Eight flips anticommute with each nonidentity Pauli. ln_1p/exp_m1
+    // avoid cancellation in ((1 - 16p/15)^(1/8) - 1)/2 for small p.
+    let log_eigenvalue = (-16.0 * prob / 15.0).ln_1p();
+    let rate = 0.5 * (log_eigenvalue / 8.0).exp_m1();
     let pfs = [Bm::x, Bm::y, Bm::z];
     for &pa in &pfs {
         out.push(NoiseInjection {
@@ -447,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_batched_two_qubit_injections() {
-        let noise = UniformNoise::depolarizing(1.0).with_idle_rz(0.1);
+        let noise = UniformNoise::depolarizing(0.3).with_idle_rz(0.1);
         let batched = noise.noise_after_gate(0, GateType::CX, &[0, 1, 2, 3]);
         let separate: Vec<_> = [[0, 1], [2, 3]]
             .iter()

@@ -351,8 +351,8 @@ fn coherent_dem_and_compression_skip_noise_on_inserted_gates() {
             );
             assert_eq!(compressed.original_count, 0);
         } else {
-            // One mechanism; its probability follows the DEM's own S-type
-            // generator approximation, which this test does not pin.
+            // One mechanism from the custom independent S flip; this test
+            // checks provenance rather than pinning its probability.
             assert_eq!(dem.len(), 1);
             assert!(dem[0].probability > 0.0);
             assert_eq!(compressed.original_count, 1);

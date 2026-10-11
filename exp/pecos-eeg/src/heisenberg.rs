@@ -85,7 +85,8 @@ fn activate_qubit(
 /// Returns `None` for gates with neither injections nor categorical channels.
 ///
 /// # Panics
-/// Panics if the provenance flags do not match the gate count.
+/// Panics if the provenance flags do not match the gate count, or received
+/// noise includes a C or A injection, even at zero rate.
 pub fn build_noise_map(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -103,6 +104,7 @@ pub fn build_noise_map(
             let qubits: SmallVec<[usize; 4]> =
                 gate.qubits.iter().map(pecos_core::QubitId::index).collect();
             let exact = noise.exact_noise_after_gate(i, gate.gate_type, &qubits);
+            crate::noise::assert_hs_injections(&exact.injections);
             (!exact.injections.is_empty() || !exact.depolarizing.is_empty()).then_some(exact)
         })
         .collect()
@@ -620,7 +622,8 @@ fn apply_depolarizing(
 /// * `expansion_gates` - Provenance flags parallel to `gates`; all false for an unexpanded circuit
 ///
 /// # Panics
-/// Panics if the provenance flags do not match the gate count.
+/// Panics if the provenance flags do not match the gate count, or received
+/// noise includes a C or A injection, even at zero rate.
 pub fn heisenberg_detection_probability(
     gates: &[Gate],
     detector: &Bm,
@@ -647,7 +650,8 @@ pub fn heisenberg_detection_probability(
 /// Applies explicit categorical channels from the precomputed noise map.
 ///
 /// # Panics
-/// Panics if the noise map does not match the gate count.
+/// Panics if the noise map does not match the gate count, or contains a C or A
+/// injection, even at zero rate.
 #[must_use]
 pub fn heisenberg_with_noise_map(
     gates: &[Gate],
@@ -657,6 +661,9 @@ pub fn heisenberg_with_noise_map(
     prune_threshold: f64,
 ) -> f64 {
     crate::expand::assert_one_per_gate("noise_map", noise_map.len(), gates.len());
+    for exact in noise_map.iter().flatten() {
+        crate::noise::assert_hs_injections(&exact.injections);
+    }
 
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
@@ -815,7 +822,9 @@ pub fn heisenberg_with_noise_map(
                             }
                         }
                     }
-                    _ => {}
+                    crate::eeg::EegType::C | crate::eeg::EegType::A => {
+                        unreachable!("C/A injections are rejected at ingress")
+                    }
                 }
             }
         }
@@ -929,7 +938,8 @@ pub fn heisenberg_with_noise_map(
 /// Use `None` (or call [`heisenberg_detection_probability`]) for exact results.
 ///
 /// # Panics
-/// Panics if the provenance flags do not match the gate count.
+/// Panics if the provenance flags do not match the gate count, or received
+/// noise includes a C or A injection, even at zero rate.
 pub fn heisenberg_windowed(
     gates: &[Gate],
     detector: &Bm,
@@ -977,7 +987,9 @@ pub fn heisenberg_windowed(
             .then(|| {
                 let qubits_usize: SmallVec<[usize; 4]> =
                     gate_qs.iter().map(|&q| q as usize).collect();
-                noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize)
+                let exact = noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize);
+                crate::noise::assert_hs_injections(&exact.injections);
+                exact
             })
             .filter(|exact| noise_touches_active(exact, &active_qubits));
         let noise_applied = gate_noise.is_some();
@@ -1104,7 +1116,9 @@ pub fn heisenberg_windowed(
                             }
                         }
                     }
-                    _ => {}
+                    crate::eeg::EegType::C | crate::eeg::EegType::A => {
+                        unreachable!("C/A injections are rejected at ingress")
+                    }
                 }
 
                 if prune_threshold > 0.0 {
@@ -1230,7 +1244,8 @@ pub fn heisenberg_windowed(
 /// `noise.exact_noise_after_gate()`.
 ///
 /// # Panics
-/// Panics if the index provenance flags or a supplied noise map do not match the gate count.
+/// Panics if the index provenance flags or a supplied noise map do not match the gate count,
+/// or noise on a gate the walk visits includes a C or A injection, even at zero rate.
 pub fn heisenberg_sparse(
     gates: &[Gate],
     detector: &Bm,
@@ -1310,6 +1325,7 @@ pub fn heisenberg_sparse(
                 dynamic_noise = noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize);
                 &dynamic_noise
             };
+            crate::noise::assert_hs_injections(&gate_noise.injections);
 
             apply_depolarizing(&mut terms, &gate_noise.depolarizing);
             for inj in gate_noise.injections.iter().rev() {
@@ -1448,7 +1464,9 @@ pub fn heisenberg_sparse(
                             }
                         }
                     }
-                    _ => {}
+                    crate::eeg::EegType::C | crate::eeg::EegType::A => {
+                        unreachable!("C/A injections are rejected at ingress")
+                    }
                 }
             }
         }
@@ -1557,6 +1575,9 @@ pub fn heisenberg_sparse(
 }
 
 /// Convenience: expand an original circuit and compute detection probability.
+///
+/// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 pub fn heisenberg_detection_probability_from_circuit(
     original_gates: &[Gate],
     detector_meas_indices: &[usize],

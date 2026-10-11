@@ -677,7 +677,17 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
-        let index = self.resolve_meas_id_to_tc_index(meas_id)?;
+        let resolved = self.resolve_meas_id_to_tc_index(meas_id)?;
+        // A stamped id resolves to an influence-map index, while record offsets
+        // count tick records; with a measurement order the two differ, so map
+        // the index back. Legacy positional ids are already tick indices.
+        let index = if self.influence_map.meas_ids.is_empty() || self.measurement_order.is_none() {
+            resolved
+        } else {
+            self.tc_to_influence()
+                .iter()
+                .find_map(|(&tc, &im)| (im == resolved).then_some(tc))?
+        };
         let measurement = i64::try_from(index).ok()?;
         let total = i64::try_from(self.num_measurements).ok()?;
         i32::try_from(measurement - total).ok()
@@ -5588,6 +5598,35 @@ mod tests {
             "id 1 lives at influence index 0; composing through the order \
              re-bound it to index 1"
         );
+    }
+
+    /// A stamped id's detector records count tick records, not map positions.
+    ///
+    /// The map holds q1 (id 1) at index 0 and q0 (id 0) at index 1; the order
+    /// puts q0 at tick record 0 and q1 at record 1. `meas_ids: [1]` therefore
+    /// names tick record 1, offset -1, the same as `records: [-1]`.
+    // exercises the deprecated measurement-order API
+    #[allow(deprecated)]
+    #[test]
+    fn stamped_detector_records_use_tick_record_coordinates() {
+        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
+        influence_map.meas_ids = vec![
+            pecos_core::MeasId::from_raw(1),
+            pecos_core::MeasId::from_raw(0),
+        ];
+        influence_map.measurements = vec![(5, 1, 0), (2, 0, 0)];
+        let records = |detectors_json: &str| {
+            let dem = DemBuilder::new(&influence_map)
+                .with_num_measurements(2)
+                .with_measurement_order(vec![0, 1])
+                .with_detectors_json(detectors_json)
+                .unwrap()
+                .build()
+                .expect("the DEM builds");
+            dem.detectors[0].records.to_vec()
+        };
+        assert_eq!(records(r#"[{"id": 0, "meas_ids": [1]}]"#), vec![-1]);
+        assert_eq!(records(r#"[{"id": 0, "records": [-1]}]"#), vec![-1]);
     }
 
     /// Positional (minted) ids with a supplied order remain accepted by the

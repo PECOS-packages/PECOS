@@ -113,6 +113,7 @@ impl NoiseCharacterization {
     /// original noise for exact targets. If `None`, uses `noise` for both.
     ///
     /// # Panics
+    /// Panics if received noise includes a C or A injection, even at zero rate.
     /// Panics if the provenance flags do not match the gate count.
     #[must_use]
     pub fn build(input: NoiseCharacterizationInput<'_>) -> Self {
@@ -417,7 +418,7 @@ mod tests {
                 .product();
             let marginal = (1.0 - product) / 2.0;
             assert!(
-                (marginal - expected).abs() < 1e-5,
+                (marginal - expected).abs() < 1e-12,
                 "{label}: {marginal} != {expected}"
             );
         }

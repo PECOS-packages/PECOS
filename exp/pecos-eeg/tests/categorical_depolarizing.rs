@@ -376,3 +376,157 @@ fn compressed_mechanism_structure_retains_exact_categorical_targets() {
         assert!((characterization.correlations[0].probability - 0.5).abs() < 1e-12);
     }
 }
+
+#[test]
+fn independent_depolarizing_flips_have_categorical_eigenvalues() {
+    for (gate_type, qubits, boundary, anticommuting) in [
+        (GateType::H, vec![0], 0.75, 2),
+        (GateType::CX, vec![0, 1], 0.9375, 8),
+    ] {
+        for p in [1e-20, 1e-6, 0.1, 0.3, boundary - 1e-6, boundary] {
+            let noise = UniformNoise {
+                p1: if qubits.len() == 1 { p } else { 0.0 },
+                p2: if qubits.len() == 2 { p } else { 0.0 },
+                ..UniformNoise::coherent_only(0.0)
+            };
+            let injections = noise.noise_after_gate(0, gate_type, &qubits);
+            assert_eq!(injections.len(), (1 << (2 * qubits.len())) - 1);
+            let expected = 1.0 - p / boundary;
+            for label in 1..(1 << (2 * qubits.len())) {
+                let mut pauli = Bm::default();
+                for &q in &qubits {
+                    pauli = pauli.multiply(&match (label >> (2 * q)) & 3 {
+                        1 => Bm::x(q),
+                        2 => Bm::y(q),
+                        3 => Bm::z(q),
+                        _ => Bm::default(),
+                    });
+                }
+                let factors: Vec<_> = injections
+                    .iter()
+                    .filter(|inj| !inj.label.commutes_with(&pauli))
+                    .map(|inj| 1.0 + 2.0 * inj.rate)
+                    .collect();
+                assert_eq!(factors.len(), anticommuting);
+                let actual: f64 = factors.iter().product();
+                // At the boundary require exact zero; otherwise relative 1e-12.
+                assert!(
+                    (actual - expected).abs() <= 1e-12 * expected.abs(),
+                    "{gate_type:?}, p={p}, Pauli={pauli:?}: {actual} != {expected}"
+                );
+            }
+            if p < 1e-16 {
+                // Eigenvalues round to one here; check the small-p asymptote
+                // q = p/(4^n - 1) to catch cancellation in the rates themselves.
+                let leading_rate = -p / f64::from(if qubits.len() == 1 { 3 } else { 15 });
+                for inj in &injections {
+                    assert!((inj.rate / leading_rate - 1.0).abs() < 1e-12);
+                }
+            }
+        }
+    }
+}
+
+struct UniformInjections(UniformNoise);
+
+impl NoiseSpec for UniformInjections {
+    fn noise_after_gate(
+        &self,
+        index: usize,
+        gate: GateType,
+        qubits: &[usize],
+    ) -> Vec<NoiseInjection> {
+        self.0.noise_after_gate(index, gate, qubits)
+    }
+
+    fn exact_noise_after_gate(&self, index: usize, gate: GateType, qubits: &[usize]) -> GateNoise {
+        GateNoise {
+            injections: self.noise_after_gate(index, gate, qubits),
+            depolarizing: Vec::new(),
+        }
+    }
+}
+
+#[test]
+fn independent_depolarizing_flips_match_channel_walks() {
+    // Overlapping H and CX noise locations prepare a noisy Bell state.
+    // RZ on both Bell qubits gives <XX> = lambda1 * lambda2 * cos(2*theta).
+    let gates = [Gate::pz(&[0, 1]), Gate::h(&[0]), Gate::cx(&[(0, 1)])];
+    let detector = Bm::x(0).multiply(&Bm::x(1));
+    for p1 in [1e-6, 0.3, 0.75] {
+        for p2 in [1e-6, 0.4, 0.9375] {
+            for theta in [0.0_f64, 0.17] {
+                let channels = UniformNoise {
+                    p1,
+                    p2,
+                    ..UniformNoise::coherent_only(theta)
+                };
+                let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
+                let channel_probability = heisenberg_detection_probability(
+                    &gates,
+                    &detector,
+                    &channels,
+                    &initial,
+                    0.0,
+                    &[false; 3],
+                );
+                let analytic = (1.0
+                    - (1.0 - 4.0 * p1 / 3.0) * (1.0 - 16.0 * p2 / 15.0) * (2.0 * theta).cos())
+                    / 2.0;
+                assert!((channel_probability - analytic).abs() < 1e-12);
+                assert_walkers(
+                    &gates,
+                    &detector,
+                    &UniformInjections(channels),
+                    &initial,
+                    2,
+                    channel_probability,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "generator view requires p1 <= 3/4")]
+fn independent_depolarizing_rejects_p1_above_boundary() {
+    UniformNoise {
+        p1: 0.75_f64.next_up(),
+        ..UniformNoise::coherent_only(0.0)
+    }
+    .noise_after_gate(0, GateType::H, &[0]);
+}
+
+#[test]
+#[should_panic(expected = "generator view requires p2 <= 15/16")]
+fn independent_depolarizing_rejects_p2_above_boundary() {
+    UniformNoise {
+        p2: 0.9375_f64.next_up(),
+        ..UniformNoise::coherent_only(0.0)
+    }
+    .noise_after_gate(0, GateType::CX, &[0, 1]);
+}
+
+#[test]
+fn independent_depolarizing_boundaries_and_nonpositive_rates() {
+    for p in [-0.1, 0.0] {
+        let noise = UniformNoise::depolarizing(p);
+        assert!(noise.noise_after_gate(0, GateType::H, &[0]).is_empty());
+        assert!(noise.noise_after_gate(0, GateType::CX, &[0, 1]).is_empty());
+    }
+    let noise = UniformNoise {
+        p1: 0.75,
+        p2: 0.9375,
+        ..UniformNoise::coherent_only(0.0)
+    };
+    for (gate, qubits) in [(GateType::H, vec![0]), (GateType::CX, vec![0, 1])] {
+        for injection in noise.noise_after_gate(0, gate, &qubits) {
+            assert_eq!(injection.rate, -0.5);
+        }
+        for p in [0.75, 0.9375, 1.0] {
+            let channels = UniformNoise::depolarizing(p).exact_noise_after_gate(0, gate, &qubits);
+            assert_eq!(channels.depolarizing.len(), 1);
+            assert!(channels.injections.is_empty());
+        }
+    }
+}

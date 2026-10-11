@@ -17,8 +17,9 @@
 //!
 //! Compression is exact for independent S flips and first order for H
 //! amplitudes. S sources compose through product(1 - 2p), with p = -rate.
-//! Categorical channels use the injection view's independent-flip approximation;
-//! keep the original noise model for exact categorical Heisenberg targets.
+//! `UniformNoise` independent flips exactly represent categorical depolarizing
+//! for `p1 <= 3/4` and `p2 <= 15/16`; larger positive values panic.
+//! Keep the original noise model for exact targets when H noise is present.
 //!
 //! This dramatically reduces the number of noise sources:
 //! ~60 mid-round faults per round → ~17 boundary faults (9 data + 8 meas).
@@ -69,6 +70,7 @@ pub struct CompressedNoise {
 /// Independent S flips compose exactly; H amplitudes use a first-order sum.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count, or a noise
 /// label encounters an unsupported gate during propagation.
 pub fn compress_noise_to_boundaries(
@@ -95,6 +97,7 @@ pub fn compress_noise_to_boundaries(
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
         for inj in injections {
             all_noise.push((gate_idx, inj));
         }
@@ -294,8 +297,9 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
 /// Call `noise_after_gate()` on each gate just like the original noise model,
 /// but mid-round gate noise is empty — all accumulated at boundaries.
 /// Its default physical view preserves independent S flips exactly, while H
-/// compression is first order. It does not reproduce original categorical noise.
-/// Keep the original model for exact targets and use this for DEM structure.
+/// compression is first order. `UniformNoise` categorical depolarizing is exact
+/// for `p1 <= 3/4` and `p2 <= 15/16`. When H noise is present, keep the original
+/// model for exact targets and use this for DEM structure.
 pub struct CompressedNoiseSpec {
     /// Gate index → noise injections at that gate.
     gate_noise: BTreeMap<usize, Vec<NoiseInjection>>,

@@ -188,6 +188,7 @@ impl CorrelationTable {
 /// detectors, including all coherent interference effects.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 #[must_use]
 pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> CorrelationTable {

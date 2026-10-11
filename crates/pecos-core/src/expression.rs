@@ -1,7 +1,8 @@
 //! Shared classical expression values and eager operator evaluation.
 
+use crate::bit_uint::twos_complement::{negate, negative, signed_cmp, signed_div_rem};
 use crate::{BitUInt, errors::PecosError};
-use std::{cmp::Ordering, fmt};
+use std::fmt;
 
 /// Minimum width for integer expression evaluation.
 pub const MIN_EVAL_WIDTH: u16 = 64;
@@ -99,55 +100,6 @@ fn width(value: &ExprValue) -> u16 {
 fn widen_pair(a: ExprValue, b: ExprValue) -> (BitUInt, BitUInt) {
     let target = width(&a).max(width(&b)).max(MIN_EVAL_WIDTH);
     (widen_to(a, target), widen_to(b, target))
-}
-
-fn negative(value: &BitUInt) -> bool {
-    value.get_bit(value.size() - 1)
-}
-
-fn negate(value: &BitUInt) -> BitUInt {
-    &BitUInt::zero(value.size()) - value
-}
-
-fn signed_cmp(a: &BitUInt, b: &BitUInt) -> Ordering {
-    // Both helpers read each operand's own top bit as its sign, so unequal
-    // widths would compare different bit positions and return quiet nonsense.
-    // Every caller passes a pair straight from `widen_pair`, which returns two
-    // operands of the same width.
-    debug_assert_eq!(a.size(), b.size(), "signed comparison needs equal widths");
-    match (negative(a), negative(b)) {
-        (true, false) => Ordering::Less,
-        (false, true) => Ordering::Greater,
-        _ => a.cmp(b),
-    }
-}
-
-// Divide magnitudes and restore the sign at the original width. Negating the
-// signed minimum wraps to itself, whose unsigned pattern is its magnitude;
-// minimum / -1 consequently wraps to minimum, with remainder zero.
-fn signed_div_rem(a: &BitUInt, b: &BitUInt, remainder: bool) -> BitUInt {
-    debug_assert_eq!(a.size(), b.size(), "signed division needs equal widths");
-    let a_negative = negative(a);
-    let b_negative = negative(b);
-    let magnitude_a = if a_negative { negate(a) } else { a.clone() };
-    let magnitude_b = if b_negative { negate(b) } else { b.clone() };
-    let magnitude = if remainder {
-        &magnitude_a % &magnitude_b
-    } else {
-        &magnitude_a / &magnitude_b
-    };
-    // A quotient is negative when the signs differ; a remainder takes the
-    // dividend's sign.
-    let negative_result = if remainder {
-        a_negative
-    } else {
-        a_negative != b_negative
-    };
-    if negative_result {
-        negate(&magnitude)
-    } else {
-        magnitude
-    }
 }
 
 fn arithmetic_shr(value: &BitUInt, count: u16) -> BitUInt {

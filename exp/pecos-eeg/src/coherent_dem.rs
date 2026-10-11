@@ -20,7 +20,8 @@
 //! For H-type (coherent) noise: amplitudes add, probability = sin²(total).
 //! For S-type (stochastic) noise: independent flips compose with
 //! probability = (1 - product(1 - 2p))/2, where p = -rate.
-//! Categorical depolarizing uses an independent-flip approximation.
+//! `UniformNoise` independent flips exactly represent categorical depolarizing
+//! for `p1 <= 3/4` and `p2 <= 15/16`; larger positive values panic.
 //! Exact Heisenberg targets use the separate physical channel view.
 
 use crate::Bm;
@@ -56,6 +57,7 @@ struct NoiseContribution {
 /// probabilities from a single framework.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem(
     gates: &[Gate],
@@ -76,6 +78,7 @@ pub fn build_coherent_dem(
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
 
         for inj in injections {
             noise_sources.push((
@@ -161,8 +164,8 @@ pub fn build_coherent_dem(
     // coherently. Different labels (e.g., Z on qubit 1 vs Z on qubit 2)
     // are separate mechanisms even if they flip the same detectors.
     //
-    // For S-type: compose independent flips exactly. The injection view
-    // approximates exclusive choices from categorical channels.
+    // For S-type: compose independent flips exactly. UniformNoise matches
+    // categorical channels exactly for p1 <= 3/4 and p2 <= 15/16.
     //
     // After coherent accumulation per label, mechanisms with the same
     // detector set are combined independently (product formula).
@@ -190,7 +193,9 @@ pub fn build_coherent_dem(
                 let p = -contrib.value;
                 *s_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 
@@ -229,6 +234,7 @@ pub fn build_coherent_dem(
 /// graphlike decomposition for pymatching.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_decomposable(
     gates: &[Gate],
@@ -249,6 +255,7 @@ pub fn build_coherent_dem_decomposable(
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
 
         for inj in injections {
             noise_sources.push((
@@ -400,7 +407,9 @@ pub fn build_coherent_dem_decomposable(
                 let (product, _, _) = s_groups.entry(key).or_insert((1.0, x_event, z_event));
                 *product *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 
@@ -501,6 +510,7 @@ fn merge_decomposable_dem_entries(
 /// Each entry is `((det_i, det_j), joint_probability)`.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact(
     gates: &[Gate],
@@ -797,6 +807,7 @@ pub fn build_coherent_dem_exact(
 /// with the X/Z component tracking from `build_coherent_dem_decomposable`.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact_decomposable(
     gates: &[Gate],

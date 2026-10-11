@@ -5,10 +5,7 @@
 
 import inspect
 import json
-import math
-import statistics
 from collections import defaultdict
-from itertools import combinations
 
 import numpy as np
 import pecos_rslib as prs
@@ -22,8 +19,15 @@ from pecos.guppy_gen.surface_teleportation import (
     render_surface_t_teleportation_module,
 )
 from pecos.qec.dem import DetectorErrorModel
-from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, t_teleportation_decision_model
+from pecos.qec.surface import (
+    LogicalCircuitBuilder,
+    SurfacePatch,
+    t_teleportation_decision_model,
+    teleportation_decision,
+)
 from pecos.qec.surface.gadgets import default_allocation
+from pecos.qec.surface.teleportation_decision import _decision_measurement_map
+from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 from pecos_rslib.qec import DemSampler
 
 
@@ -184,17 +188,6 @@ def test_truncation_drops_exactly_the_data_readout_detectors(distance, rounds_be
     assert set(observables[0]["meas_ids"]) <= resource
 
 
-def _posterior(count, total):
-    alpha, beta = count + 0.5, total - count + 0.5
-    return alpha / (alpha + beta), alpha * beta / ((alpha + beta) ** 2 * (alpha + beta + 1))
-
-
-def _rate_z(left, right):
-    a, v = _posterior(sum(left), len(left))
-    b, w = _posterior(sum(right), len(right))
-    return abs(a - b) / math.sqrt(v + w)
-
-
 def test_invalid_inputs():
     for kwargs in ({"distance": 1}, {"distance": 2}, {"dx": 3, "dz": 5}, {"distance": 3, "rotated": False}):
         with pytest.raises(ValueError, match="odd square rotated"):
@@ -252,42 +245,221 @@ def test_nonzero_stand_in_reference_is_rejected(monkeypatch):
         t_teleportation_decision_model(patch)
 
 
-def test_model_matches_program_detector_statistics():
+def _binomial_maxima(events, dem, width):
+    sampled = np.asarray(
+        DemSampler.from_dem_string(str(dem)).sample_batch(200000, seed=42).detector_events(),
+        dtype=np.int64,
+    )
+    program = np.zeros((len(events), width), dtype=np.int64)
+    for row, fired in zip(program, events, strict=True):
+        row[fired] = 1
+    model_rates = sampled.T @ sampled / len(sampled)
+    counts = program.T @ program
+    expected = len(events) * model_rates
+    variance = expected * (1 - model_rates)
+    z = np.zeros_like(model_rates)
+    np.divide(np.abs(counts - expected), np.sqrt(variance), out=z, where=variance > 0)
+    z[(variance == 0) & (counts != expected)] = np.inf
+    return float(np.diag(z).max()), float(z[np.triu_indices(width, k=1)].max())
+
+
+def _check_program_statistics(rates, shots):
     patch = SurfacePatch.create(distance=3)
     model = t_teleportation_decision_model(patch, 1)
-    p = 0.005
-    # Guppy/QIS p1 acts on every Helios-native gate inside CX, preparation and
-    # measurement. The logical-gate model has no counterpart: a stated omission,
-    # not a statistical tolerance. Match p2, measurement and preparation only.
-    noise = prs.depolarizing_noise().with_uniform_probability(0.0).with_p2(p).with_p_meas(p).with_p_prep(p)
-    results = _run(make_surface_t_teleportation(patch, 1, input_state="X"), patch, shots=400, noise=noise)
-    events, _ = model.detection_events(results)
-    dem = model.build_dem(p1=0.0, p2=p, p_meas=p, p_prep=p)
-    sampled = DemSampler.from_dem_string(str(dem)).sample_batch(20000, seed=42).detector_events()
-    width = len(json.loads(model.circuit.get_meta("detectors")))
-    program_columns = [[i in row for row in events] for i in range(width)]
-    model_columns = list(zip(*sampled, strict=True))
-    z_scores = [_rate_z(a, b) for a, b in zip(program_columns, model_columns, strict=True)]
-    program_totals, model_totals = list(map(len, events)), list(map(sum, sampled))
-    mean_z = abs(statistics.mean(program_totals) - statistics.mean(model_totals)) / math.sqrt(
-        statistics.variance(program_totals) / len(program_totals)
-        + statistics.variance(model_totals) / len(model_totals),
+    noise = (
+        prs.depolarizing_noise()
+        .with_uniform_probability(0.0)
+        .with_p1(rates["p1"])
+        .with_p2(rates["p2"])
+        .with_p_meas(rates["p_meas"])
+        .with_p_prep(rates["p_prep"])
     )
-    # Pairwise co-firing is also an oracle in the design of record. Check all
-    # pairs in these same samples with the same Jeffreys posterior calculation.
-    pair_z = [
-        _rate_z(
-            [a and b for a, b in zip(program_columns[i], program_columns[j], strict=True)],
-            [a and b for a, b in zip(model_columns[i], model_columns[j], strict=True)],
+    results = _run(make_surface_t_teleportation(patch, 1, input_state="X"), patch, shots=shots, noise=noise)
+    events, _ = model.detection_events(results)
+    dem = model.build_dem(**rates)
+    width = len(json.loads(model.circuit.get_meta("detectors")))
+    singles, pairs = _binomial_maxima(events, dem, width)
+    print(f"Statistics {rates}, shots={shots}: max |z| singles={singles:.6f}, pairs={pairs:.6f}")
+    # Seeded null maxima: all-channel 3.224/3.783, p1=0 2.522/4.028,
+    # prep-only 1.919/4.290 (singles/pairs). Leave margin below the mapping
+    # mutations; even the D X0/X1 swap reaches 6.293 in the pairs.
+    assert singles < 5.5
+    assert pairs < 5.5
+
+
+@pytest.mark.parametrize("p1", [0.0, 0.002])
+def test_model_matches_program_detector_statistics(p1):
+    p = 0.005 if p1 == 0 else 0.002
+    _check_program_statistics({"p1": p1, "p2": p, "p_meas": p, "p_prep": p}, 1000 if p1 == 0 else 2000)
+
+
+def test_model_matches_program_prep_statistics():
+    _check_program_statistics({"p1": 0.0, "p2": 0.0, "p_meas": 0.0, "p_prep": 0.005}, 2000)
+
+
+def _mechanisms(dem):
+    mechanisms = set()
+    for line in str(dem).splitlines():
+        if line.startswith("error("):
+            probability, targets = line.removeprefix("error(").split(")", 1)
+            detectors = tuple(sorted(target for target in targets.split() if target.startswith("D")))
+            observables = tuple(sorted(target for target in targets.split() if target.startswith("L")))
+            mechanisms.add((detectors, observables, float(probability)))
+    assert mechanisms
+    return mechanisms
+
+
+def test_measurement_only_exactness():
+    model = t_teleportation_decision_model(SurfacePatch.create(distance=3), 1)
+    rates = {"p1": 0.0, "p2": 0.0, "p_meas": 0.005, "p_prep": 0.0}
+    assert _mechanisms(model.build_dem(**rates)) == _mechanisms(DetectorErrorModel.from_circuit(model.circuit, **rates))
+
+
+@pytest.mark.parametrize(("distance", "rounds_before"), [(3, 0), (3, 1), (3, 2), (5, 1)])
+def test_mapping_ownership(distance, rounds_before, monkeypatch):
+    results = []
+
+    def trace(*args, **kwargs):
+        circuit, records = _trace_program_to_tick_circuit_with_result_traces(*args, **kwargs)
+        results.extend(records)
+        return circuit, records
+
+    monkeypatch.setattr(teleportation_decision, "_trace_program_to_tick_circuit_with_result_traces", trace)
+    patch = SurfacePatch.create(distance=distance)
+    model = t_teleportation_decision_model(patch, rounds_before)
+    circuit = model.traced_circuit
+    mapping = _decision_measurement_map(patch, rounds_before, model.circuit, results)
+    measured = {}
+    partners = defaultdict(set)
+    for tick in range(circuit.num_ticks()):
+        for batch in circuit.get_tick(tick).gate_batches():
+            if str(batch.gate_type) == "GateType.PZ":
+                for qubit in batch.qubits:
+                    partners[qubit] = set()
+            elif str(batch.gate_type) == "GateType.RZZ":
+                for a, b in zip(batch.qubits[::2], batch.qubits[1::2], strict=True):
+                    partners[a].add(b)
+                    partners[b].add(a)
+            elif str(batch.gate_type) == "GateType.MZ":
+                for mid, qubit in zip(batch.meas_ids, batch.qubits, strict=True):
+                    measured[mid] = (qubit, partners[qubit].copy())
+    readouts = {
+        record["name"]: record["result_ids"]
+        for record in results
+        if record["name"]
+        in (
+            "final_data",
+            "teleportation_resource_readout",
         )
-        for i, j in combinations(range(width), 2)
-    ]
-    assert max(z_scores) <= 6
-    assert mean_z <= 3
-    assert max(pair_z) <= 6
-    # At 400 shots this checks mapping and algebra under matched channels; it
-    # cannot resolve the localized seed-chain/sign-fix omissions (~10000 pooled
-    # shots would be needed for their expected ~10% effect).
+    }
+    data = {
+        label: [measured[mid][0] for mid in readouts[tag]]
+        for label, tag in (("D", "final_data"), ("A", "teleportation_resource_readout"))
+    }
+    assert set(data["D"]).isdisjoint(data["A"])
+    keys = json.loads(model.circuit.get_meta("measurement_keys"))
+    for label, family, index, _segment, occurrence, ordinal in keys["stabilizer"]:
+        check = getattr(patch.geometry, f"{family.lower()}_stabilizers")[index]
+        expected = {data[label][q] for q in check.data_qubits}
+        assert measured[mapping[ordinal]][1] == expected, (label, family, index, occurrence)
+    data_indices = {qubit: index for index, qubit in enumerate(default_allocation(patch).data_qubits)}
+    for label, qubit, ordinal in keys["data"]:
+        if label == "A":
+            assert measured[mapping[ordinal]][0] == data["A"][data_indices[qubit]]
+
+
+def _synthetic_trace(patch, rounds_before):
+    from pecos_rslib.quantum import TickCircuit
+
+    trace = TickCircuit()
+    records = []
+    next_id = 1000
+    for _ in range(rounds_before + 1):
+        for scope in ("data", "anc"):
+            ordinal = 0
+            # Z first and reversed check order guard against X0-based boundaries.
+            for family in ("z", "x"):
+                for index in reversed(range(len(getattr(patch.geometry, f"{family}_stabilizers")))):
+                    trace.tick().mz_with_ids([0], [next_id])
+                    records.append({"name": f"{scope}:s{family}{index}:meas:{ordinal}", "result_ids": [next_id]})
+                    next_id -= 3
+                    ordinal += 1
+    ids = [next_id - 3 * index for index in range(patch.geometry.num_data)]
+    trace.tick().mz_with_ids(list(range(patch.geometry.num_data)), ids)
+    records.append({"name": "teleportation_resource_readout", "result_ids": ids})
+    return trace, records
+
+
+def test_trace_metadata_uses_emission_positions(monkeypatch):
+    patch = SurfacePatch.create(distance=3)
+    trace, records = _synthetic_trace(patch, 1)
+    monkeypatch.setattr(
+        teleportation_decision,
+        "_trace_program_to_tick_circuit_with_result_traces",
+        lambda *_args, **_kwargs: (trace, records),
+    )
+    model = t_teleportation_decision_model(patch, 1)
+    traced = model.traced_circuit
+    emitted = [mid for _, mid in traced.measurement_emission()]
+    assert emitted != sorted(emitted)
+    assert int(traced.get_meta("num_measurements")) == len(emitted)
+    for name in ("detectors", "observables"):
+        original = json.loads(model.circuit.get_meta(name))
+        mapped = json.loads(traced.get_meta(name))
+        for before, after in zip(original, mapped, strict=True):
+            assert {k: v for k, v in before.items() if k not in {"records", "meas_ids"}} == {
+                k: v for k, v in after.items() if k not in {"records", "meas_ids"}
+            }
+            assert after["records"] == [emitted.index(mid) - len(emitted) for mid in after["meas_ids"]]
+    model.build_dem(p1=0, p2=0, p_meas=0.005, p_prep=0)
+
+
+@pytest.mark.parametrize("fault", ["scope", "missing", "duplicate", "index", "boundary", "ids", "readout"])
+def test_trace_rejects_malformed_rounds(fault):
+    patch = SurfacePatch.create(distance=3)
+    _, records = _synthetic_trace(patch, 1)
+    if fault == "scope":
+        for record in records[:8]:
+            record["name"] = record["name"].replace("data:", "anc:")
+    elif fault == "missing":
+        records.pop(7)
+    elif fault == "duplicate":
+        records[1]["name"] = records[0]["name"].replace(":meas:0", ":meas:1")
+    elif fault == "index":
+        records[0]["name"] = "data:sz99:meas:0"
+    elif fault == "boundary":
+        records[0]["name"] = records[0]["name"].replace(":meas:0", ":meas:1")
+    elif fault == "ids":
+        records[0]["result_ids"] = []
+    else:
+        records[-1]["result_ids"].pop()
+    model = t_teleportation_decision_model(patch, 1)
+    with pytest.raises(ValueError, match=r"[Ss]yndrome|[Ss]cope|resource readout"):
+        _decision_measurement_map(patch, 1, model.circuit, records)
+
+
+def test_trace_is_lazy_and_cached_on_frozen_model(monkeypatch):
+    calls = []
+
+    def trace(*args, **kwargs):
+        calls.append(args[0])
+        return _trace_program_to_tick_circuit_with_result_traces(*args, **kwargs)
+
+    monkeypatch.setattr(teleportation_decision, "_trace_program_to_tick_circuit_with_result_traces", trace)
+    patch = SurfacePatch.create(distance=3)
+    models = [t_teleportation_decision_model(patch, 0) for _ in range(2)]
+    for model in models:
+        model.detection_events(_zero_results(patch, 0))
+    assert calls == []
+    for model in models:
+        model.build_dem()
+        first = model.traced_circuit
+        model.build_dem(p1=0.002)
+        assert model.traced_circuit is first
+        assert model.__dict__["traced_circuit"] is first
+    assert len(calls) == 2
+    assert calls[0] is calls[1]
+    assert models[0].traced_circuit is not models[1].traced_circuit
 
 
 def test_decoded_decision_beats_raw_on_model_samples():
@@ -297,7 +469,11 @@ def test_decoded_decision_beats_raw_on_model_samples():
     raw_errors = sum(row[0] for row in batch.observable_flips())
     decoded_errors = batch.decode(dem, tesseract()).num_errors
     assert raw_errors > 0
-    assert raw_errors >= 5 * decoded_errors
+    # Measured 306 raw against 66 decoded. The native model adds faults inside
+    # each CX decomposition (two-qubit patterns, like hook errors) and the
+    # non-fault-tolerant injection's undetectable logical faults (about 10 of the
+    # 66); the logical-gate model had neither and decoded about 5x better.
+    assert raw_errors >= 3 * decoded_errors
 
 
 def test_later_records_do_not_change_first_decision():
@@ -321,10 +497,12 @@ def test_build_dem_defaults_match_explicit_builder_rates():
         for name, parameter in inspect.signature(LogicalCircuitBuilder.build_dem).parameters.items()
         if name != "self"
     }
-    assert str(model.build_dem()) == str(DetectorErrorModel.from_circuit(model.circuit, **builder_defaults))
+    assert str(model.build_dem()) == str(DetectorErrorModel.from_circuit(model.traced_circuit, **builder_defaults))
     # p1 and p_meas share from_circuit's defaults, so check they are forwarded too.
     rates = {"p1": 0.03, "p2": 0.001, "p_meas": 0.02, "p_prep": 0.0}
-    assert str(model.build_dem(p1=0.03, p_meas=0.02)) == str(DetectorErrorModel.from_circuit(model.circuit, **rates))
+    assert str(model.build_dem(p1=0.03, p_meas=0.02)) == str(
+        DetectorErrorModel.from_circuit(model.traced_circuit, **rates),
+    )
 
 
 @pytest.mark.parametrize("dagger", [False, True])

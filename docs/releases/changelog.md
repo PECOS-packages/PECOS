@@ -23,11 +23,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python additions
 
+- `t_teleportation_decision_model(patch, rounds_before)` models the first T/TDG
+  teleportation correction decision. `detection_events` transcribes a program's
+  records into its detectors, and `build_dem` builds its DEM from a native trace
+  of a Clifford stand-in, so the DEM's noise matches the program's per native
+  gate, including single-qubit noise.
 - `make_surface_t_teleportation(..., forced_decision=...)` forces the first T/TDG
   teleportation correction. `TeleportationDecisionModel.run_decoded` runs both
   forced variants through a caller-supplied runner bound to one seed and selects
   each shot by the decoded decision, giving per-shot decoded feed-forward results
-  (`DecodedDecisionRun`) at twice the shot cost. `decode_decisions` decodes the first decision from program results.
+  (`DecodedDecisionRun`) at twice the shot cost. `decode_decisions` decodes the
+  first decision from program results.
 
 ### Python breaking changes
 

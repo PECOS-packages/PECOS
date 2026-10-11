@@ -1,6 +1,7 @@
 """Full-width Python operands, checked against Python integer arithmetic."""
 
 import operator
+from collections.abc import Hashable
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -156,7 +157,9 @@ def test_invalid_binary(cls, binary):
 @pytest.mark.parametrize("cls", [I, U])
 def test_unhashable(cls):
     """Mutable in place, so neither class can be a dict key or set member."""
+    assert cls.__hash__ is None
     value = cls(8, 5)
+    assert not isinstance(value, Hashable)
     for action in (lambda: hash(value), lambda: {value}, lambda: {value: "x"}):
         with pytest.raises(TypeError, match="unhashable"):
             action()

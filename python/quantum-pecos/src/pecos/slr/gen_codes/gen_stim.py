@@ -127,29 +127,17 @@ class StimGenerator(Generator):
         previous_scope = self.enter_block(block)
 
         block_name = type(block).__name__
-        if block_name in ("If", "While", "For", "Repeat"):
-            reject_permute_in_region(block, "StimGenerator")
-
         if block_name == "While":
-            # While loops can't be directly represented
-            if self.add_comments:
-                self.circuit.append("TICK")  # Mark boundary
-            # Process body once as approximation
-            self._handle_block(block)
-        elif block_name == "For":
-            # For loops - unroll if possible
-            if hasattr(block, "count") and isinstance(block.count, int):
-                # Static count - can unroll
-                for _ in range(block.count):
-                    for op in block.ops:
-                        self._handle_op(op)
-            else:
-                # Dynamic count - process once
-                if self.add_comments:
-                    self.circuit.append("TICK")
-                for op in block.ops:
-                    self._handle_op(op)
-        elif block_name == "Repeat":
+            # Stim has no runtime loop; emitting the body once is a silent miscompile.
+            msg = "StimGenerator does not support While: Stim has no runtime loop."
+            raise NotImplementedError(msg)
+        if block_name == "For":
+            # This generator neither iterates nor binds the loop variable, so
+            # emitting the body once is a silent miscompile.
+            msg = "StimGenerator does not support For; use pecos.slr.generate(prog, 'stim'), which unrolls it."
+            raise NotImplementedError(msg)
+        if block_name == "Repeat":
+            reject_permute_in_region(block, "StimGenerator")
             # Repeat blocks can be represented in Stim
             # Repeat uses 'cond' attribute for the count
             repeat_count = getattr(block, "cond", getattr(block, "count", 1))

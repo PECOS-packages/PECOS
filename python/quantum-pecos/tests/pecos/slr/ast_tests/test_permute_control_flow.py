@@ -16,19 +16,22 @@ import stim
 from pecos.slr import Block, CReg, For, If, Main, Permute, QReg, Repeat, While
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import generate
+from pecos.slr.ast.codegen.guppy_linearity import LinearityError
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 from pecos.slr.gen_codes.gen_qir import QIRGenerator
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.gen_codes.gen_stim import StimGenerator
 from pecos.slr.qeclib import qubit as qb
 
-BACKENDS = ("qasm", "qir", "stim", "quantum_circuit", "guppy")
+BACKENDS = ("qasm", "qir", "stim", "quantum_circuit")
 LEGACY = {
     "legacy_qasm": QASMGenerator,
     "legacy_qir": QIRGenerator,
     "legacy_stim": StimGenerator,
     "legacy_quantum_circuit": QuantumCircuitGenerator,
 }
+# The deprecated StimGenerator rejects If, While and For outright.
+LEGACY_WITH_REGIONS = ("legacy_qasm", "legacy_qir", "legacy_quantum_circuit")
 
 
 def compile_program(program, backend):
@@ -40,7 +43,7 @@ def compile_program(program, backend):
     return generate(slr_to_ast(program), backend)
 
 
-@pytest.mark.parametrize("backend", [*BACKENDS, *LEGACY])
+@pytest.mark.parametrize("backend", [*BACKENDS, *LEGACY_WITH_REGIONS])
 @pytest.mark.parametrize("branch", ["then", "else"])
 @pytest.mark.parametrize("nested", [False, True])
 def test_conditional_qubit_permute_rejected(backend, branch, nested) -> None:
@@ -74,7 +77,7 @@ def test_conditional_classical_permute_rejected(backend, branch) -> None:
         compile_program(Main(q, c, qb.Measure(q[0]) > c[0], conditional), backend)
 
 
-@pytest.mark.parametrize("backend", [*BACKENDS, *LEGACY])
+@pytest.mark.parametrize("backend", [*BACKENDS, *LEGACY_WITH_REGIONS])
 def test_while_permute_rejected(backend) -> None:
     """Even generators which skip unsupported bodies must reject their Permutes."""
     q, c = QReg("q", 2), CReg("c", 1)
@@ -97,14 +100,21 @@ def test_stim_repeat_permute_records(count, nested) -> None:
     assert circuit.compile_sampler().sample(shots=4).tolist() == [expected] * 4
 
 
-@pytest.mark.parametrize("loop", ["Repeat", "For"])
-def test_guppy_loop_permute_rejected(loop) -> None:
-    """Guppy's slot tracker is a static relabel, not a runtime move."""
-    q = QReg("q", 2)
-    operation = Permute([q[0], q[1]], [q[1], q[0]])
-    body = Repeat(2).block(operation) if loop == "Repeat" else For("i", 0, 2).Do(operation)
-    with pytest.raises(NotImplementedError, match=rf"Permute.*{loop}"):
-        compile_program(Main(q, body), "guppy")
+@pytest.mark.parametrize("region", ["Repeat", "For", "If then", "If else", "If nested Repeat"])
+def test_guppy_region_permute_must_restore_slot_bindings(region) -> None:
+    """Guppy's slot relabel is static, so a region must leave every slot bound as it found it."""
+    q, c = QReg("q", 3), CReg("c", 1)
+    swap = Permute([q[0], q[1]], [q[1], q[0]])
+    body = {
+        "Repeat": lambda: Repeat(2).block(swap),
+        "For": lambda: For("i", 0, 2).Do(swap),
+        "If then": lambda: If(c == 1).Then(swap),
+        "If else": lambda: If(c == 1).Then(qb.X(q[0])).Else(swap),
+        "If nested Repeat": lambda: If(c == 1).Then(qb.X(q[0])).Else(Repeat(2).block(swap)),
+    }[region]()
+    program = Main(q, c, qb.Measure(q[2]) > c[0], body, qb.X(q[0]))
+    with pytest.raises(LinearityError, match=r"divergent Guppy slot states|changes Guppy slot state"):
+        compile_program(program, "guppy")
 
 
 @pytest.mark.parametrize("branch", ["then", "else", "both"])
@@ -124,14 +134,21 @@ def test_legacy_qir_classical_permute_has_valid_runtime_branches(branch) -> None
     assert "@set_creg_bit" in code
 
 
-@pytest.mark.parametrize("loop", ["Repeat", "For"])
-def test_legacy_stim_loop_permute_rejected(loop) -> None:
-    """The legacy placeholder cannot faithfully lower a permutation in a loop."""
+def test_legacy_stim_repeat_permute_rejected() -> None:
+    """The legacy placeholder cannot faithfully lower a permutation in a REPEAT block."""
     q = QReg("q", 2)
     operation = Block(Permute([q[0], q[1]], [q[1], q[0]]))
-    body = Repeat(2).block(operation) if loop == "Repeat" else For("i", 0, 2).Do(operation)
-    with pytest.raises(NotImplementedError, match=rf"Permute.*{loop}"):
-        compile_program(Main(q, body), "legacy_stim")
+    with pytest.raises(NotImplementedError, match=r"Permute.*Repeat"):
+        compile_program(Main(q, Repeat(2).block(operation)), "legacy_stim")
+
+
+@pytest.mark.parametrize("loop", ["While", "For"])
+def test_legacy_stim_rejects_runtime_and_variable_loops(loop) -> None:
+    """Emitting the body once would drop iterations; While used to recurse forever."""
+    q, c = QReg("q", 1), CReg("c", 1)
+    body = While(c == 1).Do(qb.X(q[0])) if loop == "While" else For("i", 0, 2).Do(qb.X(q[0]))
+    with pytest.raises(NotImplementedError, match=f"StimGenerator does not support {loop}"):
+        compile_program(Main(q, c, body), "legacy_stim")
 
 
 def test_issue_992_exact_reproducer() -> None:

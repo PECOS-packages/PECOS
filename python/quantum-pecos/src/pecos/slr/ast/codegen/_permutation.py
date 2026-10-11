@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from pecos.slr.ast.nodes import PermuteOp
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator
+    from collections.abc import Iterator
 
     from pecos.slr.ast.nodes import AstNode
 
@@ -26,9 +26,7 @@ if TYPE_CHECKING:
 def iter_permutes(node: AstNode) -> Iterator[PermuteOp]:
     """Find permutations even in nested regions and otherwise skipped branches.
 
-    Non-Guppy emitters run after BlockCall flattening. Guppy calls are real
-    runtime functions whose returned qubits are rebound at the call site;
-    their bodies are checked separately when those functions are emitted.
+    Callers run after BlockCall flattening, so this also covers block bodies.
     """
     if isinstance(node, PermuteOp):
         yield node
@@ -36,22 +34,9 @@ def iter_permutes(node: AstNode) -> Iterator[PermuteOp]:
         yield from iter_permutes(child)
 
 
-def reject_permute_in_region(
-    node: AstNode,
-    backend: str,
-    *,
-    quantum_registers: Collection[str] | None = None,
-) -> None:
-    """Reject a static permutation before emitting any part of a runtime region.
-
-    Guppy's classical mem_swap is a runtime operation, so that emitter
-    supplies its quantum register names to check only static qubit relabels.
-    """
-    for permute in iter_permutes(node):
-        if quantum_registers is not None and not any(
-            ref.split("[", 1)[0] in quantum_registers for ref in (*permute.sources, *permute.targets)
-        ):
-            continue
+def reject_permute_in_region(node: AstNode, backend: str) -> None:
+    """Reject a static permutation before emitting any part of a runtime region."""
+    if any(iter_permutes(node)):
         construct = type(node).__name__.removesuffix("Stmt")
         msg = (
             f"{backend} codegen: Permute in {construct} is not supported: "

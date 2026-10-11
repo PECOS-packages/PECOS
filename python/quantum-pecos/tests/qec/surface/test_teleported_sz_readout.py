@@ -9,9 +9,8 @@ from dataclasses import replace
 import pytest
 import stim
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, extract_detection_events_and_observables
-from pecos.qec.surface import logical_circuit as logical
 from pecos.qec.surface.circuit_builder import get_observable_descriptors_from_tick_circuit, tick_circuit_to_stim
-from pecos.qec.surface.logical_circuit import LogicalGateType, LogicalOp, _logical_readout_flow, _resource_sign_checks
+from pecos.qec.surface.logical_circuit import LogicalGateType, LogicalOp, _logical_readout_flow
 from pecos.testing import simulate_tick_circuit
 from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder
 
@@ -29,8 +28,8 @@ class ReadoutProbe(LogicalCircuitBuilder):
         return self._build_structured_dem_from_cached_slices(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
 
 
-def readout_builder(distance=3, *, gate="SZ", prepared="X", readout="Y", sparse=False):
-    patch = SurfacePatch.create(distance)
+def readout_builder(distance=3, *, dz=None, gate="SZ", prepared="X", readout="Y", sparse=False):
+    patch = SurfacePatch.create(dx=distance, dz=dz or distance)
     builder = ReadoutProbe()
     labels = ["R", "M", "D", "A"] if sparse else ["D", "A"]
     for index, label in enumerate(labels):
@@ -142,14 +141,14 @@ def test_detectors_and_existing_ids_unchanged(distance):
     assert after[:1] == before
 
 
-@pytest.mark.parametrize("distance", [3, 5])
-def test_z_readout_unchanged(distance):
-    builder, _ = readout_builder(distance, prepared="Z", readout="Z")
+@pytest.mark.parametrize(("distance", "dz"), [(3, 3), (5, 5), (3, 5), (5, 3), (5, 7)])
+def test_z_readout_unchanged(distance, dz):
+    builder, _ = readout_builder(distance, dz=dz, prepared="Z", readout="Z")
     tc = builder.to_tick_circuit()
     builder.omit_sz_correction()
     baseline = builder.to_tick_circuit()
     assert tc.get_meta("observables") == baseline.get_meta("observables")
-    assert len(json.loads(tc.get_meta("observables"))[0]["records"]) == distance
+    assert len(json.loads(tc.get_meta("observables"))[0]["records"]) == dz
     assert simulate_tick_circuit(tc)[2] == {0: 0}
 
 
@@ -162,22 +161,40 @@ def test_t_readout_unchanged():
     assert "resource_sign_records" not in json.loads(tc.get_meta("teleportation_readouts"))[0]
 
 
-def test_nonzero_resource_constant_rejected(monkeypatch):
-    def nonzero_resource(patch):
-        checks, reference = _resource_sign_checks(patch)
-        assert reference == 0
-        return checks, 1
+@pytest.mark.parametrize(("dx", "dz"), [(3, 3), (3, 5), (5, 3), (5, 7)])
+def test_multiple_teleportations_downstream(dx, dz):
+    builder, _ = multiple_teleportations_builder(dx, dz)
+    tc = builder.to_tick_circuit()
+    assert builder.output_ids() == [entry["id"] for entry in json.loads(tc.get_meta("observables"))] == [0]
+    model = stim.DetectorErrorModel(builder.build_dem())
+    assert model.num_observables == 1
+    exported = stim.Circuit(builder.to_stim())
+    assert exported.detector_error_model().num_observables == 1
+    _, flips = exported.compile_detector_sampler(seed=0).sample(64, separate_observables=True)
+    assert flips.shape == (64, 1)
+    assert not flips.any()
+    descriptor = builder.build_algorithm_descriptor()
+    assert descriptor["num_observables"] == 1
+    assert descriptor["num_frame_slots"] == 6
+    for use_stim_dem in (False, True):
+        _, decoder = builder.build_decoder(inner_decoder="pymatching", use_stim_dem=use_stim_dem)
+        assert decoder.num_observables() == 1
+    sampler, decoder, _ = builder.build_sampler_and_decoder()
+    assert sampler.num_observables == decoder.num_observables() == 1
 
-    monkeypatch.setattr(logical, "_resource_sign_checks", nonzero_resource)
-    builder, _ = readout_builder()
-    with pytest.raises(
-        logical.NonzeroTeleportationResourceReferenceError,
-        match=r"resource_sign_reference=0.*ancilla 'A'",
-    ):
-        builder.to_tick_circuit()
-    # The invariant belongs to mask consumption, not unrelated Z readouts.
-    builder, _ = readout_builder(prepared="Z", readout="Z")
-    assert json.loads(builder.to_tick_circuit().get_meta("teleportation_readouts"))[0]["resource_sign_reference"] == 1
+
+@pytest.mark.parametrize("distance", [3, 5])
+def test_teleported_observable_has_distance_one_mechanism(distance):
+    builder, _ = readout_builder(distance)
+    model = stim.DetectorErrorModel(builder.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
+    undetected = [
+        instruction
+        for instruction in model.flattened()
+        if instruction.type == "error"
+        and instruction.targets_copy() == [stim.target_logical_observable_id(0)]
+        and instruction.args_copy()[0] > 0
+    ]
+    assert len(undetected) == 1
 
 
 @pytest.mark.parametrize("distance", [3, 5])
@@ -264,15 +281,30 @@ def test_walk_replaces_conjugation_and_returns_symbols(teleportation_type):
     assert _logical_readout_flow(operations, 2, "D", "X") == expected
 
 
-def test_multiple_teleportations_x_readout():
-    builder, patch = readout_builder(readout="X")
+def multiple_teleportations_builder(dx, dz):
+    builder, patch = readout_builder(dx, dz=dz, readout="X")
     builder.add_patch(patch, "B", qubit_offset=2 * patch.geometry.num_qubits)
     builder.add_sz_via_teleportation("D", "B", 2, 2)
     builder.add_memory("D", 2, "X")
+    return builder, patch
+
+
+@pytest.mark.parametrize(("dx", "dz", "constant"), [(3, 3, 0), (3, 5, 1), (5, 3, 1), (5, 7, 1), (3, 7, 0)])
+def test_multiple_teleportations_x_readout(dx, dz, constant):
+    builder, _ = multiple_teleportations_builder(dx, dz)
     tc = builder.to_tick_circuit()
     observables = json.loads(tc.get_meta("observables"))
     assert len(observables) == 1
-    assert len(observables[0]["meas_ids"]) == 17
+    readouts = json.loads(tc.get_meta("teleportation_readouts"))
+    assert [entry["resource_sign_reference"] for entry in readouts] == [constant, constant]
+    keys = json.loads(tc.get_meta("measurement_keys"))
+    data = [ordinal for label, qubit, ordinal in keys["data"] if label == "D" and qubit % dz == 0]
+    corrections = []
+    for readout in reversed(readouts):
+        corrections.extend(readout["meas_ids"])
+        corrections.extend(readout["resource_sign_meas_ids"])
+    assert len(data) == dx
+    assert observables[0]["meas_ids"] == data + corrections
     assert observables[0]["reference"] == 1
     for seed in range(8):
         measurements, fired, raw = simulate_tick_circuit(tc, seed)

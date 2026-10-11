@@ -1324,6 +1324,11 @@ class LogicalCircuitBuilder:
         no in-circuit correction is applied.
 
         Note: The |+Y> injection is non-fault-tolerant (distance-1).
+        The corrected observable retains undetectable single-fault logical
+        errors. At fixed physical error rate, their combined probability can
+        grow with patch distance, so a distance sweep can worsen rather than
+        suppress logical errors. Absorbing the correction records does not
+        provide the protection of a fold-transversal SZ gate.
         For fault-tolerant SZ, use magic state distillation on the
         injected state before consumption.
 
@@ -2724,10 +2729,6 @@ def _resource_sign_checks(patch: SurfacePatch) -> tuple[list[tuple[str, int]], i
     return selected, (phase % 4) // 2
 
 
-class NonzeroTeleportationResourceReferenceError(ValueError):
-    """A consumed SZ resource constant is outside the supported observable contract."""
-
-
 class _CircuitGenerator:
     """Internal: generates a PECOS TickCircuit for logical circuits.
 
@@ -2883,9 +2884,6 @@ class _CircuitGenerator:
         for observable in self._obs_json:
             for label in observable["crossed_teleportations"]:
                 readout = self._teleportation_readouts[label]
-                if readout["resource_sign_reference"] != 0:
-                    msg = f"SZ observable requires resource_sign_reference=0 for teleportation ancilla '{label}'"
-                    raise NonzeroTeleportationResourceReferenceError(msg)
                 observable["abs_records"].extend(readout["meas_ids"])
                 observable["abs_records"].extend(readout["resource_sign_meas_ids"])
         reference_measurements = _replay_measurements(self.tc, total) if self._obs_json else []

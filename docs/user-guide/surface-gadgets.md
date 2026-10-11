@@ -1033,8 +1033,10 @@ of [arXiv:0904.2557](https://arxiv.org/abs/0904.2557).
 Here the resource is a projected logical-Y state whose sign depends on the
 syndrome projection outcomes. It is prepared by H followed by a physical SZ
 layer on every ancilla data qubit, then syndrome projection. Both forms prepare
-the data in |0_L>, an S eigenstate, so this experiment cannot distinguish S
-from identity. The projected resource is (-1)^r times logical Y, where r is
+the data in |0_L>, an S eigenstate, so *this* experiment cannot distinguish S
+from identity. That is a property of the Z-prepared example, not of the gadget:
+an X-prepared, Y-read program does distinguish them, and emits a deterministic
+observable for the corrected quantity. See below. The projected resource is (-1)^r times logical Y, where r is
 the parity of selected round-0 checks in the ancilla's first projection segment
 XOR `resource_sign_reference`.
 `rounds_before` must be at least one so these checks precede the CX.
@@ -1058,7 +1060,21 @@ contributions compensate when a positive check changes the representative's
 overlap from one to three; omitting the logical-Y phase would invert the sign.
 A logical Z correction on the data is required when the logical readout parity
 and resource sign parity disagree: XOR the two parities to decide.
-No decoder applies the correction today.
+
+For a program whose data readout is deterministic in X or Y, that correction is
+now folded into the observable's own parity mask, so the gadget's action is a
+decodable statement rather than something only a noiseless replay can show. The
+mask gains the consumed ancilla's logical readout records and the resource-sign
+records, alongside the data readout and any fold the readout lowers to. No
+in-circuit correction is applied; the correction lives in the mask.
+
+That observable inherits the injection's distance-1 character. Its error model
+contains one mechanism that flips it with no detector firing, and that
+mechanism's probability *grows* with distance: about 1.5 percent at distance 3
+against 4.1 percent at distance 5, at a physical error rate of 1e-3. A logical
+error rate swept over distance on this observable therefore gets worse, which is
+the resource injection's cost and not a code failure. The equivalent
+fold-transversal program has no such mechanism.
 
 ```python
 program = module["make_sz_teleportation"](2, 2, 2)

@@ -1,7 +1,7 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""First-decision transcription, truncation and matched-channel statistics."""
+"""First-decision transcription, truncation, matched-channel statistics and decoded feed-forward."""
 
 import inspect
 import json

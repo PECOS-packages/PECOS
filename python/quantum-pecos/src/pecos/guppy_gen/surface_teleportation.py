@@ -5,8 +5,10 @@
 
 The feed-forward uses a physical fold-S round, not a Pauli-frame annotation.
 Noisy execution requires decoded measurement outcomes and a sufficiently good
-resource; the convenience factory uses raw parities and is a noiseless
-reference experiment, not a fault-tolerant magic-state factory.
+resource. By default the factory uses raw parities and is a noiseless
+reference experiment, not a fault-tolerant magic-state factory;
+``forced_decision`` fixes the first correction so that
+``TeleportationDecisionModel.run_decoded`` can execute decoded decisions.
 """
 
 from pecos.guppy_gen._module_loader import load_cached_guppy_source

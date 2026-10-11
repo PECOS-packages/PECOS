@@ -25,9 +25,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - `make_surface_t_teleportation(..., forced_decision=...)` forces the first T/TDG
   teleportation correction. `TeleportationDecisionModel.run_decoded` runs both
-  forced variants at one seed and selects each shot by the decoded decision,
-  giving per-shot decoded feed-forward results (`DecodedDecisionRun`) at twice the
-  shot cost. `decode_decisions` decodes the first decision from program results.
+  forced variants through a caller-supplied runner bound to one seed and selects
+  each shot by the decoded decision, giving per-shot decoded feed-forward results
+  (`DecodedDecisionRun`) at twice the shot cost. `decode_decisions` decodes the first decision from program results.
 
 ### Python breaking changes
 

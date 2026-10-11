@@ -2678,9 +2678,11 @@ impl PyDetectorErrorModel {
 
     /// Convert the DEM to a source-informed graphlike decomposition.
     ///
-    /// Source-carried components are recursively decomposed only using
-    /// graphlike pieces that are themselves source-carried components in this
-    /// DEM. Residual hyperedges remain hyperedges.
+    /// Source-carried component structure is used first. Components that are
+    /// still hyperedges are decomposed with graphlike mechanisms that appear
+    /// as source-carried components or source-tracked alternatives in this
+    /// DEM, introducing graphlike remnants when needed. Residual hyperedges
+    /// remain hyperedges.
     fn to_string_source_graphlike_decomposed(&self) -> String {
         self.inner.to_string_source_graphlike_decomposed()
     }

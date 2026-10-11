@@ -286,16 +286,12 @@ class UnsignedClassicalSemantics:
             a = self.get_val(a, output, width, shot_id)
 
         if b is not None:
-            b = (
-                self._eval_expr(b, output, width, shot_id)
-                if isinstance(b, dict)
-                else self.get_val(
-                    b,
-                    output,
-                    width,
-                    shot_id,
-                )
-            )
+            if isinstance(b, dict):
+                b = self._eval_expr(b, output, width, shot_id)
+            elif not (op in {"<<", ">>"} and isinstance(b, int)):
+                # A literal shift count stays a plain int so eval_op sees its
+                # full value rather than the width-wrapped word.
+                b = self.get_val(b, output, width, shot_id)
             a = self.eval_op(op, a, b, width=width, signed=signed)
         return a
 

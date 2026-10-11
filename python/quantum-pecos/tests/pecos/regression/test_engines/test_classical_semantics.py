@@ -256,6 +256,10 @@ def test_shift_rule_unsigned_count_is_not_wrapped(width: int) -> None:
     for count in (2**width, 2**width + 3):
         assert int(semantics.eval_op("<<", 1, count)) == 0
         assert int(semantics.eval_op(">>", 2 ** (width - 1), count)) == 0
+        for op, start in (("<<", 1), (">>", 2 ** (width - 1))):
+            output = {"x": BitUInt(width, start)}
+            semantics.eval_cop({"t": "x", "op": op, "a": "x", "b": count}, output, width=width, shot_id=0)
+            assert int(output["x"]) == 0
 
 
 def test_shift_rule_default_underflow() -> None:

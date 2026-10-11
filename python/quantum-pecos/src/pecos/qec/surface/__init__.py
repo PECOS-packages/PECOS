@@ -130,6 +130,7 @@ from pecos.qec.surface.schedule import (
     compute_cnot_schedule,
     get_stab_schedule,
 )
+from pecos.qec.surface.teleportation_decision import TeleportationDecisionModel, t_teleportation_decision_model
 
 
 def __getattr__(name: str) -> type[NoiseParameters]:
@@ -146,6 +147,8 @@ def __getattr__(name: str) -> type[NoiseParameters]:
 
 
 __all__ = [
+    "TeleportationDecisionModel",
+    "t_teleportation_decision_model",
     "HookInjection",
     "hook_injection",
     "StateInjection",

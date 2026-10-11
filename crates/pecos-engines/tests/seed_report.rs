@@ -374,7 +374,9 @@ fn replay_rejects_invalid_reports_without_panicking() {
         ("shot total mismatch", |r| r.workers[0].shots = 7),
         ("duplicate worker index", |r| r.workers[1].worker_idx = 0),
         ("shot total overflow", |r| r.workers[0].shots = usize::MAX),
-        ("shot range overflow", |r| r.workers[0].first_shot = usize::MAX),
+        ("shot range overflow", |r| {
+            r.workers[0].first_shot = usize::MAX;
+        }),
         ("oversized shot metadata", |r| r.num_shots = usize::MAX),
         ("oversized worker metadata", |r| r.num_workers = usize::MAX),
     ];

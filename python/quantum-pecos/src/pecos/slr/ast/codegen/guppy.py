@@ -269,10 +269,9 @@ class GuppyContext:
     temp_counter: int = 0
     # Single namespace-wide slot -> Guppy-local table. Populated
     # by `populate_slot_locals` after declarations are collected (so
-    # the registers + allocator names are known); read by both
-    # `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
-    # `AstToGuppy._local_name` so all three sites that emit a slot
-    # name agree (the bug class the xfail tracked).
+    # the registers + allocator names are known); read by
+    # `GuppyLinearityState.from_allocators(..., slot_locals=...)`, so the
+    # entry unpack and every later rebinding of a slot use the same names.
     slot_locals: dict[Slot, str] = field(default_factory=dict)
 
     def indent(self) -> str:
@@ -299,9 +298,8 @@ class GuppyContext:
         Default name is `f"{allocator}_{index}"`; if that collides with
         any declared allocator name, register name, or previously
         assigned slot local, suffix `_` until unique. The output is the
-        authority used by both linearity-state binding init and the
-        emitter's `_local_name` so the entry-unpack LHS, the linearity
-        bindings, and per-slot references all agree (this disambiguation
+        authority used by linearity-state binding init, so the entry-unpack
+        LHS, the linearity bindings, and per-slot references all agree (this disambiguation
         prevents `q_0, q_1 = q` from shadowing a separately declared
         `QReg("q_0", ...)` parameter). Idempotent: caller may invoke
         once after `_collect_declarations` populates allocators+regs.
@@ -1279,12 +1277,12 @@ class AstToGuppy:
         linearity = self._linearity()
         for index in slots:
             slot = Slot(node.allocator, index)
-            local = self._local_name(slot)
+            # A consumed slot still names the local it last owned; no other
+            # slot owns that local, even after a Permute moved the default one.
+            cur = linearity.binding(slot).local
             if linearity.status(slot) is SlotState.LIVE:
-                cur = linearity.live(slot)
                 lines.append(f"{self.context.indent()}{cur} = reset({cur})")
             else:
-                cur = local
                 lines.append(f"{self.context.indent()}{cur} = qubit()")
             lines.extend(f"{self.context.indent()}{cur} = {FUNCTIONAL_GATES[gk]}({cur})" for gk in tail)
             linearity.set_live(slot, cur)
@@ -1723,11 +1721,12 @@ class AstToGuppy:
             return self._unpack_return_array(out_name, ret_temp)
         if kind == "single_qubit":
             outer_alloc, outer_index = info
-            # Bind the returned qubit to a fresh local that the linearity tracker
-            # treats as the new owner of the outer slot. Uses the standard
-            # `{allocator}_{index}` naming so subsequent gates resolve cleanly.
-            new_local = f"{outer_alloc}_{outer_index}"
-            linearity.set_live(Slot(outer_alloc, outer_index), new_local)
+            # Rebind the returned qubit to the local the outer slot owned before
+            # the call consumed it: no other slot owns that name, even after a
+            # Permute moved the default one.
+            slot = Slot(outer_alloc, outer_index)
+            new_local = linearity.binding(slot).local
+            linearity.set_live(slot, new_local)
             return [f"{self.context.indent()}{new_local} = {ret_temp}"]
         if kind == "single_bit":
             # Write the mutated bit back into the outer CReg. Bits are copyable
@@ -1736,8 +1735,8 @@ class AstToGuppy:
             return [f"{self.context.indent()}{register}[{bit_index}] = {ret_temp}[0]"]
         if kind == "qubit_bundle":
             # Destructure the returned array back into the SAME outer slots the
-            # bundle consumed, rebinding each via the canonical local name.
-            new_locals = [f"{alloc}_{idx}" for alloc, idx in info]
+            # bundle consumed, rebinding each to the local it owned before the call.
+            new_locals = [linearity.binding(Slot(alloc, idx)).local for alloc, idx in info]
             if len(new_locals) == 1:
                 line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
             else:
@@ -1764,12 +1763,12 @@ class AstToGuppy:
 
     def _unpack_return_array(self, out_name: str, ret_temp: str) -> list[str]:
         size = self.context.root_allocators[out_name]
-        new_locals = [f"{out_name}_{i}" for i in range(size)]
+        linearity = self._linearity()
+        new_locals = [linearity.binding(Slot(out_name, i)).local for i in range(size)]
         if size == 1:
             line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
         else:
             line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
-        linearity = self._linearity()
         for i, local in enumerate(new_locals):
             linearity.set_live(Slot(out_name, i), local)
         return [line]
@@ -1940,18 +1939,6 @@ class AstToGuppy:
             msg = f"AST -> Guppy v1 does not support allocator {ref.allocator!r}"
             raise GuppyCodegenError(msg)
         return Slot(ref.allocator, ref.index)
-
-    def _local_name(self, slot: Slot) -> str:
-        # Read from the disambiguated slot-locals table populated
-        # by `GuppyContext.populate_slot_locals` so this site agrees
-        # with the linearity-state binding and the entry-unpack LHS.
-        # Fall back to the bare formula only if a caller emits a slot
-        # before the table is populated (defensive; should not happen
-        # on a normal emission path).
-        cached = self.context.slot_locals.get(slot)
-        if cached is not None:
-            return cached
-        return f"{slot.allocator}_{slot.index}"
 
     def _render_bit_ref(self, ref: BitRef) -> str:
         if ref.register not in self.context.registers:

@@ -1220,6 +1220,56 @@ tracking through the fold correction. Merely adding syndrome rounds does not
 provide those features. No logical-error-rate or fault-distance guarantee is
 claimed for the complete raw-resource experiment.
 
+#### First-decision window model
+
+`t_teleportation_decision_model(patch, rounds_before)` builds the pre-decision
+window: both injection rounds, the requested rounds on both patches, and the
+resource's destructive Z readout. Its one observable is the flip of the resource
+logical-Z parity. `detection_events(results)` returns fired detector ids and the
+raw decision per shot; an external decoder predicts the flip, giving
+`decoded_decision = raw XOR predicted_flip`. This does not change the branch
+executed by the program. In a program with several T/TDG decisions, only the
+first decision is covered. Later windows include executed correction rounds and
+are out of scope.
+
+The model assumes raw resources and canonical inputs with no pending frame. It
+omits the undetectable seed T error (resource infidelity), noise on the seed
+chain, the seed's H and the sign-fix gates, and idle noise. Single-qubit noise
+also has different meanings: Guppy/QIS applies `p1` to every Helios-native gate
+inside each CX, preparation and measurement, while this logical-gate model has
+no counterpart. At d = 3, `rounds_before = 1`, with `p1 = 0.005` and every other
+channel off, the program fired 2.86 detectors per shot against 0.10 in the
+model. Comparisons should match the two-qubit, measurement and preparation
+channels with `p1=0` until native gate lowering is available.
+
+This self-contained noiseless example checks the transcription, including the
+raw parity used by the program:
+
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+from pecos.guppy_gen import make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
+
+decision_patch = SurfacePatch.create(distance=3)
+decision_model = t_teleportation_decision_model(decision_patch, rounds_before=1)
+decision_dem = decision_model.build_dem(p1=0.0, p2=0.001, p_meas=0.001, p_prep=0.001)
+decision_program = make_surface_t_teleportation(decision_patch, rounds_before=1)
+decision_engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+decision_results = (
+    sim(decision_program)
+    .classical(decision_engine)
+    .quantum(stab_vec())
+    .qubits(decision_patch.geometry.num_data + decision_patch.geometry.num_qubits)
+    .seed(712)
+    .run(4)
+    .to_dict()
+)
+events, raw = decision_model.detection_events(decision_results)
+assert all(not fired for fired in events)
+assert raw == [bool(bit) for bit in decision_results["t_correction"]]
+```
+
 #### Postselected hook resources
 
 PECOS also implements the CNOT schedule from

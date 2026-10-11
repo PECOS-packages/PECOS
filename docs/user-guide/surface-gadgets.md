@@ -1070,8 +1070,10 @@ in-circuit correction is applied; the correction lives in the mask.
 
 That observable inherits the injection's distance-1 character. Its error model
 contains one mechanism that flips it with no detector firing, and that
-mechanism's probability *grows* with distance: about 1.5 percent at distance 3
-against 4.1 percent at distance 5, at a physical error rate of 1e-3. A logical
+mechanism's probability *grows* with distance. With `p1`, `p2`, `p_meas` and
+`p_prep` all at 1e-3 it is about 2.4 percent at distance 3 and 6.4 percent at
+distance 5. The exact figure depends on which noise parameters are set, so treat
+the direction as the point rather than the number. A logical
 error rate swept over distance on this observable therefore gets worse, which is
 the resource injection's cost and not a code failure. The equivalent
 fold-transversal program has no such mechanism.

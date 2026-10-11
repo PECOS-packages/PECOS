@@ -10,6 +10,7 @@ import pytest
 from pecos._traced_circuit import measurement_ids_in_execution_order
 from pecos.qec.dem_spec import _measurement_ids_in_runtime_order
 from pecos.qec.surface import (
+    MissingObservableReferenceError,
     SurfacePatch,
     extract_detection_events_and_observables,
     generate_tick_circuit_from_patch,
@@ -40,12 +41,13 @@ def test_extraction_uses_positions(scrambled, references):
 def test_extraction_annotation_only(scrambled):
     scrambled.detector([(0, 0, 1)])
     scrambled.observable([(0, 0, 1)])
-    assert extract_detection_events_and_observables(scrambled, [[0, 1]]) == ([[0]], [[0]])
+    with pytest.raises(MissingObservableReferenceError, match="has no 'reference'"):
+        list(extract_detection_events_and_observables(scrambled, [[0, 1]])[1])
 
 
 def test_extraction_sparse_ids_and_multiplicity(scrambled):
     scrambled.set_meta("detectors", '[{"id":8,"records":[1]},{"id":3,"records":[0]},{"id":2,"records":[1,1]}]')
-    scrambled.set_meta("observables", '[{"id":7,"records":[1]},{"id":4,"records":[0]}]')
+    scrambled.set_meta("observables", '[{"id":7,"records":[1],"reference":0},{"id":4,"records":[0],"reference":0}]')
     assert extract_detection_events_and_observables(scrambled, [[1, 1]]) == ([[3, 8]], [[4, 7]])
     with pytest.raises(ValueError, match=r"row has length 1.*num_measurements=2"):
         extract_detection_events_and_observables(scrambled, [[1]])

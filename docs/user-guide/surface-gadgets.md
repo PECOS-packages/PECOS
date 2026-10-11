@@ -549,12 +549,13 @@ the readout Pauli back onto the prepared eigenstate: positive gives 0, negative
 gives 1. With folds it can be 1 noiselessly: SZ,SZ before an X readout, SZ,SZ,H
 before a Z readout, or SZdg pairs through a CX. Stim's reference-relative
 sampling reports zero observable flips for these noiseless programs.
-Observable metadata has no sign field, so both raw-parity consumers,
-`pecos.testing.simulate_tick_circuit` and
-`pecos.qec.surface.extract_detection_events_and_observables`, must account for
-this reference. SZ then SZdg before X readout has raw parity 0. A readout with no
-supported logical image, as under a physical SZ layer, produces no observable
-at all.
+Observable metadata carries this bit as `reference`.
+`pecos.testing.simulate_tick_circuit` retains raw signed parity for gate-correctness
+checks; its callers must account for the reference.
+`pecos.qec.surface.extract_detection_events_and_observables` applies it and returns
+flipped observable ids, so clean shots have no flips. SZ then SZdg before X
+readout has raw parity 0. A readout with no supported logical image, as under a
+physical SZ layer, produces no observable at all.
 
 ```python
 import stim

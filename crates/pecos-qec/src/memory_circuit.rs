@@ -106,7 +106,7 @@ pub(crate) fn finish_css_memory_circuit(
     }
 
     let (detectors_json, observables_json, num_detectors, num_observables) =
-        annotation_metadata_json(circuit);
+        css_memory_annotation_metadata_json(circuit);
     circuit.set_meta(
         "num_measurements",
         Attribute::String(circuit.num_measurements().to_string()),
@@ -185,7 +185,7 @@ fn annotate_detector(
         .map_err(|error| error.to_string())
 }
 
-fn annotation_metadata_json(circuit: &TickCircuit) -> (String, String, usize, usize) {
+fn css_memory_annotation_metadata_json(circuit: &TickCircuit) -> (String, String, usize, usize) {
     let mut detectors = Vec::new();
     let mut observables = Vec::new();
     for annotation in circuit.annotations() {
@@ -203,10 +203,17 @@ fn annotation_metadata_json(circuit: &TickCircuit) -> (String, String, usize, us
             }
             AnnotationKind::Observable { measurement_ids } => {
                 let id = observables.len();
+                // Both memory builders prepare every data qubit in the positive
+                // eigenstate of the readout basis. Each logical is an unsigned
+                // product in that basis, hence initially has parity zero. CSS
+                // syndrome measurements commute with these logicals, preserving
+                // that eigenvalue through every cycle to the same-basis readout.
+                // This derivation is specific to these pure memory experiments.
                 observables.push(serde_json::json!({
                     "id": id,
                     "meas_ids": measurement_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
                     "label": annotation.label,
+                    "reference": 0,
                 }));
             }
             AnnotationKind::TrackedPauli => {}

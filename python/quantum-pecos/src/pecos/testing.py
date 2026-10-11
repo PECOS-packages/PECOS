@@ -41,10 +41,9 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from pecos_rslib import SparseStab
-
 import pecos as pc
 from pecos._traced_circuit import measurement_ids_in_execution_order
+from pecos.qec._replay import _replay_tick_circuit
 from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
@@ -244,43 +243,13 @@ __all__ = [
 ]
 
 
-def _replay_tick_circuit(tc: TickCircuit, num_ticks: int, seed: int) -> tuple[SparseStab, list[int]]:
-    """Replay supported Clifford operations, rejecting unknown operations and angles."""
-    if not 0 <= num_ticks <= tc.num_ticks():
-        msg = "Replay tick count is outside the circuit"
-        raise ValueError(msg)
-    max_q = max(
-        (int(q) for i in range(tc.num_ticks()) for g in tc.get_tick(i).gate_batches() for q in g.qubits),
-        default=0,
-    )
-    sim = SparseStab(max_q + 1)
-    sim.set_seed(seed)
-    flat = []
-    for i in range(num_ticks):
-        for gate in tc.get_tick(i).gate_batches():
-            name = gate.gate_type.name
-            qubits = [int(q) for q in gate.qubits]
-            if gate.angles:
-                msg = f"Unsupported replay operation: {name} with angles"
-                raise NotImplementedError(msg)
-            if name in {"QAlloc", "PZ"}:
-                sim.run_gate("PZ", set(qubits))
-            elif name == "MZ":
-                flat.extend(sim.run_gate("MZ", {q}).get(q, 0) for q in qubits)
-            elif gate.is_two_qubit():
-                # Gate arity accessor: python/pecos-rslib/src/dag_circuit_bindings.rs.
-                sim.run_gate(name, set(zip(qubits[::2], qubits[1::2], strict=True)))
-            elif gate.is_single_qubit():
-                # SparseStab.run_gate raises for unsupported symbols.
-                sim.run_gate(name, set(qubits))
-            else:
-                msg = f"Unsupported replay operation: {name}"
-                raise NotImplementedError(msg)
-    return sim, flat
-
-
 def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], int, dict[int, int]]:
-    """Replay noiselessly; return measurements, fired detector count, and observables."""
+    """Replay noiselessly; return measurements, fired detector count, and raw parities.
+
+    Observable parities are keyed by declared id and retain their signed noiseless
+    value. The extraction helper XORs that value with the observable reference
+    to report flips; this gate-correctness oracle deliberately does not.
+    """
     definitions = tc.circuit_definitions()
     _, flat = _replay_tick_circuit(tc, tc.num_ticks(), seed)
     if len(flat) != definitions["num_measurements"]:

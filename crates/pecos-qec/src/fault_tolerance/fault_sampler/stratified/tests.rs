@@ -26,7 +26,7 @@ fn catalog() -> FaultCatalog {
         .add_detector_metadata(&[-2, -1], None, Some("D"), Some(0))
         .unwrap();
     circuit
-        .add_observable_metadata(&[-2], Some(0), Some("L"))
+        .add_observable_metadata(&[-2], Some(0), Some("L"), None)
         .unwrap();
     circuit.tracked_pauli_labeled("Z0", PauliString::z(0));
     FaultCatalog::from_circuit(&circuit)
@@ -568,7 +568,7 @@ fn repetition_memory_matches_enumeration_and_plain_sampling() {
         .add_detector_metadata(&[-2, -1], None, Some("D1"), Some(1))
         .unwrap();
     circuit
-        .add_observable_metadata(&[-3], Some(0), Some("logical Z"))
+        .add_observable_metadata(&[-3], Some(0), Some("logical Z"), None)
         .unwrap();
     let catalog =
         FaultCatalog::from_circuit(&circuit)

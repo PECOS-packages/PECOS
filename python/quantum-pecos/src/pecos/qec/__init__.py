@@ -155,8 +155,10 @@ from pecos.qec.surface import (
     parity_matrix_z,
     surface_code_memory,
 )
+from pecos.qec.surface._detection_events import MissingObservableReferenceError
 
 __all__ = [
+    "MissingObservableReferenceError",
     # Submodules
     "analysis",
     "color",

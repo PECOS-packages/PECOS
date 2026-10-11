@@ -36,7 +36,7 @@ use pecos_quantum::{
     TickGateError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBool, PyDict, PyInt, PyList};
 use std::collections::BTreeSet;
 
 type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
@@ -2342,6 +2342,7 @@ impl PyTickCircuit {
             entry.set_item("measurements", observable.measurements)?;
             entry.set_item("label", observable.label)?;
             entry.set_item("pauli", observable.pauli.map(|pauli| pauli.to_string()))?;
+            entry.set_item("reference", observable.reference)?;
             observables.append(entry)?;
         }
         result.set_item("observables", observables)?;
@@ -2415,16 +2416,32 @@ impl PyTickCircuit {
     ///
     /// Standard observables live in the ``L<n>`` decoder ID space. A label of
     /// ``"L3"`` therefore selects observable id 3 unless ``observable_id`` is
-    /// provided, in which case the two must agree.
-    #[pyo3(signature = (records, observable_id=None, label=None))]
+    /// provided, in which case the two must agree. ``reference`` is the noiseless
+    /// parity (integer 0 or 1), or None when unknown. It is stored, never applied.
+    #[pyo3(signature = (records, observable_id=None, label=None, reference=None))]
     fn add_observable(
         &mut self,
         records: Vec<i64>,
         observable_id: Option<usize>,
         label: Option<String>,
+        reference: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<usize> {
+        let reference = reference
+            .map(|value| {
+                if value.is_instance_of::<PyBool>() || !value.is_instance_of::<PyInt>() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "observable reference must be integer 0 or 1 or absent",
+                    ));
+                }
+                value.extract::<u8>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "observable reference must be integer 0 or 1 or absent",
+                    )
+                })
+            })
+            .transpose()?;
         self.inner
-            .add_observable_metadata(&records, observable_id, label.as_deref())
+            .add_observable_metadata(&records, observable_id, label.as_deref(), reference)
             .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 

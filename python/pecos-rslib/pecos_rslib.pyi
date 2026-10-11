@@ -2024,7 +2024,11 @@ class TickCircuit:
         ...
 
     def circuit_definitions(self) -> dict[str, Any]:
-        """Return definitions resolved to absolute measurement emission positions."""
+        """Return definitions resolved to absolute measurement emission positions.
+
+        Observable dictionaries include ``reference`` (integer 0 or 1) when
+        metadata supplies a noiseless value, or ``None`` when absent.
+        """
         ...
 
     def next_tick_index(self) -> int: ...
@@ -2049,6 +2053,7 @@ class TickCircuit:
         records: Sequence[int],
         observable_id: int | None = None,
         label: str | None = None,
+        reference: int | None = None,
     ) -> int: ...
     def annotations(self) -> list[Any]: ...
     def detector(self, measurements: Any, label: str | None = None) -> int:

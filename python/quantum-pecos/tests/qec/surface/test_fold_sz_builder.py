@@ -348,9 +348,9 @@ def test_fold_reference_parity(shape, raw_parity):
         assert fired == 0
         assert observables == {0: raw_parity}
         samples = circuit.compile_sampler(seed=seed).sample(256)
-        events, raw_observables = extract_detection_events_and_observables(tc, samples)
+        events, observable_flips = extract_detection_events_and_observables(tc, samples)
         assert events == [[] for _ in range(256)]
-        assert raw_observables == [[0] if raw_parity else [] for _ in range(256)]
+        assert observable_flips == [[] for _ in range(256)]
         detectors, flips = circuit.compile_detector_sampler(seed=seed).sample(256, separate_observables=True)
         assert not detectors.any()
         assert not flips.any()

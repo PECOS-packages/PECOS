@@ -24,6 +24,9 @@ When a new Block is converted, the workflow is:
 3. Re-run this corpus; identical records prove behavior preservation.
 
 Empirical records were probed on phase3a-blockcall branch on 2026-05-15.
+Random pins were refreshed for global per-shot seeding on 2026-10-11; the
+deterministic bits and correlations remain unchanged. These samples are not
+promised stable across Rust releases.
 Steane CX/CY/CZ + Steane X/Y/Z + Steane H are converted; their entries
 now exercise the BlockCall path (parametrized lock-in in
 `test_block_call_smoke.py::TestConvertedQeclibBlocksUseBlockCallPath`).
@@ -95,8 +98,8 @@ class TestQeclibCheck:
 
         `Check` is now converted (`a: scratch`): Guppy allocates the
         ancilla INTERNALLY, so the run needs one physical qubit beyond
-        the declared 4-qubit QReg (`qubits=5`). The Selene records are
-        byte-identical to the pre-conversion flattened form -- design
+        the declared 4-qubit QReg (`qubits=5`). The Selene records were
+        originally byte-identical to the pre-conversion flattened form -- design
         R2: parity is on behavioral records, not resource counts.
         """
         prog = Main(
@@ -106,9 +109,8 @@ class TestQeclibCheck:
             Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
-        # Empirical probe 2026-05-15: {'measurement_0': [1, 0, 0, 1]}
-        # Unchanged post-conversion (scratch internal alloc).
-        assert raw == {"measurement_0": [1, 0, 0, 1]}, raw
+        # Re-pinned for global per-shot seeding (2026-10-11).
+        assert raw == {"measurement_0": [0, 1, 0, 0]}, raw
 
     def test_check_xyz_on_plus_state_pinned_records(self) -> None:
         """Same Check, data q[0]/q[1] put into |+> by H before the Check.
@@ -128,8 +130,8 @@ class TestQeclibCheck:
         # qubits=5: converted Check allocates its scratch ancilla
         # internally (design R2 -- records unchanged, +1 physical qubit).
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
-        # Empirical probe 2026-05-15: {'measurement_0': [1, 0, 0, 1]}
-        assert raw == {"measurement_0": [1, 0, 0, 1]}, raw
+        # Re-pinned for global per-shot seeding (2026-10-11).
+        assert raw == {"measurement_0": [0, 1, 0, 0]}, raw
 
 
 class TestQeclibCheck1Flag:
@@ -142,7 +144,7 @@ class TestQeclibCheck1Flag:
         Guppy allocates BOTH internally, so the run needs 2 physical
         qubits beyond the declared 5-qubit QReg (`qubits=7`). Data
         qubits and the two classical bits are live_preserved. Selene
-        records are byte-identical to the pre-conversion flattened form
+        records were byte-identical to the pre-conversion flattened form
         -- design R2: parity on behavioral records, not resource counts.
         """
         prog = Main(
@@ -152,10 +154,9 @@ class TestQeclibCheck1Flag:
             Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=7)
-        # Empirical probe 2026-05-15: unchanged post-conversion
-        # {'measurement_0': [1, 0, 0, 1], 'measurement_1': [0, 0, 0, 0]}
+        # Re-pinned for global per-shot seeding; flags remain zero (2026-10-11).
         assert raw == {
-            "measurement_0": [1, 0, 0, 1],
+            "measurement_0": [0, 1, 0, 0],
             "measurement_1": [0, 0, 0, 0],
         }, raw
 
@@ -305,13 +306,13 @@ class TestQeclibSteaneLogicalPaulis:
     def test_steane_logical_h_on_zero_pinned_records(self) -> None:
         """Steane H on |0>^7 -> |+>^7; Z-basis measurement is seeded-random per-qubit per-shot."""
         raw = _run_via_selene(self._gate_then_measure(steane_h.H), shots=4, seed=42, qubits=7)
-        # Empirical probe 2026-05-15: pinned per-qubit, per-shot bit pattern.
+        # Re-pinned per-qubit, per-shot bit pattern (2026-10-11).
         assert raw == {
-            "measurement_0": [1, 1, 1, 0],
-            "measurement_1": [0, 1, 1, 0],
-            "measurement_2": [0, 1, 1, 1],
-            "measurement_3": [1, 0, 1, 0],
-            "measurement_4": [0, 0, 0, 0],
-            "measurement_5": [0, 0, 1, 1],
-            "measurement_6": [0, 1, 1, 1],
+            "measurement_0": [0, 1, 0, 0],
+            "measurement_1": [1, 1, 1, 1],
+            "measurement_2": [0, 1, 1, 0],
+            "measurement_3": [1, 1, 0, 1],
+            "measurement_4": [1, 1, 1, 0],
+            "measurement_5": [1, 0, 1, 1],
+            "measurement_6": [0, 0, 1, 0],
         }, raw

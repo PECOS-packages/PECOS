@@ -24,16 +24,11 @@ cx q[0], q[1];
 measure q -> c;
 """
 
-# Create noise model with builder
-noise = (
-    GeneralNoiseModelBuilder()
-    .with_seed(42)  # Reproducible randomness
-    .with_p1(0.001)  # Single-qubit gate error
-    .with_p2(0.01)
-)  # Two-qubit gate error
+# Set single-qubit error to 0.001 and two-qubit error to 0.01
+noise = GeneralNoiseModelBuilder().with_p1(0.001).with_p2(0.01)
 
 # Use with sim()
-results = sim(Qasm(qasm)).noise(noise).run(1000)
+results = sim(Qasm(qasm)).noise(noise).seed(42).run(1000)
 ```
 
 ## GeneralNoiseModelBuilder
@@ -135,7 +130,6 @@ command message need not contain every source gate.
 ```python
 noise = (
     GeneralNoiseModelBuilder()
-    .with_seed(42)  # Random seed for reproducibility
     .with_scale(1.5)  # Scale all error rates by 1.5x
     .with_leakage_scale(0.1)  # 10% of errors cause leakage
     .with_emission_scale(0.05)
@@ -247,7 +241,6 @@ Model based on typical superconducting qubit parameters:
 ```python
 noise = (
     GeneralNoiseModelBuilder()
-    .with_seed(42)
     # Gate errors (two-qubit gates are typically 10x worse)
     .with_average_p1(0.0001)  # 0.01% single-qubit error
     .with_average_p2(0.001)  # 0.1% two-qubit error
@@ -265,17 +258,17 @@ Ion traps have different characteristics than superconducting qubits:
 ```python
 noise = (
     GeneralNoiseModelBuilder()
-    .with_seed(42)
     # Excellent single-qubit gates
     .with_average_p1(0.00001)  # 0.001% error
     # Two-qubit gates are the limiting factor
     .with_average_p2(0.003)  # 0.3% error
     # State preparation
     .with_p_prep(0.001)  # 0.1% error
-    # Asymmetric measurement (bright/dark state detection)
-    .with_p_meas_0(0.001)  # Dark state error
+    # Asymmetric measurement: dark state error
+    .with_p_meas_0(0.001)
+    # Bright state error (higher)
     .with_p_meas_1(0.005)
-)  # Bright state error (higher)
+)
 ```
 
 ### Biased Noise Model
@@ -332,8 +325,6 @@ measure q -> c;
 # Build comprehensive noise model
 noise = (
     GeneralNoiseModelBuilder()
-    # Reproducibility
-    .with_seed(42)
     # Global scaling
     .with_scale(1.2)  # 20% higher error rates
     # Make Hadamard gates perfect
@@ -357,7 +348,7 @@ noise = (
 )
 
 # Run simulation
-results = sim(Qasm(qasm)).noise(noise).run(1000)
+results = sim(Qasm(qasm)).noise(noise).seed(42).run(1000)
 
 # Analyze results
 counts = Counter(results.to_dict()["c"])
@@ -371,7 +362,7 @@ for state, count in counts.most_common(5):
 
 1. **Use Average Probabilities**: They're more intuitive and match experimental error rates.
 
-2. **Set Seeds for Reproducibility**: Always use `.with_seed()` for reproducible results in research.
+2. **Set Seeds for Reproducibility**: Use `.seed()` on the simulation builder. The shared Monte Carlo loop reseeds every component before each shot, overriding seeds set directly on noise models with `.with_seed()`.
 
 3. **Start Simple**: Begin with uniform probabilities, then add complexity as needed.
 

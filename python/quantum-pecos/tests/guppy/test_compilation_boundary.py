@@ -146,7 +146,7 @@ def test_hosted_operations_keep_their_order_through_lowering() -> None:
         "trace_complete",
     ]
     # Seed 42 measures a = 1, so count = 1 and the loop applies h(b) once.
-    assert trace[-1]["measurement_results"] == {"0": 1, "1": 1}
+    assert trace[-1]["measurement_results"] == {"0": 1, "1": 0}
     assert [[_operation_shape(op) for op in chunk["operations"]] for chunk in trace[:2]] == [
         [
             ("AllocateQubit", 0),

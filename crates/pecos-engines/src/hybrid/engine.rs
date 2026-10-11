@@ -45,8 +45,8 @@ use pecos_core::rng::rng_manageable::derive_seed;
 ///
 /// In the `MonteCarloEngine`, this engine is:
 /// - Cloned for each worker thread
-/// - Assigned a unique derived seed
-/// - Reset between shots to ensure clean state
+/// - Reseeded for each global shot index, independently of the worker count
+/// - Reset after reseeding to ensure clean state
 ///
 /// # Example
 ///

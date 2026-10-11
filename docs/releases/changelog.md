@@ -23,6 +23,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- Seeded samples change for every engine on the shared Monte Carlo loop (including
+  QIS/Guppy, QASM and PHIR). A seed now determines each shot from its global index,
+  independently of the worker count and random draws in earlier shots.
+
 - Removed `DemBuilder.with_measurement_order` and `DemSamplerBuilder.with_measurement_order`
   from `pecos_rslib.qec`, including their type stubs. Write detector/observable records
   in influence-map (emission) order, or reference stamped `meas_ids` in metadata.
@@ -114,6 +118,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `step` and `buffer`; they previously defaulted to 8 and 4.
 
 ### Rust breaking changes
+
+- Seeded samples change for every engine on the shared Monte Carlo loop. Each shot
+  is reseeded from the run seed and its global index before resetting the engine.
+- `WorkerSeedRecord.seed` is replaced by `first_shot`, the worker's first global
+  shot index. `SeedReport.base_seed` now drives replay; `root_seed` is provenance
+  only. Old serialized reports must be regenerated. Shot-seed derivation is stable,
+  but component derivation uses `DefaultHasher`, so seeded samples are not promised
+  stable across Rust releases.
 
 - Removed `DemBuilder::with_measurement_order`,
   `DemSamplerBuilder::with_measurement_order`, `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,

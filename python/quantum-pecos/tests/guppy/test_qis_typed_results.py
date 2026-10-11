@@ -53,7 +53,7 @@ def test_typed_named_results() -> None:
     }
 
 
-@pytest.mark.parametrize(("seed", "trace_bit"), [(1, True), (7, True), (42, True), (99, False)])
+@pytest.mark.parametrize(("seed", "trace_bit"), [(1, True), (7, False), (42, True), (99, True)])
 def test_measurement_dependent_integer(seed: int, trace_bit: bool) -> None:
     """Mixed 1/7 outcomes form a uniform integer column across shots and seeds.
 
@@ -293,7 +293,7 @@ def test_branch_dependent_types_name_register_shot_and_types() -> None:
             result("v", 7)
 
     shots = sim(Guppy(mixed_branches)).classical(pecos.selene_engine()).qubits(1).seed(42).run(32)
-    with pytest.raises(RuntimeError, match=r"Register 'v' at shot 1: expected U32, received I64") as error:
+    with pytest.raises(RuntimeError, match=r"Register 'v' at shot 1: expected I64, received U32") as error:
         shots.to_dict()
     print(str(error.value))
 
@@ -335,4 +335,4 @@ def test_exit_before_first_result_reports_shot_register_count() -> None:
     shots = sim(Guppy(early_exit)).classical(pecos.selene_engine()).qubits(1).seed(42).run(32)
     with pytest.raises(RuntimeError) as error:
         shots.to_dict()
-    assert str(error.value) == ("Processing error: Shot 1 has 2 registers, but expected 1 based on first shot")
+    assert str(error.value) == ("Processing error: Shot 1 has 1 registers, but expected 2 based on first shot")

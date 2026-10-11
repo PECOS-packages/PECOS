@@ -122,7 +122,10 @@ Recommended defaults:
 
 ## Implementation Sketch
 
-1. Add a worker-independent per-shot seed derivation API.
+1. Use the shared Monte Carlo loop's `nth_derived_seed(base_seed, global_shot_index)`
+   seeding and the `SeedReport` shot offsets. The shot-seed derivation is stable;
+   component seeds still use `DefaultHasher`, so seeded samples are not promised
+   stable across Rust releases.
 2. Ensure each simulator/noise layer receives deterministic component RNGs
    derived from the shot seed.
 3. Add an optional `NoiseEventSink` trait or equivalent callback in Rust.

@@ -282,9 +282,11 @@ impl MonteCarloEngineBuilder {
 
     /// Set a seed value for the Monte Carlo engine
     ///
-    /// This sets the seed for the internal random number generator used to derive
-    /// worker-specific seeds. For deterministic behavior, use this together with
-    /// setting seeds on the individual components.
+    /// This seeds the internal random number generator that draws a base seed for
+    /// each run. Every shot reseeds all components from that base seed and its
+    /// global index, independently of worker count and draws in earlier shots.
+    /// Component seeds use `DefaultHasher`, so seeded samples are not promised
+    /// stable across Rust releases.
     ///
     /// # Arguments
     /// * `seed` - The seed value

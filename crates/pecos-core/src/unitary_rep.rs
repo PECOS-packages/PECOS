@@ -2269,7 +2269,8 @@ impl UnitaryRep {
     ///
     /// # Panics
     /// Panics on invalid phase operands, phases exceeding the two-operand hardware
-    /// lowering limit, or a global phase that a `Gate` list cannot represent.
+    /// lowering limit (except three-operand π phases, which lower to CCZ), or a
+    /// global phase that a `Gate` list cannot represent.
     /// Use [`Self::try_decompose`] for caller data.
     #[must_use]
     pub fn decompose(&self) -> Vec<crate::Gate> {

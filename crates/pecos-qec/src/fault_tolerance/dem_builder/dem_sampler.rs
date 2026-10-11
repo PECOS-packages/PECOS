@@ -2061,16 +2061,13 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     idle_noise: Option<NoiseConfig>,
     detector_records: Vec<Vec<i32>>,
     observable_records: Vec<Vec<i32>>,
-    measurement_order: Option<Vec<usize>>,
     detectors_json: Option<String>,
     observables_json: Option<String>,
-    num_tc_measurements: Option<usize>,
 }
 
 struct FaultMechanismContext<'a> {
-    im_to_tc: Option<&'a [usize]>,
     influence_observable_ids: &'a BTreeSet<u32>,
-    num_tc_measurements: usize,
+    num_measurements: usize,
 }
 
 impl<'a> SamplingEngineBuilder<'a> {
@@ -2092,10 +2089,8 @@ impl<'a> SamplingEngineBuilder<'a> {
             per_gate: None,
             detector_records: Vec::new(),
             observable_records: Vec::new(),
-            measurement_order: None,
             detectors_json: None,
             observables_json: None,
-            num_tc_measurements: None,
         }
     }
 
@@ -2167,7 +2162,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// # Errors
     /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
     /// references. Agreement between records and ids is checked at build time
-    /// using the final measurement order.
+    /// using influence-map emission positions.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
         super::builder::validate_sampler_json(json, self.influence_map, true)
             .map_err(|err| err.to_string())?;
@@ -2182,7 +2177,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// # Errors
     /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
     /// references. Agreement between records and ids is checked at build time
-    /// using the final measurement order.
+    /// using influence-map emission positions.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
         super::builder::validate_sampler_json(json, self.influence_map, false)
             .map_err(|err| err.to_string())?;
@@ -2206,54 +2201,24 @@ impl<'a> SamplingEngineBuilder<'a> {
         self
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
-    )]
-    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
-        self.set_measurement_order_internal(order)
-    }
-
-    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
-        self.num_tc_measurements = Some(order.len());
-        self.measurement_order = Some(order);
-        self
-    }
-
     /// Build the [`SamplingEngine`].
     ///
     /// # Errors
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
     /// influence map, or a configuration error for an invalid replacement mode
-    /// or an invalid noise or signature channel. Invalid record ranges and
-    /// incomplete measurement orders are rejected for non-empty maps. On an
+    /// or an invalid noise or signature channel. Invalid record ranges
+    /// are rejected for non-empty maps. On an
     /// empty map, records remain opaque coordinates and bounds are not checked.
     pub fn build(mut self) -> Result<SamplingEngine, super::DemBuilderError> {
-        let im_to_tc = super::builder::sampler_measurement_mapping(
-            self.influence_map,
-            self.measurement_order.as_deref(),
-        )?;
+        super::builder::validate_sampler_measurements(self.influence_map)?;
         if let Some(json) = &self.detectors_json {
-            self.detector_records = super::builder::parse_detector_record_vectors(
-                json,
-                self.influence_map,
-                im_to_tc.as_deref(),
-            )?;
+            self.detector_records =
+                super::builder::parse_detector_record_vectors(json, self.influence_map)?;
         }
         if let Some(json) = &self.observables_json {
-            self.observable_records = super::builder::parse_observable_record_vectors(
-                json,
-                self.influence_map,
-                im_to_tc.as_deref(),
-            )?;
+            self.observable_records =
+                super::builder::parse_observable_record_vectors(json, self.influence_map)?;
         }
         let num_measurements = self.influence_map.measurements.len();
         super::builder::validate_sampler_records(
@@ -2306,14 +2271,10 @@ impl<'a> SamplingEngineBuilder<'a> {
         let influence_observable_ids = self.influence_map.observable_ids();
         let num_influence_observables = self.influence_map.num_observables();
         let num_dem_outputs = num_influence_observables.max(self.observable_records.len());
-        let num_im_measurements = self.influence_map.measurements.len();
-        let num_tc_measurements = self.num_tc_measurements.unwrap_or(num_im_measurements);
 
-        // Build IM -> TC index mapping
         let mechanism_context = FaultMechanismContext {
-            im_to_tc: im_to_tc.as_deref(),
             influence_observable_ids: &influence_observable_ids,
-            num_tc_measurements,
+            num_measurements,
         };
 
         // Aggregation map: mechanism -> probability
@@ -2544,9 +2505,8 @@ impl<'a> SamplingEngineBuilder<'a> {
         let mechanism = self.compute_mechanism(
             loc_idx,
             pauli,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         if !mechanism.is_empty() {
             let entry = aggregated.entry(mechanism).or_insert(0.0);
@@ -2705,9 +2665,8 @@ impl<'a> SamplingEngineBuilder<'a> {
             let mechanism = self.compute_mechanism(
                 loc_idx,
                 *pauli,
-                context.im_to_tc,
                 context.influence_observable_ids,
-                context.num_tc_measurements,
+                context.num_measurements,
             );
             if mechanism.is_empty() || per_pauli_prob == 0.0 {
                 continue;
@@ -2746,23 +2705,20 @@ impl<'a> SamplingEngineBuilder<'a> {
         let x_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::X,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         let y_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::Y,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         let z_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::Z,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         debug_assert_eq!(y_mechanism, x_mechanism.xor(&z_mechanism));
 
@@ -2845,16 +2801,14 @@ impl<'a> SamplingEngineBuilder<'a> {
             effects1[p as usize] = Some(self.compute_mechanism(
                 loc1,
                 p,
-                context.im_to_tc,
                 context.influence_observable_ids,
-                context.num_tc_measurements,
+                context.num_measurements,
             ));
             effects2[p as usize] = Some(self.compute_mechanism(
                 loc2,
                 p,
-                context.im_to_tc,
                 context.influence_observable_ids,
-                context.num_tc_measurements,
+                context.num_measurements,
             ));
         }
 
@@ -2914,9 +2868,8 @@ impl<'a> SamplingEngineBuilder<'a> {
         &self,
         loc_idx: usize,
         pauli: Pauli,
-        im_to_tc: Option<&[usize]>,
         influence_observable_ids: &BTreeSet<u32>,
-        num_tc_measurements: usize,
+        num_measurements: usize,
     ) -> DemMechanism {
         // Get measurement indices that flip (in IM order)
         let im_meas_flips = self
@@ -2931,21 +2884,13 @@ impl<'a> SamplingEngineBuilder<'a> {
             xor_toggle_u32(&mut dem_outputs, dem_output_idx);
         }
 
-        // Convert to TC order measurement outcomes
-        let mut tc_outcomes = vec![false; num_tc_measurements];
+        // Measurement outcomes use influence-map emission positions
+        let mut outcomes = vec![false; num_measurements];
         for &im_idx in im_meas_flips {
-            let tc_idx = if let Some(mapping) = im_to_tc {
-                if (im_idx as usize) < mapping.len() {
-                    mapping[im_idx as usize]
-                } else {
-                    continue;
-                }
-            } else {
-                im_idx as usize
-            };
+            let measurement_idx = im_idx as usize;
 
-            if tc_idx < num_tc_measurements {
-                tc_outcomes[tc_idx] ^= true;
+            if measurement_idx < num_measurements {
+                outcomes[measurement_idx] ^= true;
             }
         }
 
@@ -2961,11 +2906,11 @@ impl<'a> SamplingEngineBuilder<'a> {
                     #[allow(clippy::cast_sign_loss)]
                     // negative offset + total count, or non-negative offset
                     let abs_idx = if offset < 0 {
-                        (num_tc_measurements as i32 + offset) as usize
+                        (num_measurements as i32 + offset) as usize
                     } else {
                         offset as usize
                     };
-                    if abs_idx < num_tc_measurements && tc_outcomes[abs_idx] {
+                    if abs_idx < num_measurements && outcomes[abs_idx] {
                         xor_result = !xor_result;
                     }
                 }
@@ -2991,11 +2936,11 @@ impl<'a> SamplingEngineBuilder<'a> {
                 #[allow(clippy::cast_sign_loss)]
                 // negative offset + total count, or non-negative offset
                 let abs_idx = if offset < 0 {
-                    (num_tc_measurements as i32 + offset) as usize
+                    (num_measurements as i32 + offset) as usize
                 } else {
                     offset as usize
                 };
-                if abs_idx < num_tc_measurements && tc_outcomes[abs_idx] {
+                if abs_idx < num_measurements && outcomes[abs_idx] {
                     xor_result = !xor_result;
                 }
             }
@@ -3216,12 +3161,12 @@ mod tests {
     fn test_record_vectors_empty() {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
-        let records = parse_detector_record_vectors("[]", &im, None).unwrap();
+        let records = parse_detector_record_vectors("[]", &im).unwrap();
         assert!(
             records.is_empty(),
             "expected no detector record vectors, got {records:?}"
         );
-        let records = parse_detector_record_vectors("", &im, None).unwrap();
+        let records = parse_detector_record_vectors("", &im).unwrap();
         assert!(
             records.is_empty(),
             "expected no detector record vectors, got {records:?}"
@@ -3233,7 +3178,7 @@ mod tests {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
         let json = r#"[{"id": 0, "records": [-1, -5]}, {"id": 1, "records": [-2, -3, -4]}]"#;
-        let result = parse_detector_record_vectors(json, &im, None).unwrap();
+        let result = parse_detector_record_vectors(json, &im).unwrap();
         assert_eq!(result, vec![vec![-1, -5], vec![-2, -3, -4]]);
     }
 
@@ -3244,13 +3189,11 @@ mod tests {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
         // Non-list top level (previously -> empty, accepted).
-        assert!(parse_detector_record_vectors("{}", &im, None).is_err());
+        assert!(parse_detector_record_vectors("{}", &im).is_err());
         // Non-integer record value (previously dropped via filter_map(parse.ok)).
-        assert!(
-            parse_detector_record_vectors(r#"[{"id":0,"records":[-1,"bad"]}]"#, &im, None).is_err()
-        );
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,"bad"]}]"#, &im).is_err());
         // Entry referencing neither records nor meas_ids (previously -> empty vec).
-        assert!(parse_detector_record_vectors(r#"[{"id":0}]"#, &im, None).is_err());
+        assert!(parse_detector_record_vectors(r#"[{"id":0}]"#, &im).is_err());
     }
 
     #[test]
@@ -3267,40 +3210,24 @@ mod tests {
         let im3 = im_with_n_measurements(3);
         let im0 = im_with_n_measurements(0);
         // Out-of-range negative offset on a 1-measurement circuit.
-        assert!(
-            parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1, None).is_err()
-        );
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1).is_err());
         // Out-of-range observable offset, too.
-        assert!(
-            parse_observable_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1, None).is_err()
-        );
+        assert!(parse_observable_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1).is_err());
         // Out-of-range (positional) meas_id.
-        assert!(
-            parse_detector_record_vectors(r#"[{"id":0,"meas_ids":[0,999]}]"#, &im1, None).is_err()
-        );
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"meas_ids":[0,999]}]"#, &im1).is_err());
         // Non-redundant co-present records + meas_ids (3-measurement circuit:
         // records[-1] -> index 2, meas_ids[0] -> index 0).
         assert!(
-            parse_detector_record_vectors(
-                r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#,
-                &im3,
-                None
-            )
-            .is_err()
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im3)
+                .is_err()
         );
         // Redundant co-presence is accepted (both -> index 0).
         assert!(
-            parse_detector_record_vectors(
-                r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#,
-                &im1,
-                None
-            )
-            .is_ok()
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im1)
+                .is_ok()
         );
         // Empty influence map keeps the opaque escape hatch (no range check).
-        assert!(
-            parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-99]}]"#, &im0, None).is_ok()
-        );
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-99]}]"#, &im0).is_ok());
     }
 
     #[test]

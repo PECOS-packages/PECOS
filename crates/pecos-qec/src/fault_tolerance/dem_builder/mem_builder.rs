@@ -33,8 +33,6 @@ pub struct MemBuilder<'a> {
     influence_map: &'a DagFaultInfluenceMap,
     /// Noise configuration.
     noise: NoiseConfig,
-    /// Optional measurement order from the original circuit.
-    measurement_order: Option<Vec<usize>>,
 }
 
 impl<'a> MemBuilder<'a> {
@@ -44,7 +42,6 @@ impl<'a> MemBuilder<'a> {
         Self {
             influence_map,
             noise: NoiseConfig::default(),
-            measurement_order: None,
         }
     }
 
@@ -59,26 +56,6 @@ impl<'a> MemBuilder<'a> {
     #[must_use]
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.noise = noise;
-        self
-    }
-
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0-dev.0",
-        note = "Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata."
-    )]
-    pub fn with_measurement_order(self, order: Vec<usize>) -> Self {
-        self.set_measurement_order_internal(order)
-    }
-
-    pub(crate) fn set_measurement_order_internal(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
         self
     }
 
@@ -127,14 +104,7 @@ impl<'a> MemBuilder<'a> {
         let num_measurements = self.influence_map.measurements.len();
         let mut mem = MeasurementNoiseModel::new(num_measurements);
 
-        // The shared validated mapping: an order that does not cover every map
-        // measurement is an error, never a silent bind to TC index 0.
-        if let Some(im_to_tc) = super::builder::sampler_measurement_mapping(
-            self.influence_map,
-            self.measurement_order.as_deref(),
-        )? {
-            mem.im_to_tc_order = Some(im_to_tc);
-        }
+        super::builder::validate_sampler_measurements(self.influence_map)?;
 
         let locations = &self.influence_map.locations;
         let mut two_qubit_groups: std::collections::BTreeMap<usize, Vec<usize>> =

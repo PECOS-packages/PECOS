@@ -6,17 +6,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
-### Deprecations
-
-- Deprecated `DemBuilder::with_measurement_order`,
-  `DemSamplerBuilder::with_measurement_order`, `SamplingEngineBuilder::with_measurement_order`,
-  `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,
-  `MemStabSimBuilder::measurement_order`, `MeasurementNoiseModel::with_measurement_order`, and
-  `MeasurementNoiseModel::set_measurement_order`, plus the Python `DemBuilder.with_measurement_order`
-  and `DemSamplerBuilder.with_measurement_order` methods. Circuit-built influence maps
-  already use emission order; express a different record frame with `meas_ids` in metadata.
-  Existing mapping behavior and validation remain unchanged.
-
 ### Decoder changes
 
 - `windowed` specs with a buffer previously returned the result of a monolithic
@@ -33,6 +22,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python breaking changes
+
+- Removed `DemBuilder.with_measurement_order` and `DemSamplerBuilder.with_measurement_order`
+  from `pecos_rslib.qec`, including their type stubs. Write detector/observable records
+  in influence-map (emission) order, or reference stamped `meas_ids` in metadata.
+  For a foreign record frame, permute sampled outcomes after sampling.
 
 - `TickCircuit.add_observable` now accepts `reference=0` or `reference=1` to store
   the optional noiseless observable value, with the JSON parser's integer-only validation.
@@ -120,6 +114,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `step` and `buffer`; they previously defaulted to 8 and 4.
 
 ### Rust breaking changes
+
+- Removed `DemBuilder::with_measurement_order`,
+  `DemSamplerBuilder::with_measurement_order`, `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,
+  `MemStabSimBuilder::measurement_order`, `MeasurementNoiseModel::with_measurement_order`,
+  `MeasurementNoiseModel::set_measurement_order`, and the public
+  `MeasurementNoiseModel::im_to_tc_order` field. Write detector/observable records in
+  influence-map order (emission order for circuit-built maps), or reference stamped
+  `meas_ids` in metadata. For a foreign record frame, permute sampled outcomes after sampling.
 
 - `DagCircuit::as_dag_mut` has been removed; use the gate APIs to preserve
   circuit bookkeeping.

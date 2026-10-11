@@ -2939,7 +2939,6 @@ pub struct PyDemBuilder {
     detectors_json: Option<String>,
     observables_json: Option<String>,
     num_measurements: Option<usize>,
-    measurement_order: Option<Vec<usize>>,
     exact_branch_circuit: Option<DagCircuit>,
 }
 
@@ -2957,7 +2956,6 @@ impl PyDemBuilder {
             detectors_json: None,
             observables_json: None,
             num_measurements: None,
-            measurement_order: None,
             exact_branch_circuit: None,
         }
     }
@@ -3081,26 +3079,6 @@ impl PyDemBuilder {
         slf
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    fn with_measurement_order(
-        mut slf: PyRefMut<'_, Self>,
-        order: Vec<usize>,
-    ) -> PyResult<PyRefMut<'_, Self>> {
-        PyErr::warn(
-            slf.py(),
-            &slf.py().get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-            c"with_measurement_order is deprecated: Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata.",
-            1,
-        )?;
-        slf.measurement_order = Some(order);
-        Ok(slf)
-    }
-
     /// Attach the original circuit for exact replacement-branch replay.
     ///
     /// This is only needed when using `p2_replacement_approximation="exact_branch_replay"`
@@ -3134,14 +3112,6 @@ impl PyDemBuilder {
 
         if let Some(num) = self.num_measurements {
             builder = builder.with_num_measurements(num);
-        }
-
-        if let Some(ref order) = self.measurement_order {
-            // Forwards the deprecated Python API.
-            #[allow(deprecated)]
-            {
-                builder = builder.with_measurement_order(order.clone());
-            }
         }
 
         if let Some(ref json) = self.detectors_json {
@@ -4652,7 +4622,6 @@ pub struct PyDemSamplerBuilder {
     noise: NoiseConfig,
     detectors_json: Option<String>,
     observables_json: Option<String>,
-    measurement_order: Option<Vec<usize>>,
 }
 
 #[pymethods]
@@ -4665,7 +4634,6 @@ impl PyDemSamplerBuilder {
             noise: NoiseConfig::default(),
             detectors_json: None,
             observables_json: None,
-            measurement_order: None,
         }
     }
 
@@ -4759,26 +4727,6 @@ impl PyDemSamplerBuilder {
         slf
     }
 
-    /// Map record positions to influence-map positions by qubit and occurrence.
-    ///
-    /// Deprecated: circuit-built influence maps already order measurements in
-    /// emission order. Express a different record frame with `meas_ids` in metadata.
-    /// `order[i]` is the qubit at record position `i`; repeated qubits are matched
-    /// by occurrence. The existing guard against non-positional stamped IDs remains.
-    fn with_measurement_order(
-        mut slf: PyRefMut<'_, Self>,
-        order: Vec<usize>,
-    ) -> PyResult<PyRefMut<'_, Self>> {
-        PyErr::warn(
-            slf.py(),
-            &slf.py().get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-            c"with_measurement_order is deprecated: Circuit-built influence maps already order measurements in emission order. Express a different record frame with meas_ids in metadata.",
-            1,
-        )?;
-        slf.measurement_order = Some(order);
-        Ok(slf)
-    }
-
     /// Build the `DemSampler`.
     fn build(&self) -> PyResult<PyDemSampler> {
         let mut builder = RustNewDemSamplerBuilder::new(&self.influence_map)
@@ -4794,14 +4742,6 @@ impl PyDemSamplerBuilder {
             builder = builder
                 .with_observables_json(json)
                 .map_err(pyo3::exceptions::PyValueError::new_err)?;
-        }
-
-        if let Some(ref order) = self.measurement_order {
-            // Forwards the deprecated Python API.
-            #[allow(deprecated)]
-            {
-                builder = builder.with_measurement_order(order.clone());
-            }
         }
 
         let inner = builder

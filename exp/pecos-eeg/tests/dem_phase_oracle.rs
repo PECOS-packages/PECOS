@@ -250,6 +250,26 @@ fn h_formulas_phase_and_signed_coefficients() {
 }
 
 #[test]
+fn h_formulas_with_y_stabilizer_sign() {
+    // |0>|+i>: X0Z1 * Y0X1 = -Z0Y1, and Y1 is a +1 stabilizer, so the pair
+    // interferes destructively through is_stabilizer's Y correction.
+    let gates = [gate(GateType::H, &[1]), gate(GateType::SZ, &[1])];
+    let gens = [generator(H, "XZ", None, 0.1), generator(H, "YX", None, 0.05)];
+    let exact = reference(2, &gates, &gens, &["ZI"]);
+    close(exact, 0.05_f64.sin().powi(2), 1e-12);
+    close(
+        dem(2, &gates, &gens, &["ZI"], HFormula::ExactSubset),
+        exact,
+        1e-12,
+    );
+    close(
+        dem(2, &gates, &gens, &["ZI"], HFormula::Taylor),
+        exact,
+        2.0 * 0.15_f64.powi(4),
+    );
+}
+
+#[test]
 fn h_formulas_independent_rotations_domain() {
     // YY is not a stabilizer of |00>; no interference products exist.
     let gens = [
@@ -393,7 +413,8 @@ fn strong_phi_reduced_rows_retain_original_products() {
     let rho = prepared(3, &gates);
     // Equivalent +1 generators with overlapping X pivots.
     let stabs = [bm("XXI"), bm("XIX"), bm("ZZZ")];
-    let gens = [generator(C, "YII", Some("YXX"), 0.001)];
+    // Old greedy elimination selected a reduced row here and built S_0 = IXX.
+    let gens = [generator(C, "XII", Some("IIX"), 0.001)];
     let first = lindbladian(&rho, &gens);
     for index in 0..8 {
         let bits = [index & 1 != 0, index & 2 != 0, index & 4 != 0];

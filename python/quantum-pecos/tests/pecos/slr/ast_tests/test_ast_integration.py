@@ -603,9 +603,11 @@ class TestEdgeCases:
         validation = validate(ast)
         assert validation.valid
 
-        # Should generate
-        qasm = generate(ast, "qasm")
-        assert len(qasm) > 0
+        # Should generate where nested conditionals exist; QASM 2.0 cannot combine conditions
+        qir = generate(ast, "qir")
+        assert len(qir) > 0
+        with pytest.raises(NotImplementedError, match="nested If"):
+            generate(ast, "qasm")
 
 
 class TestMultipleCodegenTargets:

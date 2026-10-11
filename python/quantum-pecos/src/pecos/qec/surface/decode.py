@@ -1800,7 +1800,12 @@ def _surface_native_topology(
     )
     observables_json = json.dumps(
         [
-            {"id": observable["id"], "records": records, "label": observable["label"]}
+            {
+                "id": observable["id"],
+                "records": records,
+                "label": observable["label"],
+                **({"reference": observable["reference"]} if observable["reference"] is not None else {}),
+            }
             for observable, records in zip(definitions["observables"], obs_records, strict=True)
         ],
     )

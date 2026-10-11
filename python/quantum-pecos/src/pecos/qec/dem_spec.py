@@ -529,6 +529,9 @@ def _resolve_dem_specs(
             ],
             context=f"observable {observable_id}",
         )
+        # Resolving measurement identities says nothing about the noiseless
+        # quantum parity or its determinism. Preserve a caller-supplied reference
+        # (including surface_memory_dem_spec's), and leave unknown values absent.
         entry = _metadata_entry(observable.metadata)
         entry.update({"id": observable_id, "meas_ids": list(meas_ids)})
         resolved_observables.append((observable_id, entry, meas_ids))

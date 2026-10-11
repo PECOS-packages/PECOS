@@ -42,7 +42,7 @@ def test_extraction_annotation_only(scrambled):
     scrambled.detector([(0, 0, 1)])
     scrambled.observable([(0, 0, 1)])
     with pytest.raises(MissingObservableReferenceError, match="has no 'reference'"):
-        extract_detection_events_and_observables(scrambled, [[0, 1]])
+        list(extract_detection_events_and_observables(scrambled, [[0, 1]])[1])
 
 
 def test_extraction_sparse_ids_and_multiplicity(scrambled):

@@ -1832,13 +1832,18 @@ impl TickCircuit {
     ///
     /// Returns an error if existing observable metadata is not a JSON array, if
     /// JSON serialization fails, if the label/id conflict, or if the selected
-    /// id duplicates an existing explicit observable id.
+    /// id duplicates an existing explicit observable id, or `reference` is not 0 or 1.
+    /// The optional reference is the noiseless parity; it is stored, never applied.
     pub fn add_observable_metadata(
         &mut self,
         records: &[i64],
         observable_id: Option<usize>,
         label: Option<&str>,
+        reference: Option<u8>,
     ) -> Result<usize, String> {
+        if reference.is_some_and(|value| value > 1) {
+            return Err("observable reference must be integer 0 or 1 or absent".into());
+        }
         let mut observables = meta_json_array(self, "observables")?;
         let label_id = observable_id_from_label(label)?;
         if let (Some(observable_id), Some(label_id)) = (observable_id, label_id)
@@ -1858,6 +1863,9 @@ impl TickCircuit {
         observable.insert("records".to_string(), serde_json::json!(records));
         if let Some(label) = label {
             observable.insert("label".to_string(), serde_json::json!(label));
+        }
+        if let Some(reference) = reference {
+            observable.insert("reference".to_string(), serde_json::json!(reference));
         }
         observables.push(serde_json::Value::Object(observable));
         set_meta_json_array(self, "observables", &observables)?;
@@ -6155,7 +6163,7 @@ mod tests {
             .add_detector_metadata(&[-1], Some(&[0.0, 1.0, 2.0]), Some("d0"), None)
             .unwrap();
         let observable_id = tc
-            .add_observable_metadata(&[-1, -2], None, Some("L2"))
+            .add_observable_metadata(&[-1, -2], None, Some("L2"), None)
             .unwrap();
 
         assert_eq!(detector_id, 0);
@@ -6184,7 +6192,7 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         let err = tc
-            .add_observable_metadata(&[-1], Some(1), Some("L2"))
+            .add_observable_metadata(&[-1], Some(1), Some("L2"), None)
             .unwrap_err();
         assert!(err.contains("conflicts"));
 
@@ -6195,9 +6203,10 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("already contains detector_id 7"));
 
-        tc.add_observable_metadata(&[-1], Some(3), None).unwrap();
+        tc.add_observable_metadata(&[-1], Some(3), None, None)
+            .unwrap();
         let err = tc
-            .add_observable_metadata(&[-2], Some(3), None)
+            .add_observable_metadata(&[-2], Some(3), None, None)
             .unwrap_err();
         assert!(err.contains("already contains observable_id 3"));
     }

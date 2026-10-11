@@ -2138,6 +2138,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.
+
+    This renderer computes a reference for the observable it is given and trusts
+    the caller to establish determinism. ``build_surface_code_circuit`` supplies
+    a pure memory experiment whose logical readout is deterministic by construction.
+    A hand-assembled step list with an undetermined terminal readout gets a
+    reference for a quantity that has none; validation belongs at that boundary.
     """
 
     def __init__(

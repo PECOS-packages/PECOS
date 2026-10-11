@@ -3208,7 +3208,7 @@ mod tests {
         );
         tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
             .unwrap();
-        tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+        tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
             .unwrap();
         tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
@@ -3327,7 +3327,7 @@ mod tests {
             );
             tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
                 .unwrap();
-            tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+            tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
                 .unwrap();
             tc.tracked_pauli_labeled("tracked", tracked_pauli);
 
@@ -3579,7 +3579,7 @@ mod tests {
             );
             tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
                 .unwrap();
-            tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+            tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
                 .unwrap();
             tc.tracked_pauli_labeled("tracked_x1", PauliString::x(1));
             tc.tracked_pauli_labeled("tracked_y1", PauliString::y(1));
@@ -3654,9 +3654,9 @@ mod tests {
                 .unwrap();
             tc.add_detector_metadata(&[-1], None, Some("D1"), Some(1))
                 .unwrap();
-            tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
+            tc.add_observable_metadata(&[-2], Some(0), Some("L0"), None)
                 .unwrap();
-            tc.add_observable_metadata(&[-1], Some(1), Some("L1"))
+            tc.add_observable_metadata(&[-1], Some(1), Some("L1"), None)
                 .unwrap();
             tc.tracked_pauli_labeled("tracked_x2", PauliString::x(2));
             tc.tracked_pauli_labeled("tracked_y2", PauliString::y(2));
@@ -3732,7 +3732,7 @@ mod tests {
         );
         tc.add_detector_metadata(&[-2, -1], None, Some("D0"), Some(0))
             .unwrap();
-        tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
+        tc.add_observable_metadata(&[-2], Some(0), Some("L0"), None)
             .unwrap();
         tc.tracked_pauli_labeled("tracked_z2", PauliString::z(2));
 

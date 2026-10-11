@@ -2052,6 +2052,7 @@ class TickCircuit:
         records: Sequence[int],
         observable_id: int | None = None,
         label: str | None = None,
+        reference: int | None = None,
     ) -> int: ...
     def annotations(self) -> list[Any]: ...
     def detector(self, measurements: Any, label: str | None = None) -> int:

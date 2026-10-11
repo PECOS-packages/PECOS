@@ -191,7 +191,7 @@ def test_missing_reference_names_entry(rows):
             r"LogicalCircuitBuilder.to_tick_circuit.*TickCircuitRenderer.*emit it"
         ),
     ):
-        extract_detection_events_and_observables(tc, rows)
+        list(extract_detection_events_and_observables(tc, rows)[1])
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -293,7 +293,7 @@ def test_missing_reference_and_id_names_entry(rows):
         MissingObservableReferenceError,
         match=r"^observable entry 1 has no 'reference'.*flip cannot be derived from its raw parity",
     ):
-        extract_detection_events_and_observables(tc, rows)
+        list(extract_detection_events_and_observables(tc, rows)[1])
 
 
 @pytest.mark.parametrize("backend", ["stabilizer", "meas_sampling"])
@@ -321,7 +321,7 @@ def test_analysis_sparse_observable_id(field, order):
 def test_missing_id_names_entry(rows):
     tc = definition_probe([{"measurements": [0], "reference": 0}])
     with pytest.raises(MissingObservableReferenceError, match=r"observable entry 0 is missing 'id'"):
-        extract_detection_events_and_observables(tc, rows)
+        list(extract_detection_events_and_observables(tc, rows)[1])
 
 
 @pytest.mark.parametrize("reference", [2, "0", 0.0, True])
@@ -329,7 +329,7 @@ def test_invalid_reference_names_value(reference):
     tc = definition_probe([{"id": 7, "measurements": [0], "reference": reference}])
     pattern = rf"observable entry 0 \(id=7\).*invalid 'reference' {re.escape(repr(reference))};"
     with pytest.raises(MissingObservableReferenceError, match=pattern):
-        extract_detection_events_and_observables(tc, [])
+        list(extract_detection_events_and_observables(tc, [])[1])
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -401,14 +401,14 @@ def test_invalid_observable_id(observable_id, rows):
     tc = definition_probe([{"id": observable_id, "measurements": [0], "reference": 0}])
     pattern = rf"observable entry 0.*invalid 'id' {re.escape(repr(observable_id))}; expected an integer"
     with pytest.raises(MissingObservableReferenceError, match=pattern):
-        extract_detection_events_and_observables(tc, rows)
+        list(extract_detection_events_and_observables(tc, rows)[1])
 
 
 @pytest.mark.parametrize("rows", [[], [[1]]])
 def test_duplicate_observable_id(rows):
     tc = definition_probe([{"id": 7, "measurements": [0], "reference": 0}] * 2)
     with pytest.raises(MissingObservableReferenceError, match=r"observable entry 1 has duplicate 'id' 7"):
-        extract_detection_events_and_observables(tc, rows)
+        list(extract_detection_events_and_observables(tc, rows)[1])
 
 
 @pytest.mark.parametrize("reference", [{}, {"reference": None}])
@@ -416,7 +416,7 @@ def test_duplicate_observable_id(rows):
 def test_helper_missing_or_null_reference(reference, rows):
     tc = definition_probe([{"id": 7, "measurements": [0], **reference}])
     with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\) has no 'reference'"):
-        extract_detection_events_and_observables(tc, rows)
+        list(extract_detection_events_and_observables(tc, rows)[1])
 
 
 @pytest.mark.parametrize("field", ["records", "meas_ids"])
@@ -471,7 +471,7 @@ def test_reader_absent_reference(metadata_reference):
     tc.set_meta("observables", json.dumps([{"id": 7, "records": [-1], **metadata_reference}]))
     assert tc.circuit_definitions()["observables"][0]["reference"] is None
     with pytest.raises(MissingObservableReferenceError, match=r"entry 0 \(id=7\) has no 'reference'"):
-        extract_detection_events_and_observables(tc, [])
+        list(extract_detection_events_and_observables(tc, [])[1])
 
 
 @pytest.mark.parametrize("reference", [2, -1, 1.5, "1", True])
@@ -502,3 +502,111 @@ def test_rust_fault_effects_ignore_reference(consumer):
     metadata[0]["reference"] = 0
     tc.set_meta("observables", json.dumps(metadata))
     assert effects() == expected
+
+
+@pytest.mark.parametrize("reference", [None, 0, 1])
+@pytest.mark.parametrize("consumer", ["json", "reader"])
+def test_native_topology_reference_round_trip(monkeypatch, reference, consumer):
+    from pecos.qec.surface import NoiseParameters, decode
+    from pecos.qec.surface.decode import (
+        _build_native_sampler_from_cached_surface_topology,
+        _surface_native_topology,
+        _surface_patch_cache_key,
+    )
+
+    tc = single_measurement_circuit()
+    entry = {"id": 0, "records": [-1], "label": "logical"}
+    if reference is not None:
+        entry["reference"] = reference
+    tc.set_meta("observables", json.dumps([entry]))
+    monkeypatch.setattr(decode, "_build_surface_tick_circuit_for_native_model", lambda *_args, **_kwargs: tc)
+    topology = _surface_native_topology(
+        _surface_patch_cache_key(SurfacePatch.create(3)),
+        1,
+        "Z",
+        None,
+        "abstract",
+        False,
+    )
+    sampler = _build_native_sampler_from_cached_surface_topology(topology, NoiseParameters(p_meas=0.1))
+    if consumer == "json":
+        assert json.loads(sampler.observables_json) == [entry]
+    else:
+        tc.set_meta("observables", sampler.observables_json)
+        assert tc.circuit_definitions()["observables"][0]["reference"] == reference
+
+
+@pytest.mark.parametrize("reference", [None, 0, 1])
+def test_typed_observable_reference_round_trip(reference):
+    tc = single_measurement_circuit()
+    tc.add_observable([-1], observable_id=7, reference=reference)
+    assert tc.circuit_definitions()["observables"][0]["reference"] == reference
+
+
+@pytest.mark.parametrize("reference", [-1, 2, 256, 0.0, 1.5, "1", True, False])
+def test_typed_observable_rejects_invalid_reference(reference):
+    tc = single_measurement_circuit()
+    with pytest.raises(ValueError, match="reference must be integer 0 or 1 or absent"):
+        tc.add_observable([-1], reference=reference)
+    assert tc.get_meta("observables") is None
+
+
+@pytest.mark.parametrize("backend", ["stabilizer", "meas_sampling"])
+def test_detector_only_analysis_without_reference(backend):
+    tc = generate_tick_circuit_from_patch(SurfacePatch.create(3), 1, add_typed_annotations=False)
+    noise = depolarizing().p_meas(0.1)
+    expected = fit_dem_from_simulation(tc, noise, shots=64, backend=backend)
+    entries = json.loads(tc.get_meta("observables"))
+    for entry in entries:
+        del entry["reference"]
+    tc.set_meta("observables", json.dumps(entries))
+    assert fit_dem_from_simulation(tc, noise, shots=64, backend=backend) == expected
+    with pytest.raises(MissingObservableReferenceError, match="has no 'reference'"):
+        empirical_correlation_table(tc, noise, shots=64, backend=backend)
+
+
+def test_lazy_flips_snapshot_and_reuse():
+    tc = single_measurement_circuit()
+    tc.set_meta("observables", '[{"id":7,"records":[-1],"reference":1}]')
+
+    def rows():
+        row = [1]
+        yield row
+        row[0] = 0
+        yield row
+
+    _, flips = extract_detection_events_and_observables(tc, rows())
+    assert list(flips) == [[], [7]]
+    assert list(flips) == [[], [7]]
+    assert flips[1:] == [[7]]
+
+
+@pytest.mark.parametrize("producer", ["bb", "coloration"])
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_css_memory_reference_round_trip(producer, basis):
+    from pecos.qec import bb_memory_circuit, coloration_memory_circuit
+    from pecos.quantum import ParityCheckMatrix
+
+    if producer == "bb":
+        tc = bb_memory_circuit(6, 6, [(3, 0), (0, 1), (0, 2)], [(0, 3), (1, 0), (2, 0)], 2, basis)
+    else:
+        checks = ParityCheckMatrix(
+            [
+                [1, 0, 1, 0, 1, 0, 1],
+                [0, 1, 1, 0, 0, 1, 1],
+                [0, 0, 0, 1, 1, 1, 1],
+            ],
+        )
+        tc = coloration_memory_circuit(checks, checks, 2, basis)
+    definitions = tc.circuit_definitions()["observables"]
+    assert {obs["reference"] for obs in definitions} == {0}
+    # Independent physical sampling checks the positive-eigenvalue derivation,
+    # including both bases and the random opposite-basis syndrome projections.
+    circuit = stim.Circuit()
+    names = {"PX": "RX", "PZ": "R", "CX": "CX", "MX": "MX", "MZ": "M", "Idle": "I", "X": "X", "Z": "Z"}
+    for _, gate in tc.gate_batches():
+        circuit.append(names[gate.gate_type.name], [int(q) for q in gate.qubits])
+    rows = circuit.compile_sampler(seed=123).sample(32)
+    for obs in definitions:
+        assert all(sum(int(row[position]) for position in obs["measurements"]) % 2 == 0 for row in rows)
+    assert extract_detection_events_and_observables(tc, rows)[1] == [[] for _ in rows]

@@ -33,6 +33,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- `TickCircuit.add_observable` now accepts `reference=0` or `reference=1` to store
+  the optional noiseless observable value, with the JSON parser's integer-only validation.
+  Omitting it still records an unknown reference, which observable-flip extraction
+  refuses. CSS memory producers `bb_memory_circuit` and `coloration_memory_circuit`
+  now emit their structurally derived references. Arbitrary Guppy specs and
+  coin-toss output inference leave unknown references absent; typed specs preserve
+  an explicit `Observable(..., metadata={"reference": value})`.
+
 - `pecos.quantum.hugr_to_dag_circuit`, `hugr_op_to_gate_type`,
   `gate_type_to_hugr_op`, `is_quantum_operation`, and
   `pecos_rslib.HugrConversionError` have been removed, including their
@@ -56,8 +64,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   native gates. Measurement records follow the circuit's measurement order
   (runtime order for a traced program), including independent measurements.
 - `extract_detection_events_and_observables` no longer treats an observable with no
-  noiseless reference as having a reference of zero, and raises instead. This includes
-  an observable carried only by a circuit annotation, such as one added with
+  noiseless reference as having a reference of zero, and raises when its lazy
+  observable-flip sequence is accessed. The second result is now a reusable lazy
+  `Sequence`; use `list(...)` to materialize it. Detector-only callers can discard it.
+  Missing references include observables carried only by circuit annotations, such as one added with
   `TickCircuit.observable`, since an annotation has no reference slot. Previously such
   an observable extracted flips from its raw parity, which is wrong whenever its
   noiseless value is one.
@@ -68,7 +78,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `MissingObservableReferenceError` for observable metadata missing `id` or
   `reference`, with non-integer or duplicate ids, or with a reference other than
   integer 0 or 1 (booleans are rejected). Metadata carrying no reference is no
-  longer accepted; the surface producers
+  longer accepted when consuming observable flips; the surface producers
   `LogicalCircuitBuilder.to_tick_circuit` and `TickCircuitRenderer` (including
   `build_memory_circuit` and `generate_tick_circuit_from_patch`) currently emit this field.
 - `pecos.qec.empirical_correlation_table` now reports reference-relative observable
@@ -79,7 +89,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `MissingObservableReferenceError` is now exported from `pecos.qec` as well as
   `pecos.qec.surface`. `ObservableReferenceDisagreementError` has been removed
   along with the probabilistic two-seed reference check; surface producers
-  establish observable determinism before computing a reference with one replay.
+  use one replay to compute a reference. LogicalCircuitBuilder guards determinism;
+  TickCircuitRenderer trusts the caller to supply a deterministic readout.
 - `pecos_rslib.Hugr` and `pecos_rslib.programs.Hugr` have been removed. Use
   `pecos.Hugr`/`pecos.Guppy` or
   `pecos_rslib.Qis(pecos_rslib.hugr_lowering.compile_hugr_to_qis(...))`.

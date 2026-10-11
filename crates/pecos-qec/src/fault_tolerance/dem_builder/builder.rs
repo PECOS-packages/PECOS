@@ -4259,7 +4259,7 @@ mod tests {
             .add_detector_metadata(&[-2], None, Some("D0"), Some(0))
             .unwrap();
         circuit
-            .add_observable_metadata(&[-1], Some(0), Some("L0"))
+            .add_observable_metadata(&[-1], Some(0), Some("L0"), None)
             .unwrap();
         let round_tripped =
             TickCircuit::from(&DagCircuit::try_from(&circuit).expect("valid circuit"));

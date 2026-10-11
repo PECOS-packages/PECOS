@@ -56,6 +56,7 @@ struct NoiseContribution {
 /// probabilities from a single framework.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem(
     gates: &[Gate],
@@ -76,6 +77,7 @@ pub fn build_coherent_dem(
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
 
         for inj in injections {
             noise_sources.push((
@@ -190,7 +192,9 @@ pub fn build_coherent_dem(
                 let p = -contrib.value;
                 *s_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 
@@ -229,6 +233,7 @@ pub fn build_coherent_dem(
 /// graphlike decomposition for pymatching.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_decomposable(
     gates: &[Gate],
@@ -249,6 +254,7 @@ pub fn build_coherent_dem_decomposable(
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
 
         for inj in injections {
             noise_sources.push((
@@ -400,7 +406,9 @@ pub fn build_coherent_dem_decomposable(
                 let (product, _, _) = s_groups.entry(key).or_insert((1.0, x_event, z_event));
                 *product *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 
@@ -501,6 +509,7 @@ fn merge_decomposable_dem_entries(
 /// Each entry is `((det_i, det_j), joint_probability)`.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact(
     gates: &[Gate],
@@ -797,6 +806,7 @@ pub fn build_coherent_dem_exact(
 /// with the X/Z component tracking from `build_coherent_dem_decomposable`.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact_decomposable(
     gates: &[Gate],

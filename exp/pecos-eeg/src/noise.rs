@@ -27,6 +27,17 @@ pub struct NoiseInjection {
     pub rate: f64,
 }
 
+/// Validate injections for consumers that implement only H and S noise.
+pub(crate) fn assert_hs_injections(injections: &[NoiseInjection]) {
+    for injection in injections {
+        assert!(
+            matches!(injection.eeg_type, EegType::H | EegType::S),
+            "unsupported EEG type {:?}: this consumer supports only H and S injections",
+            injection.eeg_type,
+        );
+    }
+}
+
 /// One categorical depolarizing channel: choose at most one nonidentity Pauli
 /// at this location, with total probability `probability`.
 #[derive(Clone, Debug, PartialEq)]
@@ -105,6 +116,15 @@ pub(crate) fn label_qubits(label: &Bm) -> impl Iterator<Item = usize> + '_ {
 }
 
 /// Trait for noise models that produce physical injections at each gate.
+///
+/// Forward EEG propagates C/A injections carrying `label2`, and `strong_sim`
+/// computes corrections from those generators. Both silently omit C/A entries
+/// without `label2`. `dem_mapping` also omits entries without `label2`, uses C
+/// only with a supplied stabilizer group (taking absolute probability
+/// contributions), and ignores A.
+/// Heisenberg walks, coherent DEM builders, and noise compression reject them
+/// with a panic, including zero-rate injections. The exact dense reference
+/// rejects them with `EegBuildError::UnsupportedExactNoise`.
 ///
 /// Implement this to specify arbitrary per-gate noise. The EEG analysis
 /// calls `noise_after_gate` for each gate in the expanded circuit,

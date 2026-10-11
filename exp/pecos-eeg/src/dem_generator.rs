@@ -60,6 +60,7 @@ pub trait DemGenerator: Send + Sync {
     /// Generate a DEM from the given context and noise.
     ///
     /// # Panics
+    /// Panics if received noise includes a C or A injection, even at zero rate.
     /// Panics if the index provenance flags do not match the gate count.
     fn generate(&self, ctx: &DemContext<'_>, noise: &dyn NoiseSpec) -> DemOutput;
 

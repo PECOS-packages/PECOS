@@ -69,6 +69,7 @@ pub struct CompressedNoise {
 /// Independent S flips compose exactly; H amplitudes use a first-order sum.
 ///
 /// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
 /// Panics if the provenance flags do not match the gate count, or a noise
 /// label encounters an unsupported gate during propagation.
 pub fn compress_noise_to_boundaries(
@@ -95,6 +96,7 @@ pub fn compress_noise_to_boundaries(
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
         for inj in injections {
             all_noise.push((gate_idx, inj));
         }

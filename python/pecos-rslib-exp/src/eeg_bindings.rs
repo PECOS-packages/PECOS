@@ -37,6 +37,11 @@ type MeasurementRecordDefinition = (usize, Vec<usize>, Vec<i32>);
 /// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
 /// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
 /// logarithmic generator coefficient.
+///
+/// Returns `ValueError` if an `ExactSubset` event has more than 25 H labels.
+///
+/// # Panics
+/// Panics if an event probability is below -1e-12.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor", bch_order=1))]
 pub fn perturbative_dem(
@@ -71,6 +76,11 @@ pub fn perturbative_dem(
 /// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
 /// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
 /// logarithmic generator coefficient.
+///
+/// Returns `ValueError` if an `ExactSubset` event has more than 25 H labels.
+///
+/// # Panics
+/// Panics if an event probability is below -1e-12.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor", bch_order=1))]
 pub fn perturbative_dem_events(
@@ -230,6 +240,11 @@ pub fn eeg_event_diagnostics(
 /// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
 /// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
 /// logarithmic generator coefficient.
+///
+/// Returns `ValueError` if an `ExactSubset` event has more than 25 H labels.
+///
+/// # Panics
+/// Panics if an event probability is below -1e-12.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor"))]
 pub fn eeg_per_detector(
@@ -264,138 +279,29 @@ pub fn eeg_per_detector(
 
     let formula = parse_h_formula(h_formula)?;
 
-    // Collect all H generators with their BCH-combined rates per label
-    let mut h_by_label: std::collections::BTreeMap<Bm, f64> = std::collections::BTreeMap::new();
-    for g in &result.generators {
-        if g.eeg_type == pecos_eeg::eeg::EegType::H {
-            *h_by_label.entry(g.label.clone()).or_insert(0.0) += g.coeff;
-        }
-    }
-    let h_labels: Vec<(Bm, f64)> = h_by_label
-        .into_iter()
-        .filter(|(_, c)| c.abs() > 1e-20)
-        .collect();
-
-    // Also collect S generators
-    let mut s_by_label: std::collections::BTreeMap<Bm, f64> = std::collections::BTreeMap::new();
-    for g in &result.generators {
-        if g.eeg_type == pecos_eeg::eeg::EegType::S {
-            *s_by_label.entry(g.label.clone()).or_insert(0.0) += g.coeff;
-        }
-    }
-
-    let mut results = Vec::new();
-
+    let config = pecos_eeg::dem_mapping::EegConfig {
+        h_formula: formula,
+        ..Default::default()
+    };
+    // Validate every pooled event before building any detector's probabilities.
     for det in &detectors {
-        // Find all H generators that anticommute with this detector
-        let det_h: Vec<(usize, f64)> = h_labels
-            .iter()
-            .enumerate()
-            .filter(|(_, (label, _))| !label.commutes_with(&det.stabilizer))
-            .map(|(i, (_, c))| (i, *c))
-            .collect();
-
-        // Find S generators that anticommute
-        let s_sum: f64 = s_by_label
-            .iter()
-            .filter(|(label, _)| !label.commutes_with(&det.stabilizer))
-            .map(|(_, c)| c)
-            .sum();
-
-        // S contribution
-        let p_s = if s_sum.abs() > 1e-20 {
-            (1.0 - (2.0 * s_sum).exp()) / 2.0
-        } else {
-            0.0
-        };
-
-        // H contribution: quadratic form with beta
-        let h_prob = match formula {
-            pecos_eeg::dem_mapping::HFormula::Taylor
-            | pecos_eeg::dem_mapping::HFormula::SinSquared
-            | pecos_eeg::dem_mapping::HFormula::ExactSubset => {
-                let mut total = 0.0_f64;
-                for (j, &(idx_j, h_j)) in det_h.iter().enumerate() {
-                    // Diagonal
-                    total += h_j * h_j;
-                    // Off-diagonal with beta
-                    for &(idx_k, h_k) in det_h.iter().skip(j + 1) {
-                        let q_j = &h_labels[idx_j].0;
-                        let q_k = &h_labels[idx_k].0;
-
-                        if !q_j.commutes_with(q_k) {
-                            continue;
-                        }
-                        let product = q_j.multiply(q_k);
-                        if product.is_identity() {
-                            total += 2.0 * h_j * h_k;
-                            continue;
-                        }
-                        match stab_group.is_stabilizer(&product) {
-                            Some(true) => {
-                                total += 2.0 * h_j * h_k;
-                            }
-                            Some(false) => {
-                                total -= 2.0 * h_j * h_k;
-                            }
-                            None => {}
-                        }
-                    }
-                }
-                let total = total.max(0.0);
-                match formula {
-                    pecos_eeg::dem_mapping::HFormula::SinSquared => total.sqrt().sin().powi(2),
-                    _ => total,
-                }
-            }
-            pecos_eeg::dem_mapping::HFormula::ExactCommuting => {
-                // Product formula over all generators for this detector
-                let mut prod_re = 1.0_f64;
-                let mut prod_im = 0.0_f64;
-                for &(idx_j, h_j) in &det_h {
-                    let label = &h_labels[idx_j].0;
-                    let p_stab = if label.is_identity() {
-                        Some(true)
-                    } else {
-                        stab_group.is_stabilizer(label)
-                    };
-
-                    let (f_re, f_im) = if let Some(sign) = p_stab {
-                        let s = if sign { 1.0 } else { -1.0 };
-                        let angle = 2.0 * s * h_j;
-                        (angle.cos(), angle.sin())
-                    } else {
-                        let dp = det.stabilizer.multiply(label);
-                        let dp_stab = if dp.is_identity() {
-                            Some(true)
-                        } else {
-                            stab_group.is_stabilizer(&dp)
-                        };
-                        if let Some(sign) = dp_stab {
-                            let s = if sign { 1.0 } else { -1.0 };
-                            let angle = -2.0 * s * h_j;
-                            (angle.cos(), angle.sin())
-                        } else {
-                            ((2.0 * h_j).cos(), 0.0)
-                        }
-                    };
-                    let new_re = prod_re * f_re - prod_im * f_im;
-                    let new_im = prod_re * f_im + prod_im * f_re;
-                    prod_re = new_re;
-                    prod_im = new_im;
-                }
-                (0.5 * (1.0 - prod_re)).max(0.0)
-            }
-        };
-
-        // Combine S and H (independent)
-        let p = if p_s.abs() > 1e-15 && h_prob > 1e-15 {
-            p_s + h_prob - 2.0 * p_s * h_prob
-        } else {
-            p_s.abs() + h_prob
-        };
-        results.push((det.id, p));
+        validate_exact_subset(&result.generators, std::slice::from_ref(det), &[], config)?;
     }
+    // Pool by a single detector to include cross-event interference, using
+    // the crate's phase-aware formulas and probability validation directly.
+    let results = detectors
+        .iter()
+        .map(|det| {
+            let entries = pecos_eeg::dem_mapping::build_dem_configured(
+                &result.generators,
+                std::slice::from_ref(det),
+                &[],
+                Some(&stab_group),
+                &config,
+            );
+            (det.id, entries.iter().map(|entry| entry.probability).sum())
+        })
+        .collect();
 
     Ok(results)
 }
@@ -574,6 +480,7 @@ pub fn exact_pairwise_rates(
     let results: Vec<((usize, usize), f64)> = pairs
         .par_iter()
         .map(|&(i, j)| {
+            // These measurement-parity detectors are Z-only: no product phase.
             let product = detectors[i].stabilizer.multiply(&detectors[j].stabilizer);
             let p_product = walk(&product);
             let p_joint = (marginals[i] + marginals[j] - p_product) / 2.0;
@@ -663,6 +570,7 @@ pub fn coherent_dem_exact(
     let mut pairwise: Vec<((usize, usize), f64)> = Vec::new();
     for i in 0..detectors.len() {
         for j in (i + 1)..detectors.len() {
+            // These measurement-parity detectors are Z-only: no product phase.
             let product = detectors[i].stabilizer.multiply(&detectors[j].stabilizer);
             let p_product = walk(&product);
             let p_joint =
@@ -764,6 +672,7 @@ pub fn coherent_dem_decomposed(
     let mut pairwise: Vec<((usize, usize), f64)> = Vec::new();
     for i in 0..detectors.len() {
         for j in (i + 1)..detectors.len() {
+            // These measurement-parity detectors are Z-only: no product phase.
             let product = detectors[i].stabilizer.multiply(&detectors[j].stabilizer);
             let p_product = walk(&product);
             let p_joint =
@@ -1082,6 +991,21 @@ pub(crate) fn validate_generator_depolarizing(p1: f64, p2: f64) -> PyResult<()> 
     Ok(())
 }
 
+/// Validate the builder's BCH-combined event sizes before computing probabilities.
+fn validate_exact_subset(
+    generators: &[pecos_eeg::circuit::PropagatedEeg],
+    detectors: &[Detector],
+    observables: &[Observable],
+    config: pecos_eeg::dem_mapping::EegConfig,
+) -> PyResult<()> {
+    if let Some(message) =
+        pecos_eeg::dem_mapping::exact_subset_violation(generators, detectors, observables, &config)
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(message));
+    }
+    Ok(())
+}
+
 fn parse_h_formula(s: &str) -> PyResult<pecos_eeg::dem_mapping::HFormula> {
     match s {
         "taylor" => Ok(pecos_eeg::dem_mapping::HFormula::Taylor),
@@ -1144,6 +1068,7 @@ fn run_eeg(
             pecos_eeg::dem_mapping::BchOrder::First
         },
     };
+    validate_exact_subset(&result.generators, &detectors, &observables, config)?;
     Ok(pecos_eeg::dem_mapping::build_dem_configured(
         &result.generators,
         &detectors,
@@ -1194,6 +1119,7 @@ fn run_eeg_decomposable(
             pecos_eeg::dem_mapping::BchOrder::First
         },
     };
+    validate_exact_subset(&result.generators, &detectors, &observables, config)?;
     let raw = pecos_eeg::dem_mapping::build_dem_configured(
         &result.generators,
         &detectors,

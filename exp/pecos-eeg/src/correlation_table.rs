@@ -246,6 +246,7 @@ pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> Correlatio
         for_each_combination_idx(n, order, |indices| {
             let mut product = detectors[indices[0]].stabilizer.clone();
             for &idx in &indices[1..] {
+                // Producers encode measurement parities as Z-only Paulis: no product phase.
                 product = product.multiply(&detectors[idx].stabilizer);
             }
             let det_ids: Vec<usize> = indices.iter().map(|&i| detectors[i].id).collect();
@@ -330,6 +331,7 @@ pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> Correlatio
     for obs in observables {
         obs_walk_items.push((obs.id, None, obs.pauli.clone()));
         for det in detectors {
+            // Detector and observable measurement parities are both Z-only.
             let product = det.stabilizer.multiply(&obs.pauli);
             obs_walk_items.push((obs.id, Some(det.id), product));
         }

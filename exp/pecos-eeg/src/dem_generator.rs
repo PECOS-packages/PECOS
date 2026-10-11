@@ -163,6 +163,7 @@ impl DemGenerator for CoherentExact {
         let mut pairwise: Vec<((usize, usize), f64)> = Vec::new();
         for i in 0..ctx.detectors.len() {
             for j in (i + 1)..ctx.detectors.len() {
+                // Measurement-parity detectors are Z-only, so their product has no phase.
                 let product = ctx.detectors[i]
                     .stabilizer
                     .multiply(&ctx.detectors[j].stabilizer);

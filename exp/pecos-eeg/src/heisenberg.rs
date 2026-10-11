@@ -919,6 +919,7 @@ pub fn heisenberg_with_noise_map(
         let eigenvalue = if term.pauli.is_identity() {
             1.0
         } else {
+            // SparsePauli is phaseless; conjugation/product phases live in term.coeff_*.
             let bm = term.pauli.to_bm();
             match initial_stab.is_stabilizer(&bm) {
                 Some(true) => 1.0,
@@ -1216,6 +1217,7 @@ pub fn heisenberg_windowed(
             1.0
         } else {
             // Convert sparse back to Bm for stabilizer check
+            // SparsePauli is phaseless; conjugation/product phases live in term.coeff_*.
             let bm = term.pauli.to_bm();
             match initial_stab.is_stabilizer(&bm) {
                 Some(true) => 1.0,
@@ -1560,6 +1562,7 @@ pub fn heisenberg_sparse(
         let eigenvalue = if term.pauli.is_identity() {
             1.0
         } else {
+            // SparsePauli is phaseless; conjugation/product phases live in term.coeff_*.
             let bm = term.pauli.to_bm();
             match initial_stab.is_stabilizer(&bm) {
                 Some(true) => 1.0,

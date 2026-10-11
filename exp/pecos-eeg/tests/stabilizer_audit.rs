@@ -104,6 +104,7 @@ fn audit_stabilizer_group(label: &str, gates: &[Gate], num_qubits: usize) {
             }
         }
 
+        // This audit checks membership only, not the ordered product sign.
         let result = stab_group.is_stabilizer(&product);
         if result.is_none() && !product.is_identity() {
             failures.push((mask, product));

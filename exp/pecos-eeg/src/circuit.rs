@@ -134,7 +134,8 @@ impl EegAnalysisResult {
 /// outside `[0, 0.5)`, which have no finite real generator coefficient.
 ///
 /// # Panics
-/// Panics if the provenance flags do not match the gate count.
+/// Panics if the provenance flags do not match the gate count, or a C/A
+/// injection lacks `label2` (including zero-rate injections).
 pub fn analyze_with_noise(
     gates: &[Gate],
     noise: &dyn crate::noise::NoiseSpec,
@@ -187,17 +188,15 @@ pub fn analyze_with_noise(
                         });
                     }
                     EegType::C | EegType::A => {
-                        if let Some(label2) = inj.label2 {
-                            let (l1, l2, coeff) =
-                                propagate_ca(inj.label, label2, inj.rate, remaining);
-                            generators.push(PropagatedEeg {
-                                eeg_type: inj.eeg_type,
-                                label: l1,
-                                label2: Some(l2),
-                                coeff,
-                                source: None,
-                            });
-                        }
+                        let label2 = inj.label2.expect("C/A injection requires label2");
+                        let (l1, l2, coeff) = propagate_ca(inj.label, label2, inj.rate, remaining);
+                        generators.push(PropagatedEeg {
+                            eeg_type: inj.eeg_type,
+                            label: l1,
+                            label2: Some(l2),
+                            coeff,
+                            source: None,
+                        });
                     }
                 }
             }

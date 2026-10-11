@@ -36,8 +36,8 @@ impl Dialect for QisDialect {
             OperationDef {
                 name: "qalloc".to_string(),
                 description: "Allocate a qubit (___qalloc)".to_string(),
-                num_operands: 0,
-                num_results: 1, // returns qubit ID
+                num_operands: -1, // zero or one explicit index
+                num_results: 1,   // returns qubit ID
                 num_regions: 0,
                 traits: vec![],
             },

@@ -16,7 +16,14 @@ fn phase_u_dem_including_phir_cphase() {
         vec![],
     );
     let mut builder = ByteMessage::quantum_operations_builder();
-    PhirProcessor::new()
+    let mut processor = PhirProcessor::new();
+    for index in 0..2 {
+        processor.ssa_values.insert(
+            index,
+            pecos_phir::execution::environment::TypedValue::I64(i64::from(index)),
+        );
+    }
+    processor
         .process_instruction(&instruction, &mut builder)
         .unwrap();
     let gates = builder.build().quantum_ops().unwrap();

@@ -639,14 +639,13 @@ impl QuantumOp {
             QuantumOp::MCX(n) | QuantumOp::MCZ(n) => Some(*n + 1),
 
             // No operands
-            QuantumOp::Alloc
-            | QuantumOp::InitZero
+            QuantumOp::InitZero
             | QuantumOp::InitOne
             | QuantumOp::InitPlus
             | QuantumOp::InitMinus => Some(0),
 
             // Variable operands
-            QuantumOp::InitState(_) | QuantumOp::MeasureExpectation(_) => None,
+            QuantumOp::Alloc | QuantumOp::InitState(_) | QuantumOp::MeasureExpectation(_) => None,
         }
     }
 

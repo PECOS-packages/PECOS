@@ -852,6 +852,15 @@ impl QisIrParser {
         match qis_name.as_str() {
             // ---- Selene-native ops (direct mapping) ----
             "qalloc" => {
+                if args.len() > 1 {
+                    return Err(PhirError::internal(
+                        "qis.qalloc requires zero or one argument",
+                    ));
+                }
+                let operands = args
+                    .iter()
+                    .map(|arg| self.arg_to_ssa(arg, &mut out))
+                    .collect();
                 let r = result.unwrap_or_else(|| self.fresh_value());
                 out.push(Instruction {
                     results: vec![r],
@@ -861,7 +870,7 @@ impl QisIrParser {
                         vec![],
                         BTreeMap::new(),
                     )),
-                    operands: vec![],
+                    operands,
                     result_types: vec![crate::types::Type::Qubit],
                     regions: vec![],
                     attributes: BTreeMap::new(),
@@ -1329,27 +1338,30 @@ fn normalize_qis_name(name: &str) -> String {
         return rest.to_string();
     }
 
+    // Runtime calls match by suffix: longer names such as the `_array` forms
+    // take different arguments and must not be lowered as these.
+
     // Runtime qubit management
-    if name.contains("__rt__qubit_allocate") {
+    if name.ends_with("__rt__qubit_allocate") {
         return "qalloc".to_string();
     }
-    if name.contains("__rt__qubit_release") {
+    if name.ends_with("__rt__qubit_release") {
         return "qfree".to_string();
     }
 
     // Runtime result/output operations -- elide
-    if name.contains("__rt__result_get_one") || name.contains("__rt__result_get_zero") {
+    if name.ends_with("__rt__result_get_one") || name.ends_with("__rt__result_get_zero") {
         return "rt_elide".to_string();
     }
-    if name.contains("__rt__result_allocate") {
+    if name.ends_with("__rt__result_allocate") {
         return "rt_result_allocate".to_string();
     }
-    if name.contains("__rt__result_record_output")
-        || name.contains("__rt__int_record_output")
-        || name.contains("__rt__tuple_start_record_output")
-        || name.contains("__rt__tuple_end_record_output")
-        || name.contains("__rt__result_update_reference_count")
-        || name.contains("__rt__result_equal")
+    if name.ends_with("__rt__result_record_output")
+        || name.ends_with("__rt__int_record_output")
+        || name.ends_with("__rt__tuple_start_record_output")
+        || name.ends_with("__rt__tuple_end_record_output")
+        || name.ends_with("__rt__result_update_reference_count")
+        || name.ends_with("__rt__result_equal")
     {
         return "rt_elide".to_string();
     }
@@ -1462,6 +1474,14 @@ mod tests {
             "qalloc"
         );
         assert_eq!(normalize_qis_name("__quantum__rt__qubit_release"), "qfree");
+        for array_call in [
+            "__quantum__rt__qubit_allocate_array",
+            "__quantum__rt__qubit_release_array",
+            "__quantum__rt__result_allocate_array",
+            "__quantum__rt__result_record_output_array",
+        ] {
+            assert_eq!(normalize_qis_name(array_call), array_call);
+        }
     }
 
     #[test]

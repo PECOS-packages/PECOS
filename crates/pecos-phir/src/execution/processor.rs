@@ -13,7 +13,7 @@ use crate::ops::{ClassicalOp, MemoryOp, Operation, QuantumOp};
 use crate::phir::{Block, Module};
 use pecos_core::Gate;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// PHIR operation processor - converts PHIR operations to quantum instructions
 #[derive(Debug, Clone)]
@@ -40,6 +40,8 @@ pub struct PhirProcessor {
     pub final_exports: BTreeMap<String, TypedValue>,
     /// Memory store for alloca/load/store operations (pointer SSA ID -> value)
     memory: BTreeMap<u32, TypedValue>,
+    /// Indices currently reserved by quantum allocation.
+    allocated_qubits: BTreeSet<usize>,
     /// Number of qubits in the program
     qubit_count: usize,
 }
@@ -63,6 +65,7 @@ impl PhirProcessor {
             final_exports: BTreeMap::new(),
             memory: BTreeMap::new(),
             qubit_count: 0,
+            allocated_qubits: BTreeSet::new(),
         }
     }
 
@@ -73,6 +76,7 @@ impl PhirProcessor {
         self.current_region = 0;
         self.measurement_mappings.clear();
         self.pending_measurements.clear();
+        self.allocated_qubits.clear();
 
         // Reset SSA values to defaults but keep variable definitions
         // We don't reset the environment completely because we need to preserve variable definitions
@@ -278,22 +282,55 @@ impl PhirProcessor {
 
             // Resource management
             QuantumOp::Alloc => {
-                if !instruction.results.is_empty() {
-                    let qubit_id = usize::try_from(instruction.results[0].id).unwrap_or(usize::MAX);
-                    self.ssa_values.insert(
-                        instruction.results[0].id,
-                        TypedValue::I64(i64::from(instruction.results[0].id)),
-                    );
-                    self.qubit_count = self.qubit_count.max(qubit_id + 1);
-                    let gate = Gate::qalloc(&[qubit_id]);
-                    message_builder.add_gate_command(&gate);
+                if instruction.operands.len() > 1 {
+                    return Err(PhirError::internal(format!(
+                        "{} requires zero or one operand",
+                        instruction.operation.name()
+                    )));
                 }
+                if instruction.operands.is_empty() && instruction.results.is_empty() {
+                    return Ok(true);
+                }
+                let qubit_id = if instruction.operands.is_empty() {
+                    // The first gap in the sorted allocated indices is the lowest free index.
+                    self.allocated_qubits
+                        .iter()
+                        .copied()
+                        .zip(0..)
+                        .find_map(|(allocated, candidate)| {
+                            (allocated != candidate).then_some(candidate)
+                        })
+                        .unwrap_or(self.allocated_qubits.len())
+                } else {
+                    self.qubit_index(instruction, 0)?
+                };
+                // Explicit indices are checked by the resolver; dynamic allocation
+                // must also stop when the command protocol's index space is exhausted.
+                let allocation_index = u32::try_from(qubit_id).map_err(|_| {
+                    PhirError::internal(format!(
+                        "{}: qubit index space exhausted",
+                        instruction.operation.name()
+                    ))
+                })?;
+                if !self.allocated_qubits.insert(qubit_id) {
+                    return Err(PhirError::internal(format!(
+                        "{}: qubit index {qubit_id} is already allocated",
+                        instruction.operation.name()
+                    )));
+                }
+                if let Some(result) = instruction.results.first() {
+                    self.ssa_values
+                        .insert(result.id, TypedValue::I64(i64::from(allocation_index)));
+                }
+                self.qubit_count = self.qubit_count.max(qubit_id + 1);
+                let gate = Gate::qalloc(&[qubit_id]);
+                message_builder.add_gate_command(&gate);
                 Ok(true)
             }
             QuantumOp::Dealloc => {
                 if !instruction.operands.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = self.qubit_index(instruction, 0)?;
+                    self.allocated_qubits.remove(&qubit_id);
                     let gate = Gate::qfree(&[qubit_id]);
                     message_builder.add_gate_command(&gate);
                 }
@@ -301,8 +338,7 @@ impl PhirProcessor {
             }
             QuantumOp::Reset => {
                 if !instruction.operands.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = self.qubit_index(instruction, 0)?;
                     message_builder.pz(&[qubit_id]);
                 }
                 Ok(true)
@@ -310,8 +346,7 @@ impl PhirProcessor {
             QuantumOp::InitZero => {
                 // InitZero is equivalent to Reset (prepare |0>)
                 if !instruction.operands.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = self.qubit_index(instruction, 0)?;
                     message_builder.pz(&[qubit_id]);
                 }
                 Ok(true)
@@ -321,6 +356,37 @@ impl PhirProcessor {
                 "Quantum operation not yet implemented: {quantum_op:?}"
             ))),
         }
+    }
+
+    /// Resolve a physical qubit index from its integer operand value.
+    fn qubit_index(
+        &mut self,
+        instruction: &crate::phir::Instruction,
+        operand_index: usize,
+    ) -> Result<usize> {
+        let value = self.operand(instruction, operand_index)?;
+        let invalid_index = || {
+            PhirError::internal(format!(
+                "{}: invalid qubit index {value:?}",
+                instruction.operation.name()
+            ))
+        };
+        // Quantum command payloads encode qubit indices as u32.
+        let index = match value {
+            TypedValue::I8(v) => u32::try_from(*v),
+            TypedValue::I16(v) => u32::try_from(*v),
+            TypedValue::I32(v) => u32::try_from(*v),
+            TypedValue::I64(v) => u32::try_from(*v),
+            TypedValue::U8(v) => Ok(u32::from(*v)),
+            TypedValue::U16(v) => Ok(u32::from(*v)),
+            TypedValue::U32(v) => Ok(*v),
+            TypedValue::U64(v) => u32::try_from(*v),
+            _ => return Err(invalid_index()),
+        }
+        .map_err(|_| invalid_index())?;
+        let index = usize::try_from(index).map_err(|_| invalid_index())?;
+        self.qubit_count = self.qubit_count.max(index + 1);
+        Ok(index)
     }
 
     /// Extract a single qubit ID from instruction operands
@@ -335,9 +401,7 @@ impl PhirProcessor {
                 instruction.operands.len()
             )));
         }
-        let qubit_id = usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-        self.qubit_count = self.qubit_count.max(qubit_id + 1);
-        Ok(qubit_id)
+        self.qubit_index(instruction, 0)
     }
 
     /// Extract two qubit IDs from instruction operands
@@ -352,10 +416,8 @@ impl PhirProcessor {
                 instruction.operands.len()
             )));
         }
-        let q1 = usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-        let q2 = usize::try_from(instruction.operands[1].id).unwrap_or(usize::MAX);
-        self.qubit_count = self.qubit_count.max(q1 + 1);
-        self.qubit_count = self.qubit_count.max(q2 + 1);
+        let q1 = self.qubit_index(instruction, 0)?;
+        let q2 = self.qubit_index(instruction, 1)?;
         Ok((q1, q2))
     }
 
@@ -467,10 +529,7 @@ impl PhirProcessor {
 
         // For now, process single-qubit measurements
         // TODO: Support multi-qubit measurements
-        let qubit_id = usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-
-        // Track maximum qubit index
-        self.qubit_count = self.qubit_count.max(qubit_id + 1);
+        let qubit_id = self.qubit_index(instruction, 0)?;
 
         message_builder.mz(&[qubit_id]);
 

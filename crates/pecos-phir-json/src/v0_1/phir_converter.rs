@@ -18,7 +18,7 @@ use pecos_phir::{
     types::{IntWidth, Type},
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::declarations::{DeclarationKind, Declarations};
 use super::environment::Environment;
@@ -83,6 +83,20 @@ pub fn phir_json_to_module(json_str: &str) -> Result<Module, PecosError> {
 
     let mut converter = ImprovedConverter::new();
     let instructions = converter.convert_operations(ops)?;
+    // Emit definitions once at the program boundary, after all uses have been resolved.
+    let instructions = converter
+        .resolved_qubits
+        .iter()
+        .map(|&id| {
+            Instruction::new(
+                Operation::Classical(ClassicalOp::ConstInt(i64::from(id))),
+                vec![],
+                vec![SSAValue::new(id)],
+                vec![Type::Int(IntWidth::I64)],
+            )
+        })
+        .chain(instructions)
+        .collect();
 
     // Create main block
     let main_block = Block {
@@ -114,6 +128,7 @@ struct ImprovedConverter {
     environment: Environment,
     declarations: Declarations,
     next_ssa_id: u32,
+    resolved_qubits: BTreeSet<u32>,
     variable_map: BTreeMap<String, u32>,
     variable_types: BTreeMap<String, Type>,
     bit_indexed_writes: BTreeMap<String, Vec<BitIndexedWrite>>,
@@ -125,6 +140,7 @@ impl ImprovedConverter {
             environment: Environment::new(),
             declarations: Declarations::default(),
             next_ssa_id: 0,
+            resolved_qubits: BTreeSet::new(),
             variable_map: BTreeMap::new(),
             variable_types: BTreeMap::new(),
             bit_indexed_writes: BTreeMap::new(),
@@ -623,15 +639,17 @@ impl ImprovedConverter {
         Ok(Some(instruction))
     }
 
-    fn resolve_qubit(&self, var: &str, index: u64) -> Result<u32, PecosError> {
+    fn resolve_qubit(&mut self, var: &str, index: u64) -> Result<u32, PecosError> {
         let index = usize::try_from(index).map_err(|_| {
             PecosError::Input(format!(
                 "Qubit index {index} too large for register '{var}'"
             ))
         })?;
         let id = self.environment.resolve_qubit(var, index)?;
-        u32::try_from(id)
-            .map_err(|_| PecosError::Input(format!("Qubit ID {id} too large for PHIR SSA")))
+        let id = u32::try_from(id)
+            .map_err(|_| PecosError::Input(format!("Qubit ID {id} too large for PHIR SSA")))?;
+        self.resolved_qubits.insert(id);
+        Ok(id)
     }
 
     fn convert_classical_operation(

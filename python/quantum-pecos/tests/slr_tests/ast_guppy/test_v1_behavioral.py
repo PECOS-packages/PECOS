@@ -27,8 +27,10 @@ Test classes per stage 4 plan (`step4-cutover-plan.md`):
 from __future__ import annotations
 
 import math
+from typing import ClassVar
 
-from pecos.slr import Comment, CReg, For, If, Main, Permute, QReg, Repeat, Return, rad
+import pytest
+from pecos.slr import Block, Comment, CReg, For, If, Main, Permute, QReg, Qubit, Repeat, Return, rad
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr.qeclib.steane.steane_class import Steane
@@ -679,9 +681,6 @@ def test_conditional_classical_permute_executes_in_selected_branch() -> None:
 
 def test_conditional_permute_block_call_rebinds_returned_qubits() -> None:
     """A Guppy function's permuted return is a faithful runtime rebinding at its call."""
-    from typing import ClassVar
-
-    from pecos.slr import Block
 
     class SwapSlots(Block):
         block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -744,3 +743,98 @@ def test_comment_only_bodies_emit_valid_guppy() -> None:
     records = run_ast_guppy_via_selene(program, shots=4)
     assert all(record["measurement_0"] == 1 for record in records)
     assert all(record["measurement_1"] == 0 for record in records)
+
+
+class _FlipFirst(Block):
+    """Apply X to the first qubit of a single-qubit, bundle or whole-register input."""
+
+    block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+    def __init__(self, q: QReg | Qubit | list[Qubit]) -> None:
+        super().__init__()
+        self.q = q
+        self.extend(qb.X(q if isinstance(q, Qubit) else q[0]))
+
+
+def _slot_rebinding_after_permute(case: str) -> tuple[Main, tuple[int, ...]]:
+    """Each case re-fills a slot after a Permute moved the local it started with."""
+    q, c = QReg("q", 2), CReg("c", 2)
+    swap = Permute([q[0], q[1]], [q[1], q[0]])
+    if case == "prepare":
+        body = (Measure(q[0]) > c[0], qb.PZ(q[0]))
+        return Main(q, c, qb.X(q[0]), swap, *body, Measure(q) > c, Return(c)), (0, 1)
+    if case == "prepare_across_two_permutes":
+        # The first refill must hand its old local to the other consumed slot,
+        # or the second refill would reuse the local the swap made live.
+        body = (Measure(q) > c, qb.PZ(q[0]), qb.X(q[0]), swap, qb.PZ(q[0]))
+        return Main(q, c, swap, *body, Measure(q) > c, Return(c)), (0, 1)
+    if case == "single_qubit_call":
+        return Main(q, c, qb.X(q[0]), swap, _FlipFirst(q[0]), Measure(q) > c, Return(c)), (1, 1)
+    if case == "one_slot_bundle_call":
+        return Main(q, c, qb.X(q[0]), swap, _FlipFirst([q[0]]), Measure(q) > c, Return(c)), (1, 1)
+    # Whole-register call after a Permute across two registers.
+    a, b, d = QReg("a", 2), QReg("b", 1), CReg("d", 1)
+    cross = Permute([a[0], b[0]], [b[0], a[0]])
+    program = Main(a, b, c, d, qb.X(a[0]), cross, _FlipFirst(a), Measure(a) > c, Measure(b) > d, Return(c, d))
+    return program, (1, 0, 1)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["prepare", "prepare_across_two_permutes", "single_qubit_call", "one_slot_bundle_call", "register_call"],
+)
+def test_slot_rebinding_after_permute_keeps_other_slots_live(case: str) -> None:
+    """A re-filled slot reuses its own local, never one a Permute gave to another slot (#1226)."""
+    program, expected = _slot_rebinding_after_permute(case)
+    records = run_ast_guppy_via_selene(program, shots=4)
+    assert all(tuple(record.values()) == expected for record in records), records
+
+
+def _region_that_permutes_and_refills(case: str) -> tuple[Main, tuple[int, ...]]:
+    """Each region swaps, measures and re-prepares both slots, so it can rejoin the outer bindings."""
+    q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 2)
+    swap = Permute([q[0], q[1]], [q[1], q[0]])
+    if case == "if_then":
+        region = If(c[0] == 0).Then(swap, Measure(q[0]) > d[0], Measure(q[1]) > d[1], qb.PZ(q))
+        return Main(q, c, d, qb.X(q[1]), region, Measure(q) > c, Return(c, d)), (0, 0, 1, 0)
+    if case == "if_else":
+        region = If(c[0] == 0).Then(swap, Measure(q) > d, qb.PZ(q)).Else(Measure(q) > d, qb.PZ(q))
+        return Main(q, c, d, qb.X(q[0]), region, Measure(q) > c, Return(c, d)), (0, 0, 0, 1)
+    # The first iteration measures the swapped pair, the second the fresh one.
+    return Main(q, c, d, qb.X(q[0]), Repeat(2).block(swap, Measure(q) > c, qb.PZ(q)), Return(c, d)), (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("case", ["if_then", "if_else", "repeat"])
+def test_region_that_permutes_and_refills_every_slot_rejoins(case: str) -> None:
+    """Refilled slots take back their initial locals, so the region's bindings match on exit."""
+    program, expected = _region_that_permutes_and_refills(case)
+    records = run_ast_guppy_via_selene(program, shots=4)
+    assert all(tuple(record.values()) == expected for record in records), records
+
+
+@pytest.mark.parametrize("region", ["If taken", "If skipped", "Repeat"])
+def test_region_that_refills_and_reconsumes_a_slot_rejoins(region: str) -> None:
+    """Refilling may trade dead locals between consumed slots; joins must not compare those names.
+
+    The skipped If runs the code after the join under the names the untaken branch left.
+    """
+    q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
+    prefix = (qb.X(q[0]), Permute([q[0], q[1]], [q[1], q[0]]), Measure(q) > c)
+    body = (qb.PZ(q[0]), qb.X(q[0]), Measure(q[0]) > d[0])
+    block = {
+        "If taken": lambda: If(c[1] == 1).Then(*body),
+        "If skipped": lambda: If(c[1] == 0).Then(*body),
+        "Repeat": lambda: Repeat(2).block(*body),
+    }[region]()
+    program = Main(q, c, d, *prefix, block, qb.PZ(q), qb.X(q[1]), Measure(q) > c, Return(c, d))
+    expected = (0, 1, 0 if region == "If skipped" else 1)
+    records = run_ast_guppy_via_selene(program, shots=4)
+    assert all(tuple(record.values()) == expected for record in records), records
+
+
+def test_block_call_return_does_not_shadow_a_register_named_like_a_slot() -> None:
+    """The returned qubit goes to the disambiguated slot local, not over CReg `q_0`."""
+    q, q_0 = QReg("q", 2), CReg("q_0", 1)
+    program = Main(q, q_0, qb.X(q[0]), _FlipFirst(q[0]), Measure(q[0]) > q_0[0], Return(q_0))
+    records = run_ast_guppy_via_selene(program, shots=4)
+    assert all(record["measurement_0"] == 0 for record in records)

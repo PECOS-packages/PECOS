@@ -116,8 +116,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ### Rust breaking changes
 
 - Removed `DemBuilder::with_measurement_order`,
-  `DemSamplerBuilder::with_measurement_order`, `SamplingEngineBuilder::with_measurement_order`,
-  `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,
+  `DemSamplerBuilder::with_measurement_order`, `MemBuilder::with_measurement_order`, `DemStabSimBuilder::measurement_order`,
   `MemStabSimBuilder::measurement_order`, `MeasurementNoiseModel::with_measurement_order`,
   `MeasurementNoiseModel::set_measurement_order`, and the public
   `MeasurementNoiseModel::im_to_tc_order` field. Write detector/observable records in

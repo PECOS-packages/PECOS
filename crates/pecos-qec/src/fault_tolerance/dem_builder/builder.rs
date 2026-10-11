@@ -2864,9 +2864,8 @@ pub(crate) fn parse_observable_record_vectors(
 /// Reject a circuit whose stable `MeasId`s are not unique, before resolving any
 /// `meas_ids`. A duplicate would make stamped-id resolution bind to the first
 /// occurrence (an ambiguous, silently-wrong bind); it indicates a trace/replay
-/// bug, not bad caller input. Mirrors the guard in
-/// `DemBuilder::validate_measurement_count` so the sampler JSON path rejects
-/// exactly what `DemBuilder` does.
+/// bug, not bad caller input. Shared by `DemBuilder::validate_measurement_count`
+/// and the sampler and MEM build paths, so they reject exactly the same inputs.
 fn reject_duplicate_stamped_meas_ids(
     influence_map: &DagFaultInfluenceMap,
 ) -> Result<(), DemBuilderError> {
@@ -3888,12 +3887,13 @@ mod tests {
     }
 
     #[test]
-    fn exact_reference_translation_preserves_legacy_ids_and_multiplicity() {
+    fn exact_reference_resolution_preserves_legacy_ids_and_multiplicity() {
         let mut map = DagFaultInfluenceMap::with_capacity(0);
         map.measurements = vec![(2, 0, 0), (3, 1, 0), (4, 0, 0)];
         let builder = DemBuilder::new(&map);
-        // q1 first, then the first and second q0 measurements. Duplicate
-        // references remain duplicate terms, for XOR cancellation downstream.
+        // Records and legacy ids name map positions directly: q1, then the first
+        // and second q0 measurements. Duplicate references remain duplicate
+        // terms, for XOR cancellation downstream.
         assert_eq!(
             builder
                 .measurement_indices_from_refs(&[1, 0, 2, 0], &[])

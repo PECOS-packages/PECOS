@@ -66,6 +66,10 @@ class GuppyLinearityState:
 
     def __init__(self, bindings: Mapping[Slot, Binding]) -> None:
         """Create state from an explicit binding table in stable order."""
+        locals_ = [binding.local for binding in bindings.values()]
+        if len(set(locals_)) != len(locals_):
+            msg = f"Guppy slot bindings must use distinct locals: {sorted(locals_)}"
+            raise LinearityError(msg)
         self._order = tuple(bindings)
         self._bindings = dict(bindings)
         self._initial_locals = {slot: binding.local for slot, binding in bindings.items()}
@@ -133,12 +137,12 @@ class GuppyLinearityState:
     def refill(self, slot: Slot) -> str:
         """Bind a consumed slot to a new qubit and return the local to assign it to.
 
-        No local is held by more than one binding, and a Permute may have moved
-        the slot's initial local to another slot. The slot takes its initial
-        local back when that is free or names only a consumed (dead) slot,
-        which then takes this slot's old local; that way a region that permutes
-        and refills every slot rejoins with the bindings it started with. If a
-        live slot holds the initial local, this slot keeps its own.
+        Every local is held by exactly one binding, but a Permute may have
+        moved the slot's initial local to another slot. If a consumed (dead)
+        slot holds it, the two trade locals and this slot takes its initial
+        one back, so a region entered with the initial bindings that permutes
+        and refills every slot leaves with them again. If a live slot holds
+        it, this slot keeps its own local.
         """
         own = self.binding(slot)
         if own.state is SlotState.LIVE:
@@ -180,13 +184,19 @@ class GuppyLinearityState:
         *,
         label: str,
     ) -> None:
-        """Accept an if only when both exits leave identical slot bindings."""
+        """Accept an if only when both exits leave the same runtime slot state.
+
+        Live slots must be bound to the same local. Consumed slots need only
+        be consumed on both paths: their locals are dead, and both paths hold
+        the same set of locals, so the ones left to consumed slots are dead on
+        either path and safe to refill after the join.
+        """
         self._require_valid_snapshot(before, label=f"{label} before")
         self._require_valid_snapshot(then_state, label=f"{label} then")
         merged_else = before if else_state is None else else_state
         self._require_valid_snapshot(merged_else, label=f"{label} else")
 
-        if then_state != merged_else:
+        if self._runtime_view(then_state) != self._runtime_view(merged_else):
             msg = (
                 f"{label} leaves divergent Guppy slot states; "
                 f"then={self._snapshot_summary(then_state)}, else={self._snapshot_summary(merged_else)}"
@@ -201,10 +211,10 @@ class GuppyLinearityState:
         *,
         label: str,
     ) -> None:
-        """Require a loop/region body to preserve exact slot bindings."""
+        """Require a loop/region body to preserve the runtime slot state (see `merge_if`)."""
         self._require_valid_snapshot(before, label=f"{label} before")
         self._require_valid_snapshot(after, label=f"{label} after")
-        if before != after:
+        if self._runtime_view(before) != self._runtime_view(after):
             msg = (
                 f"{label} changes Guppy slot state across a required invariant; "
                 f"before={self._snapshot_summary(before)}, after={self._snapshot_summary(after)}"
@@ -233,6 +243,13 @@ class GuppyLinearityState:
         old_bindings = dict(self._bindings)
         for source, target in mapping.items():
             self._bindings[source] = old_bindings[target]
+
+    @staticmethod
+    def _runtime_view(snapshot: LinearitySnapshot) -> dict[Slot, Binding | SlotState]:
+        return {
+            slot: binding if binding.state is SlotState.LIVE else SlotState.CONSUMED
+            for slot, binding in snapshot.items()
+        }
 
     def _require_known(self, slot: Slot) -> None:
         if slot not in self._bindings:

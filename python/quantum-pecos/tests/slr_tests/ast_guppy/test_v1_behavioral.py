@@ -812,6 +812,18 @@ def test_region_that_permutes_and_refills_every_slot_rejoins(case: str) -> None:
     assert all(tuple(record.values()) == expected for record in records), records
 
 
+@pytest.mark.parametrize("region", ["If", "Repeat"])
+def test_region_that_refills_and_reconsumes_a_slot_rejoins(region: str) -> None:
+    """Refilling may trade dead locals between consumed slots; joins must not compare those names."""
+    q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
+    prefix = (qb.X(q[0]), Permute([q[0], q[1]], [q[1], q[0]]), Measure(q) > c)
+    body = (qb.PZ(q[0]), qb.X(q[0]), Measure(q[0]) > d[0])
+    block = If(c[1] == 1).Then(*body) if region == "If" else Repeat(2).block(*body)
+    program = Main(q, c, d, *prefix, block, qb.PZ(q), Measure(q) > c, Return(c, d))
+    records = run_ast_guppy_via_selene(program, shots=4)
+    assert all(tuple(record.values()) == (0, 0, 1) for record in records), records
+
+
 def test_block_call_return_does_not_shadow_a_register_named_like_a_slot() -> None:
     """The returned qubit goes to the disambiguated slot local, not over CReg `q_0`."""
     q, q_0 = QReg("q", 2), CReg("q_0", 1)

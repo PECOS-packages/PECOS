@@ -880,3 +880,56 @@ fn processor_measurement_packing_batches() {
         );
     }
 }
+
+#[test]
+fn qis_final_measurement_after_consumer_is_delivered() {
+    // The last batch holds a measurement that follows a classical consumer;
+    // it must be sent and its outcome delivered even though the program has
+    // run out of operations by the time that batch is built.
+    let module = module(
+        "%q0 = call i64 @__quantum__rt__qubit_allocate()\n\
+         %q1 = call i64 @__quantum__rt__qubit_allocate()\n\
+         call void @___x(i64 %q1)\n\
+         %m = call i1 @___measure(i64 %q0)\n\
+         %z = zext i1 %m to i64\n\
+         %m2 = call i1 @___measure(i64 %q1)",
+    );
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(PhirEngine::new(module).unwrap()))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    hybrid.run_shot().unwrap();
+    let engine = hybrid
+        .controller()
+        .as_any()
+        .downcast_ref::<PhirEngine>()
+        .unwrap();
+    let measurements = &engine.processor.measurement_mappings;
+    assert_eq!(measurements.len(), 2);
+    assert_eq!(
+        engine.processor.ssa_values.get(&measurements[1]),
+        Some(&TypedValue::Bool(true))
+    );
+}
+
+#[test]
+fn qis_call_argument_spellings() {
+    // Address-space pointer types span tokens; tabs separate type and value.
+    for call in [
+        "call void @___h(%Qubit addrspace(1)* null)",
+        "call void @___h(i8 addrspace(1)* null)",
+        "call void @___rz(i64\t0, double\t1.5)",
+    ] {
+        pecos_phir::parse_qis_to_quantum(&format!(
+            "declare void @___h(i64)\ndeclare void @___rz(i64, double)\ndefine void @main() {{\n{call}\nret void\n}}\n"
+        ))
+        .unwrap_or_else(|e| panic!("{call}: {e}"));
+    }
+    // A malformed argument is a parse error, not a later out-of-bounds panic.
+    assert!(
+        pecos_phir::parse_qis_to_quantum(
+            "define void @main() {\ncall void @___rz(i64 0, garbage)\nret void\n}\n"
+        )
+        .is_err()
+    );
+}

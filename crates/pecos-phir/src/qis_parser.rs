@@ -804,13 +804,20 @@ impl QisIrParser {
                 continue;
             }
 
-            if let Some((ty, val)) = part.rsplit_once(' ') {
-                // The first token is the scalar/pointer type; the remaining
-                // tokens before the value are parameter attributes.
-                let ty = ty.split_whitespace().next().expect("argument type");
-                let val = val.trim();
-                args.push(self.parse_arg(ty, val)?);
-            }
+            let Some((prefix, val)) = part.rsplit_once(char::is_whitespace) else {
+                return Err(PhirError::internal(format!(
+                    "Call argument {part:?} has no type"
+                )));
+            };
+            // A pointer type may be spelled across tokens (`%Qubit addrspace(1)*`);
+            // otherwise the first token is the type and the rest are parameter
+            // attributes such as `noundef`.
+            let ty = if prefix.contains('*') {
+                "ptr"
+            } else {
+                prefix.split_whitespace().next().unwrap_or(prefix)
+            };
+            args.push(self.parse_arg(ty, val.trim())?);
         }
         Ok(args)
     }

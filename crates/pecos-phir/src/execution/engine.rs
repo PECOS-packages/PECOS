@@ -391,7 +391,7 @@ impl ControlEngine for PhirEngine {
         // Generate first batch of commands
         match self.generate_commands() {
             Ok(commands) => {
-                if commands.as_bytes().is_empty() {
+                if commands.is_empty()? {
                     // No quantum operations, finalize and return results immediately
                     self.processor.finalize_exports();
                     Ok(EngineStage::Complete(self.get_results()?))
@@ -413,8 +413,10 @@ impl ControlEngine for PhirEngine {
         // Generate next batch of commands (if any)
         match self.generate_commands() {
             Ok(commands) => {
-                if commands.as_bytes().is_empty() || self.finished {
-                    // No more commands, finalize exports now that all operations are done
+                if commands.is_empty()? {
+                    // No more commands, finalize exports now that all operations are done.
+                    // A final non-empty batch is sent first even when the program has
+                    // finished; the next call then completes.
                     self.processor.finalize_exports();
                     Ok(EngineStage::Complete(self.get_results()?))
                 } else {

@@ -10,27 +10,31 @@ import statistics
 from collections import defaultdict
 from itertools import combinations
 
+import numpy as np
 import pecos_rslib as prs
 import pytest
 from pecos import sim, stab_vec
 from pecos.decoders import tesseract
 from pecos.guppy_gen import make_surface_t_teleportation
 from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
-from pecos.guppy_gen.surface_teleportation import render_surface_t_teleportation_module
+from pecos.guppy_gen.surface_teleportation import (
+    load_surface_t_teleportation_module,
+    render_surface_t_teleportation_module,
+)
 from pecos.qec.dem import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, t_teleportation_decision_model
 from pecos.qec.surface.gadgets import default_allocation
 from pecos_rslib.qec import DemSampler
 
 
-def _run(program, patch, shots=8, noise=None):
+def _run(program, patch, shots=8, noise=None, seed=712):
     engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
     runner = (
         sim(program)
         .classical(engine)
         .quantum(stab_vec())
         .qubits(patch.geometry.num_data + patch.geometry.num_qubits)
-        .seed(712)
+        .seed(seed)
     )
     if noise is not None:
         runner = runner.noise(noise)
@@ -321,3 +325,196 @@ def test_build_dem_defaults_match_explicit_builder_rates():
     # p1 and p_meas share from_circuit's defaults, so check they are forwarded too.
     rates = {"p1": 0.03, "p2": 0.001, "p_meas": 0.02, "p_prep": 0.0}
     assert str(model.build_dem(p1=0.03, p_meas=0.02)) == str(DetectorErrorModel.from_circuit(model.circuit, **rates))
+
+
+@pytest.mark.parametrize("dagger", [False, True])
+@pytest.mark.parametrize("rounds_before", [0, 1])
+def test_forced_variants_noiseless(rounds_before, dagger):
+    patch = SurfacePatch.create(distance=3)
+    model = t_teleportation_decision_model(patch, rounds_before)
+    for forced in (None, False, True):
+        program = make_surface_t_teleportation(
+            patch,
+            rounds_before,
+            input_state="X",
+            dagger=dagger,
+            forced_decision=forced,
+        )
+        results = _run(program, patch)
+        events, raw = model.detection_events(results)
+        assert events == [[] for _ in range(8)]
+        assert results["t_correction"] == (raw if forced is None else [forced] * 8)
+
+
+def _decoded_setup(p=0.005):
+    patch = SurfacePatch.create(distance=3)
+    model = t_teleportation_decision_model(patch, 1)
+    noise = prs.depolarizing_noise().with_uniform_probability(0.0).with_p2(p).with_p_meas(p).with_p_prep(p)
+    dem = model.build_dem(p1=0.0, p2=p, p_meas=p, p_prep=p)
+    return patch, model, noise, dem
+
+
+def test_exact_raw_equivalence_noisy():
+    patch, model, noise, dem = _decoded_setup()
+    calls = []
+
+    def run(forced):
+        calls.append(forced)
+        program = make_surface_t_teleportation(patch, 1, input_state="X", forced_decision=forced)
+        return _run(program, patch, shots=64, noise=noise, seed=712)
+
+    result = model.run_decoded(run, tesseract(), dem=dem)
+    assert calls == [False, True]
+    assert result.raw_results == run(None)
+    independent = {forced: run(forced) for forced in (False, True)}
+    disagreements = sum(a != b for a, b in zip(result.raw, result.decoded, strict=True))
+    print(f"Exact raw equivalence: seed=712, shots=64, disagreements={disagreements}")
+    assert disagreements > 0
+    for tag, values in result.results.items():
+        assert values == [independent[bit][tag][k] for k, bit in enumerate(result.decoded)]
+
+
+def test_noiseless_decode():
+    patch, model, noise, dem = _decoded_setup(p=0.0)
+
+    def run(forced):
+        return _run(make_surface_t_teleportation(patch, 1, forced_decision=forced), patch, noise=noise)
+
+    result = model.run_decoded(run, tesseract(), dem=dem)
+    assert result.decoded == result.raw
+    assert result.results == result.raw_results
+
+
+def _forced_round_trip(patch, forced):
+    source = render_surface_t_teleportation_module(patch) + f"""
+@guppy
+def forced_round_trip_{forced}() -> None:
+    data = prepare_injected_y()
+    resource = prepare_injected_t()
+    syn_data = syndrome_extraction_data(data)
+    syn_resource = syndrome_extraction_anc(resource)
+    output("data_synx", syn_data.synx)
+    output("data_synz", syn_data.synz)
+    output("resource_synx", syn_resource.synx)
+    output("resource_synz", syn_resource.synz)
+    consume_t_resource(data, resource)
+    correct_t_teleportation(data, {forced}, False)
+    resource = prepare_injected_tdg()
+    apply_t_teleportation(data, resource, True)
+    syn = syndrome_extraction_fold_szdg_data(data)
+    output("readout_synx", syn.synx)
+    output("readout_synz", syn.synz)
+    output("final_data", measure_x_basis(data))
+"""
+    name = f"test_forced_round_trip_{forced}"
+    module = load_guppy_source(source, _get_temp_dir() / f"{name}.py", name)
+    return module[f"forced_round_trip_{forced}"]
+
+
+def test_decoded_round_trip_paired_win():
+    patch, model, noise, dem = _decoded_setup()
+
+    def run(forced):
+        return _run(_forced_round_trip(patch, forced), patch, shots=400, noise=noise, seed=712)
+
+    result = model.run_decoded(run, tesseract(), dem=dem)
+    raw_errors, decoded_errors = [
+        [bool(sum(bits[q] for q in patch.geometry.logical_x.data_qubits) % 2) for bits in records["final_data"]]
+        for records in (result.raw_results, result.results)
+    ]
+    paired = defaultdict(int)
+    for raw, decoded, raw_error, decoded_error in zip(
+        result.raw,
+        result.decoded,
+        raw_errors,
+        decoded_errors,
+        strict=True,
+    ):
+        if raw != decoded:
+            paired[raw_error, decoded_error] += 1
+    disagreements = sum(paired.values())
+    print(
+        f"Round trip: disagreements={disagreements}; "
+        f"decoded-right/raw-wrong={paired[True, False]}, raw-right/decoded-wrong={paired[False, True]}, "
+        f"both-right={paired[False, False]}, both-wrong={paired[True, True]}; "
+        f"raw rate={sum(raw_errors) / 400:.4f}, decoded rate={sum(decoded_errors) / 400:.4f}",
+    )
+    # Seeded samples are not promised stable across Rust releases. Re-pin only
+    # if a release moves this sample, and only if the paired win still holds.
+    assert disagreements > 0
+    assert paired[True, False] > paired[False, True]
+
+
+def test_run_decoded_rejects_different_seeds():
+    patch, model, noise, dem = _decoded_setup()
+
+    def run(forced):
+        return _run(
+            make_surface_t_teleportation(patch, 1, forced_decision=forced),
+            patch,
+            noise=noise,
+            seed=713 if forced else 712,
+        )
+
+    with pytest.raises(ValueError, match=r"Pre-decision.*seed.*before the decision"):
+        model.run_decoded(run, tesseract(), dem=dem)
+
+
+def test_run_decoded_rejects_ignored_forcing():
+    patch, model, noise, dem = _decoded_setup()
+    results = _run(make_surface_t_teleportation(patch, 1), patch, noise=noise)
+    with pytest.raises(ValueError, match=r"t_correction.*forced"):
+        model.run_decoded(lambda _forced: results, tesseract(), dem=dem)
+
+
+def test_run_decoded_rejects_dropped_tag():
+    patch, model, noise, dem = _decoded_setup()
+
+    def run(forced):
+        results = _run(make_surface_t_teleportation(patch, 1, forced_decision=forced), patch, noise=noise)
+        if forced:
+            del results["final_data"]
+        return results
+
+    with pytest.raises(ValueError, match="same tags"):
+        model.run_decoded(run, tesseract(), dem=dem)
+
+
+def test_decode_decisions_rejects_incompatible_dem():
+    patch, model, noise, _dem = _decoded_setup()
+    results = _run(make_surface_t_teleportation(patch, 1), patch, noise=noise)
+    events, _raw = model.detection_events(results)
+    assert any(events)
+    dem = t_teleportation_decision_model(patch, 0).build_dem(p1=0.0, p2=0.005, p_meas=0.005, p_prep=0.005)
+    with pytest.raises(ValueError, match=r"SampleBatch has .* detectors"):
+        model.decode_decisions(results, tesseract(), dem=dem)
+
+
+def test_forced_decision_validation():
+    patch = SurfacePatch.create(distance=3)
+    factories = [
+        lambda **kwargs: make_surface_t_teleportation(patch, **kwargs),
+        load_surface_t_teleportation_module(patch)["make_t_teleportation"],
+    ]
+    for factory in factories:
+        for invalid in (0, 1, "True", np.bool_(True)):
+            with pytest.raises(ValueError, match="forced_decision"):
+                factory(forced_decision=invalid)
+        for valid in (None, False, True):
+            assert factory(forced_decision=valid) is not None
+    with pytest.raises(ValueError, match=r"forced_decision.*hook"):
+        make_surface_t_teleportation(patch, resource_preparation="hook", forced_decision=False)
+
+
+@pytest.mark.parametrize("both_variants", [False, True])
+def test_run_decoded_rejects_inconsistent_shot_counts(both_variants):
+    patch, model, _noise, dem = _decoded_setup(p=0.0)
+
+    def run(forced):
+        results = _zero_results(patch, 1)
+        results["t_correction"] = [forced]
+        results["final_data"] = [] if forced or both_variants else [[0] * patch.geometry.num_data]
+        return results
+
+    with pytest.raises(ValueError, match="same shot count"):
+        model.run_decoded(run, tesseract(), dem=dem)

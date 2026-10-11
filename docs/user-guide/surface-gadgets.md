@@ -1270,6 +1270,64 @@ assert all(not fired for fired in events)
 assert raw == [bool(bit) for bit in decision_results["t_correction"]]
 ```
 
+#### Decoded first correction
+
+`make_surface_t_teleportation(..., forced_decision=False)` and the `True`
+variant preserve the resource readout and force the first physical correction.
+The default `None` uses raw parity. `model.decode_decisions(results, decoder,
+dem=dem)` returns `(raw, decoded)`, applying the decoder's predicted flip to
+that parity.
+
+`model.run_decoded(run, decoder, dem=dem)` calls `run(False)` then `run(True)`.
+Bind the same program parameters, noise, seed and shot count in `run`. It checks
+that both variants have matching tags and shot counts, forced corrections, and
+identical decision windows, then decodes once. The returned `DecodedDecisionRun`
+has `raw` and `decoded` decisions, `results` selected per shot by the decoded bit,
+and `raw_results` selected by the raw bit. These are exact seeded records:
+the programs share their pre-branch source, each shot is seeded from the run seed
+and shot index, and QIS operations execute in program order.
+
+This costs two full runs (2x the shots). Only the first decision is decoded;
+later decisions retain their program behavior. Hook resources are unsupported.
+Quote rates with `p1=0` and matched two-qubit, measurement and preparation noise
+until the stand-in is lowered to native gates, as explained above.
+
+This self-contained example runs eight noiseless shots, so the decoder agrees
+with raw parity on every shot. The DEM's rates are the decoder's prior:
+
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+from pecos.decoders import tesseract
+from pecos.guppy_gen import make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
+
+patch = SurfacePatch.create(distance=3)
+model = t_teleportation_decision_model(patch, rounds_before=1)
+p = 0.001
+dem = model.build_dem(p1=0.0, p2=p, p_meas=p, p_prep=p)
+
+
+def run(forced):
+    program = make_surface_t_teleportation(patch, rounds_before=1, forced_decision=forced)
+    engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+    return (
+        sim(program)
+        .classical(engine)
+        .quantum(stab_vec())
+        .qubits(patch.geometry.num_data + patch.geometry.num_qubits)
+        .seed(712)
+        .run(8)
+        .to_dict()
+    )
+
+
+result = model.run_decoded(run, tesseract(), dem=dem)
+assert len(result.decoded) == 8
+assert result.decoded == result.raw
+assert result.results == result.raw_results
+```
+
 #### Postselected hook resources
 
 PECOS also implements the CNOT schedule from

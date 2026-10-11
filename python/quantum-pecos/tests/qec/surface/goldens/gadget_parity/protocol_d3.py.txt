@@ -1333,7 +1333,8 @@ def apply_t_teleportation(data: SurfaceCode_3x3, resource: SurfaceCode_3x3 @ own
 
 
 def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
-                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False):
+                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False,
+                     forced_decision: bool | None = None):
     """Raw resource + corrected logical T/TDG. Syndrome rounds are recorded, not decoded."""
     if (type(rounds_before) is not int or type(rounds_after) is not int
             or min(rounds_before, rounds_after) < 0):
@@ -1346,6 +1347,8 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
         raise ValueError("readout_basis must be X, Y, or Z")
     if type(dagger) is not bool:
         raise ValueError("dagger must be a boolean")
+    if forced_decision is not None and type(forced_decision) is not bool:
+        raise ValueError("forced_decision must be None or a boolean")
     def experiment() -> None:
         if comptime(input_state == "Z"):
             data = prepare_injected_z()
@@ -1372,7 +1375,11 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
             output("data_synz", syn_data.synz)
             output("resource_synx", syn_resource.synx)
             output("resource_synz", syn_resource.synz)
-        apply_t_teleportation(data, resource, comptime(dagger))
+        if comptime(forced_decision is None):
+            apply_t_teleportation(data, resource, comptime(dagger))
+        else:
+            consume_t_resource(data, resource)
+            correct_t_teleportation(data, comptime(forced_decision is True), comptime(dagger))
         for _ in range(comptime(rounds_after)):
             syn = syndrome_extraction_data(data)
             output("data_synx", syn.synx)
@@ -1387,4 +1394,4 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
             final = measure_x_basis(data)
         output("final_data", final)
     return guppy(variant_scoped(
-        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger))
+        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger, forced_decision))

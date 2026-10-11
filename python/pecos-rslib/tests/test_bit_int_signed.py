@@ -1,25 +1,22 @@
-"""Regression contracts for signed fixed-width values and canonical hashes."""
+"""Regression contracts for signed fixed-width values."""
 
 import pytest
 from pecos_rslib import BitInt, BitUInt
 
 
 @pytest.mark.parametrize("value", [0, 1, -1, 2**70, -(2**70)])
-def test_cross_width_hash(value: int) -> None:
-    """Equal mathematical values work as dictionary keys and set members."""
+def test_cross_width_equality(value: int) -> None:
+    """Equal mathematical values compare equal at any width."""
     narrow, wide = BitInt(100, value), BitInt(130, value)
     assert narrow == wide
-    assert hash(narrow) == hash(wide) == hash(value)
-    assert {narrow: "found"}[wide] == "found"
-    assert {wide: "found"}[narrow] == "found"
-    assert len({narrow, wide}) == 1
+    assert wide == narrow
 
 
 @pytest.mark.parametrize("value", [-(2**63), -1, 0, 1, 2**63 - 1])
-def test_hash_newly_convertible_wide_value(value: int) -> None:
-    """The new i64 fast path and the arbitrary-precision value hash agree."""
+def test_newly_convertible_wide_value(value: int) -> None:
+    """The i64 fast path and the arbitrary-precision conversion agree."""
     assert int(BitInt(100, value)) == value
-    assert hash(BitInt(100, value)) == hash(BitInt(63, value)) == hash(value)
+    assert int(BitInt(63, value)) == value
 
 
 @pytest.mark.parametrize(

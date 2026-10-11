@@ -395,9 +395,11 @@ impl PyBitUInt {
         Ok(PyBool::new(py, result).to_owned().into_any().unbind())
     }
 
-    pub fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
-        self.__int__(py)?.hash()
-    }
+    // Values change in place through set, set_clip, set_bit, __setitem__ and
+    // clamp, so a value-based hash would strand a mutated key in its dict or
+    // set. Mutable types are unhashable, as list and bytearray are.
+    #[classattr]
+    const __hash__: Option<Py<PyAny>> = None;
 
     pub fn __str__(&self) -> String {
         format!("{}", self.inner)

@@ -313,18 +313,10 @@ def test_bool_false() -> None:
     assert bool(BitInt(8, 0)) is False
 
 
-def test_hash() -> None:
-    """Verify equal BitInt values produce equal hashes."""
-    a = BitInt(8, 42)
-    b = BitInt(8, 42)
-    assert hash(a) == hash(b)
-
-
-def test_hash_different_values() -> None:
-    """Verify different BitInt values produce different hashes."""
-    a = BitInt(8, 42)
-    b = BitInt(8, 43)
-    assert hash(a) != hash(b)
+def test_unhashable() -> None:
+    """Verify BitInt is unhashable because it is mutable in place."""
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(BitInt(8, 42))
 
 
 def test_len() -> None:

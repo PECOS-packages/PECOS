@@ -48,7 +48,7 @@ def wrap(value, width, cls):
         (lambda: U(8, 0) < -1, False),
         (lambda: I(100, 0) == U(100, 2**70), False),
         (lambda: I(100, 5) == "101", True),
-        (lambda: hash(U(8, 5)) == hash(I(8, 5)) == hash(5), True),
+        (lambda: U(8, 5) == I(8, 5) == 5, True),
         (lambda: int(I(600, 1) << I(8, -1)), 0),
         (lambda: int(U(8, 1) << I(8, -1)), 0),
         (lambda: int(I(100, I(100, 2**70))), 2**70),
@@ -154,22 +154,19 @@ def test_invalid_binary(cls, binary):
 
 
 @pytest.mark.parametrize("cls", [I, U])
-@pytest.mark.parametrize("value", [0, 5, 2**63, 2**70, -(2**70), -1])
-def test_numeric_hash(cls, value):
-    """Hash uses the mathematical integer even when wrapping changes its sign."""
-    result = cls(130, value)
-    expected = wrap(value, 130, cls)
-    assert int(result) == expected
-    assert hash(result) == hash(expected)
+def test_unhashable(cls):
+    """Mutable in place, so neither class can be a dict key or set member."""
+    value = cls(8, 5)
+    for action in (lambda: hash(value), lambda: {value}, lambda: {value: "x"}):
+        with pytest.raises(TypeError, match="unhashable"):
+            action()
 
 
 @pytest.mark.parametrize("value", [0, 5, 2**63, 2**70])
-def test_cross_class_dict(value):
-    """Equal values of either class and any sufficient width share a dict entry."""
-    keys = [value, U(100, value), I(100, value), U(130, value), I(130, value)]
-    mapping = dict.fromkeys(keys, "found")
-    assert len(mapping) == 1
-    assert all(mapping[key] == "found" for key in keys)
+def test_cross_class_equality(value):
+    """Equal values of either class, at any sufficient width, compare equal."""
+    values = [value, U(100, value), I(100, value), U(130, value), I(130, value)]
+    assert all(a == b for a in values for b in values)
 
 
 class IndexValue:
@@ -213,10 +210,10 @@ def test_unsupported_operand(cls, operand):
 
 
 @pytest.mark.parametrize("cls", [I, U])
-def test_lookup_in_float_containers(cls):
-    """Equal hashes with a float must not turn a container lookup into an error."""
-    assert cls(8, 1) not in {1.0}
-    assert {5.0: "x"}.get(cls(8, 5)) is None
+def test_equality_with_a_float_is_false(cls):
+    """A float operand has no integer value, so equality is False rather than an error."""
+    assert not (cls(8, 1) == 1.0)
+    assert cls(8, 1) not in [1.0]
 
 
 @st.composite

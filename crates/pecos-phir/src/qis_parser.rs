@@ -702,7 +702,12 @@ impl QisIrParser {
         let mut result_type = parse_llvm_type(ty);
         let mut operands = Vec::new();
         let operation = match name {
-            "alloca" => Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(result_type.clone()))),
+            "alloca" => {
+                crate::execution::environment::TypedValue::zero(&result_type).map_err(|error| {
+                    PhirError::internal(format!("No zero for LLVM type {ty}: {error}"))
+                })?;
+                Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(result_type.clone())))
+            }
             "load" => {
                 let (_, pointer) = read_llvm_type(part(1)?)?;
                 operands.push(self.resolve_value(pointer));
@@ -739,7 +744,8 @@ impl QisIrParser {
                 let path = parts[first_index..]
                     .iter()
                     .map(|index| {
-                        index.trim().parse::<usize>().map_err(|_| {
+                        let index = index.trim();
+                        index.parse::<usize>().map_err(|_| {
                             PhirError::internal(format!("{name}: invalid index {index}"))
                         })
                     })
@@ -1444,13 +1450,15 @@ fn literal_operation(ty: &str, text: &str) -> Result<(ClassicalOp, crate::types:
             .map_err(|error| PhirError::internal(format!("No zero for LLVM type {ty}: {error}")))?;
         return Ok((ClassicalOp::AggregateZero, result_type));
     }
-    let opaque_pointer = ty.split_whitespace().next() == Some("ptr");
-    let placeholder =
-        ty.ends_with('*') || opaque_pointer || (ty.starts_with('<') && !is_packed_struct(ty));
+    let pointer = is_llvm_pointer_type(ty);
+    let placeholder = pointer || (ty.starts_with('<') && !is_packed_struct(ty));
     let zero = matches!(text, "undef" | "poison")
         || (placeholder && matches!(text, "null" | "zeroinitializer"));
     if placeholder && zero {
         return Ok((ClassicalOp::ConstInt(0), Type::Int(IntWidth::I64)));
+    }
+    if pointer {
+        return Err(invalid());
     }
     let op = match &result_type {
         Type::Bool if zero || matches!(text, "true" | "false") => {
@@ -1481,10 +1489,16 @@ fn literal_operation(ty: &str, text: &str) -> Result<(ClassicalOp, crate::types:
     Ok((op, result_type))
 }
 
+/// Recognize opaque and typed pointer spellings accepted by the type reader.
+fn is_llvm_pointer_type(s: &str) -> bool {
+    s.ends_with('*') || s.split_whitespace().next() == Some("ptr")
+}
+
 /// Map an LLVM type string to a PHIR `Type`.
 fn parse_llvm_type(s: &str) -> crate::types::Type {
     let s = s.trim();
     match s {
+        _ if is_llvm_pointer_type(s) => crate::types::Type::Int(crate::types::IntWidth::I64),
         "i1" => crate::types::Type::Bool,
         _ if s
             .strip_prefix('i')

@@ -940,7 +940,16 @@ impl PhirProcessor {
 
     /// Read an SSA operand, reporting invalid IR at its first consumer.
     fn operand(&self, instruction: &crate::phir::Instruction, index: usize) -> Result<&TypedValue> {
-        let id = instruction.operands[index].id;
+        let id = instruction
+            .operands
+            .get(index)
+            .ok_or_else(|| {
+                PhirError::internal(format!(
+                    "{}: missing operand {index}",
+                    instruction.operation.name()
+                ))
+            })?
+            .id;
         self.ssa_values.get(&id).ok_or_else(|| {
             PhirError::internal(format!(
                 "{}: missing operand {index}, SSA id {id}",
@@ -1247,21 +1256,14 @@ impl PhirProcessor {
     }
 
     /// Finalize export values after measurements are processed
+    /// This should be called after `handle_measurement_results` to prepare exports
     ///
     /// # Errors
     /// Returns an error when an export contains an aggregate.
-    /// This should be called after `handle_measurement_results` to prepare exports
     pub fn finalize_exports(&mut self) -> Result<()> {
         for id in self.export_mappings.keys() {
             if matches!(self.ssa_values.get(id), Some(TypedValue::Aggregate(_))) {
                 return Err(PhirError::internal("arith.result: cannot export aggregate"));
-            }
-        }
-        for id in &self.measurement_mappings {
-            if matches!(self.ssa_values.get(id), Some(TypedValue::Aggregate(_))) {
-                return Err(PhirError::internal(
-                    "arith.result: cannot export aggregate measurement",
-                ));
             }
         }
         // Don't clear previous exports - they should persist and be updated

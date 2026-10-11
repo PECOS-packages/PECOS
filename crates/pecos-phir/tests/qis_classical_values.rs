@@ -989,6 +989,13 @@ fn qis_aggregate_array() {
             )),
             TypedValue::I64(17)
         );
+        let untouched = (index + 1) % 3;
+        assert_eq!(
+            value(&format!(
+                "%a = insertvalue [3 x i64] undef, i64 17, {index}\n%r = extractvalue [3 x i64] %a, {untouched}"
+            )),
+            TypedValue::I64(0)
+        );
     }
 }
 
@@ -1001,6 +1008,14 @@ fn qis_aggregate_zero_literals() {
         ),
         (
             "[2 x i64]",
+            TypedValue::Aggregate(vec![TypedValue::I64(0); 2]),
+        ),
+        (
+            "{ i8*, i64 }",
+            TypedValue::Aggregate(vec![TypedValue::I64(0); 2]),
+        ),
+        (
+            "[2 x ptr addrspace(1)]",
             TypedValue::Aggregate(vec![TypedValue::I64(0); 2]),
         ),
         ("{}", TypedValue::Aggregate(vec![])),
@@ -1046,7 +1061,6 @@ fn qis_aggregate_invalid_literals() {
         ("{ i64, i64 }", "null"),
         ("[2 x i64]", "null"),
         ("{ i64, i64 }", "{ i64 1, i64 2 }"),
-        ("{ i8*, i64 }", "undef"),
         ("{ <2 x i64>, i64 }", "poison"),
         ("{ %T, i64 }", "zeroinitializer"),
     ] {
@@ -1337,4 +1351,134 @@ fn qis_aggregate_return_name_and_pointer_types() {
             TypedValue::I64(0)
         );
     }
+}
+
+#[test]
+fn qis_pointer_alloca_zero() {
+    for ty in [
+        "ptr",
+        "i8*",
+        "%Qubit*",
+        "ptr addrspace(1)",
+        "ptr addrspace (1)",
+        "%Qubit *",
+        "i8 addrspace(1)*",
+        "%Qubit addrspace (1) *",
+        "{ i8*, i64 }*",
+        "[2 x i64] *",
+        "<2 x i64>*",
+        "void (i64, ptr)*",
+    ] {
+        let body = format!("%p = alloca {ty}\n%r = load {ty}, ptr %p");
+        assert_eq!(value(&body), TypedValue::I64(0), "{ty}");
+        let parsed = module(&body);
+        for instruction in &parsed.body.blocks[0].operations {
+            assert_eq!(
+                instruction.result_types,
+                vec![Type::Int(IntWidth::I64)],
+                "{ty}"
+            );
+        }
+        assert_eq!(
+            value(&format!(
+                "%p = alloca {{ {ty}, i64 }}\n%r = load {{ {ty}, i64 }}, ptr %p"
+            )),
+            TypedValue::Aggregate(vec![TypedValue::I64(0); 2]),
+            "{ty}"
+        );
+    }
+}
+
+#[test]
+fn qis_alloca_unsupported_zero_is_parse_error() {
+    for ty in [
+        "<2 x i64>",
+        "%T",
+        "<{ i64 }>",
+        "{ <2 x i64>, i64 }",
+        "{ i8*, %T }",
+        "[2 x %T]",
+        "[2 x { i8*, <2 x i64> }]",
+    ] {
+        let error = pecos_phir::parse_qis_to_quantum(&format!(
+            "define void @main() {{\n%p = alloca {ty}\nret void\n}}"
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(ty), "{ty}: {error}");
+    }
+}
+
+#[test]
+fn qis_pointer_select_cast_and_call() {
+    let body = "%a = select i1 true, i8* null, i8* null\n%r = bitcast i8* %a to %Qubit*";
+    let parsed = module(body);
+    for instruction in &parsed.body.blocks[0].operations {
+        if matches!(
+            instruction.operation,
+            Operation::Classical(ClassicalOp::Select | ClassicalOp::Bitcast)
+        ) {
+            assert_eq!(instruction.result_types, vec![Type::Int(IntWidth::I64)]);
+        }
+    }
+    assert_eq!(value(body), TypedValue::I64(0));
+    assert_eq!(
+        value_with_qubits(&format!("{body}\n%m = call i1 @___measure(%Qubit* %r)"), 1),
+        TypedValue::Bool(false)
+    );
+    for ty in ["ptr", "i8*", "ptr addrspace(1)", "{ i64 }*"] {
+        assert!(
+            pecos_phir::parse_qis_to_quantum(&format!(
+                "define void @main() {{\n%r = select i1 true, {ty} 7, {ty} null\n}}"
+            ))
+            .is_err(),
+            "{ty}: integer text is not a pointer literal"
+        );
+    }
+}
+
+#[test]
+fn processor_insertvalue_missing_element() {
+    let mut processor = PhirProcessor::new();
+    processor
+        .ssa_values
+        .insert(0, TypedValue::Aggregate(vec![TypedValue::I64(0)]));
+    let op = ClassicalOp::InsertValue(vec![0]);
+    let instruction = classical(op.clone(), 1);
+    let error = processor
+        .process_classical_operation(&op, &instruction)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(&instruction.operation.name()) && error.contains("missing operand 1"),
+        "{error}"
+    );
+}
+
+#[test]
+fn processor_aggregate_missing_source() {
+    for op in [
+        ClassicalOp::InsertValue(vec![0]),
+        ClassicalOp::ExtractValue(vec![0]),
+    ] {
+        let instruction = classical(op.clone(), 0);
+        let error = PhirProcessor::new()
+            .process_classical_operation(&op, &instruction)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&instruction.operation.name()) && error.contains("missing operand 0"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn qis_aggregate_invalid_index_spacing() {
+    let error = pecos_phir::parse_qis_to_quantum(
+        "define void @main() {\n%r = extractvalue { i64 } undef, -1\n}",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.ends_with("extractvalue: invalid index -1"), "{error}");
 }

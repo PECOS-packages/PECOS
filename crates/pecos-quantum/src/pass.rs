@@ -426,11 +426,11 @@ fn check_all_stacks_agree(
     agreed
 }
 
-/// Check if the successor of `node` on every qubit in `qubits` is the same DAG node.
+/// Check if the adjacent successor of `node` on every qubit in `qubits` is the same DAG node.
 fn dag_common_successor(circuit: &DagCircuit, node: usize, qubits: &[QubitId]) -> Option<usize> {
     let mut result: Option<usize> = None;
     for &q in qubits {
-        let s = circuit.successor_on_qubit(node, q)?;
+        let s = dag_adjacent_successor(circuit, node, q)?;
         match result {
             None => result = Some(s),
             Some(prev) if prev == s => {}
@@ -438,6 +438,25 @@ fn dag_common_successor(circuit: &DagCircuit, node: usize, qubits: &[QubitId]) -
         }
     }
     result
+}
+
+/// The gate directly after `node` on `qubit`: its only successor there, with
+/// `node` as that gate's only predecessor there. A manual bypass or branch wire
+/// leaves no single neighbour, so rewrites that need adjacency skip the gate.
+fn dag_adjacent_successor(circuit: &DagCircuit, node: usize, qubit: QubitId) -> Option<usize> {
+    let [successor] = circuit.successors_on_qubit(node, qubit)[..] else {
+        return None;
+    };
+    (circuit.predecessors_on_qubit(successor, qubit) == [node]).then_some(successor)
+}
+
+/// The gate directly before `node` on `qubit`, under the same rule as
+/// [`dag_adjacent_successor`].
+fn dag_adjacent_predecessor(circuit: &DagCircuit, node: usize, qubit: QubitId) -> Option<usize> {
+    let [predecessor] = circuit.predecessors_on_qubit(node, qubit)[..] else {
+        return None;
+    };
+    (circuit.successors_on_qubit(predecessor, qubit) == [node]).then_some(predecessor)
 }
 
 /// Check if a gate conjugated by H on a specific qubit simplifies.
@@ -571,20 +590,25 @@ impl CircuitPass for SimplifyRotations {
                 pecos_core::try_lower_rotation_to_clifford(gate)
             {
                 let qubits = gate.qubits.clone();
+                // A manual wire labeled outside the gate's qubits orders it
+                // against other gates; per-qubit replacements cannot keep that.
+                if circuit
+                    .incoming_wires(node)
+                    .into_iter()
+                    .chain(circuit.outgoing_wires(node))
+                    .any(|(_, q)| !qubits.contains(&q))
+                {
+                    continue;
+                }
 
-                // Save every wire on each qubit before removal bridges over it.
+                // Save every wire on each qubit before removal drops them.
                 // Manual wires can give a gate several predecessors or
                 // successors on one qubit; the replacement takes all of them.
                 let mut positions = Vec::new();
                 for &q in &qubits {
                     let preds = circuit.predecessors_on_qubit(node, q);
                     let succs = circuit.successors_on_qubit(node, q);
-                    let bridged: Vec<_> = preds
-                        .iter()
-                        .flat_map(|&p| succs.iter().map(move |&s| (p, s)))
-                        .filter(|&(p, s)| circuit.find_wire(p, s, q).is_none())
-                        .collect();
-                    positions.push((q, preds, succs, bridged, circuit.is_qubit_head(node, q)));
+                    positions.push((q, preds, succs, circuit.is_qubit_head(node, q)));
                 }
 
                 let replacements = circuit.replace_gate_unwired(
@@ -593,17 +617,9 @@ impl CircuitPass for SimplifyRotations {
                         .iter()
                         .map(|&q| Gate::simple(pauli, smallvec::smallvec![q])),
                 );
-                for ((q, preds, succs, bridged, was_head), replacement) in
+                for ((q, preds, succs, was_head), replacement) in
                     positions.into_iter().zip(replacements)
                 {
-                    // Replace the newly created bridges with paths through the
-                    // replacement. Preserve any pre-existing manual bypass.
-                    for (p, s) in bridged {
-                        let edge = circuit
-                            .find_wire(p, s, q)
-                            .expect("removal bridges the old gate's wire");
-                        circuit.remove_wire(edge);
-                    }
                     for pred in preds {
                         circuit
                             .connect(pred, replacement, q)
@@ -971,10 +987,10 @@ impl CircuitPass for PeepholeOptimize {
 
             // Check each qubit for H-conjugation.
             for &q in &qubits {
-                let Some(pred) = circuit.predecessor_on_qubit(node, q) else {
+                let Some(pred) = dag_adjacent_predecessor(circuit, node, q) else {
                     continue;
                 };
-                let Some(succ) = circuit.successor_on_qubit(node, q) else {
+                let Some(succ) = dag_adjacent_successor(circuit, node, q) else {
                     continue;
                 };
                 let Some(pred_gate) = circuit.gate(pred) else {
@@ -1690,6 +1706,81 @@ mod tests {
             expected.sort_unstable();
             assert_eq!(actual, expected);
         }
+    }
+
+    /// Unwired `gates` chained on qubit 0, plus a manual bypass wire on qubit
+    /// 0 added before or after the chain (edge order is insertion-dependent).
+    fn chain_with_bypass(gates: &[Gate], bypass: (usize, usize), bypass_first: bool) -> DagCircuit {
+        let mut dag = DagCircuit::new();
+        let nodes: Vec<_> = gates
+            .iter()
+            .map(|gate| dag.add_gate(gate.clone()))
+            .collect();
+        let mut wires: Vec<_> = nodes.windows(2).map(|pair| (pair[0], pair[1])).collect();
+        let bypass = (nodes[bypass.0], nodes[bypass.1]);
+        if bypass_first {
+            wires.insert(0, bypass);
+        } else {
+            wires.push(bypass);
+        }
+        for (from, to) in wires {
+            dag.connect(from, to, QubitId(0)).unwrap();
+        }
+        dag
+    }
+
+    #[test]
+    fn adjacency_passes_skip_neighbours_joined_by_a_bypass() {
+        let rz = Gate::rz(Angle64::QUARTER_TURN, &[0]);
+        let cases: Vec<(&str, &dyn CircuitPass, Vec<Gate>)> = vec![
+            (
+                "CancelInverses",
+                &CancelInverses,
+                vec![Gate::h(&[0]), Gate::z(&[0]), Gate::h(&[0])],
+            ),
+            (
+                "MergeAdjacentRotations",
+                &MergeAdjacentRotations,
+                vec![rz.clone(), Gate::h(&[0]), rz],
+            ),
+            (
+                "PeepholeOptimize",
+                &PeepholeOptimize,
+                vec![
+                    Gate::h(&[0]),
+                    Gate::z(&[0]),
+                    Gate::cx(&[(1, 0)]),
+                    Gate::h(&[0]),
+                ],
+            ),
+        ];
+        for (name, pass, gates) in cases {
+            for bypass_first in [false, true] {
+                // The bypass skips the second gate of each chain.
+                let mut dag = chain_with_bypass(&gates, (0, 2), bypass_first);
+                let gates_of = |dag: &DagCircuit| -> Vec<_> {
+                    dag.nodes().iter().map(|&n| dag.gate(n).cloned()).collect()
+                };
+                let before = gates_of(&dag);
+                pass.apply_dag(&mut dag);
+                assert_eq!(gates_of(&dag), before, "{name} rewrote across a bypass");
+            }
+        }
+    }
+
+    #[test]
+    fn simplification_skips_gates_with_wires_outside_their_qubits() {
+        let mut dag = DagCircuit::new();
+        let before = dag.add_gate(Gate::h(&[2]));
+        let rzz = dag.add_gate(Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]));
+        let after = dag.add_gate(Gate::h(&[2]));
+        dag.connect(before, rzz, QubitId(2)).unwrap();
+        dag.connect(rzz, after, QubitId(2)).unwrap();
+        let wires = dag.wires();
+        SimplifyRotations.apply_dag(&mut dag);
+        assert_eq!(dag.gate(rzz).unwrap().gate_type, GateType::RZZ);
+        assert_eq!(dag.gate_count(), 3);
+        assert_eq!(dag.wires(), wires);
     }
 
     #[test]

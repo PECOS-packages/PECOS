@@ -16,9 +16,9 @@
 mod dag_pass_order;
 
 #[test]
-fn passes_preserve_dev_topological_layer_and_tick_order() {
+fn passes_preserve_dev_gates_wires_and_order() {
     // Recorded by running dag_pass_order_fixtures against origin/dev
-    // 0641aeee4bf02a047da76736f3f6dc694f8038c2, not the implementation under test.
+    // de0ba996740e83ec15987cb6a4cd550a990c5acc, not the implementation under test.
     assert_eq!(
         dag_pass_order::snapshots(),
         include_str!("data/dag_pass_order.txt")

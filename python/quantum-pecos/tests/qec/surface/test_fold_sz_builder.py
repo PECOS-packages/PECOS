@@ -285,7 +285,7 @@ def test_logical_readout_combines_x_z_on_same_patch():
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
         LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=1, basis="X"),
     ]
-    assert _logical_readout_flow(operations, 3, "A", "X") == (True, (("B", 2), ("A", 1)))
+    assert _logical_readout_flow(operations, 3, "A", "X") == (True, (("B", 2), ("A", 1)), ())
 
 
 @pytest.mark.parametrize("family", ["X", "Z"])

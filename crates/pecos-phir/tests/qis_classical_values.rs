@@ -204,13 +204,15 @@ fn qis_zero_divisors() {
     }
 }
 
+// Fix demonstration: this lossless chain agrees with LLVM at every width.
+// Width-changing semantics remain tracked by #1220.
 #[test]
 fn qis_hugr_cast_chain() {
     assert_eq!(
         value(
-            "%a = add i64 -8, 0\n%b = trunc i64 %a to i32\n%c = zext i32 %b to i64\n%r = sext i64 %c to i64"
+            "%a = add i64 8, 0\n%b = trunc i64 %a to i16\n%c = zext i16 %b to i32\n%r = sext i32 %c to i64"
         ),
-        TypedValue::I64(-8)
+        TypedValue::I64(8)
     );
 }
 
@@ -591,7 +593,6 @@ fn qis_unimplemented_producers_error() {
         "%a = phi i64 [ 1, %entry ]",
         "%a = call i1 @___read_future(ptr null)",
         "call void @__quantum__qis__mz__body(%Qubit* null, %Result* null)\n%a = call i1 @__quantum__qis__read_result__body(%Result* null)",
-        "%a = call i64 @__quantum__rt__qubit_allocate()",
         "%a = insertvalue { i64 } poison, i64 1, 0",
     ] {
         let body = format!("{producer}\n%r = add i64 %a, 1");
@@ -610,10 +611,11 @@ fn qis_unimplemented_producers_error() {
     }
 }
 
-// Fix demonstration: the same type/literal mapping applies to cast operands.
+// Fix demonstration: cast literals use the same type mapping. Values are
+// lossless or truncate to i1, so expectations do not pin the #1220 defect.
 #[test]
 fn qis_cast_literals() {
-    assert_eq!(value("%r = trunc i64 -8 to i16"), TypedValue::I64(-8));
+    assert_eq!(value("%r = trunc i64 8 to i16"), TypedValue::I64(8));
     assert_eq!(value("%r = zext i1 true to i64"), TypedValue::I64(1));
     assert_eq!(value("%r = trunc i64 1 to i1"), TypedValue::Bool(true));
     assert_eq!(value("%r = trunc i64 -8 to i1"), TypedValue::Bool(false));
@@ -718,4 +720,163 @@ fn qis_erased_runtime_arguments_compatibility() {
         "call void @__quantum__rt__result_record_output(i64 0, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @label, i32 0, i32 0))",
     );
     assert_eq!(module.body.blocks[0].operations.len(), 0);
+}
+
+// Fix demonstration: delivery must assign each batch's results, without
+// overwriting the preceding measurement. Repeating shots also exercises reset.
+#[test]
+fn qis_measure_consume_measure_consume() {
+    let module = module(
+        "%q0 = call i64 @__quantum__rt__qubit_allocate()\n\
+         %q1 = call i64 @__quantum__rt__qubit_allocate()\n\
+         call void @___x(i64 %q1)\n\
+         %m = call i1 @___measure(i64 %q0)\n\
+         %z = zext i1 %m to i64\n\
+         %m2 = call i1 @___measure(i64 %q1)\n\
+         %r = zext i1 %m2 to i64",
+    );
+    let casts: Vec<_> = module.body.blocks[0]
+        .operations
+        .iter()
+        .filter(|instruction| instruction.operation == Operation::Classical(ClassicalOp::Bitcast))
+        .map(|instruction| instruction.results[0].id)
+        .collect();
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(PhirEngine::new(module).unwrap()))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    for _ in 0..2 {
+        hybrid.run_shot().unwrap();
+        let engine = hybrid
+            .controller()
+            .as_any()
+            .downcast_ref::<PhirEngine>()
+            .unwrap();
+        assert!(engine.finished);
+        assert_eq!(engine.processor.ssa_values[&casts[0]], TypedValue::I64(0));
+        assert_eq!(engine.processor.ssa_values[&casts[1]], TypedValue::I64(1));
+        let measurements = &engine.processor.measurement_mappings;
+        assert_eq!(
+            engine.processor.ssa_values[&measurements[0]],
+            TypedValue::Bool(false)
+        );
+        assert_eq!(
+            engine.processor.ssa_values[&measurements[1]],
+            TypedValue::Bool(true)
+        );
+        pecos_engines::Engine::reset(&mut hybrid).unwrap();
+    }
+}
+
+// Fix demonstration: qalloc produces the index used by HUGR's integer casts.
+#[test]
+fn qis_alloc_integer_value() {
+    assert_eq!(
+        value_with_qubits(
+            "%q0 = call i64 @__quantum__rt__qubit_allocate()\n%q1 = call i64 @__quantum__rt__qubit_allocate()\n%r = trunc i64 %q1 to i16",
+            2
+        ),
+        TypedValue::I64(1)
+    );
+}
+
+// Fix demonstration against ac44a7631: attributed integer/float/pointer
+// literals must parse exactly like their unadorned counterparts.
+#[test]
+fn qis_call_parameter_attributes() {
+    for (attributed, plain) in [
+        (
+            "call void @___rz(i64 noundef zeroext 0, double noundef 1.5)",
+            "call void @___rz(i64 0, double 1.5)",
+        ),
+        (
+            "call void @___h(ptr noundef noalias align 8 dereferenceable_or_null(8) null)",
+            "call void @___h(ptr null)",
+        ),
+        (
+            "call void @___h(%Qubit* noundef noalias align 8 dereferenceable_or_null(8) null)",
+            "call void @___h(%Qubit* null)",
+        ),
+        (
+            "%q = call i64 @__quantum__rt__qubit_allocate()\ncall void @___h(ptr nonnull dereferenceable(8) %q)\ncall void @___rz(i64 signext 0, double noundef 1.5)",
+            "%q = call i64 @__quantum__rt__qubit_allocate()\ncall void @___h(ptr %q)\ncall void @___rz(i64 0, double 1.5)",
+        ),
+    ] {
+        assert_eq!(module(attributed), module(plain));
+    }
+}
+
+// Fix demonstration: unmatched deliveries must error before changing any SSA
+// values; discarded measurements still occupy their position in the batch.
+#[test]
+fn processor_measurement_delivery_validation() {
+    use pecos_engines::byte_message::builder::ByteMessageBuilder;
+    use pecos_phir::ops::QuantumOp;
+    let mut processor = PhirProcessor::new();
+    let mut builder = ByteMessageBuilder::new();
+    let mut measurement = classical(ClassicalOp::Assign, 1);
+    measurement.operation = Operation::Quantum(QuantumOp::Measure);
+    measurement.results.clear();
+    processor
+        .process_instruction(&measurement, &mut builder)
+        .unwrap();
+    measurement.results = vec![SSAValue::new(9)];
+    processor
+        .process_instruction(&measurement, &mut builder)
+        .unwrap();
+    for outcomes in [vec![1], vec![1, 0, 1]] {
+        let error = processor.handle_measurement_results(&outcomes).unwrap_err();
+        assert!(matches!(error, PhirError::Internal(_)));
+        assert!(error.to_string().contains("pending measurements"));
+        assert!(!processor.ssa_values.contains_key(&9));
+    }
+    processor.handle_measurement_results(&[0, 1]).unwrap();
+    assert_eq!(processor.ssa_values[&9], TypedValue::Bool(true));
+    assert!(processor.handle_measurement_results(&[0]).is_err());
+    processor
+        .process_instruction(&measurement, &mut builder)
+        .unwrap();
+    processor.reset();
+    assert!(processor.handle_measurement_results(&[0]).is_err());
+    processor.handle_measurement_results(&[]).unwrap();
+}
+
+// Fix demonstration: packed variables retain earlier batches' bits, and a
+// later zero outcome clears just the bit delivered in that batch.
+#[test]
+fn processor_measurement_packing_batches() {
+    use pecos_engines::byte_message::builder::ByteMessageBuilder;
+    use pecos_phir::execution::environment::DataType;
+    use pecos_phir::ops::QuantumOp;
+    let mut processor = PhirProcessor::new();
+    processor
+        .environment
+        .add_variable("register", DataType::U32, 1)
+        .unwrap();
+    processor
+        .environment
+        .set_variable("register", TypedValue::U32(0))
+        .unwrap();
+    processor.variable_ssa_map.insert("register".into(), 100);
+    processor.export_mappings.insert(100, "register".into());
+    let mut builder = ByteMessageBuilder::new();
+    let mut measurement = classical(ClassicalOp::Assign, 1);
+    measurement.operation = Operation::Quantum(QuantumOp::Measure);
+    for (id, outcome, expected) in [(101, 1, 2), (102, 0, 2), (101, 0, 0)] {
+        measurement.results = vec![SSAValue::new(id)];
+        processor
+            .process_instruction(&measurement, &mut builder)
+            .unwrap();
+        processor.handle_measurement_results(&[outcome]).unwrap();
+        assert_eq!(processor.ssa_values[&100], TypedValue::U32(expected));
+        assert_eq!(
+            processor.environment.get_variable("register").unwrap(),
+            Some(&TypedValue::U32(expected))
+        );
+        processor.finalize_exports();
+        assert_eq!(
+            processor.final_exports["register"],
+            TypedValue::U32(expected)
+        );
+    }
 }

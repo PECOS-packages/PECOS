@@ -26,8 +26,10 @@ pub struct PhirProcessor {
     current_block: usize,
     /// Current region being executed
     current_region: usize,
-    /// Measurement index to SSA ID mapping
-    pub measurement_mappings: Vec<u32>, // SSA IDs that will receive measurement results
+    /// SSA destinations of all measurements issued in this shot (for exports).
+    pub measurement_mappings: Vec<u32>,
+    /// Measurement destinations awaiting delivery for the current batch.
+    pending_measurements: Vec<Option<u32>>,
     /// Export mappings from Result operations (source SSA ID to export name)
     pub export_mappings: BTreeMap<u32, String>,
     /// SSA value storage (SSA ID to typed value)
@@ -54,6 +56,7 @@ impl PhirProcessor {
             current_block: 0,
             current_region: 0,
             measurement_mappings: Vec::new(),
+            pending_measurements: Vec::new(),
             export_mappings: BTreeMap::new(),
             ssa_values: BTreeMap::new(),
             variable_ssa_map: BTreeMap::new(),
@@ -69,6 +72,7 @@ impl PhirProcessor {
         self.current_block = 0;
         self.current_region = 0;
         self.measurement_mappings.clear();
+        self.pending_measurements.clear();
 
         // Reset SSA values to defaults but keep variable definitions
         // We don't reset the environment completely because we need to preserve variable definitions
@@ -276,6 +280,10 @@ impl PhirProcessor {
             QuantumOp::Alloc => {
                 if !instruction.results.is_empty() {
                     let qubit_id = usize::try_from(instruction.results[0].id).unwrap_or(usize::MAX);
+                    self.ssa_values.insert(
+                        instruction.results[0].id,
+                        TypedValue::I64(i64::from(instruction.results[0].id)),
+                    );
                     self.qubit_count = self.qubit_count.max(qubit_id + 1);
                     let gate = Gate::qalloc(&[qubit_id]);
                     message_builder.add_gate_command(&gate);
@@ -466,13 +474,11 @@ impl PhirProcessor {
 
         message_builder.mz(&[qubit_id]);
 
-        // Track measurement mapping for later processing
-        // The measurement index maps to which variable should receive the result
-        let _measurement_index = self.measurement_mappings.len();
-
-        // Store the SSA ID that will receive this measurement result
-        if !instruction.results.is_empty() {
-            let result_ssa_id = instruction.results[0].id;
+        // Keep shot history for exports and one destination per pending outcome,
+        // including measurements whose results are discarded.
+        let destination = instruction.results.first().map(|result| result.id);
+        self.pending_measurements.push(destination);
+        if let Some(result_ssa_id) = destination {
             self.measurement_mappings.push(result_ssa_id);
         }
 
@@ -1002,7 +1008,14 @@ impl PhirProcessor {
     ///
     /// Returns an error if measurement result handling fails
     pub fn handle_measurement_results(&mut self, outcomes: &[u8]) -> Result<()> {
-        // Process measurement outcomes
+        if outcomes.len() != self.pending_measurements.len() {
+            return Err(PhirError::internal(format!(
+                "Measurement delivery has {} outcomes for {} pending measurements",
+                outcomes.len(),
+                self.pending_measurements.len()
+            )));
+        }
+        let pending_measurements = std::mem::take(&mut self.pending_measurements);
 
         // Create a map to track which base variable each measurement SSA ID belongs to
         let mut measurement_to_base: BTreeMap<u32, (String, u32, usize)> = BTreeMap::new();
@@ -1022,8 +1035,7 @@ impl PhirProcessor {
 
         // First, store individual measurement outcomes as bools
         for (i, &outcome) in outcomes.iter().enumerate() {
-            if i < self.measurement_mappings.len() {
-                let ssa_id = self.measurement_mappings[i];
+            if let Some(ssa_id) = pending_measurements[i] {
                 let value = TypedValue::Bool(outcome != 0);
                 // Store measurement outcome
                 self.ssa_values.insert(ssa_id, value);
@@ -1042,34 +1054,29 @@ impl PhirProcessor {
         // Now combine measurement results for integer variables
         let mut combined_values: BTreeMap<u32, u32> = BTreeMap::new();
 
-        // Process each measurement and accumulate bits for its base variable
+        // Update only the bits delivered in this batch, retaining earlier batches.
         for (i, &outcome) in outcomes.iter().enumerate() {
-            if i < self.measurement_mappings.len() {
-                let meas_ssa_id = self.measurement_mappings[i];
-
-                if let Some((var_name, base_ssa_id, bit_offset)) =
+            if let Some(meas_ssa_id) = pending_measurements[i]
+                && let Some((var_name, base_ssa_id, bit_offset)) =
                     measurement_to_base.get(&meas_ssa_id)
-                {
-                    // Measurement contributes to variable bit
-
-                    // Only process if it's an integer variable
-                    if let Ok(Some(
-                        TypedValue::I64(_)
-                        | TypedValue::U32(_)
-                        | TypedValue::U64(_)
-                        | TypedValue::I32(_),
-                    )) = self.environment.get_variable(var_name)
-                    {
-                        let current_value = combined_values.entry(*base_ssa_id).or_insert(0);
-                        if outcome != 0 {
-                            *current_value |= 1 << bit_offset;
-                        }
-                    }
+                && let Ok(Some(
+                    value @ (TypedValue::I64(_)
+                    | TypedValue::U32(_)
+                    | TypedValue::U64(_)
+                    | TypedValue::I32(_)),
+                )) = self.environment.get_variable(var_name)
+            {
+                let bytes = Self::integer_bits(value)?.to_le_bytes();
+                let previous = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                let current_value = combined_values.entry(*base_ssa_id).or_insert(previous);
+                let mask = 1 << bit_offset;
+                *current_value &= !mask;
+                if outcome != 0 {
+                    *current_value |= mask;
                 }
             }
         }
 
-        // Store the combined values for integer variables
         // Store the combined values for integer variables
         for (base_ssa_id, combined_value) in combined_values {
             // Find the variable name for this SSA ID

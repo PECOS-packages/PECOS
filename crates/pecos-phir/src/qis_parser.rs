@@ -805,7 +805,9 @@ impl QisIrParser {
             }
 
             if let Some((ty, val)) = part.rsplit_once(' ') {
-                let ty = ty.trim();
+                // The first token is the scalar/pointer type; the remaining
+                // tokens before the value are parameter attributes.
+                let ty = ty.split_whitespace().next().expect("argument type");
                 let val = val.trim();
                 args.push(self.parse_arg(ty, val)?);
             }

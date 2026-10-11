@@ -13,6 +13,7 @@ Verification stays at that size; subsequent growth and noisy decoding are
 not implemented here. Undetectable single faults remain at the injection site.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
@@ -22,6 +23,9 @@ from pecos.qec.surface.patch import SurfacePatch
 
 # Doubled coordinates, with columns increasing right and rows increasing down.
 _UR, _UL, _DR, _DL = (1, -1), (-1, -1), (1, 1), (-1, 1)
+
+# One round's (x_outcomes, z_outcomes); lists and tuples compare by value.
+_Syndrome = Sequence[Sequence[bool]]
 
 
 @dataclass(frozen=True)
@@ -43,7 +47,7 @@ class HookInjection:
     z_corrections: tuple[tuple[int, ...], ...]
     x_corrections: tuple[tuple[int, ...], ...]
 
-    def _validate_syndrome(self, syndrome: tuple[tuple[bool, ...], tuple[bool, ...]]) -> None:
+    def _validate_syndrome(self, syndrome: _Syndrome) -> None:
         if len(syndrome) != 2 or tuple(map(len, syndrome)) != (len(self.z_corrections), len(self.x_corrections)):
             msg = "Expected X and Z outcomes matching the patch stabilizers"
             raise ValueError(msg)
@@ -51,7 +55,7 @@ class HookInjection:
             msg = "Syndrome outcomes must be booleans"
             raise ValueError(msg)
 
-    def accepts(self, records: tuple[tuple[tuple[bool, ...], tuple[bool, ...]], ...]) -> bool:
+    def accepts(self, records: Sequence[_Syndrome]) -> bool:
         """Evaluate a complete attempt, including at least one verification round."""
         if len(records) < 2:
             msg = "Hook injection requires an injection round and at least one verification round"
@@ -63,7 +67,7 @@ class HookInjection:
         predictable = [first_x[i] for i in self.predictable_x] + [first_z[i] for i in self.predictable_z]
         return not any(predictable) and all(record == records[0] for record in records[1:])
 
-    def correction_gadget(self, syndrome: tuple[tuple[bool, ...], tuple[bool, ...]]) -> Gadget:
+    def correction_gadget(self, syndrome: _Syndrome) -> Gadget:
         """Materialize ideal byproduct corrections for an accepted baseline syndrome."""
         self._validate_syndrome(syndrome)
         steps = []

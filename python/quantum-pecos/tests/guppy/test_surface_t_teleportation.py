@@ -149,16 +149,27 @@ def test_teleportation_callees_preserve_patch_role_scopes(renderer):
         "apply_t_teleportation": {"data"},
         "make_t_teleportation": {"data", "anc"},
     }
+    # Patch role of every syndrome round, keyed by caller and the patch variable it measures.
+    round_roles = {
+        **{(f"prepare_injected_{state}", "surf"): "data" for state in ("z", "minus_z", "x", "minus_x", "y", "minus_y")},
+        **{(f"prepare_injected_{state}", "surf"): "anc" for state in ("t", "tdg")},
+        ("correct_t_teleportation", "data"): "data",
+        ("make_t_teleportation", "data"): "data",
+        ("make_t_teleportation", "resource"): "anc",
+    }
+    rounds_seen = set()
     for name, scopes in expected.items():
         assert sideband_scopes(name) == scopes, name
         for call in ast.walk(functions[name]):
-            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
-                continue
-            if call.func.id.startswith("syndrome_extraction"):
-                role = "anc" if isinstance(call.args[0], ast.Name) and call.args[0].id == "resource" else "data"
-                if name in {"prepare_injected_t", "prepare_injected_tdg"}:
-                    role = "anc"
-                assert sideband_scopes(call.func.id) == {role}, (name, call.func.id)
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id.startswith("syndrome_extraction")
+            ):
+                key = (name, call.args[0].id)
+                assert sideband_scopes(call.func.id) == {round_roles[key]}, (key, call.func.id)
+                rounds_seen.add(key)
+    assert rounds_seen == round_roles.keys()
 
 
 @pytest.mark.parametrize("loader", [load_surface_protocol_module, load_surface_t_teleportation_module])

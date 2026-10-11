@@ -572,20 +572,19 @@ impl CircuitPass for SimplifyRotations {
             {
                 let qubits = gate.qubits.clone();
 
-                // Save each wire position before removal bridges over it.
+                // Save every wire on each qubit before removal bridges over it.
+                // Manual wires can give a gate several predecessors or
+                // successors on one qubit; the replacement takes all of them.
                 let mut positions = Vec::new();
                 for &q in &qubits {
-                    let pred = circuit.predecessor_on_qubit(node, q);
-                    let succ = circuit.successor_on_qubit(node, q);
-                    let existing_bridge =
-                        pred.zip(succ).and_then(|(p, s)| circuit.find_wire(p, s, q));
-                    positions.push((
-                        q,
-                        pred,
-                        succ,
-                        existing_bridge,
-                        circuit.is_qubit_head(node, q),
-                    ));
+                    let preds = circuit.predecessors_on_qubit(node, q);
+                    let succs = circuit.successors_on_qubit(node, q);
+                    let bridged: Vec<_> = preds
+                        .iter()
+                        .flat_map(|&p| succs.iter().map(move |&s| (p, s)))
+                        .filter(|&(p, s)| circuit.find_wire(p, s, q).is_none())
+                        .collect();
+                    positions.push((q, preds, succs, bridged, circuit.is_qubit_head(node, q)));
                 }
 
                 let replacements = circuit.replace_gate_unwired(
@@ -594,25 +593,23 @@ impl CircuitPass for SimplifyRotations {
                         .iter()
                         .map(|&q| Gate::simple(pauli, smallvec::smallvec![q])),
                 );
-                for ((q, pred, succ, existing_bridge, was_head), replacement) in
+                for ((q, preds, succs, bridged, was_head), replacement) in
                     positions.into_iter().zip(replacements)
                 {
-                    // Replace the newly created bridge with a path through the
+                    // Replace the newly created bridges with paths through the
                     // replacement. Preserve any pre-existing manual bypass.
-                    if existing_bridge.is_none()
-                        && let Some((p, s)) = pred.zip(succ)
-                    {
+                    for (p, s) in bridged {
                         let edge = circuit
                             .find_wire(p, s, q)
                             .expect("removal bridges the old gate's wire");
                         circuit.remove_wire(edge);
                     }
-                    if let Some(pred) = pred {
+                    for pred in preds {
                         circuit
                             .connect(pred, replacement, q)
                             .expect("replacement preserves the old gate's wire order");
                     }
-                    if let Some(succ) = succ {
+                    for succ in succs {
                         circuit
                             .connect(replacement, succ, q)
                             .expect("replacement preserves the old gate's wire order");
@@ -1647,6 +1644,51 @@ mod tests {
                 actual.sort_unstable();
                 assert_eq!(actual, expected);
             }
+        }
+    }
+
+    #[test]
+    fn simplification_rewires_every_wire_past_manual_bypass() {
+        // Incoming edges are listed in an insertion-dependent order, so add
+        // the redundant bypass both before and after the chain.
+        for bypass_first in [false, true] {
+            let mut dag = DagCircuit::new();
+            let h = dag.add_gate(Gate::h(&[0]));
+            let x = dag.add_gate(Gate::x(&[0]));
+            let rzz = dag.add_gate(Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]));
+            let last = dag.add_gate(Gate::h(&[0]));
+            let mut wires = vec![(h, x), (x, rzz), (rzz, last)];
+            if bypass_first {
+                wires.insert(0, (h, rzz));
+            } else {
+                wires.push((h, rzz));
+            }
+            for (from, to) in wires {
+                dag.connect(from, to, QubitId(0)).unwrap();
+            }
+            SimplifyRotations.apply_dag(&mut dag);
+            let z = dag
+                .nodes()
+                .into_iter()
+                .find(|&node| {
+                    let gate = dag.gate(node).unwrap();
+                    gate.gate_type == GateType::Z && gate.qubits.as_slice() == [QubitId(0)]
+                })
+                .unwrap();
+            let mut actual: Vec<_> = dag
+                .wires()
+                .into_iter()
+                .filter(|&(_, _, qubit)| qubit == QubitId(0))
+                .collect();
+            actual.sort_unstable();
+            let mut expected = vec![
+                (h, x, QubitId(0)),
+                (h, z, QubitId(0)),
+                (x, z, QubitId(0)),
+                (z, last, QubitId(0)),
+            ];
+            expected.sort_unstable();
+            assert_eq!(actual, expected);
         }
     }
 

@@ -32,6 +32,11 @@ type MeasurementRecordDefinition = (usize, Vec<usize>, Vec<i32>);
 /// For exact probabilities, use `coherent_dem_decomposed`.
 ///
 /// h_formula: "taylor" (default), "sin_squared", "exact_commuting", or "exact_subset"
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor", bch_order=1))]
 pub fn perturbative_dem(
@@ -61,6 +66,11 @@ pub fn perturbative_dem(
 }
 
 /// Build perturbative DEM and return structured events: list of (prob, [det_ids], [obs_ids]).
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor", bch_order=1))]
 pub fn perturbative_dem_events(
@@ -96,6 +106,11 @@ pub fn perturbative_dem_events(
 }
 
 /// Return (num_h_generators, num_s_generators, num_detectors, numobservables).
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0))]
 pub fn eeg_summary(
@@ -106,6 +121,7 @@ pub fn eeg_summary(
     p_meas: f64,
     p_prep: f64,
 ) -> PyResult<(usize, usize, usize, usize)> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -136,6 +152,11 @@ pub fn eeg_summary(
 ///
 /// Returns list of (det_ids, num_labels, num_same_label_groups, rates_by_label, max_combined_rate)
 /// This helps understand why perturbative formulas are inaccurate.
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0))]
 pub fn eeg_event_diagnostics(
@@ -146,6 +167,7 @@ pub fn eeg_event_diagnostics(
     p_meas: f64,
     p_prep: f64,
 ) -> PyResult<Vec<PyEegEventDiagnostic>> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -203,6 +225,11 @@ pub fn eeg_event_diagnostics(
 /// computation misses.
 ///
 /// Returns list of (detector_id, probability).
+///
+/// At p1 = 3/4 or p2 = 15/16, depolarizing injections have flip probability
+/// q = 1/2. When such an injection reaches forward EEG, it raises ValueError
+/// about a flip probability of 0.5: forward EEG requires q < 1/2 for a finite
+/// logarithmic generator coefficient.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, h_formula="taylor"))]
 pub fn eeg_per_detector(
@@ -214,6 +241,7 @@ pub fn eeg_per_detector(
     p_prep: f64,
     h_formula: &str,
 ) -> PyResult<Vec<(usize, f64)>> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -575,6 +603,7 @@ pub fn coherent_dem_exact(
     p_prep: f64,
     prune: f64,
 ) -> PyResult<String> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -675,6 +704,7 @@ pub fn coherent_dem_decomposed(
     p_prep: f64,
     prune: f64,
 ) -> PyResult<(String, String)> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -895,7 +925,8 @@ pub fn correlation_matching_dem(
 /// noise kept at original positions. Returns compression statistics.
 ///
 /// Stochastic (S) flips compose exactly; coherent (H) sources compose to first
-/// order, and categorical channel exclusivity is not preserved.
+/// order. Independent flips exactly represent categorical depolarizing for
+/// p1 <= 3/4 and p2 <= 15/16; larger positive values raise ValueError.
 ///
 /// Returns (original_count, compressed_count, boundary_noise_labels).
 #[pyfunction]
@@ -908,6 +939,7 @@ pub fn compress_noise(
     p_meas: f64,
     p_prep: f64,
 ) -> PyResult<(usize, usize)> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -954,6 +986,7 @@ pub fn noise_characterization(
     prune: f64,
     compress: bool,
 ) -> PyResult<(String, String, String)> {
+    validate_generator_depolarizing(p1, p2)?;
     let base_noise = pecos_eeg::noise::UniformNoise {
         idle_rz,
         p1,
@@ -1040,6 +1073,15 @@ pub fn noise_characterization(
 
 // -- Internal --
 
+/// Validate the independent-flip domain before any generator-view computation.
+/// Channel-only callers deliberately do not use this check.
+pub(crate) fn validate_generator_depolarizing(p1: f64, p2: f64) -> PyResult<()> {
+    if let Some(message) = pecos_eeg::noise::generator_depolarizing_violation(p1, p2) {
+        return Err(pyo3::exceptions::PyValueError::new_err(message));
+    }
+    Ok(())
+}
+
 fn parse_h_formula(s: &str) -> PyResult<pecos_eeg::dem_mapping::HFormula> {
     match s {
         "taylor" => Ok(pecos_eeg::dem_mapping::HFormula::Taylor),
@@ -1062,6 +1104,7 @@ fn run_eeg(
     h_formula: &str,
     bch_order: u32,
 ) -> PyResult<Vec<DemEntry>> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,
@@ -1123,6 +1166,7 @@ fn run_eeg_decomposable(
     Vec<DemEntry>,
     Vec<pecos_eeg::dem_mapping::DecomposableDemEntry>,
 )> {
+    validate_generator_depolarizing(p1, p2)?;
     let noise = NoiseModel {
         idle_rz,
         p1,

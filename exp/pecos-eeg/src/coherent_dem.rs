@@ -20,7 +20,8 @@
 //! For H-type (coherent) noise: amplitudes add, probability = sin²(total).
 //! For S-type (stochastic) noise: independent flips compose with
 //! probability = (1 - product(1 - 2p))/2, where p = -rate.
-//! Categorical depolarizing uses an independent-flip approximation.
+//! `UniformNoise` independent flips exactly represent categorical depolarizing
+//! for `p1 <= 3/4` and `p2 <= 15/16`; larger positive values panic.
 //! Exact Heisenberg targets use the separate physical channel view.
 
 use crate::Bm;
@@ -163,8 +164,8 @@ pub fn build_coherent_dem(
     // coherently. Different labels (e.g., Z on qubit 1 vs Z on qubit 2)
     // are separate mechanisms even if they flip the same detectors.
     //
-    // For S-type: compose independent flips exactly. The injection view
-    // approximates exclusive choices from categorical channels.
+    // For S-type: compose independent flips exactly. UniformNoise matches
+    // categorical channels exactly for p1 <= 3/4 and p2 <= 15/16.
     //
     // After coherent accumulation per label, mechanisms with the same
     // detector set are combined independently (product formula).

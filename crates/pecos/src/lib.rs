@@ -46,8 +46,9 @@ pub mod engines {
 #[cfg(feature = "quantum")]
 pub mod quantum {
     pub use pecos_quantum::{
-        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagWouldCycleError, Gate,
-        GateHandle, GateType, GateView, QubitId, Tick, TickCircuit, TickGateError,
+        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagGateError, DagWireError,
+        DagWouldCycleError, Gate, GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
+        TickGateError,
     };
     pub use pecos_quantum::{F2Matrix, PauliSequence, PauliSet, PauliStabilizerGroup};
 }

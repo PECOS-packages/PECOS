@@ -188,6 +188,58 @@ impl DAG {
         self.graph.remove_node(NodeIndex::new(node))
     }
 
+    /// Remove a node, then replace selected two-edge paths through it with
+    /// unit-weight edges, in the supplied order. Returns the new edge IDs.
+    /// This preserves acyclicity without a reachability search: every new edge
+    /// abbreviates an existing directed path. Incident edges are freed first.
+    ///
+    /// # Panics
+    ///
+    /// Panics before mutation if the node is absent or a pair is not an
+    /// incoming and outgoing edge of that node.
+    pub fn remove_node_with_bridges(
+        &mut self,
+        node: usize,
+        paths: &[(usize, usize)],
+    ) -> Vec<usize> {
+        assert!(self.node_attrs(node).is_some(), "bridge node must exist");
+        let endpoints: Vec<_> = paths
+            .iter()
+            .map(|&(incoming, outgoing)| {
+                let (from, middle) = self
+                    .edge_endpoints(incoming)
+                    .expect("incoming edge must exist");
+                let (other_middle, to) = self
+                    .edge_endpoints(outgoing)
+                    .expect("outgoing edge must exist");
+                assert_eq!(middle, node, "incoming edge must end at bridge node");
+                assert_eq!(
+                    other_middle, node,
+                    "outgoing edge must start at bridge node"
+                );
+                (from, to)
+            })
+            .collect();
+        self.remove_node(node);
+        endpoints
+            .into_iter()
+            .map(|(from, to)| self.add_edge_unchecked(from, to))
+            .collect()
+    }
+
+    /// Insert a unit-weight edge without searching for cycles. The caller must
+    /// prove that both endpoints survive and the edge cannot create a cycle.
+    /// Used only to shorten paths when removing their common middle node.
+    pub(crate) fn add_edge_unchecked(&mut self, source: usize, target: usize) -> usize {
+        self.graph
+            .add_edge(
+                NodeIndex::new(source),
+                NodeIndex::new(target),
+                EdgeAttrs::with_weight(1.0).into_edge_data(),
+            )
+            .index()
+    }
+
     /// Returns the number of nodes in the DAG.
     #[must_use]
     pub fn node_count(&self) -> usize {
@@ -847,6 +899,41 @@ impl Default for DAG {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridges_free_incident_edges_before_allocating_in_path_order() {
+        let mut dag = DAG::new();
+        for _ in 0..4 {
+            dag.add_node();
+        }
+        let incoming = dag.add_edge(0, 1).unwrap();
+        let outgoing = dag.add_edge(1, 2).unwrap();
+        let other = dag.add_edge(1, 3).unwrap();
+        let mut reference = dag.clone();
+        reference.remove_node(1);
+        let expected = [
+            reference.add_edge(0, 2).unwrap(),
+            reference.add_edge(0, 3).unwrap(),
+        ];
+        let edges = dag.remove_node_with_bridges(1, &[(incoming, outgoing), (incoming, other)]);
+        assert_eq!(edges, expected);
+        assert_eq!(dag.topological_sort(), reference.topological_sort());
+    }
+
+    #[test]
+    fn invalid_bridge_is_rejected_before_mutation() {
+        let mut dag = DAG::new();
+        for _ in 0..3 {
+            dag.add_node();
+        }
+        let edge = dag.add_edge(0, 1).unwrap();
+        let before = format!("{dag:?}");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dag.remove_node_with_bridges(1, &[(edge, edge)]);
+        }));
+        assert!(result.is_err());
+        assert_eq!(format!("{dag:?}"), before);
+    }
 
     #[test]
     fn test_dag_creation() {

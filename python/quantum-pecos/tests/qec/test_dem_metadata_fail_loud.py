@@ -498,12 +498,21 @@ def test_sampler_json_output_indices_are_declared_ids() -> None:
 
 @pytest.mark.parametrize(
     "references",
-    ['"meas_ids":[0]', '"records":[0],"meas_ids":[0]', '"records":[-2],"meas_ids":[0]'],
+    ['"meas_ids":[9]', '"records":[0],"meas_ids":[9]', '"records":[-2],"meas_ids":[9]'],
 )
 def test_sampler_json_resolves_stamps_in_map_order(references: str) -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    # Non-positional stamps: map position 0 (the noisy q0) carries stamp 9, so
+    # a stamp resolved as a position would bind to nothing and fail.
+    tc = TickCircuit()
+    tc.tick().pz([0, 1])
+    tc.tick().x([0])
+    tc.tick().mz_with_ids([0, 1], [9, 4])
+    influence_map = DagFaultAnalyzer(tc.to_dag_circuit()).build_influence_map()
     definitions = f'[{{"id":0,{references}}}]'
     sampler = (
-        DemSamplerBuilder(_two_measurement_map())
+        DemSamplerBuilder(influence_map)
         .with_noise(p1=0.3, p2=0.0, p_meas=0.0, p_prep=0.0)
         .with_detectors_json(definitions)
         .with_observables_json(definitions)

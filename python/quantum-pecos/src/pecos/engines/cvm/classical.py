@@ -236,11 +236,13 @@ def recur_eval_op(
         a = get_val(a, output, width, shot_id)
 
     if b is not None:
-        b = (
-            recur_eval_op(b, output, width, shot_id=shot_id)
-            if isinstance(b, dict)
-            else get_val(b, output, width, shot_id)
-        )
+        if isinstance(b, dict):
+            b = recur_eval_op(b, output, width, shot_id=shot_id)
+        elif not (op in {"<<", ">>"} and isinstance(b, int)):
+            # A literal shift count stays a plain int so it keeps its full
+            # value; wrapping it to the register width could turn an
+            # oversized count negative or small.
+            b = get_val(b, output, width, shot_id)
 
         a = eval_op(op, a, b, width=width)
 

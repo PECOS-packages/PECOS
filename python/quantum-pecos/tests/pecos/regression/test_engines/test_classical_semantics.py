@@ -249,6 +249,15 @@ def test_shift_rule_unsigned_boundaries() -> None:
         assert int(semantics.eval_op("<<", 1, count)) == 0
 
 
+@pytest.mark.parametrize("width", [8, 64])
+def test_shift_rule_unsigned_count_is_not_wrapped(width: int) -> None:
+    """Fix demonstration: a count of 2**width or more saturates rather than wrapping."""
+    semantics = UnsignedClassicalSemantics(width)
+    for count in (2**width, 2**width + 3):
+        assert int(semantics.eval_op("<<", 1, count)) == 0
+        assert int(semantics.eval_op(">>", 2 ** (width - 1), count)) == 0
+
+
 def test_shift_rule_default_underflow() -> None:
     """Fix demonstration: the default CVM keeps a negative count loud."""
     semantics = DefaultClassicalSemantics()
@@ -263,7 +272,7 @@ def test_shift_rule_default_underflow() -> None:
 
 
 def test_shift_rule_default_boundary() -> None:
-    """Compatibility pin: default CVM saturates at BitInt's 65-bit storage."""
+    """Compatibility pin: the default CVM saturates a count at its storage width."""
     for op in ("<<", ">>"):
         output = {"x": BitInt(64, 8)}
         DefaultClassicalSemantics().eval_cop(
@@ -273,3 +282,13 @@ def test_shift_rule_default_boundary() -> None:
             shot_id=0,
         )
         assert int(output["x"]) == 0
+
+
+@pytest.mark.parametrize("count", [2**64 + 1, 2**70])
+def test_shift_rule_default_literal_count_keeps_its_value(count: int) -> None:
+    """Fix demonstration: an oversized literal count saturates, not wraps or errors."""
+    semantics = DefaultClassicalSemantics()
+    for op, start, expected in (("<<", 8, 0), (">>", 8, 0), (">>", -8, -1)):
+        output = {"x": BitInt(64, start)}
+        semantics.eval_cop({"t": "x", "op": op, "a": "x", "b": count}, output, width=64, shot_id=0)
+        assert int(output["x"]) == expected

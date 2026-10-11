@@ -225,10 +225,13 @@ class UnsignedClassicalSemantics:
             return left - right
         if op == "*":
             return left * right
-        if op == ">>":
-            return BitUInt(width, 0) if int(right) >= width else left >> int(right)
-        if op == "<<":
-            return BitUInt(width, 0) if int(right) >= width else left << int(right)
+        if op in {">>", "<<"}:
+            # Read the count at its full value before wrapping. A negative
+            # count is an unsigned pattern here like every other operand.
+            count = int(b) if int(b) >= 0 else int(right)
+            if count >= width:
+                return BitUInt(width, 0)
+            return left >> count if op == ">>" else left << count
         if op in {"/", "%"}:
             if int(right) == 0:
                 return BitUInt(width, (1 << width) - 1)

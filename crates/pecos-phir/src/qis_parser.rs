@@ -809,13 +809,15 @@ impl QisIrParser {
                     "Call argument {part:?} has no type"
                 )));
             };
-            // A pointer type may be spelled across tokens (`%Qubit addrspace(1)*`);
-            // otherwise the first token is the type and the rest are parameter
-            // attributes such as `noundef`.
-            let ty = if prefix.contains('*') {
+            // The first token is the type and the rest are parameter attributes
+            // such as `noundef`, except that an address-space pointer type spans
+            // two tokens (`%Qubit addrspace(1)*`).
+            let mut tokens = prefix.split_whitespace();
+            let ty = tokens.next().unwrap_or(prefix);
+            let ty = if tokens.next().is_some_and(|t| t.starts_with("addrspace(")) {
                 "ptr"
             } else {
-                prefix.split_whitespace().next().unwrap_or(prefix)
+                ty
             };
             args.push(self.parse_arg(ty, val.trim())?);
         }

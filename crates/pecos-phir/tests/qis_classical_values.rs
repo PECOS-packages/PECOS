@@ -2,7 +2,7 @@
 //! on the base commit, so their computed-value assertions can be checked there.
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
-use pecos_engines::{ClassicalEngine, EngineSystem};
+use pecos_engines::{ClassicalEngine, ControlEngine, EngineStage, EngineSystem};
 use pecos_phir::PhirEngine;
 use pecos_phir::error::PhirError;
 use pecos_phir::execution::{environment::TypedValue, processor::PhirProcessor};
@@ -919,6 +919,7 @@ fn qis_call_argument_spellings() {
         "call void @___h(%Qubit addrspace(1)* null)",
         "call void @___h(i8 addrspace(1)* null)",
         "call void @___rz(i64\t0, double\t1.5)",
+        "call void @___rz(i64 0, double \"note\"=\"*\" 1.5)",
     ] {
         pecos_phir::parse_qis_to_quantum(&format!(
             "declare void @___h(i64)\ndeclare void @___rz(i64, double)\ndefine void @main() {{\n{call}\nret void\n}}\n"
@@ -932,4 +933,15 @@ fn qis_call_argument_spellings() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn qis_classical_only_program_completes_at_start() {
+    // A program without quantum operations has nothing to send, so start()
+    // completes instead of handing a header-only batch to the quantum engine.
+    let mut engine = PhirEngine::new(module("%r = add i64 1, 2")).unwrap();
+    assert!(matches!(
+        ControlEngine::start(&mut engine, ()).unwrap(),
+        EngineStage::Complete(_)
+    ));
 }

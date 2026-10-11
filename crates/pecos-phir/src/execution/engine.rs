@@ -162,6 +162,27 @@ impl ClassicalEngine for PhirEngine {
         while self.current_op < self.function_ops.len() && batch_count < MAX_BATCH_SIZE {
             let instruction = &self.function_ops[self.current_op];
 
+            // Pause consumers until earlier measurements have been received.
+            if matches!(
+                instruction.operation,
+                crate::ops::Operation::Classical(_) | crate::ops::Operation::Memory(_)
+            ) {
+                let depends_on_measurements = instruction.operands.iter().any(|operand| {
+                    self.function_ops[..self.current_op].iter().any(|previous| {
+                        matches!(
+                            previous.operation,
+                            crate::ops::Operation::Quantum(crate::ops::QuantumOp::Measure)
+                        ) && previous
+                            .results
+                            .iter()
+                            .any(|result| result.id == operand.id)
+                    })
+                });
+                if depends_on_measurements && has_quantum_ops {
+                    break;
+                }
+            }
+
             // Process based on operation type
             match &instruction.operation {
                 crate::ops::Operation::Quantum(quantum_op) => {
@@ -185,28 +206,6 @@ impl ClassicalEngine for PhirEngine {
                     }
                 }
                 crate::ops::Operation::Classical(classical_op) => {
-                    // Check if this classical operation depends on measurement results
-                    // We need to check if any operand SSA ID will be produced by a future measurement
-                    let depends_on_measurements = instruction.operands.iter().any(|operand| {
-                        // Check if this operand SSA ID is produced by a Measure operation
-                        // Look ahead in the operations to see if this SSA ID is a measurement result
-                        self.function_ops[..self.current_op].iter().any(|prev_op| {
-                            matches!(
-                                prev_op.operation,
-                                crate::ops::Operation::Quantum(crate::ops::QuantumOp::Measure)
-                            ) && prev_op.results.iter().any(|r| r.id == operand.id)
-                        })
-                    });
-
-                    if depends_on_measurements {
-                        // This operation depends on measurements
-                        // If we have quantum ops to send, stop here and wait for measurements
-                        if has_quantum_ops {
-                            break;
-                        }
-                        // Otherwise, try to process it - measurements should be available
-                    }
-
                     // Process classical operation
                     if let Err(e) = self
                         .processor
@@ -228,6 +227,17 @@ impl ClassicalEngine for PhirEngine {
                         self.finished = true;
                         return Err(PecosError::Input(format!(
                             "Error processing builtin operation: {e}"
+                        )));
+                    }
+                }
+                crate::ops::Operation::Memory(_) => {
+                    if let Err(e) = self
+                        .processor
+                        .process_instruction(instruction, &mut self.message_builder)
+                    {
+                        self.finished = true;
+                        return Err(PecosError::Input(format!(
+                            "Error processing memory operation: {e}"
                         )));
                     }
                 }

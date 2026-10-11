@@ -645,6 +645,7 @@ fn test_processor_init_zero() {
 // Classical operation processor tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_const_int() {
     let processor = run_instructions(&[instr(
@@ -655,7 +656,7 @@ fn test_processor_const_int() {
     )]);
     assert_eq!(
         processor.ssa_values.get(&0),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
@@ -687,6 +688,7 @@ fn test_processor_const_bool() {
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_add() {
     let processor = run_instructions(&[
@@ -711,10 +713,11 @@ fn test_processor_add() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(30))
+        Some(&super::environment::TypedValue::I64(30))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_sub() {
     let processor = run_instructions(&[
@@ -739,10 +742,11 @@ fn test_processor_sub() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(18))
+        Some(&super::environment::TypedValue::I64(18))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_mul() {
     let processor = run_instructions(&[
@@ -767,10 +771,11 @@ fn test_processor_mul() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_div_and_mod() {
     let processor = run_instructions(&[
@@ -801,14 +806,15 @@ fn test_processor_div_and_mod() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(3))
+        Some(&super::environment::TypedValue::I64(3))
     );
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(2))
+        Some(&super::environment::TypedValue::I64(2))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_div_by_zero() {
     let processor = run_instructions(&[
@@ -834,7 +840,7 @@ fn test_processor_div_by_zero() {
     // Division by zero should produce 0
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(0))
+        Some(&super::environment::TypedValue::I64(0))
     );
 }
 
@@ -842,6 +848,7 @@ fn test_processor_div_by_zero() {
 // Bitwise operation tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_bitwise_and_or_xor() {
     let processor = run_instructions(&[
@@ -878,18 +885,19 @@ fn test_processor_bitwise_and_or_xor() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(0b1000))
+        Some(&super::environment::TypedValue::I64(0b1000))
     ); // AND
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(0b1110))
+        Some(&super::environment::TypedValue::I64(0b1110))
     ); // OR
     assert_eq!(
         processor.ssa_values.get(&4),
-        Some(&super::environment::TypedValue::U32(0b0110))
+        Some(&super::environment::TypedValue::I64(0b0110))
     ); // XOR
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_shl_shr() {
     let processor = run_instructions(&[
@@ -920,14 +928,15 @@ fn test_processor_shl_shr() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(8))
+        Some(&super::environment::TypedValue::I64(8))
     ); // 1 << 3
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(4))
+        Some(&super::environment::TypedValue::I64(4))
     ); // 16 >> 2
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_shl_shr_binary_mode() {
     // Test Shl/Shr with two operands (binary mode), matching how the QIS parser emits them
@@ -973,11 +982,11 @@ fn test_processor_shl_shr_binary_mode() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(8))
+        Some(&super::environment::TypedValue::I64(8))
     ); // 1 << 3
     assert_eq!(
         processor.ssa_values.get(&5),
-        Some(&super::environment::TypedValue::U32(4))
+        Some(&super::environment::TypedValue::I64(4))
     ); // 16 >> 2
 }
 
@@ -1159,6 +1168,7 @@ fn test_processor_comparisons_equal() {
 // Select operation test
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_select() {
     let processor = run_instructions(&[
@@ -1189,10 +1199,11 @@ fn test_processor_select() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(100))
+        Some(&super::environment::TypedValue::I64(100))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_select_false() {
     let processor = run_instructions(&[
@@ -1223,7 +1234,7 @@ fn test_processor_select_false() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(200))
+        Some(&super::environment::TypedValue::I64(200))
     );
 }
 
@@ -1343,6 +1354,7 @@ fn test_processor_fdiv_by_zero() {
 // Memory operation tests (alloca/load/store)
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_memory_alloc_store_load() {
     let processor = run_instructions(&[
@@ -1378,10 +1390,11 @@ fn test_processor_memory_alloc_store_load() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_memory_overwrite() {
     let processor = run_instructions(&[
@@ -1429,7 +1442,7 @@ fn test_processor_memory_overwrite() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&3),
-        Some(&super::environment::TypedValue::U32(99))
+        Some(&super::environment::TypedValue::I64(99))
     );
 }
 
@@ -1437,6 +1450,7 @@ fn test_processor_memory_overwrite() {
 // Assign operation test
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_assign() {
     let processor = run_instructions(&[
@@ -1455,7 +1469,7 @@ fn test_processor_assign() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
@@ -1463,6 +1477,7 @@ fn test_processor_assign() {
 // Bitcast operation tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_bitcast_bool_to_int_true() {
     let processor = run_instructions(&[
@@ -1481,10 +1496,11 @@ fn test_processor_bitcast_bool_to_int_true() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(1))
+        Some(&super::environment::TypedValue::I64(1))
     );
 }
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_bitcast_bool_to_int_false() {
     let processor = run_instructions(&[
@@ -1503,7 +1519,7 @@ fn test_processor_bitcast_bool_to_int_false() {
     ]);
     assert_eq!(
         processor.ssa_values.get(&1),
-        Some(&super::environment::TypedValue::U32(0))
+        Some(&super::environment::TypedValue::I64(0))
     );
 }
 
@@ -1511,6 +1527,7 @@ fn test_processor_bitcast_bool_to_int_false() {
 // Result/export operation tests
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_processor_result_export() {
     use crate::phir::AttributeValue;
@@ -1551,7 +1568,7 @@ fn test_processor_result_export() {
     let exports = processor.get_export_results();
     assert_eq!(
         exports.get("my_result"),
-        Some(&super::environment::TypedValue::U32(42))
+        Some(&super::environment::TypedValue::I64(42))
     );
 }
 
@@ -1659,6 +1676,7 @@ fn test_engine_compile_empty_name_error() -> Result<(), Box<dyn std::error::Erro
 // Classical-only module (no quantum messages)
 // ──────────────────────────────────────────────────────────────────────
 
+// Fix demonstration (#1217): declared signed storage is I64.
 #[test]
 fn test_engine_classical_only_module() -> Result<(), Box<dyn std::error::Error>> {
     let instructions = vec![
@@ -1712,7 +1730,7 @@ fn test_engine_classical_only_module() -> Result<(), Box<dyn std::error::Error>>
     // Verify classical ops were processed
     assert_eq!(
         engine.processor.ssa_values.get(&2),
-        Some(&super::environment::TypedValue::U32(30))
+        Some(&super::environment::TypedValue::I64(30))
     );
 
     Ok(())

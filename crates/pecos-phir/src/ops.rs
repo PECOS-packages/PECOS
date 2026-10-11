@@ -157,6 +157,10 @@ pub enum ClassicalOp {
     Div,
     /// Modulo operation
     Mod,
+    /// Unsigned integer division
+    UDiv,
+    /// Unsigned remainder
+    UMod,
     /// Negation
     Neg,
 
@@ -194,6 +198,9 @@ pub enum ClassicalOp {
     /// Right shift
     Shr(u32),
 
+    /// Logical right shift
+    LShr(u32),
+
     // Comparisons
     /// Equality
     Eq,
@@ -207,6 +214,15 @@ pub enum ClassicalOp {
     Gt,
     /// Greater than or equal
     Ge,
+
+    /// Unsigned less than
+    ULt,
+    /// Unsigned less than or equal
+    ULe,
+    /// Unsigned greater than
+    UGt,
+    /// Unsigned greater than or equal
+    UGe,
 
     // Type conversions
     /// Integer to float
@@ -663,6 +679,13 @@ impl ClassicalOp {
             ClassicalOp::Mul => "mul",
             ClassicalOp::Div => "div",
             ClassicalOp::Mod => "mod",
+            ClassicalOp::UDiv => "udiv",
+            ClassicalOp::UMod => "umod",
+            ClassicalOp::ULt => "ult",
+            ClassicalOp::ULe => "ule",
+            ClassicalOp::UGt => "ugt",
+            ClassicalOp::UGe => "uge",
+            ClassicalOp::LShr(_) => "lshr",
             ClassicalOp::Neg => "neg",
             ClassicalOp::FAdd => "fadd",
             ClassicalOp::FSub => "fsub",
@@ -706,6 +729,12 @@ impl ClassicalOp {
             ClassicalOp::Add
             | ClassicalOp::Sub
             | ClassicalOp::Mul
+            | ClassicalOp::UDiv
+            | ClassicalOp::UMod
+            | ClassicalOp::ULt
+            | ClassicalOp::ULe
+            | ClassicalOp::UGt
+            | ClassicalOp::UGe
             | ClassicalOp::Div
             | ClassicalOp::Mod
             | ClassicalOp::FAdd
@@ -736,6 +765,7 @@ impl ClassicalOp {
             | ClassicalOp::FloatToInt
             | ClassicalOp::Bitcast
             | ClassicalOp::Shl(_)
+            | ClassicalOp::LShr(_)
             | ClassicalOp::Shr(_)
             | ClassicalOp::Assign => Some(1),
 

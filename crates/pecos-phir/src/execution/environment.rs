@@ -96,6 +96,8 @@ pub enum TypedValue {
     F64(f64),
     Bool(bool),
     BitVec(Vec<bool>),
+    /// Struct or array fields in declaration order.
+    Aggregate(Vec<TypedValue>),
 }
 
 impl TypedValue {
@@ -103,7 +105,7 @@ impl TypedValue {
     ///
     /// # Errors
     ///
-    /// Returns an error if the value is a `BitVec` which cannot be converted to u64
+    /// Returns an error if the value is a `BitVec` or aggregate.
     pub fn to_u64(&self) -> Result<u64> {
         match self {
             TypedValue::I8(v) => Ok(u64::try_from(*v).unwrap_or(0)),
@@ -117,25 +119,70 @@ impl TypedValue {
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
             TypedValue::F64(v) => Ok(*v as u64),
             TypedValue::Bool(v) => Ok(u64::from(*v)),
+            TypedValue::Aggregate(_) => Err(PhirError::internal("Cannot convert Aggregate to u64")),
             TypedValue::BitVec(_) => Err(PhirError::internal("Cannot convert BitVec to u64")),
         }
     }
 
-    /// Get the data type of this value
-    #[must_use]
-    pub fn data_type(&self) -> DataType {
+    /// Build the recursively zeroed value of a PHIR type.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown type, including unknown aggregate fields.
+    pub fn zero(ty: &crate::types::Type) -> Result<Self> {
+        use crate::types::{ArraySize, IntWidth, Type};
+        Ok(match ty {
+            Type::Tuple(fields) => {
+                Self::Aggregate(fields.iter().map(Self::zero).collect::<Result<_>>()?)
+            }
+            Type::Array(element, ArraySize::Fixed(n)) => Self::Aggregate(
+                (0..*n)
+                    .map(|_| Self::zero(element))
+                    .collect::<Result<_>>()?,
+            ),
+            Type::Int(IntWidth::I8 | IntWidth::I16 | IntWidth::I32) => Self::I32(0),
+            Type::UInt(IntWidth::I8 | IntWidth::I16 | IntWidth::I32) => Self::U32(0),
+            Type::UInt(_) => Self::U64(0),
+            Type::Bool => Self::Bool(false),
+            Type::Float(_) => Self::F64(0.0),
+            Type::Unknown => {
+                return Err(PhirError::internal(format!(
+                    "No zero value for type {ty:?}"
+                )));
+            }
+            Type::Int(_)
+            | Type::Qubit
+            | Type::QuantumReg(_)
+            | Type::Bit
+            | Type::String
+            | Type::Array(_, ArraySize::Dynamic | ArraySize::Parametric(_))
+            | Type::Function(_)
+            | Type::Optional(_)
+            | Type::Ref(_)
+            | Type::MutRef(_)
+            | Type::Custom(_)
+            | Type::Unit
+            | Type::Never
+            | Type::Future => Self::I64(0),
+        })
+    }
+
+    /// Reset a value while preserving its runtime shape and scalar tags.
+    pub(crate) fn zero_like(&self) -> Self {
         match self {
-            TypedValue::I8(_) => DataType::I8,
-            TypedValue::I16(_) => DataType::I16,
-            TypedValue::I32(_) => DataType::I32,
-            TypedValue::I64(_) => DataType::I64,
-            TypedValue::U8(_) => DataType::U8,
-            TypedValue::U16(_) => DataType::U16,
-            TypedValue::U32(_) => DataType::U32,
-            TypedValue::U64(_) => DataType::U64,
-            TypedValue::F64(_) => DataType::F64,
-            TypedValue::Bool(_) => DataType::Bool,
-            TypedValue::BitVec(_) => DataType::Qubits, // BitVec represents qubit measurements
+            Self::I8(_) => Self::I8(0),
+            Self::I16(_) => Self::I16(0),
+            Self::I32(_) => Self::I32(0),
+            Self::I64(_) => Self::I64(0),
+            Self::U8(_) => Self::U8(0),
+            Self::U16(_) => Self::U16(0),
+            Self::U32(_) => Self::U32(0),
+            Self::U64(_) => Self::U64(0),
+            Self::F64(_) => Self::F64(0.0),
+            Self::Bool(_) => Self::Bool(false),
+            Self::BitVec(bits) => Self::BitVec(vec![false; bits.len()]),
+            Self::Aggregate(fields) => {
+                Self::Aggregate(fields.iter().map(Self::zero_like).collect())
+            }
         }
     }
 }
@@ -153,6 +200,16 @@ impl fmt::Display for TypedValue {
             TypedValue::U64(v) => write!(f, "{v}"),
             TypedValue::F64(v) => write!(f, "{v}"),
             TypedValue::Bool(v) => write!(f, "{v}"),
+            TypedValue::Aggregate(fields) => {
+                write!(f, "{{")?;
+                for (index, field) in fields.iter().enumerate() {
+                    if index != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{field}")?;
+                }
+                write!(f, "}}")
+            }
             TypedValue::BitVec(v) => {
                 let bits: String = v.iter().map(|b| if *b { '1' } else { '0' }).collect();
                 write!(f, "{bits}")

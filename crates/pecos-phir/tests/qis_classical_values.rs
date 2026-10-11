@@ -1,5 +1,4 @@
-//! Fix demonstrations for #1217. These tests use only APIs and variants present
-//! on the base commit, so their computed-value assertions can be checked there.
+//! Computed-value regressions for the QIS classical execution path.
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{ClassicalEngine, ControlEngine, EngineStage, EngineSystem};
@@ -175,7 +174,7 @@ fn qis_undef_poison_zero() {
             TypedValue::I64(-8)
         );
     }
-    for ty in ["ptr", "i8*", "{ i64, i64 }", "[2 x i64]", "<2 x i64>"] {
+    for ty in ["ptr", "i8*", "<2 x i64>"] {
         for literal in ["null", "undef", "poison", "zeroinitializer"] {
             assert_eq!(
                 value(&format!(
@@ -593,7 +592,6 @@ fn qis_unimplemented_producers_error() {
         "%a = phi i64 [ 1, %entry ]",
         "%a = call i1 @___read_future(ptr null)",
         "call void @__quantum__qis__mz__body(%Qubit* null, %Result* null)\n%a = call i1 @__quantum__qis__read_result__body(%Result* null)",
-        "%a = insertvalue { i64 } poison, i64 1, 0",
     ] {
         let body = format!("{producer}\n%r = add i64 %a, 1");
         let mut engine = PhirEngine::new(module(&body)).unwrap();
@@ -875,7 +873,7 @@ fn processor_measurement_packing_batches() {
             processor.environment.get_variable("register").unwrap(),
             Some(&TypedValue::U32(expected))
         );
-        processor.finalize_exports();
+        processor.finalize_exports().unwrap();
         assert_eq!(
             processor.final_exports["register"],
             TypedValue::U32(expected)
@@ -950,4 +948,393 @@ fn qis_classical_only_program_completes_at_start() {
         ControlEngine::start(&mut engine, ()).unwrap(),
         EngineStage::Complete(_)
     ));
+}
+
+#[test]
+fn qis_aggregate_round_trip() {
+    let setup = "%v = add i64 41, 1\n%a = insertvalue { i64, i1 } poison, i64 %v, 0\n%b = insertvalue { i64, i1 } %a, i1 true, 1";
+    for (name, index, expected) in [
+        ("a", 0, TypedValue::I64(42)),
+        ("a", 1, TypedValue::Bool(false)),
+        ("b", 1, TypedValue::Bool(true)),
+    ] {
+        assert_eq!(
+            value(&format!(
+                "{setup}\n%r = extractvalue {{ i64, i1 }} %{name}, {index}"
+            )),
+            expected
+        );
+    }
+    let setup = "%v = add i64 6, 1\n%a = insertvalue { i64, { i1, i64 } } undef, i64 %v, 1, 1\n%b = insertvalue { i64, { i1, i64 } } %a, i1 true, 1, 0";
+    for (name, path, expected) in [
+        ("a", "1, 1", TypedValue::I64(7)),
+        ("a", "1, 0", TypedValue::Bool(false)),
+        ("b", "1, 0", TypedValue::Bool(true)),
+    ] {
+        assert_eq!(
+            value(&format!(
+                "{setup}\n%r = extractvalue {{ i64, {{ i1, i64 }} }} %{name}, {path}"
+            )),
+            expected
+        );
+    }
+}
+
+#[test]
+fn qis_aggregate_array() {
+    for index in 0..3 {
+        assert_eq!(
+            value(&format!(
+                "%a = insertvalue [3 x i64] undef, i64 17, {index}\n%r = extractvalue [3 x i64] %a, {index}"
+            )),
+            TypedValue::I64(17)
+        );
+    }
+}
+
+#[test]
+fn qis_aggregate_zero_literals() {
+    for (ty, expected) in [
+        (
+            "{ i64, i1 }",
+            TypedValue::Aggregate(vec![TypedValue::I64(0), TypedValue::Bool(false)]),
+        ),
+        (
+            "[2 x i64]",
+            TypedValue::Aggregate(vec![TypedValue::I64(0); 2]),
+        ),
+        ("{}", TypedValue::Aggregate(vec![])),
+        ("[0 x i64]", TypedValue::Aggregate(vec![])),
+        ("[0 x i8*]", TypedValue::Aggregate(vec![])),
+        (
+            "{ i64, { i1, [2 x i64] } }",
+            TypedValue::Aggregate(vec![
+                TypedValue::I64(0),
+                TypedValue::Aggregate(vec![
+                    TypedValue::Bool(false),
+                    TypedValue::Aggregate(vec![TypedValue::I64(0); 2]),
+                ]),
+            ]),
+        ),
+    ] {
+        for literal in ["undef", "poison", "zeroinitializer"] {
+            assert_eq!(
+                value(&format!(
+                    "%r = select i1 true, {ty} {literal}, {ty} {literal}"
+                )),
+                expected
+            );
+            assert_eq!(
+                value(&format!(
+                    "%p = alloca {ty}\nstore {ty} {literal}, ptr %p\n%r = load {ty}, ptr %p"
+                )),
+                expected
+            );
+            assert_eq!(
+                value(&format!(
+                    "%a = insertvalue {{ {ty} }} undef, {ty} {literal}, 0\n%r = extractvalue {{ {ty} }} %a, 0"
+                )),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn qis_aggregate_invalid_literals() {
+    for (ty, literal) in [
+        ("{ i64, i64 }", "null"),
+        ("[2 x i64]", "null"),
+        ("{ i64, i64 }", "{ i64 1, i64 2 }"),
+        ("{ i8*, i64 }", "undef"),
+        ("{ <2 x i64>, i64 }", "poison"),
+        ("{ %T, i64 }", "zeroinitializer"),
+    ] {
+        for body in [
+            format!("%r = select i1 true, {ty} {literal}, {ty} {literal}"),
+            format!("store {ty} {literal}, ptr %p"),
+            format!("%r = insertvalue {ty} {literal}, i64 1, 0"),
+        ] {
+            let error =
+                pecos_phir::parse_qis_to_quantum(&format!("define void @main() {{\n{body}\n}}"))
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.contains(ty), "{body}: {error}");
+        }
+    }
+}
+
+#[test]
+fn qis_aggregate_memory() {
+    for pointer in [
+        "{ i1, i1 }*",
+        "ptr",
+        "{ i1, i1 } addrspace(1)*",
+        "ptr addrspace(1)",
+    ] {
+        assert_eq!(
+            value(&format!(
+                "%p = alloca {{ i1, i1 }}\n%a = insertvalue {{ i1, i1 }} undef, i1 true, 1\nstore {{ i1, i1 }} %a, {pointer} %p\n%r = load {{ i1, i1 }}, {pointer} %p"
+            )),
+            TypedValue::Aggregate(vec![TypedValue::Bool(false), TypedValue::Bool(true)])
+        );
+    }
+    assert_eq!(
+        value("%p = alloca { i64, i64 }\n%r = load { i64, i64 }, ptr %p"),
+        TypedValue::Aggregate(vec![TypedValue::I64(0); 2])
+    );
+    assert_eq!(
+        value("%p = alloca {}\nstore {} undef, {}* %p\n%r = load {}, {}* %p"),
+        TypedValue::Aggregate(vec![])
+    );
+}
+
+#[test]
+fn qis_aggregate_bell_fixture() {
+    let module = pecos_phir::parse_qis_to_quantum(include_str!("fixtures/bell_state.ll")).unwrap();
+    let operations: Vec<_> = module
+        .body
+        .blocks
+        .iter()
+        .flat_map(|block| &block.operations)
+        .collect();
+    let extracts: Vec<_> = operations
+        .iter()
+        .filter(|op| {
+            matches!(
+                op.operation,
+                Operation::Classical(ClassicalOp::ExtractValue(_))
+            )
+        })
+        .map(|op| op.results[0].id)
+        .collect();
+    let inserted = operations
+        .iter()
+        .rfind(|op| {
+            matches!(
+                op.operation,
+                Operation::Classical(ClassicalOp::InsertValue(_))
+            )
+        })
+        .unwrap()
+        .results[0]
+        .id;
+    assert_eq!(extracts.len(), 2);
+    let mut outcomes = std::collections::BTreeSet::new();
+    for seed in 0..32 {
+        let mut hybrid = HybridEngineBuilder::new()
+            .with_classical_engine(Box::new(PhirEngine::new(module.clone()).unwrap()))
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(2, seed)))
+            .build();
+        hybrid.run_shot().unwrap();
+        let engine = hybrid
+            .controller()
+            .as_any()
+            .downcast_ref::<PhirEngine>()
+            .unwrap();
+        assert!(engine.finished);
+        let processor = &engine.processor;
+        assert_eq!(processor.measurement_mappings.len(), 2);
+        let fields: Vec<_> = extracts
+            .iter()
+            .map(|id| processor.ssa_values[id].clone())
+            .collect();
+        let TypedValue::Bool(x) = fields[0] else {
+            panic!("expected boolean field")
+        };
+        assert_eq!(fields, vec![TypedValue::Bool(x); 2]);
+        for (field, measurement) in fields.iter().zip(&processor.measurement_mappings) {
+            assert_eq!(field, &processor.ssa_values[measurement]);
+        }
+        assert_eq!(
+            processor.ssa_values[&inserted],
+            TypedValue::Aggregate(fields)
+        );
+        outcomes.insert(x);
+    }
+    assert_eq!(outcomes.len(), 2);
+}
+
+#[test]
+fn qis_aggregate_misuse() {
+    for (body, operation) in [
+        (
+            "%a = insertvalue { i64 } poison, i64 1, 0\n%r = add i64 %a, 1",
+            "add",
+        ),
+        ("%r = extractvalue { i64 } undef, 1", "extractvalue"),
+        ("%r = insertvalue { i64 } undef, i64 1, 1", "insertvalue"),
+        ("%r = extractvalue i64 1, 0", "extractvalue"),
+        ("%r = insertvalue i64 1, i64 2, 0", "insertvalue"),
+    ] {
+        let mut engine = PhirEngine::new(module(body)).unwrap();
+        let error = engine
+            .generate_commands()
+            .err()
+            .expect("runtime error")
+            .to_string();
+        assert!(error.contains(operation), "{body}: {error}");
+    }
+}
+
+#[test]
+fn qis_aggregate_call_arguments() {
+    for call in [
+        "___h",
+        "___measure",
+        "___qalloc",
+        "__quantum__rt__result_record_output",
+    ] {
+        for ty in ["{ i64 }", "[2 x i64]", "{ i8* }", "{}", "<{ i64 }>", "%T"] {
+            for val in ["undef", "%a"] {
+                let error = pecos_phir::parse_qis_to_quantum(&format!(
+                    "define void @main() {{\ncall void @{call}({ty} {val})\n}}"
+                ))
+                .unwrap_err()
+                .to_string();
+                assert!(error.contains("aggregate") && error.contains(ty), "{error}");
+            }
+        }
+    }
+}
+
+#[test]
+fn processor_aggregate_scalar_consumers() {
+    for op in [
+        ClassicalOp::Add,
+        ClassicalOp::Sub,
+        ClassicalOp::Mul,
+        ClassicalOp::Div,
+        ClassicalOp::UDiv,
+        ClassicalOp::Mod,
+        ClassicalOp::UMod,
+        ClassicalOp::And,
+        ClassicalOp::Or,
+        ClassicalOp::Xor,
+        ClassicalOp::Shl(1),
+        ClassicalOp::Shr(1),
+        ClassicalOp::LShr(1),
+        ClassicalOp::Not,
+        ClassicalOp::Neg,
+        ClassicalOp::Eq,
+        ClassicalOp::Ne,
+        ClassicalOp::Lt,
+        ClassicalOp::ULt,
+        ClassicalOp::Bitcast,
+        ClassicalOp::IntToFloat,
+        ClassicalOp::FloatToInt,
+        ClassicalOp::FAdd,
+        ClassicalOp::FSub,
+        ClassicalOp::FMul,
+        ClassicalOp::FDiv,
+        ClassicalOp::FNeg,
+        ClassicalOp::Result,
+        ClassicalOp::Select,
+    ] {
+        for index in 0..if matches!(op, ClassicalOp::Select) {
+            1
+        } else {
+            2
+        } {
+            let mut processor = PhirProcessor::new();
+            processor.ssa_values.insert(0, TypedValue::I64(1));
+            processor.ssa_values.insert(1, TypedValue::I64(1));
+            processor.ssa_values.insert(2, TypedValue::I64(1));
+            processor
+                .ssa_values
+                .insert(index, TypedValue::Aggregate(vec![]));
+            let instruction = classical(op.clone(), 3);
+            let error = processor
+                .process_classical_operation(&op, &instruction)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(&instruction.operation.name()),
+                "{op:?}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn processor_aggregate_moves_reset_and_exports() {
+    use pecos_phir::execution::environment::DataType;
+    let aggregate = TypedValue::Aggregate(vec![
+        TypedValue::Bool(true),
+        TypedValue::Aggregate(vec![TypedValue::I64(3)]),
+    ]);
+    assert_eq!(aggregate.to_string(), "{true, {3}}");
+    assert!(aggregate.to_u64().is_err());
+    let mut processor = PhirProcessor::new();
+    processor.ssa_values.insert(0, aggregate.clone());
+    processor
+        .process_classical_operation(&ClassicalOp::Assign, &classical(ClassicalOp::Assign, 1))
+        .unwrap();
+    assert_eq!(processor.ssa_values[&9], aggregate);
+    processor.ssa_values.insert(1, aggregate.clone());
+    processor.ssa_values.insert(0, TypedValue::Bool(true));
+    processor
+        .process_classical_operation(&ClassicalOp::Select, &classical(ClassicalOp::Select, 3))
+        .unwrap();
+    assert_eq!(processor.ssa_values[&9], aggregate);
+    processor.export_mappings.insert(9, "tuple".to_string());
+    assert!(
+        processor
+            .finalize_exports()
+            .unwrap_err()
+            .to_string()
+            .contains("arith.result")
+    );
+    processor
+        .environment
+        .add_variable("tuple", DataType::I64, 1)
+        .unwrap();
+    processor
+        .environment
+        .set_variable("tuple", aggregate.clone())
+        .unwrap();
+    processor.variable_ssa_map.insert("tuple".to_string(), 9);
+    processor.reset();
+    assert_eq!(
+        processor.ssa_values[&9],
+        TypedValue::Aggregate(vec![
+            TypedValue::Bool(false),
+            TypedValue::Aggregate(vec![TypedValue::I64(0)])
+        ])
+    );
+    let mut engine = PhirEngine::new(module("")).unwrap();
+    engine
+        .processor
+        .final_exports
+        .insert("tuple".to_string(), aggregate);
+    assert!(
+        engine
+            .get_results()
+            .unwrap_err()
+            .to_string()
+            .contains("arith.result")
+    );
+}
+
+#[test]
+fn qis_aggregate_return_name_and_pointer_types() {
+    use pecos_phir::phir::Terminator;
+    let module = pecos_phir::parse_qis_to_quantum("define { i1, i1 } @main() {\n%a = insertvalue { i1, i1 } undef, i1 true, 0\nret { i1, i1 } %a\n}").unwrap();
+    let block = module.body.blocks.last().unwrap();
+    let Some(Terminator::Return { values }) = &block.terminator else {
+        panic!("expected return")
+    };
+    assert_eq!(values, &block.operations.last().unwrap().results);
+    for ty in [
+        "{ i8*, [2 x i64] }*",
+        "[2 x { i64, i1 }]*",
+        "<{ i64, i1 }>*",
+        "void ({ i64, i1 }, [2 x i64])*",
+        "ptr addrspace(1)",
+    ] {
+        assert_eq!(
+            value(&format!("%r = select i1 true, {ty} null, {ty} null")),
+            TypedValue::I64(0)
+        );
+    }
 }

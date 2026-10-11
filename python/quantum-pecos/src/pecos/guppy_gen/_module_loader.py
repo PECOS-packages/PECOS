@@ -3,6 +3,7 @@
 
 """Load generated source from a real file for Guppy introspection."""
 
+import hashlib
 import importlib.util
 import sys
 import tempfile
@@ -31,3 +32,10 @@ def load_guppy_source(source: str, temp_file: Path, module_name: str) -> dict:
         sys.modules.pop(module_name, None)
         raise
     return vars(module)
+
+
+@cache
+def load_cached_guppy_source(name_prefix: str, source: str, /) -> dict:
+    """Cache module identity by prefix and the complete generated source."""
+    key = f"{name_prefix}_{hashlib.sha256(source.encode()).hexdigest()}"
+    return load_guppy_source(source, _get_temp_dir() / f"{key}.py", f"pecos._generated.{key}")

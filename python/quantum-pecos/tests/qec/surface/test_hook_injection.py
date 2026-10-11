@@ -4,9 +4,11 @@
 """Exact amplitudes, physical schedules, and injection-site fault conditioning."""
 
 import itertools
+from dataclasses import replace
 
 import numpy as np
 import pytest
+from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec.surface import SurfacePatch, hook_injection
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep, TickCircuitRenderer
 from pecos.qec.surface.injection import injection_correction_supports
@@ -260,3 +262,24 @@ def test_unsupported_patch(kwargs):
 def test_unsupported_state():
     with pytest.raises(ValueError, match="Unsupported hook state"):
         hook_injection(SurfacePatch.create(distance=3), state="Z")
+
+
+def test_acceptance_uses_values_across_sequence_types():
+    hook = hook_injection(SurfacePatch.create(distance=3))
+    xs = [False] * len(hook.z_corrections)
+    zs = [False] * len(hook.x_corrections)
+    assert hook.accepts(((tuple(xs), zs), [xs, tuple(zs)], (xs, zs)))
+    changed = xs.copy()
+    changed[0] = True
+    assert not hook.accepts(((tuple(xs), zs), [changed, tuple(zs)]))
+
+
+def test_hook_seed_is_state_independent_and_flag_drives_docstring():
+    patch = SurfacePatch.create(distance=3)
+    seed = hook_injection(patch, state="T").seed
+    assert seed == hook_injection(patch, state="-Y").seed
+    assert seed.basis is None
+    assert seed.injection_seed
+    rendered = "\n".join(render_gadget_function(replace(seed, name="renamed_hook_seed")))
+    assert "state-independent hook injection seed" in rendered
+    assert "None" not in rendered

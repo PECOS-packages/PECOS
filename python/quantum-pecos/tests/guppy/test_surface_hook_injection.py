@@ -102,7 +102,7 @@ def round_trip() -> None:
     else:
         discarded = measure_z_basis(resource)
         output("discarded", discarded)
-    syn = syndrome_extraction_fold_szdg(data)
+    syn = syndrome_extraction_fold_szdg_data(data)
     output("readout_synx", syn.synx)
     output("readout_synz", syn.synz)
     final = measure_x_basis(data)
@@ -206,3 +206,57 @@ def test_invalid_resource_preparation():
         make_surface_t_teleportation(SurfacePatch.create(distance=3), resource_preparation="cultivation")
     with pytest.raises(ValueError, match="boolean"):
         make_surface_t_teleportation(SurfacePatch.create(distance=3), resource_preparation="hook", dagger=1)
+
+
+@pytest.mark.parametrize("consume", [False, True])
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+def test_accepted_and_rejected_shots_have_identical_output_schema(consume, basis):
+    patch = SurfacePatch.create(distance=3)
+    source = render_surface_hook_injection_module(patch)
+    marker = "    t(az1)"
+    assert source.count(marker) == 1
+    faulted = source.replace(marker, marker + "\n    x(az1)")
+    name = f"test_hook_schema_{consume}_{basis}"
+    rejected_module = load_guppy_source(faulted, _get_temp_dir() / f"{name}.py", name)
+    kwargs = {"consume": consume, "readout_basis": basis, "rounds_before": 1, "rounds_after": 1}
+    accepted = _run(load_surface_hook_injection_module(patch)["make_hook_experiment"](**kwargs), patch, shots=1)
+    rejected = _run(rejected_module["make_hook_experiment"](**kwargs), patch, shots=1)
+    assert accepted["hook_accepted"] == [1]
+    assert rejected["hook_accepted"] == [0]
+    assert accepted.keys() == rejected.keys()
+    for key in accepted:
+        assert type(accepted[key][0]) is type(rejected[key][0])
+        if isinstance(accepted[key][0], list):
+            assert len(accepted[key][0]) == len(rejected[key][0])
+    sidebands = {key for key in accepted if ":meas:" in key}
+    assert len(sidebands) == 8
+    assert all(key.startswith("hook:") for key in sidebands)
+
+
+def test_hook_default_verification_rounds_are_delegated(monkeypatch):
+    from pecos.guppy_gen import surface_teleportation
+
+    patch = SurfacePatch.create(distance=3)
+    calls = []
+    sentinel = object()
+
+    def load(patch_arg, verification_rounds=3):
+        assert patch_arg is patch
+        calls.append(verification_rounds)
+        return {"make_hook_experiment": lambda **_kwargs: sentinel}
+
+    monkeypatch.setattr(surface_teleportation, "load_surface_hook_injection_module", load)
+    assert make_surface_t_teleportation(patch, resource_preparation="hook", verification_rounds=None) is sentinel
+    assert make_surface_t_teleportation(patch, resource_preparation="hook", verification_rounds=1) is sentinel
+    assert calls == [3, 1]
+
+
+@pytest.mark.parametrize("state", ["t", "tdg", "x", "-x", "y", "-y"])
+def test_public_hook_factory_accepts_lowercase(state):
+    program = make_surface_hook_injection(SurfacePatch.create(distance=3), state=state, readout_basis="y")
+    assert program.compile() is not None
+
+
+def test_non_string_hook_state_raises_value_error():
+    with pytest.raises(ValueError, match="Unsupported hook state"):
+        make_surface_hook_injection(SurfacePatch.create(distance=3), state=None)

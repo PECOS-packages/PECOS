@@ -1,5 +1,6 @@
 """Surface code protocols for dx=3, dz=3.
 
+Injected signed X/Y/Z inputs project in the data role; T/TDG resources project in the anc role.
 Scoped scalar sidebands certify measurement provenance for each patch role.
 The surface DEM parser indexes scoped tags but never references them.
 The builder protocol has no init round. The certified-slot DEM route
@@ -589,6 +590,98 @@ def syndrome_extraction_fold_sz_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 
 
 @guppy
+def syndrome_extraction_fold_sz_data(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome with the fold-transversal logical SZ between CX layers 2 and 3."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # fold-transversal SZ layer
+    s(surf.data[6])
+    cz(surf.data[3], surf.data[7])
+    cz(surf.data[0], surf.data[8])
+    sdg(ax2)
+    cz(az1, az2)
+    s(surf.data[4])
+    cz(surf.data[1], surf.data[5])
+    sdg(ax1)
+    s(surf.data[2])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("data:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("data:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("data:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("data:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("data:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("data:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("data:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("data:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
 def syndrome_extraction_fold_szdg_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     """Extract full syndrome with the fold-transversal logical SZdg between CX layers 2 and 3."""
     # Allocate ancilla qubits (one per stabilizer)
@@ -673,6 +766,98 @@ def syndrome_extraction_fold_szdg_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     output("a:sz2:meas:6", sz2)
     sz3 = measure(az3).read()
     output("a:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_fold_szdg_data(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome with the fold-transversal logical SZdg between CX layers 2 and 3."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # fold-transversal SZdg layer
+    sdg(surf.data[6])
+    cz(surf.data[3], surf.data[7])
+    cz(surf.data[0], surf.data[8])
+    s(ax2)
+    cz(az1, az2)
+    sdg(surf.data[4])
+    cz(surf.data[1], surf.data[5])
+    s(ax1)
+    sdg(surf.data[2])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("data:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("data:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("data:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("data:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("data:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("data:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("data:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("data:sz3:meas:7", sz3)
 
     synx = array(sx0, sx1, sx2, sx3)
     synz = array(sz0, sz1, sz2, sz3)
@@ -1039,7 +1224,7 @@ def fix_injection_signs(surf: SurfaceCode_3x3, syn: Syndrome_3x3) -> None:
 @guppy
 def prepare_injected_z() -> SurfaceCode_3x3:
     surf = prep_injection_z_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_data(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1049,7 +1234,7 @@ def prepare_injected_z() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_minus_z() -> SurfaceCode_3x3:
     surf = prep_injection_minus_z_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_data(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1059,7 +1244,7 @@ def prepare_injected_minus_z() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_x() -> SurfaceCode_3x3:
     surf = prep_injection_x_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_data(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1069,7 +1254,7 @@ def prepare_injected_x() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_minus_x() -> SurfaceCode_3x3:
     surf = prep_injection_minus_x_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_data(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1079,7 +1264,7 @@ def prepare_injected_minus_x() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_y() -> SurfaceCode_3x3:
     surf = prep_injection_y_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_data(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1089,7 +1274,7 @@ def prepare_injected_y() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_minus_y() -> SurfaceCode_3x3:
     surf = prep_injection_minus_y_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_data(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1099,7 +1284,7 @@ def prepare_injected_minus_y() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_t() -> SurfaceCode_3x3:
     surf = prep_injection_t_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_anc(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1109,7 +1294,7 @@ def prepare_injected_t() -> SurfaceCode_3x3:
 @guppy
 def prepare_injected_tdg() -> SurfaceCode_3x3:
     surf = prep_injection_tdg_seed()
-    syn = syndrome_extraction_a(surf)
+    syn = syndrome_extraction_anc(surf)
     output("injection_synx", syn.synx)
     output("injection_synz", syn.synz)
     fix_injection_signs(surf, syn)
@@ -1131,11 +1316,11 @@ def correct_t_teleportation(data: SurfaceCode_3x3, decoded_outcome: bool, dagger
     output("t_correction", decoded_outcome)
     if decoded_outcome:
         if dagger:
-            syn = syndrome_extraction_fold_szdg_a(data)
+            syn = syndrome_extraction_fold_szdg_data(data)
         else:
-            syn = syndrome_extraction_fold_sz_a(data)
+            syn = syndrome_extraction_fold_sz_data(data)
     else:
-        syn = syndrome_extraction_a(data)
+        syn = syndrome_extraction_data(data)
     output("correction_synx", syn.synx)
     output("correction_synz", syn.synz)
 
@@ -1153,9 +1338,11 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
     if (type(rounds_before) is not int or type(rounds_after) is not int
             or min(rounds_before, rounds_after) < 0):
         raise ValueError("Teleportation round counts must be nonnegative integers")
-    if input_state not in ("Z", "-Z", "X", "-X", "Y", "-Y"):
+    input_state = input_state.upper() if isinstance(input_state, str) else input_state
+    readout_basis = readout_basis.upper() if isinstance(readout_basis, str) else readout_basis
+    if input_state not in ('Z', '-Z', 'X', '-X', 'Y', '-Y'):
         raise ValueError("input_state must be a signed X/Y/Z eigenstate")
-    if readout_basis not in ("X", "Y", "Z"):
+    if readout_basis not in ('X', 'Y', 'Z'):
         raise ValueError("readout_basis must be X, Y, or Z")
     if type(dagger) is not bool:
         raise ValueError("dagger must be a boolean")
@@ -1179,19 +1366,19 @@ def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,
         else:
             resource = prepare_injected_t()
         for _ in range(comptime(rounds_before)):
-            syn_data = syndrome_extraction_a(data)
-            syn_resource = syndrome_extraction_a(resource)
+            syn_data = syndrome_extraction_data(data)
+            syn_resource = syndrome_extraction_anc(resource)
             output("data_synx", syn_data.synx)
             output("data_synz", syn_data.synz)
             output("resource_synx", syn_resource.synx)
             output("resource_synz", syn_resource.synz)
         apply_t_teleportation(data, resource, comptime(dagger))
         for _ in range(comptime(rounds_after)):
-            syn = syndrome_extraction_a(data)
+            syn = syndrome_extraction_data(data)
             output("data_synx", syn.synx)
             output("data_synz", syn.synz)
         if comptime(readout_basis == "Y"):
-            syn = syndrome_extraction_fold_szdg_a(data)
+            syn = syndrome_extraction_fold_szdg_data(data)
             output("readout_synx", syn.synx)
             output("readout_synz", syn.synz)
         if comptime(readout_basis == "Z"):

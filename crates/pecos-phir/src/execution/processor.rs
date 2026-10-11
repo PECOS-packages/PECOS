@@ -483,11 +483,11 @@ impl PhirProcessor {
     ///
     /// # Errors
     ///
-    /// Returns an error if type conversion fails
+    /// Returns an error if type conversion fails or a signed shift count is negative.
     ///
     /// # Panics
     ///
-    /// Panics if a shift amount or constant value doesn't fit in the expected type
+    /// Panics if a constant value doesn't fit in the expected type
     pub fn process_classical_operation(
         &mut self,
         classical_op: &crate::ops::ClassicalOp,
@@ -574,45 +574,57 @@ impl PhirProcessor {
                 self.process_binary_int_op(instruction, "xor", |a, b| a ^ b, |a, b| a ^ b);
                 Ok(())
             }
-            ClassicalOp::Shl(shift) => {
+            ClassicalOp::Shl(shift) | ClassicalOp::Shr(shift) => {
+                let left = matches!(classical_op, ClassicalOp::Shl(_));
+                let count = if instruction.operands.len() >= 2 {
+                    let Some(value) = self.ssa_values.get(&instruction.operands[1].id) else {
+                        return Ok(());
+                    };
+                    let negative = match value {
+                        TypedValue::I8(v) => *v < 0,
+                        TypedValue::I16(v) => *v < 0,
+                        TypedValue::I32(v) => *v < 0,
+                        TypedValue::I64(v) => *v < 0,
+                        _ => false,
+                    };
+                    if negative {
+                        return Err(Box::new(crate::error::RuntimeError::ExecutionFailed {
+                            message: format!("Negative shift amount: {value}"),
+                            location: instruction
+                                .location
+                                .clone()
+                                .unwrap_or_else(crate::error::SourceLocation::unknown),
+                        })
+                        .into());
+                    }
+                    u32::try_from(value.to_u64().unwrap_or(0)).unwrap_or(u32::MAX)
+                } else {
+                    *shift
+                };
+                let signed = |v: i64| {
+                    if left {
+                        v.checked_shl(count).unwrap_or(0)
+                    } else {
+                        v.checked_shr(count).unwrap_or(if v < 0 { -1 } else { 0 })
+                    }
+                };
+                let unsigned = |v: u64| {
+                    if left {
+                        v.checked_shl(count).unwrap_or(0)
+                    } else {
+                        v.checked_shr(count).unwrap_or(0)
+                    }
+                };
                 if instruction.operands.len() >= 2 {
-                    // Binary mode: shift amount from second operand (used by QIS parser)
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    // shift amount is non-negative
+                    // Keep the existing same-type and mixed-type result/coercion rules.
                     self.process_binary_int_op(
                         instruction,
-                        "shl",
-                        |a, b| a.wrapping_shl(b as u32),
-                        |a, b| a.wrapping_shl(b as u32),
+                        "shift",
+                        |a, _| signed(a),
+                        |a, _| unsigned(a),
                     );
                 } else {
-                    let s = *shift;
-                    self.process_unary_int_op(
-                        instruction,
-                        move |v: i64| v.wrapping_shl(s),
-                        move |v: u64| v.wrapping_shl(s),
-                    );
-                }
-                Ok(())
-            }
-            ClassicalOp::Shr(shift) => {
-                if instruction.operands.len() >= 2 {
-                    // Binary mode: shift amount from second operand (used by QIS parser)
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    // shift amount is non-negative
-                    self.process_binary_int_op(
-                        instruction,
-                        "shr",
-                        |a, b| a.wrapping_shr(b as u32),
-                        |a, b| a.wrapping_shr(b as u32),
-                    );
-                } else {
-                    let s = *shift;
-                    self.process_unary_int_op(
-                        instruction,
-                        move |v: i64| v.wrapping_shr(s),
-                        move |v: u64| v.wrapping_shr(s),
-                    );
+                    self.process_unary_int_op(instruction, signed, unsigned);
                 }
                 Ok(())
             }

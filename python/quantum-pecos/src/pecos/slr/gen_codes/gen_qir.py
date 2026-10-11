@@ -274,8 +274,8 @@ class QIRGenerator(Generator):
             "|": self._builder.or_,
             "+": self._builder.add,
             "-": self._builder.sub,
-            ">>": self._builder.lshr,
-            "<<": self._builder.shl,
+            ">>": lambda lhs, rhs: self._shift(lhs, rhs, left=False),
+            "<<": lambda lhs, rhs: self._shift(lhs, rhs, left=True),
         }
 
     def create_creg(self, creg: CReg):
@@ -554,6 +554,13 @@ class QIRGenerator(Generator):
             )
         msg = f"SET operation not implemented for {op.left} (type: {type(op.left)})"
         raise NotImplementedError(msg)
+
+    def _shift(self, lhs, rhs, *, left):
+        """Saturate oversized counts; LLVM shifts themselves retain raw semantics."""
+        width = ir.Constant(rhs.type, lhs.type.width)
+        oversized = self._builder.icmp_unsigned(">=", rhs, width)
+        shifted = self._builder.shl(lhs, rhs) if left else self._builder.lshr(lhs, rhs)
+        return self._builder.select(oversized, ir.Constant(lhs.type, 0), shifted)
 
     def _convert_binary_op(self, op):
         """Converts an SLR binary operation to a QIR arithmetic instruction"""

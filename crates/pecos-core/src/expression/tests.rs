@@ -474,28 +474,18 @@ fn signed_right_shift_keeps_left_tag() {
 }
 
 #[test]
-fn legacy_shift_counts_64() {
+fn saturating_shift_counts_64() {
     // count, logical 1 << count, logical high-bit >> count,
-    // arithmetic -8 >> (count % 64). 65536 truncates to zero.
+    // arithmetic -8 >> count. Oversized counts retain only sign bits.
     for (count, left, right, arithmetic) in [
         (0, 1, 9_223_372_036_854_775_808, 18_446_744_073_709_551_608),
         (1, 2, 4_611_686_018_427_387_904, 18_446_744_073_709_551_612),
         (63, 9_223_372_036_854_775_808, 1, 18_446_744_073_709_551_615),
-        (64, 0, 0, 18_446_744_073_709_551_608),
-        (65, 0, 0, 18_446_744_073_709_551_612),
-        (65535, 0, 0, 18_446_744_073_709_551_615),
-        (
-            65536,
-            1,
-            9_223_372_036_854_775_808,
-            18_446_744_073_709_551_608,
-        ),
-        (
-            65537,
-            2,
-            4_611_686_018_427_387_904,
-            18_446_744_073_709_551_612,
-        ),
+        (64, 0, 0, u64::MAX),
+        (65, 0, 0, u64::MAX),
+        (65535, 0, 0, u64::MAX),
+        (65536, 0, 0, u64::MAX),
+        (65537, 0, 0, u64::MAX),
     ] {
         for rhs in [
             ExprValue::signed(count),
@@ -536,25 +526,31 @@ fn legacy_shift_counts_64() {
 }
 
 #[test]
-fn unsigned_high_bit_shift_count_is_negative() {
+fn unsigned_high_bit_shift_count_saturates() {
     for op in ["<<", ">>"] {
         for lhs in [ExprValue::signed(-8), ExprValue::unsigned(8)] {
-            let error = eval_binary_op(op, lhs, ExprValue::unsigned(9_223_372_036_854_775_808))
-                .unwrap_err();
-            assert!(
-                matches!(error, PecosError::Input(message) if message == "Negative shift amount: -9223372036854775808")
+            let expected = if op == ">>" && matches!(lhs, ExprValue::Signed(_)) {
+                u64::MAX
+            } else {
+                0
+            };
+            assert_eq!(
+                eval_binary_op(op, lhs, ExprValue::unsigned(1 << 63))
+                    .unwrap()
+                    .as_u64(),
+                expected
             );
         }
     }
 }
 
 #[test]
-fn wide_shift_counts_and_modulo() {
+fn wide_shift_counts_saturate() {
     for (count, expected) in [
-        (100, 18_446_744_073_709_551_608),
-        (101, 18_446_744_073_709_551_612),
-        (65536, 18_446_744_073_709_551_608),
-        (65537, 18_446_744_073_709_551_612),
+        (100, u64::MAX),
+        (101, u64::MAX),
+        (65536, u64::MAX),
+        (65537, u64::MAX),
     ] {
         assert_integer(
             eval_binary_op(">>", signed_input(100, -8), ExprValue::signed(count)).unwrap(),
@@ -563,12 +559,12 @@ fn wide_shift_counts_and_modulo() {
             &[expected, 68_719_476_735],
         );
     }
-    // The accessor returns zero, not the low word, when any high word is set.
+    // High words in the count must not disappear.
     assert_integer(
         eval_binary_op("<<", ExprValue::unsigned(3), pattern(false, 100, &[1, 1])).unwrap(),
         false,
         100,
-        &[3, 0],
+        &[0, 0],
     );
 }
 
@@ -601,29 +597,23 @@ fn errors_and_lossy_accessors_are_preserved() {
 
 #[test]
 fn narrow_signed_shift_count_is_read_before_widening() {
-    // An eight-bit signed 0xFF is negative one at its own width, but the count
-    // is read before the operands widen, so it shifts by 255 and does not
-    // error. Reading it after widening would sign-extend it to u64::MAX, whose
-    // lossy reading is negative one, and the call would fail instead.
-    assert_integer(
-        eval_binary_op(">>", ExprValue::signed(-8), pattern(true, 8, &[0xFF])).unwrap(),
-        true,
-        64,
-        &[u64::MAX],
-    );
-    // A 64-bit signed negative count still errors, which is what the read
-    // order preserves.
-    assert!(
-        eval_binary_op(">>", ExprValue::signed(-8), ExprValue::signed(-1))
-            .unwrap_err()
-            .to_string()
-            .contains("Negative shift amount")
-    );
+    for count in [
+        pattern(true, 8, &[0xFF]),
+        ExprValue::signed(-1),
+        signed_input(100, -1),
+    ] {
+        assert!(
+            eval_binary_op(">>", ExprValue::signed(-8), count)
+                .unwrap_err()
+                .to_string()
+                .contains("Negative shift amount: -1")
+        );
+    }
 }
 
 #[test]
-fn shift_count_truncates_to_sixteen_bits_not_eight() {
-    // 300 survives a 16-bit truncation and so reaches the width, giving zero.
+fn shift_count_300_saturates() {
+    // 300 reaches the evaluation width, giving zero.
     // An 8-bit truncation would leave 44 and shift by that instead.
     assert_integer(
         eval_binary_op("<<", ExprValue::unsigned(1), ExprValue::unsigned(300)).unwrap(),
@@ -637,4 +627,63 @@ fn shift_count_truncates_to_sixteen_bits_not_eight() {
         64,
         &[0],
     );
+}
+
+// Fix demonstration: counts never reappear after saturation, including high words.
+#[test]
+fn shift_rule_monotonic_and_full_width() {
+    for count in 0..=65537_u64 {
+        let expected = if count < 64 { 1_u64 << count } else { 0 };
+        assert_eq!(
+            eval_binary_op("<<", ExprValue::unsigned(1), ExprValue::unsigned(count))
+                .unwrap()
+                .as_u64(),
+            expected
+        );
+    }
+    for op in ["<<", ">>"] {
+        for lhs in [ExprValue::unsigned(8), ExprValue::signed(-8)] {
+            let arithmetic = op == ">>" && matches!(lhs, ExprValue::Signed(_));
+            let result = eval_binary_op(op, lhs, pattern(false, 100, &[1, 1])).unwrap();
+            assert_integer(
+                result,
+                arithmetic,
+                100,
+                if arithmetic {
+                    &[u64::MAX, 68_719_476_735]
+                } else {
+                    &[0, 0]
+                },
+            );
+        }
+    }
+}
+
+// Fix demonstration: diagnostic formatting retains the count's true magnitude.
+#[test]
+fn shift_rule_negative_diagnostics() {
+    for (width, words, expected) in [
+        (8, vec![255], "-1"),
+        (100, vec![0, 68_719_476_735], "-18446744073709551616"),
+        (130, vec![0, 0, 3], "-0x100000000000000000000000000000000"),
+    ] {
+        let err =
+            eval_binary_op("<<", ExprValue::unsigned(1), pattern(true, width, &words)).unwrap_err();
+        assert!(
+            matches!(err, PecosError::Input(message) if message == format!("Negative shift amount: {expected}"))
+        );
+    }
+}
+
+// Compatibility pin: the core operators already saturate at storage width.
+#[test]
+fn shift_rule_core_storage_boundary() {
+    for width in [8, 64, 100, 65535] {
+        let unsigned = BitUInt::new(width, 1);
+        assert!((&unsigned << width).is_zero());
+        assert!((&unsigned >> width).is_zero());
+        let signed = crate::BitInt::new(width - 1, -8);
+        assert_eq!((&signed >> width).to_i64(), Some(-1));
+        assert_eq!((&signed << width).to_i64(), Some(0));
+    }
 }

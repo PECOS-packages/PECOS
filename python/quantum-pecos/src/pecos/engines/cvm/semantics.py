@@ -103,8 +103,8 @@ class DefaultClassicalSemantics:
 class UnsignedClassicalSemantics:
     """Unsigned fixed-width classical semantics.
 
-    Arithmetic wraps modulo ``2**width``. Shifts are logical and mask their
-    amount to ``width - 1``. Division and modulo by zero produce an all-ones
+    Arithmetic wraps modulo ``2**width``. Shifts are logical and saturate at
+    the configured width. Division and modulo by zero produce an all-ones
     word. Comparisons are unsigned unless an expression contains
     ``{"signed": True}``.
 
@@ -226,9 +226,9 @@ class UnsignedClassicalSemantics:
         if op == "*":
             return left * right
         if op == ">>":
-            return left >> (int(right) & (width - 1))
+            return BitUInt(width, 0) if int(right) >= width else left >> int(right)
         if op == "<<":
-            return left << (int(right) & (width - 1))
+            return BitUInt(width, 0) if int(right) >= width else left << int(right)
         if op in {"/", "%"}:
             if int(right) == 0:
                 return BitUInt(width, (1 << width) - 1)

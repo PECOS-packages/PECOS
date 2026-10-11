@@ -104,12 +104,13 @@ fn shared_semantic_anchors() {
         ("-(1-3)", 2),
         ("(1-3) < 0", 1),
         ("(1 == 1) > -1", 0),
-        ("8 >> 64", 8),
+        ("8 >> 64", 0),
         ("-8 >> 2", 254),
         ("8 >> -(-1)", 4),
         ("1 << 64", 0),
-        ("1 << 65536", 1),
-        ("1 << 18446744073709551617", 1),
+        ("1 << 9223372036854775808", 0),
+        ("1 << 65536", 0),
+        ("1 << 18446744073709551617", 0),
     ] {
         let engine = run(&format!("creg a[4]; creg w[8]; a = 15; w = {expression};")).unwrap();
         assert_eq!(
@@ -127,14 +128,12 @@ fn shared_semantic_anchors() {
     }
     let engine = run("creg w[100]; w = 1 << 80;").unwrap();
     assert!(engine.classical_registers["w"].not_any());
-    for expression in ["8 << -1", "1 << 9223372036854775808"] {
-        assert!(
-            run(&format!("creg w[100]; w = {expression};"))
-                .unwrap_err()
-                .to_string()
-                .contains("Negative shift amount")
-        );
-    }
+    assert!(
+        run("creg w[100]; w = 8 << -1;")
+            .unwrap_err()
+            .to_string()
+            .contains("Negative shift amount")
+    );
 }
 
 #[test]
@@ -198,12 +197,17 @@ fn rng_setters_evaluate_arguments_without_folding() {
             error.contains(name) && error.contains("-0x100000000000000000000000000000000"),
             "{error}"
         );
-        assert!(
-            run(&format!("{name}(1 << 9223372036854775808);"))
-                .unwrap_err()
-                .to_string()
-                .contains("Negative shift amount")
-        );
+        let engine = run(&format!("{name}(1 << 9223372036854775808);")).unwrap();
+        match name {
+            "RNGseed" => {
+                let mut reference = QASMEngine::default();
+                reference.rng_model.set_seed(0);
+                assert_eq!(engine.rng_model.rng_gen, reference.rng_model.rng_gen);
+            }
+            "RNGindex" => assert_eq!(engine.rng_model.count, 0),
+            "RNGbound" => assert_eq!(engine.rng_model.curr_bound, 0),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -425,5 +429,35 @@ fn standard_conditional_accepts_an_unfolded_constant_operand() {
     // A register on the right is still refused, which is what the gate is for.
     assert!(
         run_standard("qreg q[1]; creg c[1]; creg d[1]; creg out[1]; if (c == d) out = 1;").is_err()
+    );
+}
+
+// Fix demonstration: the runtime and constant-folder routes share full counts.
+#[test]
+fn shift_rule_qasm_boundaries() {
+    for count in [
+        "63",
+        "64",
+        "65",
+        "65535",
+        "65536",
+        "18446744073709551617",
+        "9223372036854775808",
+    ] {
+        let engine = run(&format!("creg l[64]; creg r[64]; creg s[64]; l = 1 << {count}; r = 9223372036854775808 >> {count}; s = -8 >> {count};")).unwrap();
+        assert_eq!(
+            engine.classical_registers["l"].load_le::<u64>(),
+            if count == "63" { 1 << 63 } else { 0 }
+        );
+        assert_eq!(
+            engine.classical_registers["r"].load_le::<u64>(),
+            u64::from(count == "63")
+        );
+        assert!(engine.classical_registers["s"].all());
+    }
+    let err = run("creg x[8]; x = 1 << -18446744073709551616;").unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Negative shift amount: -18446744073709551616")
     );
 }

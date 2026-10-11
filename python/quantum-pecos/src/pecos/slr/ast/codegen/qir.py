@@ -479,9 +479,16 @@ class AstToQir:
             BinaryOp.OR: self._builder.or_,
             BinaryOp.ADD: self._builder.add,
             BinaryOp.SUB: self._builder.sub,
-            BinaryOp.RSHIFT: self._builder.lshr,
-            BinaryOp.LSHIFT: self._builder.shl,
+            BinaryOp.RSHIFT: lambda lhs, rhs: self._shift(lhs, rhs, left=False),
+            BinaryOp.LSHIFT: lambda lhs, rhs: self._shift(lhs, rhs, left=True),
         }
+
+    def _shift(self, lhs, rhs, *, left):
+        """Saturate oversized counts; LLVM shifts themselves retain raw semantics."""
+        width = llvm_ir.Constant(rhs.type, lhs.type.width)
+        oversized = self._builder.icmp_unsigned(">=", rhs, width)
+        shifted = self._builder.shl(lhs, rhs) if left else self._builder.lshr(lhs, rhs)
+        return self._builder.select(oversized, llvm_ir.Constant(lhs.type, 0), shifted)
 
     def _process_declarations(self, program: Program) -> None:
         """Process declarations to allocate qubits and classical registers."""

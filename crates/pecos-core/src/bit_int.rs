@@ -160,15 +160,8 @@ impl BitInt {
         assert!(s.len() <= 65534, "Binary string too long (max 65534 chars)");
         let user_size = s.len() as u16;
 
-        // Parse the value from the binary string
-        let val = if user_size <= 64 {
-            u64::from_str_radix(s, 2).expect("Invalid binary string")
-        } else {
-            // For large values, just use 0 for now (simplified)
-            0
-        };
-
-        Self::new_from_u64(user_size, val)
+        let pattern = BitUInt::from_binary_str(s);
+        Self::new_from_raw_inner(user_size, pattern.to_words().into_boxed_slice())
     }
 
     /// Create a zero value with the given size.
@@ -611,6 +604,19 @@ mod tests {
         let a = BitInt::new(1, 0);
         assert_eq!(a.to_i64(), Some(0));
         assert!(a.is_zero());
+    }
+
+    #[test]
+    fn from_binary_str_full_width_zero_extends() {
+        for width in [65, 100, 130, 65534] {
+            let binary = format!("1{}", "0".repeat(usize::from(width - 1)));
+            let value = BitInt::from_binary_str(&binary);
+            assert_eq!(value.size(), width);
+            let mut expected = vec![0; usize::from(width + 1).div_ceil(64)];
+            expected[usize::from((width - 1) / 64)] = 1 << ((width - 1) % 64);
+            assert_eq!(value.inner_words(), expected);
+            assert!(value > BitInt::zero(width));
+        }
     }
 
     #[test]

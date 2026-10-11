@@ -763,6 +763,11 @@ def _slot_rebinding_after_permute(case: str) -> tuple[Main, tuple[int, ...]]:
     if case == "prepare":
         body = (Measure(q[0]) > c[0], qb.PZ(q[0]))
         return Main(q, c, qb.X(q[0]), swap, *body, Measure(q) > c, Return(c)), (0, 1)
+    if case == "prepare_across_two_permutes":
+        # The first refill must hand its old local to the other consumed slot,
+        # or the second refill would reuse the local the swap made live.
+        body = (Measure(q) > c, qb.PZ(q[0]), qb.X(q[0]), swap, qb.PZ(q[0]))
+        return Main(q, c, swap, *body, Measure(q) > c, Return(c)), (0, 1)
     if case == "single_qubit_call":
         return Main(q, c, qb.X(q[0]), swap, _FlipFirst(q[0]), Measure(q) > c, Return(c)), (1, 1)
     if case == "one_slot_bundle_call":
@@ -774,10 +779,35 @@ def _slot_rebinding_after_permute(case: str) -> tuple[Main, tuple[int, ...]]:
     return program, (1, 0, 1)
 
 
-@pytest.mark.parametrize("case", ["prepare", "single_qubit_call", "one_slot_bundle_call", "register_call"])
+@pytest.mark.parametrize(
+    "case",
+    ["prepare", "prepare_across_two_permutes", "single_qubit_call", "one_slot_bundle_call", "register_call"],
+)
 def test_slot_rebinding_after_permute_keeps_other_slots_live(case: str) -> None:
     """A re-filled slot reuses its own local, never one a Permute gave to another slot (#1226)."""
     program, expected = _slot_rebinding_after_permute(case)
+    records = run_ast_guppy_via_selene(program, shots=4)
+    assert all(tuple(record.values()) == expected for record in records), records
+
+
+def _region_that_permutes_and_refills(case: str) -> tuple[Main, tuple[int, ...]]:
+    """Each region swaps, measures and re-prepares both slots, so it can rejoin the outer bindings."""
+    q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 2)
+    swap = Permute([q[0], q[1]], [q[1], q[0]])
+    if case == "if_then":
+        region = If(c[0] == 0).Then(swap, Measure(q[0]) > d[0], Measure(q[1]) > d[1], qb.PZ(q))
+        return Main(q, c, d, qb.X(q[1]), region, Measure(q) > c, Return(c, d)), (0, 0, 1, 0)
+    if case == "if_else":
+        region = If(c[0] == 0).Then(swap, Measure(q) > d, qb.PZ(q)).Else(Measure(q) > d, qb.PZ(q))
+        return Main(q, c, d, qb.X(q[0]), region, Measure(q) > c, Return(c, d)), (0, 0, 0, 1)
+    # The first iteration measures the swapped pair, the second the fresh one.
+    return Main(q, c, d, qb.X(q[0]), Repeat(2).block(swap, Measure(q) > c, qb.PZ(q)), Return(c, d)), (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("case", ["if_then", "if_else", "repeat"])
+def test_region_that_permutes_and_refills_every_slot_rejoins(case: str) -> None:
+    """Refilled slots take back their initial locals, so the region's bindings match on exit."""
+    program, expected = _region_that_permutes_and_refills(case)
     records = run_ast_guppy_via_selene(program, shots=4)
     assert all(tuple(record.values()) == expected for record in records), records
 

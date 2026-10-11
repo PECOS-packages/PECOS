@@ -1277,12 +1277,11 @@ class AstToGuppy:
         linearity = self._linearity()
         for index in slots:
             slot = Slot(node.allocator, index)
-            # A consumed slot still names the local it last owned; no other
-            # slot owns that local, even after a Permute moved the default one.
-            cur = linearity.binding(slot).local
             if linearity.status(slot) is SlotState.LIVE:
+                cur = linearity.live(slot)
                 lines.append(f"{self.context.indent()}{cur} = reset({cur})")
             else:
+                cur = linearity.refill(slot)
                 lines.append(f"{self.context.indent()}{cur} = qubit()")
             lines.extend(f"{self.context.indent()}{cur} = {FUNCTIONAL_GATES[gk]}({cur})" for gk in tail)
             linearity.set_live(slot, cur)
@@ -1721,12 +1720,8 @@ class AstToGuppy:
             return self._unpack_return_array(out_name, ret_temp)
         if kind == "single_qubit":
             outer_alloc, outer_index = info
-            # Rebind the returned qubit to the local the outer slot owned before
-            # the call consumed it: no other slot owns that name, even after a
-            # Permute moved the default one.
-            slot = Slot(outer_alloc, outer_index)
-            new_local = linearity.binding(slot).local
-            linearity.set_live(slot, new_local)
+            # The call consumed the outer slot; refill it with the returned qubit.
+            new_local = linearity.refill(Slot(outer_alloc, outer_index))
             return [f"{self.context.indent()}{new_local} = {ret_temp}"]
         if kind == "single_bit":
             # Write the mutated bit back into the outer CReg. Bits are copyable
@@ -1735,14 +1730,12 @@ class AstToGuppy:
             return [f"{self.context.indent()}{register}[{bit_index}] = {ret_temp}[0]"]
         if kind == "qubit_bundle":
             # Destructure the returned array back into the SAME outer slots the
-            # bundle consumed, rebinding each to the local it owned before the call.
-            new_locals = [linearity.binding(Slot(alloc, idx)).local for alloc, idx in info]
+            # bundle consumed, refilling each with its returned qubit.
+            new_locals = [linearity.refill(Slot(alloc, idx)) for alloc, idx in info]
             if len(new_locals) == 1:
                 line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
             else:
                 line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
-            for (alloc, idx), local in zip(info, new_locals, strict=True):
-                linearity.set_live(Slot(alloc, idx), local)
             return [line]
         msg = f"Unsupported return kind {kind!r}"  # pragma: no cover
         raise GuppyCodegenError(msg)
@@ -1764,13 +1757,11 @@ class AstToGuppy:
     def _unpack_return_array(self, out_name: str, ret_temp: str) -> list[str]:
         size = self.context.root_allocators[out_name]
         linearity = self._linearity()
-        new_locals = [linearity.binding(Slot(out_name, i)).local for i in range(size)]
+        new_locals = [linearity.refill(Slot(out_name, i)) for i in range(size)]
         if size == 1:
             line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
         else:
             line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
-        for i, local in enumerate(new_locals):
-            linearity.set_live(Slot(out_name, i), local)
         return [line]
 
     def _emit_block(self, body: tuple[Statement, ...]) -> list[str]:

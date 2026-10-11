@@ -68,6 +68,7 @@ class GuppyLinearityState:
         """Create state from an explicit binding table in stable order."""
         self._order = tuple(bindings)
         self._bindings = dict(bindings)
+        self._initial_locals = {slot: binding.local for slot, binding in bindings.items()}
 
     @classmethod
     def from_allocators(
@@ -127,6 +128,29 @@ class GuppyLinearityState:
         """Return the live local and mark the slot consumed; raise if unavailable."""
         local = self.live(slot)
         self._bindings[slot] = Binding(local=local, state=SlotState.CONSUMED)
+        return local
+
+    def refill(self, slot: Slot) -> str:
+        """Bind a consumed slot to a new qubit and return the local to assign it to.
+
+        No local is held by more than one binding, and a Permute may have moved
+        the slot's initial local to another slot. The slot takes its initial
+        local back when that is free or names only a consumed (dead) slot,
+        which then takes this slot's old local; that way a region that permutes
+        and refills every slot rejoins with the bindings it started with. If a
+        live slot holds the initial local, this slot keeps its own.
+        """
+        own = self.binding(slot)
+        if own.state is SlotState.LIVE:
+            msg = f"Slot {slot} is live and cannot be refilled"
+            raise LinearityError(msg)
+        local = self._initial_locals[slot]
+        holder = next((other for other in self._order if self._bindings[other].local == local), slot)
+        if self._bindings[holder].state is SlotState.LIVE:
+            local = own.local
+        else:
+            self._bindings[holder] = Binding(local=own.local, state=SlotState.CONSUMED)
+        self._bindings[slot] = Binding(local=local, state=SlotState.LIVE)
         return local
 
     def discard_live(self) -> list[tuple[Slot, str]]:

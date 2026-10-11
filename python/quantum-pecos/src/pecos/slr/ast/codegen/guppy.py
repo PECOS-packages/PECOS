@@ -388,10 +388,7 @@ class AstToGuppy:
         else:
             body_lines.extend(self._emit_end_cleanup())
 
-        if body_lines:
-            lines.extend(body_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        lines.extend(self._suite(body_lines))
 
         self.context.pop_indent()
         return lines
@@ -579,10 +576,7 @@ class AstToGuppy:
         else:
             body_lines.extend(self._emit_end_cleanup())
 
-        if body_lines:
-            lines.extend(body_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        lines.extend(self._suite(body_lines))
 
         self.context.pop_indent()
         self.context = saved_context
@@ -1324,6 +1318,12 @@ class AstToGuppy:
             return []
         return [f"{self.context.indent()}# {line.strip()}" for line in node.text.splitlines()]
 
+    def _suite(self, body_lines: list[str]) -> list[str]:
+        """Return an indented body that Python accepts, even when it is only comments."""
+        if any(line.strip() and not line.lstrip().startswith("#") for line in body_lines):
+            return body_lines
+        return [*body_lines, f"{self.context.indent()}pass"]
+
     def _emit_if(self, node: IfStmt) -> list[str]:
         linearity = self._linearity()
         before = linearity.snapshot()
@@ -1333,7 +1333,7 @@ class AstToGuppy:
 
         self.context.push_indent()
         then_lines = self._emit_block(node.then_body)
-        lines.extend(then_lines or [f"{self.context.indent()}pass"])
+        lines.extend(self._suite(then_lines))
         self.context.pop_indent()
         then_state = linearity.snapshot()
 
@@ -1343,7 +1343,7 @@ class AstToGuppy:
             lines.append(f"{self.context.indent()}else:")
             self.context.push_indent()
             else_lines = self._emit_block(node.else_body)
-            lines.extend(else_lines or [f"{self.context.indent()}pass"])
+            lines.extend(self._suite(else_lines))
             self.context.pop_indent()
             else_state = linearity.snapshot()
 
@@ -1357,7 +1357,7 @@ class AstToGuppy:
 
         self.context.push_indent()
         body_lines = self._emit_block(node.body)
-        lines.extend(body_lines or [f"{self.context.indent()}pass"])
+        lines.extend(self._suite(body_lines))
         self.context.pop_indent()
 
         after = linearity.snapshot()
@@ -1378,7 +1378,7 @@ class AstToGuppy:
         lines = [f"{self.context.indent()}{header}"]
         self.context.push_indent()
         body_lines = self._emit_block(node.body)
-        lines.extend(body_lines or [f"{self.context.indent()}pass"])
+        lines.extend(self._suite(body_lines))
         self.context.pop_indent()
 
         after = linearity.snapshot()

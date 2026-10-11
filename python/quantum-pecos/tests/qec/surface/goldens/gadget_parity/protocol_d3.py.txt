@@ -79,6 +79,14 @@ def apply_logical_x(surf: SurfaceCode_3x3) -> None:
 
 
 @guppy
+def apply_logical_z(surf: SurfaceCode_3x3) -> None:
+    """Apply logical Z (string along top edge)."""
+    z(surf.data[0])
+    z(surf.data[1])
+    z(surf.data[2])
+
+
+@guppy
 def transversal_h(surf: SurfaceCode_3x3) -> None:
     """Apply physical transversal H."""
     for i in range(9):
@@ -946,6 +954,19 @@ def syndrome_extraction_swapped_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     return Syndrome_3x3(synx, synz)
 
 
+@guppy
+def sz_teleportation_decision(first: Syndrome_3x3, final: array[bool, 9]) -> bool:
+    # The reference is 0 for every odd square patch, the only geometry this renderer accepts.
+    return final[0] ^ final[1] ^ final[2] ^ first.synx[1] ^ first.synx[3] ^ first.synz[0] ^ first.synz[2]
+
+
+@guppy
+def correct_sz_teleportation(data: SurfaceCode_3x3, decision: bool) -> None:
+    output("sz_correction", decision)
+    if decision:
+        apply_logical_z(data)
+
+
 def make_h_experiment(num_rounds: int, *, logical_x: bool = False):
     """Prepare Z, extract full rounds, apply H, extract swapped rounds, read X."""
     def h_experiment() -> None:
@@ -1005,7 +1026,13 @@ def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_r
         """SZ teleportation experiment."""
         data = prep_z_basis()
         anc = prep_y_basis()
-        for _ in range(comptime(rounds_before)):
+        syn = syndrome_extraction_data(data)
+        output("synx_data", syn.synx)
+        output("synz_data", syn.synz)
+        first = syndrome_extraction_anc(anc)
+        output("synx_anc", first.synx)
+        output("synz_anc", first.synz)
+        for _ in range(comptime(rounds_before - 1)):
             syn = syndrome_extraction_data(data)
             output("synx_data", syn.synx)
             output("synz_data", syn.synz)
@@ -1022,6 +1049,7 @@ def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_r
             output("synz_anc", syn.synz)
         final = measure_z_basis(anc)
         output("final_anc", final)
+        correct_sz_teleportation(data, sz_teleportation_decision(first, final))
         for _ in range(comptime(trailing_data_rounds)):
             syn = syndrome_extraction_data(data)
             output("synx_data", syn.synx)

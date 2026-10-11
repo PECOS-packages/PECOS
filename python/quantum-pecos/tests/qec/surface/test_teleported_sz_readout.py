@@ -28,7 +28,17 @@ class ReadoutProbe(LogicalCircuitBuilder):
         return self._build_structured_dem_from_cached_slices(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
 
 
-def readout_builder(distance=3, *, dz=None, gate="SZ", prepared="X", readout="Y", sparse=False):
+def readout_builder(
+    distance=3,
+    *,
+    dz=None,
+    gate="SZ",
+    prepared="X",
+    readout="Y",
+    sparse=False,
+    correction="mask",
+    rounds=2,
+):
     patch = SurfacePatch.create(dx=distance, dz=dz or distance)
     builder = ReadoutProbe()
     labels = ["R", "M", "D", "A"] if sparse else ["D", "A"]
@@ -38,12 +48,12 @@ def readout_builder(distance=3, *, dz=None, gate="SZ", prepared="X", readout="Y"
         builder.add_memory("R", 2, "X")
         builder.add_memory("R", 2, "Z")  # Random readout reserves id 0.
         builder.add_memory("M", 2, "Z")  # Existing memory keeps id 1.
-    builder.add_memory("D", 2, prepared)
+    builder.add_memory("D", rounds, prepared)
     if gate == "T":
         builder.add_t_teleportation_placeholder("D", "A", 2, 2)
     else:
-        builder.add_sz_via_teleportation("D", "A", 2, 2)
-    builder.add_memory("D", 2, readout)
+        builder.add_sz_via_teleportation("D", "A", rounds, rounds, correction=correction)
+    builder.add_memory("D", rounds, readout)
     return builder, patch
 
 
@@ -281,11 +291,11 @@ def test_walk_replaces_conjugation_and_returns_symbols(teleportation_type):
     assert _logical_readout_flow(operations, 2, "D", "X") == expected
 
 
-def multiple_teleportations_builder(dx, dz):
-    builder, patch = readout_builder(dx, dz=dz, readout="X")
+def multiple_teleportations_builder(dx, dz, *, correction="mask", rounds=2):
+    builder, patch = readout_builder(dx, dz=dz, readout="X", correction=correction, rounds=rounds)
     builder.add_patch(patch, "B", qubit_offset=2 * patch.geometry.num_qubits)
-    builder.add_sz_via_teleportation("D", "B", 2, 2)
-    builder.add_memory("D", 2, "X")
+    builder.add_sz_via_teleportation("D", "B", rounds, rounds, correction=correction)
+    builder.add_memory("D", rounds, "X")
     return builder, patch
 
 
@@ -327,3 +337,123 @@ def test_builder_descriptors_follow_patch_orientation(swapped):
     assert descriptor["basis"] == "X"
     assert descriptor["logical_type"] == ("Z" if swapped else "X")
     assert descriptor["data_qubits"] == ([0, 1, 2] if swapped else [0, 3, 6])
+
+
+@pytest.mark.parametrize(("dx", "dz", "count"), [(3, 3, 1), (5, 5, 1), (3, 3, 2), (5, 5, 2), (3, 5, 2)])
+def test_correction_declaration_and_executed_reference(dx, dz, count):
+    def build(correction):
+        if count == 1:
+            return readout_builder(dx, dz=dz, correction=correction)[0]
+        return multiple_teleportations_builder(dx, dz, correction=correction)[0]
+
+    mask, executed = build("mask"), build("executed")
+    tc = executed.to_tick_circuit()
+    baseline = mask.to_tick_circuit()
+    assert executed.build_dem() == mask.build_dem()
+    for key in ("observables", "detectors", "measurement_keys"):
+        assert tc.get_meta(key) == baseline.get_meta(key)
+    readouts = json.loads(tc.get_meta("teleportation_readouts"))
+    assert [entry["correction"] for entry in readouts] == ["executed"] * count
+    assert [entry["correction"] for entry in executed.build_algorithm_descriptor()["teleportation_readouts"]] == [
+        "executed",
+    ] * count
+    assert [entry["correction"] for entry in json.loads(baseline.get_meta("teleportation_readouts"))] == [
+        "mask",
+    ] * count
+    observable = json.loads(tc.get_meta("observables"))[0]
+    assert observable["crossed_teleportations"] == (["A"] if count == 1 else ["B", "A"])
+    refs = [entry["resource_sign_reference"] for entry in readouts]
+    assert refs == [int(dx != dz)] * count
+    expected_reference = observable["reference"] ^ (sum(refs) % 2)
+    # Inspect each step too: refs=(1, 1) cancel, hiding omission of both XORs.
+    from pecos.qec.surface._detection_events import _remove_executed_correction
+
+    intermediate = tc.circuit_definitions()["observables"][0]
+    reference = observable["reference"]
+    for readout in reversed(readouts):
+        _remove_executed_correction(intermediate, readout, dict(enumerate(range(tc.num_measurements()))))
+        reference ^= readout["resource_sign_reference"]
+        assert intermediate["reference"] == reference
+    assert intermediate["reference"] == expected_reference
+    removed = {mid for entry in readouts for key in ("meas_ids", "resource_sign_meas_ids") for mid in entry[key]}
+    records = [mid for mid in observable["meas_ids"] if mid not in removed]
+    # Zero rows expose the derived reference independently of the record transformation.
+    rows = [[0] * tc.num_measurements()]
+    rows.extend(simulate_tick_circuit(tc, seed)[0] for seed in range(8))
+    _, flips = extract_detection_events_and_observables(tc, rows, executed_corrections=True)
+    assert list(flips) == [
+        [observable["id"]] if (expected_reference ^ (sum(row[mid] for mid in records) % 2)) else [] for row in rows
+    ]
+    # Declaration does not change how the builder's own static rows are interpreted.
+    assert extract_detection_events_and_observables(tc, rows[1:])[1] == [[]] * 8
+
+
+def test_invalid_correction_mode():
+    with pytest.raises(ValueError, match="Invalid SZ correction mode"):
+        readout_builder(correction="automatic")
+
+
+@pytest.mark.parametrize(("count", "distance"), [(1, 3), (1, 5), (2, 3)])
+def test_executed_extraction_on_program_rows(sz_program, monkeypatch, distance, count):
+    import pecos
+    from pecos._traced_circuit import measurement_ids_in_execution_order
+    from pecos.guppy_gen.transversal import get_transversal_num_qubits
+    from pecos.testing import measurement_partition_from_builder, measurement_partition_from_trace
+    from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
+
+    # One pre/post round per SZ suffices for noiseless measurement transcription.
+    program, _ = sz_program(distance, count, num_rounds=1)
+    num_qubits = get_transversal_num_qubits("surface", distance)
+    traced, traces = _trace_program_to_tick_circuit_with_result_traces(program, num_qubits)
+    # Conditional Paulis introduce no measurements, so one noiseless traced path suffices.
+    monkeypatch.setattr(
+        "pecos.testing._trace_program_to_tick_circuit_with_result_traces",
+        lambda _program, _num_qubits: (traced, traces),
+    )
+    scopes = {"data": "D", "anc": "A", "second": "B"}
+    source = measurement_partition_from_trace(program, num_qubits, scopes)
+    if count == 1:
+        builder, _ = readout_builder(distance, correction="executed", rounds=1)
+        mask, _ = readout_builder(distance, rounds=1)
+    else:
+        builder, _ = multiple_teleportations_builder(distance, distance, correction="executed", rounds=1)
+        mask, _ = multiple_teleportations_builder(distance, distance, rounds=1)
+    target = measurement_partition_from_builder(builder)
+    assert source.keys() == target.keys()
+    permutation = {}
+    for key, ordinals in source.items():
+        permutation.update(zip(ordinals, target[key], strict=True))
+    tc = builder.to_tick_circuit()
+    assert sorted(permutation.values()) == list(range(tc.num_measurements()))
+    ordinal_by_id = {mid: ordinal for ordinal, mid in enumerate(measurement_ids_in_execution_order(traced))}
+    results = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(num_qubits)
+        .seed(123)
+        .run(64)
+        .to_shot_map()
+        .to_dict()
+    )
+    rows = [[0] * tc.num_measurements() for _ in range(64)]
+    offsets = {}
+    for trace in traces:
+        if not trace["result_ids"]:
+            continue
+        name = trace["name"]
+        offset = offsets.get(name, 0)
+        for index, mid in enumerate(trace["result_ids"]):
+            destination = permutation[ordinal_by_id[mid]]
+            for row, values in zip(rows, results[name], strict=True):
+                row[destination] = int(values if isinstance(values, int) else values[offset + index])
+        offsets[name] = offset + len(trace["result_ids"])
+    events, flips = extract_detection_events_and_observables(tc, rows, executed_corrections=True)
+    assert events == flips == [[]] * 64
+    events, flips = extract_detection_events_and_observables(tc, rows)
+    assert events == [[]] * 64
+    decision_xors = [decisions if count == 1 else sum(decisions) % 2 for decisions in results["sz_correction"]]
+    assert set(decision_xors) == {0, 1}
+    assert list(flips) == [[0] if decision else [] for decision in decision_xors]
+    with pytest.raises(ValueError, match="must declare correction='executed'"):
+        extract_detection_events_and_observables(mask.to_tick_circuit(), rows, executed_corrections=True)

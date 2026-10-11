@@ -365,6 +365,9 @@ def measurement_partition_from_trace(
     rounds: dict[str, int] = defaultdict(int)
     seen_labels: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for record in records:
+        # Classical derivations (sz_correction, t_correction) have no measurement provenance.
+        if record.get("result_ids") == []:
+            continue
         name = record.get("name")
         if not isinstance(name, str):
             msg = f"Invalid measurement tag: {name!r}"

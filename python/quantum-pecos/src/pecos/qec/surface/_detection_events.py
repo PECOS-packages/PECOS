@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, overload
+
+from pecos._traced_circuit import measurement_ids_in_execution_order
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -97,9 +100,22 @@ class _ObservableFlips(Sequence[list[int]]):
         return self._values == other
 
 
+def _remove_executed_correction(observable: dict, readout: dict, positions: dict[int, int]) -> None:
+    """Remove one crossed correction from a copied mask, preserving multiplicity."""
+    if readout.get("correction") != "executed":
+        msg = f"Crossed teleportation {readout['ancilla_patch']!r} must declare correction='executed'"
+        raise ValueError(msg)
+    _validate_observable_references([observable])
+    for mid in (*readout["meas_ids"], *readout["resource_sign_meas_ids"]):
+        observable["measurements"].remove(positions[mid])
+    observable["reference"] ^= readout["resource_sign_reference"]
+
+
 def extract_detection_events_and_observables(
     tick_circuit: TickCircuit,
     results: Iterable[Sequence[int]],
+    *,
+    executed_corrections: bool = False,
 ) -> tuple[list[list[int]], Sequence[list[int]]]:
     """Extract fired detector ids and reference-relative observable ids in id order.
 
@@ -108,8 +124,24 @@ def extract_detection_events_and_observables(
     Observable flips are a cached, reusable sequence: accessing it validates
     reader ids/references and raises MissingObservableReferenceError when needed.
     Discarding it leaves detector-only callers unaffected by absent references.
+    For program-corrected rows, ``executed_corrections=True`` removes crossed SZ
+    correction records and XORs their resource-sign references. Every crossing
+    must be declared ``correction="executed"``. Static builder rows always use
+    the default mask extraction, even with an executed declaration.
     """
     definitions = tick_circuit.circuit_definitions()
+    observables = definitions["observables"]
+    if executed_corrections:
+        metadata = {obs["id"]: obs for obs in json.loads(tick_circuit.get_meta("observables") or "[]")}
+        readouts = {
+            readout["ancilla_patch"]: readout
+            for readout in json.loads(tick_circuit.get_meta("teleportation_readouts") or "[]")
+        }
+        positions = {mid: position for position, mid in enumerate(measurement_ids_in_execution_order(tick_circuit))}
+        observables = [dict(obs, measurements=list(obs["measurements"])) for obs in observables]
+        for obs in observables:
+            for label in metadata.get(obs["id"], {}).get("crossed_teleportations", []):
+                _remove_executed_correction(obs, readouts[label], positions)
     num_meas = definitions["num_measurements"]
     detection_events_per_shot: list[list[int]] = []
     rows: list[tuple[int, ...]] = []
@@ -130,4 +162,4 @@ def extract_detection_events_and_observables(
                 fired_detectors.append(det["id"])
         detection_events_per_shot.append(fired_detectors)
 
-    return detection_events_per_shot, _ObservableFlips(definitions["observables"], rows)
+    return detection_events_per_shot, _ObservableFlips(observables, rows)

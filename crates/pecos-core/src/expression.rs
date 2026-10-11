@@ -29,7 +29,7 @@ impl ExprValue {
     /// Reads the pattern as `u64` and casts to `i64`, regardless of its tag.
     ///
     /// Returns zero if any bits above bit 63 are set. Narrow signed patterns
-    /// are not sign-extended. This lossy accessor also defines shift-count errors.
+    /// are not sign-extended.
     #[must_use]
     pub fn as_i64(&self) -> i64 {
         match self {
@@ -79,6 +79,33 @@ impl fmt::Display for ExprValue {
     }
 }
 
+/// Format an integer pattern at its full width for diagnostics.
+///
+/// Negative patterns use their magnitude; widths above 128 use hexadecimal.
+///
+/// # Errors
+/// Returns an error if the pattern cannot be converted to a bit vector.
+pub fn format_integer(bits: &BitUInt, signed: bool) -> Result<String, PecosError> {
+    let is_negative = signed && negative(bits);
+    let magnitude = if is_negative {
+        negate(bits)
+    } else {
+        bits.clone()
+    };
+    let magnitude =
+        crate::bitvec::from_expr_value(&ExprValue::Unsigned(magnitude), usize::from(bits.size()))?;
+    let magnitude = if magnitude.len() <= 128 {
+        crate::bitvec::to_decimal_string(&magnitude)
+    } else {
+        crate::bitvec::to_hex_string(&magnitude)
+    };
+    Ok(if is_negative {
+        format!("-{magnitude}")
+    } else {
+        magnitude
+    })
+}
+
 /// Widen a value according to its tag, promoting booleans as unsigned integers.
 /// Reuse integer storage unchanged when no growth is needed.
 fn widen_to(value: ExprValue, target: u16) -> BitUInt {
@@ -103,7 +130,7 @@ fn widen_pair(a: ExprValue, b: ExprValue) -> (BitUInt, BitUInt) {
 }
 
 fn arithmetic_shr(value: &BitUInt, count: u16) -> BitUInt {
-    let count = count % value.size();
+    let count = count.min(value.size());
     let mut result = value >> count;
     if negative(value) {
         for bit in (value.size() - count)..value.size() {
@@ -144,35 +171,34 @@ pub fn eval_unary_op(op: &str, value: ExprValue) -> Result<ExprValue, PecosError
 /// inputs are signed. Right shifts follow the left input's tag. Comparisons
 /// return unsigned 64-bit zero or one; logical operations return booleans.
 ///
-/// Shift counts deliberately preserve PHIR's legacy rules: reject a negative
-/// `as_i64()` reading, truncate the `as_u64()` reading to 16 bits, and reduce
-/// modulo the evaluation width only for arithmetic right shifts.
-///
-/// The rejection depends on the count's width, not on its tag: a signed count
-/// narrower than 64 bits is read at face value, so a signed eight-bit `0xFF`
-/// shifts by 255 rather than erroring as negative one.
-///
-/// The count is also read before the operands widen, and both directions of
-/// that matter. Widening a narrow signed count would sign-extend it, so the
-/// eight-bit `0xFF` above would become negative one and error instead of
-/// shifting. Widening a negative count past 64 bits would set a word above the
-/// first, and the lossy accessor reports zero for that, so the count would
-/// silently become a shift by nothing rather than an error. #879 covers
-/// whether to replace this family of rules.
+/// Shift counts use their full mathematical value and own signedness tag.
+/// Negative signed counts are errors. Counts at or beyond the evaluation width
+/// yield zero, or all sign bits for an arithmetic right shift.
 ///
 /// # Errors
 /// Returns an error for division by zero, a negative shift count, or an
 /// unsupported operator.
 pub fn eval_binary_op(op: &str, lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, PecosError> {
-    // Read truth values and the original shift-count pattern before consuming
-    // operands. Widening can change the lossy reading of a signed count.
+    // Inspect the count at its own width and tag before widening the operands.
     match op {
         "&&" => return Ok(ExprValue::Boolean(lhs.as_bool() && rhs.as_bool())),
         "||" => return Ok(ExprValue::Boolean(lhs.as_bool() || rhs.as_bool())),
         _ => {}
     }
     let shift_count = match op {
-        "<<" | ">>" => rhs.as_u64(),
+        "<<" | ">>" => match &rhs {
+            ExprValue::Signed(bits) if negative(bits) => {
+                return Err(PecosError::Input(format!(
+                    "Negative shift amount: {}",
+                    format_integer(bits, true)?
+                )));
+            }
+            ExprValue::Signed(bits) | ExprValue::Unsigned(bits) => bits
+                .to_u64()
+                .and_then(|count| u16::try_from(count).ok())
+                .unwrap_or(u16::MAX),
+            ExprValue::Boolean(value) => u16::from(*value),
+        },
         _ => 0,
     };
     let lhs_signed = matches!(lhs, ExprValue::Signed(_));
@@ -206,15 +232,7 @@ pub fn eval_binary_op(op: &str, lhs: ExprValue, rhs: ExprValue) -> Result<ExprVa
         "|" => Ok(wrap(&lhs_bits | &rhs_bits)),
         "^" => Ok(wrap(&lhs_bits ^ &rhs_bits)),
         "<<" | ">>" => {
-            let ri = shift_count.cast_signed();
-            if ri < 0 {
-                return Err(PecosError::Input(format!("Negative shift amount: {ri}")));
-            }
-            // Truncating to 16 bits is the rule, not an accident: PHIR and the
-            // Python interpreter both do it, so a count of 65536 shifts by
-            // nothing. #879 asks whether to replace it.
-            #[allow(clippy::cast_possible_truncation)]
-            let shift = shift_count as u16;
+            let shift = shift_count;
             if op == "<<" {
                 Ok(wrap(&lhs_bits << shift))
             } else if lhs_signed {

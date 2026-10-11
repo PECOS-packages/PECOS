@@ -414,18 +414,18 @@ class PhirClassicalInterpreter:
                     return _trunc_mod(li, ri) & _MASK64, True, False
                 return (lbits % rbits) & _MASK64, False, False
             case "<<":
-                if ri < 0:
+                if rsigned and ri < 0:
                     msg = f"Negative shift amount: {ri}"
                     raise ValueError(msg)
-                shift = rbits & 0xFFFF
+                shift = rbits
                 return ((lbits << shift) & _MASK64 if shift < 64 else 0), result_signed, False
             case ">>":
-                if ri < 0:
+                if rsigned and ri < 0:
                     msg = f"Negative shift amount: {ri}"
                     raise ValueError(msg)
                 if lsigned:  # arithmetic shift (sign-extends), tagged by the LHS
-                    return (li >> (ri % 64)) & _MASK64, True, False
-                shift = rbits & 0xFFFF
+                    return (li >> min(rbits, 64)) & _MASK64, True, False
+                shift = rbits
                 return (lbits >> shift if shift < 64 else 0), False, False
             case "==":
                 return int(lbits == rbits), False, False

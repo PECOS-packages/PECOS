@@ -343,8 +343,8 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_shift_count_uses_shared_accessor() {
-        for (index, left, right) in [(2, 128, 0), (3, 2048, 0), (64, 8, 8), (128, 8, 8)] {
+    fn unsigned_shift_count_uses_full_value() {
+        for (index, left, right) in [(2, 128, 0), (3, 2048, 0), (64, 0, 0), (128, 0, 0)] {
             let mut count = BitVec::repeat(false, 129);
             count.set(index, true);
             let context = RegisterContext(count);
@@ -365,9 +365,9 @@ mod tests {
         let context = RegisterContext(BitVec::new());
         for (op, count, expected) in [
             ("<<", "64", 0),
-            ("<<", "65536", 1),
-            ("<<", "18446744073709551617", 1),
-            (">>", "64", 1),
+            ("<<", "65536", 0),
+            ("<<", "18446744073709551617", 0),
+            (">>", "64", 0),
         ] {
             let expr = binary(op, integer("1"), integer(count));
             assert_eq!(
@@ -378,11 +378,11 @@ mod tests {
             );
         }
         let expr = binary("<<", integer("1"), integer("9223372036854775808"));
-        assert!(
+        assert_eq!(
             evaluate_expression_bitvec(&expr, &context, 100)
-                .unwrap_err()
-                .to_string()
-                .contains("Negative shift amount")
+                .unwrap()
+                .as_u64(),
+            0
         );
     }
 

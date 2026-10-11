@@ -88,14 +88,18 @@ pub fn operand_to_pyint<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyA
     obj.py().import("operator")?.getattr("index")?.call1((obj,))
 }
 
-/// Shift counts retain the low sixteen bits of the mathematical value.
+/// Read a count once, rejecting negatives and saturating beyond all storage widths.
 pub fn shift_count(obj: &Bound<'_, PyAny>) -> PyResult<u16> {
     let value = operand_to_pyint(obj)?;
-    if let Ok(small) = value.extract::<i64>() {
-        let [low, high, ..] = small.to_le_bytes();
-        return Ok(u16::from_le_bytes([low, high]));
+    if value.lt(0)? {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "negative shift count",
+        ));
     }
-    value.bitand(u16::MAX)?.extract()
+    if value.ge(u16::MAX)? {
+        return Ok(u16::MAX);
+    }
+    value.extract()
 }
 
 /// Convert `u64` words (little-endian) representing a two's complement value

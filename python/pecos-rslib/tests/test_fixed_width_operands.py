@@ -50,8 +50,8 @@ def wrap(value, width, cls):
         (lambda: I(100, 0) == U(100, 2**70), False),
         (lambda: I(100, 5) == "101", True),
         (lambda: U(8, 5) == I(8, 5) == 5, True),
-        (lambda: int(I(600, 1) << I(8, -1)), 0),
-        (lambda: int(U(8, 1) << I(8, -1)), 0),
+        (lambda: int(I(600, 1) << I(8, -1)), ValueError),
+        (lambda: int(U(8, 1) << I(8, -1)), ValueError),
         (lambda: int(I(100, I(100, 2**70))), 2**70),
         (lambda: int(U(100, I(100, -1))), 2**100 - 1),
         (lambda: int(I(100, 0) + 2**63), 2**63),
@@ -62,14 +62,18 @@ def wrap(value, width, cls):
         (lambda: int(U(100, U(100, 2**70))), 2**70),
         (lambda: int(I(8, 0) + ("1" + "0" * 8)), -256),
         (lambda: int(I(8, 0) | ("1" * 9)), -1),
-        (lambda: int(U(8, 1) << U(100, 2**70 + 3)), 8),
+        (lambda: int(U(8, 1) << U(100, 2**70 + 3)), 0),
         (lambda: int(U(8, 12) // I(100, 2**70 + 3)), 4),
         (lambda: int(I(8, "1010")), 10),
     ],
 )
 def test_packet_rows(expression, expected):
     """Pin each non-mutating example in the packet, including unchanged controls."""
-    assert expression() == expected
+    if expected is ValueError:
+        with pytest.raises(ValueError, match="negative shift count"):
+            expression()
+    else:
+        assert expression() == expected
 
 
 @pytest.mark.parametrize("cls", [I, U])
@@ -190,7 +194,11 @@ def test_index_operand(cls, value):
     assert int(cls(130, operand)) == wrap(value, 130, cls)
     assert int(cls(130, 0) + operand) == wrap(value, 130, cls)
     assert (cls(130, 0) < operand) == (0 < value)
-    assert int(cls(8, 1) << operand) == wrap(1 << (value & 65535), 8, cls)
+    if value < 0:
+        with pytest.raises(ValueError, match="negative shift count"):
+            cls(8, 1) << operand
+    else:
+        assert int(cls(8, 1) << operand) == (wrap(1 << value, 8, cls) if value < 9 else 0)
     result = cls(130, 0)
     result.set(operand)
     assert int(result) == wrap(value, 130, cls)
@@ -285,9 +293,10 @@ def test_comparison_no_coercion():
 
 
 def test_signed_shift_count():
-    """A narrow negative count contributes sixteen low bits, not its raw pattern."""
-    assert int(I(600, 1) << I(8, -1)) == 0
-    assert int(I(600, -2) >> I(8, -1)) == -1
+    """A narrow signed negative count is an error in both directions."""
+    for op in (operator.lshift, operator.rshift):
+        with pytest.raises(ValueError, match="negative shift count"):
+            op(I(600, -2), I(8, -1))
 
 
 def test_u64_range_signed_operand():
@@ -347,10 +356,10 @@ def test_copy_and_set_keep_declared_width(cls, operand_cls, width):
         "0b" + format(2**100 + 3, "b"),
     ],
 )
-def test_wide_shift_low_bits(cls, operand):
-    """All count representations preserve their low bits, for both shifts."""
-    assert int(cls(8, 1) << operand) == 8
-    assert int(cls(8, 64) >> operand) == 8
+def test_wide_shift_saturates(cls, operand):
+    """All count representations saturate, for both shifts."""
+    assert int(cls(8, 1) << operand) == 0
+    assert int(cls(8, 64) >> operand) == 0
 
 
 def test_mixed_division_and_remainder():
@@ -451,7 +460,11 @@ def test_comparison_propagates_index_errors(cls):
 def test_shift_count_converts_once(cls, value):
     """A shift count consults __index__ exactly once, small or wide."""
     count = CountingIndex(value)
-    assert int(cls(8, 1) << count) == wrap(1 << (value & 65535), 8, cls)
+    if value < 0:
+        with pytest.raises(ValueError, match="negative shift count"):
+            cls(8, 1) << count
+    else:
+        assert int(cls(8, 1) << count) == (wrap(1 << value, 8, cls) if value < 9 else 0)
     assert count.calls == 1
 
 
@@ -467,3 +480,22 @@ def test_comparison_uses_the_type_level_index_protocol(cls):
     """Support is decided by the type, as operator.index decides it."""
     assert cls(8, 5) == HiddenIndex(5)
     assert not (cls(8, 0) == NoisyGetattr())
+
+
+@pytest.mark.parametrize("cls", [I, U])
+def test_shift_rule_boundaries(cls):
+    """Fix demonstration: full counts saturate at receiver storage width."""
+    width = 64 + (cls is I)
+    for count in (width - 1, width, width + 1, 65535, 65536, 2**64 + 1, U(64, 2**63)):
+        n = int(count)
+        assert int(cls(64, 1) << count) == (wrap(1 << n, 64, cls) if n < width else 0)
+        assert int(cls(64, -8) >> count) == (-1 if cls is I else (2**64 - 8) >> n)
+    with pytest.raises(ValueError, match="negative shift count"):
+        cls(64, 1) << I(8, -1)
+
+
+@pytest.mark.parametrize("cls", [I, U])
+def test_shift_rule_monotonic(cls):
+    """Fix demonstration: a zero left shift never becomes nonzero again."""
+    for count in range(8 + (cls is I), 65538):
+        assert int(cls(8, 1) << count) == 0

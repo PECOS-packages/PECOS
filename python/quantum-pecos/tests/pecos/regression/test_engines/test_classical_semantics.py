@@ -25,13 +25,13 @@ from pecos.simulators import SparseStab
 
 @pytest.mark.parametrize("width", [8, 16, 32, 64])
 def test_unsigned_arithmetic_is_fixed_width(width: int) -> None:
-    """Unsigned operations use logical shifts, masked shifts, and wrapping arithmetic."""
+    """Unsigned operations use logical shifts, saturating shifts, and wrapping arithmetic."""
     semantics = UnsignedClassicalSemantics(width)
     all_ones = (1 << width) - 1
 
     assert int(semantics.eval_op(">>", all_ones, 1)) == all_ones >> 1
-    assert int(semantics.eval_op("<<", 1, width)) == 1
-    assert int(semantics.eval_op(">>", 0b100, width + 1)) == 0b10
+    assert int(semantics.eval_op("<<", 1, width)) == 0
+    assert int(semantics.eval_op(">>", 0b100, width + 1)) == 0
     assert int(semantics.eval_op("+", all_ones, 1)) == 0
     assert int(semantics.eval_op("-", 0, 1)) == all_ones
     assert int(semantics.eval_op("*", 1 << (width // 2), 1 << (width // 2))) == 0
@@ -166,7 +166,7 @@ def test_hybrid_engine_masks_and_zero_extends_narrow_bit_variables() -> None:
 
 @pytest.mark.parametrize("width", [0, 3, 12, 48, -8])
 def test_unsigned_semantics_rejects_non_power_of_two_widths(width: int) -> None:
-    """Shift masking requires a positive power-of-two word width."""
+    """The configured word width remains a positive power of two."""
     with pytest.raises(ValueError, match="positive power of two"):
         UnsignedClassicalSemantics(width)
 
@@ -236,3 +236,63 @@ def test_unsigned_set_output_accepts_none_cvar_spec_type() -> None:
     )
 
     assert isinstance(output["value"], BitInt)
+
+
+def test_shift_rule_unsigned_boundaries() -> None:
+    """Fix demonstration: both shifts saturate, even with signed=True."""
+    semantics = UnsignedClassicalSemantics(128)
+    for count in (127, 128, 129, 65535, 65536, 2**64 + 1, 2**127):
+        assert int(semantics.eval_op("<<", 1, count)) == (1 << count if count < 128 else 0)
+        for signed in (False, True):
+            assert int(semantics.eval_op(">>", -8, count, signed=signed)) == ((2**128 - 8) >> count)
+    for count in range(128, 65538):
+        assert int(semantics.eval_op("<<", 1, count)) == 0
+
+
+@pytest.mark.parametrize("width", [8, 64])
+def test_shift_rule_unsigned_count_is_not_wrapped(width: int) -> None:
+    """Fix demonstration: a count of 2**width or more saturates rather than wrapping."""
+    semantics = UnsignedClassicalSemantics(width)
+    for count in (2**width, 2**width + 3):
+        assert int(semantics.eval_op("<<", 1, count)) == 0
+        assert int(semantics.eval_op(">>", 2 ** (width - 1), count)) == 0
+        for op, start in (("<<", 1), (">>", 2 ** (width - 1))):
+            output = {"x": BitUInt(width, start)}
+            semantics.eval_cop({"t": "x", "op": op, "a": "x", "b": count}, output, width=width, shot_id=0)
+            assert int(output["x"]) == 0
+
+
+def test_shift_rule_default_underflow() -> None:
+    """Fix demonstration: the default CVM keeps a negative count loud."""
+    semantics = DefaultClassicalSemantics()
+    output = {"x": BitInt(64, 8), "a": BitInt(64, 1), "b": BitInt(64, 2)}
+    with pytest.raises(ValueError, match="negative shift count"):
+        semantics.eval_cop(
+            {"t": "x", "op": ">>", "a": "x", "b": {"op": "-", "a": "a", "b": "b"}},
+            output,
+            width=64,
+            shot_id=0,
+        )
+
+
+def test_shift_rule_default_boundary() -> None:
+    """Compatibility pin: the default CVM saturates a count at its storage width."""
+    for op in ("<<", ">>"):
+        output = {"x": BitInt(64, 8)}
+        DefaultClassicalSemantics().eval_cop(
+            {"t": "x", "op": op, "a": "x", "b": 65},
+            output,
+            width=64,
+            shot_id=0,
+        )
+        assert int(output["x"]) == 0
+
+
+@pytest.mark.parametrize("count", [2**64 + 1, 2**70])
+def test_shift_rule_default_literal_count_keeps_its_value(count: int) -> None:
+    """Fix demonstration: an oversized literal count saturates, not wraps or errors."""
+    semantics = DefaultClassicalSemantics()
+    for op, start, expected in (("<<", 8, 0), (">>", 8, 0), (">>", -8, -1)):
+        output = {"x": BitInt(64, start)}
+        semantics.eval_cop({"t": "x", "op": op, "a": "x", "b": count}, output, width=64, shot_id=0)
+        assert int(output["x"]) == expected

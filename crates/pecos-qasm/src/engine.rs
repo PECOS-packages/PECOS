@@ -1412,19 +1412,9 @@ impl QASMEngine {
         match &value {
             ExprValue::Boolean(value) => Ok(u64::from(*value)),
             ExprValue::Signed(bits) if bits.get_bit(bits.size() - 1) => {
-                // Display on ExprValue is lossy above 64 bits. Format the full magnitude.
-                let magnitude = &BitUInt::zero(bits.size()) - bits;
-                let magnitude = pecos_core::bitvec::from_expr_value(
-                    &ExprValue::Unsigned(magnitude),
-                    usize::from(bits.size()),
-                )?;
-                let magnitude = if magnitude.len() <= 128 {
-                    pecos_core::bitvec::to_decimal_string(&magnitude)
-                } else {
-                    pecos_core::bitvec::to_hex_string(&magnitude)
-                };
                 Err(PecosError::Input(format!(
-                    "{name} requires a non-negative argument, got -{magnitude}"
+                    "{name} requires a non-negative argument, got {}",
+                    pecos_core::expression::format_integer(bits, true)?
                 )))
             }
             ExprValue::Signed(bits) | ExprValue::Unsigned(bits) => {

@@ -2662,6 +2662,8 @@ numpy-compat = [
 ]
 test = [
     { name = "hypothesis" },
+    { name = "llvmlite", version = "0.45.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'x86_64' and extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-13-quantum-pecos-cuda13') or (platform_machine != 'x86_64' and extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (platform_machine != 'x86_64' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13') or (sys_platform != 'darwin' and extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-13-quantum-pecos-cuda13') or (sys_platform != 'darwin' and extra != 'extra-13-quantum-pecos-cuda13' and extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (sys_platform != 'darwin' and extra != 'extra-13-quantum-pecos-cuda13' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13') or (sys_platform != 'darwin' and extra != 'extra-13-quantum-pecos-cuda12' and extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (sys_platform != 'darwin' and extra != 'extra-13-quantum-pecos-cuda12' and extra != 'extra-15-pecos-workspace-cuda13' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13') or (sys_platform != 'darwin' and extra != 'extra-13-quantum-pecos-cuda12' and extra != 'extra-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
+    { name = "llvmlite", version = "0.48.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin' or (extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-13-quantum-pecos-cuda13') or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
     { name = "matplotlib" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2719,6 +2721,7 @@ numpy-compat = [
 ]
 test = [
     { name = "hypothesis", specifier = "==6.152.1" },
+    { name = "llvmlite", specifier = ">=0.45.1" },
     { name = "matplotlib", specifier = ">=2.2.0" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-cov", specifier = "==7.1.0" },

@@ -22,17 +22,30 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from pecos_rslib.qec import SampleBatch
+
 from pecos.qec.dem import DetectorErrorModel
 from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 from pecos.qec.surface.gadgets import default_allocation
 from pecos.qec.surface.logical_circuit import LogicalCircuitBuilder
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from pecos_rslib.quantum import TickCircuit
 
+    from pecos.decoders import DecoderSpec
     from pecos.qec.surface.patch import SurfacePatch
+
+
+@dataclass(frozen=True)
+class DecodedDecisionRun:
+    """Shot records selected by decoded and raw first-correction decisions."""
+
+    results: dict[str, list]
+    raw_results: dict[str, list]
+    raw: list[bool]
+    decoded: list[bool]
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,78 @@ class TeleportationDecisionModel:
         observable = json.loads(self.circuit.get_meta("observables"))[0]
         raw = [bool(sum(row[mid] for mid in observable["meas_ids"]) % 2) for row in rows]
         return events, raw
+
+    def decode_decisions(
+        self,
+        results: Mapping[str, Sequence],
+        decoder: DecoderSpec,
+        *,
+        dem: DetectorErrorModel,
+    ) -> tuple[list[bool], list[bool]]:
+        """Return raw decisions and decisions XORed with predicted observable flips.
+
+        Rows use this window's detector count so SampleBatch.decode validates
+        compatibility with the supplied DEM, including for mismatched windows.
+        """
+        events, raw = self.detection_events(results)
+        width = len(json.loads(self.circuit.get_meta("detectors")))
+        rows = [[0] * width for _ in events]
+        for row, fired in zip(rows, events, strict=True):
+            for detector in fired:
+                row[detector] = 1
+        predictions = (
+            SampleBatch(rows, [0] * len(raw), num_observables=1)
+            .decode(
+                str(dem),
+                decoder,
+                predictions=True,
+            )
+            .predictions
+        )
+        decoded = [bit ^ bool(prediction & 1) for bit, prediction in zip(raw, predictions, strict=True)]
+        return raw, decoded
+
+    def run_decoded(
+        self,
+        run: Callable[[bool], Mapping[str, Sequence]],
+        decoder: DecoderSpec,
+        *,
+        dem: DetectorErrorModel,
+    ) -> DecodedDecisionRun:
+        """Run both forced variants at full shot count (2x cost), decoding once.
+
+        Results and raw_results are exact: programs share pre-branch source,
+        each shot's seed depends only on (run seed, shot index), and QIS
+        operations run in program order. Window equality checks the pre-branch
+        half at runtime. The caller must bind identical seeds and noise.
+        """
+        variants = tuple(run(forced) for forced in (False, True))
+        if variants[0].keys() != variants[1].keys():
+            msg = "Forced variants must have the same tags"
+            raise ValueError(msg)
+        counts = {len(values) for results in variants for values in results.values()}
+        if len(counts) != 1:
+            msg = "Every tag in both forced variants must have the same shot count"
+            raise ValueError(msg)
+        for forced, results in zip((False, True), variants, strict=True):
+            if "t_correction" not in results:
+                msg = "Missing t_correction; the first decision must be forced"
+                raise ValueError(msg)
+            for records in results["t_correction"]:
+                first = records[0] if isinstance(records, Sequence) and records else records
+                if first != forced:
+                    msg = f"First t_correction must equal forced decision {forced}"
+                    raise ValueError(msg)
+        if self.detection_events(variants[0]) != self.detection_events(variants[1]):
+            msg = "Pre-decision windows differ: runs did not share a seed or differ before the decision"
+            raise ValueError(msg)
+        raw, decoded = self.decode_decisions(variants[0], decoder, dem=dem)
+        return DecodedDecisionRun(
+            results={tag: [variants[bit][tag][k] for k, bit in enumerate(decoded)] for tag in variants[0]},
+            raw_results={tag: [variants[bit][tag][k] for k, bit in enumerate(raw)] for tag in variants[0]},
+            raw=raw,
+            decoded=decoded,
+        )
 
     def _transcribe(self, results: Mapping[str, Sequence]) -> list[list[int]]:
         if "hook_accepted" in results:

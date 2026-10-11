@@ -289,7 +289,9 @@ impl ClassicalEngine for PhirEngine {
 
         // Check if all operations have been processed
         if self.current_op >= self.function_ops.len() {
-            self.processor.finalize_exports();
+            self.processor
+                .finalize_exports()
+                .map_err(|e| PecosError::Input(e.to_string()))?;
         }
 
         Ok(())
@@ -303,6 +305,11 @@ impl ClassicalEngine for PhirEngine {
 
         for (export_name, value) in export_results {
             let data = match value {
+                TypedValue::Aggregate(_) => {
+                    return Err(PecosError::Input(
+                        "arith.result: cannot export aggregate".to_string(),
+                    ));
+                }
                 TypedValue::I8(v) => Data::I32(i32::from(v)),
                 TypedValue::I16(v) => Data::I32(i32::from(v)),
                 TypedValue::I32(v) => Data::I32(v),
@@ -393,7 +400,9 @@ impl ControlEngine for PhirEngine {
             Ok(commands) => {
                 if commands.is_empty()? {
                     // No quantum operations, finalize and return results immediately
-                    self.processor.finalize_exports();
+                    self.processor
+                        .finalize_exports()
+                        .map_err(|e| PecosError::Input(e.to_string()))?;
                     Ok(EngineStage::Complete(self.get_results()?))
                 } else {
                     Ok(EngineStage::NeedsProcessing(commands))
@@ -417,7 +426,9 @@ impl ControlEngine for PhirEngine {
                     // No more commands, finalize exports now that all operations are done.
                     // A final non-empty batch is sent first even when the program has
                     // finished; the next call then completes.
-                    self.processor.finalize_exports();
+                    self.processor
+                        .finalize_exports()
+                        .map_err(|e| PecosError::Input(e.to_string()))?;
                     Ok(EngineStage::Complete(self.get_results()?))
                 } else {
                     Ok(EngineStage::NeedsProcessing(commands))

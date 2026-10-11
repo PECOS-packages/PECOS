@@ -237,6 +237,12 @@ pub enum ClassicalOp {
     // Constants
     /// Integer constant
     ConstInt(i64),
+    /// Recursive zero of the declared result type.
+    AggregateZero,
+    /// Replace a field at a constant index path.
+    InsertValue(Vec<usize>),
+    /// Read a field at a constant index path.
+    ExtractValue(Vec<usize>),
     /// Float constant
     ConstFloat(f64),
     /// Boolean constant
@@ -713,6 +719,9 @@ impl ClassicalOp {
             ClassicalOp::Bitcast => "bitcast",
             ClassicalOp::Select => "select",
             ClassicalOp::ConstInt(_) => "const_int",
+            ClassicalOp::AggregateZero => "aggregate_zero",
+            ClassicalOp::InsertValue(_) => "insertvalue",
+            ClassicalOp::ExtractValue(_) => "extractvalue",
             ClassicalOp::ConstFloat(_) => "const_float",
             ClassicalOp::ConstBool(_) => "const_bool",
             ClassicalOp::ConstString(_) => "const_string",
@@ -749,7 +758,8 @@ impl ClassicalOp {
             | ClassicalOp::Lt
             | ClassicalOp::Le
             | ClassicalOp::Gt
-            | ClassicalOp::Ge => Some(2),
+            | ClassicalOp::Ge
+            | ClassicalOp::InsertValue(_) => Some(2),
 
             // Unary operations
             // Unary operations
@@ -766,10 +776,12 @@ impl ClassicalOp {
             | ClassicalOp::Shl(_)
             | ClassicalOp::LShr(_)
             | ClassicalOp::Shr(_)
-            | ClassicalOp::Assign => Some(1),
+            | ClassicalOp::Assign
+            | ClassicalOp::ExtractValue(_) => Some(1),
 
             // Constants (no operands)
-            ClassicalOp::ConstInt(_)
+            ClassicalOp::AggregateZero
+            | ClassicalOp::ConstInt(_)
             | ClassicalOp::ConstFloat(_)
             | ClassicalOp::ConstBool(_)
             | ClassicalOp::ConstString(_) => Some(0),

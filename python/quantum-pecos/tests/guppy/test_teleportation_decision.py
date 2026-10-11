@@ -6,11 +6,13 @@
 import inspect
 import json
 from collections import defaultdict
+from itertools import pairwise
 
 import numpy as np
 import pecos_rslib as prs
 import pytest
 from pecos import sim, stab_vec
+from pecos._traced_circuit import measurement_ids_in_execution_order
 from pecos.decoders import tesseract
 from pecos.guppy_gen import make_surface_t_teleportation
 from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
@@ -281,8 +283,10 @@ def _check_program_statistics(rates, shots):
     singles, pairs = _binomial_maxima(events, dem, width)
     print(f"Statistics {rates}, shots={shots}: max |z| singles={singles:.6f}, pairs={pairs:.6f}")
     # Seeded null maxima: all-channel 3.224/3.783, p1=0 2.522/4.028,
-    # prep-only 1.919/4.290 (singles/pairs). Leave margin below the mapping
-    # mutations; even the D X0/X1 swap reaches 6.293 in the pairs.
+    # prep-only 1.919/4.290 (singles/pairs). Swapping D X0/X1 at all-channel
+    # 0.002 gives 8.494/13.849 (2000 shots, program seed 712, DEM seed 42).
+    # At p1=0, other channels 0.005, 1000 shots, the same swap passes: 3.915/4.028.
+    # The all-channel case is load-bearing for mapping mutations.
     assert singles < 5.5
     assert pairs < 5.5
 
@@ -328,7 +332,19 @@ def test_mapping_ownership(distance, rounds_before, monkeypatch):
     patch = SurfacePatch.create(distance=distance)
     model = t_teleportation_decision_model(patch, rounds_before)
     circuit = model.traced_circuit
-    mapping = _decision_measurement_map(patch, rounds_before, model.circuit, results)
+    mapping = {}
+    used = set()
+    for name in ("detectors", "observables"):
+        original = json.loads(model.circuit.get_meta(name))
+        mapped = json.loads(circuit.get_meta(name))
+        for before, after in zip(original, mapped, strict=True):
+            assert before["id"] == after["id"]
+            used.update(before["meas_ids"])
+            for ordinal, mid in zip(before["meas_ids"], after["meas_ids"], strict=True):
+                assert mapping.setdefault(ordinal, mid) == mid
+    assert mapping.keys() == used
+    assert len(set(mapping.values())) == len(mapping)
+    positions = {mid: position for position, mid in enumerate(measurement_ids_in_execution_order(circuit))}
     measured = {}
     partners = defaultdict(set)
     for tick in range(circuit.num_ticks()):
@@ -358,14 +374,31 @@ def test_mapping_ownership(distance, rounds_before, monkeypatch):
     }
     assert set(data["D"]).isdisjoint(data["A"])
     keys = json.loads(model.circuit.get_meta("measurement_keys"))
+    occurrences = defaultdict(list)
+    syndrome_positions = defaultdict(list)
     for label, family, index, _segment, occurrence, ordinal in keys["stabilizer"]:
+        if ordinal not in used:
+            continue
         check = getattr(patch.geometry, f"{family.lower()}_stabilizers")[index]
         expected = {data[label][q] for q in check.data_qubits}
         assert measured[mapping[ordinal]][1] == expected, (label, family, index, occurrence)
+        position = positions[mapping[ordinal]]
+        occurrences[label, family, index].append((occurrence, position))
+        syndrome_positions[label].append(position)
+    for key, values in occurrences.items():
+        ordered = [position for _, position in sorted(values)]
+        assert all(a < b for a, b in pairwise(ordered)), key
     data_indices = {qubit: index for index, qubit in enumerate(default_allocation(patch).data_qubits)}
     for label, qubit, ordinal in keys["data"]:
-        if label == "A":
+        if label == "A" and ordinal in used:
             assert measured[mapping[ordinal]][0] == data["A"][data_indices[qubit]]
+    assert all(
+        position < positions[mid]
+        for mid in readouts["teleportation_resource_readout"]
+        for position in syndrome_positions["A"]
+    )
+    helper_mapping = _decision_measurement_map(patch, rounds_before, model.circuit, results)
+    assert mapping == {ordinal: helper_mapping[ordinal] for ordinal in used}
 
 
 def _synthetic_trace(patch, rounds_before):
@@ -438,6 +471,15 @@ def test_trace_rejects_malformed_rounds(fault):
         _decision_measurement_map(patch, 1, model.circuit, records)
 
 
+def test_trace_rejects_duplicate_result_ids():
+    patch = SurfacePatch.create(distance=3)
+    _, records = _synthetic_trace(patch, 1)
+    records[9]["result_ids"] = records[0]["result_ids"]
+    model = t_teleportation_decision_model(patch, 1)
+    with pytest.raises(ValueError, match="Decision trace result ids must be unique"):
+        _decision_measurement_map(patch, 1, model.circuit, records)
+
+
 def test_trace_is_lazy_and_cached_on_frozen_model(monkeypatch):
     calls = []
 
@@ -469,11 +511,50 @@ def test_decoded_decision_beats_raw_on_model_samples():
     raw_errors = sum(row[0] for row in batch.observable_flips())
     decoded_errors = batch.decode(dem, tesseract()).num_errors
     assert raw_errors > 0
-    # Measured 306 raw against 66 decoded. The native model adds faults inside
-    # each CX decomposition (two-qubit patterns, like hook errors) and the
-    # non-fault-tolerant injection's undetectable logical faults (about 10 of the
-    # 66); the logical-gate model had neither and decoded about 5x better.
+    # Measured 306 raw / 66 decoded: non-FT injection has a single-fault floor
+    # of about 29/4000 (10 undetectable seed/first-chain-CX faults, 19 from
+    # degenerate D.Z1-alone and A.Z1-alone patterns). The rest is multi-fault,
+    # with 2.9x the builder's fault mass; at p1=0 decoding is near the floor.
+    # The old logical-gate model had neither this floor nor this fault mass.
     assert raw_errors >= 3 * decoded_errors
+
+
+def test_decoding_improves_known_program_decisions():
+    patch = SurfacePatch.create(distance=3)
+    model = t_teleportation_decision_model(patch, 1)
+    source = render_surface_t_teleportation_module(patch) + """
+@guppy
+def known_decision() -> None:
+    data = prepare_injected_z()
+    resource = prepare_injected_z()
+    syn_data = syndrome_extraction_data(data)
+    syn_resource = syndrome_extraction_anc(resource)
+    output("data_synx", syn_data.synx)
+    output("data_synz", syn_data.synz)
+    output("resource_synx", syn_resource.synx)
+    output("resource_synz", syn_resource.synz)
+    consume_t_resource(data, resource)
+    output("final_data", measure_z_basis(data))
+"""
+    name = "test_known_decision"
+    module = load_guppy_source(source, _get_temp_dir() / f"{name}.py", name)
+    program = module["known_decision"]
+    # Both logical Z states make the noiseless decision zero on every shot.
+    assert model.detection_events(_run(program, patch, seed=5))[1] == [False] * 8
+    p = 0.002
+    noise = prs.depolarizing_noise().with_uniform_probability(0.0).with_p1(p).with_p2(p).with_p_meas(p).with_p_prep(p)
+    results = _run(program, patch, shots=1000, noise=noise, seed=5)
+    raw, decoded = model.decode_decisions(
+        results,
+        tesseract(),
+        dem=model.build_dem(p1=p, p2=p, p_meas=p, p_prep=p),
+    )
+    raw_errors, decoded_errors = sum(raw), sum(decoded)
+    print(f"Known decision: seed=5, shots=1000, raw={raw_errors}, decoded={decoded_errors}")
+    assert raw_errors > 0
+    # Measured 151 raw / 48 decoded at all-channel 0.002, seed 5, 1000 shots;
+    # the 2x bound leaves margin below the measured 3.15x improvement.
+    assert raw_errors >= 2 * decoded_errors
 
 
 def test_later_records_do_not_change_first_decision():

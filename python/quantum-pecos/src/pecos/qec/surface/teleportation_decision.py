@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from pecos.qec.surface.patch import SurfacePatch
 
 
-_TRACE_SEED = 712
+_TRACE_SEED = 712  # Any value works: the stand-in is straight-line, with no measurement-dependent branch.
 _SYNDROME_TAG = re.compile(r"(data|anc):s([xz])(\d+):meas:(\d+)")
 
 

@@ -411,7 +411,32 @@ class StrangeEq(int):
     def __eq__(self, other):
         return ["eq"]
 
+    def __ne__(self, other):
+        return ["ne"]
+
     __hash__ = int.__hash__
+
+
+class HiddenIndex:
+    """Instance attribute lookup hides __index__, as the integer protocol ignores."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+    def __getattribute__(self, name):
+        if name == "__index__":
+            raise AttributeError(name)
+        return object.__getattribute__(self, name)
+
+
+class NoisyGetattr:
+    """No integer protocol, and a __getattr__ that raises for anything missing."""
+
+    def __getattr__(self, name):
+        raise RuntimeError(name)
 
 
 @pytest.mark.parametrize("cls", [I, U])
@@ -435,3 +460,10 @@ def test_comparison_returns_bool(cls):
     """Comparison results are bools even when an int subclass answers oddly."""
     assert (cls(8, 1) == StrangeEq(1)) is True
     assert (cls(8, 1) != StrangeEq(2)) is True
+
+
+@pytest.mark.parametrize("cls", [I, U])
+def test_comparison_uses_the_type_level_index_protocol(cls):
+    """Support is decided by the type, as operator.index decides it."""
+    assert cls(8, 5) == HiddenIndex(5)
+    assert not (cls(8, 0) == NoisyGetattr())

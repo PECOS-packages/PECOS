@@ -383,7 +383,7 @@ impl PyBitUInt {
         let py = other.py();
         let result = if let Ok(value) = other.extract::<PyRef<PyBitUInt>>() {
             op.matches(self.inner.cmp(&value.inner))
-        } else if other.is_instance_of::<PyString>() || other.hasattr("__index__")? {
+        } else if other.is_instance_of::<PyString>() || other.get_type().hasattr("__index__")? {
             self.__int__(py)?
                 .rich_compare(bit_conversion::operand_to_pyint(other)?, op)?
                 .is_truthy()?

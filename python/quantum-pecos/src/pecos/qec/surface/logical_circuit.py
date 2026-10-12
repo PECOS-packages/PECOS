@@ -752,7 +752,8 @@ class LogicalOp:
     # from deterministic observables on the data.
     teleportation: bool = False
     # Gate implemented by resource consumption: "T", "SZ", or None.
-    # Used by build_algorithm_descriptor() to emit the correct boundary gate.
+    # build_algorithm_descriptor() emits TGateInjection for "T"; an "SZ"
+    # teleportation stays a Cnot boundary, its correction carried by the masks.
     teleportation_type: str | None = None
     # SZ correction mode: "mask" (observable masks only) or "executed" (applied in the program).
     correction: Literal["mask", "executed"] = "mask"

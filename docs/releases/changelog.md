@@ -23,10 +23,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python additions
 
-- Rendered surface-code SZ teleportation applies the conditional logical Z in
-  the program and records `sz_correction`. The builder accepts
-  `correction="executed"`; observable extraction with `executed_corrections=True`
-  removes those correction records while preserving the static DEM mask.
+- Rendered surface-code SZ teleportation uses `correction="physical"` by default
+  to execute the conditional logical Z (the Guppy/Helios idiom), or
+  `correction="record"` to only record `sz_correction` for frame tracking.
+  These string modes replace the boolean switch; other values raise `ValueError`.
+  Both modes output the frame bit.
+  The builder's observable mask remains the DEM in all cases; exported
+  `crossed_teleportations` will support a future executed-run transcription.
+  Mask extraction on rows from a program that executed the correction counts it
+  twice.
 
 - `t_teleportation_decision_model(patch, rounds_before)` models the first T/TDG
   teleportation correction decision. `detection_events` transcribes a program's

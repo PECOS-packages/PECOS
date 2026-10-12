@@ -101,7 +101,11 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     parity = [f"final[{q}]" for q in geom.logical_z.data_qubits]
     parity.extend(f"first.syn{family.lower()}[{index}]" for family, index in checks)
     if reference:
-        parity.append("True")
+        msg = (
+            f"Resource-sign reference {reference} for the {dx}x{dz} patch; "
+            "the renderer assumes 0, which holds for every odd square patch"
+        )
+        raise ValueError(msg)
     lines.extend(
         [
             "@guppy",
@@ -152,8 +156,16 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "    return guppy(variant_scoped(transversal_cx_experiment, num_rounds, control_x))",
             "",
             "",
-            "def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_rounds: int):",
-            '    """Y-ancilla teleportation followed by data-only memory and Z readout."""',
+            "def make_sz_teleportation(",
+            '    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, correction: str = "physical",',
+            "):",
+            '    """Y-ancilla SZ teleportation followed by data-only memory and Z readout.',
+            "",
+            '    ``correction="physical"`` (default) executes the conditional logical Z;',
+            '    ``"record"`` applies nothing. Both modes output ``sz_correction``.',
+            '    Other values raise ValueError; accepted values are "physical" and "record"."""',
+            '    if correction not in ("physical", "record"):',
+            '        raise ValueError("correction must be physical or record")',
             "    if rounds_before < 1:",
             (
                 '        raise ValueError("SZ teleportation requires rounds_before >= 1 '
@@ -173,10 +185,15 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "        transversal_cx(data, anc)",
             *_rounds("rounds_after", ("data", "anc")),
             *_readout("anc"),
-            "        correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+            '        if comptime(correction == "physical"):',
+            "            correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+            "        else:",
+            '            output("sz_correction", sz_teleportation_decision(first, final))',
             *_rounds("trailing_data_rounds", ("data",)),
             *_readout("data"),
-            "    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))",
+            "    return guppy(variant_scoped(",
+            "        sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, correction,",
+            "    ))",
             "",
             "",
             "def make_t_teleportation_placeholder(rounds_before: int, rounds_after: int):",

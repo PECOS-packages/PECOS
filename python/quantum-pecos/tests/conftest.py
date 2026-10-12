@@ -10,13 +10,16 @@ import pytest
 
 @pytest.fixture
 def sz_program():
-    """Compose rendered SZ helpers for signed readout and executed-row tests."""
+    """Compose rendered SZ helpers for signed readout tests."""
     from pecos.guppy_gen._module_loader import load_cached_guppy_source
     from pecos.guppy_gen.gadget_render import render_gadget_function
     from pecos.guppy_gen.protocol_render import render_surface_protocol_module
     from pecos.qec.surface import SurfacePatch, gadgets
 
-    def build(distance, count, num_rounds=2):
+    def build(distance, count, num_rounds=2, *, correction="physical"):
+        if not isinstance(correction, str) or correction not in ("physical", "record"):
+            msg = "correction must be physical or record"
+            raise ValueError(msg)
         patch = SurfacePatch.create(distance)
         source = render_surface_protocol_module(patch)
         round_gadget = gadgets.syndrome_round_gadget(patch, gadgets.default_allocation(patch), round_index=0)
@@ -55,7 +58,11 @@ def sz_program():
                 [
                     "    final = measure_z_basis(anc)",
                     f'    output("final_{scope}", final)',
-                    "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+                    (
+                        "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))"
+                        if correction == "physical"
+                        else '    output("sz_correction", sz_teleportation_decision(first, final))'
+                    ),
                 ],
             )
             if count == 1:
@@ -70,7 +77,7 @@ def sz_program():
             for _ in range(num_rounds):
                 rounds(("data",))
         body.extend(["    final = measure_x_basis(data)", '    output("final_data", final)'])
-        module = load_cached_guppy_source("sz_executed_test", source + "\n\n" + "\n".join(body) + "\n")
+        module = load_cached_guppy_source("sz_program_test", source + "\n\n" + "\n".join(body) + "\n")
         return module["experiment"], patch
 
     return build

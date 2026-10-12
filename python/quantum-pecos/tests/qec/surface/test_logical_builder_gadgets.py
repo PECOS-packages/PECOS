@@ -75,7 +75,6 @@ TELEPORTATION_METADATA = {
                 "data_patch": "D",
                 "ancilla_patch": "Y",
                 "teleportation_type": "SZ",
-                "correction": "mask",
                 "basis": "Z",
                 "meas_ids": [64, 65, 66],
                 "records": [-34, -33, -32],
@@ -113,7 +112,6 @@ TELEPORTATION_METADATA = {
                 "data_patch": "D",
                 "ancilla_patch": "Y",
                 "teleportation_type": "SZ",
-                "correction": "mask",
                 "basis": "Z",
                 "meas_ids": [80, 81, 82],
                 "records": [-34, -33, -32],
@@ -2442,7 +2440,6 @@ def test_resource_sign_metadata(dx, dz, preceding_rounds):
         "resource_sign_meas_ids",
         "resource_sign_records",
         "resource_sign_reference",
-        "correction",
     }
     total = int(tc.get_meta("num_measurements"))
     for prefix in ("", "resource_sign_"):

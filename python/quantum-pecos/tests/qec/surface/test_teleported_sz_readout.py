@@ -3,6 +3,7 @@
 
 """Corrected SZ parities, symbolic crossings, and downstream observable contracts."""
 
+import inspect
 import json
 from dataclasses import replace
 
@@ -36,7 +37,6 @@ def readout_builder(
     prepared="X",
     readout="Y",
     sparse=False,
-    correction="mask",
     rounds=2,
 ):
     patch = SurfacePatch.create(dx=distance, dz=dz or distance)
@@ -52,7 +52,7 @@ def readout_builder(
     if gate == "T":
         builder.add_t_teleportation_placeholder("D", "A", 2, 2)
     else:
-        builder.add_sz_via_teleportation("D", "A", rounds, rounds, correction=correction)
+        builder.add_sz_via_teleportation("D", "A", rounds, rounds)
     builder.add_memory("D", rounds, readout)
     return builder, patch
 
@@ -291,10 +291,10 @@ def test_walk_replaces_conjugation_and_returns_symbols(teleportation_type):
     assert _logical_readout_flow(operations, 2, "D", "X") == expected
 
 
-def multiple_teleportations_builder(dx, dz, *, correction="mask", rounds=2):
-    builder, patch = readout_builder(dx, dz=dz, readout="X", correction=correction, rounds=rounds)
+def multiple_teleportations_builder(dx, dz, *, rounds=2):
+    builder, patch = readout_builder(dx, dz=dz, readout="X", rounds=rounds)
     builder.add_patch(patch, "B", qubit_offset=2 * patch.geometry.num_qubits)
-    builder.add_sz_via_teleportation("D", "B", rounds, rounds, correction=correction)
+    builder.add_sz_via_teleportation("D", "B", rounds, rounds)
     builder.add_memory("D", rounds, "X")
     return builder, patch
 
@@ -340,100 +340,35 @@ def test_builder_descriptors_follow_patch_orientation(swapped):
 
 
 @pytest.mark.parametrize(("dx", "dz", "count"), [(3, 3, 1), (5, 5, 1), (3, 3, 2), (5, 5, 2), (3, 5, 2)])
-def test_correction_declaration_and_executed_reference(dx, dz, count):
-    def build(correction):
-        if count == 1:
-            return readout_builder(dx, dz=dz, correction=correction)[0]
-        return multiple_teleportations_builder(dx, dz, correction=correction)[0]
-
-    mask, executed = build("mask"), build("executed")
-    tc = executed.to_tick_circuit()
-    baseline = mask.to_tick_circuit()
-    assert executed.build_dem() == mask.build_dem()
-    for key in ("observables", "detectors", "measurement_keys"):
-        assert tc.get_meta(key) == baseline.get_meta(key)
-    readouts = json.loads(tc.get_meta("teleportation_readouts"))
-    assert [entry["correction"] for entry in readouts] == ["executed"] * count
-    assert [entry["correction"] for entry in executed.build_algorithm_descriptor()["teleportation_readouts"]] == [
-        "executed",
-    ] * count
-    assert [entry["correction"] for entry in json.loads(baseline.get_meta("teleportation_readouts"))] == [
-        "mask",
-    ] * count
+def test_exported_crossed_teleportations(dx, dz, count):
+    builder, _ = readout_builder(dx, dz=dz) if count == 1 else multiple_teleportations_builder(dx, dz)
+    tc = builder.to_tick_circuit()
     observable = json.loads(tc.get_meta("observables"))[0]
     assert observable["crossed_teleportations"] == (["A"] if count == 1 else ["B", "A"])
-    refs = [entry["resource_sign_reference"] for entry in readouts]
-    assert refs == [int(dx != dz)] * count
-    expected_reference = observable["reference"] ^ (sum(refs) % 2)
-    # Inspect each step too: refs=(1, 1) cancel, hiding omission of both XORs.
-    from pecos.qec.surface._detection_events import _remove_executed_correction
-
-    intermediate = tc.circuit_definitions()["observables"][0]
-    reference = observable["reference"]
-    for readout in reversed(readouts):
-        _remove_executed_correction(intermediate, readout, dict(enumerate(range(tc.num_measurements()))))
-        reference ^= readout["resource_sign_reference"]
-        assert intermediate["reference"] == reference
-    assert intermediate["reference"] == expected_reference
-    removed = {mid for entry in readouts for key in ("meas_ids", "resource_sign_meas_ids") for mid in entry[key]}
-    records = [mid for mid in observable["meas_ids"] if mid not in removed]
-    # Zero rows expose the derived reference independently of the record transformation.
-    rows = [[0] * tc.num_measurements()]
-    rows.extend(simulate_tick_circuit(tc, seed)[0] for seed in range(8))
-    _, flips = extract_detection_events_and_observables(tc, rows, executed_corrections=True)
-    assert list(flips) == [
-        [observable["id"]] if (expected_reference ^ (sum(row[mid] for mid in records) % 2)) else [] for row in rows
-    ]
-    # Declaration does not change how the builder's own static rows are interpreted.
-    assert extract_detection_events_and_observables(tc, rows[1:])[1] == [[]] * 8
+    readouts = json.loads(tc.get_meta("teleportation_readouts"))
+    assert [entry["resource_sign_reference"] for entry in readouts] == [int(dx != dz)] * count
 
 
-@pytest.mark.parametrize(
-    ("damage", "message"),
-    [
-        ("strip_key", "has no crossed_teleportations metadata"),
-        ("unknown_label", "which has no teleportation readout"),
-        ("missing_record", "mask lacks correction record"),
-    ],
-)
-def test_executed_extraction_rejects_missing_crossing_metadata(damage, message):
-    tc = readout_builder(3, correction="executed")[0].to_tick_circuit()
-    observables = json.loads(tc.get_meta("observables"))
-    if damage == "strip_key":
-        del observables[0]["crossed_teleportations"]
-    elif damage == "unknown_label":
-        observables[0]["crossed_teleportations"] = ["missing"]
-    else:
-        correction_id = json.loads(tc.get_meta("teleportation_readouts"))[0]["meas_ids"][0]
-        position = observables[0]["meas_ids"].index(correction_id)
-        del observables[0]["meas_ids"][position]
-        del observables[0]["records"][position]
-    tc.set_meta("observables", json.dumps(observables))
-    rows = [[0] * tc.num_measurements()]
-    with pytest.raises(ValueError, match=message):
-        extract_detection_events_and_observables(tc, rows, executed_corrections=True)
-
-
-def test_executed_extraction_keeps_uncrossed_observables():
-    # An empty crossing list is legitimate metadata, not missing metadata.
-    tc = readout_builder(3, sparse=True, correction="executed")[0].to_tick_circuit()
+def test_exported_uncrossed_observables():
+    tc = readout_builder(3, sparse=True)[0].to_tick_circuit()
     crossings = {obs["id"]: obs["crossed_teleportations"] for obs in json.loads(tc.get_meta("observables"))}
-    assert sorted(map(len, crossings.values())) == [0, 1]
-    rows = [simulate_tick_circuit(tc, seed)[0] for seed in range(8)]
-    uncrossed = {obs_id for obs_id, labels in crossings.items() if not labels}
-    executed = extract_detection_events_and_observables(tc, rows, executed_corrections=True)[1]
-    masked = extract_detection_events_and_observables(tc, rows)[1]
-    for executed_row, masked_row in zip(executed, masked, strict=True):
-        assert [i for i in executed_row if i in uncrossed] == [i for i in masked_row if i in uncrossed]
+    assert crossings == {1: [], 2: ["A"]}
 
 
-def test_invalid_correction_mode():
-    with pytest.raises(ValueError, match="Invalid SZ correction mode"):
-        readout_builder(correction="automatic")
+def test_builder_has_no_correction_declaration():
+    builder, _ = readout_builder()
+    with pytest.raises(TypeError, match="unexpected keyword argument 'correction'"):
+        builder.add_sz_via_teleportation("D", "A", correction="executed")
+    assert "correction" not in LogicalOp.__dataclass_fields__
 
 
-@pytest.mark.parametrize(("count", "distance"), [(1, 3), (1, 5), (2, 3)])
-def test_executed_extraction_on_program_rows(sz_program, monkeypatch, distance, count):
+def test_extraction_signature():
+    assert list(inspect.signature(extract_detection_events_and_observables).parameters) == ["tick_circuit", "results"]
+
+
+@pytest.mark.parametrize("correction", ["physical", "record"])
+@pytest.mark.parametrize("count", [1, 2])
+def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, correction):
     import pecos
     from pecos._traced_circuit import measurement_ids_in_execution_order
     from pecos.guppy_gen.transversal import get_transversal_num_qubits
@@ -441,7 +376,8 @@ def test_executed_extraction_on_program_rows(sz_program, monkeypatch, distance, 
     from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
     # One pre/post round per SZ suffices for noiseless measurement transcription.
-    program, _ = sz_program(distance, count, num_rounds=1)
+    distance = 3
+    program, _ = sz_program(distance, count, num_rounds=1, correction=correction)
     num_qubits = get_transversal_num_qubits("surface", distance)
     traced, traces = _trace_program_to_tick_circuit_with_result_traces(program, num_qubits)
     # Conditional Paulis introduce no measurements, so one noiseless traced path suffices.
@@ -452,11 +388,9 @@ def test_executed_extraction_on_program_rows(sz_program, monkeypatch, distance, 
     scopes = {"data": "D", "anc": "A", "second": "B"}
     source = measurement_partition_from_trace(program, num_qubits, scopes)
     if count == 1:
-        builder, _ = readout_builder(distance, correction="executed", rounds=1)
-        mask, _ = readout_builder(distance, rounds=1)
+        builder, _ = readout_builder(distance, rounds=1)
     else:
-        builder, _ = multiple_teleportations_builder(distance, distance, correction="executed", rounds=1)
-        mask, _ = multiple_teleportations_builder(distance, distance, rounds=1)
+        builder, _ = multiple_teleportations_builder(distance, distance, rounds=1)
     target = measurement_partition_from_builder(builder)
     assert source.keys() == target.keys()
     permutation = {}
@@ -487,12 +421,13 @@ def test_executed_extraction_on_program_rows(sz_program, monkeypatch, distance, 
             for row, values in zip(rows, results[name], strict=True):
                 row[destination] = int(values if isinstance(values, int) else values[offset + index])
         offsets[name] = offset + len(trace["result_ids"])
-    events, flips = extract_detection_events_and_observables(tc, rows, executed_corrections=True)
-    assert events == flips == [[]] * 64
     events, flips = extract_detection_events_and_observables(tc, rows)
     assert events == [[]] * 64
     decision_xors = [decisions if count == 1 else sum(decisions) % 2 for decisions in results["sz_correction"]]
     assert set(decision_xors) == {0, 1}
-    assert list(flips) == [[0] if decision else [] for decision in decision_xors]
-    with pytest.raises(ValueError, match="must declare correction='executed'"):
-        extract_detection_events_and_observables(mask.to_tick_circuit(), rows, executed_corrections=True)
+    if correction == "physical":
+        # The program already applied the frame bit; the mask counts it twice.
+        assert list(flips) == [[0] if decision else [] for decision in decision_xors]
+    else:
+        # The mask's correction records apply the recorded frame bit.
+        assert flips == [[]] * 64

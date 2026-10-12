@@ -37,6 +37,7 @@ pub mod ensemble;
 pub mod erasure;
 pub mod errors;
 pub mod ghost_protocol;
+pub mod graphlike_projection;
 pub mod k_mwpm;
 pub mod logical_algorithm;
 pub mod logical_subgraph;

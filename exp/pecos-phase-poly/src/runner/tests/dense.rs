@@ -4,7 +4,7 @@
 use super::*;
 use num_complex::Complex64;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn apply_native(sim: &mut StateVec, kind: GateType, angles: &[Angle64], qs: &[QubitId]) {
     let pair = if qs.len() == 2 {
@@ -130,6 +130,18 @@ fn replay(circuit: &TickCircuit, records: &[bool], n: usize) -> Vec<Complex64> {
                     }
                 }
             }
+            GateType::CS | GateType::CSdg | GateType::CCZ => {
+                // Reuse explicit diagonal matrices acting on the plain vector;
+                // these do not call PhasePoly or controlled StateVec gates.
+                let diagonal = match gate.gate_type {
+                    GateType::CS => 9,
+                    GateType::CSdg => 10,
+                    _ => 11,
+                };
+                for qs in gate.qubits.chunks_exact(gate.gate_type.quantum_arity()) {
+                    dense_gate(&mut state, diagonal, qs);
+                }
+            }
             GateType::Channel => {
                 // Generated channels have one probability-one symbolic unitary.
                 // Use the core unitary conversion, independently of pauli_mixture.
@@ -165,7 +177,7 @@ fn replay(circuit: &TickCircuit, records: &[bool], n: usize) -> Vec<Complex64> {
     state
 }
 
-const KINDS: [GateType; 22] = [
+const KINDS: [GateType; 25] = [
     GateType::I,
     GateType::Idle,
     GateType::TrackedPauliMeta,
@@ -178,6 +190,9 @@ const KINDS: [GateType; 22] = [
     GateType::Tdg,
     GateType::CX,
     GateType::CZ,
+    GateType::CS,
+    GateType::CSdg,
+    GateType::CCZ,
     GateType::RZ,
     GateType::RZZ,
     GateType::SZZ,
@@ -195,7 +210,7 @@ fn random_tick_circuits_match_dense_oracle() {
     let mut rng = PecosRng::seed_from_u64(0x2610_0681);
     let mut skipped = 0;
     let mut shots = 0;
-    let mut covered = BTreeSet::new();
+    let mut covered = BTreeMap::new();
     let mut rotations = BTreeSet::new();
     for n in 1..=6 {
         for trial in 0..64 {
@@ -252,7 +267,8 @@ fn random_tick_circuits_match_dense_oracle() {
             };
             assert_state(&sim, &replay(&circuit, &result.records, n));
             for gate in circuit.iter_gate_batches() {
-                covered.insert(gate.gate_type);
+                *covered.entry(gate.gate_type).or_insert(0_usize) +=
+                    gate.qubits.len() / gate.gate_type.quantum_arity();
                 if matches!(gate.gate_type, GateType::RZ | GateType::RZZ) {
                     rotations.insert((gate.gate_type, gate.angles[0]));
                 }
@@ -261,7 +277,9 @@ fn random_tick_circuits_match_dense_oracle() {
     }
     assert!(skipped < shots / 2, "compatible shots must be the majority");
     for kind in KINDS {
-        assert!(covered.contains(&kind), "uncovered {kind:?}");
+        let count = covered.get(&kind).copied().unwrap_or(0);
+        assert!(count > 0, "uncovered {kind:?}");
+        println!("TickCircuit dense oracle: {kind:?} count={count}");
     }
     for kind in [GateType::RZ, GateType::RZZ] {
         for k in 0_u8..8 {
@@ -331,5 +349,38 @@ fn unrecorded_resets_on_entangled_states() {
             assert_state(&sim, &dense);
         }
         assert_eq!(seen.len(), 2);
+    }
+}
+
+#[test]
+fn controlled_diagonal_builders_match_dense() {
+    let mut circuit = TickCircuit::new();
+    circuit.tick().px(&[0, 1, 2]);
+    circuit.tick().cs(&[(0, 1)]);
+    circuit.tick().csdg(&[(1, 2)]);
+    circuit.tick().ccz(&[(0, 1, 2)]);
+    let mut sim = PhasePoly::with_seed(3, 0);
+    let shot = compile(&circuit)
+        .unwrap()
+        .run_shot(&mut sim, &mut PecosRng::seed_from_u64(1))
+        .unwrap();
+    assert_state(&sim, &replay(&circuit, &shot.records, 3));
+}
+
+#[test]
+fn controlled_diagonal_multiple_groups_match_dense() {
+    for kind in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().px(&[0, 1, 2, 3, 4, 5]);
+        append(
+            &mut circuit,
+            Gate::simple(kind, [5, 1, 3, 0, 4, 2].map(QubitId).to_vec()),
+        );
+        let mut sim = PhasePoly::with_seed(6, 0);
+        let shot = compile(&circuit)
+            .unwrap()
+            .run_shot(&mut sim, &mut PecosRng::seed_from_u64(1))
+            .unwrap();
+        assert_state(&sim, &replay(&circuit, &shot.records, 6));
     }
 }

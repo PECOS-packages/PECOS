@@ -388,18 +388,43 @@ def test_correction_declaration_and_executed_reference(dx, dz, count):
     assert extract_detection_events_and_observables(tc, rows[1:])[1] == [[]] * 8
 
 
-@pytest.mark.parametrize("damage", ["strip_key", "unknown_label"])
-def test_executed_extraction_rejects_missing_crossing_metadata(damage):
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("strip_key", "has no crossed_teleportations metadata"),
+        ("unknown_label", "which has no teleportation readout"),
+        ("missing_record", "mask lacks correction record"),
+    ],
+)
+def test_executed_extraction_rejects_missing_crossing_metadata(damage, message):
     tc = readout_builder(3, correction="executed")[0].to_tick_circuit()
     observables = json.loads(tc.get_meta("observables"))
     if damage == "strip_key":
         del observables[0]["crossed_teleportations"]
     elif damage == "unknown_label":
         observables[0]["crossed_teleportations"] = ["missing"]
+    else:
+        correction_id = json.loads(tc.get_meta("teleportation_readouts"))[0]["meas_ids"][0]
+        position = observables[0]["meas_ids"].index(correction_id)
+        del observables[0]["meas_ids"][position]
+        del observables[0]["records"][position]
     tc.set_meta("observables", json.dumps(observables))
     rows = [[0] * tc.num_measurements()]
-    with pytest.raises(ValueError, match=r"crossed_teleportations metadata|has no teleportation readout"):
+    with pytest.raises(ValueError, match=message):
         extract_detection_events_and_observables(tc, rows, executed_corrections=True)
+
+
+def test_executed_extraction_keeps_uncrossed_observables():
+    # An empty crossing list is legitimate metadata, not missing metadata.
+    tc = readout_builder(3, sparse=True, correction="executed")[0].to_tick_circuit()
+    crossings = {obs["id"]: obs["crossed_teleportations"] for obs in json.loads(tc.get_meta("observables"))}
+    assert sorted(map(len, crossings.values())) == [0, 1]
+    rows = [simulate_tick_circuit(tc, seed)[0] for seed in range(8)]
+    uncrossed = {obs_id for obs_id, labels in crossings.items() if not labels}
+    executed = extract_detection_events_and_observables(tc, rows, executed_corrections=True)[1]
+    masked = extract_detection_events_and_observables(tc, rows)[1]
+    for executed_row, masked_row in zip(executed, masked, strict=True):
+        assert [i for i in executed_row if i in uncrossed] == [i for i in masked_row if i in uncrossed]
 
 
 def test_invalid_correction_mode():

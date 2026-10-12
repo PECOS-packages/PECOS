@@ -25,6 +25,61 @@ original `i32` exports remain available for existing callers. Use only the
 
 ## Build
 
+### Optional SIMD and prediction-only fast path
+
+The streaming WASM adapter skips discarded-mass evidence bookkeeping while
+preserving candidate scoring, pruning, tie-breaking, and corrections. Its
+exports return predictions and status, not confidence or evidence. Native
+callers needing full telemetry can continue using the existing default
+`advance_prediction` / `flush` APIs. The opt-in
+`advance_prediction_without_evidence` / `flush_prediction_without_evidence`
+methods require `reset` before returning to evidence-producing APIs; mixed
+use fails closed rather than returning incomplete evidence.
+
+To enable standard WASM SIMD on a compatible runtime:
+
+```console
+python scripts/build_frontier_wasm.py /path/to/model.dem --simd
+```
+
+SIMD is opt-in; the default build remains compatible with non-SIMD runtimes.
+No approximate arithmetic or reduced beam width is introduced. Timing gains
+depend on the model, compiler and runtime. Published benchmark modules are
+separate frozen artifacts; a build from current upstream is not byte-identical.
+
+### Explicit fixed-lag streaming
+
+Dependency-driven scheduling remains the default. To select persistent
+fixed-lag processing for equally sized detector blocks, call
+`frontier_stream_fixed_lag_i64(rounds, window)` after `init` and before
+`frontier_stream_begin`. For 20 extraction rounds and one terminal readout
+block, use `(21, 2)`. Both arguments and the status result are `i64`. Each
+block must fit one push, so the detector count divided by `rounds` is at most
+128. Success returns 0; invalid configuration returns -1, sets status 3, and
+clears stale corrections (status 1 if no model is loaded). `frontier_stream_dependency_driven_i64()` restores the
+default schedule. Configuration resets the current shot.
+
+The window includes the current round: W=2 gives one round of lookahead.
+The retained frontier persists across the circuit, and the terminal call
+flushes the remaining work. Fixed-lag bounds include the final detector block.
+With finite K and Delta, this changes which syndrome information is available
+during pruning and is not promised to match dependency-driven or batch results.
+Fixed lag applies only to the streaming exports: `frontier_decode` delivers the
+whole syndrome at once and matches batch decoding.
+Use `StreamingMode::FixedLag` from Rust for explicit, possibly unequal bounds.
+
+K and Delta may be selected at compile time with `FRONTIER_K` and
+`FRONTIER_DELTA`; their defaults are unchanged. The build fails for a K that
+is not a positive integer or a Delta that is negative or NaN. For example:
+
+```console
+FRONTIER_K=256 FRONTIER_DELTA=14 python scripts/build_frontier_wasm.py model.dem --simd
+```
+
+Measure individual pushes and the terminal correction call separately.
+Neither initialization time nor an average divided by round count is a
+substitute for final-correction latency.
+
 The default build embeds `model.dem`, a tiny smoke-test model:
 
 ```console

@@ -10,7 +10,7 @@ import pytest
 
 @pytest.fixture
 def sz_program():
-    """Compose rendered SZ helpers for signed readout and executed-row tests."""
+    """Compose rendered SZ helpers for signed readout tests."""
     from pecos.guppy_gen._module_loader import load_cached_guppy_source
     from pecos.guppy_gen.gadget_render import render_gadget_function
     from pecos.guppy_gen.protocol_render import render_surface_protocol_module

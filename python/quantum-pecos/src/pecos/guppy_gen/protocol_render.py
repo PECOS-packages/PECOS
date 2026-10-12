@@ -101,7 +101,8 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     parity = [f"final[{q}]" for q in geom.logical_z.data_qubits]
     parity.extend(f"first.syn{family.lower()}[{index}]" for family, index in checks)
     if reference:
-        parity.append("True")
+        msg = "The renderer supports only odd square patches, for which the resource-sign reference is 0"
+        raise ValueError(msg)
     lines.extend(
         [
             "@guppy",
@@ -152,8 +153,13 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "    return guppy(variant_scoped(transversal_cx_experiment, num_rounds, control_x))",
             "",
             "",
-            "def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_rounds: int):",
-            '    """Y-ancilla teleportation followed by data-only memory and Z readout."""',
+            "def make_sz_teleportation(",
+            "    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, apply_correction: bool = True,",
+            "):",
+            '    """Execute for the Guppy/Helios authoring idiom, or record for frame-tracking hardware,',
+            '    where a controller or post-processor applies the frame bit."""',
+            "    if type(apply_correction) is not bool:",
+            '        raise ValueError("apply_correction must be a boolean")',
             "    if rounds_before < 1:",
             (
                 '        raise ValueError("SZ teleportation requires rounds_before >= 1 '
@@ -173,10 +179,15 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "        transversal_cx(data, anc)",
             *_rounds("rounds_after", ("data", "anc")),
             *_readout("anc"),
-            "        correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+            "        if comptime(apply_correction):",
+            "            correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+            "        else:",
+            '            output("sz_correction", sz_teleportation_decision(first, final))',
             *_rounds("trailing_data_rounds", ("data",)),
             *_readout("data"),
-            "    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))",
+            "    return guppy(variant_scoped(",
+            "        sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, apply_correction,",
+            "    ))",
             "",
             "",
             "def make_t_teleportation_placeholder(rounds_before: int, rounds_after: int):",

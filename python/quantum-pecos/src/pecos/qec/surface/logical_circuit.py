@@ -754,8 +754,6 @@ class LogicalOp:
     # Gate implemented by resource consumption: "T", "SZ", or None.
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
     teleportation_type: str | None = None
-    # SZ correction mode: "mask" (observable masks only) or "executed" (applied in the program).
-    correction: Literal["mask", "executed"] = "mask"
     # Phase variant of a one-round fold segment; absent on every other operation.
     fold: Literal["SZ", "SZdg"] | None = None
 
@@ -1301,8 +1299,6 @@ class LogicalCircuitBuilder:
         ancilla_label: str,
         rounds_before: int = 3,
         rounds_after: int = 3,
-        *,
-        correction: Literal["mask", "executed"] = "mask",
     ) -> None:
         """Apply logical SZ via gate teleportation with |+Y> ancilla.
 
@@ -1325,11 +1321,11 @@ class LogicalCircuitBuilder:
         The ancilla must have odd dx and dz for encoded logical-Y content.
         Deterministic X/Y data observables absorb these correction records into
         their parity masks, and the ancilla's random readout remains separate.
-        With ``correction="mask"`` no in-circuit correction is applied. With
-        ``correction="executed"`` the program applies Z_L when m XOR c XOR ref is
-        1 (c: the resource-sign check parity, ref: ``resource_sign_reference``).
-        The mask remains the DEM in both modes; extraction from executed-run rows
-        removes the correction records and adjusts the reference.
+        The rendered program can execute or record the correction. Extracting
+        observables from rows of a program that executed it must remove those
+        records and adjust the reference. That transcription does not exist yet;
+        observables export ``crossed_teleportations`` for it. The mask remains
+        the DEM in all cases.
 
         Note: The |+Y> injection is non-fault-tolerant (distance-1).
         The corrected observable retains undetectable single-fault logical
@@ -1345,11 +1341,7 @@ class LogicalCircuitBuilder:
             ancilla_label: Label of the ancilla patch (consumed).
             rounds_before: Syndrome rounds before CX; at least one to record the resource sign.
             rounds_after: Syndrome rounds after CX.
-            correction: "mask" for static rows or "executed" for program-corrected rows.
         """
-        if correction not in ("mask", "executed"):
-            msg = f"Invalid SZ correction mode {correction!r}; expected mask or executed"
-            raise ValueError(msg)
         if rounds_before < 1:
             msg = "SZ teleportation requires rounds_before >= 1 to record the resource sign before CX"
             raise ValueError(msg)
@@ -1374,7 +1366,6 @@ class LogicalCircuitBuilder:
                 patches=[data_label, ancilla_label],
                 teleportation=True,
                 teleportation_type="SZ",
-                correction=correction,
             ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis at final round.
@@ -2887,7 +2878,6 @@ class _CircuitGenerator:
                     segment = min(key[3] for key in self.stab_meas if key[0] == label)
                     meas_ids = [self.stab_meas[label, family, index, segment, 0] for family, index in checks]
                 self._teleportation_readouts[label].update(
-                    correction=op.correction,
                     resource_sign_meas_ids=meas_ids,
                     resource_sign_records=[idx - total for idx in meas_ids],
                     resource_sign_reference=reference,

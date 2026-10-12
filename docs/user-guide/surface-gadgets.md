@@ -1066,26 +1066,25 @@ now folded into the observable's own parity mask, so the gadget's action is a
 decodable statement rather than something only a noiseless replay can show. The
 mask gains the consumed ancilla's logical readout records and the resource-sign
 records, alongside the data readout and any fold the readout lowers to. This
-mask remains the DEM in both correction modes.
+mask is the DEM in all cases.
 
-The rendered SZ program now applies logical Z after ancilla readout when
-`m XOR c XOR resource_sign_reference` is 1, and outputs the decision as
-`sz_correction`. Here m is the ancilla logical Z parity and c is the selected
-first-round check parity. Declare `correction="executed"` on
-`builder.add_sz_via_teleportation` when interpreting these program runs. After
-mapping program measurements into builder rows, call
-`extract_detection_events_and_observables(tc, rows, executed_corrections=True)`.
-This removes each crossed teleportation's readout and resource-sign records
-from the observable and XORs its resource-sign reference into the mask
-reference. Detectors are unchanged. The observable metadata exports the
-crossed ancilla labels as `crossed_teleportations`.
+The rendered factory `make_sz_teleportation(..., apply_correction=True)` executes
+logical Z after ancilla readout when `m XOR c XOR resource_sign_reference` is 1,
+and outputs the decision as `sz_correction`. Here m is the ancilla logical Z
+parity and c is the selected first-round check parity. Executing the correction
+is the default and matches the Guppy/Helios authoring idiom.
+With `apply_correction=False`, the factory outputs the same frame bit and applies
+no Z. Recording matches frame-tracking hardware, where a controller or a
+post-processor applies the frame bit. The switch must be a bool.
 
-The default declaration is `correction="mask"`; executed extraction rejects a
-crossing with that declaration. Default extraction always uses the mask,
-including for static builder simulations declared `"executed"`. Applying mask
-extraction to program-corrected rows counts the correction twice. Noise on the
-conditional Z gates is a small omission from the static builder circuit and
-its DEM.
+The builder circuit never executes the correction. Its deterministic X/Y
+observable masks absorb the correction records. Observables export the crossed
+ancilla labels as `crossed_teleportations`; a future executed-run transcription
+will use them to remove each crossed teleportation's readout and resource-sign
+records and XOR its resource-sign reference into the observable reference.
+That transcription does not exist yet. Applying mask extraction to rows from
+a program that executed the correction counts it twice. Noise on the conditional
+Z gates is a small omission from the static builder circuit and its DEM.
 
 That observable inherits the injection's distance-1 character. Its error model
 contains one mechanism that flips it with no detector firing, and that
@@ -1099,8 +1098,10 @@ fold-transversal program has no such mechanism.
 
 ```python
 program = module["make_sz_teleportation"](2, 2, 2)
+recording_program = module["make_sz_teleportation"](2, 2, 2, apply_correction=False)
+assert callable(recording_program.compile)
 builder = new_builder(two_patches=True)
-builder.add_sz_via_teleportation("D", "A", 2, 2, correction="executed")
+builder.add_sz_via_teleportation("D", "A", 2, 2)
 builder.add_memory("D", 2, "Z")
 assert builder.to_tick_circuit().num_measurements() == 98
 assert callable(program.compile)
@@ -1109,7 +1110,6 @@ import json
 
 tc = builder.to_tick_circuit()
 readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
-assert readout["correction"] == "executed"
 assert (readout["ancilla_patch"], readout["data_patch"], readout["basis"]) == ("A", "D", "Z")
 assert len(readout["meas_ids"]) == len(patch.geometry.logical_z.data_qubits)
 # Measurement IDs index the readout stream; map them to the ancilla's data register.
@@ -1507,13 +1507,13 @@ assert callable(program.compile)
 ```
 
 !!! note "Resource and correction limits"
-    These factories generate uncorrected protocol experiments: the S factory
-    uses a projected Y resource with no conditional correction, and the T
-    **placeholder** is entirely Clifford (no T gate, no magic resource).
+    The S factory uses a projected Y resource and executes its conditional Z
+    correction by default, or records the frame bit with `apply_correction=False`.
+    The T **placeholder** remains entirely Clifford (no T gate, no magic resource,
+    no conditional S correction).
     The executable T factory above is a separate adaptive implementation.
     The builder records teleportation readouts in the circuit metadata and in
     `build_algorithm_descriptor()`; those records do not apply a correction.
-    The Guppy factories emit measurement outputs only.
     Chen, Chen, Lu and Pan ([arXiv:2412.01391](https://arxiv.org/abs/2412.01391))
     describe a mid-cycle fold-transversal logical SZ, available separately as
     the [fold round gadget](#fold-transversal-sz), outside these protocol factories.

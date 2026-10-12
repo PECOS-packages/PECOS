@@ -1019,8 +1019,13 @@ def make_transversal_cx(num_rounds: int, *, control_x: bool = False):
     return guppy(variant_scoped(transversal_cx_experiment, num_rounds, control_x))
 
 
-def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_rounds: int):
-    """Y-ancilla teleportation followed by data-only memory and Z readout."""
+def make_sz_teleportation(
+    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, apply_correction: bool = True,
+):
+    """Execute for the Guppy/Helios authoring idiom, or record for frame-tracking hardware,
+    where a controller or post-processor applies the frame bit."""
+    if type(apply_correction) is not bool:
+        raise ValueError("apply_correction must be a boolean")
     if rounds_before < 1:
         raise ValueError("SZ teleportation requires rounds_before >= 1 to record the resource sign before CX")
     def sz_teleportation() -> None:
@@ -1050,14 +1055,19 @@ def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_r
             output("synz_anc", syn.synz)
         final = measure_z_basis(anc)
         output("final_anc", final)
-        correct_sz_teleportation(data, sz_teleportation_decision(first, final))
+        if comptime(apply_correction):
+            correct_sz_teleportation(data, sz_teleportation_decision(first, final))
+        else:
+            output("sz_correction", sz_teleportation_decision(first, final))
         for _ in range(comptime(trailing_data_rounds)):
             syn = syndrome_extraction_data(data)
             output("synx_data", syn.synx)
             output("synz_data", syn.synz)
         final = measure_z_basis(data)
         output("final_data", final)
-    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))
+    return guppy(variant_scoped(
+        sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, apply_correction,
+    ))
 
 
 def make_t_teleportation_placeholder(rounds_before: int, rounds_after: int):

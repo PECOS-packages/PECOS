@@ -603,7 +603,10 @@ def _expected_readout(scope, basis="z"):
                 "transversal_cx(data, anc)",
                 _expected_rounds("rounds_after", "data", "anc"),
                 *_expected_readout("anc"),
-                "correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+                "if comptime(apply_correction):\n"
+                "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))\n"
+                "else:\n"
+                "    output('sz_correction', sz_teleportation_decision(first, final))",
                 _expected_rounds("trailing_data_rounds", "data"),
                 *_expected_readout("data"),
             ],
@@ -815,3 +818,81 @@ def test_partition_skips_classical_derivations(monkeypatch, tag):
     records[0]["result_ids"] = [40]
     with pytest.raises(ValueError, match="Unsupported measurement tag"):
         measurement_partition_from_trace("program", 1, {"a": "D"})
+
+
+@pytest.mark.parametrize("apply_correction", [1, "True", None])
+def test_sz_correction_requires_bool(module, apply_correction):
+    with pytest.raises(ValueError, match="apply_correction must be a boolean"):
+        module["make_sz_teleportation"](2, 2, 2, apply_correction=apply_correction)
+
+
+def test_sz_correction_variant_identity(module):
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+
+    factory = module["make_sz_teleportation"]
+    execute_program = factory(2, 2, 2, apply_correction=True)
+    record_program = factory(2, 2, 2, apply_correction=False)
+    assert execute_program.wrapped.name != record_program.wrapped.name
+    executed = compile_guppy_to_hugr(execute_program)
+    recorded = compile_guppy_to_hugr(record_program)
+    assert executed != recorded
+    assert compile_guppy_to_hugr(factory(2, 2, 2)) == executed
+
+
+def test_sz_renderer_rejects_nonzero_reference(monkeypatch, patch):
+    monkeypatch.setattr("pecos.guppy_gen.protocol_render.resource_sign_checks", lambda _patch: ([], 1))
+    with pytest.raises(ValueError, match=r"only odd square patches.*reference is 0"):
+        render_surface_protocol_module(patch)
+
+
+@pytest.mark.parametrize("distance", [3, 5])
+def test_sz_recorded_signed_witness(distance):
+    from collections import Counter
+
+    patch = SurfacePatch.create(distance)
+    source = render_surface_protocol_module(patch)
+    before, factory = source.split("def make_sz_teleportation(", 1)
+    factory, after = factory.split("def make_t_teleportation_placeholder(", 1)
+    # Change only the factory's input and readout to the sign-sensitive recipe;
+    # retain its correction branch so the witness exercises both renderer modes.
+    factory = factory.replace("data = prep_z_basis()", "data = prep_x_basis()")
+    factory = factory.replace("final = measure_z_basis(data)", "final = measure_x_basis(data)")
+    factory = factory.replace(
+        "        for _ in range(comptime(trailing_data_rounds)):",
+        "        syn = syndrome_extraction_fold_szdg_data(data)\n"
+        '        output("fold_z", syn.synz)\n'
+        "        for _ in range(comptime(trailing_data_rounds)):",
+    )
+    module = load_cached_guppy_source(
+        "sz_recorded_witness",
+        before + "def make_sz_teleportation(" + factory + "def make_t_teleportation_placeholder(" + after,
+    )
+    parities_by_mode = {}
+    decisions_by_mode = {}
+    for apply_correction in (True, False):
+        program = module["make_sz_teleportation"](2, 2, 2, apply_correction=apply_correction)
+        results = (
+            pecos.sim(program)
+            .classical(pecos.selene_engine())
+            .quantum(pecos.stabilizer())
+            .qubits(get_transversal_num_qubits("surface", distance))
+            .seed(123)
+            .run(64)
+            .to_shot_map()
+            .to_dict()
+        )
+        parities_by_mode[apply_correction] = [
+            (sum(row[q] for q in patch.geometry.logical_x.data_qubits) + sum(fold)) % 2
+            for row, fold in zip(results["final_data"], results["fold_z"], strict=True)
+        ]
+        decisions_by_mode[apply_correction] = results["sz_correction"]
+        assert set(results["sz_correction"]) == {0, 1}
+    recorded = parities_by_mode[False]
+    corrected = [parity ^ decision for parity, decision in zip(recorded, decisions_by_mode[False], strict=True)]
+    assert set(recorded) == {0, 1}
+    assert corrected == parities_by_mode[True] == [0] * 64
+    assert decisions_by_mode[False] == decisions_by_mode[True]
+    print(
+        f"d={distance}: raw={dict(Counter(recorded))}, corrected={dict(Counter(corrected))}, "
+        f"decisions={dict(Counter(decisions_by_mode[False]))}",
+    )

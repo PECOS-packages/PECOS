@@ -20,7 +20,7 @@
 //! word `w`, bit `b` represents index `32*w + b`.
 
 use pecos_frontier::{
-    FrontierConfig, ObsMask, SparseDem, TrellisOrdering, TrellisStreamingDecoder,
+    FrontierConfig, ObsMask, SparseDem, StreamingMode, TrellisOrdering, TrellisStreamingDecoder,
 };
 use std::cell::RefCell;
 
@@ -28,6 +28,37 @@ const MODEL_DEM: &str = include_str!(concat!(env!("OUT_DIR"), "/model.dem"));
 #[cfg(all(feature = "replay", not(test)))]
 const REPLAY: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/replay.fwr"));
 const LIVE_MAX_DETECTORS: usize = 128;
+
+/// Select ZIP-style fixed lag for equally sized detector blocks, after init and
+/// before begin. Include the terminal readout block in `rounds` (Helios: 21).
+/// Existing streaming exports and their i64 ABI remain unchanged.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_fixed_lag_i64(rounds: i64, window: i64) -> i64 {
+    STATE.with_borrow_mut(|state| {
+        let (Ok(rounds), Ok(window)) = (usize::try_from(rounds), usize::try_from(window)) else {
+            return state.configuration_error();
+        };
+        if rounds < 2
+            || rounds > state.detector_count
+            || state.detector_count % rounds != 0
+            || window < 2
+            || window > rounds
+        {
+            return state.configuration_error();
+        }
+        let width = state.detector_count / rounds;
+        state.configure_streaming(StreamingMode::FixedLag {
+            detector_round_bounds: (0..=rounds).map(|r| r * width).collect(),
+            window_size: window,
+        })
+    })
+}
+
+/// Restore dependency-driven scheduling without rebuilding the model.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_dependency_driven_i64() -> i64 {
+    STATE.with_borrow_mut(|state| state.configure_streaming(StreamingMode::DependencyDriven))
+}
 const MAX_OBSERVABLES: usize = 128;
 #[cfg(any(feature = "replay", test))]
 mod replay;
@@ -64,6 +95,25 @@ struct PreparedReplay {
 }
 
 impl State {
+    fn configuration_error(&mut self) -> i64 {
+        self.status = STATUS_DECODE_ERROR;
+        self.result = [0; 4];
+        -1
+    }
+
+    fn configure_streaming(&mut self, mode: StreamingMode) -> i64 {
+        let Some(decoder) = self.decoder.as_mut() else {
+            return self.configuration_error();
+        };
+        decoder.reset();
+        if decoder.set_streaming_mode(mode).is_err() {
+            return self.configuration_error();
+        }
+        self.status = STATUS_OK;
+        self.result = [0; 4];
+        self.stream_columns_processed = 0;
+        0
+    }
     const fn empty() -> Self {
         Self {
             decoder: None,
@@ -103,9 +153,19 @@ impl State {
             self.status = STATUS_MODEL_ERROR;
             return;
         };
+        let defaults = FrontierConfig::default();
+        let (Ok(k), Ok(delta)) = (
+            option_env!("FRONTIER_K").map_or(Ok(defaults.k), str::parse::<usize>),
+            option_env!("FRONTIER_DELTA").map_or(Ok(defaults.delta), str::parse::<f64>),
+        ) else {
+            self.status = STATUS_MODEL_ERROR;
+            return;
+        };
         let config = FrontierConfig {
+            k,
+            delta,
             column_order,
-            ..FrontierConfig::default()
+            ..defaults
         };
         match TrellisStreamingDecoder::from_sparse_dem(&dem, config) {
             Ok(decoder) => {
@@ -146,7 +206,7 @@ impl State {
             self.status = STATUS_DECODE_ERROR;
             return false;
         }
-        if let Ok(predicted) = decoder.flush_prediction() {
+        if let Ok(predicted) = decoder.flush_prediction_without_evidence() {
             self.store_result(&predicted);
             self.status = STATUS_OK;
             true
@@ -194,7 +254,7 @@ impl State {
             self.status = STATUS_DECODE_ERROR;
             return None;
         }
-        if let Ok(columns_processed) = decoder.advance_prediction() {
+        if let Ok(columns_processed) = decoder.advance_prediction_without_evidence() {
             let processed = columns_processed.saturating_sub(self.stream_columns_processed);
             self.stream_columns_processed = columns_processed;
             self.status = STATUS_OK;
@@ -211,7 +271,7 @@ impl State {
             self.status = STATUS_MODEL_ERROR;
             return false;
         };
-        if let Ok(predicted) = decoder.flush_prediction() {
+        if let Ok(predicted) = decoder.flush_prediction_without_evidence() {
             self.store_result(&predicted);
             self.status = STATUS_OK;
             true
@@ -690,6 +750,44 @@ mod tests {
         );
         assert_eq!(frontier_status_i64(), i64::from(STATUS_DECODE_ERROR));
         assert_eq!(STATE.with_borrow(|state| state.result), [0; 4]);
+    }
+
+    #[test]
+    fn fixed_lag_exports_preserve_default_and_finish_tail() {
+        STATE.with_borrow_mut(|state| {
+            state.initialize("error(0.1) D0 D2 L0\nerror(0.2) D1\nerror(0.3) D2");
+        });
+        assert_eq!(frontier_stream_fixed_lag_i64(3, 2), 0);
+        frontier_stream_begin();
+        assert_eq!(frontier_stream_push_i64(1, 1, 0, 0, 0), 0);
+        assert_eq!(frontier_stream_push_i64(1, 0, 0, 0, 0), 1);
+        assert_eq!(frontier_stream_finish_round_i64(1, 1, 0, 0, 0), 1);
+        assert_eq!(frontier_stream_fixed_lag_i64(3, 1), -1);
+        assert_eq!(frontier_stream_fixed_lag_i64(2, 2), -1);
+        assert_eq!(frontier_stream_dependency_driven_i64(), 0);
+        frontier_stream_begin();
+        assert_eq!(frontier_stream_push_i64(1, 1, 0, 0, 0), 0);
+        assert_eq!(frontier_stream_finish_round_i64(2, 2, 0, 0, 0), 1);
+    }
+
+    #[test]
+    fn invalid_schedule_clears_stale_corrections_and_recovers() {
+        STATE.with_borrow_mut(|state| {
+            state.initialize("error(0.1) D0 L0\nerror(0.2) D1\nerror(0.3) D2");
+        });
+        for (rounds, window) in [(0, 2), (-1, 2), (3, -1), (3, 1), (3, 4), (i64::MAX, 2)] {
+            STATE.with_borrow_mut(|state| state.result = [1; 4]);
+            assert_eq!(frontier_stream_fixed_lag_i64(rounds, window), -1);
+            assert_eq!(frontier_status_i64(), i64::from(STATUS_DECODE_ERROR));
+            assert_eq!(STATE.with_borrow(|state| state.result), [0; 4]);
+            assert_eq!(frontier_stream_dependency_driven_i64(), 0);
+            assert_eq!(frontier_status_i64(), i64::from(STATUS_OK));
+        }
+        assert_eq!(frontier_stream_fixed_lag_i64(3, 2), 0);
+        frontier_stream_begin();
+        assert_eq!(frontier_stream_push_i64(1, 1, 0, 0, 0), 0);
+        assert_eq!(frontier_stream_push_i64(1, 0, 0, 0, 0), 1);
+        assert_eq!(frontier_stream_finish_round_i64(1, 0, 0, 0, 0), 1);
     }
 
     #[test]

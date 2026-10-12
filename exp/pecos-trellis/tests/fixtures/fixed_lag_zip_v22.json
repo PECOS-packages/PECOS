@@ -1,0 +1,1517 @@
+{
+  "source": "Original frontier-full.zip v2.2, native C++ engine; SHA256 1f63cdb5a8b428654b23781dd6341996d451ce6949d3c38bdf720ea2103fe0d7",
+  "model": {
+    "num_detectors": 6,
+    "num_observables": 1,
+    "mechanisms": [
+      [
+        0.11,
+        [
+          0,
+          4
+        ],
+        [
+          0
+        ]
+      ],
+      [
+        0.19,
+        [
+          0,
+          1
+        ],
+        [
+          0
+        ]
+      ],
+      [
+        0.23,
+        [
+          1,
+          5
+        ],
+        []
+      ],
+      [
+        0.09,
+        [
+          0
+        ],
+        []
+      ],
+      [
+        0.14,
+        [
+          1
+        ],
+        []
+      ],
+      [
+        0.21,
+        [
+          2,
+          3
+        ],
+        [
+          0
+        ]
+      ],
+      [
+        0.08,
+        [
+          2
+        ],
+        []
+      ],
+      [
+        0.13,
+        [
+          3
+        ],
+        []
+      ],
+      [
+        0.17,
+        [
+          4,
+          5
+        ],
+        [
+          0
+        ]
+      ],
+      [
+        0.12,
+        [
+          4
+        ],
+        []
+      ],
+      [
+        0.07,
+        [
+          5
+        ],
+        []
+      ]
+    ]
+  },
+  "bounds": [
+    0,
+    2,
+    4,
+    6
+  ],
+  "window": 2,
+  "alpha": 0.8,
+  "cases": [
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 0,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 1,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 2,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 3,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 4,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 5,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 6,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 7,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 8,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 9,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 10,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 11,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 12,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 13,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 14,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 15,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 16,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 17,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 18,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 19,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 20,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 21,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 22,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 23,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 24,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 25,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 26,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 27,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 28,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 29,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 30,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 31,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 32,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 33,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 34,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 35,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 36,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 37,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 38,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 39,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 40,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 41,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 42,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 43,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 44,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 45,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 46,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 47,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 48,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 49,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 50,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 51,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 52,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 53,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 54,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 55,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 56,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 57,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 58,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 59,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 60,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 61,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 62,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 256,
+      "delta": 14,
+      "syndrome": 63,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 0,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 1,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 2,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 3,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 4,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 5,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 6,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 7,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 8,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 9,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 10,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 11,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 12,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 13,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 14,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 15,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 16,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 17,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 18,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 19,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 20,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 21,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 22,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 23,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 24,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 25,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 26,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 27,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 28,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 29,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 30,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 31,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 32,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 33,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 34,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 35,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 36,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 37,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 38,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 39,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 40,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 41,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 42,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 43,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 44,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 45,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 46,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 47,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 48,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 49,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 50,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 51,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 52,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 53,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 54,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 55,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 56,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 57,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 58,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 59,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 60,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 61,
+      "prediction": 0,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 62,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "k": 2,
+      "delta": 1.5,
+      "syndrome": 63,
+      "prediction": 1,
+      "columns": [
+        0,
+        5,
+        11
+      ]
+    }
+  ]
+}

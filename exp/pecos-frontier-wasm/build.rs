@@ -21,6 +21,8 @@ const MAX_OBSERVABLES: u32 = 128;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=FRONTIER_DEM_PATH");
+    println!("cargo:rerun-if-env-changed=FRONTIER_K");
+    println!("cargo:rerun-if-env-changed=FRONTIER_DELTA");
     println!("cargo:rerun-if-env-changed=FRONTIER_REPLAY_PATH");
     println!("cargo:rerun-if-changed=model.dem");
 

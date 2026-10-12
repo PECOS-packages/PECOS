@@ -419,10 +419,10 @@ class TestSZTeleportation:
     def test_sz_phase_single_qubit(self):
         """Verify SZ teleportation protocol at the single-qubit level.
 
-        The phase test (SZ^2|+> = Z|+> = |->) cannot be verified at the
-        logical level because the |+Y> injection is non-fault-tolerant
-        (distance-1 error). But we CAN verify the protocol works on a
-        single physical qubit, confirming the circuit structure is correct.
+        The logical phase test (SZ^2|+> = Z|+> = |->) is covered by
+        test_multiple_teleportations_x_readout in test_teleported_sz_readout.py.
+        This test checks the protocol on a single physical qubit, confirming
+        the circuit structure.
         """
         sim = SparseStab(3)
         # Qubit 0: data (|+>), Qubit 1: ancilla 1 (|+Y>), Qubit 2: ancilla 2 (|+Y>)

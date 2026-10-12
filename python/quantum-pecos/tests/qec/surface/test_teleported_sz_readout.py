@@ -366,9 +366,9 @@ def test_extraction_signature():
     assert list(inspect.signature(extract_detection_events_and_observables).parameters) == ["tick_circuit", "results"]
 
 
-@pytest.mark.parametrize("apply_correction", [True, False])
+@pytest.mark.parametrize("correction", ["physical", "record"])
 @pytest.mark.parametrize("count", [1, 2])
-def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, apply_correction):
+def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, correction):
     import pecos
     from pecos._traced_circuit import measurement_ids_in_execution_order
     from pecos.guppy_gen.transversal import get_transversal_num_qubits
@@ -377,7 +377,7 @@ def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, apply_c
 
     # One pre/post round per SZ suffices for noiseless measurement transcription.
     distance = 3
-    program, _ = sz_program(distance, count, num_rounds=1, apply_correction=apply_correction)
+    program, _ = sz_program(distance, count, num_rounds=1, correction=correction)
     num_qubits = get_transversal_num_qubits("surface", distance)
     traced, traces = _trace_program_to_tick_circuit_with_result_traces(program, num_qubits)
     # Conditional Paulis introduce no measurements, so one noiseless traced path suffices.
@@ -425,7 +425,7 @@ def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, apply_c
     assert events == [[]] * 64
     decision_xors = [decisions if count == 1 else sum(decisions) % 2 for decisions in results["sz_correction"]]
     assert set(decision_xors) == {0, 1}
-    if apply_correction:
+    if correction == "physical":
         # The program already applied the frame bit; the mask counts it twice.
         assert list(flips) == [[0] if decision else [] for decision in decision_xors]
     else:

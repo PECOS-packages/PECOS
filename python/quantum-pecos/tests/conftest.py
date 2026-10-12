@@ -16,7 +16,10 @@ def sz_program():
     from pecos.guppy_gen.protocol_render import render_surface_protocol_module
     from pecos.qec.surface import SurfacePatch, gadgets
 
-    def build(distance, count, num_rounds=2, *, apply_correction=True):
+    def build(distance, count, num_rounds=2, *, correction="physical"):
+        if not isinstance(correction, str) or correction not in ("physical", "record"):
+            msg = "correction must be physical or record"
+            raise ValueError(msg)
         patch = SurfacePatch.create(distance)
         source = render_surface_protocol_module(patch)
         round_gadget = gadgets.syndrome_round_gadget(patch, gadgets.default_allocation(patch), round_index=0)
@@ -57,7 +60,7 @@ def sz_program():
                     f'    output("final_{scope}", final)',
                     (
                         "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))"
-                        if apply_correction
+                        if correction == "physical"
                         else '    output("sz_correction", sz_teleportation_decision(first, final))'
                     ),
                 ],

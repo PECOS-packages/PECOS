@@ -1068,16 +1068,17 @@ mask gains the consumed ancilla's logical readout records and the resource-sign
 records, alongside the data readout and any fold the readout lowers to. This
 mask is the DEM in all cases.
 
-The rendered factory `make_sz_teleportation(..., apply_correction=True)` executes
+The rendered factory `make_sz_teleportation(..., correction="physical")` executes
 logical Z after ancilla readout when `m XOR c XOR resource_sign_reference` is 1,
 and outputs the decision as `sz_correction`. Here m is the ancilla logical Z
 parity and c is the selected first-round check parity. Executing the correction
 is the default and matches the Guppy/Helios authoring idiom.
-With `apply_correction=False`, the factory outputs the same frame bit and applies
+With `correction="record"`, the factory outputs the same frame bit and applies
 no Z. Recording matches frame-tracking hardware, where a controller or a
 post-processor applies the frame bit. Mask extraction on recorded rows is exactly
 that post-processing: the mask's correction records apply the frame bit, with no
-extra step. The switch must be a bool.
+extra step. The mode must be exactly `"physical"` or `"record"`; other values,
+including booleans, raise `ValueError`.
 
 The builder circuit never executes the correction. Its deterministic X/Y
 observable masks absorb the correction records. Observables export the crossed
@@ -1085,7 +1086,7 @@ ancilla labels as `crossed_teleportations`; a future executed-run transcription
 will use them to remove each crossed teleportation's readout and resource-sign
 records and XOR its resource-sign reference into the observable reference.
 That transcription does not exist yet. Applying mask extraction to rows from
-a program that executed the correction counts it twice. In execute mode, noise on
+a program that executed the correction counts it twice. In physical mode, noise on
 the conditional Z gates is a small omission from the static builder circuit and
 its DEM.
 
@@ -1101,7 +1102,7 @@ fold-transversal program has no such mechanism.
 
 ```python
 program = module["make_sz_teleportation"](2, 2, 2)
-recording_program = module["make_sz_teleportation"](2, 2, 2, apply_correction=False)
+recording_program = module["make_sz_teleportation"](2, 2, 2, correction="record")
 assert callable(recording_program.compile)
 builder = new_builder(two_patches=True)
 builder.add_sz_via_teleportation("D", "A", 2, 2)
@@ -1511,7 +1512,7 @@ assert callable(program.compile)
 
 !!! note "Resource and correction limits"
     The S factory uses a projected Y resource and executes its conditional Z
-    correction by default, or records the frame bit with `apply_correction=False`.
+    correction by default, or records the frame bit with `correction="record"`.
     The T **placeholder** remains entirely Clifford (no T gate, no magic resource,
     no conditional S correction).
     The executable T factory above is a separate adaptive implementation.

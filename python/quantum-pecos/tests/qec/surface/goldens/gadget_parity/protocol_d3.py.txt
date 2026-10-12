@@ -1020,14 +1020,15 @@ def make_transversal_cx(num_rounds: int, *, control_x: bool = False):
 
 
 def make_sz_teleportation(
-    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, apply_correction: bool = True,
+    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, correction: str = "physical",
 ):
     """Y-ancilla SZ teleportation followed by data-only memory and Z readout.
 
-    ``apply_correction=True`` executes the Z (the Guppy/Helios idiom);
-    ``False`` records ``sz_correction`` for frame-tracking hardware."""
-    if type(apply_correction) is not bool:
-        raise ValueError("apply_correction must be a boolean")
+    ``correction="physical"`` (default) executes the conditional logical Z;
+    ``"record"`` applies nothing. Both modes output ``sz_correction``.
+    Other values raise ValueError; accepted values are "physical" and "record"."""
+    if correction not in ("physical", "record"):
+        raise ValueError("correction must be physical or record")
     if rounds_before < 1:
         raise ValueError("SZ teleportation requires rounds_before >= 1 to record the resource sign before CX")
     def sz_teleportation() -> None:
@@ -1057,7 +1058,7 @@ def make_sz_teleportation(
             output("synz_anc", syn.synz)
         final = measure_z_basis(anc)
         output("final_anc", final)
-        if comptime(apply_correction):
+        if comptime(correction == "physical"):
             correct_sz_teleportation(data, sz_teleportation_decision(first, final))
         else:
             output("sz_correction", sz_teleportation_decision(first, final))
@@ -1068,7 +1069,7 @@ def make_sz_teleportation(
         final = measure_z_basis(data)
         output("final_data", final)
     return guppy(variant_scoped(
-        sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, apply_correction,
+        sz_teleportation, rounds_before, rounds_after, trailing_data_rounds, correction,
     ))
 
 

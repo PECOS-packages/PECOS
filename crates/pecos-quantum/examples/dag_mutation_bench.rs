@@ -15,6 +15,8 @@
 //! Dependency-free removal benchmark. Run with `cargo run --release -p
 //! pecos-quantum --example dag_mutation_bench -- [workload] [size] [qubits]`.
 //! Construction and cloning are outside the timed region; reports three-run medians.
+//! The `wide-*` workloads build around one `size`-qubit gate and `matrix` uses
+//! `size * size` qubits; these ignore `qubits`.
 use pecos_core::{Angle64, Gate};
 use pecos_quantum::DagCircuit;
 use pecos_quantum::pass::{CancelInverses, CircuitPass, SimplifyRotations, StripIdentities};
@@ -27,24 +29,62 @@ fn main() {
     let n: usize = args.get(2).map_or(100_000, |s| s.parse().unwrap());
     let qubits: usize = args.get(3).map_or(10, |s| s.parse().unwrap());
     let mut base = DagCircuit::with_capacity(n, n * 2);
-    for i in 0..n {
-        let q = i % qubits;
-        match workload {
-            "strip" => {
-                base.add_gate_auto_wire(if (i / qubits).is_multiple_of(2) {
-                    Gate::i(&[q])
-                } else {
-                    Gate::h(&[q])
-                });
+    let mut removed = Vec::new();
+    let all: Vec<usize> = (0..n).collect();
+    match workload {
+        "wide-before" | "wide-after" => {
+            // One `n`-qubit gate whose `n` single-qubit neighbours on one side
+            // are removed. Single-qubit gates open and close every qubit.
+            single_qubit_layer(&mut base, &all);
+            if workload == "wide-before" {
+                removed = single_qubit_layer(&mut base, &all);
             }
-            "simplify" => {
-                base.rzz(Angle64::HALF_TURN, &[(q, (q + 1) % qubits)]);
+            base.add_gate_auto_wire(Gate::h(&all));
+            if workload == "wide-after" {
+                removed = single_qubit_layer(&mut base, &all);
             }
-            "alternate" => {
-                base.h(&[0]);
+            single_qubit_layer(&mut base, &all);
+        }
+        "wide-cancel" => {
+            // `n` single-qubit gates into one `n`-qubit gate; nothing cancels.
+            single_qubit_layer(&mut base, &all);
+            base.add_gate_auto_wire(Gate::x(&all));
+        }
+        "matrix" => {
+            // On `n * n` qubits, `n` row gates, one gate on every qubit, then
+            // `n` column gates; the middle gate is removed.
+            for row in 0..n {
+                let row: Vec<usize> = (0..n).map(|col| row * n + col).collect();
+                base.add_gate_auto_wire(Gate::h(&row));
             }
-            _ => {
-                base.h(&[q]);
+            let every: Vec<usize> = (0..n * n).collect();
+            removed.push(base.add_gate_auto_wire(Gate::x(&every)));
+            for col in 0..n {
+                let col: Vec<usize> = (0..n).map(|row| row * n + col).collect();
+                base.add_gate_auto_wire(Gate::h(&col));
+            }
+        }
+        _ => {
+            for i in 0..n {
+                let q = i % qubits;
+                match workload {
+                    "strip" => {
+                        base.add_gate_auto_wire(if (i / qubits).is_multiple_of(2) {
+                            Gate::i(&[q])
+                        } else {
+                            Gate::h(&[q])
+                        });
+                    }
+                    "simplify" => {
+                        base.rzz(Angle64::HALF_TURN, &[(q, (q + 1) % qubits)]);
+                    }
+                    "alternate" => {
+                        base.h(&[0]);
+                    }
+                    _ => {
+                        base.h(&[q]);
+                    }
+                }
             }
         }
     }
@@ -53,12 +93,17 @@ fn main() {
         let mut circuit = base.clone();
         let start = Instant::now();
         match workload {
-            "cancel" => CancelInverses.apply_dag(&mut circuit),
+            "cancel" | "wide-cancel" => CancelInverses.apply_dag(&mut circuit),
             "strip" => StripIdentities.apply_dag(&mut circuit),
             "simplify" => SimplifyRotations.apply_dag(&mut circuit),
             "remove" | "alternate" => {
                 let stride = if workload == "alternate" { 2 } else { 1 };
                 for node in (0..n).step_by(stride) {
+                    black_box(circuit.remove_gate(node));
+                }
+            }
+            "wide-before" | "wide-after" | "matrix" => {
+                for &node in &removed {
                     black_box(circuit.remove_gate(node));
                 }
             }
@@ -69,4 +114,12 @@ fn main() {
     }
     times.sort_unstable();
     println!("{workload},{n},{qubits},{:.6}", times[1].as_secs_f64());
+}
+
+/// Adds a single-qubit gate on each qubit and returns their node IDs.
+fn single_qubit_layer(base: &mut DagCircuit, qubits: &[usize]) -> Vec<usize> {
+    qubits
+        .iter()
+        .map(|&q| base.add_gate_auto_wire(Gate::h(&[q])))
+        .collect()
 }

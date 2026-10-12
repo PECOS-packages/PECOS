@@ -29,6 +29,9 @@ use pecos_num::dag::{DAG, DagWouldCycleError};
 
 use crate::circuit::{Circuit, CircuitMut, GateHandle, GateView};
 
+mod gate_wires;
+use gate_wires::{GateWires, OnQubit};
+
 // Re-export attribute type for use with DagCircuit
 pub use pecos_num::graph::Attribute;
 
@@ -703,6 +706,14 @@ pub struct DagCircuit {
     next_insertion_sequence: usize,
     /// Qubit labels for each edge, indexed by edge ID.
     edge_qubits: BTreeMap<usize, QubitId>,
+    /// Labeled wires out of each gate, by qubit, indexed by node slot, so a
+    /// lookup on one qubit of a wide gate need not scan its other wires.
+    /// Reads give the graph's own adjacency order (newest first). Kept in
+    /// step with `edge_qubits` by `label_wire`, `unlabel_wire` and
+    /// `remove_gate`.
+    out_wires: Vec<GateWires>,
+    /// Labeled wires into each gate, like `out_wires`.
+    in_wires: Vec<GateWires>,
     /// Append frontier of each qubit: the gates the next auto-wired gate on
     /// that qubit must follow. An auto-wired chain has exactly one; manual
     /// wires can leave several, and appending wires from all of them.
@@ -790,6 +801,8 @@ impl DagCircuit {
             gate_insertion_keys: Vec::new(),
             next_insertion_sequence: 0,
             edge_qubits: BTreeMap::new(),
+            out_wires: Vec::new(),
+            in_wires: Vec::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
             insertion_links: Vec::new(),
@@ -821,6 +834,8 @@ impl DagCircuit {
             next_insertion_sequence: 0,
             // BTreeMap doesn't support with_capacity - it allocates as needed
             edge_qubits: BTreeMap::new(),
+            out_wires: Vec::with_capacity(gates),
+            in_wires: Vec::with_capacity(gates),
             qubit_heads: BTreeMap::new(),
             last_node: None,
             insertion_links: Vec::with_capacity(gates),
@@ -1070,6 +1085,8 @@ impl DagCircuit {
             self.gates.resize(node_idx + 1, None);
             self.insertion_links.resize(node_idx + 1, None);
             self.head_qubits.resize_with(node_idx + 1, BTreeSet::new);
+            self.out_wires.resize_with(node_idx + 1, Default::default);
+            self.in_wires.resize_with(node_idx + 1, Default::default);
             self.gate_insertion_keys
                 .resize_with(node_idx + 1, Default::default);
         }
@@ -1204,26 +1221,22 @@ impl DagCircuit {
         let mut paths = smallvec::SmallVec::<[(usize, usize); 2]>::new();
         let mut labels = smallvec::SmallVec::<[QubitId; 2]>::new();
         if bridge {
-            // Every labeled wire out of a predecessor, scanned once each. A bridge
-            // is added only where no identical wire exists or was just added.
-            let mut wires = BTreeSet::new();
-            let sources: BTreeSet<usize> =
-                inputs.values().flatten().map(|&(_, from)| from).collect();
-            for from in sources {
-                for edge in self.dag.out_edges(from) {
-                    if let Some(&q) = self.edge_qubits.get(&edge) {
-                        let to = self.dag.edge_endpoints(edge).expect("live wire").1;
-                        wires.insert((from, to, q));
-                    }
-                }
-            }
+            // A bridge is added only where no identical wire exists or was just
+            // added. Each qubit's existing wires out of its predecessors are
+            // gathered once, not searched again for every candidate bridge.
             for q in qubits {
                 let (Some(ins), Some(outs)) = (inputs.get(&q), outputs.get(&q)) else {
                     continue;
                 };
+                let mut wired = BTreeSet::new();
+                for &(_, from) in ins {
+                    for edge in self.out_wires_on(from, q) {
+                        wired.insert((from, self.dag.edge_endpoints(edge).expect("live wire").1));
+                    }
+                }
                 for &(input, from) in ins {
                     for &(output, to) in outs {
-                        if wires.insert((from, to, q)) {
+                        if wired.insert((from, to)) {
                             paths.push((input, output));
                             labels.push(q);
                         }
@@ -1253,11 +1266,22 @@ impl DagCircuit {
                 self.last_node = previous;
             }
         }
-        for &edge in incoming.iter().chain(&outgoing) {
+        // The removed gate's own lists go whole; each wire leaves its
+        // neighbour's list.
+        std::mem::take(&mut self.in_wires[node]).for_each(|qubit, edge| {
+            let (from, _) = self.dag.edge_endpoints(edge).expect("live wire");
+            self.out_wires[from].remove(qubit, edge);
             self.edge_qubits.remove(&edge);
-        }
+        });
+        std::mem::take(&mut self.out_wires[node]).for_each(|qubit, edge| {
+            let (_, to) = self.dag.edge_endpoints(edge).expect("live wire");
+            self.in_wires[to].remove(qubit, edge);
+            self.edge_qubits.remove(&edge);
+        });
         let edges = self.dag.remove_node_with_bridges(node, &paths);
-        self.edge_qubits.extend(edges.into_iter().zip(labels));
+        for (edge, qubit) in edges.into_iter().zip(labels) {
+            self.label_wire(edge, qubit);
+        }
         self.measurement_targets.remove(&node);
         self.conditions.remove(&node);
         if node < self.gates.len() {
@@ -1466,8 +1490,39 @@ impl DagCircuit {
             .dag
             .add_edge(from, to)
             .map_err(DagWireError::WouldCycle)?;
-        self.edge_qubits.insert(edge, qubit);
+        self.label_wire(edge, qubit);
         Ok(edge)
+    }
+
+    /// Label a live edge with its qubit and index it at both endpoints.
+    fn label_wire(&mut self, edge: usize, qubit: QubitId) {
+        let (from, to) = self.dag.edge_endpoints(edge).expect("live wire");
+        self.edge_qubits.insert(edge, qubit);
+        self.out_wires[from].insert(qubit, edge);
+        self.in_wires[to].insert(qubit, edge);
+    }
+
+    /// Drop a live edge's label and index entries before the graph removes it.
+    fn unlabel_wire(&mut self, edge: usize) -> Option<QubitId> {
+        let qubit = self.edge_qubits.remove(&edge)?;
+        let (from, to) = self.dag.edge_endpoints(edge).expect("live wire");
+        self.out_wires[from].remove(qubit, edge);
+        self.in_wires[to].remove(qubit, edge);
+        Some(qubit)
+    }
+
+    /// Labeled wires out of `node` on `qubit`, newest first.
+    fn out_wires_on(&self, node: usize, qubit: QubitId) -> OnQubit<'_> {
+        self.out_wires
+            .get(node)
+            .map_or_else(OnQubit::empty, |wires| wires.on_qubit(qubit))
+    }
+
+    /// Labeled wires into `node` on `qubit`, newest first.
+    fn in_wires_on(&self, node: usize, qubit: QubitId) -> OnQubit<'_> {
+        self.in_wires
+            .get(node)
+            .map_or_else(OnQubit::empty, |wires| wires.on_qubit(qubit))
     }
 
     fn validate_wire(&self, from: usize, to: usize, qubit: QubitId) -> Result<(), DagWireError> {
@@ -1525,10 +1580,8 @@ impl DagCircuit {
 
     /// Find a wire by both endpoints and its qubit, including parallel wires.
     fn find_wire(&self, from: usize, to: usize, qubit: QubitId) -> Option<usize> {
-        self.dag.out_edges(from).into_iter().find(|&edge| {
-            self.edge_qubits.get(&edge) == Some(&qubit)
-                && self.dag.edge_endpoints(edge) == Some((from, to))
-        })
+        self.out_wires_on(from, qubit)
+            .find(|&edge| self.dag.edge_endpoints(edge) == Some((from, to)))
     }
 
     /// Connects two gates on all shared qubits.
@@ -1587,8 +1640,11 @@ impl DagCircuit {
     ///
     /// The qubit that was carried by this wire, or `None` if the edge didn't exist.
     pub fn remove_wire(&mut self, edge_id: usize) -> Option<QubitId> {
+        // Every wire is labeled, so an unknown ID is rejected before the graph
+        // sees it (the graph would truncate an oversized ID to another edge).
+        let qubit = self.unlabel_wire(edge_id)?;
         self.dag.remove_edge(edge_id);
-        self.edge_qubits.remove(&edge_id)
+        Some(qubit)
     }
 
     /// Returns the number of wires (edges) in the circuit.
@@ -1644,42 +1700,28 @@ impl DagCircuit {
     /// Returns the predecessor gate for a specific qubit input.
     #[must_use]
     pub fn predecessor_on_qubit(&self, node: usize, qubit: QubitId) -> Option<usize> {
-        for edge_id in self.dag.in_edges(node) {
-            if self.edge_qubits.get(&edge_id) == Some(&qubit) {
-                return self.dag.edge_endpoints(edge_id).map(|(src, _)| src);
-            }
-        }
-        None
+        let edge = self.in_wires_on(node, qubit).next()?;
+        self.dag.edge_endpoints(edge).map(|(src, _)| src)
     }
 
     /// Returns the successor gate for a specific qubit output.
     #[must_use]
     pub fn successor_on_qubit(&self, node: usize, qubit: QubitId) -> Option<usize> {
-        for edge_id in self.dag.out_edges(node) {
-            if self.edge_qubits.get(&edge_id) == Some(&qubit) {
-                return self.dag.edge_endpoints(edge_id).map(|(_, tgt)| tgt);
-            }
-        }
-        None
+        let edge = self.out_wires_on(node, qubit).next()?;
+        self.dag.edge_endpoints(edge).map(|(_, tgt)| tgt)
     }
 
     /// Returns every gate with a wire on `qubit` into this gate. Manual wires
     /// may add redundant edges, so a gate can have several.
     pub(crate) fn predecessors_on_qubit(&self, node: usize, qubit: QubitId) -> Vec<usize> {
-        self.dag
-            .in_edges(node)
-            .into_iter()
-            .filter(|edge| self.edge_qubits.get(edge) == Some(&qubit))
+        self.in_wires_on(node, qubit)
             .map(|edge| self.dag.edge_endpoints(edge).expect("live wire").0)
             .collect()
     }
 
     /// Returns every gate with a wire on `qubit` out of this gate.
     pub(crate) fn successors_on_qubit(&self, node: usize, qubit: QubitId) -> Vec<usize> {
-        self.dag
-            .out_edges(node)
-            .into_iter()
-            .filter(|edge| self.edge_qubits.get(edge) == Some(&qubit))
+        self.out_wires_on(node, qubit)
             .map(|edge| self.dag.edge_endpoints(edge).expect("live wire").1)
             .collect()
     }
@@ -3776,6 +3818,99 @@ mod tests {
                 let (from, to) = circuit.dag.edge_endpoints(edge).unwrap();
                 assert!(positions[&from] < positions[&to]);
                 assert!(expected_wires.contains(&(from, to, qubit)));
+            }
+        }
+        assert_wire_index(circuit);
+    }
+
+    /// The per-qubit wire index must equal the graph's labeled adjacency,
+    /// grouped by qubit in the graph's order, and be empty for free slots.
+    fn assert_wire_index(circuit: &DagCircuit) {
+        // Stable sorting by qubit keeps the graph's newest-first order.
+        let by_qubit = |wires: Vec<(usize, QubitId)>| {
+            let mut wires: Vec<_> = wires.into_iter().map(|(edge, q)| (q, edge)).collect();
+            wires.sort_by_key(|&(q, _)| q);
+            wires
+        };
+        assert_eq!(circuit.out_wires.len(), circuit.gates.len());
+        assert_eq!(circuit.in_wires.len(), circuit.gates.len());
+        for node in 0..circuit.gates.len() {
+            let (outgoing, incoming) = if circuit.gate(node).is_some() {
+                (
+                    by_qubit(circuit.outgoing_wires(node)),
+                    by_qubit(circuit.incoming_wires(node)),
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            let listed = |wires: &GateWires| {
+                let mut listed = Vec::new();
+                wires.for_each(|qubit, edge| listed.push((qubit, edge)));
+                listed
+            };
+            assert_eq!(listed(&circuit.out_wires[node]), outgoing);
+            assert_eq!(listed(&circuit.in_wires[node]), incoming);
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn remove_wire_ignores_unknown_ids_that_alias_a_wire() {
+        let mut circuit = DagCircuit::new();
+        let h = circuit.add_gate(Gate::h(&[0]));
+        let x = circuit.add_gate(Gate::x(&[0]));
+        let edge = circuit.connect(h, x, QubitId(0)).unwrap();
+        assert_eq!(circuit.remove_wire(edge + (1 << 32)), None);
+        assert_eq!(circuit.wires(), [(h, x, QubitId(0))]);
+        assert_wire_index(&circuit);
+        assert_eq!(circuit.remove_wire(edge), Some(QubitId(0)));
+        assert_eq!(circuit.wire_count(), 0);
+        assert_wire_index(&circuit);
+    }
+
+    #[test]
+    fn wire_index_follows_manual_edits() {
+        for seed in [0, 1, 42, 0xdeca_fbad] {
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut circuit = DagCircuit::new();
+            for _ in 0..500 {
+                let nodes = circuit.nodes();
+                let q = rng.random_range(0..4);
+                match rng.random_range(0..8) {
+                    0 | 1 => {
+                        circuit.add_gate_auto_wire(Gate::h(&[q]));
+                    }
+                    // Wide enough that its wire lists switch to the map form.
+                    7 => {
+                        circuit.add_gate_auto_wire(Gate::h(&(0..24).collect::<Vec<_>>()));
+                    }
+                    2 => {
+                        circuit.add_gate_auto_wire(Gate::cx(&[(q, (q + 1) % 4)]));
+                    }
+                    3 => {
+                        circuit.add_gate(Gate::h(&[q]));
+                    }
+                    4 if nodes.len() >= 2 => {
+                        let from = nodes[rng.random_range(0..nodes.len())];
+                        let to = nodes[rng.random_range(0..nodes.len())];
+                        // Cycles, duplicates and self-loops are refused.
+                        let _ = circuit.connect(from, to, QubitId(q));
+                    }
+                    5 => {
+                        let edges: Vec<_> = circuit.edge_qubits.keys().copied().collect();
+                        if !edges.is_empty() {
+                            circuit.remove_wire(edges[rng.random_range(0..edges.len())]);
+                        }
+                    }
+                    6 if !nodes.is_empty() => {
+                        circuit.remove_gate(nodes[rng.random_range(0..nodes.len())]);
+                        if rng.random_range(0..4) == 0 {
+                            circuit = circuit.clone();
+                        }
+                    }
+                    _ => {}
+                }
+                assert_wire_index(&circuit);
             }
         }
     }

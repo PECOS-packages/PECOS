@@ -405,8 +405,8 @@ def test_native_topology_uses_annotation_definitions(scrambled, monkeypatch, sam
     assert observables.shape == (8, topology.num_observables)
     assert detectors[:, 1].tolist() == observables[:, 0].tolist()
     assert json.loads(topology.detectors_json) == [
-        {"id": 0, "records": [-2], "label": "first"},
-        {"id": 1, "records": [-1], "label": "second"},
+        {"id": 0, "records": [-2], "label": "first", "fault_sector": None},
+        {"id": 1, "records": [-1], "label": "second", "fault_sector": None},
     ]
     assert json.loads(topology.observables_json) == [{"id": 0, "records": [-1], "label": "logical"}]
 
@@ -426,7 +426,7 @@ def test_abstract_result_refs_follow_all_measurement_emissions(gate_type):
     circuit.set_gate_meta(1, 0, "label", "sz0")
     circuit.set_gate_meta(1, 0, "syndrome_round", 0)
     circuit.set_meta("num_measurements", "2")
-    circuit.set_meta("detectors", '[{"id":0,"records":[1]}]')
+    circuit.set_meta("detectors", '[{"id":0,"records":[1],"fault_sector":"X"}]')
     assert _surface_abstract_measurement_result_refs(circuit) == [("array", "final", 0), ("scalar", "sz0:meas:0")]
     remap = _surface_runtime_measurement_remap_from_result_traces(
         circuit,
@@ -443,7 +443,7 @@ def test_abstract_result_refs_follow_all_measurement_emissions(gate_type):
             definition_kind="detectors",
             measurement_index_remap=remap,
         ),
-    ) == [{"id": 0, "meas_ids": [0]}]
+    ) == [{"id": 0, "meas_ids": [0], "fault_sector": "X"}]
 
 
 @pytest.mark.parametrize("label", ["sx0", "final[3]"])

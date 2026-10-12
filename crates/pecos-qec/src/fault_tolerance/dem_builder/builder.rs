@@ -33,6 +33,7 @@ use crate::fault_tolerance::propagator::{
 };
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
+use pecos_quantum::parse_fault_sector;
 use pecos_simulators::{
     PauliProp, SymbolicMeasurementResult, SymbolicSparseStab,
     symbolic_sparse_stab::MeasurementHistory,
@@ -59,6 +60,8 @@ pub struct ParsedDetector {
     pub meas_ids: Vec<usize>,
     /// Human-readable name from the metadata JSON's `label` field.
     pub label: Option<String>,
+    /// Optional detector fault sector.
+    pub fault_sector: Option<String>,
 }
 
 /// Parsed observable from JSON metadata.
@@ -582,6 +585,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 };
                 Ok(ParsedDetector {
+                    fault_sector: detector.fault_sector,
                     id: detector.id,
                     coords,
                     label: detector.label,
@@ -880,6 +884,7 @@ impl<'a> DemBuilder<'a> {
         // Add detector definitions
         for det in &self.detectors {
             let mut def = DetectorDef::new(det.id);
+            def.fault_sector.clone_from(&det.fault_sector);
             if let Some(coords) = det.coords {
                 def = def.with_coords(coords);
             }
@@ -2615,6 +2620,8 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let label = extract_definition_label(object, "detector")?;
 
     Ok(ParsedDetector {
+        fault_sector: parse_fault_sector(object.get("fault_sector"), id)
+            .map_err(DemBuilderError::ParseError)?,
         id,
         coords,
         records,
@@ -4036,7 +4043,7 @@ mod tests {
             pecos_quantum::Attribute::String(circuit.num_measurements().to_string()),
         );
         circuit
-            .add_detector_metadata(&[-2], None, Some("D0"), Some(0))
+            .add_detector_metadata(&[-2], None, Some("D0"), Some(0), None)
             .unwrap();
         circuit
             .add_observable_metadata(&[-1], Some(0), Some("L0"), None)
@@ -4418,6 +4425,74 @@ mod tests {
             );
             assert_catalog_dem_effects_match(&catalog, &dem, gate_type);
         }
+    }
+
+    #[test]
+    fn fault_sector_parser_and_sampler_validation() {
+        use super::super::{dem_sampler::SamplingEngineBuilder, sampler::DemSamplerBuilder};
+        let map = DagFaultInfluenceMap::with_capacity(0);
+        for (field, expected) in [
+            ("", None),
+            (r#", "fault_sector": null"#, None),
+            (r#", "fault_sector": "X""#, Some("X".to_string())),
+            (r#", "fault_sector": "Z""#, Some("Z".to_string())),
+            (r#", "fault_sector": "XX""#, Some("XX".to_string())),
+            (r#", "fault_sector": "x""#, Some("x".to_string())),
+            (
+                r#", "fault_sector": "sector-3""#,
+                Some("sector-3".to_string()),
+            ),
+        ] {
+            let json = format!(r#"[{{"id":0,"records":[-1]{field}}}]"#);
+            assert_eq!(
+                parse_detectors_json(&json).unwrap()[0].fault_sector,
+                expected
+            );
+            assert!(
+                DemSamplerBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .is_ok()
+            );
+            assert!(
+                SamplingEngineBuilder::new(&map)
+                    .with_detectors_json(&json)
+                    .is_ok()
+            );
+            assert!(parse_detector_record_vectors(&json, &map).is_ok());
+        }
+        for value in [r#""""#, "1", "[]", "{}", "true"] {
+            let json = format!(r#"[{{"id":37,"records":[-1],"fault_sector":{value}}}]"#);
+            let errors = [
+                parse_detectors_json(&json).unwrap_err().to_string(),
+                validate_sampler_json(&json, &map, true)
+                    .unwrap_err()
+                    .to_string(),
+                parse_detector_record_vectors(&json, &map)
+                    .unwrap_err()
+                    .to_string(),
+            ];
+            for error in errors {
+                assert!(error.contains("detector 37 fault_sector"), "{error}");
+            }
+            assert!(parse_observables_json(&json).is_ok());
+        }
+    }
+
+    #[test]
+    fn fault_sector_survives_guppy_result_tag_resolution() {
+        let tags = std::collections::BTreeMap::from([("syndrome".into(), vec![Some(0)])]);
+        let (detectors, _) = resolve_result_tags(
+            r#"[{"id":0,"result_tags":["syndrome"],"fault_sector":"Z"}]"#,
+            "[]",
+            &tags,
+            1,
+            &[17],
+            &[17],
+        )
+        .unwrap();
+        let detector = &parse_detectors_json(&detectors).unwrap()[0];
+        assert_eq!(detector.fault_sector, Some("Z".to_string()));
+        assert_eq!(detector.meas_ids, vec![17]);
     }
 
     #[test]

@@ -83,6 +83,7 @@ class SurfaceDetectorDescriptor(TypedDict):
 
     id: int
     detector_id: int
+    fault_sector: str | None
     stabilizer_kind: str
     stabilizer_index: int
     round: int
@@ -1684,6 +1685,7 @@ def _build_detector_descriptors(
             {
                 "id": int(det["id"]),
                 "detector_id": int(det["id"]),
+                "fault_sector": det["fault_sector"],
                 "stabilizer_kind": descriptor["stabilizer_kind"],
                 "stabilizer_index": descriptor["stabilizer_index"],
                 "round": coords[2],
@@ -2675,6 +2677,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2684,6 +2687,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2695,6 +2699,7 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
+                                "fault_sector": "X",
                                 "coords": [s.index, 0, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2717,6 +2722,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2726,6 +2732,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2737,6 +2744,7 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
+                                "fault_sector": "Z",
                                 "coords": [det_x, 1, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2764,6 +2772,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 detectors.append(
                     {
                         "id": detector_id,
+                        "fault_sector": stab_type,
                         "coords": [det_x, det_y, num_rounds],
                         "records": records,
                     },

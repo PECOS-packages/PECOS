@@ -2030,6 +2030,8 @@ class TickCircuit:
     def circuit_definitions(self) -> dict[str, Any]:
         """Return definitions resolved to absolute measurement emission positions.
 
+        Detector dictionaries always include ``fault_sector`` (an opaque non-empty string,
+        or ``None`` for an unknown fault sector).
         Observable dictionaries include ``reference`` (integer 0 or 1) when
         metadata supplies a noiseless value, or ``None`` when absent.
         """
@@ -2051,6 +2053,7 @@ class TickCircuit:
         coords: Sequence[float] | None = None,
         label: str | None = None,
         detector_id: int | None = None,
+        fault_sector: str | None = None,
     ) -> int: ...
     def add_observable(
         self,
@@ -2619,6 +2622,7 @@ class qec:
         @property
         def num_contributions(self) -> int: ...
         def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
+        def detector_fault_sectors(self) -> list[tuple[int, str | None]]: ...
         def round_schedule(
             self,
             influence_map: qec.DagFaultInfluenceMap,

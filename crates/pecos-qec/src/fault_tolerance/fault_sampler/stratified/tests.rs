@@ -23,7 +23,7 @@ fn catalog() -> FaultCatalog {
     circuit.tick().mz(&[QubitId(0), QubitId(1)]);
     circuit.set_meta("num_measurements", Attribute::String("2".into()));
     circuit
-        .add_detector_metadata(&[-2, -1], None, Some("D"), Some(0))
+        .add_detector_metadata(&[-2, -1], None, Some("D"), Some(0), None)
         .unwrap();
     circuit
         .add_observable_metadata(&[-2], Some(0), Some("L"), None)
@@ -562,10 +562,10 @@ fn repetition_memory_matches_enumeration_and_plain_sampling() {
     circuit.tick().mz(&[QubitId(0), QubitId(1), QubitId(2)]);
     circuit.set_meta("num_measurements", Attribute::String("3".into()));
     circuit
-        .add_detector_metadata(&[-3, -2], None, Some("D0"), Some(0))
+        .add_detector_metadata(&[-3, -2], None, Some("D0"), Some(0), None)
         .unwrap();
     circuit
-        .add_detector_metadata(&[-2, -1], None, Some("D1"), Some(1))
+        .add_detector_metadata(&[-2, -1], None, Some("D1"), Some(1), None)
         .unwrap();
     circuit
         .add_observable_metadata(&[-3], Some(0), Some("logical Z"), None)

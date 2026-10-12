@@ -16,7 +16,7 @@ def sz_program():
     from pecos.guppy_gen.protocol_render import render_surface_protocol_module
     from pecos.qec.surface import SurfacePatch, gadgets
 
-    def build(distance, count, num_rounds=2):
+    def build(distance, count, num_rounds=2, *, apply_correction=True):
         patch = SurfacePatch.create(distance)
         source = render_surface_protocol_module(patch)
         round_gadget = gadgets.syndrome_round_gadget(patch, gadgets.default_allocation(patch), round_index=0)
@@ -55,7 +55,11 @@ def sz_program():
                 [
                     "    final = measure_z_basis(anc)",
                     f'    output("final_{scope}", final)',
-                    "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
+                    (
+                        "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))"
+                        if apply_correction
+                        else '    output("sz_correction", sz_teleportation_decision(first, final))'
+                    ),
                 ],
             )
             if count == 1:
@@ -70,7 +74,7 @@ def sz_program():
             for _ in range(num_rounds):
                 rounds(("data",))
         body.extend(["    final = measure_x_basis(data)", '    output("final_data", final)'])
-        module = load_cached_guppy_source("sz_executed_test", source + "\n\n" + "\n".join(body) + "\n")
+        module = load_cached_guppy_source("sz_program_test", source + "\n\n" + "\n".join(body) + "\n")
         return module["experiment"], patch
 
     return build

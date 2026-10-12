@@ -110,7 +110,6 @@ def extract_detection_events_and_observables(
     Discarding it leaves detector-only callers unaffected by absent references.
     """
     definitions = tick_circuit.circuit_definitions()
-    observables = definitions["observables"]
     num_meas = definitions["num_measurements"]
     detection_events_per_shot: list[list[int]] = []
     rows: list[tuple[int, ...]] = []
@@ -131,4 +130,4 @@ def extract_detection_events_and_observables(
                 fired_detectors.append(det["id"])
         detection_events_per_shot.append(fired_detectors)
 
-    return detection_events_per_shot, _ObservableFlips(observables, rows)
+    return detection_events_per_shot, _ObservableFlips(definitions["observables"], rows)

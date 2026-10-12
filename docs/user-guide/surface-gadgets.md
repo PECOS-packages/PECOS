@@ -1075,7 +1075,9 @@ parity and c is the selected first-round check parity. Executing the correction
 is the default and matches the Guppy/Helios authoring idiom.
 With `apply_correction=False`, the factory outputs the same frame bit and applies
 no Z. Recording matches frame-tracking hardware, where a controller or a
-post-processor applies the frame bit. The switch must be a bool.
+post-processor applies the frame bit. Mask extraction on recorded rows is exactly
+that post-processing: the mask's correction records apply the frame bit, with no
+extra step. The switch must be a bool.
 
 The builder circuit never executes the correction. Its deterministic X/Y
 observable masks absorb the correction records. Observables export the crossed
@@ -1083,8 +1085,9 @@ ancilla labels as `crossed_teleportations`; a future executed-run transcription
 will use them to remove each crossed teleportation's readout and resource-sign
 records and XOR its resource-sign reference into the observable reference.
 That transcription does not exist yet. Applying mask extraction to rows from
-a program that executed the correction counts it twice. Noise on the conditional
-Z gates is a small omission from the static builder circuit and its DEM.
+a program that executed the correction counts it twice. In execute mode, noise on
+the conditional Z gates is a small omission from the static builder circuit and
+its DEM.
 
 That observable inherits the injection's distance-1 character. Its error model
 contains one mechanism that flips it with no detector firing, and that

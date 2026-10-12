@@ -841,14 +841,13 @@ def test_sz_correction_variant_identity(module):
 
 def test_sz_renderer_rejects_nonzero_reference(monkeypatch, patch):
     monkeypatch.setattr("pecos.guppy_gen.protocol_render.resource_sign_checks", lambda _patch: ([], 1))
-    with pytest.raises(ValueError, match=r"only odd square patches.*reference is 0"):
+    message = rf"Resource-sign reference 1 for the {patch.dx}x{patch.dz} patch; .*assumes 0"
+    with pytest.raises(ValueError, match=message):
         render_surface_protocol_module(patch)
 
 
 @pytest.mark.parametrize("distance", [3, 5])
 def test_sz_recorded_signed_witness(distance):
-    from collections import Counter
-
     patch = SurfacePatch.create(distance)
     source = render_surface_protocol_module(patch)
     before, factory = source.split("def make_sz_teleportation(", 1)
@@ -892,7 +891,3 @@ def test_sz_recorded_signed_witness(distance):
     assert set(recorded) == {0, 1}
     assert corrected == parities_by_mode[True] == [0] * 64
     assert decisions_by_mode[False] == decisions_by_mode[True]
-    print(
-        f"d={distance}: raw={dict(Counter(recorded))}, corrected={dict(Counter(corrected))}, "
-        f"decisions={dict(Counter(decisions_by_mode[False]))}",
-    )

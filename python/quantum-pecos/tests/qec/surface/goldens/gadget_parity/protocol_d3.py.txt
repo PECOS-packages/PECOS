@@ -1022,8 +1022,10 @@ def make_transversal_cx(num_rounds: int, *, control_x: bool = False):
 def make_sz_teleportation(
     rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, apply_correction: bool = True,
 ):
-    """Execute for the Guppy/Helios authoring idiom, or record for frame-tracking hardware,
-    where a controller or post-processor applies the frame bit."""
+    """Y-ancilla SZ teleportation followed by data-only memory and Z readout.
+
+    ``apply_correction=True`` executes the Z (the Guppy/Helios idiom);
+    ``False`` records ``sz_correction`` for frame-tracking hardware."""
     if type(apply_correction) is not bool:
         raise ValueError("apply_correction must be a boolean")
     if rounds_before < 1:

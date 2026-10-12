@@ -101,7 +101,10 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     parity = [f"final[{q}]" for q in geom.logical_z.data_qubits]
     parity.extend(f"first.syn{family.lower()}[{index}]" for family, index in checks)
     if reference:
-        msg = "The renderer supports only odd square patches, for which the resource-sign reference is 0"
+        msg = (
+            f"Resource-sign reference {reference} for the {dx}x{dz} patch; "
+            "the renderer assumes 0, which holds for every odd square patch"
+        )
         raise ValueError(msg)
     lines.extend(
         [
@@ -156,8 +159,10 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "def make_sz_teleportation(",
             "    rounds_before: int, rounds_after: int, trailing_data_rounds: int, *, apply_correction: bool = True,",
             "):",
-            '    """Execute for the Guppy/Helios authoring idiom, or record for frame-tracking hardware,',
-            '    where a controller or post-processor applies the frame bit."""',
+            '    """Y-ancilla SZ teleportation followed by data-only memory and Z readout.',
+            "",
+            "    ``apply_correction=True`` executes the Z (the Guppy/Helios idiom);",
+            '    ``False`` records ``sz_correction`` for frame-tracking hardware."""',
             "    if type(apply_correction) is not bool:",
             '        raise ValueError("apply_correction must be a boolean")',
             "    if rounds_before < 1:",

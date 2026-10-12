@@ -355,13 +355,79 @@ def test_exported_uncrossed_observables():
     assert crossings == {1: [], 2: ["A"]}
 
 
-@pytest.mark.parametrize("mode", ["mask", "executed", "automatic"])
-def test_builder_has_no_correction_declaration(mode):
+def test_builder_has_no_correction_declaration():
     builder, _ = readout_builder()
     with pytest.raises(TypeError, match="unexpected keyword argument 'correction'"):
-        builder.add_sz_via_teleportation("D", "A", correction=mode)
+        builder.add_sz_via_teleportation("D", "A", correction="executed")
     assert "correction" not in LogicalOp.__dataclass_fields__
 
 
 def test_extraction_signature():
     assert list(inspect.signature(extract_detection_events_and_observables).parameters) == ["tick_circuit", "results"]
+
+
+@pytest.mark.parametrize("apply_correction", [True, False])
+@pytest.mark.parametrize("count", [1, 2])
+def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, apply_correction):
+    import pecos
+    from pecos._traced_circuit import measurement_ids_in_execution_order
+    from pecos.guppy_gen.transversal import get_transversal_num_qubits
+    from pecos.testing import measurement_partition_from_builder, measurement_partition_from_trace
+    from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
+
+    # One pre/post round per SZ suffices for noiseless measurement transcription.
+    distance = 3
+    program, _ = sz_program(distance, count, num_rounds=1, apply_correction=apply_correction)
+    num_qubits = get_transversal_num_qubits("surface", distance)
+    traced, traces = _trace_program_to_tick_circuit_with_result_traces(program, num_qubits)
+    # Conditional Paulis introduce no measurements, so one noiseless traced path suffices.
+    monkeypatch.setattr(
+        "pecos.testing._trace_program_to_tick_circuit_with_result_traces",
+        lambda _program, _num_qubits: (traced, traces),
+    )
+    scopes = {"data": "D", "anc": "A", "second": "B"}
+    source = measurement_partition_from_trace(program, num_qubits, scopes)
+    if count == 1:
+        builder, _ = readout_builder(distance, rounds=1)
+    else:
+        builder, _ = multiple_teleportations_builder(distance, distance, rounds=1)
+    target = measurement_partition_from_builder(builder)
+    assert source.keys() == target.keys()
+    permutation = {}
+    for key, ordinals in source.items():
+        permutation.update(zip(ordinals, target[key], strict=True))
+    tc = builder.to_tick_circuit()
+    assert sorted(permutation.values()) == list(range(tc.num_measurements()))
+    ordinal_by_id = {mid: ordinal for ordinal, mid in enumerate(measurement_ids_in_execution_order(traced))}
+    results = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(num_qubits)
+        .seed(123)
+        .run(64)
+        .to_shot_map()
+        .to_dict()
+    )
+    rows = [[0] * tc.num_measurements() for _ in range(64)]
+    offsets = {}
+    for trace in traces:
+        if not trace["result_ids"]:
+            continue
+        name = trace["name"]
+        offset = offsets.get(name, 0)
+        for index, mid in enumerate(trace["result_ids"]):
+            destination = permutation[ordinal_by_id[mid]]
+            for row, values in zip(rows, results[name], strict=True):
+                row[destination] = int(values if isinstance(values, int) else values[offset + index])
+        offsets[name] = offset + len(trace["result_ids"])
+    events, flips = extract_detection_events_and_observables(tc, rows)
+    assert events == [[]] * 64
+    decision_xors = [decisions if count == 1 else sum(decisions) % 2 for decisions in results["sz_correction"]]
+    assert set(decision_xors) == {0, 1}
+    if apply_correction:
+        # The program already applied the frame bit; the mask counts it twice.
+        assert list(flips) == [[0] if decision else [] for decision in decision_xors]
+    else:
+        # The mask's correction records apply the recorded frame bit.
+        assert flips == [[]] * 64

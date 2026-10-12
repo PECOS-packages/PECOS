@@ -11,7 +11,7 @@
 // the License.
 
 use pecos_decoder_core::dem::SparseDem;
-use std::{env, fs, path::PathBuf};
+use std::{env, fmt::Display, fs, path::PathBuf, str::FromStr};
 
 #[cfg(feature = "replay")]
 #[path = "src/replay.rs"]
@@ -42,9 +42,58 @@ fn main() {
         source.display()
     );
     fs::write(output, dem).expect("failed to stage embedded DEM");
+    stage_search_parameters();
 
     #[cfg(feature = "replay")]
     stage_replay(&parsed);
+}
+
+/// Validate optional `FRONTIER_K` / `FRONTIER_DELTA` so a bad value fails the build
+/// instead of the deployed module's `init`. The rules mirror `TrellisConfig`.
+fn stage_search_parameters() {
+    let k = parsed_env::<u64>("FRONTIER_K");
+    if let Some(k) = k {
+        let pointer_width: u32 = env::var("CARGO_CFG_TARGET_POINTER_WIDTH")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            k > 0 && (pointer_width >= u64::BITS || k < 1 << pointer_width),
+            "FRONTIER_K={k} must be positive and fit the target usize"
+        );
+    }
+    let delta = parsed_env::<f64>("FRONTIER_DELTA");
+    if let Some(delta) = delta {
+        assert!(
+            delta >= 0.0,
+            "FRONTIER_DELTA={delta} must be nonnegative and not NaN"
+        );
+    }
+    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("search_parameters.rs");
+    fs::write(
+        output,
+        format!(
+            "const FRONTIER_K: Option<usize> = {k:?};\n\
+             const FRONTIER_DELTA_BITS: Option<u64> = {:?};\n",
+            delta.map(f64::to_bits)
+        ),
+    )
+    .expect("failed to stage search parameters");
+}
+
+fn parsed_env<T: FromStr>(name: &str) -> Option<T>
+where
+    T::Err: Display,
+{
+    let value = env::var_os(name)?;
+    let value = value
+        .to_str()
+        .unwrap_or_else(|| panic!("{name} must be valid UTF-8"));
+    Some(
+        value
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}")),
+    )
 }
 
 #[cfg(feature = "replay")]

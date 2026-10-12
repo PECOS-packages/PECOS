@@ -25,40 +25,11 @@ use pecos_frontier::{
 use std::cell::RefCell;
 
 const MODEL_DEM: &str = include_str!(concat!(env!("OUT_DIR"), "/model.dem"));
+// Optional build-time FRONTIER_K / FRONTIER_DELTA, validated by build.rs.
+include!(concat!(env!("OUT_DIR"), "/search_parameters.rs"));
 #[cfg(all(feature = "replay", not(test)))]
 const REPLAY: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/replay.fwr"));
 const LIVE_MAX_DETECTORS: usize = 128;
-
-/// Select ZIP-style fixed lag for equally sized detector blocks, after init and
-/// before begin. Include the terminal readout block in `rounds` (Helios: 21).
-/// Existing streaming exports and their i64 ABI remain unchanged.
-#[unsafe(no_mangle)]
-pub extern "C" fn frontier_stream_fixed_lag_i64(rounds: i64, window: i64) -> i64 {
-    STATE.with_borrow_mut(|state| {
-        let (Ok(rounds), Ok(window)) = (usize::try_from(rounds), usize::try_from(window)) else {
-            return state.configuration_error();
-        };
-        if rounds < 2
-            || rounds > state.detector_count
-            || state.detector_count % rounds != 0
-            || window < 2
-            || window > rounds
-        {
-            return state.configuration_error();
-        }
-        let width = state.detector_count / rounds;
-        state.configure_streaming(StreamingMode::FixedLag {
-            detector_round_bounds: (0..=rounds).map(|r| r * width).collect(),
-            window_size: window,
-        })
-    })
-}
-
-/// Restore dependency-driven scheduling without rebuilding the model.
-#[unsafe(no_mangle)]
-pub extern "C" fn frontier_stream_dependency_driven_i64() -> i64 {
-    STATE.with_borrow_mut(|state| state.configure_streaming(StreamingMode::DependencyDriven))
-}
 const MAX_OBSERVABLES: usize = 128;
 #[cfg(any(feature = "replay", test))]
 mod replay;
@@ -95,25 +66,26 @@ struct PreparedReplay {
 }
 
 impl State {
-    fn configuration_error(&mut self) -> i64 {
-        self.status = STATUS_DECODE_ERROR;
+    fn configuration_error(&mut self, status: i32) -> i64 {
+        self.status = status;
         self.result = [0; 4];
         -1
     }
 
     fn configure_streaming(&mut self, mode: StreamingMode) -> i64 {
         let Some(decoder) = self.decoder.as_mut() else {
-            return self.configuration_error();
+            return self.configuration_error(STATUS_MODEL_ERROR);
         };
         decoder.reset();
         if decoder.set_streaming_mode(mode).is_err() {
-            return self.configuration_error();
+            return self.configuration_error(STATUS_DECODE_ERROR);
         }
         self.status = STATUS_OK;
         self.result = [0; 4];
         self.stream_columns_processed = 0;
         0
     }
+
     const fn empty() -> Self {
         Self {
             decoder: None,
@@ -154,16 +126,9 @@ impl State {
             return;
         };
         let defaults = FrontierConfig::default();
-        let (Ok(k), Ok(delta)) = (
-            option_env!("FRONTIER_K").map_or(Ok(defaults.k), str::parse::<usize>),
-            option_env!("FRONTIER_DELTA").map_or(Ok(defaults.delta), str::parse::<f64>),
-        ) else {
-            self.status = STATUS_MODEL_ERROR;
-            return;
-        };
         let config = FrontierConfig {
-            k,
-            delta,
+            k: FRONTIER_K.unwrap_or(defaults.k),
+            delta: FRONTIER_DELTA_BITS.map_or(defaults.delta, f64::from_bits),
             column_order,
             ..defaults
         };
@@ -542,6 +507,43 @@ pub extern "C" fn frontier_stream_finish_round_i64(
     }
 }
 
+/// Select ZIP-style fixed lag for equally sized detector blocks, after init and
+/// before begin. Include the terminal readout block in `rounds` (Helios: 21).
+/// Each block must fit one push (at most 128 detectors). Fixed lag applies to
+/// the streaming exports; `frontier_decode` sees the whole syndrome at once.
+/// Existing streaming exports and their i64 ABI remain unchanged.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_fixed_lag_i64(rounds: i64, window: i64) -> i64 {
+    STATE.with_borrow_mut(|state| {
+        if state.decoder.is_none() {
+            return state.configuration_error(STATUS_MODEL_ERROR);
+        }
+        let (Ok(rounds), Ok(window)) = (usize::try_from(rounds), usize::try_from(window)) else {
+            return state.configuration_error(STATUS_DECODE_ERROR);
+        };
+        if rounds < 2
+            || rounds > state.detector_count
+            || state.detector_count % rounds != 0
+            || state.detector_count / rounds > LIVE_MAX_DETECTORS
+            || window < 2
+            || window > rounds
+        {
+            return state.configuration_error(STATUS_DECODE_ERROR);
+        }
+        let width = state.detector_count / rounds;
+        state.configure_streaming(StreamingMode::FixedLag {
+            detector_round_bounds: (0..=rounds).map(|r| r * width).collect(),
+            window_size: window,
+        })
+    })
+}
+
+/// Restore dependency-driven scheduling without rebuilding the model.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_dependency_driven_i64() -> i64 {
+    STATE.with_borrow_mut(|state| state.configure_streaming(StreamingMode::DependencyDriven))
+}
+
 /// Helios-compatible status query.
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_status_i64() -> i64 {
@@ -788,6 +790,37 @@ mod tests {
         assert_eq!(frontier_stream_push_i64(1, 1, 0, 0, 0), 0);
         assert_eq!(frontier_stream_push_i64(1, 0, 0, 0, 0), 1);
         assert_eq!(frontier_stream_finish_round_i64(1, 0, 0, 0, 0), 1);
+    }
+
+    #[test]
+    fn fixed_lag_rounds_must_fit_one_push() {
+        use std::fmt::Write as _;
+        let independent = |detectors: usize| {
+            let mut dem = String::new();
+            for d in 0..detectors {
+                writeln!(dem, "error(0.1) D{d}").unwrap();
+            }
+            dem
+        };
+        STATE.with_borrow_mut(|state| state.initialize(&independent(256)));
+        assert_eq!(frontier_stream_fixed_lag_i64(2, 2), 0);
+        STATE.with_borrow_mut(|state| state.initialize(&independent(258)));
+        assert_eq!(frontier_stream_fixed_lag_i64(2, 2), -1);
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_DECODE_ERROR));
+        assert_eq!(frontier_stream_fixed_lag_i64(3, 2), 0);
+    }
+
+    #[test]
+    fn schedule_selection_without_a_model_reports_model_error() {
+        STATE.with_borrow_mut(|state| {
+            state.initialize("not a dem");
+            state.result = [1; 4];
+        });
+        assert_eq!(frontier_stream_fixed_lag_i64(2, 2), -1);
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_MODEL_ERROR));
+        assert_eq!(STATE.with_borrow(|state| state.result), [0; 4]);
+        assert_eq!(frontier_stream_dependency_driven_i64(), -1);
+        assert_eq!(frontier_status_i64(), i64::from(STATUS_MODEL_ERROR));
     }
 
     #[test]

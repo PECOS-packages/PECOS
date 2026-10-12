@@ -1739,6 +1739,7 @@ enum DecodeMode {
 #[derive(Clone, Copy)]
 struct BinaryRangeOptions {
     mode: DecodeMode,
+    /// Detectors at or above this index are unknown and excluded from scoring.
     known_count: Option<usize>,
 }
 
@@ -1810,30 +1811,6 @@ impl TrellisModel {
             };
         }
         TrellisDecodeAttempt::Success(Self::finish_binary(progress, columns.len(), bp_seconds))
-    }
-
-    fn process_binary_known_range_mode(
-        &self,
-        progress: &mut BinaryProgress,
-        observed: &[u64],
-        range: std::ops::Range<usize>,
-        known_count: usize,
-        mode: DecodeMode,
-    ) -> Result<(), BinaryFailure> {
-        self.process_binary_range_with_mode(
-            progress,
-            observed,
-            &self.suffix_values,
-            range,
-            PruneParams {
-                k: self.config.k,
-                delta: self.config.delta,
-            },
-            BinaryRangeOptions {
-                mode,
-                known_count: Some(known_count),
-            },
-        )
     }
 
     /// The binary float column walk shared by batch and streaming.

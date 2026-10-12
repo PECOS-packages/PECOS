@@ -56,7 +56,6 @@ fn fixed_lag_matches_original_zip_native_golden_predictions_and_schedule() {
             let syndrome = case["syndrome"].as_u64().unwrap();
             let bits: Vec<_> = (0..6).map(|d| ((syndrome >> d) & 1) as u8).collect();
             let mut columns = Vec::new();
-            let mut failed = false;
             for chunk in bits.chunks(2) {
                 decoder.feed_prefix(chunk).unwrap();
                 let advanced = if omit_evidence {
@@ -64,27 +63,19 @@ fn fixed_lag_matches_original_zip_native_golden_predictions_and_schedule() {
                 } else {
                     decoder.advance_prediction()
                 };
-                if let Ok(count) = advanced {
-                    columns.push(count);
-                } else {
-                    failed = true;
-                    break;
-                }
+                columns.push(advanced.unwrap());
             }
-            let prediction = if failed {
-                None
+            let prediction = if omit_evidence {
+                decoder.flush_prediction_without_evidence()
             } else {
-                Some(
-                    if omit_evidence {
-                        decoder.flush_prediction_without_evidence()
-                    } else {
-                        decoder.flush_prediction()
-                    }
-                    .unwrap()
-                    .words()[0],
-                )
-            };
-            assert_eq!(prediction, case["prediction"].as_u64(), "{case}");
+                decoder.flush_prediction()
+            }
+            .unwrap();
+            assert_eq!(
+                Some(prediction.words()[0]),
+                case["prediction"].as_u64(),
+                "{case}"
+            );
             assert_eq!(serde_json::json!(columns), case["columns"], "{case}");
         }
     }

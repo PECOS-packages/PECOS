@@ -8,6 +8,7 @@ from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.guppy_gen.surface_teleportation import _render_surface_t_teleportation_module
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import QubitAllocation
+from pecos.qec.surface.logical_circuit import resource_sign_checks
 
 
 def _rounds(count: str, patches: tuple[str, ...], *, swapped: bool = False) -> list[str]:
@@ -78,6 +79,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     functions = [gadgets.prep_gadget(patch, allocation, basis=basis) for basis in ("Z", "X", "Y")]
     functions.extend(gadgets.measure_out_gadget(patch, allocation, basis=basis) for basis in ("Z", "X"))
     functions.append(gadgets.logical_pauli_gadget(patch, allocation, pauli="X"))
+    functions.append(gadgets.logical_pauli_gadget(patch, allocation, pauli="Z"))
     functions.append(gadgets.transversal_layer_gadget(patch, allocation, gate="H"))
     functions.append(gadgets.transversal_cx_gadget(patch, allocation, patch, target))
     for gadget in functions:
@@ -95,6 +97,29 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     swapped = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
     lines.extend(render_gadget_function(swapped, tag_scope="a"))
     lines.extend(["", ""])
+    checks, reference = resource_sign_checks(patch)
+    parity = [f"final[{q}]" for q in geom.logical_z.data_qubits]
+    parity.extend(f"first.syn{family.lower()}[{index}]" for family, index in checks)
+    if reference:
+        parity.append("True")
+    lines.extend(
+        [
+            "@guppy",
+            f"def sz_teleportation_decision(first: Syndrome_{dx}x{dz}, final: array[bool, {geom.num_data}]) -> bool:",
+            '    """Raw SZ correction decision: ancilla logical-Z readout XOR resource-sign checks XOR reference."""',
+            "    # The reference is 0 for every odd square patch, the only geometry this renderer accepts.",
+            f"    return {' ^ '.join(parity)}",
+            "",
+            "",
+            "@guppy",
+            f"def correct_sz_teleportation(data: SurfaceCode_{dx}x{dz}, decision: bool) -> None:",
+            '    output("sz_correction", decision)',
+            "    if decision:",
+            "        apply_logical_z(data)",
+            "",
+            "",
+        ],
+    )
     lines.extend(
         [
             "def make_h_experiment(num_rounds: int, *, logical_x: bool = False):",
@@ -138,10 +163,17 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             '        """SZ teleportation experiment."""',
             "        data = prep_z_basis()",
             "        anc = prep_y_basis()",
-            *_rounds("rounds_before", ("data", "anc")),
+            "        syn = syndrome_extraction_data(data)",
+            '        output("synx_data", syn.synx)',
+            '        output("synz_data", syn.synz)',
+            "        first = syndrome_extraction_anc(anc)",
+            '        output("synx_anc", first.synx)',
+            '        output("synz_anc", first.synz)',
+            *_rounds("rounds_before - 1", ("data", "anc")),
             "        transversal_cx(data, anc)",
             *_rounds("rounds_after", ("data", "anc")),
             *_readout("anc"),
+            "        correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
             *_rounds("trailing_data_rounds", ("data",)),
             *_readout("data"),
             "    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))",

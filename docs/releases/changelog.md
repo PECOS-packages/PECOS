@@ -23,6 +23,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python additions
 
+- Rendered surface-code SZ teleportation applies the conditional logical Z in
+  the program and records `sz_correction`. The builder accepts
+  `correction="executed"`; observable extraction with `executed_corrections=True`
+  removes those correction records while preserving the static DEM mask.
+
 - `t_teleportation_decision_model(patch, rounds_before)` models the first T/TDG
   teleportation correction decision. `detection_events` transcribes a program's
   records into its detectors, and `build_dem` builds its DEM from a native trace

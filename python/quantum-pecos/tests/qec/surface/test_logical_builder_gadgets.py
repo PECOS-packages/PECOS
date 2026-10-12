@@ -24,7 +24,7 @@ from pecos.qec.surface.logical_circuit import (
     _logical_readout_flow,
     _propagate_stabilizer_terms,
     _PropagationContext,
-    _resource_sign_checks,
+    resource_sign_checks,
 )
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import group_contains, simulate_tick_circuit, stabilizer_generators_after
@@ -75,6 +75,7 @@ TELEPORTATION_METADATA = {
                 "data_patch": "D",
                 "ancilla_patch": "Y",
                 "teleportation_type": "SZ",
+                "correction": "mask",
                 "basis": "Z",
                 "meas_ids": [64, 65, 66],
                 "records": [-34, -33, -32],
@@ -112,6 +113,7 @@ TELEPORTATION_METADATA = {
                 "data_patch": "D",
                 "ancilla_patch": "Y",
                 "teleportation_type": "SZ",
+                "correction": "mask",
                 "basis": "Z",
                 "meas_ids": [80, 81, 82],
                 "records": [-34, -33, -32],
@@ -2380,7 +2382,7 @@ def test_sz_resource_sign_fold_control(distance):
 @pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
 def test_resource_sign_signed_identity(dx, dz, alternate_x, expected_reference):
     patch = _resource_patch(dx, dz, alternate_x=alternate_x)
-    checks, reference = _resource_sign_checks(patch)
+    checks, reference = resource_sign_checks(patch)
     selected = set(checks)
     width = patch.geometry.num_qubits
     generators = [
@@ -2440,6 +2442,7 @@ def test_resource_sign_metadata(dx, dz, preceding_rounds):
         "resource_sign_meas_ids",
         "resource_sign_records",
         "resource_sign_reference",
+        "correction",
     }
     total = int(tc.get_meta("num_measurements"))
     for prefix in ("", "resource_sign_"):
@@ -2450,7 +2453,7 @@ def test_resource_sign_metadata(dx, dz, preceding_rounds):
     assert len(selected) == len(readout["resource_sign_meas_ids"]) == (num_data - 1) // 2
     assert sorted(Counter(row[1] for row in selected).values()) == [(num_data - 1) // 4, (num_data + 1) // 4]
     assert {(row[0], row[3], row[4]) for row in selected} == {("A", preceding_rounds, 0)}
-    checks, reference = _resource_sign_checks(patch)
+    checks, reference = resource_sign_checks(patch)
     assert {(row[1], row[2]) for row in selected} == set(checks)
     assert readout["resource_sign_reference"] == reference
     descriptor_readout = builder.build_algorithm_descriptor()["teleportation_readouts"][0]
@@ -2474,7 +2477,7 @@ def test_resource_sign_rejects_non_real_phase_in_invalid_geometry():
     geometry.x_stabilizers[0] = replace(geometry.x_stabilizers[0], data_qubits=(0,))
     geometry.logical_x = replace(geometry.logical_x, data_qubits=tuple(range(1, geometry.num_data)))
     with pytest.raises(ValueError, match=r"Resource sign.*non-real Pauli phase.*odd"):
-        _resource_sign_checks(patch)
+        resource_sign_checks(patch)
 
 
 @pytest.mark.parametrize(("dx", "dz", "family", "reference"), [(1, 1, None, 0), (1, 3, "X", 1), (3, 1, "Z", 1)])

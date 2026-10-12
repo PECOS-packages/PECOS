@@ -96,6 +96,9 @@ def test_all_gadget_functions_compile(module, patch):
         "transversal_h",
         "transversal_cx",
         "apply_logical_x",
+        "apply_logical_z",
+        "sz_teleportation_decision",
+        "correct_sz_teleportation",
         "syndrome_extraction_swapped_a",
         "syndrome_extraction_fold_sz_a",
         "syndrome_extraction_fold_szdg_a",
@@ -297,7 +300,7 @@ def test_teleportation_outcome(module, patch, recipe):
     _assert_parity(results["final_data"], patch.geometry.logical_z.data_qubits, 0)
     assert set(results) == {
         f"{tag}_{label}" for tag in ("synx", "synz", "final") for label in ("data", "anc")
-    } | _sideband_tags(("data", "anc"))
+    } | _sideband_tags(("data", "anc")) | ({"sz_correction"} if recipe == "sz" else set())
 
 
 def test_sidebands_and_memory_parity(patch):
@@ -325,6 +328,8 @@ def test_sidebands_and_memory_parity(patch):
             assert {ast.literal_eval(call.args[0]) for call in calls} == {"injection_synx", "injection_synz"}
         elif node.name == "consume_t_resource":
             assert [ast.literal_eval(call.args[0]) for call in calls] == ["teleportation_resource_readout"]
+        elif node.name == "correct_sz_teleportation":
+            assert [ast.literal_eval(call.args[0]) for call in calls] == ["sz_correction"]
         elif node.name == "correct_t_teleportation":
             assert {ast.literal_eval(call.args[0]) for call in calls} == {
                 "t_correction",
@@ -588,10 +593,17 @@ def _expected_readout(scope, basis="z"):
             [
                 "data = prep_z_basis()",
                 "anc = prep_y_basis()",
-                _expected_rounds("rounds_before", "data", "anc"),
+                "syn = syndrome_extraction_data(data)",
+                "output('synx_data', syn.synx)",
+                "output('synz_data', syn.synz)",
+                "first = syndrome_extraction_anc(anc)",
+                "output('synx_anc', first.synx)",
+                "output('synz_anc', first.synz)",
+                _expected_rounds("rounds_before - 1", "data", "anc"),
                 "transversal_cx(data, anc)",
                 _expected_rounds("rounds_after", "data", "anc"),
                 *_expected_readout("anc"),
+                "correct_sz_teleportation(data, sz_teleportation_decision(first, final))",
                 _expected_rounds("trailing_data_rounds", "data"),
                 *_expected_readout("data"),
             ],
@@ -749,3 +761,57 @@ def test_source_cache_preserves_content_and_prefix_identity():
     assert changed["value"] == 2
     assert first["value"] == other_prefix["value"] == 1
     assert len({module["__name__"] for module in (first, changed, other_prefix)}) == 3
+
+
+@pytest.mark.parametrize("distance", [3, 5])
+@pytest.mark.parametrize("count", [1, 2])
+def test_sz_signed_witness(sz_program, distance, count):
+    from collections import Counter
+
+    from pecos.qec.surface.logical_circuit import resource_sign_checks
+
+    program, patch = sz_program(distance, count)
+    results = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(get_transversal_num_qubits("surface", distance))
+        .seed(123)
+        .run(64)
+        .to_shot_map()
+        .to_dict()
+    )
+    # The decision reads first.synx[i] as check i: gadgets._ancilla_register
+    # places check i on ancilla i, and gadget_render._allocation_epochs sorts
+    # each syndrome family by that index.
+    for checks in (patch.geometry.x_stabilizers, patch.geometry.z_stabilizers):
+        assert [check.index for check in checks] == list(range(len(checks)))
+    assert resource_sign_checks(patch)[1] == 0
+    parities = [sum(row[q] for q in patch.geometry.logical_x.data_qubits) % 2 for row in results["final_data"]]
+    if count == 1:
+        parities = [parity ^ (sum(fold) % 2) for parity, fold in zip(parities, results["fold_z"], strict=True)]
+    # Two SZs compose to Z, but this composition check is sign-blind: two SZdg do too.
+    counts = Counter(parities)
+    decisions = Counter((row,) if count == 1 else tuple(row) for row in results["sz_correction"])
+    assert counts == {count - 1: 64}
+    assert set(decisions) == (
+        {(False,), (True,)} if count == 1 else {(False, False), (False, True), (True, False), (True, True)}
+    )
+
+
+@pytest.mark.parametrize("tag", ["sz_correction", "t_correction"])
+def test_partition_skips_classical_derivations(monkeypatch, tag):
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0], [40])
+    records = [
+        {"name": tag, "values": [True], "result_ids": []},
+        {"name": "final_a", "values": [False], "result_ids": [40]},
+    ]
+    monkeypatch.setattr(
+        "pecos.testing._trace_program_to_tick_circuit_with_result_traces",
+        lambda _program, _num_qubits: (circuit, records),
+    )
+    assert measurement_partition_from_trace("program", 1, {"a": "D"}) == {("D", "final", 0): (0,)}
+    records[0]["result_ids"] = [40]
+    with pytest.raises(ValueError, match="Unsupported measurement tag"):
+        measurement_partition_from_trace("program", 1, {"a": "D"})

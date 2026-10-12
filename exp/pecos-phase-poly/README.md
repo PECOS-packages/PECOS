@@ -170,13 +170,14 @@ three ideal shots and prints elapsed time with `-- --nocapture`.
 
 `runner::compile(&circuit)` (also `Program::compile`) validates every batch and
 annotation before producing a reusable `Program`. Supported gates are I, Idle,
-TrackedPauliMeta, X/Y/Z, SZ/SZdg, T/Tdg, CX/CZ, PZ/PX, MZ/MX/MPZ, and Pauli-mixture
-Channel expressions. RZ and RZZ require exact Angle64 multiples of pi/4; SZZ and
-SZZdg are supported too. RZZ uses a CX–T-power–CX parity circuit. Compilation
+TrackedPauliMeta, X/Y/Z, SZ/SZdg, T/Tdg, CX/CZ, CS/CSdg, CCZ, PZ/PX, MZ/MX/MPZ, and
+Pauli-mixture Channel expressions. RZ and RZZ require exact Angle64 multiples
+of pi/4; SZZ and SZZdg are supported too. RZZ uses a CX–T-power–CX parity circuit. Compilation
 rejects unsupported gates, malformed batches, missing or duplicate measurement
 IDs, and unresolved annotation references with their original locations.
 I, Idle, and TrackedPauliMeta batches are shape-free no-ops, including empty
 batches, matching StabActive. Empty batches of real gates remain invalid.
+Pauli-product X measurements are expressed as CX ladders around MX.
 
 `program.run_shot(&mut sim, &mut noise_rng)` resets a caller-supplied PhasePoly
 of exactly `program.num_qubits()` qubits and executes the whole program. Its

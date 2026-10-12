@@ -3,6 +3,11 @@
 
 //! Validated `TickCircuit` execution with sampled Pauli-mixture noise.
 //!
+//! Supported gates are I, Idle, `TrackedPauliMeta`, X/Y/Z, SZ/SZdg, T/Tdg,
+//! CX/CZ, CS/CSdg, CCZ, PZ/PX, MZ/MX/MPZ, and Pauli-mixture channels.
+//! RZ/RZZ require exact multiples of pi/4; SZZ/SZZdg are also supported.
+//! Pauli-product X measurements are expressed as CX ladders around MX.
+//!
 //! Records follow execution order, independent of stable measurement-ID allocation.
 //! Detector and observable values are raw XOR parities, without reference normalization.
 //! Noise uses the caller's RNG; measurements use the simulator's independent RNG.
@@ -269,6 +274,20 @@ impl Instruction {
                         } else {
                             sim.cz(&[(pair[0], pair[1])]);
                         }
+                    }
+                }
+                GateType::CS | GateType::CSdg => {
+                    for pair in qs.as_chunks::<2>().0 {
+                        if *kind == GateType::CS {
+                            sim.cs(&[(pair[0], pair[1])]);
+                        } else {
+                            sim.csdg(&[(pair[0], pair[1])]);
+                        }
+                    }
+                }
+                GateType::CCZ => {
+                    for triple in qs.as_chunks::<3>().0 {
+                        sim.ccz(&[(triple[0], triple[1], triple[2])]);
                     }
                 }
                 GateType::PZ => {

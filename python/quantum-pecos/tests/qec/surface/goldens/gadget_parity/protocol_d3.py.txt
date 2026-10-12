@@ -956,6 +956,7 @@ def syndrome_extraction_swapped_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 
 @guppy
 def sz_teleportation_decision(first: Syndrome_3x3, final: array[bool, 9]) -> bool:
+    """Raw SZ correction decision: ancilla logical-Z readout XOR resource-sign checks XOR reference."""
     # The reference is 0 for every odd square patch, the only geometry this renderer accepts.
     return final[0] ^ final[1] ^ final[2] ^ first.synx[1] ^ first.synx[3] ^ first.synz[0] ^ first.synz[2]
 

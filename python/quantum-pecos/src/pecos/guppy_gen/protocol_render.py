@@ -106,6 +106,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         [
             "@guppy",
             f"def sz_teleportation_decision(first: Syndrome_{dx}x{dz}, final: array[bool, {geom.num_data}]) -> bool:",
+            '    """Raw SZ correction decision: ancilla logical-Z readout XOR resource-sign checks XOR reference."""',
             "    # The reference is 0 for every odd square patch, the only geometry this renderer accepts.",
             f"    return {' ^ '.join(parity)}",
             "",

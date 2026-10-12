@@ -388,6 +388,20 @@ def test_correction_declaration_and_executed_reference(dx, dz, count):
     assert extract_detection_events_and_observables(tc, rows[1:])[1] == [[]] * 8
 
 
+@pytest.mark.parametrize("damage", ["strip_key", "unknown_label"])
+def test_executed_extraction_rejects_missing_crossing_metadata(damage):
+    tc = readout_builder(3, correction="executed")[0].to_tick_circuit()
+    observables = json.loads(tc.get_meta("observables"))
+    if damage == "strip_key":
+        del observables[0]["crossed_teleportations"]
+    elif damage == "unknown_label":
+        observables[0]["crossed_teleportations"] = ["missing"]
+    tc.set_meta("observables", json.dumps(observables))
+    rows = [[0] * tc.num_measurements()]
+    with pytest.raises(ValueError, match=r"crossed_teleportations metadata|has no teleportation readout"):
+        extract_detection_events_and_observables(tc, rows, executed_corrections=True)
+
+
 def test_invalid_correction_mode():
     with pytest.raises(ValueError, match="Invalid SZ correction mode"):
         readout_builder(correction="automatic")

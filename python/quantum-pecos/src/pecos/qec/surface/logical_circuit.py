@@ -755,7 +755,7 @@ class LogicalOp:
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
     teleportation_type: str | None = None
     # SZ correction mode: "mask" (observable masks only) or "executed" (applied in the program).
-    correction: str = "mask"
+    correction: Literal["mask", "executed"] = "mask"
     # Phase variant of a one-round fold segment; absent on every other operation.
     fold: Literal["SZ", "SZdg"] | None = None
 
@@ -1301,7 +1301,8 @@ class LogicalCircuitBuilder:
         ancilla_label: str,
         rounds_before: int = 3,
         rounds_after: int = 3,
-        correction: str = "mask",
+        *,
+        correction: Literal["mask", "executed"] = "mask",
     ) -> None:
         """Apply logical SZ via gate teleportation with |+Y> ancilla.
 

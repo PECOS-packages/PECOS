@@ -107,6 +107,12 @@ def _remove_executed_correction(observable: dict, readout: dict, positions: dict
         raise ValueError(msg)
     _validate_observable_references([observable])
     for mid in (*readout["meas_ids"], *readout["resource_sign_meas_ids"]):
+        if positions[mid] not in observable["measurements"]:
+            msg = (
+                f"Observable {observable['id']} crosses teleportation {readout['ancilla_patch']!r} "
+                f"but its mask lacks correction record {mid}"
+            )
+            raise ValueError(msg)
         observable["measurements"].remove(positions[mid])
     observable["reference"] ^= readout["resource_sign_reference"]
 
@@ -127,7 +133,9 @@ def extract_detection_events_and_observables(
     For program-corrected rows, ``executed_corrections=True`` removes crossed SZ
     correction records and XORs their resource-sign references. Every crossing
     must be declared ``correction="executed"``. Static builder rows always use
-    the default mask extraction, even with an executed declaration.
+    the default mask extraction, even with an executed declaration. Executed
+    extraction needs each observable's ``crossed_teleportations`` metadata and
+    validates observable references eagerly.
     """
     definitions = tick_circuit.circuit_definitions()
     observables = definitions["observables"]
@@ -140,7 +148,16 @@ def extract_detection_events_and_observables(
         positions = {mid: position for position, mid in enumerate(measurement_ids_in_execution_order(tick_circuit))}
         observables = [dict(obs, measurements=list(obs["measurements"])) for obs in observables]
         for obs in observables:
-            for label in metadata.get(obs["id"], {}).get("crossed_teleportations", []):
+            # Absent metadata must not read as "no crossings": that would return
+            # mask flips for executed rows, applying the correction twice.
+            crossed = metadata.get(obs["id"], {}).get("crossed_teleportations")
+            if crossed is None:
+                msg = f"Observable {obs['id']} has no crossed_teleportations metadata; cannot extract executed rows"
+                raise ValueError(msg)
+            for label in crossed:
+                if label not in readouts:
+                    msg = f"Observable {obs['id']} crosses teleportation {label!r}, which has no teleportation readout"
+                    raise ValueError(msg)
                 _remove_executed_correction(obs, readouts[label], positions)
     num_meas = definitions["num_measurements"]
     detection_events_per_shot: list[list[int]] = []

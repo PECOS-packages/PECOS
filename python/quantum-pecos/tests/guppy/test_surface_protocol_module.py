@@ -781,9 +781,9 @@ def test_sz_signed_witness(sz_program, distance, count):
         .to_shot_map()
         .to_dict()
     )
-    # Rotated X supports are assigned consecutive indices; Z supports are
-    # reindexed after sorting (layouts/rotated_lattice.py). gadget_render's
-    # _allocation_epochs sorts each syndrome family by those indices.
+    # The decision reads first.synx[i] as check i: gadgets._ancilla_register
+    # places check i on ancilla i, and gadget_render._allocation_epochs sorts
+    # each syndrome family by that index.
     for checks in (patch.geometry.x_stabilizers, patch.geometry.z_stabilizers):
         assert [check.index for check in checks] == list(range(len(checks)))
     assert resource_sign_checks(patch)[1] == 0
@@ -793,7 +793,6 @@ def test_sz_signed_witness(sz_program, distance, count):
     # Two SZs compose to Z, but this composition check is sign-blind: two SZdg do too.
     counts = Counter(parities)
     decisions = Counter((row,) if count == 1 else tuple(row) for row in results["sz_correction"])
-    print(f"d={distance}, SZ count={count}: witness={dict(counts)}, decisions={dict(decisions)}")
     assert counts == {count - 1: 64}
     assert set(decisions) == (
         {(False,), (True,)} if count == 1 else {(False, False), (False, True), (True, False), (True, True)}

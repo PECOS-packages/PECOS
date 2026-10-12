@@ -71,6 +71,8 @@ pub struct ResolvedDetector {
     pub coords: Option<Vec<f64>>,
     /// Optional human-readable name.
     pub label: Option<String>,
+    /// Fault sector supplied by metadata; annotations alone leave it unknown.
+    pub fault_sector: Option<String>,
     /// Absolute emission positions, preserving source order and multiplicity.
     pub measurements: Vec<usize>,
 }
@@ -195,6 +197,7 @@ struct Definition {
     measurements: Vec<usize>,
     coords: Option<Vec<f64>>,
     label: Option<String>,
+    fault_sector: Option<String>,
     pauli: Option<PauliString>,
 }
 
@@ -375,6 +378,7 @@ pub fn resolve_definitions(
         .unwrap_or_default()
     {
         let definition = Definition {
+            fault_sector: entry.fault_sector,
             measurements: resolver.references(
                 "detector",
                 entry.id,
@@ -399,6 +403,7 @@ pub fn resolve_definitions(
         .unwrap_or_default()
     {
         let definition = Definition {
+            fault_sector: None,
             measurements: resolver.references(
                 "observable",
                 entry.id,
@@ -429,6 +434,7 @@ pub fn resolve_definitions(
         definitions.insert(
             id,
             Definition {
+                fault_sector: None,
                 measurements: resolver.ids(
                     kind,
                     id,
@@ -445,6 +451,7 @@ pub fn resolve_definitions(
         detectors: merge("detector", detectors, annotation_detectors)?
             .into_iter()
             .map(|(id, d)| ResolvedDetector {
+                fault_sector: d.fault_sector,
                 id,
                 coords: d.coords,
                 label: d.label,

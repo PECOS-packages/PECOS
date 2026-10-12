@@ -1778,6 +1778,15 @@ impl TickCircuit {
         self.circuit_attrs.get(key)
     }
 
+    /// Return the next automatically assigned detector metadata id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector metadata is malformed or the id overflows.
+    pub fn next_detector_metadata_id(&self) -> Result<usize, String> {
+        next_metadata_id(&meta_json_array(self, "detectors")?, "detectors")
+    }
+
     /// Add detector metadata defined by measurement-record offsets.
     ///
     /// This appends one entry to the circuit-level `"detectors"` JSON metadata
@@ -1789,19 +1798,22 @@ impl TickCircuit {
     ///
     /// Returns an error if existing detector metadata is not a JSON array, if
     /// JSON serialization fails, or if `detector_id` duplicates an existing
-    /// explicit detector id.
+    /// explicit detector id, or the fault sector is empty.
     pub fn add_detector_metadata(
         &mut self,
         records: &[i64],
         coords: Option<&[f64]>,
         label: Option<&str>,
         detector_id: Option<usize>,
+        fault_sector: Option<&str>,
     ) -> Result<usize, String> {
         let mut detectors = meta_json_array(self, "detectors")?;
         let id = match detector_id {
             Some(id) => id,
             None => next_metadata_id(&detectors, "detectors")?,
         };
+        let fault_sector = fault_sector.map(|value| serde_json::Value::String(value.to_owned()));
+        let fault_sector = crate::parse_fault_sector(fault_sector.as_ref(), id)?;
         ensure_unique_metadata_id(&detectors, "detectors", "detector_id", id)?;
 
         let mut detector = serde_json::Map::new();
@@ -1812,6 +1824,9 @@ impl TickCircuit {
         }
         if let Some(label) = label {
             detector.insert("label".to_string(), serde_json::json!(label));
+        }
+        if let Some(fault_sector) = fault_sector {
+            detector.insert("fault_sector".to_string(), serde_json::json!(fault_sector));
         }
         detectors.push(serde_json::Value::Object(detector));
         set_meta_json_array(self, "detectors", &detectors)?;
@@ -6150,7 +6165,7 @@ mod tests {
         let mut tc = TickCircuit::new();
 
         let detector_id = tc
-            .add_detector_metadata(&[-1], Some(&[0.0, 1.0, 2.0]), Some("d0"), None)
+            .add_detector_metadata(&[-1], Some(&[0.0, 1.0, 2.0]), Some("d0"), None, Some("X"))
             .unwrap();
         let observable_id = tc
             .add_observable_metadata(&[-1, -2], None, Some("L2"), None)
@@ -6167,7 +6182,7 @@ mod tests {
         };
         assert_eq!(
             detectors,
-            r#"[{"coords":[0.0,1.0,2.0],"id":0,"label":"d0","records":[-1]}]"#
+            r#"[{"coords":[0.0,1.0,2.0],"fault_sector":"X","id":0,"label":"d0","records":[-1]}]"#
         );
 
         let observables = match tc.get_meta("observables").unwrap() {
@@ -6175,6 +6190,37 @@ mod tests {
             other => panic!("expected observables JSON string, got {other:?}"),
         };
         assert_eq!(observables, r#"[{"id":2,"label":"L2","records":[-1,-2]}]"#);
+    }
+
+    #[test]
+    fn test_metadata_helper_fault_sectors() {
+        for sector in [
+            None,
+            Some("X"),
+            Some("Z"),
+            Some("XX"),
+            Some("sector-3"),
+            Some("x"),
+            Some(" "),
+        ] {
+            let mut circuit = TickCircuit::new();
+            circuit
+                .add_detector_metadata(&[-1], None, None, Some(37), sector)
+                .unwrap();
+            let entries = meta_json_array(&circuit, "detectors").unwrap();
+            assert_eq!(
+                entries[0]
+                    .get("fault_sector")
+                    .and_then(serde_json::Value::as_str),
+                sector
+            );
+        }
+        let mut circuit = TickCircuit::new();
+        let error = circuit
+            .add_detector_metadata(&[-1], None, None, Some(37), Some(""))
+            .unwrap_err();
+        assert!(error.contains("detector 37 fault_sector"), "{error}");
+        assert!(circuit.get_meta("detectors").is_none());
     }
 
     #[test]
@@ -6186,10 +6232,10 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("conflicts"));
 
-        tc.add_detector_metadata(&[-1], None, None, Some(7))
+        tc.add_detector_metadata(&[-1], None, None, Some(7), None)
             .unwrap();
         let err = tc
-            .add_detector_metadata(&[-2], None, None, Some(7))
+            .add_detector_metadata(&[-2], None, None, Some(7), None)
             .unwrap_err();
         assert!(err.contains("already contains detector_id 7"));
 

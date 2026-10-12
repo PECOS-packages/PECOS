@@ -1793,6 +1793,7 @@ def _surface_native_topology(
                 "id": detector["id"],
                 "records": records,
                 "label": detector["label"],
+                "fault_sector": detector["fault_sector"],
                 **({"coords": detector["coords"]} if detector["coords"] is not None else {}),
             }
             for detector, records in zip(definitions["detectors"], det_records, strict=True)

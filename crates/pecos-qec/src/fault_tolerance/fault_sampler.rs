@@ -3206,7 +3206,7 @@ mod tests {
             "num_measurements",
             pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
         );
-        tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+        tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0), None)
             .unwrap();
         tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
             .unwrap();
@@ -3325,7 +3325,7 @@ mod tests {
                 "num_measurements",
                 pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
             );
-            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0), None)
                 .unwrap();
             tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
                 .unwrap();
@@ -3577,7 +3577,7 @@ mod tests {
                 "num_measurements",
                 pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
             );
-            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0), None)
                 .unwrap();
             tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
                 .unwrap();
@@ -3650,9 +3650,9 @@ mod tests {
                 "num_measurements",
                 pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
             );
-            tc.add_detector_metadata(&[-2], None, Some("D0"), Some(0))
+            tc.add_detector_metadata(&[-2], None, Some("D0"), Some(0), None)
                 .unwrap();
-            tc.add_detector_metadata(&[-1], None, Some("D1"), Some(1))
+            tc.add_detector_metadata(&[-1], None, Some("D1"), Some(1), None)
                 .unwrap();
             tc.add_observable_metadata(&[-2], Some(0), Some("L0"), None)
                 .unwrap();
@@ -3730,7 +3730,7 @@ mod tests {
             "num_measurements",
             pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
         );
-        tc.add_detector_metadata(&[-2, -1], None, Some("D0"), Some(0))
+        tc.add_detector_metadata(&[-2, -1], None, Some("D0"), Some(0), None)
             .unwrap();
         tc.add_observable_metadata(&[-2], Some(0), Some("L0"), None)
             .unwrap();

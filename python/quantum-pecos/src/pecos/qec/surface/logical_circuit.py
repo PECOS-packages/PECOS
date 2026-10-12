@@ -2767,6 +2767,8 @@ class _CircuitGenerator:
         self.stab_meas: dict[tuple[str, str, int, int, int], int] = {}
         self._stab_meas_by_round: dict[tuple[str, int, int], list[tuple[str, str, int, int, int]]] = {}
         self._last_round: dict[tuple[str, str, int], int] = {}
+        self._untyped_measurements: set[int] = set()
+        self._pending_phase_patches: set[str] = set()
         self._fold_maps: dict[tuple[str, int], tuple[dict[int, int], dict[int, int]]] = {}
         self._boundary_terms: dict[tuple[str, str, int], list[tuple[str, str, int]] | None] = {}
         self._propagation_context = _PropagationContext.from_operations(operations)
@@ -2865,6 +2867,7 @@ class _CircuitGenerator:
                 "coords": d["coords"],
                 "records": [idx - total for idx in d["abs_records"]],
                 "meas_ids": d["abs_records"],
+                "fault_sector": d["fault_sector"],
             }
             for d in self._det_json
         ]
@@ -3111,8 +3114,12 @@ class _CircuitGenerator:
                     )
                 rounds.append(gadget.steps)
             measurements = self._emit_steps(rounds)
+            if op.fold:
+                self._untyped_measurements.update(measurements.values())
             for (position, qubit), index in measurements.items():
                 label = op.patches[position]
+                if label in self._pending_phase_patches:
+                    self._untyped_measurements.add(index)
                 allocation = allocations[label]
                 if qubit in allocation.x_ancilla_qubits:
                     family, register = "X", allocation.x_ancilla_qubits
@@ -3127,6 +3134,7 @@ class _CircuitGenerator:
                 self.stab_meas[key] = index
                 self._last_round[label, family, self.segment_idx] = rnd
                 self._stab_meas_by_round.setdefault((label, self.segment_idx, rnd), []).append(key)
+            self._pending_phase_patches.difference_update(op.patches)
             for label in op.patches:
                 self._emit_round_detectors(label, rnd)
             self.round_time += 1.0
@@ -3316,6 +3324,11 @@ class _CircuitGenerator:
                 "id": len(self._det_json),
                 "coords": [anc_x, anc_y, self.round_time],
                 "abs_records": list(meas_indices),
+                # Keep the current family key: base_family flips after transversal H.
+                # Fold rounds introduce Z-partner terms via _fold_maps. Their
+                # fault sectors are unverified, including comparisons across a fold.
+                # The first measurements after physical SZ/SZdg are also untyped.
+                "fault_sector": None if self._untyped_measurements.intersection(meas_indices) else stab_type,
             },
         )
 
@@ -3334,11 +3347,15 @@ class _CircuitGenerator:
 
     def _emit_transversal_sz(self, op: LogicalOp) -> None:
         self._emit_transversal_layer(op, "SZ")
+        self._pending_phase_patches.update(op.patches)
 
     def _emit_transversal_szdg(self, op: LogicalOp) -> None:
         self._emit_transversal_layer(op, "SZDG")
+        self._pending_phase_patches.update(op.patches)
 
     def _emit_transversal_cx(self, op: LogicalOp) -> None:
+        if self._pending_phase_patches.intersection(op.patches):
+            self._pending_phase_patches.update(op.patches)
         ctrl_label, tgt_label = op.patches[0], op.patches[1]
         ctrl_ps = self.patches[ctrl_label]
         tgt_ps = self.patches[tgt_label]
@@ -3373,6 +3390,9 @@ class _CircuitGenerator:
                 ).steps,
             ],
         )
+        if patch_label in self._pending_phase_patches:
+            self._untyped_measurements.update(measured.values())
+            self._pending_phase_patches.remove(patch_label)
         for q in range(ps.patch.geometry.num_data):
             self.data_meas[patch_label, q] = measured[0, ps.qubit_offset + q]
 
@@ -3408,14 +3428,7 @@ class _CircuitGenerator:
                 syn_idx = self.stab_meas.get(syn_key)
                 if syn_idx is not None:
                     all_idx = [*data_rec, syn_idx]
-                    anc_x, anc_y = self._ancilla_spatial_coords(patch_label, lookup_type, s.index)
-                    self._det_json.append(
-                        {
-                            "id": len(self._det_json),
-                            "coords": [anc_x, anc_y, self.round_time],
-                            "abs_records": list(all_idx),
-                        },
-                    )
+                    self._add_detector(patch_label, lookup_type, s.index, all_idx)
 
         else:
             # A zero-round final segment reads data right after the previous

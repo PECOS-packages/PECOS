@@ -106,7 +106,13 @@ pub(crate) fn finish_css_memory_circuit(
     }
 
     let (detectors_json, observables_json, num_detectors, num_observables) =
-        css_memory_annotation_metadata_json(circuit);
+        css_memory_annotation_metadata_json(
+            circuit,
+            x_measurements,
+            z_measurements,
+            &final_data,
+            basis,
+        );
     circuit.set_meta(
         "num_measurements",
         Attribute::String(circuit.num_measurements().to_string()),
@@ -185,7 +191,32 @@ fn annotate_detector(
         .map_err(|error| error.to_string())
 }
 
-fn css_memory_annotation_metadata_json(circuit: &TickCircuit) -> (String, String, usize, usize) {
+fn css_memory_annotation_metadata_json(
+    circuit: &TickCircuit,
+    x_measurements: &[Vec<TickMeasRef>],
+    z_measurements: &[Vec<TickMeasRef>],
+    final_data: &[TickMeasRef],
+    basis: MemoryBasis,
+) -> (String, String, usize, usize) {
+    let mut fault_sectors: std::collections::BTreeMap<_, _> =
+        [(x_measurements, "X"), (z_measurements, "Z")]
+            .into_iter()
+            .flat_map(|(rounds, family)| {
+                rounds
+                    .iter()
+                    .flatten()
+                    .map(move |measurement| (measurement.meas_id, family))
+            })
+            .collect();
+    let final_family = match basis {
+        MemoryBasis::X => "X",
+        MemoryBasis::Z => "Z",
+    };
+    fault_sectors.extend(
+        final_data
+            .iter()
+            .map(|measurement| (measurement.meas_id, final_family)),
+    );
     let mut detectors = Vec::new();
     let mut observables = Vec::new();
     for annotation in circuit.annotations() {
@@ -195,8 +226,17 @@ fn css_memory_annotation_metadata_json(circuit: &TickCircuit) -> (String, String
                 coords: _,
             } => {
                 let id = detectors.len();
+                let fault_sector = measurement_ids
+                    .first()
+                    .and_then(|id| fault_sectors.get(id))
+                    .filter(|family| {
+                        measurement_ids
+                            .iter()
+                            .all(|id| fault_sectors.get(id) == Some(*family))
+                    });
                 detectors.push(serde_json::json!({
                     "id": id,
+                    "fault_sector": fault_sector,
                     "meas_ids": measurement_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
                     "label": annotation.label,
                 }));
@@ -261,5 +301,27 @@ fn parity_matrix_from_rows(rows: Vec<Vec<u8>>, width: usize) -> ParityCheckMatri
     } else {
         ParityCheckMatrix::from_dense(rows)
             .expect("a rectangular logical-operator matrix was generated")
+    }
+}
+
+#[cfg(test)]
+mod fault_sector_tests {
+    use super::*;
+
+    #[test]
+    fn css_detector_requires_every_measurement_to_have_the_same_family() {
+        let mut circuit = TickCircuit::new();
+        let x = circuit.tick().mx(&[0, 1]);
+        let z = circuit.tick().mz(&[2]);
+        let unknown = circuit.tick().mz(&[3]);
+        for measurements in [vec![x[0], x[1]], vec![x[0], z[0]], vec![x[0], unknown[0]]] {
+            circuit.detector(&measurements).unwrap();
+        }
+        let (json, _, _, _) =
+            css_memory_annotation_metadata_json(&circuit, &[x], &[z], &[], MemoryBasis::X);
+        let detectors: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(detectors[0]["fault_sector"], "X");
+        assert!(detectors[1]["fault_sector"].is_null());
+        assert!(detectors[2]["fault_sector"].is_null());
     }
 }

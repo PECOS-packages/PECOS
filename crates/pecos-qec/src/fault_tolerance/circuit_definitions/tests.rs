@@ -307,6 +307,7 @@ fn merged_fields() {
     assert_eq!(
         result.detectors[0],
         ResolvedDetector {
+            fault_sector: None,
             id: 0,
             coords: Some(vec![1.0, 2.0, 3.0]),
             label: Some("check".into()),

@@ -2486,6 +2486,15 @@ impl PyDetectorErrorModel {
             .collect()
     }
 
+    /// Detector identities and their optional fault sectors.
+    fn detector_fault_sectors(&self) -> Vec<(u32, Option<&str>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.fault_sector.as_deref()))
+            .collect()
+    }
+
     /// Build a decoder without rendering and reparsing this model at the API boundary.
     ///
     /// Windowed and beam-search specifications consume the structured model directly;

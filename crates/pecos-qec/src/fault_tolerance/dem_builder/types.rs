@@ -2029,6 +2029,8 @@ pub struct DetectorDef {
     pub coords: Option<[f64; 3]>,
     /// Measurement record offsets (negative indices from end of record).
     pub records: SmallVec<[i32; 2]>,
+    /// Optional fault sector; omitted from all DEM text and PECOS metadata output.
+    pub fault_sector: Option<String>,
 }
 
 impl DetectorDef {
@@ -2037,6 +2039,7 @@ impl DetectorDef {
     pub fn new(id: u32) -> Self {
         Self {
             id,
+            fault_sector: None,
             coords: None,
             records: SmallVec::new(),
         }

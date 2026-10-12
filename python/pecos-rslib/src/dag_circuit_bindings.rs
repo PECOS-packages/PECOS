@@ -2356,6 +2356,7 @@ impl PyTickCircuit {
             entry.set_item("measurements", detector.measurements)?;
             entry.set_item("coords", detector.coords)?;
             entry.set_item("label", detector.label)?;
+            entry.set_item("fault_sector", detector.fault_sector.as_deref())?;
             detectors.append(entry)?;
         }
         result.set_item("detectors", detectors)?;
@@ -2423,16 +2424,44 @@ impl PyTickCircuit {
     /// This is the typed equivalent of appending to the circuit-level
     /// ``"detectors"`` JSON metadata list. Use ``detector(...)`` when you
     /// already have explicit measurement handles from this TickCircuit.
-    #[pyo3(signature = (records, coords=None, label=None, detector_id=None))]
+    #[pyo3(signature = (records, coords=None, label=None, detector_id=None, fault_sector=None))]
     fn add_detector(
         &mut self,
         records: Vec<i64>,
         coords: Option<Vec<f64>>,
         label: Option<String>,
         detector_id: Option<usize>,
+        fault_sector: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<usize> {
+        let id = match detector_id {
+            Some(id) => id,
+            None => self
+                .inner
+                .next_detector_metadata_id()
+                .map_err(pyo3::exceptions::PyValueError::new_err)?,
+        };
+        let fault_sector = fault_sector
+            .map(|value| {
+                value
+                    .extract::<String>()
+                    .map(serde_json::Value::String)
+                    .map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "detector {id} fault_sector must be a non-empty string or null"
+                        ))
+                    })
+            })
+            .transpose()?;
+        let fault_sector = pecos_quantum::parse_fault_sector(fault_sector.as_ref(), id)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         self.inner
-            .add_detector_metadata(&records, coords.as_deref(), label.as_deref(), detector_id)
+            .add_detector_metadata(
+                &records,
+                coords.as_deref(),
+                label.as_deref(),
+                Some(id),
+                fault_sector.as_deref(),
+            )
             .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 

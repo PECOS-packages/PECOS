@@ -68,6 +68,7 @@ mod circuit;
 mod circuit_display;
 mod dag_circuit;
 pub mod diamond_norm;
+mod fault_sector;
 pub mod measures;
 pub mod pass;
 pub mod pauli_group;
@@ -83,6 +84,7 @@ pub use dag_circuit::{
     AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
     DagWireError, MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
+pub use fault_sector::parse_fault_sector;
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
     Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,

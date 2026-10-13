@@ -183,14 +183,26 @@ fn local_gate_faults_match_explicit_general_noise_and_rng_per_native_batch() {
         batch(2, 0, 0, vec![Gate::mz(&[0]), Gate::mz(&[1])]),
     ];
     for events in [false, true] {
-        for seed in 0..32 {
-            let mut actual = system(profile(0.8, 0.7, 0.3, 0.4, 0.2), events, seed);
+        for (seed, ratio) in (0..32).flat_map(|seed| [0.0, 0.4, 1.0].map(|ratio| (seed, ratio))) {
+            let local = ScheduledLocalNoise::new(
+                ScheduledIdleNoise::new(2).unwrap(),
+                0.8,
+                0.7,
+                0.3,
+                0.4,
+                0.2,
+            )
+            .unwrap()
+            .with_prep_leak_ratio(ratio)
+            .unwrap();
+            let mut actual = system(local.into(), events, seed);
             let mut expected = QuantumSystem::new(
                 Box::new(
                     GeneralNoiseModelBuilder::new()
                         .with_p1(0.8)
                         .with_p2(0.7)
                         .with_p_prep(0.3)
+                        .with_prep_leak_ratio(ratio)
                         .with_p_meas_0(0.4)
                         .with_p_meas_1(0.2)
                         .build(),
@@ -372,9 +384,12 @@ fn normalized_capacity_violation_poison_clone_and_reset() {
             Ok(())
         }
     }
-    let noise = ScheduledEventIdleNoise::new(profile(0.0, 0.0, 1.0, 0.0, 0.0), |_| {
-        Ok(Box::new(AppendOutsideCapacity))
-    });
+    let local =
+        ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 1.0, 0.0, 0.0)
+            .unwrap()
+            .with_prep_leak_ratio(1.0)
+            .unwrap();
+    let noise = ScheduledEventIdleNoise::new(local, |_| Ok(Box::new(AppendOutsideCapacity)));
     let mut sim = QuantumSystem::new(noise.into_noise_model(), Box::new(StateVecEngine::new(2)));
     sim.begin_shot(context(0)).unwrap();
     let bad = message(&[batch(0, 0, 0, vec![Gate::mz(&[0])])], true);
@@ -389,11 +404,170 @@ fn normalized_capacity_violation_poison_clone_and_reset() {
                 owner,
                 &[
                     batch(0, 0, 0, vec![Gate::pz(&[0])]),
-                    batch(1, 0, 0, vec![Gate::mz(&[0])])
+                    batch(1, 0, 0, vec![Gate::measure_leaked(&[0])])
                 ],
                 true
             ),
-            vec![1]
+            vec![2]
         );
+    }
+}
+
+#[test]
+fn preparation_leakage_ratio_is_checked_even_without_preparation_faults() {
+    for ratio in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let local =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 0.0, 0.0, 0.0)
+                .unwrap();
+        assert!(local.with_prep_leak_ratio(ratio).is_err());
+    }
+}
+
+#[test]
+fn preparation_leakage_is_conditional_and_readout_preserves_the_ternary_result() {
+    for events in [false, true] {
+        for (prep, ratio, expected) in [
+            (0.0, 1.0, vec![0, 0]),
+            (1.0, 0.0, vec![0, 0]),
+            (1.0, 1.0, vec![2, 0]),
+        ] {
+            let local = ScheduledLocalNoise::new(
+                ScheduledIdleNoise::new(2).unwrap(),
+                0.0,
+                0.0,
+                prep,
+                0.0,
+                1.0,
+            )
+            .unwrap()
+            .with_prep_leak_ratio(ratio)
+            .unwrap();
+            let mut sim = system(local.into(), events, 4);
+            let b = [batch(
+                0,
+                0,
+                0,
+                vec![Gate::pz(&[0]), Gate::measure_leaked(&[0]), Gate::mz(&[0])],
+            )];
+            // Binary 1 (whether leaked or an X fault) flips to zero; ternary 2 does not.
+            assert_eq!(run(&mut sim, &b, events), expected);
+        }
+    }
+}
+
+#[test]
+fn preparation_leakage_same_batch_reset_snapshots_match_general_readout() {
+    let gates = vec![
+        Gate::pz(&[0]),
+        Gate::measure_leaked(&[0]),
+        Gate::mz(&[0]),
+        Gate::pz(&[0]),
+        Gate::measure_leaked(&[0]),
+        Gate::pz(&[0]),
+        Gate::measure_leaked(&[0]),
+    ];
+    for events in [false, true] {
+        let mut saw_clear = false;
+        let mut saw_leak = false;
+        for seed in 0..32 {
+            let local = ScheduledLocalNoise::new(
+                ScheduledIdleNoise::new(2).unwrap(),
+                0.0,
+                0.0,
+                0.5,
+                0.0,
+                0.0,
+            )
+            .unwrap()
+            .with_prep_leak_ratio(1.0)
+            .unwrap();
+            let mut actual = system(local.into(), events, seed);
+            let mut expected = QuantumSystem::new(
+                Box::new(
+                    GeneralNoiseModelBuilder::new()
+                        .with_p_prep(0.5)
+                        .with_prep_leak_ratio(1.0)
+                        .with_p_meas_1(0.0)
+                        .build(),
+                ),
+                Box::new(StateVecEngine::new(2)),
+            );
+            expected.set_seed(seed);
+            // Preserve the complete native lifecycle, including the order of
+            // preparation sampling and deferred readout RNG draws. The general
+            // model records leakage separately at each measurement position.
+            let want = expected
+                .process(
+                    ByteMessage::quantum_operations_builder()
+                        .add_gate_commands(&gates)
+                        .build(),
+                )
+                .unwrap()
+                .outcomes()
+                .unwrap();
+            let got = run(&mut actual, &[batch(0, 0, 0, gates.clone())], events);
+            assert_eq!(got, want);
+            assert_eq!(
+                actual.controller().rng().clone().next_u64(),
+                expected.controller().rng().clone().next_u64()
+            );
+            saw_clear |= got[0] == 2 && got[2] == 0;
+            saw_leak |= got[0] == 0 && got[2] == 2;
+        }
+        assert!(
+            saw_clear && saw_leak,
+            "exercise both reset clearing and new leakage"
+        );
+    }
+}
+
+#[test]
+fn whole_shot_reset_clears_preparation_leakage_in_cloned_hosts() {
+    for events in [false, true] {
+        let local =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 1.0, 0.0, 0.0)
+                .unwrap()
+                .with_prep_leak_ratio(1.0)
+                .unwrap();
+        let mut sim = system(local.into(), events, 3);
+        assert_eq!(
+            run(
+                &mut sim,
+                &[batch(
+                    0,
+                    0,
+                    0,
+                    vec![Gate::pz(&[0]), Gate::measure_leaked(&[0])]
+                )],
+                events
+            ),
+            vec![2]
+        );
+        let mut cloned = sim.clone();
+        for host in [&mut sim, &mut cloned] {
+            host.reset().unwrap();
+            host.begin_shot(context(1)).unwrap();
+            assert_eq!(
+                run(
+                    host,
+                    &[batch(0, 0, 0, vec![Gate::measure_leaked(&[0])])],
+                    events
+                ),
+                vec![0]
+            );
+            assert_eq!(
+                run(
+                    host,
+                    &[batch(
+                        1,
+                        0,
+                        0,
+                        vec![Gate::pz(&[0]), Gate::measure_leaked(&[0])]
+                    )],
+                    events
+                ),
+                vec![2]
+            );
+        }
     }
 }

@@ -67,12 +67,12 @@ def test_zero_local_faults_preserve_seeded_idle_output(tmp_path, scheduled_suppo
     assert actual.run(32).to_dict() == expected.run(32).to_dict()
 
 
-@pytest.mark.parametrize("parameter", ["p1", "p2", "prep", "meas0", "meas1"])
+@pytest.mark.parametrize("parameter", ["p1", "p2", "prep", "meas0", "meas1", "prep_leak_ratio"])
 @pytest.mark.parametrize("value", [-0.1, 1.1, math.inf, math.nan])
 def test_invalid_probability(parameter, value):
     import pecos_rslib as pr
 
-    with pytest.raises(ValueError, match="probabilities"):
+    with pytest.raises(ValueError, match=r"probabilities|leakage ratio"):
         pr.scheduled_local_noise(pr.scheduled_idle_noise(1), **{parameter: value})
 
 
@@ -199,3 +199,59 @@ attributes #0 = { "EntryPoint" }
             # The initial PZ is separate; MZ, MZ, PZ, MZ arrive together after
             # the idle gap, then RXY, MZ arrive after the first result returns.
             assert batches == [[(0, 1, []), (1_000_000_000, 4, [0, 1, 3]), (1_000_000_000, 2, [1])]] * shots
+
+
+@pytest.mark.parametrize("events", [False, True])
+@pytest.mark.parametrize(("prep", "ratio", "first"), [(0.0, 1.0, 0), (1.0, 0.0, 1), (1.0, 1.0, 2)])
+def test_preparation_leakage_drives_integer_feedback_on_repeated_worker_runs(
+    tmp_path,
+    scheduled_support,
+    events,
+    prep,
+    ratio,
+    first,
+):
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 0, coalesce_queued=True)
+    program = """
+declare i64 @___qalloc()
+declare void @___qfree(i64)
+declare i64 @___lazy_measure_leaked(i64)
+declare void @___reset(i64)
+declare i64 @___read_future_uint(i64)
+declare void @setup(i64)
+declare i64 @teardown()
+define i64 @qmain(i64 %arg) #0 {
+  call void @setup(i64 %arg)
+  %q = call i64 @___qalloc()
+  %clean = call i64 @___lazy_measure_leaked(i64 %q)
+  call void @___reset(i64 %q)
+  %first = call i64 @___lazy_measure_leaked(i64 %q)
+  %value = call i64 @___read_future_uint(i64 %first)
+  %leaked = icmp eq i64 %value, 2
+  br i1 %leaked, label %repeat, label %done
+repeat:
+  %second = call i64 @___lazy_measure_leaked(i64 %q)
+  br label %done
+done:
+  call void @___qfree(i64 %q)
+  %end = call i64 @teardown()
+  ret i64 %end
+}
+attributes #0 = { "EntryPoint" }
+"""
+    profile = pr.scheduled_local_noise(pr.scheduled_idle_noise(1), prep=prep, prep_leak_ratio=ratio)
+    built = simulation(library, program, profile, events).build()
+    for shots in (4, 6):
+        result = built.run(shots).to_dict()
+        # This public runtime also emits PZ on allocation, so both the initial
+        # preparation and the explicit reset receive the configured fault.
+        assert result["measurement_0"] == [first] * shots
+        assert result["measurement_1"] == [first] * shots
+        if first == 2:
+            # This measurement is emitted only after the live integer future
+            # returns 2 and the running program takes its conditional branch.
+            assert result["measurement_2"] == [2] * shots
+        else:
+            assert "measurement_2" not in result

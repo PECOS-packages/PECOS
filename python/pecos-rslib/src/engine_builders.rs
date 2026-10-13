@@ -891,13 +891,14 @@ pub fn scheduled_idle_noise(
 pub struct PyScheduledLocalNoise {
     pub(crate) inner: pecos_engines::scheduled_frame::ScheduledLocalNoise,
 }
-/// Add uniform Pauli gate faults, preparation faults and asymmetric readout.
+/// Add Pauli gate faults, preparation faults and asymmetric readout.
+/// p2_pauli_model optionally selects ordered nonidentity I/X/Y/Z pair weights.
 /// prep_leak_ratio is the conditional leakage probability given a preparation fault.
 /// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
 /// For Z-only channels, scheduled_idle_noise() uses Z models by default.
 /// Probabilities are event probabilities in [0, 1], not average gate infidelities.
 #[pyfunction]
-#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0))]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None))]
 pub fn scheduled_local_noise(
     idle: PyScheduledIdleNoise,
     p1: f64,
@@ -906,12 +907,17 @@ pub fn scheduled_local_noise(
     meas0: f64,
     meas1: f64,
     prep_leak_ratio: f64,
+    p2_pauli_model: Option<std::collections::BTreeMap<String, f64>>,
 ) -> PyResult<PyScheduledLocalNoise> {
     Ok(PyScheduledLocalNoise {
         inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
             idle.inner, p1, p2, prep, meas0, meas1,
         )
         .and_then(|profile| profile.with_prep_leak_ratio(prep_leak_ratio))
+        .and_then(|profile| match p2_pauli_model {
+            Some(model) => profile.with_p2_pauli_model(model),
+            None => Ok(profile),
+        })
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })
 }

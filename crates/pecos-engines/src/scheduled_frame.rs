@@ -68,8 +68,9 @@ pub struct ScheduledNoise {
     coherent_model: BTreeMap<String, f64>,
 }
 /// Checked local Pauli gate faults, preparation faults and asymmetric readout.
-/// Idle channels use the supplied profile. Gate faults are uniform over X/Y/Z or
-/// the fifteen nonidentity Pauli pairs, with angle-independent event probability.
+/// Idle channels use the supplied profile. Single-qubit faults are uniform over
+/// X/Y/Z; two-qubit faults default to uniform nonidentity Pauli pairs and accept
+/// a checked distribution. Gate fault probability is independent of angle.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
 /// Preparation faults can leak or flip the qubit. Gate emission/leakage, seepage
@@ -87,13 +88,14 @@ struct LocalFaults {
     p2: f64,
     prep: f64,
     prep_leak_ratio: f64,
+    p2_pauli_model: Option<BTreeMap<String, f64>>,
     meas0: f64,
     meas1: f64,
 }
 impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
     /// Replaces all existing local fault probabilities if the profile already has them,
-    /// including resetting the preparation leakage ratio to zero.
+    /// including resetting preparation leakage to zero and two-qubit faults to uniform.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(
@@ -119,10 +121,44 @@ impl ScheduledLocalNoise {
                 p2,
                 prep,
                 prep_leak_ratio: 0.0,
+                p2_pauli_model: None,
                 meas0,
                 meas1,
             },
         })
+    }
+    /// Set the conditional distribution of a two-qubit Pauli fault.
+    /// Keys are ordered pairs of I/X/Y/Z excluding II. The first character acts
+    /// on the emitted gate's first operand, not the lower-numbered qubit. Missing
+    /// pairs have zero weight. This replaces the previous distribution without
+    /// changing the fault probability, idle channels or preparation leakage.
+    /// # Errors
+    /// Rejects invalid keys or nonfinite/negative weights, even when p2 is zero.
+    /// Weights must sum to one within 1e-10; empty and all-zero maps are rejected.
+    pub fn with_p2_pauli_model(mut self, model: BTreeMap<String, f64>) -> Result<Self, PecosError> {
+        for (pair, weight) in &model {
+            if pair.len() != 2
+                || pair == "II"
+                || !pair
+                    .bytes()
+                    .all(|axis| matches!(axis, b'I' | b'X' | b'Y' | b'Z'))
+            {
+                return Err(error(
+                    "scheduled two-qubit Pauli keys must be I/X/Y/Z pairs excluding II",
+                ));
+            }
+            if !weight.is_finite() || *weight < 0.0 {
+                return Err(error(
+                    "scheduled two-qubit Pauli weights must be finite and nonnegative",
+                ));
+            }
+        }
+        let total: f64 = model.values().sum();
+        if !total.is_finite() || (total - 1.0).abs() > 1e-10 {
+            return Err(error("scheduled two-qubit Pauli weights must sum to one"));
+        }
+        self.local.p2_pauli_model = Some(model);
+        Ok(self)
     }
     /// Set the conditional probability of leakage when a preparation fault occurs.
     /// The remaining preparation faults apply X. Preparation always resets the
@@ -276,6 +312,9 @@ impl ScheduledNoise {
                 .with_prep_leak_ratio(local.prep_leak_ratio)
                 .with_p_meas_0(local.meas0)
                 .with_p_meas_1(local.meas1);
+            if let Some(model) = &local.p2_pauli_model {
+                builder = builder.with_p2_pauli_model(model);
+            }
         }
         let inner = builder.build();
         ScheduledIdleModel {

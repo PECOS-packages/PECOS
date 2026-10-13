@@ -603,3 +603,248 @@ fn replacing_local_faults_clears_old_preparation_leakage_but_retains_idle_noise(
         assert_eq!(run(&mut new, &batches, events), vec![1, 1]);
     }
 }
+
+#[test]
+fn invalid_two_qubit_distributions_reject_even_with_zero_event_probability() {
+    let mut invalid = vec![
+        BTreeMap::new(),
+        model(&[("XI", 0.0)]),
+        model(&[("XI", 0.5)]),
+    ];
+    for key in ["II", "XL", "LX", "xx", "X", "XYZ", "é", " X"] {
+        invalid.push(model(&[(key, 0.0), ("XX", 1.0)]));
+    }
+    for weight in [-0.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MAX] {
+        invalid.push(model(&[("XI", weight), ("IX", 1.0)]));
+    }
+    for distribution in invalid {
+        let local =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 0.0, 0.0, 0.0)
+                .unwrap();
+        assert!(local.with_p2_pauli_model(distribution).is_err());
+    }
+}
+
+#[test]
+fn ordered_pauli_pairs_act_on_emitted_operands_in_all_measurement_bases() {
+    for events in [false, true] {
+        for reverse in [false, true] {
+            let pair = if reverse { (1, 0) } else { (0, 1) };
+            for interaction in [
+                Gate::rzz(Angle64::ZERO, &[pair]),
+                Gate::rxyxy2q(Angle64::ZERO, Angle64::from_radians(0.4), &[pair]),
+            ] {
+                for a in ['I', 'X', 'Y', 'Z'] {
+                    for b in ['I', 'X', 'Y', 'Z'] {
+                        if a == 'I' && b == 'I' {
+                            continue;
+                        }
+                        for basis in ['X', 'Y', 'Z'] {
+                            let local = ScheduledLocalNoise::new(
+                                ScheduledIdleNoise::new(2).unwrap(),
+                                0.0,
+                                1.0,
+                                0.0,
+                                0.0,
+                                0.0,
+                            )
+                            .unwrap()
+                            .with_p2_pauli_model(model(&[(&format!("{a}{b}"), 1.0)]))
+                            .unwrap();
+                            let mut sim = system(local.into(), events, 9);
+                            let mut gates = vec![Gate::pz(&[0]), Gate::pz(&[1])];
+                            let phi = if basis == 'X' {
+                                std::f64::consts::FRAC_PI_2
+                            } else {
+                                0.0
+                            };
+                            if basis != 'Z' {
+                                for q in [0, 1] {
+                                    gates.push(Gate::rxy1q(
+                                        Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+                                        Angle64::from_radians(phi),
+                                        &[q],
+                                    ));
+                                }
+                            }
+                            gates.push(interaction.clone());
+                            if basis != 'Z' {
+                                for q in [0, 1] {
+                                    gates.push(Gate::rxy1q(
+                                        Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
+                                        Angle64::from_radians(phi),
+                                        &[q],
+                                    ));
+                                }
+                            }
+                            gates.extend([Gate::mz(&[0]), Gate::mz(&[1])]);
+                            // A Pauli flips the measured eigenvalue exactly when it
+                            // anticommutes with the chosen measurement basis.
+                            let mut want = vec![
+                                u32::from(a != 'I' && a != basis),
+                                u32::from(b != 'I' && b != basis),
+                            ];
+                            if reverse {
+                                want.reverse();
+                            }
+                            assert_eq!(
+                                run(&mut sim, &[batch(0, 0, 0, gates)], events),
+                                want,
+                                "pair={a}{b}, basis={basis}, reversed={reverse}, gate={:?}",
+                                interaction.gate_type
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn nonuniform_pairs_match_whole_batch_general_model_results_and_rng() {
+    let distribution = model(&[("IX", 0.15), ("XI", 0.25), ("YZ", 0.6), ("ZZ", 0.0)]);
+    let batches = [
+        batch(0, 0, 0, vec![Gate::pz(&[0]), Gate::pz(&[1])]),
+        batch(
+            1,
+            0,
+            0,
+            vec![
+                Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0]),
+                Gate::rzz(Angle64::from_radians(0.3), &[(1, 0)]),
+                Gate::mz(&[0]),
+                Gate::pz(&[0]),
+                Gate::rxyxy2q(
+                    Angle64::from_radians(-0.6),
+                    Angle64::from_radians(0.2),
+                    &[(0, 1)],
+                ),
+                Gate::measure_leaked(&[1]),
+                Gate::mz(&[0]),
+            ],
+        ),
+    ];
+    for events in [false, true] {
+        for seed in 0..32 {
+            let local = ScheduledLocalNoise::new(
+                ScheduledIdleNoise::new(2).unwrap(),
+                0.1,
+                0.8,
+                0.2,
+                0.1,
+                0.3,
+            )
+            .unwrap()
+            .with_prep_leak_ratio(0.4)
+            .unwrap()
+            .with_p2_pauli_model(distribution.clone())
+            .unwrap();
+            let mut actual = system(local.into(), events, seed);
+            let mut expected = QuantumSystem::new(
+                Box::new(
+                    GeneralNoiseModelBuilder::new()
+                        .with_p1(0.1)
+                        .with_p2(0.8)
+                        .with_p_prep(0.2)
+                        .with_prep_leak_ratio(0.4)
+                        .with_p_meas_0(0.1)
+                        .with_p_meas_1(0.3)
+                        .with_p2_pauli_model(&distribution)
+                        .build(),
+                ),
+                Box::new(StateVecEngine::new(2)),
+            );
+            expected.set_seed(seed);
+            for b in &batches {
+                let want = expected
+                    .process(
+                        ByteMessage::quantum_operations_builder()
+                            .add_gate_commands(&b.gates)
+                            .build(),
+                    )
+                    .unwrap()
+                    .outcomes()
+                    .unwrap();
+                assert_eq!(run(&mut actual, std::slice::from_ref(b), events), want);
+                assert_eq!(
+                    actual.controller().rng().clone().next_u64(),
+                    expected.controller().rng().clone().next_u64()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn replacing_pair_distribution_preserves_clones_and_other_faults() {
+    for events in [false, true] {
+        let original =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 1.0, 1.0, 0.0, 0.0)
+                .unwrap()
+                .with_prep_leak_ratio(1.0)
+                .unwrap()
+                .with_p2_pauli_model(model(&[("XI", 1.0)]))
+                .unwrap();
+        let changed = original
+            .clone()
+            .with_p2_pauli_model(model(&[("IX", 1.0)]))
+            .unwrap();
+        let batches = [batch(
+            0,
+            0,
+            0,
+            vec![
+                Gate::rzz(Angle64::ZERO, &[(0, 1)]),
+                Gate::mz(&[0]),
+                Gate::mz(&[1]),
+                Gate::pz(&[0]),
+                Gate::measure_leaked(&[0]),
+            ],
+        )];
+        assert_eq!(
+            run(&mut system(original.into(), events, 9), &batches, events),
+            vec![1, 0, 2]
+        );
+        assert_eq!(
+            run(&mut system(changed.into(), events, 9), &batches, events),
+            vec![0, 1, 2]
+        );
+    }
+}
+
+#[test]
+fn replacing_local_profile_restores_default_two_qubit_sampling() {
+    let custom =
+        ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 1.0, 0.0, 0.0, 0.0)
+            .unwrap()
+            .with_p2_pauli_model(model(&[("XI", 1.0)]))
+            .unwrap();
+    let replaced = ScheduledLocalNoise::new(custom.into(), 0.0, 0.8, 0.0, 0.0, 0.0).unwrap();
+    let batches = [batch(
+        0,
+        0,
+        0,
+        vec![
+            Gate::pz(&[0]),
+            Gate::pz(&[1]),
+            Gate::rzz(Angle64::ZERO, &[(0, 1)]),
+            Gate::mz(&[0]),
+            Gate::mz(&[1]),
+        ],
+    )];
+    for events in [false, true] {
+        for seed in 0..32 {
+            let mut actual = system(replaced.clone().into(), events, seed);
+            let mut expected = system(profile(0.0, 0.8, 0.0, 0.0, 0.0), events, seed);
+            assert_eq!(
+                run(&mut actual, &batches, events),
+                run(&mut expected, &batches, events)
+            );
+            assert_eq!(
+                actual.controller().rng().clone().next_u64(),
+                expected.controller().rng().clone().next_u64()
+            );
+        }
+    }
+}

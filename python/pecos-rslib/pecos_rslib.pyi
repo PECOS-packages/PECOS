@@ -4018,7 +4018,7 @@ def scheduled_event_idle_noise(
 ) -> ScheduledEventIdleNoise: ...
 
 class ScheduledLocalNoise:
-    """Checked uniform Pauli gate, preparation X/leakage and asymmetric readout faults."""
+    """Checked Pauli gate, preparation X/leakage and asymmetric readout faults."""
 
 def scheduled_local_noise(
     idle: ScheduledIdleNoise,
@@ -4029,8 +4029,13 @@ def scheduled_local_noise(
     meas0: float = 0.0,
     meas1: float = 0.0,
     prep_leak_ratio: float = 0.0,
+    p2_pauli_model: dict[str, float] | None = None,
 ) -> ScheduledLocalNoise:
-    """prep_leak_ratio is the conditional leakage probability given a prep fault."""
+    """Configure preparation leakage and optional ordered two-qubit Pauli weights.
+
+    prep_leak_ratio is conditional on a preparation fault. p2_pauli_model maps
+    nonidentity I/X/Y/Z pairs to finite nonnegative weights summing to one.
+    """
     ...
 
 class ScheduledEventLocalNoise:

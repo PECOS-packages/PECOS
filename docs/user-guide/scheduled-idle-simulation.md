@@ -160,8 +160,8 @@ must expose that operation to model its fault. No hidden preparation is inserted
 All probabilities and the leakage ratio must be finite and in [0, 1], even when
 `prep=0`. These are event probabilities, not average gate infidelities.
 Gate-induced emission/leakage, seepage, custom fault maps, angle-dependent rates,
-crosstalk, repumping and automatic post-two-qubit idle injection are not configurable. Unsupported Python keywords
-raise rather than being silently ignored. Existing idle leakage remains supported:
+crosstalk, repumping and automatic post-two-qubit idle injection are not
+configurable. Unsupported Python keywords raise rather than being silently ignored. Existing idle leakage remains supported:
 leakage-aware readout returns 2 without readout flips, whereas ordinary leaked
 readout starts at 1 and is subject to `meas1`.
 

@@ -77,7 +77,10 @@ pub struct ScheduledNoise {
 /// Capacity remains 1..=16 with a state-vector engine. Measurements capture
 /// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
-pub struct ScheduledLocalNoise(ScheduledNoise);
+pub struct ScheduledLocalNoise {
+    idle: ScheduledNoise,
+    local: LocalFaults,
+}
 #[derive(Clone, Debug)]
 struct LocalFaults {
     p1: f64,
@@ -109,16 +112,17 @@ impl ScheduledLocalNoise {
                 "scheduled local probabilities must be finite and in [0, 1]",
             ));
         }
-        let mut profile = idle;
-        profile.local = Some(LocalFaults {
-            p1,
-            p2,
-            prep,
-            prep_leak_ratio: 0.0,
-            meas0,
-            meas1,
-        });
-        Ok(Self(profile))
+        Ok(Self {
+            idle,
+            local: LocalFaults {
+                p1,
+                p2,
+                prep,
+                prep_leak_ratio: 0.0,
+                meas0,
+                meas1,
+            },
+        })
     }
     /// Set the conditional probability of leakage when a preparation fault occurs.
     /// The remaining preparation faults apply X. Preparation always resets the
@@ -132,24 +136,21 @@ impl ScheduledLocalNoise {
                 "scheduled preparation leakage ratio must be finite and in [0, 1]",
             ));
         }
-        let local = self
-            .0
-            .local
-            .as_mut()
-            .ok_or_else(|| error("missing scheduled local fault configuration"))?;
-        local.prep_leak_ratio = ratio;
+        self.local.prep_leak_ratio = ratio;
         Ok(self)
     }
 }
 /// Lossless conversion for scheduled transport composition; all configured faults remain enabled.
 impl From<ScheduledLocalNoise> for ScheduledNoise {
     fn from(profile: ScheduledLocalNoise) -> Self {
-        profile.0
+        let mut noise = profile.idle;
+        noise.local = Some(profile.local);
+        noise
     }
 }
 impl IntoNoiseModel for ScheduledLocalNoise {
     fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        self.0.into_noise_model()
+        ScheduledNoise::from(self).into_noise_model()
     }
 }
 

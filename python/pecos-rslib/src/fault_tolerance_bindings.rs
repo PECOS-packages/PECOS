@@ -1528,7 +1528,6 @@ fn parse_fault_distance_osd_method(value: &str) -> PyResult<RustFaultDistanceOsd
 impl PyFaultDistanceUpperBoundConfig {
     #[new]
     #[pyo3(signature = (samples, seed, observable_subset_strategy, error_rate, max_iterations, bp_method, bp_schedule, min_sum_scaling_factor, osd_method, osd_order, omp_threads))]
-    #[allow(clippy::too_many_arguments)]
     fn new(
         samples: usize,
         seed: u64,
@@ -2356,7 +2355,6 @@ impl PyDetectorErrorModel {
     /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -2991,7 +2989,6 @@ impl PyDemBuilder {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
         p1: f64,
@@ -3924,7 +3921,6 @@ impl PyDemSampler {
     /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -4088,7 +4084,6 @@ impl PyDemSampler {
     /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
         detectors: Vec<Vec<i32>>,
@@ -4656,7 +4651,6 @@ impl PyDemSamplerBuilder {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
         p1: f64,

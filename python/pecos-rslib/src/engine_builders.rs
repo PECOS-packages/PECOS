@@ -898,7 +898,6 @@ pub struct PyScheduledLocalNoise {
 /// Probabilities are event probabilities in [0, 1], not average gate infidelities.
 #[pyfunction]
 #[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0))]
-#[allow(clippy::too_many_arguments)]
 pub fn scheduled_local_noise(
     idle: PyScheduledIdleNoise,
     p1: f64,

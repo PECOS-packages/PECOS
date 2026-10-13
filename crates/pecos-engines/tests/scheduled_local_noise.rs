@@ -384,32 +384,36 @@ fn normalized_capacity_violation_poison_clone_and_reset() {
             Ok(())
         }
     }
-    let local =
-        ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 1.0, 0.0, 0.0)
-            .unwrap()
-            .with_prep_leak_ratio(1.0)
-            .unwrap();
-    let noise = ScheduledEventIdleNoise::new(local, |_| Ok(Box::new(AppendOutsideCapacity)));
-    let mut sim = QuantumSystem::new(noise.into_noise_model(), Box::new(StateVecEngine::new(2)));
-    sim.begin_shot(context(0)).unwrap();
-    let bad = message(&[batch(0, 0, 0, vec![Gate::mz(&[0])])], true);
-    assert!(sim.process(bad).is_err());
-    let mut cloned = sim.clone();
-    for owner in [&mut sim, &mut cloned] {
-        assert!(owner.process(ByteMessage::create_empty()).is_err());
-        owner.reset().unwrap();
-        owner.begin_shot(context(1)).unwrap();
-        assert_eq!(
-            run(
-                owner,
-                &[
-                    batch(0, 0, 0, vec![Gate::pz(&[0])]),
-                    batch(1, 0, 0, vec![Gate::measure_leaked(&[0])])
-                ],
-                true
-            ),
-            vec![2]
-        );
+    // A certain preparation fault reads 1 when it applies X and 2 when it leaks.
+    for (ratio, expected) in [(0.0, 1), (1.0, 2)] {
+        let local =
+            ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 1.0, 0.0, 0.0)
+                .unwrap()
+                .with_prep_leak_ratio(ratio)
+                .unwrap();
+        let noise = ScheduledEventIdleNoise::new(local, |_| Ok(Box::new(AppendOutsideCapacity)));
+        let mut sim =
+            QuantumSystem::new(noise.into_noise_model(), Box::new(StateVecEngine::new(2)));
+        sim.begin_shot(context(0)).unwrap();
+        let bad = message(&[batch(0, 0, 0, vec![Gate::mz(&[0])])], true);
+        assert!(sim.process(bad).is_err());
+        let mut cloned = sim.clone();
+        for owner in [&mut sim, &mut cloned] {
+            assert!(owner.process(ByteMessage::create_empty()).is_err());
+            owner.reset().unwrap();
+            owner.begin_shot(context(1)).unwrap();
+            assert_eq!(
+                run(
+                    owner,
+                    &[
+                        batch(0, 0, 0, vec![Gate::pz(&[0])]),
+                        batch(1, 0, 0, vec![Gate::measure_leaked(&[0])])
+                    ],
+                    true
+                ),
+                vec![expected]
+            );
+        }
     }
 }
 

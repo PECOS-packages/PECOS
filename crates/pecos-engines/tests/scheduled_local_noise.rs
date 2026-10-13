@@ -571,3 +571,31 @@ fn whole_shot_reset_clears_preparation_leakage_in_cloned_hosts() {
         }
     }
 }
+
+#[test]
+fn replacing_local_faults_clears_old_preparation_leakage_but_retains_idle_noise() {
+    for events in [false, true] {
+        let idle = ScheduledIdleNoise::new(2)
+            .unwrap()
+            .with_linear(1e9, model(&[("X", 1.0)]))
+            .unwrap();
+        let original = ScheduledLocalNoise::new(idle, 0.0, 0.0, 1.0, 0.0, 0.0)
+            .unwrap()
+            .with_prep_leak_ratio(1.0)
+            .unwrap();
+        let replacement =
+            ScheduledLocalNoise::new(original.clone().into(), 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
+        let batches = [batch(
+            0,
+            1_000_000_000,
+            0,
+            vec![Gate::pz(&[0]), Gate::measure_leaked(&[0]), Gate::mz(&[1])],
+        )];
+        // Preparation replaces qubit 0's idle history. Qubit 1 still receives
+        // the retained idle channel, even after replacing the local profile.
+        let mut old = system(original.into(), events, 9);
+        let mut new = system(replacement.into(), events, 9);
+        assert_eq!(run(&mut old, &batches, events), vec![2, 1]);
+        assert_eq!(run(&mut new, &batches, events), vec![1, 1]);
+    }
+}

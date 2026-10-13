@@ -73,8 +73,8 @@ leakage record as well as resetting the simulator state. Other qubits and gaps b
 non-preparation gates retain their idle noise. Preparation still occupies the
 entire batch and advances the cursor; capacity, overlap and finite-rate checks
 remain enforced. The local fault profile below also emits a real reset before its
-preparation bit flip, so it uses the same omission. This does not justify omission
-for correlated channels or other preparation operations.
+preparation X or leakage fault, so it uses the same omission. This does not justify
+omission for correlated channels or other preparation operations.
 
 Earlier versions sampled idle noise before preparation. Omitting those discarded
 channels avoids unnecessary work and changes RNG consumption, so seeded outcomes
@@ -137,7 +137,7 @@ The v4 [event adapter](scheduled-event-adapters.md) can use the same profile via
 
 ## Local gate, preparation and readout faults
 
-`scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0)` adds a
+`scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0, prep_leak_ratio=0)` adds a
 checked subset of `GeneralNoiseModel` to an existing `scheduled_idle_noise()` profile:
 
 - `p1`: a uniform X/Y/Z fault after an emitted single-qubit gate, including `RZ`.
@@ -146,18 +146,22 @@ checked subset of `GeneralNoiseModel` to an existing `scheduled_idle_noise()` pr
   is no per-gate noiseless override in this profile.
 - `p2`: a uniform nonidentity two-qubit Pauli fault after a two-qubit gate. This
   event probability is independent of rotation angle.
-- `prep`: an X fault after preparation resets the qubit and clears leakage.
+- `prep`: probability of a fault after preparation resets the qubit and clears prior leakage.
+- `prep_leak_ratio`: conditional probability that a preparation fault causes leakage;
+  otherwise it applies X. The default is zero (all preparation faults are X).
+  Thus a fresh preparation leaks with probability `prep * prep_leak_ratio`.
+  A later preparation clears old leakage, but can introduce a new preparation fault.
 - `meas0`, `meas1`: classical readout flips 0→1 and 1→0, respectively.
 
 Preparation faults apply to emitted reset-Z operations. Allocation by itself does
 not imply a reset in the scheduled stream; runtimes that prepare on allocation
 must expose that operation to model its fault. No hidden preparation is inserted.
 
-All probabilities must be finite and in [0, 1]. They are event probabilities,
-not average gate infidelities. Gate-induced emission/leakage, preparation leakage,
-seepage, custom fault maps, angle-dependent rates, crosstalk, repumping and automatic
-post-two-qubit idle injection are not configurable. Unsupported Python keywords
-raise rather than being silently ignored. Existing idle leakage remains supported:
+All probabilities and the leakage ratio must be finite and in [0, 1], even when
+`prep=0`. These are event probabilities, not average gate infidelities.
+Gate-induced emission/leakage, seepage, custom fault maps, angle-dependent rates,
+crosstalk, repumping and automatic post-two-qubit idle injection are not
+configurable. Unsupported Python keywords raise rather than being silently ignored. Existing idle leakage remains supported:
 leakage-aware readout returns 2 without readout flips, whereas ordinary leaked
 readout starts at 1 and is subject to `meas1`.
 
@@ -165,7 +169,15 @@ readout starts at 1 and is subject to `meas1`.
 import pecos_rslib as pr
 
 idle = pr.scheduled_idle_noise(2, linear=0.02)
-local = pr.scheduled_local_noise(idle, p1=0.01, p2=0.02, prep=0.03, meas0=0.04, meas1=0.05)
+local = pr.scheduled_local_noise(
+    idle,
+    p1=0.01,
+    p2=0.02,
+    prep=0.03,
+    prep_leak_ratio=0.5,
+    meas0=0.04,
+    meas1=0.05,
+)
 ```
 
 In Python, the `idle` base must be created with `scheduled_idle_noise()`;
@@ -177,8 +189,10 @@ Use `local` as `.noise(local)` with v3, or
 invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
 meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Unlike Python, the
 Rust constructor accepts a carrier that already contains local faults: it replaces
-all five local probabilities while preserving its idle configuration, rather than
-adding or combining the old and new probabilities. The canonical Rust
+all five local probabilities and resets the preparation leakage ratio to zero
+while preserving its idle configuration. Opt into preparation leakage with
+`.with_prep_leak_ratio(ratio)?`; conversion to `ScheduledNoise` preserves the ratio
+for both timed and event batches. The canonical Rust
 carrier is `ScheduledNoise`; `ScheduledIdleNoise` is a compatibility alias that
 retains the entire configuration, including local faults. `ScheduledEventIdleZ`
 and `ScheduledEventIdleNoise` likewise alias `ScheduledEventNoise`. The Python

@@ -67,27 +67,33 @@ pub struct ScheduledNoise {
     sine_model: BTreeMap<String, f64>,
     coherent_model: BTreeMap<String, f64>,
 }
-/// Checked local Pauli gate faults, preparation bit flips and asymmetric readout.
+/// Checked local Pauli gate faults, preparation faults and asymmetric readout.
 /// Idle channels use the supplied profile. Gate faults are uniform over X/Y/Z or
 /// the fifteen nonidentity Pauli pairs, with angle-independent event probability.
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
-/// Emission, gate/preparation leakage, seepage and crosstalk are disabled.
+/// Preparation faults can leak or flip the qubit. Gate emission/leakage, seepage
+/// and crosstalk are disabled.
 /// Capacity remains 1..=16 with a state-vector engine. Measurements capture
 /// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
-pub struct ScheduledLocalNoise(ScheduledNoise);
+pub struct ScheduledLocalNoise {
+    idle: ScheduledNoise,
+    local: LocalFaults,
+}
 #[derive(Clone, Debug)]
 struct LocalFaults {
     p1: f64,
     p2: f64,
     prep: f64,
+    prep_leak_ratio: f64,
     meas0: f64,
     meas1: f64,
 }
 impl ScheduledLocalNoise {
     /// Set local fault probabilities while preserving the supplied idle channels.
-    /// Replaces all existing local fault probabilities if the profile already has them.
+    /// Replaces all existing local fault probabilities if the profile already has them,
+    /// including resetting the preparation leakage ratio to zero.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(
@@ -106,26 +112,45 @@ impl ScheduledLocalNoise {
                 "scheduled local probabilities must be finite and in [0, 1]",
             ));
         }
-        let mut profile = idle;
-        profile.local = Some(LocalFaults {
-            p1,
-            p2,
-            prep,
-            meas0,
-            meas1,
-        });
-        Ok(Self(profile))
+        Ok(Self {
+            idle,
+            local: LocalFaults {
+                p1,
+                p2,
+                prep,
+                prep_leak_ratio: 0.0,
+                meas0,
+                meas1,
+            },
+        })
+    }
+    /// Set the conditional probability of leakage when a preparation fault occurs.
+    /// The remaining preparation faults apply X. Preparation always resets the
+    /// qubit and clears prior leakage before sampling this new fault. The default
+    /// ratio is zero; a zero preparation fault probability leaves this inactive.
+    /// # Errors
+    /// Rejects nonfinite ratios or values outside [0, 1], even when prep is zero.
+    pub fn with_prep_leak_ratio(mut self, ratio: f64) -> Result<Self, PecosError> {
+        if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) {
+            return Err(error(
+                "scheduled preparation leakage ratio must be finite and in [0, 1]",
+            ));
+        }
+        self.local.prep_leak_ratio = ratio;
+        Ok(self)
     }
 }
 /// Lossless conversion for scheduled transport composition; all configured faults remain enabled.
 impl From<ScheduledLocalNoise> for ScheduledNoise {
     fn from(profile: ScheduledLocalNoise) -> Self {
-        profile.0
+        let mut noise = profile.idle;
+        noise.local = Some(profile.local);
+        noise
     }
 }
 impl IntoNoiseModel for ScheduledLocalNoise {
     fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        self.0.into_noise_model()
+        ScheduledNoise::from(self).into_noise_model()
     }
 }
 
@@ -248,6 +273,7 @@ impl ScheduledNoise {
                 .with_p1(local.p1)
                 .with_p2(local.p2)
                 .with_p_prep(local.prep)
+                .with_prep_leak_ratio(local.prep_leak_ratio)
                 .with_p_meas_0(local.meas0)
                 .with_p_meas_1(local.meas1);
         }

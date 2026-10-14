@@ -1741,7 +1741,7 @@ impl Mul<PauliLeakageChannel> for &PauliLeakageChannel {
 #[derive(Clone, Debug)]
 pub struct PauliLeakageWeightedSampler {
     probability: f64,
-    sampler: SingleQubitWeightedSampler,
+    sampler: WeightedSampler<String>,
 }
 
 impl PauliLeakageWeightedSampler {
@@ -1750,7 +1750,9 @@ impl PauliLeakageWeightedSampler {
     pub fn new(channel: &PauliLeakageChannel) -> Self {
         Self {
             probability: channel.probability,
-            sampler: SingleQubitWeightedSampler::new(channel.events()),
+            // Channel validation permits identity; legacy fault samplers do not.
+            // Keep identity in the distribution, including its sampling draw.
+            sampler: WeightedSampler::new(channel.events()),
         }
     }
 
@@ -1758,7 +1760,7 @@ impl PauliLeakageWeightedSampler {
     pub(crate) fn sample_event(&self, rng: &mut NoiseRng) -> Option<char> {
         self.is_selected(rng).then(|| {
             self.sampler
-                .sample_keys(rng)
+                .sample(rng)
                 .chars()
                 .next()
                 .expect("arity-one event")
@@ -1786,7 +1788,7 @@ impl PauliLeakageWeightedSampler {
 #[derive(Clone, Debug)]
 pub struct TwoQubitPauliLeakageWeightedSampler {
     probability: f64,
-    sampler: TwoQubitWeightedSampler,
+    sampler: WeightedSampler<String>,
 }
 
 impl TwoQubitPauliLeakageWeightedSampler {
@@ -1795,14 +1797,15 @@ impl TwoQubitPauliLeakageWeightedSampler {
     pub fn new(channel: &TwoQubitPauliLeakageChannel) -> Self {
         Self {
             probability: channel.probability,
-            sampler: TwoQubitWeightedSampler::new(channel.events()),
+            // Preserve II as an explicitly sampled event without changing legacy validation.
+            sampler: WeightedSampler::new(channel.events()),
         }
     }
 
     fn sample_events(&self, rng: &mut NoiseRng) -> Option<[char; 2]> {
         self.is_selected(rng).then(|| {
             self.sampler
-                .sample_keys(rng)
+                .sample(rng)
                 .chars()
                 .collect::<Vec<_>>()
                 .try_into()
@@ -2527,6 +2530,77 @@ mod tests {
 
         assert!((first.probability() - 0.9).abs() < f64::EPSILON);
         assert!((second.probability() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn identity_channels_preserve_seeded_event_draws() {
+        for mixed in [false, true] {
+            let weights = if mixed { vec![0.75, 0.25] } else { vec![1.0] };
+            let events = ["I", "X"]
+                .into_iter()
+                .zip(weights.iter().copied())
+                .map(|(key, weight)| (key.to_string(), weight))
+                .collect();
+            let joint_events = ["II", "XI"]
+                .into_iter()
+                .zip(weights.iter().copied())
+                .map(|(key, weight)| (key.to_string(), weight))
+                .collect();
+            // Relabel a legacy distribution with the same ordered weights. Its RNG
+            // consumption must match even when the channel samples only identity.
+            let reference = SingleQubitWeightedSampler::new(
+                &["X", "Y"]
+                    .into_iter()
+                    .zip(weights.iter().copied())
+                    .map(|(key, weight)| (key.to_string(), weight))
+                    .collect(),
+            );
+            for probability in [0.0, 0.6, 1.0] {
+                let single = PauliLeakageWeightedSampler::new(
+                    &PauliLeakageChannel::new(probability, &events).unwrap(),
+                );
+                let joint = TwoQubitPauliLeakageWeightedSampler::new(
+                    &TwoQubitPauliLeakageChannel::new(probability, &joint_events).unwrap(),
+                );
+                let mut expected_rng = NoiseRng::with_seed(41);
+                let mut single_rng = expected_rng.clone();
+                let mut joint_rng = expected_rng.clone();
+                for _ in 0..128 {
+                    let expected = expected_rng.occurs(probability).then(|| {
+                        if reference.sample_keys(&mut expected_rng) == "X" {
+                            'I'
+                        } else {
+                            'X'
+                        }
+                    });
+                    assert_eq!(single.sample_event(&mut single_rng), expected);
+                    assert_eq!(
+                        joint.sample_events(&mut joint_rng),
+                        expected.map(|event| [event, 'I'])
+                    );
+                }
+                assert_eq!(
+                    single_rng.random_float().to_bits(),
+                    expected_rng.clone().random_float().to_bits()
+                );
+                assert_eq!(
+                    joint_rng.random_float().to_bits(),
+                    expected_rng.random_float().to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "SingleQubitWeightedSampler: invalid key 'I'")]
+    fn legacy_single_qubit_sampler_still_rejects_identity() {
+        let _ = SingleQubitWeightedSampler::new(&BTreeMap::from([("I".into(), 1.0)]));
+    }
+
+    #[test]
+    #[should_panic(expected = "TwoQubitWeightedSampler: key 'II' is not allowed")]
+    fn legacy_two_qubit_sampler_still_rejects_identity() {
+        let _ = TwoQubitWeightedSampler::new(&BTreeMap::from([("II".into(), 1.0)]));
     }
 
     #[test]

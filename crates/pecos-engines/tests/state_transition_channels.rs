@@ -187,3 +187,101 @@ fn runtime_frames_reject_hooks_until_channel_barriers_have_boundary_support() {
         .unwrap();
     assert!(error.to_string().contains("gate-hook channels"));
 }
+
+#[test]
+fn pauli_identity_hooks_build_and_preserve_interference() {
+    use pecos_engines::noise::P2PauliLeakageStep;
+    let single = PauliLeakageChannel::new(1.0, &BTreeMap::from([("I".into(), 1.0)])).unwrap();
+    let joint = P2PauliLeakageStep::joint(
+        TwoQubitPauliLeakageChannel::new(1.0, &BTreeMap::from([("II".into(), 1.0)])).unwrap(),
+    );
+    let noise = GeneralNoiseModel::builder()
+        .add_p1_pauli_leakage_channel_before_gate(&single)
+        .add_p1_pauli_leakage_channel_after_gate(&single)
+        .add_p2_pauli_leakage_step_before_gate(&joint)
+        .add_p2_pauli_leakage_step_after_gate(&joint)
+        .add_p2_pauli_leakage_channel_before_gate(&single)
+        .add_p2_pauli_leakage_channel_after_gate(&single)
+        .build();
+    let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(2)));
+    system.set_seed(41);
+    let circuit = ByteMessage::quantum_operations_builder()
+        .h(&[0])
+        .cz(&[(0, 1)])
+        .h(&[0])
+        .mz(&[0, 1])
+        .build();
+    for _ in 0..64 {
+        system.reset().unwrap();
+        assert_eq!(
+            system
+                .process_as_system(circuit.clone())
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![0, 0]
+        );
+    }
+}
+
+#[test]
+fn mixed_pauli_identity_hooks_preserve_event_probabilities() {
+    use pecos_engines::noise::P2PauliLeakageStep;
+    for joint in [false, true] {
+        for before in [false, true] {
+            let mut builder = GeneralNoiseModel::builder();
+            if joint {
+                let step = P2PauliLeakageStep::joint(
+                    TwoQubitPauliLeakageChannel::new(
+                        0.8,
+                        &BTreeMap::from([("II".into(), 0.75), ("XI".into(), 0.25)]),
+                    )
+                    .unwrap(),
+                );
+                builder = if before {
+                    builder.add_p2_pauli_leakage_step_before_gate(&step)
+                } else {
+                    builder.add_p2_pauli_leakage_step_after_gate(&step)
+                };
+            } else {
+                let channel = PauliLeakageChannel::new(
+                    0.8,
+                    &BTreeMap::from([("I".into(), 0.75), ("X".into(), 0.25)]),
+                )
+                .unwrap();
+                builder = if before {
+                    builder.add_p1_pauli_leakage_channel_before_gate(&channel)
+                } else {
+                    builder.add_p1_pauli_leakage_channel_after_gate(&channel)
+                };
+            }
+            let mut system =
+                QuantumSystem::new(Box::new(builder.build()), Box::new(StateVecEngine::new(2)));
+            system.set_seed(41);
+            let mut circuit = ByteMessage::quantum_operations_builder();
+            if joint {
+                circuit.cz(&[(0, 1)]);
+            } else {
+                circuit.z(&[0]);
+            }
+            let circuit = circuit.mz(&[0, 1]).build();
+            let mut ones = 0;
+            for _ in 0..1024 {
+                system.reset().unwrap();
+                let outcomes = system
+                    .process_as_system(circuit.clone())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap();
+                assert_eq!(outcomes.len(), 2);
+                assert_eq!(outcomes[1], 0);
+                ones += usize::from(outcomes[0] == 1);
+            }
+            // P(X) = outer probability * event weight = 0.2, not 0.8.
+            assert!(
+                (150..260).contains(&ones),
+                "joint={joint}, before={before}: {ones}"
+            );
+        }
+    }
+}

@@ -87,3 +87,32 @@ def test_event_weights_cannot_exceed_one(weight: float, joint: bool) -> None:
     event = "XL" if joint else "X"
     with pytest.raises(ValueError, match="between 0 and 1"):
         cls(1.0, {event: weight})
+
+
+@pytest.mark.parametrize("joint", [False, True])
+@pytest.mark.parametrize("placement", ["before", "after"])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_identity_events_attach_and_execute(joint: bool, placement: str, mixed: bool) -> None:
+    from pecos_rslib import Qasm, sim
+
+    identity, flip = ("II", "XI") if joint else ("I", "X")
+    events = {identity: 0.75, flip: 0.25} if mixed else {identity: 1.0}
+    cls = TwoQubitPauliLeakageChannel if joint else PauliLeakageChannel
+    channel = cls(0.8 if mixed else 1.0, PauliLeakageDict(events))
+    builder = GeneralNoiseModelBuilder()
+    if joint:
+        noise = getattr(builder, f"add_p2_pauli_leakage_step_{placement}_gate")(P2PauliLeakageStep.joint(channel))
+        gates = "cz q[0], q[1];" if mixed else "h q[0]; cz q[0], q[1]; h q[0];"
+    else:
+        noise = getattr(builder, f"add_p1_pauli_leakage_channel_{placement}_gate")(channel)
+        gates = "z q[0];" if mixed else "h q[0]; h q[0];"
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; ' + gates + " measure q -> c;"
+    )
+    outcomes = sim(program).noise(noise).seed(41).run(1024).to_dict()["c"]
+    assert len(outcomes) == 1024
+    assert set(outcomes) <= {0, 1}
+    if mixed:
+        assert 150 < sum(outcomes) < 260
+    else:
+        assert outcomes == [0] * 1024

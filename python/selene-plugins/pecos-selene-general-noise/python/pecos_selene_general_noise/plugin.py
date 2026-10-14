@@ -86,6 +86,106 @@ def _distribution(
         raise ValueError(message)
 
 
+def _label_arity(labels: list[str]) -> int:
+    arities = {len(label.strip()) for label in labels}
+    if not arities or len(arities) != 1 or not arities <= {1, 2}:
+        message = "hook labels must have a consistent arity of 1 or 2"
+        raise ValueError(message)
+    return arities.pop()
+
+
+@dataclass(frozen=True)
+class TransitionHook:
+    """Plain transition data; Rust owns label and conditional-row validation."""
+
+    probability: float
+    transitions: Mapping[str, float | Mapping[str, float]]
+    kind: str = field(default="transition", init=False)
+
+    def __post_init__(self) -> None:
+        """Freeze both flat maps and nested rows."""
+        object.__setattr__(
+            self,
+            "transitions",
+            MappingProxyType(
+                {
+                    key: MappingProxyType(dict(value)) if isinstance(value, Mapping) else value
+                    for key, value in self.transitions.items()
+                },
+            ),
+        )
+
+    def arity(self) -> int:
+        """Infer arity without interpreting state labels."""
+        labels = []
+        for key, value in self.transitions.items():
+            if isinstance(value, Mapping):
+                labels.extend((key, *value))
+            else:
+                labels.extend(key.split("->"))
+        return _label_arity(labels)
+
+    def validate(self, arity: int = 2) -> None:
+        """Check shape and outer probability for a gate site."""
+        _probability("hook.probability", self.probability)
+        if self.probability is None or self.kind != "transition" or self.arity() > arity:
+            message = "invalid transition hook kind, probability, or arity"
+            raise ValueError(message)
+
+
+@dataclass(frozen=True)
+class PauliLeakageHook:
+    """Plain Pauli/leakage event data validated by the Rust channel constructor."""
+
+    probability: float
+    events: Distribution
+    kind: str = field(default="pauli_leakage", init=False)
+
+    def __post_init__(self) -> None:
+        """Freeze the event distribution."""
+        object.__setattr__(self, "events", _frozen_distribution(self.events))
+
+    def arity(self) -> int:
+        """Infer arity from event labels."""
+        return _label_arity(list(self.events))
+
+    def validate(self, arity: int = 2) -> None:
+        """Check shape and outer probability for a gate site."""
+        _probability("hook.probability", self.probability)
+        if self.probability is None or self.kind != "pauli_leakage" or self.arity() > arity:
+            message = "invalid Pauli-leakage hook kind, probability, or arity"
+            raise ValueError(message)
+
+
+@dataclass(frozen=True)
+class IndependentHook:
+    """Distinct one-qubit channels of the same family for the two operands."""
+
+    first: TransitionHook | PauliLeakageHook
+    second: TransitionHook | PauliLeakageHook
+    kind: str = field(default="independent", init=False)
+
+    def validate(self, arity: int = 2) -> None:
+        """Require two one-qubit channels from the same family."""
+        if (
+            arity != 2
+            or self.kind != "independent"
+            or not isinstance(self.first, (TransitionHook, PauliLeakageHook))
+            or type(self.first) is not type(self.second)
+        ):
+            message = "independent hook requires arity 2 and one family"
+            raise ValueError(message)
+        self.first.validate(1)
+        self.second.validate(1)
+
+
+GateHook = TransitionHook | PauliLeakageHook | IndependentHook
+
+
+def _hook_family(hook: GateHook) -> str:
+    return hook.first.kind if isinstance(hook, IndependentHook) else hook.kind
+
+
 @dataclass(frozen=True)
 class PreparationNoise:
     """Preparation faults and all-to-all preparation crosstalk."""
@@ -128,11 +228,16 @@ class GateNoise:
     seepage_probability: float | None = None
     scale: float | None = None
 
+    hooks_before: tuple[GateHook, ...] = ()
+    hooks_after: tuple[GateHook, ...] = ()
+
     _paulis: ClassVar[frozenset[str]] = ONE_QUBIT_PAULIS
     _emissions: ClassVar[frozenset[str]] = ONE_QUBIT_CHANNELS
 
     def __post_init__(self) -> None:
         """Defensively freeze user-supplied channel distributions."""
+        object.__setattr__(self, "hooks_before", tuple(self.hooks_before))
+        object.__setattr__(self, "hooks_after", tuple(self.hooks_after))
         object.__setattr__(self, "pauli_model", _frozen_distribution(self.pauli_model))
         object.__setattr__(self, "emission_model", _frozen_distribution(self.emission_model))
 
@@ -141,6 +246,11 @@ class GateNoise:
         if self.probability is not None and self.average_infidelity is not None:
             message = f"{name} accepts probability or average_infidelity, not both"
             raise ValueError(message)
+        for hook in (*self.hooks_before, *self.hooks_after):
+            if not isinstance(hook, (TransitionHook, PauliLeakageHook, IndependentHook)):
+                message = "unknown gate hook kind"
+                raise TypeError(message)
+            hook.validate(2 if isinstance(self, TwoQubitGateNoise) else 1)
         _probability(f"{name}.probability", self.probability)
         _probability(f"{name}.average_infidelity", self.average_infidelity)
         _probability(f"{name}.emission_ratio", self.emission_ratio)
@@ -323,6 +433,12 @@ class GeneralNoiseParameters:
                 message = f"effective {name} probability must be between 0 and 1, got {probability}"
                 raise ValueError(message)
 
+        for gate, scale in ((self.single_qubit, p1_scale), (self.two_qubit, p2_scale)):
+            for hook in (*gate.hooks_before, *gate.hooks_after):
+                legs = (hook.first, hook.second) if isinstance(hook, IndependentHook) else (hook,)
+                for leg in legs:
+                    require("gate hook", leg.probability * scale * overall)
+
         prep = self.preparation.probability or 0.0
         meas_0 = self.measurement.p0_to_1 or 0.0
         meas_1 = self.measurement.p1_to_0 or 0.0
@@ -387,6 +503,108 @@ class GeneralNoiseParameters:
 
     def _with_scaling(self, **changes: object) -> GeneralNoiseParameters:
         return replace(self, scaling=replace(self.scaling, **changes))
+
+    def _with_hooks(
+        self,
+        site: str,
+        timing: str,
+        family: str,
+        hooks: tuple[GateHook, ...],
+        *,
+        append: bool,
+    ) -> GeneralNoiseParameters:
+        gate = getattr(self, site)
+        for hook in hooks:
+            if not isinstance(hook, (TransitionHook, PauliLeakageHook, IndependentHook)):
+                message = "unknown gate hook kind"
+                raise TypeError(message)
+            hook.validate(1 if site == "single_qubit" else 2)
+            if _hook_family(hook) != family:
+                message = f"expected {family} hook"
+                raise ValueError(message)
+        current = getattr(gate, timing)
+        retained = current if append else tuple(hook for hook in current if _hook_family(hook) != family)
+        return replace(self, **{site: replace(gate, **{timing: (*retained, *hooks)})})
+
+    def with_p1_transition_channels_before_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("single_qubit", "hooks_before", "transition", tuple(hooks), append=False)
+
+    def add_p1_transition_channel_before_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("single_qubit", "hooks_before", "transition", (hook,), append=True)
+
+    def with_p1_transition_channels_after_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("single_qubit", "hooks_after", "transition", tuple(hooks), append=False)
+
+    def add_p1_transition_channel_after_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("single_qubit", "hooks_after", "transition", (hook,), append=True)
+
+    def with_p1_pauli_leakage_channels_before_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("single_qubit", "hooks_before", "pauli_leakage", tuple(hooks), append=False)
+
+    def add_p1_pauli_leakage_channel_before_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("single_qubit", "hooks_before", "pauli_leakage", (hook,), append=True)
+
+    def with_p1_pauli_leakage_channels_after_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("single_qubit", "hooks_after", "pauli_leakage", tuple(hooks), append=False)
+
+    def add_p1_pauli_leakage_channel_after_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("single_qubit", "hooks_after", "pauli_leakage", (hook,), append=True)
+
+    def with_p2_transition_steps_before_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("two_qubit", "hooks_before", "transition", tuple(hooks), append=False)
+
+    def add_p2_transition_channel_before_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_before", "transition", (hook,), append=True)
+
+    def add_p2_transition_step_before_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_before", "transition", (hook,), append=True)
+
+    def with_p2_transition_steps_after_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("two_qubit", "hooks_after", "transition", tuple(hooks), append=False)
+
+    def add_p2_transition_channel_after_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_after", "transition", (hook,), append=True)
+
+    def add_p2_transition_step_after_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_after", "transition", (hook,), append=True)
+
+    def with_p2_pauli_leakage_steps_before_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("two_qubit", "hooks_before", "pauli_leakage", tuple(hooks), append=False)
+
+    def add_p2_pauli_leakage_channel_before_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_before", "pauli_leakage", (hook,), append=True)
+
+    def add_p2_pauli_leakage_step_before_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_before", "pauli_leakage", (hook,), append=True)
+
+    def with_p2_pauli_leakage_steps_after_gate(self, hooks: tuple[GateHook, ...]) -> GeneralNoiseParameters:
+        """Replace this family's hooks, appending after the retained other family."""
+        return self._with_hooks("two_qubit", "hooks_after", "pauli_leakage", tuple(hooks), append=False)
+
+    def add_p2_pauli_leakage_channel_after_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_after", "pauli_leakage", (hook,), append=True)
+
+    def add_p2_pauli_leakage_step_after_gate(self, hook: GateHook) -> GeneralNoiseParameters:
+        """Append a hook in execution order."""
+        return self._with_hooks("two_qubit", "hooks_after", "pauli_leakage", (hook,), append=True)
 
     def with_noiseless_gate(self, gate: str) -> GeneralNoiseParameters:
         """Add a gate parsed by PECOS to the noiseless gate set."""
@@ -653,6 +871,32 @@ class GeneralNoiseParameters:
             apply("with_p2_angle_power", two.angle_power)
         if two.idle_after_gate is not None:
             apply("with_idle_after_2q", two.idle_after_gate)
+
+        if any((one.hooks_before, one.hooks_after, two.hooks_before, two.hooks_after)):
+            pecos = import_module("pecos")
+
+            def channel(hook: TransitionHook | PauliLeakageHook) -> object:
+                name = "StateTransitionChannel" if isinstance(hook, TransitionHook) else "PauliLeakageChannel"
+                if hook.arity() == 2:
+                    name = "TwoQubit" + name
+                data = hook.transitions if isinstance(hook, TransitionHook) else hook.events
+                return getattr(pecos, name)(hook.probability, _json_value(data))
+
+            for arity, gate in ((1, one), (2, two)):
+                for timing in ("before", "after"):
+                    for hook in getattr(gate, f"hooks_{timing}"):
+                        family = _hook_family(hook)
+                        step_name = "P2TransitionStep" if family == "transition" else "P2PauliLeakageStep"
+                        suffix = "channel"
+                        if isinstance(hook, IndependentHook):
+                            value = getattr(pecos, step_name).independent(channel(hook.first), channel(hook.second))
+                            suffix = "step"
+                        else:
+                            value = channel(hook)
+                            if arity == 2 and family == "pauli_leakage" and hook.arity() == 2:
+                                value = getattr(pecos, step_name).joint(value)
+                                suffix = "step"
+                        apply(f"add_p{arity}_{family}_{suffix}_{timing}_gate", value)
 
         idle = self.idle
         if idle.linear_rate is not None:

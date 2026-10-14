@@ -91,6 +91,27 @@ cargo test -p pecos-selene-general-noise
 
 ## Gate-hook channels
 
-The additive `StateTransitionChannel` and `PauliLeakageChannel` before/after gate
-hooks in PECOS are not yet exposed by this wrapper. The shared parameter bridge
-covers the legacy general-noise settings; channel-hook integration is deferred.
+Configure ordered before/after hooks with `TransitionHook`, `PauliLeakageHook`,
+and `IndependentHook`. Both families share one list per site, preserving insertion
+order through Selene and the optional `sim()` bridge:
+
+```python
+from pecos_selene_general_noise import GeneralNoiseParameters, PauliLeakageHook, TransitionHook
+
+parameters = (GeneralNoiseParameters()
+    .add_p1_pauli_leakage_channel_before_gate(PauliLeakageHook(1.0, {"L": 1.0}))
+    .add_p1_transition_channel_before_gate(TransitionHook(1.0, {"L->0": 1.0})))
+```
+
+Transition maps accept flat `"source->destination"` keys or nested rows.
+Single-qubit sites require one-character labels. At two-qubit sites, one-qubit
+hooks draw independently for each operand; two-character labels describe a joint
+channel (including transition wildcards). `IndependentHook(first, second)` supplies
+distinct one-qubit hooks of the same family for the two operands.
+
+The `with_p1_*_channels_*_gate` and `with_p2_*_steps_*_gate` methods replace that
+family's entries and append replacements after the retained other family.
+The corresponding `add_*` methods append one hook. Outer probabilities use the
+site scale and overall scale; independent legs are checked separately. Python
+validates shape and probabilities; native channel constructors validate labels
+and rows and report configuration errors at plugin initialization.

@@ -269,7 +269,7 @@ are provided for these draft APIs.
 
 This increment does not provide mixture/product channel objects, conditional follow-up channels,
 arbitrary Kraus composition, or coherent superpositions involving leakage. The Selene wrapper
-does not expose these hook lists yet. Runtime-frame profiles reject hook lists until internal
+exposes these ordered hook lists through plain-data hook specs and matching fluent setters. Runtime-frame profiles reject hook lists until internal
 channel measurement barriers can preserve their source-operation boundaries. Ordinary `sim()`
 gate execution supports these hooks. Existing gate-noise configuration is not migrated into this
 channel executor; such a migration would require separate seeded and statistical parity checks.

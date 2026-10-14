@@ -2,6 +2,24 @@
 
 `pecos-rslib` provides Rust extensions for the Python version of PECOS.
 
+## Building wheels
+
+Build distributable wheels through the package's PEP 517 backend:
+
+```sh
+uv build --wheel python/pecos-rslib
+```
+
+The backend uses Maturin for the extension and bundles the QIS FFI library and
+Selene runtime plugins selected from Cargo's artifact messages. These libraries
+are loaded dynamically, so they are not discovered by scanning the extension's
+link-time dependencies. The installed package registers its own library directory
+with the executor; explicit runtime overrides still take precedence.
+
+Direct `maturin build` builds only the extension and bypasses this packaging step.
+Use `uv build` (or another PEP 517 frontend) for complete wheels. Release wheels
+still pass through the platform's wheel repair step before distribution.
+
 ## Optional HUGR compiler
 
 Install `pecos-rslib[hugr]` to lower HUGR programs with Selene's compiler.

@@ -245,8 +245,9 @@ class RecordingBuilder:
 
     def __getattr__(self, name: str) -> Callable[..., RecordingBuilder]:
         def record(*args: object) -> RecordingBuilder:
-            self.calls.append((name, args))
-            return self
+            updated = RecordingBuilder()
+            updated.calls = [*self.calls, (name, args)]
+            return updated
 
         return record
 
@@ -306,8 +307,9 @@ def test_same_parameters_configure_a_pecos_sim_builder() -> None:
 
     returned = parameters.apply_to_pecos_builder(builder, seed=17)
 
-    assert returned is builder
-    assert builder.calls == [
+    assert returned is not builder
+    assert builder.calls == []
+    assert returned.calls == [
         ("with_scale", (0.5,)),
         ("with_leakage_scale", (0.6,)),
         ("with_emission_scale", (0.7,)),
@@ -350,6 +352,38 @@ def test_same_parameters_configure_a_pecos_sim_builder() -> None:
 def test_pecos_builder_bridge_rejects_negative_seed() -> None:
     with pytest.raises(ValueError, match="seed must be non-negative"):
         GeneralNoiseParameters().apply_to_pecos_builder(RecordingBuilder(), seed=-1)
+
+
+@pytest.mark.parametrize(
+    ("gate", "parameters"),
+    [
+        ("PZ", GeneralNoiseParameters().with_p_prep(1.0).with_prep_leak_ratio(0.0)),
+        ("MZ", GeneralNoiseParameters().with_p_meas(1.0)),
+        ("CNOT", GeneralNoiseParameters().with_p2(1.0).with_p2_pauli_model({"XI": 1.0})),
+    ],
+)
+def test_noiseless_gate_bridge_suppresses_faults_in_pecos(gate: str, parameters: GeneralNoiseParameters) -> None:
+    """Selene gate names reach the real immutable builder and suppress their faults."""
+    pecos = pytest.importorskip("pecos", reason="quantum-pecos is optional for the Selene plugin")
+    program = pecos.Qasm.from_string(
+        """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        reset q;
+        cx q[0], q[1];
+        measure q -> c;
+        """,
+    )
+    noisy_builder = parameters.to_pecos_builder(seed=17)
+    quiet_builder = parameters.with_noiseless_gate(gate).to_pecos_builder(seed=17)
+
+    noisy = pecos.sim(program).noise(noisy_builder).seed(17).run(4).to_dict()["c"]
+    quiet = pecos.sim(program).noise(quiet_builder).seed(17).run(4).to_dict()["c"]
+
+    assert all(value != 0 for value in noisy)
+    assert quiet == [0] * 4
 
 
 def test_plugin_executes_in_selene() -> None:

@@ -353,9 +353,10 @@ jobs:
       run: |
         mkdir -p "$GITHUB_WORKSPACE/dist/pecos-rslib"
         cd "$RUNNER_TEMP"
-        env -u LLVM_SYS_211_PREFIX maturin build --locked \
-          --manifest-path "$GITHUB_WORKSPACE/python/pecos-rslib/Cargo.toml" \
-          --out "$GITHUB_WORKSPACE/dist/pecos-rslib"
+        env -u LLVM_SYS_211_PREFIX uv build --wheel \
+          "$GITHUB_WORKSPACE/python/pecos-rslib" \
+          --config-setting 'build-args=--locked --profile dev' \
+          --out-dir "$GITHUB_WORKSPACE/dist/pecos-rslib"
 
     - name: Build pecos-rslib wheel
       if: runner.os != 'Linux'
@@ -363,7 +364,8 @@ jobs:
         RUSTUP_TOOLCHAIN: stable
       run: |
         mkdir -p dist/pecos-rslib
-        maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
+        uv build --wheel python/pecos-rslib \
+          --config-setting 'build-args=--locked --profile dev' --out-dir dist/pecos-rslib
 
     - name: Build pecos-rslib-llvm wheel
       if: matrix.build-llvm
@@ -563,10 +565,12 @@ jobs:
         mkdir -p "$isolated_home" "$llvm_shadow"
         printf '#!/usr/bin/env sh\nexit 86\n' > "$llvm_shadow/llvm-as"
         chmod +x "$llvm_shadow/llvm-as"
+        cp scripts/ci/smoke_guppy_qis.py "$RUNNER_TEMP/smoke_guppy_qis.py"
+        cd "$RUNNER_TEMP"
         env -u LLVM_SYS_211_PREFIX \
           HOME="$isolated_home" \
           PATH="$llvm_shadow:$PATH" \
-          "$python_bin" scripts/ci/smoke_guppy_qis.py
+          "$python_bin" -I smoke_guppy_qis.py
 
     - name: Execute WASM compatibility smoke test
       run: python scripts/ci/smoke_wasm_foreign_object.py

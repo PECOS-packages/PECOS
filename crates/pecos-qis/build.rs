@@ -54,7 +54,7 @@ fn configured_or_detected_llvm() -> Option<PathBuf> {
 
 #[cfg(feature = "llvm")]
 fn validate_llvm() {
-    use pecos_build::llvm::{is_valid_llvm, LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION};
+    use pecos_build::llvm::{LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION, is_valid_llvm};
 
     // Check if LLVM_SYS_PREFIX_ENV is already set and valid
     if let Ok(sys_prefix) = env::var(LLVM_SYS_PREFIX_ENV) {

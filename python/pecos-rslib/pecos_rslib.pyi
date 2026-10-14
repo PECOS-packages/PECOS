@@ -1256,6 +1256,9 @@ class TransitionDict:
 
     ``a * b`` is the tensor/Kronecker product. In a two-qubit mapping, ``*`` in
     the same source and destination position is an unmeasured identity wire.
+    Products of two one-qubit dictionaries expose wildcard rows, preserving identity
+    wires when reconstructed from ``transitions`` or ``to_dict()``. Higher-arity
+    products expose expanded rows.
     Concrete one- and two-qubit maps require every computational completion of
     each supplied leakage pattern; missing source rows raise ValueError.
     """

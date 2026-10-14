@@ -722,7 +722,7 @@ impl TransitionDict {
                 Self::new_validated(&rows)
             }
         });
-        let expanded = factors[0].tensor(&factors[1]);
+        let expanded = factors[0].tensor_expanded(&factors[1]);
         Self {
             arity,
             transitions: transitions.clone(),
@@ -738,6 +738,9 @@ impl TransitionDict {
     }
 
     /// Return the validated nested transition mapping.
+    ///
+    /// Products of two one-qubit dictionaries use wildcard rows to preserve identity wires
+    /// when reconstructed with [`Self::new`].
     #[must_use]
     pub fn transitions(&self) -> &BTreeMap<String, BTreeMap<String, f64>> {
         &self.transitions
@@ -765,8 +768,34 @@ impl TransitionDict {
     /// Omitted rows are expanded as identity only where the other factor acts. The returned
     /// object retains per-leg dependency metadata so an identity factor does not cause an
     /// unnecessary computational-basis measurement when used as a joint channel.
+    /// For two one-qubit operands, the public rows use matching wildcards so reconstructing
+    /// from [`Self::transitions`] preserves these dependencies. Higher-arity products expose
+    /// concrete expanded rows.
     #[must_use]
     pub fn tensor(&self, other: &Self) -> Self {
+        let mut result = self.tensor_expanded(other);
+        if self.arity == 1 && other.arity == 1 {
+            result.transitions = [(self, "", "*"), (other, "*", "")]
+                .into_iter()
+                .flat_map(|(factor, prefix, suffix)| {
+                    factor.transitions.iter().map(move |(source, row)| {
+                        (
+                            format!("{prefix}{source}{suffix}"),
+                            row.iter()
+                                .map(|(destination, &probability)| {
+                                    (format!("{prefix}{destination}{suffix}"), probability)
+                                })
+                                .collect(),
+                        )
+                    })
+                })
+                .collect();
+        }
+        result
+    }
+
+    /// Expand a tensor into concrete rows while retaining per-leg dependencies.
+    fn tensor_expanded(&self, other: &Self) -> Self {
         let mut transitions = BTreeMap::new();
         for left_source in transition_basis_labels(self.arity) {
             for right_source in transition_basis_labels(other.arity) {
@@ -2564,20 +2593,64 @@ mod tests {
         let product = &first * &second;
 
         assert_eq!(product.arity(), 2);
-        assert_eq!(product.transitions().len(), 5);
         assert_eq!(
-            product.transitions()["0L"],
+            product.transitions(),
+            &BTreeMap::from([
+                ("L*".to_string(), BTreeMap::from([("0*".to_string(), 1.0)])),
+                ("*L".to_string(), BTreeMap::from([("*1".to_string(), 1.0)])),
+            ])
+        );
+        assert_eq!(product.expanded_transitions().len(), 5);
+        assert_eq!(
+            product.expanded_transitions()["0L"],
             BTreeMap::from([("01".to_string(), 1.0)])
         );
         assert_eq!(
-            product.transitions()["L0"],
+            product.expanded_transitions()["L0"],
             BTreeMap::from([("00".to_string(), 1.0)])
         );
         assert_eq!(
-            product.transitions()["LL"],
+            product.expanded_transitions()["LL"],
             BTreeMap::from([("01".to_string(), 1.0)])
         );
         assert_eq!(product.computational_dependencies(), &[false, false]);
+    }
+
+    #[test]
+    fn transition_dict_tensor_round_trips_all_one_qubit_source_sets() {
+        let source_sets: [&[&str]; 3] = [&["L"], &["0", "1"], &["0", "1", "L"]];
+        for left_sources in source_sets {
+            for right_sources in source_sets {
+                let factor = |sources: &[&str]| {
+                    TransitionDict::new(
+                        &sources
+                            .iter()
+                            .map(|&source| {
+                                let row = match source {
+                                    "0" => [("1".to_string(), 0.25), ("L".to_string(), 0.75)],
+                                    "1" => [("0".to_string(), 0.75), ("L".to_string(), 0.25)],
+                                    _ => [("0".to_string(), 0.25), ("1".to_string(), 0.75)],
+                                };
+                                (source.to_string(), BTreeMap::from(row))
+                            })
+                            .collect(),
+                    )
+                    .unwrap()
+                };
+                let product = factor(left_sources).tensor(&factor(right_sources));
+                let rebuilt = TransitionDict::new(product.transitions()).unwrap();
+                assert_eq!(
+                    rebuilt.expanded_transitions(),
+                    product.expanded_transitions()
+                );
+                assert_eq!(
+                    rebuilt.computational_dependencies(),
+                    product.computational_dependencies(),
+                    "source sets {left_sources:?} and {right_sources:?}"
+                );
+                assert_eq!(rebuilt, product);
+            }
+        }
     }
 
     #[test]

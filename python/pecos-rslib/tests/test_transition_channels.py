@@ -23,15 +23,33 @@ def test_transition_dict_tensor_product_and_mapping_api() -> None:
     product = recover_first * recover_second
 
     assert product.arity == 2
-    assert len(product) == 5
-    assert product["0L"] == {"01": 1.0}
-    assert product["L0"] == {"00": 1.0}
-    assert product["LL"] == {"01": 1.0}
-    assert "LL" in product
+    assert len(product) == 2
+    assert product["L*"] == {"0*": 1.0}
+    assert product["*L"] == {"*1": 1.0}
+    assert "L*" in product
     assert product.get("missing") is None
-    assert product.keys() == ["0L", "1L", "L0", "L1", "LL"]
-    assert product.values()[-1] == {"01": 1.0}
+    assert product.keys() == ["*L", "L*"]
+    assert product.values()[-1] == {"0*": 1.0}
     assert product.to_dict() == product.transitions
+
+
+@pytest.mark.parametrize("row_form", ["tensor", "transitions", "to_dict", "channel"])
+def test_transition_tensor_plain_rows_preserve_partner_coherence(row_form: str) -> None:
+    product = TransitionDict({"0": {"1": 1.0}, "1": {"0": 1.0}}) * TransitionDict({"L": {"L": 1.0}})
+    original = TwoQubitStateTransitionChannel(1.0, product)
+    rows = {
+        "tensor": product,
+        "transitions": product.transitions,
+        "to_dict": product.to_dict(),
+        "channel": original.transitions,
+    }
+    channel = TwoQubitStateTransitionChannel(1.0, rows[row_form])
+    builder = GeneralNoiseModelBuilder().add_p2_transition_channel_before_gate(channel)
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[1]; '
+        "h q[1]; cx q[0],q[1]; h q[1]; measure q[1] -> c[0];"
+    )
+    assert sim(program).noise(builder).seed(1).run(400).to_dict()["c"] == [0] * 400
 
 
 @pytest.mark.parametrize("step_form", ["product", "joint", "tensor", "stack"])

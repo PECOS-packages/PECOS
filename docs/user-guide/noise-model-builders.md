@@ -213,9 +213,10 @@ Use separate ordered channels if both forms are needed.
 For asymmetric independent operands, use `P2TransitionStep.independent(first, second)` or
 `P2PauliLeakageStep.independent(first, second)`. The existing `first * second` shorthand has the
 same independent-coin meaning. `TransitionDict` and `PauliLeakageDict` can tensor conditional
-maps with `left * right` for a joint channel with one outer coin. Keep the resulting dictionary
-object when constructing the channel: converting a transition tensor to a plain dictionary
-loses its identity-wire metadata and can cause additional measurements.
+maps with `left * right` for a joint channel with one outer coin. A tensor of two one-qubit
+`TransitionDict`s exposes wildcard rows through `.transitions` and `to_dict()`, so rebuilding
+from a plain dictionary preserves identity wires and measures the same legs. Higher-arity
+transition tensors continue to expose expanded rows.
 
 ### Rust Construction and Validation
 

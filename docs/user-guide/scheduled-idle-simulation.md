@@ -157,7 +157,8 @@ prep_leak_ratio=0, p2_pauli_model=None)` adds a checked subset of
   one within 1e-10. Empty/all-zero maps, `II`, leakage entries and invalid keys
   are rejected even when `p2=0`. Weights select the fault type and do not rescale
   `p2`; values near unit sum follow the existing general-model sampler.
-- `prep`: probability of a fault after preparation resets the qubit and clears prior leakage.
+- `prep`: probability of a fault after preparation resets the qubit and clears
+  prior leakage.
 - `prep_leak_ratio`: conditional probability that a preparation fault causes leakage;
   otherwise it applies X. The default is zero (all preparation faults are X).
   Thus a fresh preparation leaks with probability `prep * prep_leak_ratio`.
@@ -172,9 +173,9 @@ All probabilities and the leakage ratio must be finite and in [0, 1], even when
 `prep=0`. These are event probabilities, not average gate infidelities.
 Gate-induced emission/leakage, seepage, other custom fault maps, angle-dependent
 rates, crosstalk, repumping and automatic post-two-qubit idle injection are not
-configurable. Unsupported Python keywords raise rather than being silently ignored. Existing idle leakage remains supported:
-leakage-aware readout returns 2 without readout flips, whereas ordinary leaked
-readout starts at 1 and is subject to `meas1`.
+configurable. Unsupported Python keywords raise rather than being silently ignored.
+Existing idle leakage remains supported: leakage-aware readout returns 2 without
+readout flips, whereas ordinary leaked readout starts at 1 and is subject to `meas1`.
 
 ```python
 import pecos_rslib as pr
@@ -203,14 +204,14 @@ meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Unlike Python, th
 Rust constructor accepts a carrier that already contains local faults: it replaces
 all five local probabilities, resets the preparation leakage ratio to zero and
 restores the uniform two-qubit distribution while preserving idle configuration.
-Opt into preparation leakage with
-`.with_prep_leak_ratio(ratio)?` and select an ordered Pauli map with
-`.with_p2_pauli_model(distribution)?`. Each setter replaces only its own setting;
-conversion to `ScheduledNoise` preserves both for timed and event batches.
-The canonical Rust carrier is `ScheduledNoise`; `ScheduledIdleNoise` is a compatibility alias that
-retains the entire configuration, including local faults. `ScheduledEventIdleZ`
-and `ScheduledEventIdleNoise` likewise alias `ScheduledEventNoise`. The Python
-idle and local factories retain their distinct profile classes.
+Opt into preparation leakage with `.with_prep_leak_ratio(ratio)?` and select an
+ordered Pauli map with `.with_p2_pauli_model(distribution)?`. Each setter replaces
+only its own setting; conversion to `ScheduledNoise` preserves both for timed and
+event batches. The canonical Rust carrier is `ScheduledNoise`; `ScheduledIdleNoise`
+is a compatibility alias that retains the entire configuration, including local
+faults. `ScheduledEventIdleZ` and `ScheduledEventIdleNoise` likewise alias
+`ScheduledEventNoise`. The Python idle and local factories retain their distinct
+profile classes.
 
 ## Shared scheduled admission and execution limits
 

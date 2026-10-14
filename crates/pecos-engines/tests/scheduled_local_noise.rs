@@ -617,6 +617,8 @@ fn invalid_two_qubit_distributions_reject_even_with_zero_event_probability() {
     for weight in [-0.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MAX] {
         invalid.push(model(&[("XI", weight), ("IX", 1.0)]));
     }
+    // Sums to one, so only the negative-weight check rejects it.
+    invalid.push(model(&[("XI", -0.1), ("IX", 1.1)]));
     for distribution in invalid {
         let local =
             ScheduledLocalNoise::new(ScheduledIdleNoise::new(2).unwrap(), 0.0, 0.0, 0.0, 0.0, 0.0)

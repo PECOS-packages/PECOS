@@ -16,7 +16,7 @@ pub enum ChannelValidationError {
     InvalidLabel(String),
     /// A label or dictionary has the wrong number of operands.
     InvalidArity { expected: usize, actual: usize },
-    /// A conditional/event weight is negative or not finite.
+    /// A conditional/event weight is not finite or outside `[0, 1]`.
     InvalidWeight { label: String, value: f64 },
     /// A conditional row or event distribution does not sum to one.
     NotNormalized { source: Option<String>, total: f64 },
@@ -46,7 +46,7 @@ impl fmt::Display for ChannelValidationError {
             }
             Self::InvalidWeight { label, value } => write!(
                 f,
-                "weight for {label:?} must be finite and non-negative, got {value}"
+                "weight for {label:?} must be finite and between 0 and 1, got {value}"
             ),
             Self::NotNormalized { source, total } => write!(
                 f,
@@ -55,7 +55,7 @@ impl fmt::Display for ChannelValidationError {
             ),
             Self::IncompleteComputationalRows => write!(
                 f,
-                "both '0' and '1' source rows are required when either is supplied: the channel performs MZ when it fires; even an explicit 'i->i': 1.0 row follows measurement and is not the identity quantum map"
+                "both '0' and '1' source rows are required when either is supplied: the channel performs MZ when it fires; even an explicit 'i->i': 1.0 row follows measurement and is not the identity quantum map. Add the missing row explicitly, for example '1->1': 1.0 alongside '0->L': 1.0 (or '0->0': 1.0 when '0' is missing)"
             ),
             Self::ConflictingWildcard(label) => write!(
                 f,
@@ -91,7 +91,7 @@ fn distribution(
         return Err(ChannelValidationError::EmptyDistribution);
     }
     for (label, &value) in row {
-        if !value.is_finite() || value < 0.0 {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
             return Err(ChannelValidationError::InvalidWeight {
                 label: label.clone(),
                 value,

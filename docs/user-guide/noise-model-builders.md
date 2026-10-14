@@ -105,9 +105,9 @@ configuration retains its existing execution path.
 Every channel has its own outer `probability`. It is **not multiplied by `p1`, `p2`, or emission
 ratios**. As in the prototype, global `scale` and the corresponding `p1_scale` or `p2_scale`
 multiply this probability, clamped to `[0, 1]`; angle-dependent p2 scaling does not affect hooks.
-A failed outer coin is a no-op, including no measurement. New leakage uses `leakage_scale`:
-its default `1.0` tracks leakage, while lower values explicitly approximate some leakage events
-by complete depolarization.
+A failed outer coin is a no-op, including no measurement. An explicit `L` event or destination
+always marks the operand leaked, independently of `leakage_scale`. The legacy leakage paths
+retain that setting's leakage-to-depolarization approximation.
 
 At each gate event:
 
@@ -164,7 +164,7 @@ are illustrative, not device calibration parameters.
 ### Pauli and Leakage Channels
 
 `PauliLeakageChannel(p, events)` samples a state-independent event over `{I, X, Y, Z, L}` when
-its outer coin succeeds. Event weights must be finite, non-negative, and sum to one **globally**.
+its outer coin succeeds. Event weights must be finite, lie in `[0, 1]`, and sum to one **globally**.
 `I` is allowed, including `II` in a joint channel. `L` means `any -> L`; Paulis are ignored on
 already leaked operands. Pauli events preserve coherence according to their usual quantum map.
 
@@ -219,8 +219,9 @@ loses its identity-wire metadata and can cause additional measurements.
 Rust provides the same placements, ordering, independent/joint modes, and validation as Python.
 Channel and dictionary constructors return `Result<_, ChannelValidationError>`. Python translates
 these structured errors to `ValueError`. Weights use the existing sampler normalization tolerance
-of `1e-5`; probabilities and weights must be finite. Wrong arity, malformed labels, incomplete
-computational rows, and conflicting wildcard groups are rejected.
+of `1e-5` for row sums; each probability and weight must independently be finite and in `[0, 1]`.
+The row-sum tolerance never permits an individual weight above one. Wrong arity, malformed labels,
+incomplete computational rows, and conflicting wildcard groups are rejected.
 
 ```rust
 use std::collections::BTreeMap;

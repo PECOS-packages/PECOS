@@ -198,3 +198,34 @@ def test_identity_rows_collapse_in_sim_and_internal_results_stay_hidden() -> Non
     outcomes = sim(program).noise(noise).seed(51).run(256).to_dict()["c"]
     assert len(outcomes) == 256
     assert 85 < sum(outcomes) < 171
+
+
+@pytest.mark.parametrize("weight", [1.000001, float.fromhex("0x1.0000000000001p+0")])
+@pytest.mark.parametrize("joint", [False, True])
+def test_transition_weights_cannot_exceed_one(weight: float, joint: bool) -> None:
+    cls = TwoQubitStateTransitionChannel if joint else StateTransitionChannel
+    label = "*L->*0" if joint else "L->0"
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        cls(1.0, {label: weight})
+
+
+@pytest.mark.parametrize("state_channel", [False, True])
+@pytest.mark.parametrize("two_qubit", [False, True])
+@pytest.mark.parametrize("placement", ["before", "after"])
+def test_explicit_leakage_ignores_legacy_depolarization_scale(
+    state_channel: bool, two_qubit: bool, placement: str
+) -> None:
+    from pecos_rslib import PauliLeakageChannel, Qasm, sim
+
+    gate = "cz q[0], q[1];" if two_qubit else "z q[0]; z q[1];"
+    program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; ' + gate + " measure q -> c;")
+    channel = (
+        StateTransitionChannel(1.0, {"0->L": 1.0, "1->L": 1.0})
+        if state_channel
+        else PauliLeakageChannel(1.0, {"L": 1.0})
+    )
+    builder = GeneralNoiseModelBuilder().with_leakage_scale(0.0)
+    arity = "p2" if two_qubit else "p1"
+    family = "transition" if state_channel else "pauli_leakage"
+    noise = getattr(builder, f"add_{arity}_{family}_channel_{placement}_gate")(channel)
+    assert sim(program).noise(noise).seed(42).run(32).to_dict()["c"] == [3] * 32

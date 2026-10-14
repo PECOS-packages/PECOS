@@ -1536,11 +1536,7 @@ impl GeneralNoiseModel {
         builder: &mut ByteMessageBuilder,
     ) {
         if event == 'L' {
-            if !self.is_leaked(qubit)
-                && let Some(gate) = self.leak(qubit)
-            {
-                builder.add_gate_command(&gate);
-            }
+            self.apply_channel_leakage(qubit, builder);
             return;
         }
         if self.is_leaked(qubit) {
@@ -1704,6 +1700,15 @@ impl GeneralNoiseModel {
         }
     }
 
+    // An explicit L destination always enters the tracked leakage sector. The legacy
+    // leak() helper separately retains its leakage-to-depolarization approximation.
+    fn apply_channel_leakage(&mut self, qubit: usize, builder: &mut ByteMessageBuilder) {
+        if !self.is_leaked(qubit) {
+            self.mark_as_leaked(qubit);
+            builder.add_gate_command(&Gate::pz(&[qubit]));
+        }
+    }
+
     fn apply_population_transition(
         &mut self,
         qubit: usize,
@@ -1730,16 +1735,8 @@ impl GeneralNoiseModel {
                 destination
             }
             (Zero | One, Leakage) => {
-                let mut resulting_state = source;
-                if let Some(gate) = self.leak(qubit) {
-                    if self.is_leaked(qubit) {
-                        resulting_state = Leakage;
-                    } else if matches!(gate.gate_type, GateType::X | GateType::Y) {
-                        resulting_state = if source == Zero { One } else { Zero };
-                    }
-                    builder.add_gate_command(&gate);
-                }
-                resulting_state
+                self.apply_channel_leakage(qubit, builder);
+                Leakage
             }
             _ => unreachable!(),
         }
@@ -5020,6 +5017,69 @@ mod tests {
             gate_types(&builder.build()),
             vec![GateType::PZ, GateType::PZ, GateType::H]
         );
+    }
+
+    #[test]
+    fn explicit_channel_leakage_suppresses_gates_at_every_legacy_leakage_scale() {
+        let transition = deterministic_transition("0", "L");
+        let pauli =
+            crate::noise::PauliLeakageChannel::new(1.0, &BTreeMap::from([("L".into(), 1.0)]))
+                .unwrap();
+        for scale in [0.0, 0.4, 1.0] {
+            for state_channel in [false, true] {
+                for two_qubit in [false, true] {
+                    let base = GeneralNoiseModel::builder()
+                        .with_leakage_scale(scale)
+                        .with_seed(17);
+                    let mut noise = match (state_channel, two_qubit) {
+                        (false, false) => base.add_p1_pauli_leakage_channel_before_gate(&pauli),
+                        (false, true) => base.add_p2_pauli_leakage_channel_before_gate(&pauli),
+                        (true, false) => base.add_p1_transition_channel_before_gate(&transition),
+                        (true, true) => base.add_p2_transition_channel_before_gate(&transition),
+                    }
+                    .build();
+                    let gate = if two_qubit {
+                        Gate::cz(&[(0, 1)])
+                    } else {
+                        Gate::h(&[0])
+                    };
+                    let mut builder = ByteMessage::quantum_operations_builder();
+                    if two_qubit {
+                        noise.apply_tq_faults(&gate, 0.0, &mut builder);
+                    } else {
+                        noise.apply_sq_faults(&gate, &mut builder);
+                    }
+                    let mut emitted = builder.build();
+                    let count = if two_qubit { 2 } else { 1 };
+                    if state_channel {
+                        assert_eq!(gate_types(&emitted), vec![GateType::MZ; count]);
+                        emitted = noise
+                            .apply_noise_on_continue_processing(outcome_message(&vec![0; count]))
+                            .unwrap();
+                    }
+                    assert_eq!(gate_types(&emitted), vec![GateType::PZ; count]);
+                    for qubit in 0..count {
+                        assert!(noise.is_leaked(qubit));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_leakage_scale_still_replaces_leakage_with_paulis() {
+        let mut noise = GeneralNoiseModel::builder()
+            .with_leakage_scale(0.0)
+            .with_seed(17)
+            .build();
+        let mut reference_rng = noise.rng.clone();
+        for _ in 0..100 {
+            // Preserve the legacy outer draw and Pauli draw exactly.
+            assert!(!reference_rng.occurs(0.0));
+            let expected = reference_rng.random_pauli_or_none(0);
+            assert_eq!(noise.leak(0), expected);
+            assert!(!noise.is_leaked(0));
+        }
     }
 
     #[test]

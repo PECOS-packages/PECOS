@@ -141,7 +141,38 @@ fn wildcard_identity_preserves_interference_on_the_other_operand() {
 fn wildcard_rows_within_normalization_tolerance_remain_valid_when_combined() {
     let channel = TwoQubitStateTransitionChannel::from_transitions(
         1.0,
-        &BTreeMap::from([("*L->*0".into(), 1.000_009), ("L*->0*".into(), 1.000_009)]),
+        &BTreeMap::from([
+            ("*L->*0".into(), 0.500_004),
+            ("*L->*1".into(), 0.500_004),
+            ("L*->0*".into(), 0.500_004),
+            ("L*->1*".into(), 0.500_004),
+        ]),
     );
     assert!(channel.is_ok());
+}
+
+#[test]
+fn individual_weights_above_one_are_rejected_even_within_sum_tolerance() {
+    for weight in [1.000_001, f64::from_bits(1.0_f64.to_bits() + 1)] {
+        let errors = [
+            StateTransitionChannel::from_transitions(
+                1.0,
+                &BTreeMap::from([("L->0".into(), weight)]),
+            )
+            .unwrap_err(),
+            TwoQubitStateTransitionChannel::from_transitions(
+                1.0,
+                &BTreeMap::from([("*L->*0".into(), weight)]),
+            )
+            .unwrap_err(),
+            PauliLeakageChannel::new(1.0, &BTreeMap::from([("X".into(), weight)])).unwrap_err(),
+            TwoQubitPauliLeakageChannel::new(1.0, &BTreeMap::from([("XL".into(), weight)]))
+                .unwrap_err(),
+        ];
+        for error in errors {
+            assert!(
+                matches!(error, ChannelValidationError::InvalidWeight { value, .. } if value.to_bits() == weight.to_bits())
+            );
+        }
+    }
 }

@@ -78,3 +78,12 @@ def test_explicit_identity_events(events: dict) -> None:
 def test_invalid_event_distributions(events: dict) -> None:
     with pytest.raises(ValueError, match="channel|weight|source rows|wildcard"):
         PauliLeakageChannel(1.0, events)
+
+
+@pytest.mark.parametrize("weight", [1.000001, float.fromhex("0x1.0000000000001p+0")])
+@pytest.mark.parametrize("joint", [False, True])
+def test_event_weights_cannot_exceed_one(weight: float, joint: bool) -> None:
+    cls = TwoQubitPauliLeakageChannel if joint else PauliLeakageChannel
+    event = "XL" if joint else "X"
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        cls(1.0, {event: weight})

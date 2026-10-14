@@ -315,7 +315,7 @@ pub enum PauliLeakageEvent {
     Y,
     /// Apply Pauli Z in the computational subspace.
     Z,
-    /// Leak the operand using the model's configured leakage handling.
+    /// Mark the operand as leaked, independently of the legacy leakage scale.
     Leakage,
 }
 

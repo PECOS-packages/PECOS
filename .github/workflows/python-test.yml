@@ -342,7 +342,23 @@ jobs:
     - name: Install Python build tooling
       run: uv pip install --system maturin
 
+    # Build one artifact the way an isolated PEP 517 frontend does: outside the
+    # checkout and without Cargo exporting the workspace's LLVM prefix. The
+    # installed-wheel smoke test below then exercises Guppy -> QIS -> Selene,
+    # catching both LLVM toolchain fallback and native-library ABI mismatches.
+    - name: Build pecos-rslib wheel from an isolated frontend
+      if: runner.os == 'Linux'
+      env:
+        RUSTUP_TOOLCHAIN: stable
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/dist/pecos-rslib"
+        cd "$RUNNER_TEMP"
+        env -u LLVM_SYS_211_PREFIX maturin build --locked \
+          --manifest-path "$GITHUB_WORKSPACE/python/pecos-rslib/Cargo.toml" \
+          --out "$GITHUB_WORKSPACE/dist/pecos-rslib"
+
     - name: Build pecos-rslib wheel
+      if: runner.os != 'Linux'
       env:
         RUSTUP_TOOLCHAIN: stable
       run: |
@@ -537,6 +553,20 @@ jobs:
             python scripts/ci/check_module_versions.py pecos_rslib
           fi
         fi
+
+    - name: Execute installed-wheel Guppy QIS smoke test
+      if: matrix.include-pecos
+      run: |
+        python_bin="$(command -v python)"
+        isolated_home="$RUNNER_TEMP/qis-smoke-home"
+        llvm_shadow="$RUNNER_TEMP/qis-smoke-path"
+        mkdir -p "$isolated_home" "$llvm_shadow"
+        printf '#!/usr/bin/env sh\nexit 86\n' > "$llvm_shadow/llvm-as"
+        chmod +x "$llvm_shadow/llvm-as"
+        env -u LLVM_SYS_211_PREFIX \
+          HOME="$isolated_home" \
+          PATH="$llvm_shadow:$PATH" \
+          "$python_bin" scripts/ci/smoke_guppy_qis.py
 
     - name: Execute WASM compatibility smoke test
       run: python scripts/ci/smoke_wasm_foreign_object.py

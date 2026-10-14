@@ -38,6 +38,19 @@ fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResul
     }
 }
 
+fn normalize_noise_builder(py: Python, noise_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    match noise_builder
+        .bind(py)
+        .getattr(pyo3::intern!(py, "__pecos_noise_builder__"))
+    {
+        Ok(converter) => Ok(converter.call0()?.into_any().unbind()),
+        Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
+            Ok(noise_builder)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Check if a Python object is a Guppy function
 fn is_guppy_function(py: Python, obj: &Py<PyAny>) -> PyResult<bool> {
     // Check if guppylang module is available
@@ -396,8 +409,13 @@ impl PySimBuilder {
         })
     }
 
-    /// Set noise model builder
+    /// Set a noise model builder or portable noise-parameter object.
+    ///
+    /// Parameter objects can define ``__pecos_noise_builder__()`` to convert
+    /// themselves into a native PECOS noise builder. ``GeneralNoiseParameters``
+    /// implements this protocol.
     fn noise(&mut self, noise_builder: Py<PyAny>) -> PyResult<Self> {
+        let noise_builder = Python::attach(|py| normalize_noise_builder(py, noise_builder))?;
         if crate::scheduled_adapter::is_event_noise(&noise_builder)
             && !matches!(self.inner, SimBuilderInner::QisControl(_))
         {

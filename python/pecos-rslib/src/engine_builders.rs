@@ -1103,36 +1103,10 @@ impl PyGeneralNoiseModelBuilder {
 
     /// Add a noiseless gate
     fn with_noiseless_gate(&self, gate_name: &str) -> PyResult<Self> {
-        // Make it case-insensitive
-        let gate_type = match gate_name.to_uppercase().as_str() {
-            "I" => GateType::I,
-            "X" => GateType::X,
-            "Y" => GateType::Y,
-            "Z" => GateType::Z,
-            "S" | "SZ" => GateType::SZ,       // S gate is SZ in GateType
-            "SDG" | "SZDG" => GateType::SZdg, // S dagger
-            "H" => GateType::H,
-            "RX" => GateType::RX,
-            "RY" => GateType::RY,
-            "RZ" => GateType::RZ,
-            "T" => GateType::T,
-            "TDG" => GateType::Tdg,
-            "U" => GateType::U,
-            "RXY1Q" => GateType::RXY1Q,
-            "CX" => GateType::CX,
-            "SZZ" => GateType::SZZ,
-            "SZZDG" => GateType::SZZdg,
-            "RZZ" => GateType::RZZ,
-            "RXYXY2Q" => GateType::RXYXY2Q,
-            "MEASURE" => GateType::MZ,
-            "PREP" => GateType::PZ,
-            "IDLE" => GateType::Idle,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Invalid gate type: {gate_name}"
-                )));
-            }
-        };
+        // Share canonical names and aliases with the Selene general-noise adapter.
+        let gate_type = gate_name.parse::<GateType>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid gate type: {gate_name}"))
+        })?;
         Ok(Self {
             inner: self.inner.clone().with_noiseless_gate(gate_type),
         })

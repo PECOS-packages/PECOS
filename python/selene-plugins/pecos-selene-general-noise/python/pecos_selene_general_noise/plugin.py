@@ -7,15 +7,25 @@ import math
 import platform
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
+from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, Protocol, Self, cast
 
 from selene_core import ErrorModel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 Distribution = Mapping[str, float]
 ONE_QUBIT_PAULIS = frozenset({"X", "Y", "Z"})
 ONE_QUBIT_CHANNELS = ONE_QUBIT_PAULIS | {"L"}
+
+
+class _PecosGeneralNoiseBuilder(Protocol):
+    """Structural type for the immutable Python PECOS noise builder."""
+
+    def __getattr__(self, name: str) -> Callable[..., Self]: ...
 
 
 def _frozen_distribution(value: Distribution | None) -> Distribution | None:
@@ -558,6 +568,160 @@ class GeneralNoiseParameters:
     def with_local_crosstalk_groups(self, *groups: tuple[int, ...]) -> GeneralNoiseParameters:
         """Set device-neutral local-crosstalk neighborhoods for the Selene adapter."""
         return self._with_measurement(local_groups=tuple(tuple(group) for group in groups))
+
+    def apply_to_pecos_builder(
+        self,
+        builder: _PecosGeneralNoiseBuilder,
+        *,
+        seed: int | None = None,
+    ) -> _PecosGeneralNoiseBuilder:
+        """Apply this configuration to a PECOS ``GeneralNoiseModelBuilder``.
+
+        This is the canonical bridge for running the same general-noise parameters
+        through PECOS ``sim()`` and through :class:`GeneralNoisePlugin`. The returned
+        builder must be used because PECOS builders are immutable.
+
+        Selene ``local_groups`` are intentionally not applied: they describe how the
+        Selene runtime adapter turns a device topology into PECOS crosstalk payloads,
+        rather than a parameter of ``GeneralNoiseModel`` itself. End-to-end crosstalk
+        parity therefore also requires both runtimes to emit equivalent payloads.
+        """
+        self.validate_effective_probabilities()
+
+        def apply(name: str, *args: object) -> None:
+            nonlocal builder
+            builder = getattr(builder, name)(*args)
+
+        scaling = self.scaling
+        if scaling.overall is not None:
+            apply("with_scale", scaling.overall)
+        if scaling.leakage is not None:
+            apply("with_leakage_scale", scaling.leakage)
+        if scaling.emission is not None:
+            apply("with_emission_scale", scaling.emission)
+
+        preparation = self.preparation
+        if preparation.probability is not None:
+            apply("with_p_prep", preparation.probability)
+        if preparation.leakage_ratio is not None:
+            apply("with_prep_leak_ratio", preparation.leakage_ratio)
+        if preparation.crosstalk_probability is not None:
+            apply("with_p_prep_crosstalk", preparation.crosstalk_probability)
+        if preparation.average_crosstalk_probability is not None:
+            # The Python PECOS builder currently exposes only the process-rate
+            # spelling. This is the same 18/5 conversion used by the Rust builder.
+            apply("with_p_prep_crosstalk", preparation.average_crosstalk_probability * 18.0 / 5.0)
+        if preparation.scale is not None:
+            apply("with_prep_scale", preparation.scale)
+        if preparation.crosstalk_scale is not None:
+            apply("with_p_prep_crosstalk_scale", preparation.crosstalk_scale)
+
+        one = self.single_qubit
+        if one.probability is not None:
+            apply("with_p1", one.probability)
+        if one.average_infidelity is not None:
+            apply("with_average_p1", one.average_infidelity)
+        if one.pauli_model is not None:
+            apply("with_p1_pauli_model", dict(one.pauli_model))
+        if one.emission_ratio is not None:
+            apply("with_p1_emission_ratio", one.emission_ratio)
+        if one.emission_model is not None:
+            apply("with_p1_emission_model", dict(one.emission_model))
+        if one.seepage_probability is not None:
+            apply("with_p1_seepage_prob", one.seepage_probability)
+        if one.scale is not None:
+            apply("with_p1_scale", one.scale)
+
+        two = self.two_qubit
+        if two.probability is not None:
+            apply("with_p2", two.probability)
+        if two.average_infidelity is not None:
+            apply("with_average_p2", two.average_infidelity)
+        if two.pauli_model is not None:
+            apply("with_p2_pauli_model", dict(two.pauli_model))
+        if two.emission_ratio is not None:
+            apply("with_p2_emission_ratio", two.emission_ratio)
+        if two.emission_model is not None:
+            apply("with_p2_emission_model", dict(two.emission_model))
+        if two.seepage_probability is not None:
+            apply("with_p2_seepage_prob", two.seepage_probability)
+        if two.scale is not None:
+            apply("with_p2_scale", two.scale)
+        if two.angle_coefficients is not None:
+            apply("with_p2_angle_params", *two.angle_coefficients)
+        if two.angle_power is not None:
+            apply("with_p2_angle_power", two.angle_power)
+        if two.idle_after_gate is not None:
+            apply("with_idle_after_2q", two.idle_after_gate)
+
+        idle = self.idle
+        if idle.linear_rate is not None:
+            apply(
+                "with_p_idle_linear",
+                idle.linear_rate,
+                dict(idle.linear_model or {"X": 1 / 3, "Y": 1 / 3, "Z": 1 / 3}),
+            )
+        if idle.sin_squared_rate is not None:
+            apply("with_p_idle_sin_squared", idle.sin_squared_rate, dict(idle.sin_squared_model or {"Z": 1.0}))
+        if idle.coherent_rate is not None:
+            apply("with_p_idle_coherent", idle.coherent_rate, dict(idle.coherent_model or {"RZ": 1.0}))
+        if idle.scale is not None:
+            apply("with_idle_scale", idle.scale)
+
+        measurement = self.measurement
+        if measurement.p0_to_1 is not None:
+            apply("with_p_meas_0", measurement.p0_to_1)
+        if measurement.p1_to_0 is not None:
+            apply("with_p_meas_1", measurement.p1_to_0)
+        if measurement.global_crosstalk_probability is not None:
+            apply("with_p_meas_crosstalk_global", measurement.global_crosstalk_probability)
+        if measurement.local_crosstalk_probability is not None:
+            apply("with_p_meas_crosstalk_local", measurement.local_crosstalk_probability)
+        if measurement.crosstalk_model is not None:
+            apply("with_p_meas_crosstalk_model", dict(measurement.crosstalk_model))
+        if measurement.scale is not None:
+            apply("with_meas_scale", measurement.scale)
+        if measurement.crosstalk_scale is not None:
+            apply("with_p_meas_crosstalk_scale", measurement.crosstalk_scale)
+
+        for gate in self.noiseless_gates:
+            apply("with_noiseless_gate", gate)
+        if seed is not None:
+            if seed < 0:
+                message = "seed must be non-negative"
+                raise ValueError(message)
+            apply("with_seed", seed)
+        return builder
+
+    def to_pecos_builder(self, *, seed: int | None = None) -> _PecosGeneralNoiseBuilder:
+        """Create a PECOS builder configured from these parameters.
+
+        ``quantum-pecos`` is an optional runtime dependency of this plugin package;
+        install it when using this convenience method.
+        """
+        try:
+            pecos = import_module("pecos")
+        except ImportError as error:
+            message = "to_pecos_builder() requires the quantum-pecos package"
+            raise ImportError(message) from error
+        general_noise = cast("Callable[[], _PecosGeneralNoiseBuilder]", pecos.general_noise)
+        return self.apply_to_pecos_builder(general_noise(), seed=seed)
+
+    def __pecos_noise_builder__(self) -> _PecosGeneralNoiseBuilder:
+        """Convert this configuration for direct use by ``sim(...).noise(...)``.
+
+        ``local_groups`` belongs to the Selene adapter rather than PECOS's
+        ``GeneralNoiseModel``. Reject it on the direct path instead of silently
+        discarding topology that the user may expect ``sim()`` to apply.
+        """
+        if self.measurement.local_groups:
+            message = (
+                "measurement.local_groups is Selene-adapter topology and cannot be applied by "
+                "sim().noise(GeneralNoiseParameters); pass the parameters to GeneralNoisePlugin "
+                "or remove local_groups"
+            )
+            raise ValueError(message)
+        return self.to_pecos_builder()
 
 
 @dataclass

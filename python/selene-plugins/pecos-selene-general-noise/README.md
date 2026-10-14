@@ -20,6 +20,24 @@ parameters = (
 noise = GeneralNoisePlugin(parameters=parameters, random_seed=7)
 ```
 
+The same immutable parameter object can configure PECOS ``sim()`` directly, so
+parity experiments do not need to duplicate a long setter chain:
+
+```python
+from pecos import sim
+
+pecos_results = sim(program).noise(parameters).seed(7).run(1_000)
+```
+
+``local_groups`` is Selene-adapter topology rather than a
+``GeneralNoiseModel`` parameter. Direct ``sim().noise(parameters)`` use rejects
+parameters containing local groups rather than silently dropping topology.
+Call ``parameters.to_pecos_builder(seed=...)`` when an explicit native builder
+is useful; that lower-level conversion does not copy local groups.
+End-to-end crosstalk comparisons must arrange for the two runtimes to emit the
+same global and local crosstalk payloads. The channel probabilities and models
+themselves are shared exactly.
+
 For a first experiment, `GeneralNoiseParameters.uniform(1e-3)` applies a
 common process-infidelity/error probability to preparation, measurement,
 one-qubit, and two-qubit operations.

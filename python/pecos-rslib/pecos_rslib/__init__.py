@@ -51,6 +51,10 @@ _add_windows_llvm_dll_directories()
 from . import pecos_rslib as _native  # noqa: E402
 from .pecos_rslib import *  # noqa: E402,F403
 
+_qis_library_dir = Path(__file__).resolve().parent / "_native"
+if _qis_library_dir.is_dir():
+    _native._set_qis_library_dir(_qis_library_dir)
+
 __doc__ = _native.__doc__
 if hasattr(_native, "__all__"):
     __all__ = _native.__all__

@@ -1534,7 +1534,8 @@ fn maximum_frame_hook_yields_and_expansion_fit_derived_budgets() {
             .add_p1_transition_channel_after_gate(&flip);
     }
     // Every hook emits an internal MZ and an X: 24 barriers and 48 hook
-    // commands per gate, plus the ideal Z. All 128 records attain this case.
+    // commands per gate, plus the ideal Z. Every record attains the per-hook
+    // yield and command allowances; the base allowance stays unused here.
     let gates = vec![Gate::z(&[0]); 128];
     let bound = 128 * (16 * (2 + 1) + 2 * 24);
     for legacy_input in [false, true] {

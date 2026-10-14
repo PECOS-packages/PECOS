@@ -1426,9 +1426,12 @@ impl GeneralNoiseModelBuilder {
         }
     }
 
-    // Frame events execute as unnoised physical commands. Hooks have their
-    // own gate boundaries and may coexist with this profile; other callers of
-    // simple_probabilities must still reject hooks they cannot translate.
+    // Frame events execute as unnoised physical commands. Hooks may coexist
+    // with them: a FLIP on a hook-leaked qubit only changes the simulator's
+    // placeholder state, which no readout in this profile can observe (MZ reads
+    // 1, MeasureLeaked reads 2, and every exit from leakage resets the qubit).
+    // Other callers of simple_probabilities must still reject hooks they
+    // cannot translate.
     pub(crate) fn runtime_frame_supports_physical_events(&self) -> bool {
         self.is_plain_pauli_except_angle_and_emission(true)
             && self.resolved_angle_scaling().is_none()

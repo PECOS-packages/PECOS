@@ -98,9 +98,11 @@ order through Selene and the optional `sim()` bridge:
 ```python
 from pecos_selene_general_noise import GeneralNoiseParameters, PauliLeakageHook, TransitionHook
 
-parameters = (GeneralNoiseParameters()
+parameters = (
+    GeneralNoiseParameters()
     .add_p1_pauli_leakage_channel_before_gate(PauliLeakageHook(1.0, {"L": 1.0}))
-    .add_p1_transition_channel_before_gate(TransitionHook(1.0, {"L->0": 1.0})))
+    .add_p1_transition_channel_before_gate(TransitionHook(1.0, {"L->0": 1.0}))
+)
 ```
 
 Transition maps accept flat `"source->destination"` keys or nested rows.

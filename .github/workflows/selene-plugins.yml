@@ -214,6 +214,12 @@ jobs:
             -e python/pecos-rslib \
             -e python/quantum-pecos
 
+      - name: Test general-noise Rust composition
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --release -p pecos-selene-general-noise --test library
+          cargo test --locked --release -p pecos-selene-general-noise --no-default-features --test library
+
       - name: Run tests
         if: runner.os == 'Linux'
         run: |

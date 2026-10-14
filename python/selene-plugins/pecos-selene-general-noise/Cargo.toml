@@ -11,7 +11,12 @@ description = "PECOS general noise model plugin for the Selene quantum emulator"
 [lib]
 name = "pecos_selene_general_noise"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["plugin-export"]
+# Downstream plugin crates disable this to provide their own FFI factory.
+plugin-export = []
 
 [dependencies]
 anyhow = { workspace = true }
@@ -31,3 +36,7 @@ smallvec = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "library"
+path = "tests-rust/library.rs"

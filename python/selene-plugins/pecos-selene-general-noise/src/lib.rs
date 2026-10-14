@@ -5,6 +5,7 @@ mod simulator;
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
+#[cfg(feature = "plugin-export")]
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -12,7 +13,10 @@ use pecos_core::Angle64;
 use pecos_core::gate_type::GateType;
 use pecos_engines::prelude::*;
 use selene_core::error_model::BatchResult;
-use selene_core::error_model::interface::{ErrorModelInterface, ErrorModelInterfaceFactory};
+use selene_core::error_model::interface::ErrorModelInterface;
+#[cfg(feature = "plugin-export")]
+use selene_core::error_model::interface::ErrorModelInterfaceFactory;
+#[cfg(feature = "plugin-export")]
 use selene_core::export_error_model_plugin;
 use selene_core::runtime::{BatchOperation, Operation};
 use selene_core::simulator::SimulatorInterface;
@@ -575,7 +579,16 @@ struct MeasurementResult {
     kind: MeasurementKind,
 }
 
-struct GeneralNoiseErrorModel {
+/// Stateful Selene error model backed by PECOS general noise.
+///
+/// This type implements [`ErrorModelInterface`] for downstream Rust plugins that
+/// need to normalize runtime-specific operations before applying generic noise.
+/// Disable the crate's default `plugin-export` feature when supplying your own
+/// FFI factory. Each shot must follow the Selene start/operations/end lifecycle.
+/// Pass complete runtime batches with their original timing and measurement IDs;
+/// splitting batches can change noise semantics. Custom operations remain errors.
+/// After an execution error, discard the instance rather than reuse partial state.
+pub struct GeneralNoiseErrorModel {
     model: Box<dyn NoiseModel>,
     builder: ByteMessageBuilder,
     last_operation_end: Vec<Option<u64>>,
@@ -583,6 +596,21 @@ struct GeneralNoiseErrorModel {
 }
 
 impl GeneralNoiseErrorModel {
+    /// Construct an instance using the JSON emitted by `GeneralNoiseParameters`.
+    ///
+    /// Configuration validation is identical to the default exported plugin.
+    /// Unknown fields, invalid probabilities and out-of-capacity local groups
+    /// return errors. This constructor does not start a shot or interpret custom
+    /// runtime operations; callers must explicitly normalize those operations.
+    ///
+    /// # Errors
+    /// Returns an error for malformed or invalid noise configuration.
+    pub fn from_json(n_qubits: usize, configuration: &str) -> Result<Self> {
+        let config: Config = serde_json::from_str(configuration)
+            .context("could not parse PECOS general-noise JSON configuration")?;
+        Self::new(config.build_model()?, n_qubits, &config)
+    }
+
     fn new(model: Box<dyn NoiseModel>, n_qubits: usize, config: &Config) -> Result<Self> {
         for group in &config.measurement.local_groups {
             if let Some(qubit) = group.iter().find(|qubit| **qubit >= n_qubits) {
@@ -866,9 +894,11 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
     }
 }
 
+#[cfg(feature = "plugin-export")]
 #[derive(Default)]
 struct GeneralNoiseFactory;
 
+#[cfg(feature = "plugin-export")]
 impl ErrorModelInterfaceFactory for GeneralNoiseFactory {
     type Interface = GeneralNoiseErrorModel;
 
@@ -883,17 +913,14 @@ impl ErrorModelInterfaceFactory for GeneralNoiseFactory {
                 error_model_args.len().saturating_sub(1)
             );
         }
-        let config: Config = serde_json::from_str(error_model_args[1].as_ref())
-            .context("could not parse PECOS general-noise JSON configuration")?;
-        let model = config.build_model()?;
-        Ok(Box::new(GeneralNoiseErrorModel::new(
-            model,
+        Ok(Box::new(GeneralNoiseErrorModel::from_json(
             usize::try_from(n_qubits).context("qubit count does not fit usize")?,
-            &config,
+            error_model_args[1].as_ref(),
         )?))
     }
 }
 
+#[cfg(feature = "plugin-export")]
 export_error_model_plugin!(crate::GeneralNoiseFactory);
 
 #[cfg(test)]

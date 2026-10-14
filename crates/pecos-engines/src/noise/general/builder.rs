@@ -1416,7 +1416,7 @@ impl GeneralNoiseModelBuilder {
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let emission_off =
             zero_or_unset(self.p1_emission_ratio) && zero_or_unset(self.p2_emission_ratio);
-        if self.is_plain_pauli_except_angle_and_emission()
+        if self.is_plain_pauli_except_angle_and_emission(false)
             && self.resolved_angle_scaling().is_none()
             && emission_off
         {
@@ -1424,6 +1424,16 @@ impl GeneralNoiseModelBuilder {
         } else {
             None
         }
+    }
+
+    // Frame events execute as unnoised physical commands. Hooks have their
+    // own gate boundaries and may coexist with this profile; other callers of
+    // simple_probabilities must still reject hooks they cannot translate.
+    pub(crate) fn runtime_frame_supports_physical_events(&self) -> bool {
+        self.is_plain_pauli_except_angle_and_emission(true)
+            && self.resolved_angle_scaling().is_none()
+            && self.p1_emission_ratio.is_none_or(|p| p == 0.0)
+            && self.p2_emission_ratio.is_none_or(|p| p == 0.0)
     }
 
     /// Like [`Self::simple_probabilities`], but ALSO permits angle-dependent
@@ -1451,7 +1461,7 @@ impl GeneralNoiseModelBuilder {
     /// noiseless gates must be off).
     #[must_use]
     pub fn pauli_with_angle_scaling(&self) -> Option<PauliWithAngleScaling> {
-        if self.is_plain_pauli_except_angle_and_emission() {
+        if self.is_plain_pauli_except_angle_and_emission(false) {
             let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
             let (p1_emission, p2_emission) = self.resolved_emission_ratios();
             Some((
@@ -1476,7 +1486,7 @@ impl GeneralNoiseModelBuilder {
     /// `pauli_with_angle_scaling` (which extracts them). The emission DISTRIBUTION
     /// must still be the default uniform model (`p1/p2_emission_model` unset) --
     /// custom emission samplers are NOT in this subset.
-    fn is_plain_pauli_except_angle_and_emission(&self) -> bool {
+    fn is_plain_pauli_except_angle_and_emission(&self, allow_hooks: bool) -> bool {
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let one_or_unset = |v: Option<f64>| v.is_none() || v == Some(1.0);
 
@@ -1497,17 +1507,18 @@ impl GeneralNoiseModelBuilder {
         let custom_models_off = self.p_idle_linear_model.is_none()
             && self.p1_emission_model.is_none()
             && self.p1_pauli_model.is_none()
-            && self.p1_pauli_leakage_channels_before_gate.is_empty()
+            && self.p2_emission_model.is_none()
+            && self.p2_pauli_model.is_none()
+            && self.p_meas_crosstalk_model.is_none();
+
+        let hooks_off = self.p1_pauli_leakage_channels_before_gate.is_empty()
             && self.p1_pauli_leakage_channels_after_gate.is_empty()
             && self.p1_transition_channels_before_gate.is_empty()
             && self.p1_transition_channels_after_gate.is_empty()
-            && self.p2_emission_model.is_none()
-            && self.p2_pauli_model.is_none()
             && self.p2_pauli_leakage_steps_before_gate.is_empty()
             && self.p2_pauli_leakage_steps_after_gate.is_empty()
             && self.p2_transition_steps_before_gate.is_empty()
-            && self.p2_transition_steps_after_gate.is_empty()
-            && self.p_meas_crosstalk_model.is_none();
+            && self.p2_transition_steps_after_gate.is_empty();
 
         let scales_neutral = one_or_unset(self.scale)
             && one_or_unset(self.idle_scale)
@@ -1526,7 +1537,11 @@ impl GeneralNoiseModelBuilder {
 
         let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
 
-        optional_features_off && custom_models_off && scales_neutral && gates_default
+        optional_features_off
+            && custom_models_off
+            && (allow_hooks || hooks_off)
+            && scales_neutral
+            && gates_default
     }
 
     /// Resolve the base Pauli probabilities `(p_prep, p_meas_0, p_meas_1, p1,

@@ -526,21 +526,17 @@ impl GeneralNoiseModel {
         }
     }
 
-    pub(crate) fn has_pending_crosstalk(&self) -> bool {
-        self.pending_crosstalk.is_some()
-    }
-
-    // Prefix commands are resolved transitions, preceding any resumed source gates.
+    // Prefix commands complete a paused gate, preceding any resumed source gates.
     pub(crate) fn continue_runtime_frame(
         &mut self,
         reply: ByteMessage,
     ) -> Result<FrameContinuation, PecosError> {
-        let was_pending = self.has_pending_crosstalk();
+        let was_pending = self.barrier_pending();
         let mut ends = Vec::new();
         let mut prefix = 0;
         let commands = self.continue_with_boundaries(reply, Some(&mut ends), &mut prefix)?;
         // Let the owner consume trailing frame records before completion even
-        // when the last payload's transition is identity.
+        // when the last gate or payload's completion prefix is empty.
         let stage = self.finish_stage(commands, was_pending)?;
         Ok(FrameContinuation {
             stage,
@@ -598,16 +594,17 @@ impl GeneralNoiseModel {
         }
     }
 
+    // Runtime wire gates are singletons; only P1 hooks are reachable. Each
+    // hook shares one barrier across its gate's targets, so it yields at most
+    // once. Include nonmeasuring hooks too for a conservative configured bound.
+    pub(crate) fn runtime_frame_hook_count(&self) -> Result<usize, PecosError> {
+        self.p1_hook_order_before_gate
+            .len()
+            .checked_add(self.p1_hook_order_after_gate.len())
+            .ok_or_else(|| PecosError::Input("hook count overflow".into()))
+    }
+
     pub(crate) fn validate_runtime_configuration(&self) -> Result<(), PecosError> {
-        if !self.p1_hook_order_before_gate.is_empty()
-            || !self.p1_hook_order_after_gate.is_empty()
-            || !self.p2_hook_order_before_gate.is_empty()
-            || !self.p2_hook_order_after_gate.is_empty()
-        {
-            return Err(PecosError::Input(
-                "gate-hook channels are not supported by the runtime-frame profile".into(),
-            ));
-        }
         let probabilities = [
             self.p_prep,
             self.p_prep_leak_ratio,
@@ -983,17 +980,22 @@ impl GeneralNoiseModel {
     }
 
     fn continuation_pending(&self) -> bool {
-        self.crosstalk_active
+        self.crosstalk_active || self.pending_input.is_some() || self.barrier_pending()
+    }
+
+    // A crosstalk payload or gate hook is waiting for its simulator reply
+    // before any later source record can be emitted.
+    pub(crate) fn barrier_pending(&self) -> bool {
+        self.pending_crosstalk.is_some()
             || self.pending_gate_continuation.is_some()
             || self.pending_hook.is_some()
-            || self.pending_input.is_some()
             || !self.pending_transition_batches.is_empty()
     }
 
     fn continue_with_boundaries(
         &mut self,
         message: ByteMessage,
-        boundaries: Option<&mut Vec<u32>>,
+        mut boundaries: Option<&mut Vec<u32>>,
         prefix: &mut usize,
     ) -> Result<ByteMessage, PecosError> {
         if self.continuation_failed {
@@ -1005,13 +1007,20 @@ impl GeneralNoiseModel {
         self.continuation_failed = self.continuation_pending();
         let transitions = self.apply_measurement_reply(message)?;
         let transition_gates = transitions.quantum_ops()?;
-        *prefix = transition_gates.len();
         let mut builder = NoiseUtils::create_quantum_builder();
         builder.add_gate_commands(&transition_gates);
         // Only resume the crosstalk barrier whose reply we just consumed. Resuming a
         // channel can encounter a new crosstalk site that needs its own simulator reply.
         let remaining_crosstalk = self.pending_crosstalk.take();
-        self.resume_pending_gate(&mut builder)?;
+        self.resume_pending_gate(&mut builder);
+        // All commands completing the paused source gate belong ahead of frame
+        // events following that gate, including another hook's internal MZ.
+        *prefix = builder.message_count() as usize;
+        if self.pending_gate_continuation.is_none()
+            && let Some(gates) = self.pending_input.take()
+        {
+            self.apply_gate_sequence(gates.into_iter(), &mut builder, boundaries.as_deref_mut())?;
+        }
         if let Some(remaining) = remaining_crosstalk {
             self.apply_gate_sequence(remaining, &mut builder, boundaries)?;
         }
@@ -2015,11 +2024,11 @@ impl GeneralNoiseModel {
         }
     }
 
-    fn resume_pending_gate(&mut self, builder: &mut ByteMessageBuilder) -> Result<(), PecosError> {
+    fn resume_pending_gate(&mut self, builder: &mut ByteMessageBuilder) {
         if let Some(hook) = self.pending_hook.take()
             && self.apply_hook(&hook.gate, hook.site, hook.next, builder)
         {
-            return Ok(());
+            return;
         }
         if let Some(continuation) = self.pending_gate_continuation.take() {
             match continuation {
@@ -2035,13 +2044,6 @@ impl GeneralNoiseModel {
                 }
             }
         }
-
-        if self.pending_gate_continuation.is_none()
-            && let Some(gates) = self.pending_input.take()
-        {
-            self.apply_gate_sequence(gates.into_iter(), builder, None)?;
-        }
-        Ok(())
     }
 
     /// Leak a qubit (or replace it with completely depolarizing noise)

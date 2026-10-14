@@ -6,6 +6,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=0
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
 
 on:
   # Merges into the main branches always run, whatever they touch.
@@ -62,7 +64,16 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # Assign on its own line so a git failure aborts the step (fail closed).
         run: |
-          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml scripts/ci/smoke_selene_wheel.py Cargo.toml Cargo.lock uv.lock)"
+          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins \
+            python/selene-plugins/ \
+            python/pecos-rslib/src/sim.rs \
+            python/pecos-rslib/src/engine_builders.rs \
+            python/quantum-pecos/src/pecos/_sim.py \
+            crates/pecos-engines/src/noise/ \
+            crates/pecos-qis/ \
+            .github/workflows/selene-plugins.yml \
+            scripts/ci/smoke_selene_wheel.py \
+            Cargo.toml Cargo.lock uv.lock)"
           case "$run" in
             true|false) ;;
             *)
@@ -77,8 +88,10 @@ jobs:
     needs: selene-changes
     if: needs.selene-changes.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
-    # Linux non-PR runs include the extended semantic suite as well.
-    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request' && 60 || 30 }}
+    # Linux also builds the PECOS packages for the cross-runtime parity tests
+    # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
+    # (about 31 min); a cold non-PR run measured about 50 min.
+    timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -176,9 +189,45 @@ jobs:
             uv pip install --system -c "$env:RUNNER_TEMP/uv-constraints.txt" -e "$($pluginDir.FullName)[test]"
           }
 
+      # The parity tests drive PECOS sim(), whose native packages link LLVM.
+      # Linux is the only runner that provisions it here.
+      - name: Install just
+        if: runner.os == 'Linux'
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        if: runner.os == 'Linux'
+        run: just ci-env
+
+      - name: Install PECOS cross-runtime parity dependencies
+        if: runner.os == 'Linux'
+        run: |
+          uv pip install --system -c "${{ runner.temp }}/uv-constraints.txt" \
+            -e python/pecos-rslib-llvm \
+            -e python/pecos-rslib \
+            -e python/quantum-pecos
+
       - name: Run tests
+        if: runner.os == 'Linux'
         run: |
           pytest python/selene-plugins/ -m "not slow" -v --tb=short
+
+      # Without PECOS installed the modules that drive sim() cannot import, so
+      # they are excluded by name rather than skipped: a broken install on Linux
+      # fails instead of passing silently.
+      - name: Run tests (without PECOS sim modules)
+        if: runner.os != 'Linux'
+        run: |
+          pytest python/selene-plugins/ -m "not slow" -v --tb=short \
+            --ignore=python/selene-plugins/pecos-selene-general-noise/tests/test_pecos_sim_bridge.py \
+            --ignore=python/selene-plugins/pecos-selene-general-noise/tests/test_sim_parity.py
 
       - name: Run extended semantic tests
         if: runner.os == 'Linux' && github.event_name != 'pull_request'

@@ -18,6 +18,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=0
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
 
 jobs:
   extended-semantics:
@@ -57,6 +59,19 @@ jobs:
           prefix-key: v1-selene-general-noise-semantics
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
+      # The sim() parity tests build PECOS packages that link LLVM.
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        run: just ci-env
+
       - name: Build semantic-test plugins
         run: |
           cargo build --locked --release \
@@ -70,7 +85,10 @@ jobs:
             python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
           uv pip install --system \
             -e 'python/selene-plugins/pecos-selene-general-noise[test]' \
-            -e python/selene-plugins/pecos-selene-statevec
+            -e python/selene-plugins/pecos-selene-statevec \
+            -e python/pecos-rslib-llvm \
+            -e python/pecos-rslib \
+            -e python/quantum-pecos
 
       - name: Run extended semantic matrix
         # `set -o pipefail` is required: the default shell is `bash -e`, where the

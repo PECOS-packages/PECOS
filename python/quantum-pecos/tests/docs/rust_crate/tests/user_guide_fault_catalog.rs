@@ -17,11 +17,11 @@ FaultCatalog, StochasticNoiseParams,
     circuit.set_meta("num_measurements", Attribute::String("1".into()));
     circuit.set_meta(
         "detectors",
-        Attribute::String(r#"[{"records":[-1]}]"#.into()),
+        Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
     );
     circuit.set_meta(
         "observables",
-        Attribute::String(r#"[{"records":[-1]}]"#.into()),
+        Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
     );
 
     // Structural catalog (no noise):
@@ -78,11 +78,11 @@ FaultCatalog, StochasticNoiseParams,
     circuit.set_meta("num_measurements", Attribute::String("1".into()));
     circuit.set_meta(
         "detectors",
-        Attribute::String(r#"[{"records":[-1]}]"#.into()),
+        Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
     );
     circuit.set_meta(
         "observables",
-        Attribute::String(r#"[{"records":[-1]}]"#.into()),
+        Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
     );
 
     // Structural catalog (no noise):

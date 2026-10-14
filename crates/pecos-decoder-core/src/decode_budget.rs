@@ -182,6 +182,18 @@ impl DetectorRegion {
 /// (observable correction mask) but with different accuracy/latency
 /// trade-offs.
 pub trait DecodeStrategy: Send + Sync {
+    /// Expose the optional phase-2 feed-forward consultation surface.
+    ///
+    /// The logical-circuit harness reaches
+    /// [`DecisionConsultingStrategy`](crate::logical_algorithm::DecisionConsultingStrategy)
+    /// through this hook at a decision boundary. Existing strategies return
+    /// `None`; a future consulting strategy will override it.
+    fn as_decision_consulting(
+        &mut self,
+    ) -> Option<&mut dyn crate::logical_algorithm::DecisionConsultingStrategy> {
+        None
+    }
+
     /// Decode a syndrome and return the observable correction mask.
     ///
     /// The syndrome covers the full circuit. The strategy decides

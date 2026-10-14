@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 
 import pecos
 import pytest
@@ -19,7 +20,9 @@ from pecos._qis_trace_replay import (
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
+    DetectorErrorModel,
     Observable,
+    _hugr_result_tags,
     build_dem_from_guppy,
     rec,
     result_ref,
@@ -74,6 +77,78 @@ def _measurement_feedback_without_named_results() -> None:
     if measure(q0).read():
         x(q1)
     _ = measure(q1).read()
+
+
+@guppy
+def _measurement_without_named_results() -> None:
+    q = qubit()
+    _ = measure(q).read()
+
+
+def _unexpected_hugr_analysis(*_args: object) -> None:
+    msg = "Unused HUGR analysis must remain lazy"
+    raise AssertionError(msg)
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, wrapped: bool) -> None:
+    """Regression: packet A must not parse or analyze generator-certified builds."""
+    for name in ("load_hugr_from_bytes", "extract_result_tag_measurements", "measurement_op_count"):
+        monkeypatch.setattr(_hugr_result_tags, name, _unexpected_hugr_analysis)
+    program = make_surface_code(3, 1, "Z")
+    detectors, observables = surface_memory_dem_spec(3, 1, "Z")
+    build = build_dem_from_guppy(
+        pecos.Guppy(program) if wrapped else program,
+        num_qubits=get_num_qubits(3),
+        detectors=detectors,
+        observables=observables,
+        p_meas=0.1,
+    )
+    assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
+    assert build.dem.num_detectors == len(detectors)
+
+
+@pytest.mark.parametrize("references", ["typed", "json"])
+def test_tagged_build_loads_and_extracts_hugr_once(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
+    """Regression: packet A shares lazy analysis across preflight and tag consumers."""
+    loader = Mock(wraps=_hugr_result_tags.load_hugr_from_bytes)
+    extractor = Mock(wraps=_hugr_result_tags.extract_result_tag_measurements)
+    counter = Mock(wraps=_hugr_result_tags.measurement_op_count)
+    monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", loader)
+    monkeypatch.setattr(_hugr_result_tags, "extract_result_tag_measurements", extractor)
+    monkeypatch.setattr(_hugr_result_tags, "measurement_op_count", counter)
+    if references == "typed":
+        dem = build_dem_from_guppy(
+            _scrambled_tagged_measurements,
+            num_qubits=2,
+            detectors=[Detector(result_ref("a"))],
+            p_meas=0.1,
+        ).dem
+    else:
+        dem = DetectorErrorModel.from_guppy(
+            _scrambled_tagged_measurements,
+            num_qubits=2,
+            detectors_json='[{"id":0,"result_tags":["a"]}]',
+            p_meas=0.1,
+        )
+    assert dem.num_detectors == 1
+    assert loader.call_count == extractor.call_count == counter.call_count == 1
+
+
+def test_build_without_candidate_tags_skips_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: packet A must preserve the no-candidate-tags early return."""
+    loader = Mock(wraps=_hugr_result_tags.load_hugr_from_bytes)
+    monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", loader)
+    monkeypatch.setattr(_hugr_result_tags, "extract_result_tag_measurements", _unexpected_hugr_analysis)
+    monkeypatch.setattr(_hugr_result_tags, "measurement_op_count", _unexpected_hugr_analysis)
+    build = build_dem_from_guppy(
+        _measurement_without_named_results,
+        num_qubits=1,
+        detectors=[Detector(rec[-1])],
+        p_meas=0.1,
+    )
+    assert build.dem.num_detectors == 1
+    assert loader.call_count == 1
 
 
 def _reordered_trace() -> tuple[TickCircuit, list[dict[str, object]]]:
@@ -330,10 +405,39 @@ def test_guppy_wrapped_generator_keeps_its_certificate() -> None:
     assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
 
 
-def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard() -> None:
-    """A self-consistent digest stapled to a pecos.Hugr wrapper must not
-    suppress the control-flow guard: certificates are honored only on Guppy
-    definition objects, never on byte carriers."""
+def test_certified_definition_does_not_certify_foreign_bytes() -> None:
+    """A pecos.Guppy whose envelope differs from its certified generator
+    definition must fail the digest check: the certificate binds the bytes
+    that are audited and executed, not the definition it was stamped on."""
+    import pecos
+    from pecos._compilation import guppy_to_hugr
+
+    foreign_bytes = guppy_to_hugr(_scrambled_tagged_measurements)
+
+    class _MismatchedGuppy(pecos.Guppy):
+        @property
+        def hugr_bytes(self) -> bytes:
+            return foreign_bytes
+
+    detectors, observables = surface_memory_dem_spec(3, 1, "Z")
+    with pytest.raises(ValueError, match="certificate does not match the program and layout"):
+        build_dem_from_guppy(
+            _MismatchedGuppy(make_surface_code(3, 1, "Z")),
+            num_qubits=get_num_qubits(3),
+            detectors=detectors,
+            observables=observables,
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+
+@pytest.mark.parametrize("claimed_definition", ["none", "self", "stamped_object"])
+def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard(claimed_definition: str) -> None:
+    """A self-consistent digest stapled to a byte carrier must not suppress
+    the control-flow guard: certificates are honored only on Guppy definition
+    objects, never on byte carriers, whatever ``wrapped_function`` they claim."""
     import hashlib as _hashlib
 
     import pecos
@@ -344,6 +448,14 @@ def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard() -> None:
     digest = _hashlib.sha256(dynamic_bytes + b"\0" + layout_json.encode()).hexdigest()
     forged = pecos.Hugr(dynamic_bytes)
     forged.__pecos_named_measurement_layout_v2__ = (digest, [])
+    if claimed_definition == "self":
+        forged.wrapped_function = forged
+    elif claimed_definition == "stamped_object":
+
+        class _Stamped:
+            __pecos_named_measurement_layout_v2__ = (digest, [])
+
+        forged.wrapped_function = _Stamped()
 
     with pytest.raises(ValueError, match="branching or looping control flow"):
         build_dem_from_guppy(

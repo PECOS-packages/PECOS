@@ -92,7 +92,9 @@ fn main() {
 
         // Build influence map
         let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
+        let builder = InfluenceBuilder::new(&circuit)
+            .unwrap()
+            .with_z(&tracked_pauli_qubits);
         let influence_map = builder.build().expect("circuit is replayable");
 
         let num_locations = influence_map.locations.len();
@@ -137,7 +139,8 @@ fn main() {
         // CPU benchmark
         let num_loc = influence_map.locations.len();
         let probs = vec![p_error; num_loc];
-        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs);
+        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs)
+            .expect("comparison influence map must support Pauli propagation");
 
         let cpu_start = Instant::now();
         let _ = cpu_sampler.sample_statistics(num_shots as usize, seed);
@@ -180,7 +183,9 @@ fn main() {
         let num_data = distance * distance;
 
         let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
+        let builder = InfluenceBuilder::new(&circuit)
+            .unwrap()
+            .with_z(&tracked_pauli_qubits);
         let influence_map = builder.build().expect("circuit is replayable");
 
         let (
@@ -221,7 +226,8 @@ fn main() {
 
         // CPU
         let probs2 = vec![p_error; influence_map.locations.len()];
-        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs2);
+        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs2)
+            .expect("comparison influence map must support Pauli propagation");
         let cpu_start = Instant::now();
         let _ = cpu_sampler.sample_statistics(num_shots as usize, seed);
         let cpu_time = cpu_start.elapsed();

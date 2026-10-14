@@ -50,8 +50,8 @@ fn detector_free_mechanisms_sort_last_and_empty_dem_stays_empty() {
     assert_eq!(deadline_column_order(&dem).unwrap(), vec![1, 0]);
 
     let empty = sparse_dem(Vec::new(), 0, 0);
-    assert!(deadline_column_order(&empty).unwrap().is_empty());
-    assert!(backward_deadline_column_order(&empty).unwrap().is_empty());
+    assert_eq!(deadline_column_order(&empty).unwrap(), []);
+    assert_eq!(backward_deadline_column_order(&empty).unwrap(), []);
 }
 
 #[test]

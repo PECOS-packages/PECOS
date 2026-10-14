@@ -16,12 +16,10 @@
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
-
-pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
-
-from pecos_rslib_exp import (  # noqa: E402
+from pecos_rslib_exp import (
     FrontierCommitteeDecoder,
     FrontierDecoder,
 )
@@ -30,6 +28,13 @@ SMALL_DEM = """\
 error(0.1) D0 L0
 error(0.2) D1
 """
+
+N1_FACTORS = [
+    [(0.60, [], []), (0.25, [0], [0]), (0.15, [0], [])],
+    [(0.80, [], []), (0.20, [0], [])],
+]
+
+METRIC_FLIP_DEM = "error(0.20) D0 L0\nerror(0.15) D0\nerror(0.15) D0\n"
 
 
 def test_sparse_and_dense_decode_agree() -> None:
@@ -86,6 +91,155 @@ def test_column_order_variants_and_validation() -> None:
         FrontierDecoder.from_dem(SMALL_DEM, column_order=[0, 0])
 
 
+def test_factor_model_decode_preserves_degeneracy_mass() -> None:
+    decoder = FrontierDecoder.from_factors(
+        N1_FACTORS,
+        1,
+        1,
+        k=10**9,
+        delta=1e6,
+    )
+
+    result = decoder.decode_syndrome([1])
+    logical_masses = dict(result.logical_masses)
+
+    assert result.observable_flips.mask == 0
+    assert logical_masses[0] == pytest.approx(math.log(0.24), abs=1e-9)
+    assert logical_masses[1] == pytest.approx(math.log(0.20), abs=1e-9)
+
+
+def test_maxlog_metric_can_flip_the_prediction() -> None:
+    default_result = FrontierDecoder.from_dem(METRIC_FLIP_DEM).decode_syndrome([1])
+    maxlog_result = FrontierDecoder.from_dem(
+        METRIC_FLIP_DEM,
+        k=10**9,
+        delta=1e6,
+        metric_mode="frontier_lite",
+    ).decode_syndrome([1])
+
+    assert default_result.observable_flips.mask == 0
+    assert maxlog_result.observable_flips.mask == 1
+    assert maxlog_result.status == "exact"
+    assert maxlog_result.logical_masses[0] == (1, -1.93359375)
+
+
+@pytest.mark.parametrize(
+    ("int_metric_scale", "expected_masses"),
+    [
+        (1, [(1, -1.0), (0, -2.0)]),
+        (1024, [(1, -1.93359375), (0, -2.28125)]),
+    ],
+)
+def test_maxlog_int_metric_scale_is_forwarded(
+    int_metric_scale: int,
+    expected_masses: list[tuple[int, float]],
+) -> None:
+    result = FrontierDecoder.from_dem(
+        METRIC_FLIP_DEM,
+        k=10**9,
+        delta=1e6,
+        metric_mode="maxlog_int",
+        int_metric_scale=int_metric_scale,
+    ).decode_syndrome([1])
+
+    assert result.logical_masses == expected_masses
+
+
+@pytest.mark.parametrize(
+    "metric_mode",
+    [
+        "logsumexp_float",
+        "float",
+        "exact",
+        "frontierLite",
+        "frontier_lite",
+        "frontier-lite",
+        "frontierlite",
+        "maxlog_int",
+        "max_log_int",
+        "viterbi_int",
+    ],
+)
+def test_metric_mode_aliases_are_accepted_with_surrounding_whitespace(metric_mode: str) -> None:
+    decoder = FrontierDecoder.from_dem(
+        "error(0.1) D0\n",
+        metric_mode=f"  {metric_mode}  ",
+    )
+    assert decoder.decode_syndrome([0]).status == "exact"
+
+
+def test_metric_and_factor_model_error_paths() -> None:
+    with pytest.raises(ValueError, match=r"logsumexp_float.*maxlog_int"):
+        FrontierDecoder.from_dem(SMALL_DEM, metric_mode="not_a_metric")
+    with pytest.raises(ValueError, match=r"logsumexp_float.*maxlog_int"):
+        FrontierDecoder.from_factors(
+            N1_FACTORS,
+            1,
+            1,
+            column_order="not_an_order",
+            metric_mode="not_a_metric",
+        )
+    with pytest.raises(RuntimeError, match="integer max-log metric is not supported"):
+        FrontierCommitteeDecoder.from_dem(SMALL_DEM, metric_mode="maxlog_int")
+    with pytest.raises(ValueError, match="delta must be finite under maxlog_int"):
+        FrontierDecoder.from_dem(
+            SMALL_DEM,
+            delta=float("inf"),
+            metric_mode="maxlog_int",
+        )
+    with pytest.raises(RuntimeError, match="BP-guided pruning requires a binary model"):
+        FrontierDecoder.from_factors(
+            N1_FACTORS,
+            1,
+            1,
+            bp_score_iterations=1,
+        )
+    with pytest.raises(RuntimeError, match="outcome probabilities must sum to 1"):
+        FrontierDecoder.from_factors(
+            [[(0.6, [], []), (0.3, [0], [])]],
+            1,
+            0,
+        )
+    with pytest.raises(
+        RuntimeError,
+        match="num_detectors 1000000000000000 exceeds the u32 index-addressable width 4294967296",
+    ):
+        FrontierDecoder.from_factors(
+            [[(0.5, [], []), (0.5, [0], [])]],
+            10**15,
+            1,
+        )
+
+
+@pytest.mark.parametrize(
+    "column_order",
+    ["time_order", "deadline_reorder", "backward_deadline_reorder"],
+)
+def test_binary_factor_model_delegates_identically_to_dem(column_order: str) -> None:
+    factors = [
+        [(0.9, [], []), (0.1, [0], [0])],
+        [(0.8, [], []), (0.2, [1], [])],
+    ]
+    config = {
+        "k": 10**9,
+        "delta": 1e6,
+        "score_alpha": 0.7,
+        "bp_score_iterations": 2,
+        "column_order": column_order,
+    }
+    factor_decoder = FrontierDecoder.from_factors(factors, 2, 1, **config)
+    dem_decoder = FrontierDecoder.from_dem(SMALL_DEM, **config)
+
+    for syndrome in ([0, 0], [1, 0], [0, 1], [1, 1]):
+        factor_result = factor_decoder.decode_syndrome(syndrome)
+        dem_result = dem_decoder.decode_syndrome(syndrome)
+        assert factor_result.observable_flips.mask == dem_result.observable_flips.mask
+        assert factor_result.log_evidence == dem_result.log_evidence
+        assert factor_result.runner_up_gap == dem_result.runner_up_gap
+        assert factor_result.logical_masses == dem_result.logical_masses
+        assert factor_result.status == dem_result.status
+
+
 def test_committee_easy_tie_selects_forward() -> None:
     committee = FrontierCommitteeDecoder.from_dem("error(0.1) D0 L0\n", column_order="time_order")
 
@@ -99,6 +253,49 @@ def test_committee_easy_tie_selects_forward() -> None:
     assert result.transitions == 2
     assert committee.build_seconds >= 0.0
     assert not hasattr(committee, "decode")
+
+
+CHAIN_DEM = """\
+error(0.1) D0 L0
+error(0.1) D0 D1
+error(0.1) D1 D2
+error(0.1) D2 D3
+error(0.1) D3
+error(0.05) D1 L0
+"""
+
+COMMITTEE_RESULT_FIELDS = (
+    "log_evidence",
+    "runner_up_gap",
+    "peak_retained_states",
+    "processed_columns",
+    "transitions",
+    "dropped_states",
+    "dropped_log_mass",
+    "status",
+    "logical_masses",
+    "direction",
+    "forward_log_evidence",
+    "backward_log_evidence",
+)
+
+
+def test_committee_parallel_legs_match_sequential_decode() -> None:
+    committee = FrontierCommitteeDecoder.from_dem(CHAIN_DEM, k=2, delta=float("inf"))
+
+    for bits in range(16):
+        syndrome = [(bits >> detector) & 1 for detector in range(4)]
+        sequential = committee.decode_syndrome(syndrome)
+        parallel = committee.decode_syndrome(syndrome, parallel_legs=True)
+        sparse = committee.decode_from_defects(
+            [detector for detector in range(4) if syndrome[detector]],
+            parallel_legs=True,
+        )
+
+        for result in (parallel, sparse):
+            assert result.observable_flips.mask == sequential.observable_flips.mask
+            for field in COMMITTEE_RESULT_FIELDS:
+                assert getattr(result, field) == getattr(sequential, field), field
 
 
 def test_bp_score_iterations_and_telemetry_are_exposed() -> None:
@@ -157,6 +354,77 @@ def test_decode_batch_matches_individual_decodes() -> None:
     assert [result.observable_flips.mask for result in batch] == [result.observable_flips.mask for result in individual]
     assert [result.log_evidence for result in batch] == [result.log_evidence for result in individual]
     assert [result.logical_masses for result in batch] == [result.logical_masses for result in individual]
+
+
+@pytest.mark.parametrize(
+    ("decoder_class", "metric_mode"),
+    [
+        (FrontierDecoder, "logsumexp_float"),
+        (FrontierDecoder, "maxlog_int"),
+        (FrontierCommitteeDecoder, "logsumexp_float"),
+    ],
+)
+def test_decode_batch_workers_match_all_public_fields(decoder_class, metric_mode: str) -> None:
+    rng = random.Random(35)
+    shots = [[rng.randrange(2) for _ in range(2)] for _ in range(1025)]
+    # BP is disabled so the public wall-clock field is also exactly comparable.
+    decoder = decoder_class.from_dem(SMALL_DEM, metric_mode=metric_mode, bp_score_iterations=0)
+    fields = (
+        "log_evidence",
+        "runner_up_gap",
+        "peak_retained_states",
+        "processed_columns",
+        "transitions",
+        "dropped_states",
+        "dropped_log_mass",
+        "bp_seconds",
+        "status",
+        "logical_masses",
+    )
+    if decoder_class is FrontierCommitteeDecoder:
+        fields += ("direction", "forward_log_evidence", "backward_log_evidence")
+    else:
+        fields += ("escalation_rungs_used",)
+    sequential = decoder.decode_batch(shots, workers=1)
+    for actual_batch in (decoder.decode_batch(shots), decoder.decode_batch(shots, workers=4)):
+        assert len(actual_batch) == len(sequential) == len(shots)
+        for actual, expected in zip(actual_batch, sequential, strict=True):
+            assert actual.observable_flips.mask == expected.observable_flips.mask
+            assert list(actual.observable_flips) == list(expected.observable_flips)
+            assert actual.observable_flips.indices() == expected.observable_flips.indices()
+            for field in fields:
+                assert getattr(actual, field) == getattr(expected, field), field
+    assert decoder.decode_batch([], workers=4) == []
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+@pytest.mark.parametrize("shots", [[], [[0, 0]]])
+@pytest.mark.parametrize(
+    ("workers", "error"),
+    [(0, ValueError), (-1, ValueError), (-(2**70), OverflowError), (2**70, OverflowError)],
+)
+def test_decode_batch_rejects_invalid_workers(
+    decoder_class,
+    shots: list[list[int]],
+    workers: int,
+    error: type[Exception],
+) -> None:
+    decoder = decoder_class.from_dem(SMALL_DEM)
+    match = "workers must be at least 1" if error is ValueError else None
+    with pytest.raises(error, match=match):
+        decoder.decode_batch(shots, workers=workers)
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+@pytest.mark.parametrize("workers", [1, 4])
+@pytest.mark.parametrize("shot", [[0], [0, 1]])
+def test_decode_batch_preserves_individual_errors(decoder_class, workers: int, shot: list[int]) -> None:
+    decoder = decoder_class.from_dem("error(0.1) D0 L0\ndetector D1\n")
+    with pytest.raises(RuntimeError) as individual_error:
+        decoder.decode_syndrome(shot)
+    with pytest.raises(RuntimeError) as batch_error:
+        decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
+    assert str(batch_error.value) == f"shot 1: {individual_error.value}"
 
 
 DUPLICATE_DEM = """\

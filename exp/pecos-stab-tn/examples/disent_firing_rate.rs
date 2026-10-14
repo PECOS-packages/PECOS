@@ -242,7 +242,7 @@ fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mi
     let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix);
     stn.flush();
 
-    let state = stn.state_vector();
+    let state = stn.state_vector_up_to_phase();
     let max_weight_index = state
         .iter()
         .enumerate()
@@ -254,7 +254,7 @@ fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mi
     let zero_bits = vec![false; num_qubits];
     for bits in [&max_weight_bits, &zero_bits] {
         let _ = stn.prob_bitstring(bits);
-        let _ = stn.amplitude_iterative(bits);
+        let _ = stn.amplitude_iterative_up_to_phase(bits);
     }
 
     let qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();

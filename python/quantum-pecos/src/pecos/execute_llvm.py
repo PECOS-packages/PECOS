@@ -1,6 +1,6 @@
 """Execute LLVM module - HUGR to LLVM compilation interface.
 
-This module provides HUGR to LLVM compilation using PECOS's Rust HUGR compiler.
+This module provides HUGR to LLVM compilation using Selene's compiler package.
 """
 
 from pathlib import Path
@@ -16,20 +16,11 @@ def compile_module_to_string(hugr_bytes: bytes) -> str:
         LLVM IR as a string
 
     Raises:
-        RuntimeError: If compilation fails
+        HugrReadError: If the HUGR envelope is invalid
     """
-    try:
-        from pecos_rslib_llvm import compile_hugr_to_qis
+    from pecos.compilation_pipeline import compile_hugr_to_qis
 
-        return compile_hugr_to_qis(hugr_bytes, None)
-    except ImportError as e:
-        msg = (
-            "HUGR -> QIS compilation requires the pecos-rslib-llvm package "
-            "(the base pecos-rslib wheel does not link LLVM)."
-        )
-        raise RuntimeError(
-            msg,
-        ) from e
+    return compile_hugr_to_qis(hugr_bytes)
 
 
 def compile_module_to_file(hugr_bytes: bytes, output_path: str | Path) -> None:
@@ -77,22 +68,11 @@ def is_available() -> bool:
     """Check if execute_llvm functionality is available.
 
     Returns:
-        True if at least one HUGR->LLVM backend is available, False otherwise
+        True if the Selene HUGR->LLVM compiler is available, False otherwise
     """
-    # Check Rust backend
     import importlib.util
 
-    if importlib.util.find_spec("pecos_rslib_llvm") is not None:
-        return True
-
-    try:
-        # Check external compiler
-        from pecos._compilation import HugrLlvmCompiler
-
-        compiler = HugrLlvmCompiler()
-        return compiler.is_available()
-    except ImportError:
-        return False
+    return importlib.util.find_spec("selene_hugr_qis_compiler") is not None
 
 
 # Additional metadata

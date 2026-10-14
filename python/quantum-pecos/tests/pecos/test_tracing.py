@@ -3,10 +3,14 @@
 
 """Tests for the public QIS operation-tracing API."""
 
+import math
+
 import pecos
 import pecos_rslib
 import pytest
+from pecos._qis_trace_replay import _replay_qis_trace_into_tick_circuit
 from pecos.quantum import TickCircuit
+from pecos.simulators import StateVec
 
 
 def _completed_trace() -> list[dict]:
@@ -69,6 +73,151 @@ def _idle_gates(circuit: TickCircuit) -> list[tuple[list[int], float]]:
     ]
 
 
+def _execute_tick_circuit(circuit: TickCircuit) -> list[complex]:
+    simulator = StateVec(2)
+    for tick_index in range(circuit.num_ticks()):
+        for gate in circuit.get_tick(tick_index).gate_batches():
+            name = gate.gate_type.name
+            qubits = list(gate.qubits)
+            angles = list(gate.angles)
+            if name in {"PZ", "X", "Z", "RZ"}:
+                params = {"angle": angles[0]} if name == "RZ" else None
+                for qubit in qubits:
+                    simulator.backend.run_1q_gate(name, qubit, params)
+            elif name == "RZZ":
+                for offset in range(0, len(qubits), 2):
+                    simulator.backend.run_2q_gate(
+                        name,
+                        (qubits[offset], qubits[offset + 1]),
+                        {"angle": angles[0]},
+                    )
+            else:
+                msg = f"unexpected replay gate {name}"
+                raise AssertionError(msg)
+    return [complex(value) for value in simulator.backend.vector]
+
+
+def test_qis_trace_crz_preserves_full_matrix() -> None:
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, -math.tau, 3 * math.pi, 3 * math.tau, -3 * math.tau):
+        columns: list[list[complex]] = []
+        for basis in range(4):
+            operations = [
+                {"AllocateQubit": {"id": 0}},
+                {"AllocateQubit": {"id": 1}},
+            ]
+            lowered = [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "PZ", "qubits": [1], "angles": [], "params": []},
+            ]
+            if basis & 1:
+                operations.append({"Quantum": {"X": 0}})
+                lowered.append({"gate_type": "X", "qubits": [0], "angles": [], "params": []})
+            if basis & 2:
+                operations.append({"Quantum": {"X": 1}})
+                lowered.append({"gate_type": "X", "qubits": [1], "angles": [], "params": []})
+            operations.append({"Quantum": {"CRZ": [theta, 1, 0]}})
+            lowered.append(
+                {
+                    "gate_type": "CRZ",
+                    "qubits": [1, 0],
+                    "angles": [theta],
+                    "params": [],
+                },
+            )
+            trace = _completed_trace()
+            trace[0]["operations"] = operations
+            trace[0]["num_operations"] = len(operations)
+            trace[0]["lowered_quantum_ops"] = lowered
+            circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
+            columns.append(_execute_tick_circuit(circuit))
+
+        half = theta / 2
+        reference = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, complex(math.cos(half), -math.sin(half)), 0],
+            [0, 0, 0, complex(math.cos(half), math.sin(half))],
+        ]
+        for column in range(4):
+            for row in range(4):
+                assert abs(columns[column][row] - reference[row][column]) < 1e-12
+
+
+@pytest.mark.parametrize("lowered", [False, True], ids=["raw", "runtime-lowered"])
+def test_qis_trace_rxyxy2q_preserves_angles_and_pair(lowered: bool) -> None:
+    operations = [
+        {"AllocateQubit": {"id": 7}},
+        {"AllocateQubit": {"id": 11}},
+        {"AllocateQubit": {"id": 3}},
+        {"Quantum": {"RXYXY2Q": [-0.73, 0.41, 3, 7]}},
+    ]
+    if lowered:
+        trace = _completed_trace()
+        trace[0]["operations"] = operations
+        trace[0]["num_operations"] = len(operations)
+        trace[0]["lowered_quantum_ops"] = [
+            {
+                "gate_type": "RXYXY2Q",
+                "qubits": [2, 0],
+                "angles": [-0.73, 0.41],
+                "params": [],
+                "metadata": {"source_label": "xyxy"},
+            },
+        ]
+        circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
+        assert circuit.get_gate_meta(0, 0, "source_label") == "xyxy"
+    else:
+        circuit = _replay_qis_trace_into_tick_circuit(operations)
+
+    gates = [gate for _, gate in circuit.gate_batches() if gate.gate_type.name != "PZ"]
+    assert len(gates) == 1
+    assert gates[0].gate_type.name == "RXYXY2Q"
+    # Gate.angles exposes Angle64's unsigned radians; compare signed representatives.
+    assert [math.remainder(angle, math.tau) for angle in gates[0].angles] == pytest.approx([-0.73, 0.41])
+    assert gates[0].qubits == [2, 0]
+
+
+@pytest.mark.parametrize("typed_angles", [False, True], ids=["float", "angle64"])
+def test_tick_circuit_rxyxy2q_constructor(typed_angles: bool) -> None:
+    theta, phi = -0.73, 0.41
+    if typed_angles:
+        theta, phi = (pecos_rslib.angle64.from_radians(angle) for angle in (theta, phi))
+    circuit = TickCircuit()
+    tick = circuit.tick()
+    assert tick.rxyxy2q(theta, phi, [(5, 2)]) is tick
+    assert circuit.gate_count() == 1
+    gates = [circuit.get_tick(0).gate_batches()[0], pecos_rslib.Gate.rxyxy2q(theta, phi, [(5, 2)])]
+    for gate in gates:
+        assert gate.gate_type.name == "RXYXY2Q"
+        assert gate.gate_type == pecos_rslib.GateType.RXYXY2Q
+        assert [math.remainder(angle, math.tau) for angle in gate.angles] == pytest.approx([-0.73, 0.41])
+        assert gate.qubits == [5, 2]
+
+
+@pytest.mark.parametrize("lowered", [False, True], ids=["raw", "runtime-lowered"])
+def test_qis_trace_unknown_gate_still_fails(lowered: bool) -> None:
+    if lowered:
+        trace = _completed_trace()
+        trace[0]["lowered_quantum_ops"][1]["gate_type"] = "UnknownGate"
+        with pytest.raises(ValueError, match=r"Unsupported.*UnknownGate"):
+            pecos.qis_operation_trace_to_tick_circuit(trace)
+    else:
+        with pytest.raises(ValueError, match=r"Unsupported.*UnknownGate"):
+            _replay_qis_trace_into_tick_circuit([{"Quantum": {"UnknownGate": 0}}])
+
+
+def test_qis_trace_rxyxy2q_rejects_incomplete_pair() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][1] = {
+        "gate_type": "RXYXY2Q",
+        "qubits": [2],
+        "angles": [-0.73, 0.41],
+        "params": [],
+    }
+    with pytest.raises(ValueError, match=r"RXYXY2Q.*expected an even number of qubits"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
 def test_tracing_apis_are_exported_at_top_level() -> None:
     assert pecos.capture_qis_operation_trace is pecos.tracing.capture_qis_operation_trace
     assert pecos.qis_operation_trace_to_tick_circuit is pecos.tracing.qis_operation_trace_to_tick_circuit
@@ -116,6 +265,23 @@ def test_leakage_measurement_replays_as_accepted_path_mz() -> None:
     assert "MZ" in _gate_names(replayed)
     assert "MeasureLeaked" not in _gate_names(replayed)
     assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
+
+
+def test_legacy_r1xy_trace_record_replays_as_rxy1q() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"].insert(
+        1,
+        {
+            "gate_type": "R1XY",
+            "qubits": [0],
+            "angles": [0.5, 0.0],
+            "params": [],
+        },
+    )
+
+    replayed = pecos.qis_operation_trace_to_tick_circuit(trace)
+
+    assert "RXY1Q" in _gate_names(replayed)
 
 
 def test_qis_operation_trace_conversion_rejects_an_incomplete_trace() -> None:
@@ -193,9 +359,12 @@ def test_qis_operation_trace_conversion_rejects_boolean_framing_counts() -> None
         ("RX", []),
         ("RY", [0.5, 0.25]),
         ("RZ", []),
-        ("R1XY", [0.5]),
+        ("RXY1Q", [0.5]),
         ("CRZ", []),
         ("RZZ", []),
+        ("RXYXY2Q", []),
+        ("RXYXY2Q", [0.5]),
+        ("RXYXY2Q", [0.5, 0.25, 0.75]),
     ],
 )
 def test_qis_operation_trace_conversion_rejects_invalid_angle_arity(
@@ -205,7 +374,7 @@ def test_qis_operation_trace_conversion_rejects_invalid_angle_arity(
     trace = _completed_trace()
     trace[0]["lowered_quantum_ops"][1] = {
         "gate_type": gate_type,
-        "qubits": [0, 1] if gate_type in {"CRZ", "RZZ"} else [0],
+        "qubits": [0, 1] if gate_type in {"CRZ", "RZZ", "RXYXY2Q"} else [0],
         "angles": angles,
         "params": [],
     }

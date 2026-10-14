@@ -13,8 +13,6 @@ pub enum ProgramFormat {
     LlvmIrText,
     /// LLVM bitcode
     LlvmBitcode,
-    /// HUGR bytes
-    HugrBytes,
     /// QIS bitcode (Selene format)
     QisBitcode,
 }
@@ -28,7 +26,6 @@ impl ProgramFormat {
         match self {
             Self::LlvmIrText => "llvm-ir-text",
             Self::LlvmBitcode => "llvm-bitcode",
-            Self::HugrBytes => "hugr-bytes",
             Self::QisBitcode => "qis-bitcode",
         }
     }
@@ -44,6 +41,8 @@ pub enum InterfaceError {
     LoadError(String),
     /// Execution error
     ExecutionError(String),
+    /// Typed program termination, including cooperative cancellation.
+    ProgramError(pecos_qis_ffi_types::ProgramError),
     /// Invalid program format
     InvalidFormat(String),
     /// Other error
@@ -56,6 +55,7 @@ impl std::fmt::Display for InterfaceError {
             Self::LoadError(msg) => write!(f, "Load error: {msg}"),
             Self::ExecutionError(msg) => write!(f, "Execution error: {msg}"),
             Self::InvalidFormat(msg) => write!(f, "Invalid format: {msg}"),
+            Self::ProgramError(error) => error.fmt(f),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -78,7 +78,7 @@ pub trait QisInterface: Send + Sync {
     ///
     /// The format depends on the implementation:
     /// - JIT: LLVM IR text or bitcode
-    /// - Helios: QIS bitcode or HUGR bytes
+    /// - Helios: LLVM IR text or QIS bitcode
     ///
     /// # Errors
     /// Returns an error if the program cannot be loaded or parsed.
@@ -256,7 +256,7 @@ pub trait QisInterface: Send + Sync {
     /// The handle uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS is consistent across threads (important on macOS).
     ///
-    /// Returns None if dynamic execution is not supported.
+    /// Returns None if dynamic execution is unsupported or not yet enabled.
     fn get_sync_handle(&self) -> Option<Box<dyn DynamicSyncHandle>> {
         None
     }
@@ -272,6 +272,9 @@ pub trait DynamicSyncHandle: Send + Sync {
     /// Wait for the worker to need a measurement result
     ///
     /// Returns `Some(result_id)` if worker needs a result, None on timeout or completion.
+    /// A zero timeout is a non-blocking, non-consuming peek of the outstanding
+    /// request. Repeated peeks return the same ID until ready is signalled or
+    /// the worker completes.
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64>;
 
     /// Set a measurement result for the running program
@@ -316,19 +319,21 @@ pub trait DynamicSyncHandle: Send + Sync {
 
     /// Get named results from the execution context
     ///
-    /// Returns a map of result names to their boolean values.
-    /// Named results are stored by `print_bool` and `print_bool_arr` FFI calls.
+    /// Returns a map of result names to their typed values.
+    /// Named results are stored by the scalar and array `print_*` FFI calls.
     ///
     /// # Errors
     /// Returns an error if the FFI call fails or JSON parsing fails.
     fn get_named_results(
         &self,
-    ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError>;
+    ) -> Result<std::collections::BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError>;
 
     /// Get named result provenance from the execution context.
     ///
-    /// Returns one record per `result(...)` output call, including the runtime
-    /// measurement result IDs read to produce that output.
+    /// Returns one record per bool output or scalar integer 0/1 call.
+    /// Integer arrays never produce traces.
+    /// Only real bool calls attach runtime measurement result IDs; integer
+    /// detector traces have empty IDs and leave pending reads for bool calls.
     ///
     /// # Errors
     /// Returns an error if the FFI call fails or JSON parsing fails.

@@ -4,13 +4,9 @@ Created after a bug where pc.abs([0+1j]) returned [0.0] instead of [1.0]
 due to missing dtype validation in the array extraction macro.
 """
 
-import sys
-
-sys.path.insert(0, "/home/ciaranra/Repos/cl_projects/gup/PECOS-alt/python/quantum-pecos/src")
-
-import pytest
 import numpy as np
 import pecos as pc
+import pytest
 
 
 class TestUnaryOperationsDtypeValidation:

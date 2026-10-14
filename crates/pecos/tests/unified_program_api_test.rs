@@ -8,7 +8,7 @@
 #[cfg(test)]
 mod tests {
     use pecos_engines::sim;
-    use pecos_programs::{Hugr, Qasm, Qis};
+    use pecos_programs::{Qasm, Qis};
     use pecos_qasm::qasm_engine;
 
     #[test]
@@ -82,9 +82,6 @@ mod tests {
             format!("{llvm}"),
             "define void @main() {\nentry:\n  ret void\n}"
         );
-
-        let hugr = Hugr::from_bytes(vec![1, 2, 3]);
-        assert_eq!(format!("{hugr}"), "Hugr(3 bytes)");
     }
 
     #[test]
@@ -98,9 +95,5 @@ mod tests {
         let qis = Qis::from_string("define void @main() {\nentry:\n  ret void\n}");
         let program: Program = qis.into();
         assert_eq!(program.program_type(), "QIS");
-
-        let hugr = Hugr::from_bytes(vec![1, 2, 3]);
-        let program: Program = hugr.into();
-        assert_eq!(program.program_type(), "HUGR");
     }
 }

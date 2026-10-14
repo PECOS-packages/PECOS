@@ -36,13 +36,12 @@ fn synthetic_one_qubit_influence(
     z: &[u32],
 ) -> DagFaultInfluenceMap {
     let mut influence = DagFaultInfluenceMap::with_capacity(1);
-    influence.locations.push(DagSpacetimeLocation {
-        node: 0,
-        qubits: vec![QubitId::from(0usize)],
+    influence.locations.push(DagSpacetimeLocation::new(
+        0,
+        vec![QubitId::from(0usize)],
         before,
-        gate_type,
-        idle_duration: 0.0,
-    });
+        &pecos_core::Gate::simple(gate_type, vec![QubitId::from(0usize)]),
+    ));
     influence.influences.detectors_x.extend(x.iter().copied());
     influence.influences.detectors_y.extend(y.iter().copied());
     influence.influences.detectors_z.extend(z.iter().copied());
@@ -57,13 +56,12 @@ fn synthetic_two_qubit_influence() -> DagFaultInfluenceMap {
         (0, &[0][..], &[0, 1][..], &[1][..]),
         (1, &[2][..], &[2, 3][..], &[3][..]),
     ] {
-        influence.locations.push(DagSpacetimeLocation {
-            node: 0,
-            qubits: vec![QubitId::from(qubit)],
-            before: false,
-            gate_type: GateType::CX,
-            idle_duration: 0.0,
-        });
+        influence.locations.push(DagSpacetimeLocation::new(
+            0,
+            vec![QubitId::from(qubit)],
+            false,
+            &pecos_core::Gate::cx(&[(0, 1)]),
+        ));
         influence.influences.detectors_x.extend(x.iter().copied());
         influence.influences.detectors_y.extend(y.iter().copied());
         influence.influences.detectors_z.extend(z.iter().copied());
@@ -153,7 +151,8 @@ fn single_qubit_gate_mechanisms_compose_to_the_three_pauli_channel() {
     let influence = synthetic_one_qubit_influence(GateType::H, false, &[0], &[0, 1], &[1]);
     let model = MemBuilder::new(&influence)
         .with_noise_config(NoiseConfig::new(p1, 0.0, 0.0, 0.0))
-        .build();
+        .build()
+        .unwrap();
     let distribution = independent_distribution(&model, 2);
     let target = p1 / 3.0;
 
@@ -169,7 +168,7 @@ fn single_qubit_gate_mechanisms_compose_to_the_three_pauli_channel() {
     let dem = build_synthetic_dem(&influence, NoiseConfig::new(p1, 0.0, 0.0, 0.0));
     let mechanisms = gate_signature_mechanisms(&dem);
     assert_eq!(mechanisms.len(), 3);
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
     let dem_distribution = compose_independent_mechanisms(
         mechanisms
             .iter()
@@ -193,7 +192,8 @@ fn two_qubit_gate_mechanisms_compose_to_the_fifteen_pauli_channel() {
     let influence = synthetic_two_qubit_influence();
     let model = MemBuilder::new(&influence)
         .with_noise_config(NoiseConfig::new(0.0, p2, 0.0, 0.0))
-        .build();
+        .build()
+        .unwrap();
     let distribution = independent_distribution(&model, 4);
     let target = p2 / 15.0;
 
@@ -209,7 +209,7 @@ fn two_qubit_gate_mechanisms_compose_to_the_fifteen_pauli_channel() {
     let dem = build_synthetic_dem(&influence, NoiseConfig::new(0.0, p2, 0.0, 0.0));
     let mechanisms = gate_signature_mechanisms(&dem);
     assert_eq!(mechanisms.len(), 15);
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
     let dem_distribution = compose_independent_mechanisms(
         mechanisms
             .iter()
@@ -237,7 +237,7 @@ fn equal_gate_signatures_sum_before_independent_merging() {
         mechanisms[0].1.to_bits(),
         combine_probabilities(0.2, 0.3).to_bits()
     );
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn vanishing_gate_signatures_drop_without_changing_survivors() {
 
     assert_eq!(mechanisms.len(), 1);
     assert!((mechanisms[0].1 - 0.7).abs() < 1e-15);
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 }
 
 #[test]
@@ -270,7 +270,8 @@ fn prep_and_measurement_channels_remain_single_exact_mechanisms() {
         let influence = synthetic_one_qubit_influence(gate_type, before, &[0], &[], &[]);
         let model = MemBuilder::new(&influence)
             .with_noise_config(noise.clone())
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(model.mechanisms.len(), 1);
         assert_eq!(
             model
@@ -281,7 +282,7 @@ fn prep_and_measurement_channels_remain_single_exact_mechanisms() {
                 .to_bits(),
             expected.to_bits()
         );
-        assert!(model.idle_noise_residuals.is_empty());
+        assert_eq!(model.idle_noise_residuals, []);
 
         let dem = build_synthetic_dem(&influence, noise);
         let records = dem.contribution_render_records();
@@ -290,7 +291,7 @@ fn prep_and_measurement_channels_remain_single_exact_mechanisms() {
             records[0].contribution.probability.to_bits(),
             expected.to_bits()
         );
-        assert!(dem.idle_noise_residuals().is_empty());
+        assert_eq!(dem.idle_noise_residuals(), []);
     }
 }
 

@@ -120,6 +120,19 @@ pub fn to_i32(bitvec: &BitVec<u8, Lsb0>) -> i32 {
     }
 }
 
+/// Read a `BitVec` as an unsigned little-endian `u64`.
+///
+/// Returns `None` if any bit at index 64 or above is set. Leading zero bits
+/// are permitted, and an empty vector represents zero.
+#[must_use]
+pub fn to_u64(bitvec: &BitVec<u8, Lsb0>) -> Option<u64> {
+    let mut value = 0u64;
+    for index in bitvec.iter_ones() {
+        value |= 1u64.checked_shl(u32::try_from(index).ok()?)?;
+    }
+    Some(value)
+}
+
 /// Convert a `BitVec` to an i64 value (interprets as signed two's complement)
 ///
 /// # Arguments
@@ -277,6 +290,37 @@ pub fn parse_decimal_string(s: &str) -> Result<BitVec<u8, Lsb0>, String> {
 mod tests {
     use super::*;
     use crate::bitvec::display::to_decimal_string;
+
+    #[test]
+    fn test_to_u64_unsigned_top_bit() {
+        assert_eq!(to_u64(&bitvec![u8, Lsb0; 0, 0, 0, 1]), Some(8));
+        assert_eq!(to_u64(&bitvec![u8, Lsb0; 1]), Some(1));
+        assert_eq!(to_u64(&BitVec::repeat(true, 64)), Some(u64::MAX));
+    }
+
+    #[test]
+    fn test_to_u64_empty() {
+        assert_eq!(to_u64(&BitVec::new()), Some(0));
+    }
+
+    #[test]
+    fn test_to_u64_leading_zeros() {
+        let mut value = BitVec::repeat(true, 64);
+        value.resize(65, false);
+        assert_eq!(to_u64(&value), Some(u64::MAX));
+        value.resize(129, false);
+        assert_eq!(to_u64(&value), Some(u64::MAX));
+        assert_eq!(to_u64(&BitVec::repeat(false, 129)), Some(0));
+    }
+
+    #[test]
+    fn test_to_u64_overflow() {
+        for (width, high_bit) in [(65, 64), (129, 64), (129, 128)] {
+            let mut value = BitVec::repeat(false, width);
+            value.set(high_bit, true);
+            assert_eq!(to_u64(&value), None);
+        }
+    }
 
     #[test]
     fn test_from_u32() {

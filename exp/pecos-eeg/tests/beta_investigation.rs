@@ -72,7 +72,8 @@ fn test_zbasis_generator_labels() {
     }
 
     let noise = NoiseModel::coherent_only(0.001);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     let h_gens: Vec<&PropagatedEeg> = result
         .generators
@@ -91,7 +92,12 @@ fn test_zbasis_generator_labels() {
 
     // Check products of all pairs
     eprintln!("\nPairwise products:");
-    let stab_group = StabilizerGroup::from_circuit(&gates, expanded.num_original_qubits);
+    let end = expanded
+        .gates
+        .iter()
+        .rposition(|g| g.gate_type != GateType::MZ)
+        .unwrap();
+    let stab_group = StabilizerGroup::from_circuit(&expanded.gates[..=end], expanded.num_qubits);
 
     for j in 0..h_gens.len() {
         for k in (j + 1)..h_gens.len() {
@@ -100,15 +106,8 @@ fn test_zbasis_generator_labels() {
             if !qj.commutes_with(qk) {
                 continue; // Skip anticommuting pairs
             }
-            let product = qj.multiply(qk);
-            let orig_product = expanded.map_to_original_frame(&product);
-            let is_stab = stab_group.is_stabilizer(&orig_product);
-
-            if is_stab.is_some() || !orig_product.is_identity() {
-                eprintln!(
-                    "  [{j},{k}] commute=true product_orig={orig_product:?} is_stab={is_stab:?}"
-                );
-            }
+            let expectation = stab_group.product_expectation([qj, qk]);
+            eprintln!("  [{j},{k}] commute=true expectation={expectation:?}");
         }
     }
 }

@@ -28,7 +28,6 @@
    :recursive:
 
    pecos.simulators.cointoss
-   pecos.simulators.cuda_stabilizer
    pecos.simulators.cuda_statevec
    pecos.simulators.custatevec
    pecos.simulators.gate_syms

@@ -10,6 +10,8 @@ control engine and quantum system.
 
 import pytest
 from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -40,15 +42,17 @@ class TestDynamicCircuitExecution:
             if result1:
                 x(q2)
 
-            return measure(q2).read()  # Should always be False
+            output_value = measure(q2).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Run the circuit
         results = sim(Guppy(conditional_x_from_zero)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m1, m2], [m1, m2], ...] where m2 is the return value
-        measurements = results["measurements"]
-        return_values = [shot[-1] for shot in measurements]
+        measurements = results["outcome"]
+        return_values = measurements
 
         # All results should be False since q1 is |0>, so X is never applied to q2
         ones_count = sum(1 for m in return_values if m)
@@ -73,7 +77,9 @@ class TestDynamicCircuitExecution:
             if result1:
                 x(q2)
 
-            return measure(q2).read()  # Should always be True
+            output_value = measure(q2).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Run the circuit
         results = sim(Guppy(conditional_x_from_one)).qubits(2).quantum(state_vector()).seed(42).run(100)
@@ -81,8 +87,8 @@ class TestDynamicCircuitExecution:
         # Extract the return value (last measurement in each shot) -- each
         # row is a per-shot LIST, which is always truthy: counting rows
         # instead of values made this assertion unable to fail.
-        measurements = results["measurements"]
-        return_values = [shot[-1] for shot in measurements]
+        measurements = results["outcome"]
+        return_values = measurements
 
         # All results should be True since q1 is |1>, so X is always applied to q2
         ones_count = sum(1 for m in return_values if m)
@@ -112,13 +118,15 @@ class TestDynamicCircuitExecution:
             if result1:
                 x(q2)
 
-            return result1, measure(q2).read()
+            output_value = result1, measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         # Run the circuit
         results = sim(Guppy(measurement_feedback)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
         # Extract measurements - one (m0, m1) row per shot
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert len(measurements) == 100, "should have one measurement row per shot"
 
         # Both measurements should always match
@@ -169,15 +177,17 @@ class TestDynamicCircuitExecution:
                 pass
 
             # Measure final state - should be |1>
-            return measure(q2).read()
+            output_value = measure(q2).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Run the circuit
         results = sim(Guppy(teleport_one)).qubits(3).quantum(state_vector()).seed(42).run(100)
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m0, m1, m2], ...] where m2 is the return value
-        measurements = results["measurements"]
-        return_values = [shot[-1] for shot in measurements]
+        measurements = results["outcome"]
+        return_values = measurements
 
         # The teleported state should be |1>, so we expect all True
         ones_count = sum(1 for m in return_values if m)

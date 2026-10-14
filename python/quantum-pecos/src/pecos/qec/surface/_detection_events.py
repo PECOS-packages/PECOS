@@ -1,79 +1,133 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Metadata-driven detection-event extraction for surface memory circuits."""
+"""Definition-based detection-event extraction for surface memory circuits."""
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Sequence
+from functools import cached_property
+from typing import TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
+
+    from pecos_rslib.quantum import TickCircuit
 
 
-class _TickCircuitLike(Protocol):
-    def get_meta(self, key: str) -> str | None:
-        """Return metadata stored under ``key`` when available."""
-        ...
+class MissingObservableReferenceError(ValueError):
+    """An observable cannot be interpreted as a flip without its noiseless reference."""
 
 
-def _record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
-    records = entry.get("records")
-    if records is not None:
-        return [int(record) for record in records]  # type: ignore[union-attr]
-    meas_ids = entry.get("meas_ids")
-    if meas_ids is not None:
-        return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
-    msg = "detector/observable metadata entry must define either 'records' or 'meas_ids'"
-    raise ValueError(msg)
+def _validate_observable_references(
+    observables: list[dict[str, object]],
+) -> None:
+    """Validate reader output when observable flips are requested."""
+    seen = set()
+    for index, obs in enumerate(observables):
+        entry = f"observable entry {index}"
+        if "id" in obs:
+            entry += f" (id={obs['id']})"
+        if obs.get("reference") is None:
+            msg = (
+                f"{entry} has no 'reference', so a flip cannot be derived from its raw parity. "
+                "An observable carried only by a circuit annotation has no noiseless reference; "
+                "neither does metadata written before the field existed or with "
+                "TickCircuit.add_observable without reference=0 or reference=1. "
+                "Surface producers LogicalCircuitBuilder.to_tick_circuit and TickCircuitRenderer "
+                "(via build_memory_circuit or generate_tick_circuit_from_patch) emit it."
+            )
+            raise MissingObservableReferenceError(msg)
+        if "id" not in obs:
+            msg = f"{entry} is missing 'id'"
+            raise MissingObservableReferenceError(msg)
+        observable_id = obs["id"]
+        if isinstance(observable_id, bool) or not isinstance(observable_id, int):
+            msg = f"{entry} has invalid 'id' {observable_id!r}; expected an integer"
+            raise MissingObservableReferenceError(msg)
+        if observable_id in seen:
+            msg = f"observable entry {index} has duplicate 'id' {observable_id!r}"
+            raise MissingObservableReferenceError(msg)
+        seen.add(observable_id)
+        reference = obs["reference"]
+        if isinstance(reference, bool) or not isinstance(reference, int) or reference not in (0, 1):
+            msg = f"{entry} has invalid 'reference' {reference!r}; expected integer 0 or 1"
+            raise MissingObservableReferenceError(msg)
+
+
+class _ObservableFlips(Sequence[list[int]]):
+    """Cache flips on first access, allowing detector-only use without a reference."""
+
+    __hash__ = None
+
+    def __init__(self, observables: list[dict[str, object]], rows: list[tuple[int, ...]]) -> None:
+        self._observables = observables
+        self._rows = rows
+
+    @cached_property
+    def _values(self) -> list[list[int]]:
+        _validate_observable_references(self._observables)
+        flips = []
+        for row in self._rows:
+            flipped = []
+            for obs in self._observables:
+                val = obs["reference"]
+                for position in obs["measurements"]:
+                    val ^= int(row[position])
+                if val:
+                    flipped.append(obs["id"])
+            flips.append(flipped)
+        return flips
+
+    @overload
+    def __getitem__(self, index: int) -> list[int]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[list[int]]: ...
+
+    def __getitem__(self, index: int | slice) -> list[int] | list[list[int]]:
+        return self._values[index]
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _ObservableFlips):
+            return self._values == other._values
+        return self._values == other
 
 
 def extract_detection_events_and_observables(
-    tick_circuit: _TickCircuitLike,
+    tick_circuit: TickCircuit,
     results: Iterable[Sequence[int]],
-) -> tuple[list[list[int]], list[list[int]]]:
-    """Extract fired detectors and observables from flat measurement rows."""
-    detectors_json = tick_circuit.get_meta("detectors")
-    detectors = json.loads(detectors_json) if detectors_json else []
+) -> tuple[list[list[int]], Sequence[list[int]]]:
+    """Extract fired detector ids and reference-relative observable ids in id order.
 
-    observables_json = tick_circuit.get_meta("observables")
-    observables = json.loads(observables_json) if observables_json else []
-
-    num_meas_meta = tick_circuit.get_meta("num_measurements")
-    if num_meas_meta is None or num_meas_meta == "":
-        msg = "extract_detection_events_and_observables requires tick_circuit.get_meta('num_measurements') to be set"
-        raise ValueError(msg)
-    num_meas = int(num_meas_meta)
-
+    XOR raw parity with each noiseless reference so a clean shot has no flips.
+    ``pecos.testing.simulate_tick_circuit`` instead retains raw signed parity.
+    Observable flips are a cached, reusable sequence: accessing it validates
+    reader ids/references and raises MissingObservableReferenceError when needed.
+    Discarding it leaves detector-only callers unaffected by absent references.
+    """
+    definitions = tick_circuit.circuit_definitions()
+    num_meas = definitions["num_measurements"]
     detection_events_per_shot: list[list[int]] = []
-    observable_flips_per_shot: list[list[int]] = []
+    rows: list[tuple[int, ...]] = []
 
     for row in results:
         if len(row) != num_meas:
-            msg = f"result row has length {len(row)} but tick_circuit metadata declares num_measurements={num_meas}"
+            msg = f"result row has length {len(row)} but tick_circuit emits num_measurements={num_meas}"
             raise ValueError(msg)
-
+        # Results may be a one-shot iterator reusing a mutable buffer. Freeze
+        # each row now so later observable access sees the same shot as detectors.
+        rows.append(tuple(row))
         fired_detectors: list[int] = []
-        for det_idx, det in enumerate(detectors):
+        for det in definitions["detectors"]:
             val = 0
-            for rec in _record_offsets(det, num_meas):
-                idx = num_meas + rec
-                if 0 <= idx < num_meas:
-                    val ^= int(row[idx])
+            for position in det["measurements"]:
+                val ^= int(row[position])
             if val:
-                fired_detectors.append(det_idx)
+                fired_detectors.append(det["id"])
         detection_events_per_shot.append(fired_detectors)
 
-        flipped_observables: list[int] = []
-        for obs_idx, obs in enumerate(observables):
-            val = 0
-            for rec in _record_offsets(obs, num_meas):
-                idx = num_meas + rec
-                if 0 <= idx < num_meas:
-                    val ^= int(row[idx])
-            if val:
-                flipped_observables.append(obs_idx)
-        observable_flips_per_shot.append(flipped_observables)
-
-    return detection_events_per_shot, observable_flips_per_shot
+    return detection_events_per_shot, _ObservableFlips(definitions["observables"], rows)

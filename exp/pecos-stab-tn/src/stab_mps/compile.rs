@@ -744,7 +744,11 @@ mod tests {
         assert_eq!(advice.simulator, SimulatorKind::Mast);
         assert_eq!(advice.injection, InjectionMode::Deferred);
         assert_eq!(advice.deferred_feasible, Some(true));
-        assert!(advice.warnings.is_empty());
+        assert!(
+            advice.warnings.is_empty(),
+            "expected no warnings, got {:?}",
+            advice.warnings
+        );
     }
 
     #[test]

@@ -101,7 +101,7 @@ Builder class for creating `ByteMessage` instances.
 - `ry(theta, [q0, q1, ...])`: Add RY gate(s)
 - `rzz(theta, [(q0, q1), ...])`: Add RZZ gate(s)
 - `szz([(q0, q1), ...])`: Add SZZ gate(s)
-- `r1xy(theta, phi, [q0, q1, ...])`: Add R1XY gate(s)
+- `rxy1q(theta, phi, [q0, q1, ...])`: Add RXY1Q gate(s)
 - `u(theta, phi, lambda_, [q0, q1, ...])`: Add U gate(s)
 - `mz([q0, q1, ...])`: Add Z-basis measurement(s)
 - `pz([q0, q1, ...])`: Add PZ (preparation/reset) gate(s)

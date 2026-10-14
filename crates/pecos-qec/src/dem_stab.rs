@@ -166,7 +166,6 @@ pub struct DemStabSimBuilder {
     per_gate_noise: Option<PerGateTypeNoise>,
     detectors: Vec<DetectorDef>,
     observables: Vec<DemOutput>,
-    measurement_order: Option<Vec<usize>>,
 }
 
 impl DemStabSimBuilder {
@@ -210,13 +209,6 @@ impl DemStabSimBuilder {
         self
     }
 
-    /// Set the measurement order mapping from a `TickCircuit` (advanced).
-    #[must_use]
-    pub fn measurement_order(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
-        self
-    }
-
     /// Build the [`DemStabSim`], consuming the builder.
     ///
     /// # Errors
@@ -226,7 +218,7 @@ impl DemStabSimBuilder {
         let dag = self.circuit.ok_or(DemStabError::MissingCircuit)?;
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map_diagnostic();
 
         let detector_records: Vec<Vec<i32>> =
             self.detectors.iter().map(|d| d.records.to_vec()).collect();
@@ -240,20 +232,14 @@ impl DemStabSimBuilder {
         builder = if let Some(cfg) = self.per_gate_noise {
             builder.with_per_gate_noise(cfg)
         } else {
-            builder.with_noise(
-                self.noise.p1,
-                self.noise.p2,
-                self.noise.p_meas,
-                self.noise.p_prep,
-            )
+            // Forward the whole configuration: `with_noise` takes the four
+            // scalars and clears the gate-rate tables, so unpacking here would
+            // discard the caller's per-gate rates without reporting it.
+            builder.with_noise_config(self.noise)
         };
         builder = builder
             .with_detector_records(detector_records)
             .with_observable_records(observable_records);
-
-        if let Some(order) = self.measurement_order {
-            builder = builder.with_measurement_order(order);
-        }
 
         let detectors = self.detectors.clone();
         let observables = self.observables.clone();

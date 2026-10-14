@@ -21,8 +21,7 @@
 //! - [`synthesize_numerical`]: n-qubit, general `H_g`, Simpson integrand,
 //!   Walsh-Hadamard rate recovery.
 //!
-//! See `design/lindblad_magnus_algorithm.md` for the math spec and paper
-//! arXiv:2502.03462 for closed-form fixtures.
+//! See arXiv:2502.03462 for the math and the closed-form fixtures.
 
 use num_complex::Complex64;
 
@@ -214,10 +213,9 @@ pub fn synthesize_superop_identity(gate: &Gate) -> PauliLindbladModel {
 /// noise** (no collapse operators) via the exact error-unitary path.
 ///
 /// For coherent noise the Pauli rates are quadratic in the perturbation
-/// strength (see `design/lindblad_magnus_algorithm.md` section 4.5). The
-/// linear-order [`synthesize_numerical`] path gives `alpha_b = 0` for
-/// coherent noise because `Tr(P_b L(P_b)) = 0` when `L` is a single
-/// commutator. This function computes the exact error unitary
+/// strength. The linear-order [`synthesize_numerical`] path gives
+/// `alpha_b = 0` for coherent noise because `Tr(P_b L(P_b)) = 0` when `L`
+/// is a single commutator. This function computes the exact error unitary
 /// `U_err = U_ideal^dag * U_full` and extracts Pauli fidelities directly.
 ///
 /// Requires `gate.noise.collapse` to be empty. Use
@@ -349,7 +347,7 @@ fn integrated_alpha(gate: &Gate, p: &PauliString, n_steps: usize) -> f64 {
 
 /// Walsh-Hadamard inversion:
 ///   `lambda_k = -(1/4^n) * sum_{b non-identity} (-1)^{<k,b>_sp} alpha_b`
-/// (see `design/lindblad_magnus_algorithm.md` step 4). alpha_I = 0 is
+/// (the Pauli-twirl projection step). alpha_I = 0 is
 /// implicit.
 fn model_from_alphas_walsh(
     paulis: Vec<PauliString>,

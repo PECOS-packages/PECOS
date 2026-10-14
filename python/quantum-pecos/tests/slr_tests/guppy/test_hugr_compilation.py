@@ -10,7 +10,6 @@ from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
 
-@pytest.mark.optional_dependency
 class TestHugrCompilation:
     """Test that various patterns compile successfully to HUGR."""
 
@@ -188,7 +187,6 @@ class TestHugrCompilation:
         assert hugr is not None
 
 
-@pytest.mark.optional_dependency
 class TestHugrCompilationFailures:
     """Test cases that should fail HUGR compilation with clear errors."""
 
@@ -237,7 +235,6 @@ class TestHugrCompilationFailures:
         assert "linearity" in str(exc_info.value).lower() or "not defined" in str(exc_info.value).lower()
 
 
-@pytest.mark.optional_dependency
 class TestQECPatternCompilation:
     """Test real QEC patterns compile to HUGR."""
 

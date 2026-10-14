@@ -13,6 +13,13 @@
 //! - `relay-bp` - Relay BP decoder for qLDPC codes (pure Rust)
 //! - `uf` - Syndrome-graph Union-Find decoder (pure Rust)
 //! - `all` - Enable all decoders
+//!
+//! ## Batch decoding
+//!
+//! [`batch::SampleBatch`] holds detector-event shots and their true observable
+//! flips; [`batch::SampleBatch::decode_with`] decodes and scores them with any
+//! [`batch::DecoderFactory`] (for example a [`DecoderSpec`]) across sequential,
+//! parallel, or native-batch execution and returns a [`batch::DecodeResult`].
 
 pub mod batch;
 pub mod spec;
@@ -24,6 +31,11 @@ pub use pecos_decoder_core::{
     BatchDecoder, CssDecoder, Decoder, DecoderError, DecodingResultTrait, ObservableDecoder,
     SoftDecoder,
 };
+// Wide observable masks appear in `batch::SampleBatch` and `batch::DecodeResult`.
+pub use pecos_decoder_core::obs_mask::ObsMask;
+
+/// Re-export native belief-propagation primitives.
+pub use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
 
 // Re-export observable subgraph decoder (for transversal gates)
 pub use pecos_decoder_core::logical_subgraph::{
@@ -92,7 +104,9 @@ pub use pecos_pymatching::{
 // Re-export Tesseract decoder when feature is enabled
 #[cfg(feature = "tesseract")]
 pub use pecos_tesseract::{
-    DecodingResult as TesseractDecodingResult, TesseractConfig, TesseractDecoder,
+    DecodingResult as TesseractDecodingResult, TesseractConfig, TesseractDecoder, TesseractError,
+    TesseractTrellisConfig, TesseractTrellisDecoder, TesseractTrellisRankingMode,
+    TesseractTrellisResult,
 };
 
 // Re-export Chromobius decoder when feature is enabled
@@ -105,10 +119,10 @@ pub use pecos_chromobius::{
 // Re-export UF decoder when feature is enabled
 #[cfg(feature = "uf")]
 pub use pecos_uf_decoder::{
-    AStarConfig, AStarDecoder, BeamSearchConfig, BeamSearchWindowedDecoder,
-    BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, OverlappingWindowedDecoder,
-    QubitEdgeMapping, SandwichWindowedDecoder, StreamingWindowedDecoder, UfDecoder,
-    UfDecoderConfig, WindowedConfig, WindowedDecoder, WindowedLogicalSubgraphDecoder,
+    AStarConfig, AStarDecoder, BeamSearchConfig, BeamSearchWindowedDecoder, BeamWindowConfig,
+    BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, QubitEdgeMapping,
+    StreamingWindowedDecoder, UfDecoder, UfDecoderConfig, WindowedConfig,
+    WindowedLogicalSubgraphDecoder,
 };
 
 // Re-export Relay BP decoder when feature is enabled

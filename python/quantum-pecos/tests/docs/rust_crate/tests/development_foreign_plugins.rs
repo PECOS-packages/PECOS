@@ -3,6 +3,16 @@
 #![allow(unused_imports, unused_variables, unused_mut, unused_assignments, dead_code, non_snake_case)]
 
 
+// Works with pecos-neo's generic runner
+
+#[test]
+fn test_development_foreign_plugins_rust_1() {
+    use pecos_foreign::ForeignSimulator;
+    use pecos_neo::CircuitRunner;
+    let runner = CircuitRunner::<ForeignSimulator>::new();
+}
+
+
 #[test]
 fn test_development_foreign_plugins_rust_3() {
     use pecos_foreign::discovery::discover_plugins;

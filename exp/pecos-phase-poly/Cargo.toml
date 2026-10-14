@@ -1,0 +1,27 @@
+[package]
+name = "pecos-phase-poly"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Experimental exact simulation of third-order phase-polynomial states"
+publish = false
+
+[dependencies]
+pecos-core.workspace = true
+pecos-quantum.workspace = true
+pecos-simulators.workspace = true
+pecos-random.workspace = true
+num-complex.workspace = true
+
+[dev-dependencies]
+pecos-stab-active = { path = "../pecos-stab-active" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

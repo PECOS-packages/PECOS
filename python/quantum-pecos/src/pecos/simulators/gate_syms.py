@@ -27,8 +27,8 @@ alt_symbols = {
     "init |-i>": "Init -Y",
     # one-qubit operations
     # ====================
-    "RXY1Q": "R1XY",
-    "U1q": "R1XY",
+    "R1XY": "RXY1Q",
+    "U1q": "RXY1Q",
     # Square root of Paulis
     "Q": "SX",  # +x-y == R(X, pi/2)
     "Qd": "SXdg",  # +x+y == R(X, -pi/2)
@@ -71,6 +71,7 @@ alt_symbols = {
     # 'G2': q2.G2,
     # 'II': q2.II,
     "ZZPhase": "RZZ",
+    "RXYXY2Q": "RXYXY2Q",
     "RXXYYZZ": "RXXRYYRZZ",
     "R2XXYYZZ": "RXXRYYRZZ",
     "ZZ": "SZZ",

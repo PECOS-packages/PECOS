@@ -118,19 +118,28 @@ impl GateDependentChannel {
     }
 
     /// Get the configuration for a specific gate type.
-    fn get_config(&self, gate_type: GateType) -> Option<&GateNoiseConfig> {
+    fn get_config(&self, gate_type: GateType, event: &NoiseEvent<'_>) -> Option<&GateNoiseConfig> {
         self.gate_configs
             .get(&gate_type)
+            .or_else(|| {
+                event
+                    .noise_gate_type()
+                    .and_then(|gate| self.gate_configs.get(&gate))
+            })
             .or(self.default_config.as_ref())
     }
 }
 
 impl NoiseChannel for GateDependentChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         match event {
             NoiseEvent::AfterGate { gate_type, .. } => {
                 // Only respond if we have a configuration for this gate type
-                self.get_config(*gate_type)
+                self.get_config(*gate_type, event)
                     .is_some_and(|c| c.error_probability > 0.0)
             }
             _ => false,
@@ -150,12 +159,14 @@ impl NoiseChannel for GateDependentChannel {
             return NoiseResponse::None;
         };
 
-        // Skip noiseless gates
-        if ctx.is_noiseless(*gate_type) {
+        if ctx.is_noiseless_operation_with_calibration(
+            event,
+            self.gate_configs.contains_key(gate_type),
+        ) {
             return NoiseResponse::None;
         }
 
-        let Some(config) = self.get_config(*gate_type) else {
+        let Some(config) = self.get_config(*gate_type, event) else {
             return NoiseResponse::None;
         };
 

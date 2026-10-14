@@ -3,7 +3,11 @@ mod common;
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
-    use pecos_engines::{Engine, ShotVec};
+    use pecos_core::{Gate, QubitId};
+    use pecos_engines::{
+        ClassicalControlEngineBuilder, ControlEngine, EngineStage, StateVectorEngineBuilder,
+    };
+    use pecos_phir_json::phir_json_engine;
     use pecos_phir_json::v0_1::ast::PHIRProgram;
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
     use pecos_phir_json::v0_1::operations::{MachineOperationResult, OperationProcessor};
@@ -94,62 +98,29 @@ mod tests {
         let program: PHIRProgram = serde_json::from_str(phir_json)
             .map_err(|e| PecosError::Input(format!("Failed to parse PHIR program: {e}")))?;
 
-        // Create engine directly
-        let mut engine = PhirJsonEngine::from_program(program.clone())?;
-
-        // Execute directly
-        let shot = engine.process(())?;
-
-        // Create a shotVec for compatibility with the rest of the test
-        let mut results = ShotVec::default();
-        results.shots.push(shot);
-
-        // Print results for debugging
-        println!("ShotResults: {results:?}");
-
-        // Verify the simulation results
-        assert!(
-            !results.shots.is_empty(),
-            "Expected non-empty simulation results"
+        let mut engine = PhirJsonEngine::from_program(program)?;
+        let EngineStage::NeedsProcessing(commands) = engine.start(())? else {
+            panic!("expected machine commands");
+        };
+        assert_eq!(
+            commands.quantum_ops()?,
+            vec![
+                Gate::h(&[0]),
+                Gate::idle(0.005, vec![QubitId(0), QubitId(1)]),
+                Gate::idle(0.000_002, vec![QubitId(0)]),
+            ]
         );
 
-        // First try the standard shots format which the test helper creates
-        let shot = &results.shots[0];
-
-        // Print a clearer debugging message for troubleshooting
-        println!(
-            "Available keys in the shot: {:?}",
-            shot.data.keys().collect::<Vec<_>>()
-        );
-        println!("Shot contents: {shot:?}");
-        // Note: register_shots and register_shots_u64 fields have been removed
-        // All data is now accessed through shots[i].data
-
-        // Since we've made the environment the single source of truth for all values,
-        // we now have a standardized way of retrieving results.
-        // Look in the shot map for string-based values
-        if shot.data.contains_key("x") {
-            assert_eq!(
-                shot.data.get("x").unwrap().as_u32(),
-                Some(1),
-                "Expected output value to be 1, got {}",
-                shot.data.get("x").unwrap()
-            );
-        }
-        // Check if source variable was exposed directly
-        else if shot.data.contains_key("var") {
-            assert_eq!(
-                shot.data.get("var").unwrap().as_u32(),
-                Some(1),
-                "Expected var value to be 1, got {}",
-                shot.data.get("var").unwrap()
-            );
-        } else {
-            // Since we've moved to environment as the single source of truth,
-            // all test results should be available through one of the above methods
-            println!("WARNING: Neither 'x' nor 'var' register found in any result collection.");
-            println!("This test is checking that machine operations executed correctly.");
-            println!("Proceeding with test since machine operations executed without errors.");
+        // The classical work after the machine operations must still run to completion.
+        let results = phir_json_engine()
+            .json(phir_json)?
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(4)?;
+        assert_eq!(results.shots.len(), 4);
+        for shot in &results.shots {
+            assert_eq!(shot.data["x"].as_u32(), Some(1));
         }
 
         Ok(())
@@ -183,64 +154,31 @@ mod tests {
         let program: PHIRProgram = serde_json::from_str(phir_json)
             .map_err(|e| PecosError::Input(format!("Failed to parse PHIR program: {e}")))?;
 
-        // Create engine directly
-        let mut engine = PhirJsonEngine::from_program(program.clone())?;
+        let mut engine = PhirJsonEngine::from_program(program)?;
+        let EngineStage::NeedsProcessing(commands) = engine.start(())? else {
+            panic!("expected machine commands");
+        };
+        assert_eq!(
+            commands.quantum_ops()?,
+            vec![
+                Gate::h(&[0]),
+                Gate::idle(0.005, vec![QubitId(0), QubitId(1)]),
+                Gate::idle(0.000_002, vec![QubitId(0)]),
+                Gate::idle(0.001, vec![QubitId(1)]),
+                Gate::cx(&[(0, 1)]),
+            ]
+        );
 
-        // Execute directly
-        let shot = engine.process(())?;
-
-        // Create a shotVec for compatibility with the rest of the test
-        let mut results = ShotVec::default();
-        results.shots.push(shot);
-
-        // Print all available results for debugging
-        println!("ShotResults: {results:?}");
-        // Note: register_shots fields have been removed
-        // All data is now accessed through shots[i].data
-        println!("Shots: {:?}", results.shots);
-
-        // Verify that the program executed successfully with machine operations
-        assert!(!results.shots.is_empty(), "Expected non-empty results");
-
-        // Check multiple locations where the result might be stored
-        // With environment as single source of truth, the approach is now more standardized
-        let expected_value = 42;
-        let mut value_found = false;
-
-        // Check string-based location: shots hashmap
-        if !results.shots.is_empty() && results.shots[0].data.contains_key("a") {
-            let value = results.shots[0]
-                .data
-                .get("a")
-                .unwrap()
-                .as_u32()
-                .unwrap_or(0);
-            assert_eq!(
-                value, expected_value,
-                "Expected output value to be {expected_value}, got {value}"
-            );
-            value_found = true;
-        }
-        // Check direct source variable: "result" in string-based shots
-        else if !results.shots.is_empty() && results.shots[0].data.contains_key("result") {
-            let value = results.shots[0]
-                .data
-                .get("result")
-                .unwrap()
-                .as_u32()
-                .unwrap_or(0);
-            assert_eq!(
-                value, expected_value,
-                "Expected result variable to be {expected_value}, got {value}"
-            );
-            value_found = true;
-        }
-
-        // If no value was found in any of the standard locations, print information and continue
-        if !value_found {
-            println!("WARNING: Neither 'a' nor 'result' register found in any result collection.");
-            println!("This test is checking that machine operations executed correctly.");
-            println!("Proceeding with test since machine operations executed without errors.");
+        // The classical work after the machine operations must still run to completion.
+        let results = phir_json_engine()
+            .json(phir_json)?
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(4)?;
+        assert_eq!(results.shots.len(), 4);
+        for shot in &results.shots {
+            assert_eq!(shot.data["a"].as_u32(), Some(42));
         }
 
         Ok(())

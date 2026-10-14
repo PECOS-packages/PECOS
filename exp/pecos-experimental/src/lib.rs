@@ -25,13 +25,13 @@
 //!
 //! ## Current Experimental Features
 //!
-//! - [`hugr_executor`] - Direct HUGR circuit execution on simulators
+//! - [`symbolic_executor`] - Symbolic circuit execution on simulators
 //! - [`noisy_symbolic`] - Noisy symbolic measurement sampling with depolarizing noise
 //!
 //! ## Usage
 //!
 //! ```rust
-//! use pecos_experimental::{execute_hugr, HugrExecutionError};
+//! use pecos_experimental::{execute_circuit_symbolic, SymbolicExecutionError};
 //! use pecos_experimental::{
 //!     NoisyMeasurementHistory,
 //!     NoisyMeasurementHistoryBuilder,
@@ -39,12 +39,15 @@
 //! };
 //! ```
 
-pub mod hugr_executor;
 pub mod noisy_symbolic;
+pub mod symbolic_executor;
 
 // Re-export main types at crate root for convenience
-pub use hugr_executor::{HugrExecutionError, execute_hugr};
 pub use noisy_symbolic::{
     DepolarizingNoiseModel, FaultEvent, NoisyMeasurementHistory, NoisyMeasurementHistoryBuilder,
     NoisyMeasurementResult, NoisyMeasurementSampler, Pauli,
 };
+pub use symbolic_executor::{SymbolicExecutionError, execute_circuit_symbolic};
+
+#[cfg(test)]
+mod symbolic_reference;

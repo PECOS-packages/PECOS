@@ -4,9 +4,7 @@ use pest::iterators::Pair;
 
 use crate::ast::Expression;
 use crate::parser::Rule;
-use crate::parser::constant_folding::{
-    fold_constants, fold_constants_gate_param, fold_constants_with_width,
-};
+use crate::parser::constant_folding::{fold_constants, fold_constants_gate_param};
 
 /// Parse an arbitrary-length decimal integer string into a `BitVec`
 /// This only handles positive integers - negative signs should be handled as unary operations
@@ -150,20 +148,6 @@ pub fn parse_expr(pair: Pair<Rule>) -> Result<Expression, PecosError> {
     let expr = parse_expr_internal(pair)?;
     // Apply constant folding optimization
     Ok(fold_constants(expr))
-}
-
-/// Main expression parser with width context for better constant folding
-///
-/// # Errors
-///
-/// Returns an error if the expression cannot be parsed
-pub fn parse_expr_with_width(
-    pair: Pair<Rule>,
-    default_width: usize,
-) -> Result<Expression, PecosError> {
-    let expr = parse_expr_internal(pair)?;
-    // Apply constant folding optimization with width context
-    Ok(fold_constants_with_width(expr, default_width))
 }
 
 /// Parse a gate parameter expression

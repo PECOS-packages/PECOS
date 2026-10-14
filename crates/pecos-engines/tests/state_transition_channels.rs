@@ -176,3 +176,14 @@ fn individual_weights_above_one_are_rejected_even_within_sum_tolerance() {
         }
     }
 }
+
+#[test]
+fn runtime_frames_reject_hooks_until_channel_barriers_have_boundary_support() {
+    use pecos_engines::runtime_frame::{FrameLimits, RuntimeNoise};
+    let recovery = StateTransitionChannel::leak_recovery(1.0, 0.5).unwrap();
+    let builder = GeneralNoiseModel::builder().add_p2_transition_channel_before_gate(&recovery);
+    let error = RuntimeNoise::new(builder, 2, FrameLimits::default())
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("gate-hook channels"));
+}

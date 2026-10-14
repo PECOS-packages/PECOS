@@ -35,17 +35,26 @@ class SlrConverter:
     analysis, and optimization capabilities.
     """
 
-    def __init__(self, block: Main | None = None, *, optimize_parallel: bool = True):
+    def __init__(
+        self,
+        block: Main | None = None,
+        *,
+        optimize_parallel: bool = True,
+        includes: list[str] | None = None,
+    ):
         """Initialize the SLR converter.
 
         Args:
             block: The SLR block to convert (optional for using from_* methods)
             optimize_parallel: Whether to apply ParallelOptimizer transformation (default: True).
                              Only affects blocks containing Parallel() statements.
+            includes: QASM include files. Defaults to ["qelib1.inc"]. An hqslib1.inc-only
+                list cannot resolve emitted ch, rzz, crx, cry, or crz operations.
         """
         self._original_block = block
         self._block = block
         self._optimize_parallel = optimize_parallel
+        self._qasm_includes = includes
 
         # Apply transformations if requested and block is provided
         if block is not None and optimize_parallel:
@@ -103,7 +112,7 @@ class SlrConverter:
         from pecos.slr.ast.codegen.qasm import ast_to_qasm
 
         ast = self._to_ast()
-        return ast_to_qasm(ast, include_header=include_header)
+        return ast_to_qasm(ast, include_header=include_header, includes=self._qasm_includes)
 
     def _generate_guppy(self) -> str:
         """Generate Guppy code using AST-based codegen."""

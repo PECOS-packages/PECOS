@@ -39,7 +39,7 @@ fn y_commutes_with_y() {
     dag.mz(&[0]);
 
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let map = analyzer.build_influence_map();
+    let map = analyzer.build_influence_map().unwrap();
 
     // Find the first H gate's after-location (node with lowest index)
     // At this point the backward-propagated observable should have Y on qubit 0.
@@ -132,6 +132,7 @@ fn custom_p1_weights_affect_decoder() {
         .expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -208,6 +209,7 @@ fn prep_gate_stops_propagation() {
     dag.mz(&[0]);
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()
@@ -245,7 +247,7 @@ fn faults_after_reset_propagate() {
     dag.mz(&[0]);
 
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let map = analyzer.build_influence_map();
+    let map = analyzer.build_influence_map().unwrap();
 
     // H gate after-location should have detector influence
     // (backward from MZ through H: observable is X at H location)
@@ -318,6 +320,7 @@ fn probability_sums_to_one() {
         .expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve against the circuit")
         .build()

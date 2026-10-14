@@ -8,9 +8,6 @@ from __future__ import annotations
 import errno
 
 import pytest
-
-pytest.importorskip("pecos_rslib")
-
 from pecos_rslib.qec import DemSampler, SampleBatch
 
 

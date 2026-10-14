@@ -12,7 +12,7 @@
 
 //! Polynomial-time relative amplitudes of the canonical ket represented by a stabilizer tableau.
 //!
-//! `StabMps::state_vector` fixes a tableau's otherwise arbitrary ket phase by
+//! `StabMps::state_vector_up_to_phase` fixes a tableau's otherwise arbitrary ket phase by
 //! normalizing the first nonzero column of `prod_k (I + S_k) / 2`. Equivalently,
 //! the numerically first computational-basis word in the support has a positive
 //! real amplitude. This module implements that same convention without building
@@ -24,6 +24,29 @@ use num_complex::Complex64;
 use pecos_simulators::{Gens, SparseStabY};
 
 use super::tableau_compose::multiply_row_within;
+
+/// Magnitude of each amplitude in a uniform support of size `2^rank`.
+///
+/// Avoid `powf`: its platform-dependent rounding disagrees with the standard
+/// `1/sqrt(2)` constant on Windows. Construct the exact power-of-two scale and
+/// apply the irrational factor only for odd ranks, including subnormal scales.
+fn support_magnitude(rank: usize) -> f64 {
+    let half_rank = rank / 2;
+    if half_rank > 1074 {
+        return 0.0;
+    }
+    let bits = if half_rank <= 1022 {
+        ((1023 - half_rank) as u64) << 52
+    } else {
+        1_u64 << (1074 - half_rank)
+    };
+    let scale = f64::from_bits(bits);
+    if rank & 1 == 0 {
+        scale
+    } else {
+        scale * std::f64::consts::FRAC_1_SQRT_2
+    }
+}
 
 /// An exact fourth root of unity, represented by its exponent in `i^exponent`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -114,7 +137,7 @@ impl CanonicalKet {
 
         // The solution set differs by the row space of the X block. Clearing
         // its pivots from q0 upward gives the smallest MSB-first projector
-        // column, exactly matching state_vector's scan order.
+        // column, exactly matching state_vector_up_to_phase's scan order.
         for &(pivot_qubit, row) in &x_pivots {
             if first_support[pivot_qubit] {
                 for qubit in &reduced_stabs.row_x[row] {
@@ -123,7 +146,7 @@ impl CanonicalKet {
             }
         }
 
-        let support_amplitude_magnitude = 2.0_f64.powf(-(x_pivots.len() as f64) / 2.0);
+        let support_amplitude_magnitude = support_magnitude(x_pivots.len());
         Self {
             num_qubits,
             reduced_stabs,
@@ -137,7 +160,7 @@ impl CanonicalKet {
         &self.first_support
     }
 
-    /// Return one amplitude in `state_vector`'s canonical representative.
+    /// Return one amplitude in `state_vector_up_to_phase`'s canonical representative.
     ///
     /// Relative phases within the ket are exact; the physical state remains
     /// defined only up to a common global phase.
@@ -199,7 +222,7 @@ fn pauli_applied_amplitude_at(
 }
 
 /// Return `<target|D_0^x0 ... D_{n-1}^xn|phi>` in the same effective
-/// multiplication order used by `StabMps::state_vector`.
+/// multiplication order used by `StabMps::state_vector_up_to_phase`.
 #[cfg(test)]
 fn destabilizer_basis_amplitude(
     tableau: &SparseStabY,
@@ -241,7 +264,7 @@ fn destabilizer_basis_amplitude_with_ket(
         return source_amplitude;
     }
 
-    // state_vector applies row 0 first, then row 1, etc. Track the phase of
+    // state_vector_up_to_phase applies row 0 first, then row 1, etc. Track the phase of
     // that same left-multiplication sequence on the source computational ket.
     let mut current = source;
     let mut phase = QuarterPhase::ONE;
@@ -403,7 +426,7 @@ impl CanonicalPhaseTracker {
     }
 
     /// Unit phase of the selected terminal tableau basis vector, relative to
-    /// `state_vector`'s canonical representative.
+    /// `state_vector_up_to_phase`'s canonical representative.
     pub(super) fn terminal_tableau_basis_phase(
         &self,
         tableau: &SparseStabY,
@@ -490,6 +513,28 @@ mod tests {
     use pecos_simulators::CliffordGateable;
 
     #[test]
+    fn support_magnitude_has_platform_independent_bits() {
+        for (rank, expected) in [
+            (0, 0x3ff0_0000_0000_0000),
+            (1, 0x3fe6_a09e_667f_3bcd),
+            (2, 0x3fe0_0000_0000_0000),
+            (3, 0x3fd6_a09e_667f_3bcd),
+            (2044, 0x0010_0000_0000_0000),
+            (2045, 0x000b_504f_333f_9de6),
+            (2046, 0x0008_0000_0000_0000),
+            (2148, 1),
+            (2149, 1),
+            (2150, 0),
+            (usize::MAX, 0),
+        ] {
+            assert_eq!(
+                support_magnitude(std::hint::black_box(rank)).to_bits(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn known_y_state_uses_positive_first_amplitude() {
         let mut tableau = SparseStabY::new(1).with_destab_sign_tracking();
         tableau.h(&[QubitId(0)]).sz(&[QubitId(0)]);
@@ -531,7 +576,7 @@ mod tests {
                 ],
             );
             stn.mps.apply_one_site_gate(0, &x).unwrap();
-            let dense = stn.state_vector();
+            let dense = stn.state_vector_up_to_phase();
             assert_eq!(
                 destabilizer_basis_amplitude(&stn.tableau, &[1], &[true]),
                 expected
@@ -561,7 +606,7 @@ mod tests {
         );
         stn.mps.apply_one_site_gate(0, &x).unwrap();
         stn.mps.apply_one_site_gate(1, &x).unwrap();
-        let dense = stn.state_vector();
+        let dense = stn.state_vector_up_to_phase();
         for (index, expected) in dense.into_iter().enumerate() {
             let target = [index & 1 != 0, index & 2 != 0];
             assert_eq!(

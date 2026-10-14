@@ -38,4 +38,3 @@ pecos.error\_models
    pecos.noise.noise_impl_old
    pecos.noise.old
    pecos.noise.parent_class_error_gen
-   pecos.noise.simple_depolarizing_error_model

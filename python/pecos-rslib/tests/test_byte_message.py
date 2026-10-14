@@ -12,7 +12,8 @@
 
 """Tests for the ByteMessage Python bindings."""
 
-from pecos_rslib import ByteMessage, ByteMessageBuilder
+import pytest
+from pecos_rslib import ByteMessage, ByteMessageBuilder, StateVecEngine
 
 
 def test_byte_message_builder_basic() -> None:
@@ -79,7 +80,7 @@ def test_byte_message_parameterized_gates() -> None:
     # Add some parameterized gates
     builder.rz(0.5, [0])
     builder.rzz(0.25, [(0, 1)])
-    builder.r1xy(0.3, 0.4, [2])
+    builder.rxy1q(0.3, 0.4, [2])
 
     # Build the message
     message = builder.build()
@@ -100,7 +101,7 @@ def test_byte_message_parameterized_gates() -> None:
     assert ops[1]["qubits"] == [0, 1]
     assert math.isclose(ops[1]["angles"][0], 0.25)
 
-    assert ops[2]["gate_type"] == "R1XY"
+    assert ops[2]["gate_type"] == "RXY1Q"
     assert ops[2]["qubits"] == [2]
     assert math.isclose(ops[2]["angles"][0], 0.3)
     assert math.isclose(ops[2]["angles"][1], 0.4)
@@ -210,3 +211,12 @@ def example_bell_state_experiment() -> None:
     print("\n==== End of Example ====")
 
     return message
+
+
+def test_quantum_operations_rejects_outcomes() -> None:
+    builder = ByteMessage.quantum_operations_builder()
+    builder.mz([0])
+    outcomes = StateVecEngine(1).process(builder.build())
+    assert not outcomes.is_empty()
+    with pytest.raises(RuntimeError, match="Message 0: expected Gate, found Outcome"):
+        outcomes.parse_quantum_operations()

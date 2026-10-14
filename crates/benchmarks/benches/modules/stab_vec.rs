@@ -480,7 +480,7 @@ fn bench_t_gate_patterns<M: Measurement>(c: &mut Criterion<M>) {
     group.sample_size(10);
 
     let nq = 20;
-    // T gate = RZ(pi/4)
+    // RZ(pi/4) is projectively equivalent to T.
     let t_angle = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
 
     // Pattern: T gates on same qubit fuse (T*T = S = Clifford)

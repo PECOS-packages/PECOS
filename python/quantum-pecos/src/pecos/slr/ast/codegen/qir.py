@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -203,14 +204,9 @@ _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
         (GateKind.RY, (1,), (-math.pi / 4,)),
     ),
     # ---- parameterized controlled rotations ----
-    # CRZ(theta) = (RZ(theta/2) o RZ(theta/2)) . RZZ(-theta/2): 1 RZZ,
-    # 2 single-qubit RZ. The RZ on the control absorbs the e^{i theta/2}
-    # phase that PECOS's R*(theta) all carry (otherwise it would be a
-    # c=1-only relative phase, which is observable). Verified against
-    # gate_matrix_def.CRZ(theta) for 5 random angles.
+    # CRZ(theta) = (I o RZ(theta/2)) . RZZ(-theta/2).
     GateKind.CRZ: (
         (GateKind.RZZ, (0, 1), lambda p: (-p[0] / 2,)),
-        (GateKind.RZ, (0,), lambda p: (p[0] / 2,)),
         (GateKind.RZ, (1,), lambda p: (p[0] / 2,)),
     ),
     # CRX(theta) = (I o H) . CRZ(theta) . (I o H): conjugate CRZ by H
@@ -218,21 +214,16 @@ _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
     GateKind.CRX: (
         (GateKind.H, (1,), ()),
         (GateKind.RZZ, (0, 1), lambda p: (-p[0] / 2,)),
-        (GateKind.RZ, (0,), lambda p: (p[0] / 2,)),
         (GateKind.RZ, (1,), lambda p: (p[0] / 2,)),
         (GateKind.H, (1,), ()),
     ),
-    # CRY(theta) = (I o (S.H)) . CRZ(theta) . (I o (H.Sdg)): conjugate
-    # CRZ by (S.H) on the target since S.X.Sdg = Y (and H.Z.H = X).
+    # CRY emission is SX(target), CRZ(theta), SXdg(target).
     # Same 1 RZZ.
     GateKind.CRY: (
-        (GateKind.SZdg, (1,), ()),
-        (GateKind.H, (1,), ()),
+        (GateKind.SX, (1,), ()),
         (GateKind.RZZ, (0, 1), lambda p: (-p[0] / 2,)),
-        (GateKind.RZ, (0,), lambda p: (p[0] / 2,)),
         (GateKind.RZ, (1,), lambda p: (p[0] / 2,)),
-        (GateKind.H, (1,), ()),
-        (GateKind.SZ, (1,), ()),
+        (GateKind.SXdg, (1,), ()),
     ),
 }
 
@@ -241,6 +232,7 @@ PARAMETERIZED_GATES = {GateKind.RX, GateKind.RY, GateKind.RZ, GateKind.RZZ}
 
 # Two-qubit gates
 TWO_QUBIT_GATES = {GateKind.CX, GateKind.CZ, GateKind.RZZ}
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 
 def _param_to_radians(p: object) -> float:
@@ -248,9 +240,8 @@ def _param_to_radians(p: object) -> float:
 
     Accepts a `LiteralExpr` wrapping either a typed `Angle` or a bare
     number, or a raw number (decomposition steps thread raw floats).
-    Typed angles use the signed principal value so the float-based
-    decomposition arithmetic (`-theta/2`) avoids the global-phase flip
-    that the unsigned `[0, 2pi)` form would introduce at the wrap point.
+    Typed angles use the signed principal value. Controlled-rotation
+    boundary spellings arrive as unreduced radians floats.
     """
     from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
@@ -260,22 +251,26 @@ def _param_to_radians(p: object) -> float:
     return float(value)
 
 
-def _require_typed_angle_params(node: GateOp, backend: str) -> None:
-    """Fail loud if a parameterized user gate has a non-`Angle` param.
+def _require_parameter_literals(node: GateOp, backend: str) -> None:
+    """Validate the AST parameter representation expected by each gate family.
 
-    Enforces the typed-AST-dialect contract uniformly across backends: a
-    parameterized `GateOp` reaching codegen from the user / direct-AST path
-    must carry typed `Angle` literals (`rad(...)` / `turns(...)`), not bare
-    floats. (Internal decomposition steps thread raw floats but reach the
-    per-gate emitters directly, not this top-level entry.)
+    Stored rotations carry typed `Angle` literals. Controlled-rotation
+    boundary spellings carry unreduced real radians literals.
     """
     from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
     if not node.gate.is_parameterized:
         return
     for p in node.params:
-        if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
-            gate_name = getattr(node.gate, "name", node.gate)
+        gate_name = getattr(node.gate, "name", node.gate)
+        if node.gate in CONTROLLED_ROTATION_GATES:
+            if not (isinstance(p, LiteralExpr) and isinstance(p.value, int | float) and not isinstance(p.value, bool)):
+                msg = (
+                    f"{backend} codegen: controlled rotation {gate_name!r} requires "
+                    f"an unreduced real radians literal; got {p!r}."
+                )
+                raise NotImplementedError(msg)
+        elif not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
             msg = (
                 f"{backend} codegen: parameterized gate {gate_name!r} requires typed `Angle` "
                 f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
@@ -485,9 +480,16 @@ class AstToQir:
             BinaryOp.OR: self._builder.or_,
             BinaryOp.ADD: self._builder.add,
             BinaryOp.SUB: self._builder.sub,
-            BinaryOp.RSHIFT: self._builder.lshr,
-            BinaryOp.LSHIFT: self._builder.shl,
+            BinaryOp.RSHIFT: lambda lhs, rhs: self._shift(lhs, rhs, left=False),
+            BinaryOp.LSHIFT: lambda lhs, rhs: self._shift(lhs, rhs, left=True),
         }
+
+    def _shift(self, lhs, rhs, *, left):
+        """Saturate oversized counts; LLVM shifts themselves retain raw semantics."""
+        width = llvm_ir.Constant(rhs.type, lhs.type.width)
+        oversized = self._builder.icmp_unsigned(">=", rhs, width)
+        shifted = self._builder.shl(lhs, rhs) if left else self._builder.lshr(lhs, rhs)
+        return self._builder.select(oversized, llvm_ir.Constant(lhs.type, 0), shifted)
 
     def _process_declarations(self, program: Program) -> None:
         """Process declarations to allocate qubits and classical registers."""
@@ -657,11 +659,15 @@ class AstToQir:
             )
             raise NotImplementedError(msg)
 
-        # Typed-angle guard: a user/direct-AST parameterized gate's params
-        # must be typed `Angle` literals (matches the Guppy backend and the
-        # typed-AST-dialect contract). Internal decomposition steps thread
-        # raw floats but reach `_process_*_gate` directly, bypassing here.
-        _require_typed_angle_params(node, "QIR")
+        # Stored rotations use typed `Angle` literals; controlled-rotation
+        # boundary spellings use unreduced real radians. Internal lowering
+        # steps recurse without repeating this source-boundary validation.
+        _require_parameter_literals(node, "QIR")
+
+        self._process_gate_lowering(node)
+
+    def _process_gate_lowering(self, node: GateOp) -> None:
+        """Emit a gate or recursively emit its QIS-native decomposition."""
 
         qir_name = GATE_TO_QIR.get(node.gate)
         if qir_name is None and node.gate in _GATE_DECOMP:
@@ -693,10 +699,7 @@ class AstToQir:
                 else:
                     prim_params = params_spec
                 prim_node = replace(node, gate=prim_kind, targets=prim_targets, params=prim_params)
-                if prim_kind in TWO_QUBIT_GATES:
-                    self._process_two_qubit_gate(prim_node, GATE_TO_QIR[prim_kind])
-                else:
-                    self._process_single_qubit_gate(prim_node, GATE_TO_QIR[prim_kind])
+                self._process_gate_lowering(prim_node)
             return
         if qir_name is None:
             # A gate with no
@@ -1032,6 +1035,7 @@ class AstToQir:
 
     def _process_if(self, node: IfStmt) -> None:
         """Process an if statement."""
+        reject_permute_in_region(node, "QIR")
         pred = self._as_i1(self._eval_expression(node.condition))
 
         if node.else_body:
@@ -1057,6 +1061,7 @@ class AstToQir:
         silently dropped the loop condition and all iterations (a
         miscompile qir-qis cannot catch, since one pass is valid QIR).
         """
+        reject_permute_in_region(node, "QIR")
         msg = (
             "QIR codegen does not support While loops (unbounded "
             "iteration / fixed-point linear state is out of scope for "

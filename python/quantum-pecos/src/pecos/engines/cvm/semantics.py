@@ -103,8 +103,8 @@ class DefaultClassicalSemantics:
 class UnsignedClassicalSemantics:
     """Unsigned fixed-width classical semantics.
 
-    Arithmetic wraps modulo ``2**width``. Shifts are logical and mask their
-    amount to ``width - 1``. Division and modulo by zero produce an all-ones
+    Arithmetic wraps modulo ``2**width``. Shifts are logical and saturate at
+    the configured width. Division and modulo by zero produce an all-ones
     word. Comparisons are unsigned unless an expression contains
     ``{"signed": True}``.
 
@@ -225,10 +225,13 @@ class UnsignedClassicalSemantics:
             return left - right
         if op == "*":
             return left * right
-        if op == ">>":
-            return left >> (int(right) & (width - 1))
-        if op == "<<":
-            return left << (int(right) & (width - 1))
+        if op in {">>", "<<"}:
+            # Read the count at its full value before wrapping. A negative
+            # count is an unsigned pattern here like every other operand.
+            count = int(b) if int(b) >= 0 else int(right)
+            if count >= width:
+                return BitUInt(width, 0)
+            return left >> count if op == ">>" else left << count
         if op in {"/", "%"}:
             if int(right) == 0:
                 return BitUInt(width, (1 << width) - 1)
@@ -283,16 +286,12 @@ class UnsignedClassicalSemantics:
             a = self.get_val(a, output, width, shot_id)
 
         if b is not None:
-            b = (
-                self._eval_expr(b, output, width, shot_id)
-                if isinstance(b, dict)
-                else self.get_val(
-                    b,
-                    output,
-                    width,
-                    shot_id,
-                )
-            )
+            if isinstance(b, dict):
+                b = self._eval_expr(b, output, width, shot_id)
+            elif not (op in {"<<", ">>"} and isinstance(b, int)):
+                # A literal shift count stays a plain int so eval_op sees its
+                # full value rather than the width-wrapped word.
+                b = self.get_val(b, output, width, shot_id)
             a = self.eval_op(op, a, b, width=width, signed=signed)
         return a
 

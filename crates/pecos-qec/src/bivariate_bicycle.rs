@@ -562,7 +562,9 @@ mod tests {
 
     fn sample_annotation_parities(circuit: &TickCircuit) -> (Vec<bool>, Vec<bool>) {
         let mut sim = SparseStab::new(144);
-        let measurements = CircuitExecutor::new(circuit).run(&mut sim);
+        let measurements = CircuitExecutor::new(circuit)
+            .run(&mut sim)
+            .expect("bivariate bicycle circuit contains supported Clifford gates");
         let parity = |ids: &[pecos_core::MeasId]| {
             ids.iter()
                 .fold(false, |value, id| value ^ measurements[id.index()].outcome)
@@ -675,7 +677,7 @@ mod tests {
                 .expect("fault-free circuit has a DEM");
             assert_eq!(dem.num_detectors(), 144);
             assert_eq!(dem.num_observables(), 12);
-            assert!(dem.to_mechanisms().0.is_empty());
+            assert_eq!(dem.to_mechanisms().0, []);
 
             let zero_noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
             let sampler = DemSampler::from_tick_circuit(&circuit, &zero_noise)

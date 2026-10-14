@@ -42,7 +42,13 @@ impl PhirJsonEngine {
     fn initial_stack(program: Option<&PHIRProgram>) -> Vec<ExecFrame> {
         program.map_or_else(Vec::new, |p| {
             vec![ExecFrame {
-                ops: p.ops.clone(),
+                // Declarations are registered once when the program is loaded.
+                ops: p
+                    .ops
+                    .iter()
+                    .filter(|op| !matches!(op, Operation::VariableDefinition { .. }))
+                    .cloned()
+                    .collect(),
                 idx: 0,
             }]
         })
@@ -158,7 +164,7 @@ impl PhirJsonEngine {
                     data,
                     data_type,
                     variable,
-                    infer_size(data_type, *size),
+                    super::ast::declaration_size(data, data_type, variable, *size)?,
                 )?;
             }
         }
@@ -182,6 +188,7 @@ impl PhirJsonEngine {
     /// # Errors
     /// - Returns an error if variable definitions cannot be processed.
     pub fn from_program(program: PHIRProgram) -> Result<Self, PecosError> {
+        super::declarations::validate_operations(&program.ops)?;
         let mut processor = OperationProcessor::new();
 
         // Process variable definitions
@@ -197,7 +204,7 @@ impl PhirJsonEngine {
                     data,
                     data_type,
                     variable,
-                    infer_size(data_type, *size),
+                    super::ast::declaration_size(data, data_type, variable, *size)?,
                 )?;
             }
         }
@@ -285,7 +292,7 @@ impl PhirJsonEngine {
                         data,
                         data_type,
                         variable,
-                        infer_size(data_type, *size),
+                        super::ast::declaration_size(data, data_type, variable, *size)?,
                     )?;
                     self.advance_cursor();
                 }
@@ -541,32 +548,7 @@ impl ClassicalEngine for PhirJsonEngine {
     }
 
     fn num_qubits(&self) -> usize {
-        // First check if environment has quantum variables
-        let sum = self.processor.environment.count_qubits();
-        if sum > 0 {
-            return sum;
-        }
-
-        // If no quantum variables in environment, directly scan the program ops
-        if let Some(program) = &self.program {
-            let mut total = 0;
-            for op in &program.ops {
-                if let Operation::VariableDefinition {
-                    data,
-                    data_type,
-                    variable: _,
-                    size,
-                } = op
-                    && data == "qvar_define"
-                    && data_type == "qubits"
-                {
-                    total += infer_size(data_type, *size);
-                }
-            }
-            return total;
-        }
-
-        0 // If no program is loaded, return 0
+        self.processor.environment.count_qubits()
     }
 
     fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
@@ -785,117 +767,30 @@ impl Engine for PhirJsonEngine {
     type Input = ();
     type Output = Shot;
 
-    #[allow(clippy::too_many_lines)]
-    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
-        // Print out operations for debugging
-        if let Some(program) = &self.program {
-            log::debug!(
-                "Process() called, processing {} operations",
-                program.ops.len()
-            );
-            for (i, op) in program.ops.iter().enumerate() {
-                log::debug!("Process: Operation {i}: {op:?}");
-            }
-        }
-
-        // Reset state to ensure we start fresh
+    /// Executes classical control without a quantum backend.
+    ///
+    /// Empty command batches resume the execution cursor. If execution generates
+    /// quantum commands, use `start()`/`continue_processing()` with a quantum
+    /// engine, or the simulation builder instead.
+    ///
+    /// # Errors
+    /// Returns an error if execution generates quantum commands or processing fails.
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         self.reset_state();
-
-        // Start the engine and check its state
-        match self.start(())? {
-            EngineStage::Complete(result) => {
-                log::debug!("Shot completed directly in start()");
-                Ok(result)
-            }
-            EngineStage::NeedsProcessing(_cmds) => {
-                log::debug!("PhirJsonEngine cannot process quantum operations directly");
-                log::debug!("Falling back to manual direct execution for integration testing");
-
-                // For integration tests, manually execute the operations
-                if let Some(program) = &self.program {
-                    log::debug!("Process: processing all operations in order");
-
-                    // Process operations in order (like a real execution)
-                    for (i, op) in program.ops.iter().enumerate() {
-                        log::debug!("Processing operation {i}: {op:?}");
-
-                        match op {
-                            Operation::VariableDefinition {
-                                data,
-                                data_type,
-                                variable,
-                                size,
-                            } => {
-                                log::debug!(
-                                    "Processing variable definition: {data_type} {variable}"
-                                );
-                                let _ = self.processor.handle_variable_definition(
-                                    data,
-                                    data_type,
-                                    variable,
-                                    infer_size(data_type, *size),
-                                );
-                            }
-                            Operation::ClassicalOp {
-                                cop,
-                                args,
-                                returns,
-                                function: _,
-                                metadata: _,
-                            } => {
-                                log::debug!("Processing classical operation {i}: {cop}");
-                                if let Err(e) = self.processor.handle_classical_op(
-                                    cop,
-                                    args,
-                                    returns,
-                                    &program.ops,
-                                    i,
-                                ) {
-                                    log::error!("Failed to process classical operation: {e}");
-                                    return Err(e);
-                                }
-                            }
-                            Operation::QuantumOp {
-                                qop,
-                                args,
-                                returns: _,
-                                angles: _,
-                                metadata: _,
-                            } => {
-                                log::debug!("Processing quantum operation {i}: {qop}");
-                                log::debug!("Simulating quantum gate: {qop} on qubits: {args:?}");
-                            }
-                            // Handle other operation types as needed
-                            _ => log::debug!("Skipping operation type for direct execution"),
-                        }
+        let mut stage = self.start(input)?;
+        loop {
+            match stage {
+                EngineStage::Complete(result) => return Ok(result),
+                EngineStage::NeedsProcessing(commands) => {
+                    if !commands.is_empty()? {
+                        return Err(PecosError::Processing(
+                            "PhirJsonEngine::process(()) cannot execute quantum commands; use \
+                             start()/continue_processing() with a quantum engine, or the simulation builder."
+                                .to_string(),
+                        ));
                     }
-
-                    // Process all Result commands to ensure outputs are generated
-                    let mut result_ops = Vec::new();
-                    for (i, op) in program.ops.iter().enumerate() {
-                        if let Operation::ClassicalOp {
-                            cop, args, returns, ..
-                        } = op
-                            && cop == "Result"
-                        {
-                            result_ops.push((i, args.clone(), returns.clone()));
-                        }
-                    }
-
-                    log::debug!("Processing {} Result commands", result_ops.len());
-                    for (i, args, returns) in result_ops {
-                        self.processor.handle_classical_op(
-                            "Result",
-                            &args,
-                            &returns,
-                            &program.ops,
-                            i,
-                        )?;
-                    }
+                    stage = self.continue_processing(ByteMessage::outcomes_builder().build())?;
                 }
-
-                // Return results from the processed state
-                Ok(self.get_results()?)
             }
         }
     }

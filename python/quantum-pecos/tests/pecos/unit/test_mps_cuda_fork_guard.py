@@ -112,3 +112,52 @@ def test_mps_constructor_checks_fork_poison_before_cuda(monkeypatch) -> None:
     stubs.handle_factory.assert_not_called()
     stubs.mps_factory.assert_not_called()
     stubs.qubit.assert_not_called()
+
+
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_mps_reset_continues_seed_stream(monkeypatch, seed) -> None:
+    """Resets vary shot sampling reproducibly while retaining the original Config."""
+    from random import Random
+
+    stubs = _load_mps_module(monkeypatch)
+    stubs.config.side_effect = lambda **params: types.SimpleNamespace(_complex_t=complex, **params)
+    configs = []
+    shot_seeds = []
+    outcomes = []
+
+    def make_mps(_handle, _qubits, config):
+        configs.append(config)
+        shot_seeds.append(config.seed)
+        outcomes.append(Random(config.seed).getrandbits(1))
+        return types.SimpleNamespace(_logger=types.SimpleNamespace(info=Mock()))
+
+    stubs.mps_factory.side_effect = make_mps
+
+    def run(run_seed):
+        sim = stubs.module.MPS(2, seed=run_seed, logfile="mps.log")
+        for _ in range(199):
+            sim.reset()
+        assert all(config is sim.config for config in configs[-200:])
+        assert sim.config.logfile == "mps.log"
+        return outcomes[-200:], shot_seeds[-200:]
+
+    first, first_seeds = run(seed)
+    second, second_seeds = run(seed)
+    other, other_seeds = run(seed + 1)
+    assert len(set(first_seeds)) == 200
+    assert set(first) == {0, 1}
+    assert first == second
+    assert first_seeds == second_seeds
+    assert first != other
+    assert first_seeds != other_seeds
+
+
+@pytest.mark.parametrize("params", [{}, {"seed": None}])
+def test_mps_unseeded_reset_keeps_config_seed_none(monkeypatch, params) -> None:
+    """Without a seed, pytket remains responsible for independent shot randomness."""
+    stubs = _load_mps_module(monkeypatch)
+    stubs.config.side_effect = lambda **kwargs: types.SimpleNamespace(_complex_t=complex, seed=kwargs.get("seed"))
+    sim = stubs.module.MPS(2, **params)
+    for _ in range(3):
+        assert sim.config.seed is None
+        sim.reset()

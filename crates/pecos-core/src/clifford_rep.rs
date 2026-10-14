@@ -1946,7 +1946,11 @@ mod tests {
 
     #[test]
     fn support_qubits_omits_identity_spectators() {
-        assert!(CliffordRep::identity(10).support_qubits().is_empty());
+        let support = CliffordRep::identity(10).support_qubits();
+        assert!(
+            support.is_empty(),
+            "expected no support qubits, got {support:?}"
+        );
         assert_eq!(CliffordRep::h(3).extended_to(10).support_qubits(), vec![3]);
         assert_eq!(
             CliffordRep::cx(0, 2).extended_to(5).support_qubits(),

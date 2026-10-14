@@ -22,6 +22,11 @@
 //! 3. base p1/3 (or p2/15) uniform   // fallback
 //! ```
 //!
+//! Phase-shaped U operations inherit RZ calibration only when the scheduled U
+//! has no explicit per-qubit or per-type rates. Explicit U calibration takes
+//! precedence over an inherited RZ noiseless flag; an explicit U noiseless flag
+//! still suppresses its channel. General Euler U gates retain their own rates.
+//!
 //! Rates are absolute per-Pauli probabilities (NOT normalized weights):
 //! a `[f64; 3]` entry is `[P(X), P(Y), P(Z)]` and the gate's total error
 //! probability is the sum. Two-qubit arrays follow [`TWO_QUBIT_PAULIS`]
@@ -163,17 +168,19 @@ impl PerGatePauliChannel {
     }
 
     /// Resolve the 1q rates for a gate on a qubit via the layered lookup.
-    fn rates_1q_for(&self, gate: GateType, qubit: QubitId) -> [f64; 3] {
-        if let Some(rates) = self.rates_1q_per_qubit.get(&(gate, qubit)) {
-            return *rates;
-        }
-        if let Some(rates) = self.rates_1q.get(&gate) {
-            return *rates;
-        }
-        [self.base_p1 / 3.0; 3]
+    fn explicit_1q_rates(&self, gate: GateType, qubit: QubitId) -> Option<[f64; 3]> {
+        self.rates_1q_per_qubit
+            .get(&(gate, qubit))
+            .or_else(|| self.rates_1q.get(&gate))
+            .copied()
     }
 
-    /// Resolve the 2q rates for a gate on an ordered pair.
+    fn rates_1q_for(&self, scheduled: GateType, inherited: GateType, qubit: QubitId) -> [f64; 3] {
+        self.explicit_1q_rates(scheduled, qubit)
+            .or_else(|| self.explicit_1q_rates(inherited, qubit))
+            .unwrap_or([self.base_p1 / 3.0; 3])
+    }
+
     fn rates_2q_for(&self, gate: GateType, first: QubitId, second: QubitId) -> [f64; 15] {
         if let Some(rates) = self.rates_2q_per_qubits.get(&(gate, first, second)) {
             return *rates;
@@ -197,6 +204,7 @@ impl PerGatePauliChannel {
         &self,
         gate_type: GateType,
         qubits: &[QubitId],
+        inherited: GateType,
         ctx: &NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
@@ -210,7 +218,13 @@ impl PerGatePauliChannel {
                 if ctx.is_leaked(qubit) {
                     continue;
                 }
-                let [px, py, pz] = self.rates_1q_for(gate_type, qubit);
+                // An explicit scheduled calibration overrides an inherited
+                // exemption. An explicit scheduled noiseless flag still wins.
+                if self.explicit_1q_rates(gate_type, qubit).is_none() && ctx.is_noiseless(inherited)
+                {
+                    continue;
+                }
+                let [px, py, pz] = self.rates_1q_for(gate_type, inherited, qubit);
                 let r = rng.random::<f64>();
                 let pauli = if r < px {
                     GateType::X
@@ -223,23 +237,25 @@ impl PerGatePauliChannel {
                 };
                 gates.push(GateCommand::new(pauli, smallvec::smallvec![qubit]));
             }
-        } else if qubits.len() == 2 {
-            let (first, second) = (qubits[0], qubits[1]);
-            if !ctx.is_leaked(first) && !ctx.is_leaked(second) {
-                let rates = self.rates_2q_for(gate_type, first, second);
-                let r = rng.random::<f64>();
-                let mut cumulative = 0.0;
-                for (idx, &p) in rates.iter().enumerate() {
-                    cumulative += p;
-                    if r < cumulative {
-                        let (pauli0, pauli1) = TWO_QUBIT_PAULIS[idx];
-                        if pauli0 != GateType::I {
-                            gates.push(GateCommand::new(pauli0, smallvec::smallvec![first]));
+        } else if gate_type.is_two_qubit() {
+            for qubits in qubits.as_chunks::<2>().0 {
+                let (first, second) = (qubits[0], qubits[1]);
+                if !ctx.is_leaked(first) && !ctx.is_leaked(second) {
+                    let rates = self.rates_2q_for(gate_type, first, second);
+                    let r = rng.random::<f64>();
+                    let mut cumulative = 0.0;
+                    for (idx, &p) in rates.iter().enumerate() {
+                        cumulative += p;
+                        if r < cumulative {
+                            let (pauli0, pauli1) = TWO_QUBIT_PAULIS[idx];
+                            if pauli0 != GateType::I {
+                                gates.push(GateCommand::new(pauli0, smallvec::smallvec![first]));
+                            }
+                            if pauli1 != GateType::I {
+                                gates.push(GateCommand::new(pauli1, smallvec::smallvec![second]));
+                            }
+                            break;
                         }
-                        if pauli1 != GateType::I {
-                            gates.push(GateCommand::new(pauli1, smallvec::smallvec![second]));
-                        }
-                        break;
                     }
                 }
             }
@@ -307,6 +323,17 @@ impl PerGatePauliChannel {
 }
 
 impl NoiseChannel for PerGatePauliChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        let mut kinds = super::EventKinds::of(super::NoiseEventKind::AfterGate);
+        if self.p_meas > 0.0 || !self.measurement_rates.is_empty() {
+            kinds = kinds.with(super::NoiseEventKind::BeforeMeasurement);
+        }
+        if self.p_init > 0.0 || !self.init_rates.is_empty() {
+            kinds = kinds.with(super::NoiseEventKind::AfterPreparation);
+        }
+        kinds
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         match event {
             NoiseEvent::AfterGate { gate_type, .. } => {
@@ -331,7 +358,15 @@ impl NoiseChannel for PerGatePauliChannel {
         match event {
             NoiseEvent::AfterGate {
                 gate_type, qubits, ..
-            } => self.apply_after_gate(*gate_type, qubits, ctx, rng),
+            } => self.apply_after_gate(
+                *gate_type,
+                qubits,
+                event
+                    .noise_gate_type()
+                    .expect("gate event has a noise type"),
+                ctx,
+                rng,
+            ),
             NoiseEvent::BeforeMeasurement { qubits } => {
                 self.apply_before_measurement(qubits, ctx, rng)
             }
@@ -363,6 +398,60 @@ mod tests {
     use crate::noise::ComposableNoiseModel;
     use crate::prelude::*;
     use pecos_simulators::SparseStab;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::None => Vec::new(),
+            _ => panic!("Expected Pauli faults or no fault"),
+        }
+    }
+
+    #[test]
+    fn test_batched_two_qubit_faults() {
+        let channel = PerGatePauliChannel::new().with_base(0.0, 0.5);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        let trailing = [QubitId(4), QubitId(5)];
+        for seed in 0..32 {
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut separate_ctx = NoiseContext::new();
+            let mut separate_rng = PecosRng::seed_from_u64(seed);
+            let mut batched_gates = Vec::new();
+            for pair_batch in [qubits.as_slice(), trailing.as_slice()] {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair_batch,
+                    angles: &[],
+                    gate_id: None,
+                };
+                batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
+            }
+            let mut separate_gates = Vec::new();
+            for pair in qubits
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .chain(std::iter::once(&trailing))
+            {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair,
+                    angles: &[],
+                    gate_id: None,
+                };
+                separate_gates.extend(collect_gates(channel.apply(
+                    &event,
+                    &mut separate_ctx,
+                    &mut separate_rng,
+                )));
+            }
+            assert_eq!(
+                batched_gates, separate_gates,
+                "batched fault stream differs at seed {seed}"
+            );
+        }
+    }
 
     const SHOTS: usize = 20_000;
 

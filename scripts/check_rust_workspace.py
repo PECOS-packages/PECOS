@@ -42,11 +42,8 @@ class ForeignTrain:
 # Members deliberately off the crate train: each FFI shim is versioned with the language
 # package it ships inside. The Julia binding declares its version in three places, so the
 # crate is checked against `PECOS.jl` here and `julia-version-consistency.yml` additionally
-# covers `build_tarballs.jl`. The Go binding declares its version only in this crate --
-# `pecos_version()` derives the string users see from `CARGO_PKG_VERSION` and Go modules are
-# versioned by git tag -- so there is no second declaration to drift against.
+# covers `build_tarballs.jl`.
 INDEPENDENT_MEMBERS = {
-    "go/pecos-go-ffi": ForeignTrain("Go", None),
     "julia/pecos-julia-ffi": ForeignTrain("Julia", REPO_ROOT / "julia/PECOS.jl/Project.toml"),
 }
 
@@ -55,8 +52,6 @@ INDEPENDENT_MEMBERS = {
 # without this, dropping a crate from `[workspace].members` (or adding it to `exclude`)
 # would hide it from `cargo metadata` and silently take it off the train.
 STANDALONE_MANIFESTS = {
-    "crates/pecos-pymatching/tests/pymatching/crates/pecos-chromobius",
-    "crates/pecos-pymatching/tests/pymatching/crates/pecos-tesseract",
     "exp/zlup/ffi/zlup-ffi",
     "exp/zlup/fuzz",
     "python/quantum-pecos/tests/docs/rust_crate",

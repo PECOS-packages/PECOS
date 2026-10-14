@@ -24,7 +24,7 @@ Wrapper classes (for use with sim()):
     - Wat: WebAssembly text format programs
 
 Low-level program types (from pecos_rslib):
-    - Hugr, Qasm, Qis, PhirJson, Wasm, Wat
+    - Qasm, Qis, PhirJson, Wasm, Wat
 
 Example:
     >>> from pecos import sim, Qasm, Guppy
@@ -45,7 +45,7 @@ Example:
     >>>
     >>> # Guppy function
     >>> from guppylang import guppy
-    >>> from guppylang.std.quantum import qubit, h, measure
+    >>> from guppylang.std.quantum import qubit, h, cx, measure
     >>>
     >>> @guppy
     ... def my_circuit():
@@ -54,17 +54,17 @@ Example:
     ...     return measure(q).read()
     ...
     >>>
-    >>> results = sim(Guppy(my_circuit)).run(1000)
+    >>> results = sim(Guppy(my_circuit)).qubits(1).run(1000)
 """
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import pecos_rslib
+from pecos_rslib import hugr_lowering
 
 if TYPE_CHECKING:
     from pecos.typing import (
-        CompiledHugr,
         CompiledPhirJson,
         CompiledQasm,
         CompiledQis,
@@ -102,15 +102,15 @@ class HugrPackage(Protocol):
 class Guppy:
     """Wrapper for Guppy functions.
 
-    Converts Guppy-decorated functions to Hugr format for simulation.
+    Compiles Guppy-decorated functions through HUGR to QIS for simulation.
     The conversion is cached, so multiple calls will not recompile.
 
     Example:
         >>> from guppylang import guppy
-        >>> from guppylang.std.quantum import qubit, h, measure
+        >>> from guppylang.std.quantum import qubit, h, cx, measure
         >>>
         >>> @guppy
-        ... def bell_state():
+        ... def bell_state() -> tuple[bool, bool]:
         ...     q0, q1 = qubit(), qubit()
         ...     h(q0)
         ...     cx(q0, q1)
@@ -118,7 +118,7 @@ class Guppy:
         ...
         >>>
         >>> from pecos import sim, Guppy
-        >>> results = sim(Guppy(bell_state)).run(1000)
+        >>> results = sim(Guppy(bell_state)).qubits(2).run(1000)
     """
 
     def __init__(self, func: GuppyFunction) -> None:
@@ -131,34 +131,35 @@ class Guppy:
         """The wrapped ``@guppy`` definition (for compilation/certification)."""
         return self._func
 
-    def _to_program(self) -> "CompiledHugr":
+    @property
+    def hugr_bytes(self) -> bytes:
+        """The compiled HUGR envelope, from the shared Guppy compile cache."""
+        from pecos._compilation import guppy_to_hugr
+
+        return guppy_to_hugr(self._func)
+
+    def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            hugr_package = self._func.compile()
-            # Use the BINARY HUGR envelope (Model format). The Selene/QIS engine's
-            # HUGR reader does not accept the S-expression *text* envelope
-            # (`to_str`) -- loading it fails with "Failed to read HUGR" -- whereas the
-            # binary Model form round-trips cleanly, including CFG loops (while
-            # statements). (The `Hugr.from_bytes` sim loader is more permissive and
-            # accepts either, but the QIS engine path used for DEM tracing is not.)
-            hugr_bytes = hugr_package.to_bytes()
-            self._program = pecos_rslib.Hugr.from_bytes(hugr_bytes)
+            self._program = pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(self.hugr_bytes))
         return self._program
 
 
 class Hugr:
     """Wrapper for HUGR (Higher-order Unified Graph Representation) programs.
 
-    Accepts HUGR data as bytes or a file path.
+    Accepts HUGR data as bytes or a file path. Simulation lowers to QIS and
+    requires the selene-hugr-qis-compiler package, a built Selene runtime, and
+    explicit .qubits(N).
 
     Example:
         >>> from pecos import sim, Hugr
         >>>
         >>> # From bytes
-        >>> results = sim(Hugr(hugr_bytes)).run(1000)
+        >>> results = sim(Hugr(hugr_bytes)).qubits(2).run(1000)
         >>>
         >>> # From file
-        >>> results = sim(Hugr.from_file("program.hugr")).run(1000)
+        >>> results = sim(Hugr.from_file("program.hugr")).qubits(2).run(1000)
     """
 
     def __init__(self, data: bytes) -> None:
@@ -181,15 +182,14 @@ class Hugr:
     def from_bytes(cls, data: bytes) -> "Hugr":
         """Create from HUGR bytes.
 
-        This is an alias for the constructor, provided for API consistency
-        with the Rust Hugr type.
+        This is an alias for the constructor.
         """
         return cls(data)
 
-    def _to_program(self) -> "CompiledHugr":
+    def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = pecos_rslib.Hugr.from_bytes(self._data)
+            self._program = pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(self._data))
         return self._program
 
 

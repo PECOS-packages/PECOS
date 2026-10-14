@@ -14,7 +14,9 @@ if [ -z "$base" ]; then
   exit 0
 fi
 
-changed="$(git diff --name-only "$base"...HEAD)"
+# --no-renames: a printed rename shows only its destination, so moving code to an
+# ignored path (e.g. a root .md) would otherwise hide the deletion.
+changed="$(git diff --name-only --no-renames "$base"...HEAD)"
 {
   echo "Changed files:"
   printf '  %s\n' $changed
@@ -22,7 +24,7 @@ changed="$(git diff --name-only "$base"...HEAD)"
 
 # Allowlist of paths that PROVABLY cannot affect python-ci-core or
 # `pecos rust test`:
-#   - other-language CI workflows (julia/go/codeql) and issue templates
+#   - other-language CI workflows (julia/codeql) and issue templates
 #   - root-level prose only ([^/]+); root README/CHANGELOG are not pyproject
 #     `readme=` inputs (verified).
 # docs/ is intentionally NOT ignored: docs/assets/** holds test fixtures (e.g.
@@ -30,9 +32,11 @@ changed="$(git diff --name-only "$base"...HEAD)"
 # python/quantum-pecos/tests/docs/, both collected by the non-slow core
 # selection. Nested package READMEs (python/**/README.md) are also build inputs
 # and run. Anything not on the allowlist runs.
-ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|go-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
+ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
 
-if printf '%s\n' "$changed" | grep -qvE "$ignore"; then
+# Here-string, not `printf | grep -q`: under pipefail an early-exiting grep can
+# SIGPIPE the producer on a large diff and turn a match into "false".
+if grep -qvE "$ignore" <<<"$changed"; then
   echo "true"
 else
   echo "false"

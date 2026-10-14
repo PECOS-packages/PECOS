@@ -42,6 +42,7 @@ pub struct RelayBpBuilder<'a> {
     num_sets: usize,
     set_max_iter: usize,
     gamma_dist_interval: (f64, f64),
+    explicit_gammas: Option<Vec<Vec<f64>>>,
     stopping_criterion: StoppingCriterion,
     seed: u64,
 }
@@ -68,6 +69,7 @@ impl<'a> RelayBpBuilder<'a> {
             num_sets: relay_defaults.num_sets,
             set_max_iter: relay_defaults.set_max_iter,
             gamma_dist_interval: relay_defaults.gamma_dist_interval,
+            explicit_gammas: relay_defaults.explicit_gammas,
             stopping_criterion: relay_defaults.stopping_criterion,
             seed: relay_defaults.seed,
         }
@@ -139,6 +141,18 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
+    /// Supply explicit per-variable memory strengths for relay legs.
+    ///
+    /// Each inner vector is one gamma set and must contain one finite value per
+    /// check matrix column. Row zero is the first relay leg. Sets are reused
+    /// cyclically when there are fewer sets than relay legs. Supplying them
+    /// bypasses random gamma sampling.
+    #[must_use]
+    pub fn explicit_gammas(mut self, gammas: Vec<Vec<f64>>) -> Self {
+        self.explicit_gammas = Some(gammas);
+        self
+    }
+
     /// Set stopping criterion (default: `NConv { stop_after: 1 }`)
     #[must_use]
     pub fn stopping_criterion(mut self, criterion: StoppingCriterion) -> Self {
@@ -160,8 +174,10 @@ impl<'a> RelayBpBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::Configuration`] if error priors are not set.
-    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
+    /// Returns [`RelayBpError::Configuration`] if error priors are not set or
+    /// the gamma distribution interval is invalid.
+    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid
+    /// or an explicit gamma row does not match its column count.
     pub fn build(self) -> Result<RelayBpDecoder> {
         let error_priors = self.error_priors.ok_or_else(|| {
             crate::errors::RelayBpError::Configuration("error_priors must be set".to_string())
@@ -180,6 +196,7 @@ impl<'a> RelayBpBuilder<'a> {
             num_sets: self.num_sets,
             set_max_iter: self.set_max_iter,
             gamma_dist_interval: self.gamma_dist_interval,
+            explicit_gammas: self.explicit_gammas,
             stopping_criterion: self.stopping_criterion,
             seed: self.seed,
         };
@@ -301,6 +318,15 @@ mod tests {
         // enables memory across its ensemble by default.
         let min_sum = MinSumBpBuilder::new(&h.view());
         assert_eq!(min_sum.gamma0, None);
+    }
+
+    #[test]
+    fn relay_builder_accepts_explicit_gammas() {
+        let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
+        let gammas = vec![vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]];
+        let relay = RelayBpBuilder::new(&h.view()).explicit_gammas(gammas.clone());
+
+        assert_eq!(relay.explicit_gammas, Some(gammas));
     }
 
     #[test]

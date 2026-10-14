@@ -305,7 +305,7 @@ mod tests {
 
         assert_eq!(result.len(), 5);
         assert_eq!(result[0].2, vec![input_angle]);
-        assert!(result[1].2.is_empty());
+        assert_eq!(result[1].2, []);
         assert_eq!(result[2].2, vec![-input_angle]);
         assert_eq!(result[4].2, vec![fixed_angle]);
     }

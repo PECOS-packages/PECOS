@@ -132,7 +132,7 @@ mod tests {
         let _ = || {
             use pecos::sim;
             use pecos_engines::state_vector;
-            use pecos_programs::{Hugr, Qasm, Qis};
+            use pecos_programs::{Qasm, Qis};
 
             // QASM -> QASM engine
             let _qasm_results = sim(Qasm::from_string("OPENQASM 2.0; qreg q[1];"))
@@ -143,13 +143,6 @@ mod tests {
             // LLVM -> LLVM engine
             let _llvm_results = sim(Qis::from_string("define void @main() { ret void }"))
                 .quantum(state_vector())
-                .shots(10)
-                .run();
-
-            // HUGR -> Selene engine
-            let _hugr_results = sim(Hugr::from_bytes(vec![0x00, 0x01, 0x02]))
-                .quantum(state_vector())
-                .qubits(1)
                 .shots(10)
                 .run();
         };

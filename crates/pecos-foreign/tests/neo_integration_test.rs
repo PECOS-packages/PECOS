@@ -159,3 +159,14 @@ fn test_foreign_sim_derived_gates_via_neo() {
         "X on toy sim decomposes to H(SZ(SZ(H))) = double flip = |0>"
     );
 }
+
+#[test]
+#[should_panic(expected = "cannot apply exact T:")]
+fn test_foreign_sim_rejects_phase_inexact_t_via_neo() {
+    let mut commands = CommandQueue::new();
+    commands.push(GateCommand::new(pecos_neo::GateType::T, vec![QubitId(0)]));
+
+    let mut sim = make_toy_sim(1);
+    let mut runner = CircuitRunner::<ForeignSimulator>::rotations();
+    let _ = runner.apply_circuit(&mut sim, &commands);
+}

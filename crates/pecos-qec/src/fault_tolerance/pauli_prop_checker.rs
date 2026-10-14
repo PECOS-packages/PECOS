@@ -35,7 +35,7 @@
 //! circuit.tick().cx(&[(1, 3), (2, 4)]); // Second round
 //! circuit.tick().mz(&[3, 4]);           // Measure ancillas
 //!
-//! let checker = PauliPropChecker::new(&circuit);
+//! let checker = PauliPropChecker::new(&circuit).unwrap();
 //!
 //! // Analyze all weight-1 faults
 //! let z_ancillas = &[3, 4];
@@ -45,7 +45,8 @@
 //! println!("Total faults: {}", results.len());
 //! ```
 
-use super::propagator::{Direction, apply_gate};
+use super::propagator::UnsupportedGateError;
+use super::propagator::{Direction, apply_gate_unchecked, is_supported_prep_gate};
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, PauliFaultIterator,
     SpacetimeLocation,
@@ -307,13 +308,18 @@ pub(crate) fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Ga
         // The shared dispatcher keeps preps transparent and expects walkers
         // to clear at their own call sites; without this arm a stale ledger
         // entry would survive a re-preparation and read as a phantom flip.
-        GateType::PX | GateType::PZ | GateType::QAlloc | GateType::MPZ => {
+        gate_type if is_supported_prep_gate(gate_type) || gate_type == GateType::MPZ => {
             for q in &gate.qubits {
                 prop.clear_qubit(q.index());
             }
         }
         _ => {
-            apply_gate(prop, gate, Direction::Forward);
+            // Checker constructors and free propagation entries preflight with validate_tick_circuit.
+            let outcome = apply_gate_unchecked(prop, gate, Direction::Forward);
+            debug_assert_eq!(
+                outcome,
+                super::propagator::PauliPropagationOutcome::Propagated
+            );
         }
     }
 }
@@ -321,8 +327,19 @@ pub(crate) fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Ga
 /// Propagates a Pauli fault through a circuit using `PauliProp`.
 ///
 /// Returns the propagated `PauliProp` state after the circuit.
-#[must_use]
-pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+pub fn propagate_fault(
+    circuit: &TickCircuit,
+    fault: &PauliFault,
+) -> Result<PauliProp, UnsupportedGateError> {
+    super::propagator::validate_tick_circuit(circuit)?;
+    Ok(propagate_fault_validated(circuit, fault))
+}
+
+fn propagate_fault_validated(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
     let mut prop = init_pauli_prop_with_fault(fault);
 
     // Find the tick where the fault occurs
@@ -357,8 +374,22 @@ pub fn propagate_fault(circuit: &TickCircuit, fault: &PauliFault) -> PauliProp {
 /// Propagates multiple faults through a circuit.
 ///
 /// Each fault is injected at its own tick, either before or after that tick's gates.
-#[must_use]
-pub fn propagate_faults(circuit: &TickCircuit, faults: &FaultConfiguration) -> PauliProp {
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
+pub fn propagate_faults(
+    circuit: &TickCircuit,
+    faults: &FaultConfiguration,
+) -> Result<PauliProp, UnsupportedGateError> {
+    super::propagator::validate_tick_circuit(circuit)?;
+    Ok(propagate_faults_validated(circuit, faults))
+}
+
+pub(crate) fn propagate_faults_validated(
+    circuit: &TickCircuit,
+    faults: &FaultConfiguration,
+) -> PauliProp {
     let mut prop = PauliProp::new();
     let faults_by_tick = faults.by_tick();
 
@@ -1329,6 +1360,9 @@ impl FaultToleranceAnalysis {
 /// - **Has inputs** → Use s + r <= t enumeration (input faults + internal faults)
 /// - **Has outputs + ambiguous syndromes** → May need follow-up stabilizers
 /// - **No inputs, no outputs** → Self-contained, standard analysis
+///
+/// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct PauliPropChecker<'a> {
     circuit: &'a TickCircuit,
     config: FaultCheckConfig,
@@ -1343,16 +1377,19 @@ impl<'a> PauliPropChecker<'a> {
     /// Automatically analyzes the circuit's I/O structure to determine:
     /// - Which qubits are inputs (need s + r <= t enumeration)
     /// - Which qubits are outputs (may need follow-up syndrome analysis)
-    #[must_use]
-    pub fn new(circuit: &'a TickCircuit) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn new(circuit: &'a TickCircuit) -> Result<Self, UnsupportedGateError> {
+        super::propagator::validate_tick_circuit(circuit)?;
         let locations = super::circuit_runner::extract_spacetime_locations(circuit, false);
         let io = CircuitIO::from_circuit(circuit);
-        Self {
+        Ok(Self {
             circuit,
             config: FaultCheckConfig::default(),
             locations,
             io,
-        }
+        })
     }
 
     /// Sets the fault check configuration.
@@ -1382,7 +1419,7 @@ impl<'a> PauliPropChecker<'a> {
     }
 
     pub(crate) fn propagate_fault_configuration(&self, faults: &FaultConfiguration) -> PauliProp {
-        propagate_faults(self.circuit, faults)
+        propagate_faults_validated(self.circuit, faults)
     }
 
     /// Returns the detected input qubits.
@@ -1468,7 +1505,7 @@ impl<'a> PauliPropChecker<'a> {
             total_tested += 1;
 
             // Propagate faults through circuit
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             // Check if propagated error anticommutes with logical operator
             if anticommutes_with_logical(&prop, logical_xs, logical_zs) {
@@ -1503,7 +1540,7 @@ impl<'a> PauliPropChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             // Check against all logical operators
             let causes_error = logicals
@@ -1539,7 +1576,7 @@ impl<'a> PauliPropChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             if prop.weight() > max_output_weight {
                 failures.push(fault_config);
@@ -1586,7 +1623,7 @@ impl<'a> PauliPropChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let produces_syndrome = has_syndrome(&prop, z_ancillas, x_ancillas);
 
             // Failure if syndrome doesn't match expectation
@@ -1634,7 +1671,7 @@ impl<'a> PauliPropChecker<'a> {
         );
 
         for fault_config in fault_iter {
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             let (z_flips, x_flips) = get_syndrome_flips(&prop, z_ancillas, x_ancillas);
 
@@ -1699,7 +1736,7 @@ impl<'a> PauliPropChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let classification = classify_fault(&prop, z_ancillas, x_ancillas, logicals);
 
             match classification {
@@ -1759,7 +1796,7 @@ impl<'a> PauliPropChecker<'a> {
         );
 
         for fault_config in fault_iter {
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let classification = classify_fault(&prop, z_ancillas, x_ancillas, logicals);
 
             if classification == FaultClass::UndetectableLogicalError {
@@ -1810,7 +1847,7 @@ impl<'a> PauliPropChecker<'a> {
         );
 
         for fault_config in fault_iter {
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             // Get syndrome
             let syndrome = crate::fault_tolerance::decoder_integration::extract_syndrome(
@@ -1955,7 +1992,7 @@ impl<'a> PauliPropChecker<'a> {
             let history = compute_syndrome_history(self.circuit, fault, &rounds);
 
             // Propagate to end of circuit to check logical error
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let causes_logical = logicals
                 .iter()
                 .any(|(xs, zs)| anticommutes_with_logical(&prop, xs, zs));
@@ -2291,7 +2328,7 @@ impl<'a> PauliPropChecker<'a> {
 
         for fault_config in fault_iter {
             // Propagate fault through circuit
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             // Compute gadget syndrome (within-gadget ancilla measurements)
             let (z_flips, x_flips) = get_syndrome_flips(&prop, z_ancillas, x_ancillas);
@@ -2574,8 +2611,8 @@ mod tests {
         let fault = PauliFault::new(location, vec![1]);
         let faults = FaultConfiguration::with_faults(vec![fault.clone()]);
 
-        let single = propagate_fault(&circuit, &fault);
-        let multiple = propagate_faults(&circuit, &faults);
+        let single = propagate_fault(&circuit, &fault).unwrap();
+        let multiple = propagate_faults(&circuit, &faults).unwrap();
 
         assert_same_pauli_frame(&multiple, &single, "X fault after H at tick 0");
     }
@@ -2589,8 +2626,8 @@ mod tests {
         let fault = PauliFault::new(location, vec![1]);
         let faults = FaultConfiguration::with_faults(vec![fault.clone()]);
 
-        let single = propagate_fault(&circuit, &fault);
-        let multiple = propagate_faults(&circuit, &faults);
+        let single = propagate_fault(&circuit, &fault).unwrap();
+        let multiple = propagate_faults(&circuit, &faults).unwrap();
 
         assert_same_pauli_frame(&multiple, &single, "X fault before H at tick 0");
     }
@@ -2608,10 +2645,11 @@ mod tests {
             PauliFault::new(second_location, vec![1]),
         ]);
 
-        let prop = propagate_faults(&circuit, &faults);
+        let prop = propagate_faults(&circuit, &faults).unwrap();
 
         assert_eq!(prop.get_x_qubits(), vec![0, 1, 2]);
-        assert!(prop.get_z_qubits().is_empty());
+        let qubits = prop.get_z_qubits();
+        assert!(qubits.is_empty(), "expected no Z qubits, got {qubits:?}");
     }
 
     #[test]
@@ -2678,8 +2716,8 @@ mod tests {
                             );
                             let fault = PauliFault::new(location, vec![pauli]);
                             let faults = FaultConfiguration::with_faults(vec![fault.clone()]);
-                            let single = propagate_fault(&circuit, &fault);
-                            let multiple = propagate_faults(&circuit, &faults);
+                            let single = propagate_fault(&circuit, &fault).unwrap();
+                            let multiple = propagate_faults(&circuit, &faults).unwrap();
                             let context = format!(
                                 "circuit={circuit_index}, tick={tick}, qubit={qubit}, \
                                  before={before}, pauli={pauli}, has_gate={has_gate}"
@@ -2746,7 +2784,7 @@ mod tests {
             gate_index: 0,
         };
         let fault = PauliFault::new(loc, vec![1]); // X before the readout
-        let prop = propagate_fault(&circuit, &fault);
+        let prop = propagate_fault(&circuit, &fault).unwrap();
 
         assert_eq!(
             classify_fault(&prop, &[0], &[], &[]),
@@ -2780,7 +2818,7 @@ mod tests {
                 gate_index: 0,
             };
             let fault = PauliFault::new(loc, vec![1]);
-            propagate_fault(&circuit, &fault)
+            propagate_fault(&circuit, &fault).unwrap()
         };
         let fused = build(true);
         let split = build(false);
@@ -2812,7 +2850,7 @@ mod tests {
             gate_index: 0,
         };
         let fault = PauliFault::new(loc, vec![1]);
-        let prop = propagate_fault(&circuit, &fault);
+        let prop = propagate_fault(&circuit, &fault).unwrap();
         assert!(
             !prop.contains_x(0) && !prop.contains_z(0),
             "the re-preparation must clear the recorded flip from the ledger"
@@ -2921,7 +2959,7 @@ mod tests {
         circuit.tick().h(&[0]);
         circuit.tick().cx(&[(0, 1)]);
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         assert_eq!(checker.locations().len(), 2);
     }
 
@@ -2937,7 +2975,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Logical Z for Bell state is ZZ
         let logical_xs: &[usize] = &[];
@@ -2964,7 +3002,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Check that errors don't spread beyond weight 2
         let result = checker.check_error_weight(2);
@@ -2995,7 +3033,7 @@ mod tests {
             .x_only() // X errors for bit-flip code
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Logical X for 3-qubit bit-flip code: X0X1X2
         let logical_xs: &[usize] = &[0, 1, 2];
@@ -3022,7 +3060,7 @@ mod tests {
 
         let (z_flips, x_flips) = get_syndrome_flips(&prop, &[0, 1], &[]);
         assert_eq!(z_flips, vec![0]);
-        assert!(x_flips.is_empty());
+        assert!(x_flips.is_empty(), "expected no X flips, got {x_flips:?}");
     }
 
     #[test]
@@ -3061,7 +3099,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Check that weight-1 X errors produce syndromes
         let result = checker.check_syndrome_detection(&[3, 4], &[], true);
@@ -3103,7 +3141,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Analyze with Z-basis measurements on qubit 1
         let z_ancillas = &[1usize];
@@ -3264,7 +3302,7 @@ mod tests {
             vec![1],
         );
         let faults = FaultConfiguration::with_faults(vec![fault]);
-        let prop = propagate_faults(&circuit, &faults);
+        let prop = propagate_faults(&circuit, &faults).unwrap();
 
         assert!(
             !has_syndrome(&prop, z_ancillas, x_ancillas),
@@ -3293,7 +3331,7 @@ mod tests {
         circuit.tick().cx(&[(2, 4)]);
         circuit.tick().mz(&[3, 4]);
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         let expected_location =
             SpacetimeLocation::new(4, vec![QubitId(2), QubitId(4)], false, GateType::CX, 0);
         let generated = PauliFaultIterator::new(
@@ -3340,7 +3378,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Measure qubit 1 in Z basis, so X errors on qubit 1 are detected
         let z_ancillas = &[1usize];
@@ -3407,12 +3445,16 @@ mod tests {
         let x_ancillas: &[usize] = &[];
 
         // Analyze single round
-        let single_checker = PauliPropChecker::new(&single_round).with_config(config.clone());
+        let single_checker = PauliPropChecker::new(&single_round)
+            .unwrap()
+            .with_config(config.clone());
         let single_analysis =
             single_checker.analyze_fault_tolerance(z_ancillas, x_ancillas, logicals, false);
 
         // Analyze two rounds
-        let two_checker = PauliPropChecker::new(&two_rounds).with_config(config);
+        let two_checker = PauliPropChecker::new(&two_rounds)
+            .unwrap()
+            .with_config(config);
         let two_analysis =
             two_checker.analyze_fault_tolerance(z_ancillas, x_ancillas, logicals, false);
 
@@ -3469,7 +3511,7 @@ mod tests {
         let fault_config = FaultConfiguration::with_faults(vec![fault]);
 
         // Propagate through circuit
-        let prop = propagate_faults(&circuit, &fault_config);
+        let prop = propagate_faults(&circuit, &fault_config).unwrap();
 
         // Check: should have X on qubit 2, nothing on ancillas
         assert!(prop.contains_x(2), "X should be on qubit 2");
@@ -3535,7 +3577,7 @@ mod tests {
             vec![1],
         );
         let faults = FaultConfiguration::with_faults(vec![fault]);
-        let prop = propagate_faults(&circuit, &faults);
+        let prop = propagate_faults(&circuit, &faults).unwrap();
 
         assert!(
             !has_syndrome(&prop, z_ancillas, x_ancillas),
@@ -3569,7 +3611,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0])];
         let z_ancillas = &[1usize];
@@ -3631,7 +3673,7 @@ mod tests {
             vec![1],
         );
         let faults = FaultConfiguration::with_faults(vec![fault]);
-        let prop = propagate_faults(&circuit, &faults);
+        let prop = propagate_faults(&circuit, &faults).unwrap();
 
         assert!(
             !has_syndrome(&prop, z_ancillas, x_ancillas)
@@ -3674,7 +3716,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
 
@@ -3745,7 +3787,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // For this test, we check syndrome on ALL measured qubits (ancillas + data)
         // Any X error will flip SOME measurement result.
@@ -3823,7 +3865,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         // Logical Z = Z0, measure qubit 0
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0])];
@@ -3880,7 +3922,7 @@ mod tests {
             "State prep should have no input qubits"
         );
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         assert!(!checker.has_input_qubits());
     }
 
@@ -3901,7 +3943,7 @@ mod tests {
         let ancillas = detect_ancilla_qubits(&circuit);
         assert_eq!(ancillas, vec![3, 4], "Qubits 3, 4 should be ancillas");
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         assert!(checker.has_input_qubits());
         assert_eq!(checker.input_qubits(), &[0, 1, 2]);
     }
@@ -3970,7 +4012,7 @@ mod tests {
         circuit.tick().mz(&[3, 4]);
 
         let config = FaultCheckConfig::new().with_weight(1).x_only();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -4000,7 +4042,7 @@ mod tests {
         circuit.tick().mz(&[3, 4]);
 
         let config = FaultCheckConfig::new().with_weight(1).x_only();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         assert!(checker.has_input_qubits());
         assert_eq!(checker.input_qubits(), &[0, 1, 2]);
@@ -4035,7 +4077,7 @@ mod tests {
 
         // t = 1, X only
         let config = FaultCheckConfig::new().with_weight(1).x_only();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         assert_eq!(checker.input_qubits(), &[0, 1]);
 
@@ -4193,7 +4235,7 @@ mod tests {
         circuit.tick().mz(&[3, 4]);
 
         let config = FaultCheckConfig::new().with_weight(1).x_only();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -4221,7 +4263,7 @@ mod tests {
         circuit.tick().mz(&[3, 4]);
 
         let config = FaultCheckConfig::new().with_weight(1).x_only();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -4270,7 +4312,7 @@ mod tests {
         circuit.tick().mz(&[3, 4]);
 
         let config = FaultCheckConfig::new().with_weight(1).x_only();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -4334,7 +4376,7 @@ mod tests {
         circuit.tick().cx(&[(2, 4)]);
         circuit.tick().mz(&[3, 4]); // Ancillas measured
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         // Input qubits: data qubits 0, 1, 2 used but never prepared
         assert_eq!(checker.input_qubits().len(), 3);
@@ -4377,7 +4419,7 @@ mod tests {
         circuit.tick().cx(&[(0, 2)]);
         circuit.tick().mz(&[0, 1, 2]); // All measured
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         assert!(
             checker.input_qubits().is_empty(),
@@ -4402,7 +4444,7 @@ mod tests {
         circuit.tick().cx(&[(0, 2)]);
         // No measurement - outputs go to next stage
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         assert!(
             checker.input_qubits().is_empty(),
@@ -4424,7 +4466,7 @@ mod tests {
         // No prep - qubits come from previous stage
         circuit.tick().mz(&[0, 1, 2]); // Measure all
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         assert_eq!(checker.input_qubits().len(), 3, "All qubits are inputs");
         assert!(
@@ -4450,7 +4492,7 @@ mod tests {
         circuit.tick().cx(&[(2, 4)]);
         circuit.tick().mz(&[3, 4]);
 
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
 
         // The checker should have detected the I/O structure
         assert!(
@@ -4476,7 +4518,7 @@ mod tests {
         circuit.tick().mz(&[2]);
 
         let config = FaultCheckConfig::new().with_weight(1).all_paulis();
-        let checker = PauliPropChecker::new(&circuit).with_config(config);
+        let checker = PauliPropChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[2];
         let x_ancillas: &[usize] = &[];

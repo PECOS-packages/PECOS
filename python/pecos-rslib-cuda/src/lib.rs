@@ -16,12 +16,13 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, Gate, QubitId};
 use pecos_cuquantum::{
-    ArbitraryRotationGateable, CliffordGateable, CuDensityMat, CuStabilizer, CuStateVec,
-    CuTensorNet, QuantumSimulator, is_cudensitymat_usable as cudensitymat_usable,
-    is_cuquantum_available as cuquantum_available, is_custabilizer_usable as custabilizer_usable,
-    is_custatevec_usable as custatevec_usable, is_cutensornet_usable as cutensornet_usable,
+    ArbitraryRotationGateable, CliffordGateable, CuDensityMat, CuStateVec, CuTensorNet,
+    QuantumSimulator, is_cudensitymat_usable as cudensitymat_usable,
+    is_cuquantum_available as cuquantum_available, is_custatevec_usable as custatevec_usable,
+    is_cutensornet_usable as cutensornet_usable,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -38,12 +39,6 @@ fn is_cuquantum_available() -> bool {
 #[pyfunction]
 fn is_custatevec_usable() -> bool {
     custatevec_usable()
-}
-
-/// Check if the cuStabilizer backend can create a frame simulator on this system.
-#[pyfunction]
-fn is_custabilizer_usable() -> bool {
-    custabilizer_usable()
 }
 
 /// Check if the cuTensorNet backend can create a handle on this system.
@@ -74,6 +69,35 @@ fn is_cudensitymat_usable() -> bool {
 #[pyclass(name = "CuStateVec", unsendable)]
 struct PyCuStateVec {
     inner: CuStateVec,
+}
+
+impl PyCuStateVec {
+    fn apply_lowered_controlled_rotation(&mut self, gates: impl IntoIterator<Item = Gate>) {
+        for gate in gates {
+            match gate.gate_type {
+                GateType::Z => {
+                    self.inner.z(&gate.qubits);
+                }
+                GateType::H => {
+                    self.inner.h(&gate.qubits);
+                }
+                GateType::SX => {
+                    self.inner.sx(&gate.qubits);
+                }
+                GateType::SXdg => {
+                    self.inner.sxdg(&gate.qubits);
+                }
+                GateType::RZ => {
+                    self.inner.rz(gate.angles[0], &gate.qubits);
+                }
+                GateType::RZZ => {
+                    self.inner
+                        .rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]);
+                }
+                _ => unreachable!("controlled-rotation lowering emitted an unexpected gate"),
+            }
+        }
+    }
 }
 
 #[pymethods]
@@ -422,37 +446,52 @@ impl PyCuStateVec {
         self.inner.rzz(Angle64::from_radians(angle), &pairs);
     }
 
-    /// Apply controlled-RX gate. Pairs of qubits = (control, target).
-    fn crx(&mut self, angle: f64, qubits: Vec<usize>) {
+    /// Apply RXYXY2Q with angles (theta, phi) in radians.
+    fn rxyxy2q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
             .iter()
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
-        self.inner.crx(Angle64::from_radians(angle), &pairs);
+        self.inner.rxyxy2q(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &pairs,
+        );
+    }
+
+    /// Apply controlled-RX gate. Pairs of qubits = (control, target).
+    fn crx(&mut self, angle: f64, qubits: Vec<usize>) {
+        for pair in qubits.as_chunks::<2>().0 {
+            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crx(
+                angle,
+                QubitId(pair[0]),
+                QubitId(pair[1]),
+            ));
+        }
     }
 
     /// Apply controlled-RY gate. Pairs of qubits = (control, target).
     fn cry(&mut self, angle: f64, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.cry(Angle64::from_radians(angle), &pairs);
+        for pair in qubits.as_chunks::<2>().0 {
+            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_cry(
+                angle,
+                QubitId(pair[0]),
+                QubitId(pair[1]),
+            ));
+        }
     }
 
     /// Apply controlled-RZ gate. Pairs of qubits = (control, target).
     fn crz(&mut self, angle: f64, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.crz(Angle64::from_radians(angle), &pairs);
+        for pair in qubits.as_chunks::<2>().0 {
+            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crz(
+                angle,
+                QubitId(pair[0]),
+                QubitId(pair[1]),
+            ));
+        }
     }
 
     /// Apply U gate (general single-qubit rotation).
@@ -466,10 +505,10 @@ impl PyCuStateVec {
         );
     }
 
-    /// Apply R1XY gate (rotation in XY plane).
-    fn r1xy(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
+    /// Apply RXY1Q gate (rotation in XY plane).
+    fn rxy1q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.r1xy(
+        self.inner.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qubits,
@@ -527,345 +566,6 @@ impl PyCuStateVec {
     ///     where bit i corresponds to qubit i.
     fn sample(&mut self, num_samples: usize) -> Vec<u64> {
         self.inner.sample(num_samples)
-    }
-}
-
-/// GPU-accelerated stabilizer quantum simulator using cuQuantum.
-///
-/// This simulator can handle thousands of qubits efficiently, but only supports
-/// Clifford gates (no T gates or arbitrary rotations).
-///
-/// Args:
-///     `num_qubits`: Number of qubits to simulate.
-///
-/// Example:
-///     >>> sim = CuStabilizerSim(100)
-///     >>> sim.h([0])
-///     >>> sim.cx([0, 1])
-///     >>> results = sim.mz([0, 1])
-#[pyclass(name = "CuStabilizer", unsendable)]
-struct PyCuStabilizer {
-    inner: CuStabilizer,
-}
-
-#[pymethods]
-impl PyCuStabilizer {
-    /// Create a new stabilizer simulator with the given number of qubits.
-    #[new]
-    fn new(num_qubits: usize) -> PyResult<Self> {
-        let inner =
-            CuStabilizer::new(num_qubits).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(Self { inner })
-    }
-
-    /// Create a new stabilizer simulator with a specific random seed.
-    #[staticmethod]
-    fn with_seed(num_qubits: usize, seed: u64) -> PyResult<Self> {
-        let inner = CuStabilizer::with_seed_result(num_qubits, seed)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(Self { inner })
-    }
-
-    /// Get the number of qubits in this simulator.
-    #[getter]
-    fn num_qubits(&self) -> usize {
-        self.inner.num_qubits()
-    }
-
-    /// Reset the simulator to the |0...0> state.
-    fn reset(&mut self) {
-        self.inner.reset();
-    }
-
-    // =========================================================================
-    // Clifford gates
-    // =========================================================================
-
-    /// Apply Hadamard gate to the specified qubits.
-    fn h(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h(&qubits);
-    }
-
-    /// Apply Pauli X gate to the specified qubits.
-    fn x(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.x(&qubits);
-    }
-
-    /// Apply Pauli Y gate to the specified qubits.
-    fn y(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.y(&qubits);
-    }
-
-    /// Apply Pauli Z gate to the specified qubits.
-    fn z(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.z(&qubits);
-    }
-
-    /// Apply S gate (sqrt(Z)) to the specified qubits.
-    fn s(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sz(&qubits);
-    }
-
-    /// Apply S-dagger gate to the specified qubits.
-    fn sdg(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.szdg(&qubits);
-    }
-
-    /// Apply CNOT (CX) gate. First qubit is control, second is target.
-    fn cx(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.cx(&pairs);
-    }
-
-    /// Apply CY gate. First qubit is control, second is target.
-    fn cy(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.cy(&pairs);
-    }
-
-    /// Apply CZ gate.
-    fn cz(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.cz(&pairs);
-    }
-
-    /// Apply SWAP gate.
-    fn swap(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.swap(&pairs);
-    }
-
-    /// Apply iSWAP gate.
-    fn iswap(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.iswap(&pairs);
-    }
-
-    /// Apply sqrt(X) gate.
-    fn sx(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sx(&qubits);
-    }
-
-    /// Apply sqrt(X)-dagger gate.
-    fn sxdg(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sxdg(&qubits);
-    }
-
-    /// Apply sqrt(Y) gate.
-    fn sy(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sy(&qubits);
-    }
-
-    /// Apply sqrt(Y)-dagger gate.
-    fn sydg(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sydg(&qubits);
-    }
-
-    /// Apply sqrt(Z) gate (same as S).
-    fn sz(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sz(&qubits);
-    }
-
-    /// Apply sqrt(Z)-dagger gate (same as Sdg).
-    fn szdg(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.szdg(&qubits);
-    }
-
-    /// Apply sqrt(XX) gate.
-    fn sxx(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.sxx(&pairs);
-    }
-
-    /// Apply sqrt(XX)-dagger gate.
-    fn sxxdg(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.sxxdg(&pairs);
-    }
-
-    /// Apply sqrt(YY) gate.
-    fn syy(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.syy(&pairs);
-    }
-
-    /// Apply sqrt(YY)-dagger gate.
-    fn syydg(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.syydg(&pairs);
-    }
-
-    /// Apply sqrt(ZZ) gate.
-    fn szz(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.szz(&pairs);
-    }
-
-    /// Apply sqrt(ZZ)-dagger gate.
-    fn szzdg(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.szzdg(&pairs);
-    }
-
-    /// Apply F gate (face rotation X->Y->Z->X).
-    fn f(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.f(&qubits);
-    }
-
-    /// Apply F-dagger gate.
-    fn fdg(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.fdg(&qubits);
-    }
-
-    /// Apply H2 gate (Z*H*Z).
-    fn h2(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h2(&qubits);
-    }
-
-    /// Apply H3 gate.
-    fn h3(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h3(&qubits);
-    }
-
-    /// Apply H4 gate.
-    fn h4(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h4(&qubits);
-    }
-
-    /// Apply H5 gate.
-    fn h5(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h5(&qubits);
-    }
-
-    /// Apply H6 gate.
-    fn h6(&mut self, qubits: Vec<usize>) {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h6(&qubits);
-    }
-
-    /// Apply G gate (Quantinuum native two-qubit gate).
-    fn g(&mut self, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.g(&pairs);
-    }
-
-    // =========================================================================
-    // Measurement
-    // =========================================================================
-
-    /// Measure qubits in the X basis.
-    fn mx(&mut self, qubits: Vec<usize>) -> Vec<u8> {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        let results = self.inner.mx(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
-    }
-
-    /// Measure qubits in the -X basis.
-    fn mnx(&mut self, qubits: Vec<usize>) -> Vec<u8> {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        let results = self.inner.mnx(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
-    }
-
-    /// Measure qubits in the Y basis.
-    fn my(&mut self, qubits: Vec<usize>) -> Vec<u8> {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        let results = self.inner.my(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
-    }
-
-    /// Measure qubits in the -Y basis.
-    fn mny(&mut self, qubits: Vec<usize>) -> Vec<u8> {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        let results = self.inner.mny(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
-    }
-
-    /// Measure qubits in the Z basis.
-    ///
-    /// Returns a list of measurement results (0 or 1) for each qubit.
-    fn mz(&mut self, qubits: Vec<usize>) -> Vec<u8> {
-        let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        let results = self.inner.mz(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
     }
 }
 
@@ -967,13 +667,11 @@ fn pecos_rslib_cuda(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add availability check functions
     m.add_function(wrap_pyfunction!(is_cuquantum_available, m)?)?;
     m.add_function(wrap_pyfunction!(is_custatevec_usable, m)?)?;
-    m.add_function(wrap_pyfunction!(is_custabilizer_usable, m)?)?;
     m.add_function(wrap_pyfunction!(is_cutensornet_usable, m)?)?;
     m.add_function(wrap_pyfunction!(is_cudensitymat_usable, m)?)?;
 
     // Add simulator classes
     m.add_class::<PyCuStateVec>()?;
-    m.add_class::<PyCuStabilizer>()?;
     m.add_class::<PyCuTensorNet>()?;
     m.add_class::<PyCuDensityMat>()?;
 

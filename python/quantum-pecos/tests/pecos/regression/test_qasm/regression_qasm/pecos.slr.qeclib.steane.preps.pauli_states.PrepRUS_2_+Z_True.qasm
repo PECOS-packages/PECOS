@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 barrier ;
 reset q_test[0];
 reset q_test[1];

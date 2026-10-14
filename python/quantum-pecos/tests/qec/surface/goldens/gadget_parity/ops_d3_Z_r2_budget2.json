@@ -1,0 +1,1953 @@
+{
+ "allocation": {
+  "data": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8
+  ],
+  "x_anc": [
+   9,
+   9,
+   9,
+   9
+  ],
+  "z_anc": [
+   10,
+   10,
+   10,
+   10
+  ]
+ },
+ "ops": [
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "prep_z_basis"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    0
+   ],
+   "label": "data[0]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    1
+   ],
+   "label": "data[1]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    2
+   ],
+   "label": "data[2]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    3
+   ],
+   "label": "data[3]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    4
+   ],
+   "label": "data[4]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    5
+   ],
+   "label": "data[5]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    6
+   ],
+   "label": "data[6]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    7
+   ],
+   "label": "data[7]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    8
+   ],
+   "label": "data[8]"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "init_x_syndrome"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    0
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    2
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    5
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    4
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    4
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    3
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    7
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    6
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    8
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    7
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "syndrome_extraction round 1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az0"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    10
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    6,
+    10
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    0
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    2
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    1,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    5
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    0,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    4
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    4
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    3
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    8,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    7
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    6
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    7,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    8
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    7
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    2,
+    10
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    10
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx3"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "syndrome_extraction round 2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az0"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    10
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    6,
+    10
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    0
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz0"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    2
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    1,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    5
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    0,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    4
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    10
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz1"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    4
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    3
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    8,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    7
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    6
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    7,
+    10
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Prepare ancillas"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "az3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    8
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    7
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    2,
+    10
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    10
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx3"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sz3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "measure_z_basis"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    0
+   ],
+   "label": "final[0]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    1
+   ],
+   "label": "final[1]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    2
+   ],
+   "label": "final[2]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    3
+   ],
+   "label": "final[3]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    4
+   ],
+   "label": "final[4]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    5
+   ],
+   "label": "final[5]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    6
+   ],
+   "label": "final[6]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    7
+   ],
+   "label": "final[7]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    8
+   ],
+   "label": "final[8]"
+  }
+ ]
+}

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 import pecos as pc
 from pecos.simulators.custatevec._cuquantum_compat import cp, cusv
-from pecos.simulators.custatevec.gates_one_qubit import H
+from pecos.simulators.custatevec.gates_one_qubit import RZ, SX, H, SXdg
 
 
 def _apply_controlled_matrix(
@@ -273,6 +273,26 @@ def RYY(
     _apply_two_qubit_matrix(state, qubits, matrix)
 
 
+def RXYXY2Q(
+    state: CuStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float, float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Apply the phase-exact shared XY-axis two-qubit rotation matrix."""
+    if len(angles) != 2:
+        msg = "RXYXY2Q requires exactly 2 angle parameters."
+        raise ValueError(msg)
+    theta, phi = angles
+    c = cmath.cos(theta / 2)
+    s = -1j * cmath.sin(theta / 2)
+    matrix = cp.asarray(
+        [c, 0, 0, s * cmath.exp(-2j * phi), 0, c, s, 0, 0, s, c, 0, s * cmath.exp(2j * phi), 0, 0, c],
+        dtype=state.cp_type,
+    )
+    _apply_two_qubit_matrix(state, qubits, matrix)
+
+
 def RZZ(
     state: CuStateVec,
     qubits: tuple[int, int],
@@ -322,21 +342,13 @@ def CRX(
     angles: tuple[float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Controlled-RX gate (qubits[0] = control, qubits[1] = target).
-
-    Uses `_apply_controlled_matrix` so only the 2x2 RX(theta) action on
-    the target is passed; cuStateVec handles the controlled gating
-    internally. RX(theta) = [[cos(theta/2), -i sin(theta/2)],
-                              [-i sin(theta/2), cos(theta/2)]].
-    """
+    """Lower controlled-RX at the simulator boundary."""
     if len(angles) != 1:
         msg = "CRX gate requires exactly 1 angle parameter."
         raise ValueError(msg)
-    theta = float(angles[0])
-    c = cmath.cos(theta / 2)
-    s = cmath.sin(theta / 2)
-    matrix = cp.asarray([c, -1j * s, -1j * s, c], dtype=state.cp_type)
-    _apply_controlled_matrix(state, qubits[0], qubits[1], matrix)
+    H(state, qubits[1])
+    CRZ(state, qubits, angles)
+    H(state, qubits[1])
 
 
 def CRY(
@@ -345,20 +357,13 @@ def CRY(
     angles: tuple[float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Controlled-RY gate (qubits[0] = control, qubits[1] = target).
-
-    Uses `_apply_controlled_matrix` with the 2x2 RY(theta) on target.
-    RY(theta) = [[cos(theta/2), -sin(theta/2)],
-                  [sin(theta/2), cos(theta/2)]].
-    """
+    """Lower controlled-RY at the simulator boundary."""
     if len(angles) != 1:
         msg = "CRY gate requires exactly 1 angle parameter."
         raise ValueError(msg)
-    theta = float(angles[0])
-    c = cmath.cos(theta / 2)
-    s = cmath.sin(theta / 2)
-    matrix = cp.asarray([c, -s, s, c], dtype=state.cp_type)
-    _apply_controlled_matrix(state, qubits[0], qubits[1], matrix)
+    SX(state, qubits[1])
+    CRZ(state, qubits, angles)
+    SXdg(state, qubits[1])
 
 
 def CRZ(
@@ -367,20 +372,13 @@ def CRZ(
     angles: tuple[float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Controlled-RZ gate (qubits[0] = control, qubits[1] = target).
-
-    Uses `_apply_controlled_matrix` with the 2x2 RZ(theta) on target.
-    RZ(theta) = diag(exp(-i theta/2), exp(i theta/2)).
-    """
+    """Lower controlled-RZ at the simulator boundary."""
     if len(angles) != 1:
         msg = "CRZ gate requires exactly 1 angle parameter."
         raise ValueError(msg)
-    theta = float(angles[0])
-    matrix = cp.asarray(
-        [cmath.exp(-1j * theta / 2), 0, 0, cmath.exp(1j * theta / 2)],
-        dtype=state.cp_type,
-    )
-    _apply_controlled_matrix(state, qubits[0], qubits[1], matrix)
+    half_theta = float(angles[0]) / 2
+    RZZ(state, qubits, (-half_theta,))
+    RZ(state, qubits[1], (half_theta,))
 
 
 def RXXRYYRZZ(

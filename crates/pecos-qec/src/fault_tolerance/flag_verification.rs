@@ -189,7 +189,7 @@ mod tests {
         flag_qubits: &[usize],
         t: usize,
     ) -> FlagFaultToleranceReport {
-        let checker = PauliPropChecker::new(circuit);
+        let checker = PauliPropChecker::new(circuit).unwrap();
         checker.verify_flag_fault_tolerance(data_qubits, flag_qubits, (STABILIZER_XS, &[]), t)
     }
 
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn stabilizer_equivalent_weight_prevents_false_violation() {
         let circuit = weight_four_x_measurement(false);
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         let fault = checker
             .locations()
             .iter()
@@ -230,7 +230,7 @@ mod tests {
             .clone();
         let faults =
             FaultConfiguration::with_faults(vec![super::super::PauliFault::new(fault, vec![1, 0])]);
-        let prop = propagate_faults(&circuit, &faults);
+        let prop = propagate_faults(&circuit, &faults).unwrap();
 
         // The X fault on the measurement ancilla after CX(a, 0) propagates through the remaining
         // data couplings, so E = X1 X2 X3 and wt(E) = 3. For P = X0 X1 X2 X3,
@@ -263,7 +263,7 @@ mod tests {
         const WEIGHT_SIX_FLAG: &[usize] = &[7];
 
         let circuit = weight_six_single_flag_x_measurement();
-        let checker = PauliPropChecker::new(&circuit);
+        let checker = PauliPropChecker::new(&circuit).unwrap();
         let one_fault_report = checker.verify_flag_fault_tolerance(
             WEIGHT_SIX_DATA,
             WEIGHT_SIX_FLAG,

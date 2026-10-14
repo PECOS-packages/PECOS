@@ -2,6 +2,7 @@ name: GitHub Actions Security Check
 
 on:
   push:
+    tags: [ "py-*", "jl-*", "rs-*" ]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - '.github/workflows/**'
@@ -21,14 +22,18 @@ on:
       - '.github/zizmor.yaml'
       - 'action.yml'
       - 'action.yaml'
+  workflow_dispatch:
   schedule:
-    - cron: "31 8 * * 1"
+    - cron: "25 5 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:

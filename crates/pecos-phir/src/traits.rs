@@ -83,18 +83,27 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::Sdg
         | QuantumOp::T
         | QuantumOp::Tdg
+        | QuantumOp::SX
+        | QuantumOp::SXdg
         | QuantumOp::RX(_)
         | QuantumOp::RY(_)
         | QuantumOp::RZ(_)
-        | QuantumOp::R1XY(_, _)
+        | QuantumOp::RXY1Q(_, _)
         | QuantumOp::U3(_, _, _)
         | QuantumOp::CX
         | QuantumOp::CY
         | QuantumOp::CZ
         | QuantumOp::CH
         | QuantumOp::SWAP
+        | QuantumOp::SXX
+        | QuantumOp::SXXdg
+        | QuantumOp::SYY
+        | QuantumOp::SYYdg
+        | QuantumOp::SZZ
+        | QuantumOp::SZZdg
         | QuantumOp::CPhase(_)
-        | QuantumOp::RZZ(_) => {
+        | QuantumOp::RZZ(_)
+        | QuantumOp::RXYXY2Q(_, _) => {
             traits.insert(PureQuantum);
             traits.insert(NoSideEffect);
         }
@@ -144,10 +153,17 @@ fn get_classical_traits(c_op: &crate::ops::ClassicalOp) -> BTreeSet<OpTrait> {
         }
         // Non-commutative arithmetic
         ClassicalOp::Sub
+        | ClassicalOp::UDiv
+        | ClassicalOp::UMod
         | ClassicalOp::Div
         | ClassicalOp::Mod
         | ClassicalOp::FSub
-        | ClassicalOp::FDiv => {
+        | ClassicalOp::FDiv
+        | ClassicalOp::LShr(_)
+        | ClassicalOp::ULt
+        | ClassicalOp::ULe
+        | ClassicalOp::UGt
+        | ClassicalOp::UGe => {
             traits.insert(NoSideEffect);
         }
         // Unary operations

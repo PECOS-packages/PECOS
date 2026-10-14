@@ -16,6 +16,8 @@ Defines simulator traits and provides native Rust quantum simulator implementati
 
 - `StateVec` - Full state vector simulator
 - `DensityMatrix` - Density matrix simulator
+- `QuditStateVec` / `QutritStateVec` - Physical multilevel state-vector trajectories
+- `QuditDensityMatrix` / `QutritDensityMatrix` - Exact small-system multilevel evolution
 - `SparseStab` - Sparse stabilizer simulator
 - `SymbolicSparseStab` - Symbolic sparse stabilizer (tracks measurement history)
 - `StabilizerTableauSimulator` - Tableau-based stabilizer simulator
@@ -27,3 +29,63 @@ Defines simulator traits and provides native Rust quantum simulator implementati
 - `PauliProp` - Pauli propagation through circuits
 - `Gens`, `SymbolicGens` - Generator representations
 - `PhaseSign`, `SignAlgebra` - Sign algebra for stabilizer phases
+
+## Qutrit and Qudit Simulation
+
+The generalized simulators use a uniform local dimension. Their qutrit wrappers
+fix that dimension to three, use the physical basis `|0>, |1>, |L>`, and are
+designed for leakage studies and independent noise-model verification:
+
+```rust
+use num_complex::Complex64;
+use pecos_simulators::{QutritDensityMatrix, qutrit_leakage_channel};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let inv_sqrt_two = 1.0 / 2.0_f64.sqrt();
+    let h = [
+        Complex64::new(inv_sqrt_two, 0.0),
+        Complex64::new(inv_sqrt_two, 0.0),
+        Complex64::new(inv_sqrt_two, 0.0),
+        Complex64::new(-inv_sqrt_two, 0.0),
+    ];
+
+    let mut state = QutritDensityMatrix::with_seed(1, 42)?;
+    state
+        .apply_embedded_qubit_unitary(0, &h)?
+        .apply_kraus(&[0], &qutrit_leakage_channel(0.01)?)?;
+    let probabilities = state.outcome_probabilities(0)?;
+    println!("{probabilities:?}");
+    Ok(())
+}
+```
+
+Site zero is the least-significant radix digit. In a multi-site operation,
+`targets[0]` is likewise the least-significant local-matrix digit. Arbitrary
+one- and two-site unitaries can include coherent coupling to leakage levels;
+embedded qubit unitaries leave all non-computational levels unchanged.
+
+`QuditStateVec` stores `d^N` amplitudes and samples Kraus trajectories.
+`QuditDensityMatrix` stores an exact `d^N` by `d^N` operator and applies Kraus
+channels without sampling. The density-matrix backend is therefore intended only
+for small reference problems. It provides reduced density matrices and numerical
+trace, Hermiticity, and positive-semidefiniteness diagnostics.
+
+Trajectory Kraus samples report both the selected operator and its pre-collapse
+probability. Generalized measurement instruments group one or more Kraus
+operators into each reported outcome; the state-vector backend samples an
+individual pure-state branch while the density-matrix backend retains the exact
+conditional mixed state. Joint basis measurements and coarse-grained projective
+partitions are also supported on arbitrary target sets.
+
+Constructing a density-matrix simulator from external data validates trace,
+Hermiticity, and positive semidefiniteness by default. The `required_memory_bytes`
+helpers estimate primary dense storage before construction. Primary state allocations
+use fallible reservation, but operations and diagnostics can require comparably sized
+temporary buffers, so callers should retain memory headroom beyond that estimate.
+
+State-vector `reset_site` samples a trajectory branch and consumes randomness. The
+density-matrix implementation applies the exact reset channel without sampling.
+
+Full measurement reports any local basis level. Computational measurement is
+strict: it returns an error when a site has population outside `|0>, |1>`, avoiding
+an implicit device-specific rule for assigning leakage to a detector outcome.

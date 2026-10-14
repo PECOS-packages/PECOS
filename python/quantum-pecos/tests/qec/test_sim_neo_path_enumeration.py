@@ -20,11 +20,8 @@ one result row, with its exact probability in `result.weights`.
 from __future__ import annotations
 
 import pytest
-
-pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
-
-from pecos.quantum import TickCircuit  # noqa: E402
-from pecos_rslib_exp import (  # noqa: E402
+from pecos.quantum import TickCircuit
+from pecos_rslib_exp import (
     depolarizing,
     monte_carlo,
     path_enumeration,

@@ -17,7 +17,7 @@ This module provides:
 - JSON-like types for gate parameters
 - Protocol definitions for PECOS interfaces
 - Generic Array type for dtype-parameterized arrays
-- Compiled program types (CompiledHugr, CompiledQasm, etc.) for type annotations
+- Compiled program types (CompiledQis, CompiledQasm, etc.) for type annotations
 - PhirModel re-export for PHIR program handling
 """
 
@@ -68,7 +68,12 @@ from phir.model import (
 from phir.model import (
     SeqBlock as _SeqBlock,
 )
+from phir.model import (
+    TQOp as _TQOp,
+)
 from pydantic import model_validator
+
+from pecos._phir_declarations import validate_declaration_names
 
 
 class _PecosCVarDefine(_CVarDefine):
@@ -121,7 +126,29 @@ class ResultCOp(_Op):
     returns: list[str]
 
 
-_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | _QOp | _MOpType | _Barrier
+class RXYXY2QOp(_TQOp):
+    """PECOS-specific two-qubit XY-plane rotation with angles theta and phi.
+
+    This operation is a PECOS extension, not part of the upstream PHIR
+    specification. Qubit pairs and angle units follow the upstream TQOp model.
+    """
+
+    qop: Literal["RXYXY2Q"]
+
+    @model_validator(mode="after")
+    def check_angles(self) -> RXYXY2QOp:
+        """Require exactly two angles and at least one qubit pair."""
+        match self.angles:
+            case ([_, _], _):
+                if self.args:
+                    return self
+                msg = "RXYXY2Q requires at least one qubit pair."
+            case _:
+                msg = "RXYXY2Q requires exactly two angles (theta, phi)."
+        raise ValueError(msg)
+
+
+_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _QOp | _MOpType | _Barrier
 
 
 class _PecosSeqBlock(_SeqBlock):
@@ -137,16 +164,23 @@ class _PecosIfBlock(_IfBlock):
     false_branch: list[_PecosOpType | _PecosBlockType] | None = None  # type: ignore[assignment]
 
 
-_PecosBlockType: TypeAlias = _PecosSeqBlock | _QParBlock | _PecosIfBlock
+class _PecosQParBlock(_QParBlock):
+    """QParBlock extended with PECOS-specific quantum operations."""
+
+    ops: list[_QOp | RXYXY2QOp]
+
+
+_PecosBlockType: TypeAlias = _PecosSeqBlock | _PecosQParBlock | _PecosIfBlock
 _PecosCmd: TypeAlias = _PecosDataMgmt | _PecosOpType | _PecosBlockType | _Comment
 
 
 class PhirModel(_PHIRModel):
-    """PHIR model extended with PECOS-specific classical operations.
+    """PHIR model extended with PECOS-specific classical and quantum operations.
 
     Adds support for the ``Result`` cop used by PECOS ``HybridEngine`` to
-    map internal measurement registers to external result variables. Fully
-    backwards-compatible with upstream PHIR programs.
+    map internal measurement registers to external result variables. Enforces
+    PHIR-JSON's program-wide uniqueness of declared names. Also supports the
+    two-angle, two-qubit ``RXYXY2Q`` quantum operation.
 
     The upstream ``phir.model.PHIRModel`` rejects programs containing
     ``Result`` cops because ``Result`` is not in the PHIR specification.
@@ -155,6 +189,12 @@ class PhirModel(_PHIRModel):
     """
 
     ops: list[_PecosCmd]  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _check_declaration_names(self) -> PhirModel:
+        """Enforce PHIR-JSON v0.1's unique-name rule for both declaration kinds."""
+        validate_declaration_names(self.model_dump()["ops"])
+        return self
 
 
 _PecosSeqBlock.model_rebuild()
@@ -413,8 +453,6 @@ class GraphProtocol(Protocol):
 if TYPE_CHECKING:
     import pecos_rslib.programs as programs_rs
 
-    #: Compiled HUGR program type from pecos_rslib
-    CompiledHugr: TypeAlias = programs_rs.Hugr
     #: Compiled PHIR JSON program type from pecos_rslib
     CompiledPhirJson: TypeAlias = programs_rs.PhirJson
     #: Compiled QASM program type from pecos_rslib
@@ -427,9 +465,7 @@ if TYPE_CHECKING:
     CompiledWat: TypeAlias = programs_rs.Wat
 
     #: Union type for any compiled program that can be passed to the simulator
-    CompiledProgram: TypeAlias = (
-        CompiledHugr | CompiledQasm | CompiledQis | CompiledPhirJson | CompiledWasm | CompiledWat
-    )
+    CompiledProgram: TypeAlias = CompiledQasm | CompiledQis | CompiledPhirJson | CompiledWasm | CompiledWat
 
 
 # =============================================================================
@@ -498,7 +534,6 @@ __all__ = [
     "SIGNED_INTEGER_TYPES",
     "UNSIGNED_INTEGER_TYPES",
     "Array",
-    "CompiledHugr",
     "CompiledPhirJson",
     "CompiledProgram",
     "CompiledQasm",

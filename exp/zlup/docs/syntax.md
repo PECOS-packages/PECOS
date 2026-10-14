@@ -59,7 +59,7 @@ Complete syntax reference for the Zlup quantum programming language.
 1e-5            // Scientific without decimal
 
 // Angles
-1.57_a64        // Angle type for rotations
+1.57 rad        // Angle type for rotations
 ```
 
 ### Strings

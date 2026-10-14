@@ -159,7 +159,6 @@ pub mod batch;
 pub mod batch_composite;
 mod builder;
 pub mod channel;
-mod compiled;
 mod condition;
 mod primitive;
 mod response;
@@ -176,7 +175,6 @@ pub use channel::{
     BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel,
     CompositeEventFilter,
 };
-pub use compiled::{CompiledAction, CompiledCondition, CompiledPrimitive};
 pub use condition::{
     Active, Always, AnyQubitLeaked, Condition, FnCondition, GateTypeIs, Leaked, Never, NotLeaked,
     OutcomeIs, PartnerLeaked,
@@ -295,7 +293,7 @@ mod tests {
 
         // Should skip, not apply pauli
         assert!(response.skips_gate());
-        assert!(response.collect_gates().is_empty());
+        assert_eq!(response.collect_gates(), []);
     }
 
     /// Test seepage for leaked qubits.

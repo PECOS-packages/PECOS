@@ -197,7 +197,7 @@ impl DepolarizingNoiseModel {
             | GateType::T
             | GateType::Tdg
             | GateType::U
-            | GateType::R1XY => {
+            | GateType::RXY1Q => {
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying single-qubit gate with possible fault");
                 Self::apply_sq_faults(rng, p1_threshold, builder, gate);
@@ -206,6 +206,8 @@ impl DepolarizingNoiseModel {
             | GateType::CY
             | GateType::CZ
             | GateType::CH
+            | GateType::CS
+            | GateType::CSdg
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
@@ -213,7 +215,7 @@ impl DepolarizingNoiseModel {
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
-            | GateType::CRZ
+            | GateType::RXYXY2Q
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
@@ -223,7 +225,7 @@ impl DepolarizingNoiseModel {
                 trace!("Applying two-qubit gate with possible fault");
                 Self::apply_tq_faults(rng, p2_threshold, builder, gate);
             }
-            GateType::CCX => {
+            GateType::CCX | GateType::CCZ => {
                 NoiseUtils::add_gate_to_builder(builder, gate);
                 trace!("Applying three-qubit gate with possible fault");
                 Self::apply_tq_faults(rng, p2_threshold, builder, gate);
@@ -324,96 +326,102 @@ impl DepolarizingNoiseModel {
         builder: &mut ByteMessageBuilder,
         gate: &Gate,
     ) {
-        // Use fused noise sampling: probability check + Pauli selection in one call
-        if let Some(fault_type) = rng.inner_mut().noise_sample_2q(p2_threshold) {
-            let qubit0 = gate.qubits[0];
-            let qubit1 = gate.qubits[1];
+        // CCX retains its existing first-two-qubits fault behavior.
+        for qubits in gate.qubits.as_chunks::<2>().0 {
+            // Use fused noise sampling: probability check + Pauli selection in one call
+            if let Some(fault_type) = rng.inner_mut().noise_sample_2q(p2_threshold) {
+                let qubit0 = qubits[0];
+                let qubit1 = qubits[1];
 
-            match fault_type {
-                // IX
-                0 => {
-                    trace!("Applying IX fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_x(builder, *qubit1);
+                match fault_type {
+                    // IX
+                    0 => {
+                        trace!("Applying IX fault on qubits {qubits:?}");
+                        NoiseUtils::apply_x(builder, *qubit1);
+                    }
+                    // IY
+                    1 => {
+                        trace!("Applying IY fault on qubits {qubits:?}");
+                        NoiseUtils::apply_y(builder, *qubit1);
+                    }
+                    // IZ
+                    2 => {
+                        trace!("Applying IZ fault on qubits {qubits:?}");
+                        NoiseUtils::apply_z(builder, *qubit1);
+                    }
+                    // XI
+                    3 => {
+                        trace!("Applying XI fault on qubits {qubits:?}");
+                        NoiseUtils::apply_x(builder, *qubit0);
+                    }
+                    // XX
+                    4 => {
+                        trace!("Applying XX fault on qubits {qubits:?}");
+                        NoiseUtils::apply_x(builder, *qubit0);
+                        NoiseUtils::apply_x(builder, *qubit1);
+                    }
+                    // XY
+                    5 => {
+                        trace!("Applying XY fault on qubits {qubits:?}");
+                        NoiseUtils::apply_x(builder, *qubit0);
+                        NoiseUtils::apply_y(builder, *qubit1);
+                    }
+                    // XZ
+                    6 => {
+                        trace!("Applying XZ fault on qubits {qubits:?}");
+                        NoiseUtils::apply_x(builder, *qubit0);
+                        NoiseUtils::apply_z(builder, *qubit1);
+                    }
+                    // YI
+                    7 => {
+                        trace!("Applying YI fault on qubits {qubits:?}");
+                        NoiseUtils::apply_y(builder, *qubit0);
+                    }
+                    // YX
+                    8 => {
+                        trace!("Applying YX fault on qubits {qubits:?}");
+                        NoiseUtils::apply_y(builder, *qubit0);
+                        NoiseUtils::apply_x(builder, *qubit1);
+                    }
+                    // YY
+                    9 => {
+                        trace!("Applying YY fault on qubits {qubits:?}");
+                        NoiseUtils::apply_y(builder, *qubit0);
+                        NoiseUtils::apply_y(builder, *qubit1);
+                    }
+                    // YZ
+                    10 => {
+                        trace!("Applying YZ fault on qubits {qubits:?}");
+                        NoiseUtils::apply_y(builder, *qubit0);
+                        NoiseUtils::apply_z(builder, *qubit1);
+                    }
+                    // ZI
+                    11 => {
+                        trace!("Applying ZI fault on qubits {qubits:?}");
+                        NoiseUtils::apply_z(builder, *qubit0);
+                    }
+                    // ZX
+                    12 => {
+                        trace!("Applying ZX fault on qubits {qubits:?}");
+                        NoiseUtils::apply_z(builder, *qubit0);
+                        NoiseUtils::apply_x(builder, *qubit1);
+                    }
+                    // ZY
+                    13 => {
+                        trace!("Applying ZY fault on qubits {qubits:?}");
+                        NoiseUtils::apply_z(builder, *qubit0);
+                        NoiseUtils::apply_y(builder, *qubit1);
+                    }
+                    // ZZ
+                    _ => {
+                        trace!("Applying ZZ fault on qubits {qubits:?}");
+                        NoiseUtils::apply_z(builder, *qubit0);
+                        NoiseUtils::apply_z(builder, *qubit1);
+                    }
                 }
-                // IY
-                1 => {
-                    trace!("Applying IY fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_y(builder, *qubit1);
-                }
-                // IZ
-                2 => {
-                    trace!("Applying IZ fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_z(builder, *qubit1);
-                }
-                // XI
-                3 => {
-                    trace!("Applying XI fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_x(builder, *qubit0);
-                }
-                // XX
-                4 => {
-                    trace!("Applying XX fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_x(builder, *qubit0);
-                    NoiseUtils::apply_x(builder, *qubit1);
-                }
-                // XY
-                5 => {
-                    trace!("Applying XY fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_x(builder, *qubit0);
-                    NoiseUtils::apply_y(builder, *qubit1);
-                }
-                // XZ
-                6 => {
-                    trace!("Applying XZ fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_x(builder, *qubit0);
-                    NoiseUtils::apply_z(builder, *qubit1);
-                }
-                // YI
-                7 => {
-                    trace!("Applying YI fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_y(builder, *qubit0);
-                }
-                // YX
-                8 => {
-                    trace!("Applying YX fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_y(builder, *qubit0);
-                    NoiseUtils::apply_x(builder, *qubit1);
-                }
-                // YY
-                9 => {
-                    trace!("Applying YY fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_y(builder, *qubit0);
-                    NoiseUtils::apply_y(builder, *qubit1);
-                }
-                // YZ
-                10 => {
-                    trace!("Applying YZ fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_y(builder, *qubit0);
-                    NoiseUtils::apply_z(builder, *qubit1);
-                }
-                // ZI
-                11 => {
-                    trace!("Applying ZI fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_z(builder, *qubit0);
-                }
-                // ZX
-                12 => {
-                    trace!("Applying ZX fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_z(builder, *qubit0);
-                    NoiseUtils::apply_x(builder, *qubit1);
-                }
-                // ZY
-                13 => {
-                    trace!("Applying ZY fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_z(builder, *qubit0);
-                    NoiseUtils::apply_y(builder, *qubit1);
-                }
-                // ZZ
-                _ => {
-                    trace!("Applying ZZ fault on qubits {:?}", gate.qubits);
-                    NoiseUtils::apply_z(builder, *qubit0);
-                    NoiseUtils::apply_z(builder, *qubit1);
-                }
+            }
+            if matches!(gate.gate_type, GateType::CCX | GateType::CCZ) {
+                break;
             }
         }
     }
@@ -646,6 +654,109 @@ impl ControlEngine for DepolarizingNoiseModel {
 mod tests {
     use super::*;
     use crate::engine_system::{ControlEngine, EngineStage};
+
+    #[test]
+    fn diagonal_gates_preserve_reference_fault_streams() {
+        for seed in 0..32 {
+            for (gate, reference_gate) in [
+                (
+                    Gate::ccz(&[(0, 1, 2), (3, 4, 5)]),
+                    Gate::ccx(&[(0, 1, 2), (3, 4, 5)]),
+                ),
+                (Gate::cs(&[(0, 1), (2, 3)]), Gate::cz(&[(0, 1), (2, 3)])),
+                (Gate::csdg(&[(0, 1), (2, 3)]), Gate::cz(&[(0, 1), (2, 3)])),
+            ] {
+                let mut noise = DepolarizingNoiseModel::new(0.0, 0.0, 0.0, 1.0);
+                noise.set_seed(seed);
+                let mut reference = noise.clone();
+                let mut actual = ByteMessage::quantum_operations_builder();
+                actual.add_gate_command(&gate);
+                actual.cx(&[(6, 7)]);
+                let mut expected = ByteMessage::quantum_operations_builder();
+                expected.add_gate_command(&reference_gate);
+                expected.cx(&[(6, 7)]);
+                let EngineStage::NeedsProcessing(actual) = noise.start(actual.build()).unwrap()
+                else {
+                    panic!("expected processing");
+                };
+                let EngineStage::NeedsProcessing(expected) =
+                    reference.start(expected.build()).unwrap()
+                else {
+                    panic!("expected processing");
+                };
+                assert_eq!(
+                    actual.quantum_ops().unwrap()[1..],
+                    expected.quantum_ops().unwrap()[1..]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ccx_faults_retain_first_pair_behavior() {
+        for seed in 0..16 {
+            for triples in [vec![(0, 1, 2)], vec![(0, 1, 2), (3, 4, 5)]] {
+                let mut noise = DepolarizingNoiseModel::new(0.0, 0.0, 0.0, 1.0);
+                noise.set_seed(seed);
+                let mut reference = noise.clone();
+                let mut ccx = ByteMessage::quantum_operations_builder();
+                ccx.add_gate_command(&Gate::ccx(&triples));
+                ccx.cx(&[(6, 7)]);
+                let mut cx = ByteMessage::quantum_operations_builder();
+                cx.cx(&[(0, 1)]);
+                cx.cx(&[(6, 7)]);
+                let EngineStage::NeedsProcessing(actual) = noise.start(ccx.build()).unwrap() else {
+                    panic!("Expected NeedsProcessing stage");
+                };
+                let EngineStage::NeedsProcessing(expected) = reference.start(cx.build()).unwrap()
+                else {
+                    panic!("Expected NeedsProcessing stage");
+                };
+                // The following CX also verifies that CCX consumed only one fault draw.
+                assert_eq!(
+                    actual.quantum_ops().unwrap()[1..],
+                    expected.quantum_ops().unwrap()[1..]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_batched_two_qubit_faults_are_independent() {
+        for seed in 0..32 {
+            let mut noise = DepolarizingNoiseModel::new(0.0, 0.0, 0.0, 0.5);
+            noise.set_seed(seed);
+            let mut separate = noise.clone();
+            // Compare fault bytes: ideal gate serialization differs between batching forms.
+            let mut batched_output = ByteMessage::quantum_operations_builder();
+            DepolarizingNoiseModel::apply_tq_faults(
+                &mut noise.rng,
+                noise.p2_threshold,
+                &mut batched_output,
+                &Gate::cx(&[(0, 1), (2, 3)]),
+            );
+            DepolarizingNoiseModel::apply_tq_faults(
+                &mut noise.rng,
+                noise.p2_threshold,
+                &mut batched_output,
+                &Gate::cx(&[(4, 5)]),
+            );
+            let mut separate_output = ByteMessage::quantum_operations_builder();
+            for pair in [(0, 1), (2, 3), (4, 5)] {
+                DepolarizingNoiseModel::apply_tq_faults(
+                    &mut separate.rng,
+                    separate.p2_threshold,
+                    &mut separate_output,
+                    &Gate::cx(&[pair]),
+                );
+            }
+            assert_eq!(
+                batched_output.build().as_bytes(),
+                separate_output.build().as_bytes(),
+                "batched fault stream differs at seed {seed}"
+            );
+        }
+    }
 
     #[test]
     fn test_probabilities_getter_and_setter() {

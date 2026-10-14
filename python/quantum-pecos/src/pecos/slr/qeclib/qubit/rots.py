@@ -72,42 +72,52 @@ RZZ = RZZGate()
 
 
 class CRXGate(TQGate):
-    """Controlled-RX gate.
+    """Controlled-RX boundary spelling.
 
     This gate applies an RX rotation to the target qubit controlled by
-    the control qubit. The rotation angle is specified as a parameter.
+    the control qubit. Its angle is radians as a real number; a typed
+    ``Angle`` is rejected because it has already been reduced modulo 2pi.
+    Code generators lower the source value unless the target owns CRX.
     """
 
     has_parameters = True
     num_params = 1
+    has_unreduced_radian_parameters = True
 
 
 CRX = CRXGate()
 
 
 class CRYGate(TQGate):
-    """Controlled-RY gate.
+    """Controlled-RY boundary spelling.
 
     This gate applies an RY rotation to the target qubit controlled by
-    the control qubit. The rotation angle is specified as a parameter.
+    the control qubit. Its angle is radians as a real number; a typed
+    ``Angle`` is rejected because it has already been reduced modulo 2pi.
+    Code generators lower the source value unless the target owns CRY.
     """
 
     has_parameters = True
     num_params = 1
+    has_unreduced_radian_parameters = True
 
 
 CRY = CRYGate()
 
 
 class CRZGate(TQGate):
-    """Controlled-RZ gate.
+    """Controlled-RZ boundary spelling.
 
     This gate applies an RZ rotation to the target qubit controlled by
-    the control qubit. The rotation angle is specified as a parameter.
+    the control qubit. Its angle is radians as a real number; a typed
+    ``Angle`` is rejected because it has already been reduced modulo 2pi.
+    Code generators lower it to RZZ and target-only RZ unless the target
+    owns CRZ.
     """
 
     has_parameters = True
     num_params = 1
+    has_unreduced_radian_parameters = True
 
 
 CRZ = CRZGate()

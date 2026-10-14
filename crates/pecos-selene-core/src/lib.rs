@@ -40,6 +40,9 @@ pub trait SeleneSimBehavior: Send {
     /// Apply `RZZ(theta)` to a pair of qubits. Angle in radians.
     fn apply_rzz(&mut self, q1: QubitId, q2: QubitId, theta: f64) -> Result<()>;
 
+    /// Apply `RXYXY2Q(theta, phi)` to a pair of qubits. Angles in radians.
+    fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()>;
+
     /// Reset a single qubit to `|0>`.
     fn reset_qubit(&mut self, qubit: QubitId) -> Result<()>;
 
@@ -168,8 +171,22 @@ impl<B: SeleneSimBehavior> SimulatorInterface for SeleneAdapter<B> {
                     self.check_qubit(qubit_id, "Reset")?;
                     self.behavior.reset_qubit(QubitId(to_usize(qubit_id)))?;
                 }
-                Operation::RPPGate { .. } => {
-                    return Err(anyhow!("RPP gates are not supported by this simulator"));
+                Operation::RPPGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                    phi,
+                } => {
+                    self.check_pair(qubit_id_1, qubit_id_2, "RXYXY2Q")?;
+                    if qubit_id_1 == qubit_id_2 {
+                        return Err(anyhow!("RXYXY2Q requires two distinct qubits"));
+                    }
+                    self.behavior.apply_rxyxy2q(
+                        QubitId(to_usize(qubit_id_1)),
+                        QubitId(to_usize(qubit_id_2)),
+                        theta,
+                        phi,
+                    )?;
                 }
                 Operation::Custom { .. } => {}
                 _ => return Err(anyhow!("Unsupported Selene operation")),

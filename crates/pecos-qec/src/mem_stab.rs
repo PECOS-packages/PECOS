@@ -70,6 +70,9 @@ pub enum MemStabError {
     /// Builder called without a circuit.
     #[error("MemStabSim requires a circuit; call .circuit(dag) before .build()")]
     MissingCircuit,
+    /// The measurement-noise model could not be built.
+    #[error(transparent)]
+    DemBuilder(#[from] crate::fault_tolerance::dem_builder::DemBuilderError),
 }
 
 /// Clifford + depolarizing-family noise simulator that samples raw measurement outcomes.
@@ -143,7 +146,6 @@ impl MemStabSim {
 pub struct MemStabSimBuilder {
     circuit: Option<DagCircuit>,
     noise: NoiseConfig,
-    measurement_order: Option<Vec<usize>>,
 }
 
 impl MemStabSimBuilder {
@@ -161,13 +163,6 @@ impl MemStabSimBuilder {
         self
     }
 
-    /// Set the measurement order mapping from a `TickCircuit` (advanced).
-    #[must_use]
-    pub fn measurement_order(mut self, order: Vec<usize>) -> Self {
-        self.measurement_order = Some(order);
-        self
-    }
-
     /// Build the [`MemStabSim`], consuming the builder.
     ///
     /// # Errors
@@ -177,21 +172,15 @@ impl MemStabSimBuilder {
         let dag = self.circuit.ok_or(MemStabError::MissingCircuit)?;
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map_diagnostic();
 
-        let mut builder = MemBuilder::new(&influence_map).with_noise(
-            self.noise.p1,
-            self.noise.p2,
-            self.noise.p_meas,
-            self.noise.p_prep,
-        );
-
-        if let Some(order) = self.measurement_order {
-            builder = builder.with_measurement_order(order);
-        }
+        // Forward the whole configuration. Unpacking it into the four scalars
+        // rebuilds a fresh `NoiseConfig` and drops everything else the caller
+        // set -- per-gate rate tables above all -- without reporting it.
+        let builder = MemBuilder::new(&influence_map).with_noise_config(self.noise);
 
         Ok(MemStabSim {
-            mnm: builder.build(),
+            mnm: builder.build()?,
         })
     }
 }

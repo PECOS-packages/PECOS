@@ -5,7 +5,10 @@
 //!
 //! The actual FFI implementation (with `#[no_mangle]` functions) is in `pecos-qis-ffi`.
 
+mod named_results;
 mod operations;
+
+pub use named_results::{NamedResult, ProgramError};
 
 pub use operations::{LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, TraceMetadata};
 
@@ -134,16 +137,16 @@ mod tests {
     #[test]
     fn test_new_collector() {
         let collector = OperationCollector::new();
-        assert!(collector.operations.is_empty());
-        assert!(collector.measurements.is_empty());
-        assert!(collector.allocated_qubits.is_empty());
-        assert!(collector.allocated_results.is_empty());
+        assert_eq!(collector.operations, []);
+        assert_eq!(collector.measurements, []);
+        assert_eq!(collector.allocated_qubits, []);
+        assert_eq!(collector.allocated_results, []);
     }
 
     #[test]
     fn test_default_collector() {
         let collector = OperationCollector::default();
-        assert!(collector.operations.is_empty());
+        assert_eq!(collector.operations, []);
     }
 
     #[test]
@@ -232,17 +235,23 @@ mod tests {
         collector.store_result(0, true);
 
         // Verify state exists
-        assert!(!collector.operations.is_empty());
-        assert!(!collector.allocated_qubits.is_empty());
+        assert!(
+            !collector.operations.is_empty(),
+            "collector must contain the queued operation"
+        );
+        assert!(
+            !collector.allocated_qubits.is_empty(),
+            "collector must contain the allocated qubit"
+        );
 
         // Reset
         collector.reset();
 
         // Verify all cleared
-        assert!(collector.operations.is_empty());
-        assert!(collector.measurements.is_empty());
-        assert!(collector.allocated_qubits.is_empty());
-        assert!(collector.allocated_results.is_empty());
+        assert_eq!(collector.operations, []);
+        assert_eq!(collector.measurements, []);
+        assert_eq!(collector.allocated_qubits, []);
+        assert_eq!(collector.allocated_results, []);
 
         // Verify IDs reset
         let q = collector.allocate_qubit();
@@ -260,7 +269,7 @@ mod tests {
         let ops = collector.take_operations();
 
         assert_eq!(ops.len(), 2);
-        assert!(collector.operations.is_empty());
+        assert_eq!(collector.operations, []);
     }
 
     #[test]

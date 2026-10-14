@@ -335,7 +335,10 @@ fn test_repetition_code_as_1d_surface_code() {
     let result = decoder.decode(&detection_events).unwrap();
     // Adjacent detections in repetition code should not cause logical error
     // But the exact observable depends on implementation details
-    assert!(!result.observable.is_empty());
+    assert!(
+        !result.observable.is_empty(),
+        "decoder returned no observables"
+    );
 
     // Test logical error (full chain)
     let mut detection_events = vec![0u8; length];

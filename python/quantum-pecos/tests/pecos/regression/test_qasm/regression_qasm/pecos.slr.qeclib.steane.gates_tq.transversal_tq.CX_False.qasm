@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 // Transversal Logical CX
 cx q1_test[0], q2_test[0];
 cx q1_test[1], q2_test[1];

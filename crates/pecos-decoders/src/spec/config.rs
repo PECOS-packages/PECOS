@@ -33,6 +33,60 @@ pub struct TesseractConfig {
     pub no_revisit_dets: Option<bool>,
     pub pqlimit: Option<usize>,
     pub det_penalty: Option<f64>,
+    pub merge_errors: Option<bool>,
+}
+
+/// Rule for ranking beam states when truncating a trellis layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TesseractTrellisRankingMode {
+    /// Keep the states carrying the most probability mass (upstream default).
+    #[default]
+    MassOnly,
+    /// Discount each state's mass by a detector-cost estimate of the mass
+    /// still needed to clear its remaining active detectors.
+    FutureDetcostRanked,
+    /// Like [`FutureDetcostRanked`](Self::FutureDetcostRanked), but the
+    /// estimate only counts detectors that are active in the state.
+    FutureActiveDetcostRanked,
+}
+
+/// Configuration for Tesseract's trellis-mode decoder. Defaults are
+/// upstream's `TesseractTrellisConfig` defaults.
+///
+/// This mirrors `pecos_tesseract::TesseractTrellisConfig` field for field
+/// because the spec layer must compile without the `tesseract` feature;
+/// `build::trellis_engine_config` and its test keep the two in step.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TesseractTrellisConfig {
+    /// Maximum number of partial-syndrome states kept per trellis layer.
+    pub beam_width: usize,
+    /// After the `beam_width` cut, keep only the highest-scoring states
+    /// whose cumulative mass reaches `1 - beam_eps` of the layer's total
+    /// mass; zero keeps every state up to `beam_width`. Must be in `[0, 1)`.
+    pub beam_eps: f64,
+    /// Scale applied to the future detector-cost estimate in the ranked
+    /// modes; ignored under [`TesseractTrellisRankingMode::MassOnly`].
+    pub future_detcost_scale: f64,
+    /// Print per-shot beam statistics to stdout.
+    pub verbose: bool,
+    /// Merge error mechanisms with identical detector and observable
+    /// symptoms before decoding.
+    pub merge_errors: bool,
+    /// Beam ranking rule.
+    pub ranking_mode: TesseractTrellisRankingMode,
+}
+
+impl Default for TesseractTrellisConfig {
+    fn default() -> Self {
+        Self {
+            beam_width: 1024,
+            beam_eps: 0.0,
+            future_detcost_scale: 2.0,
+            verbose: false,
+            merge_errors: true,
+            ranking_mode: TesseractTrellisRankingMode::MassOnly,
+        }
+    }
 }
 
 /// K-MWPM construction options.
@@ -223,45 +277,13 @@ pub struct BeliefMatchingConfig {
     pub embedded_full_dem: Option<String>,
 }
 
-/// Sliding-window construction mode.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum WindowedMode {
-    #[default]
-    NonOverlapping,
-    Sandwich,
-    Overlap,
-    Auto,
-}
-
-/// Sliding-window construction options.
+/// Whole-component window construction options. Inner, buffer, and step are required.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowedConfig {
+    /// Required commit step in rounds, at least 1.
     pub step_size: usize,
     pub buffer_size: usize,
-    pub mode: WindowedMode,
-    pub seam_half_width: usize,
-    pub core_extend: usize,
-    pub commit_weight_max: f64,
     pub inner: Box<DecoderSpec>,
-    pub sandwich_phase2: Box<DecoderSpec>,
-}
-
-impl Default for WindowedConfig {
-    fn default() -> Self {
-        Self {
-            step_size: 0,
-            buffer_size: 0,
-            mode: WindowedMode::Auto,
-            seam_half_width: 0,
-            core_extend: 0,
-            commit_weight_max: 0.0,
-            inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
-            sandwich_phase2: Box::new(DecoderSpec::PyMatching(PyMatchingConfig {
-                correlated: true,
-                error_probability: None,
-            })),
-        }
-    }
 }
 
 /// MWPF solver selection.

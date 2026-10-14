@@ -122,7 +122,7 @@ class DepolarModel(ParentErrorModel):
             self.has_meas_errors = True
 
             # Generate data errors
-            self.gen.set_default_error("data", pauli_errors.error_func)
+            self.gen.set_gate_error("data", pauli_errors.error_func)
 
             # Generate measurement errors
             self.gen.set_group_error("measurements", pauli_errors_before.error_func)

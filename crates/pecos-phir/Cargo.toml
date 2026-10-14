@@ -19,9 +19,8 @@ pecos-engines.workspace = true
 # Logging
 log.workspace = true
 
-# JSON serialization (keeping for HUGR parsing)
+# Serialization
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 
 # Error handling
 thiserror.workspace = true
@@ -35,18 +34,8 @@ tempfile.workspace = true
 # RON (Rusty Object Notation) for debugging
 ron.workspace = true
 
-# HUGR support via tket (formerly tket2, which re-exports hugr)
-tket = { workspace = true, optional = true }
-tket-qsystem = { workspace = true, optional = true }
-
 [dev-dependencies]
 tempfile.workspace = true
-
-[features]
-default = []
-
-# HUGR parsing support
-hugr = ["tket", "tket-qsystem"]
 
 [lints]
 workspace = true

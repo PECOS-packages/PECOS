@@ -138,7 +138,6 @@ def _q(name: str, qir: str) -> list[int]:
     return [int(m) if m else 0 for m in re.findall(rf"call void @__quantum__qis__{name}__body\({_QARG}\)", qir)]
 
 
-@pytest.mark.optional_dependency
 def test_multiple_permutations_qir() -> None:
     """Two sequential element-wise QReg Permutes compose correctly."""
     a = QReg("a", 3)
@@ -165,7 +164,6 @@ def test_multiple_permutations_qir() -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_permutation_with_conditional_qir() -> None:
     """Element-wise QReg/CReg Permute is realized around control flow."""
     a = QReg("a", 2)

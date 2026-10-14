@@ -22,6 +22,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, TypedDict
 
 import pecos._traced_circuit as _traced_circuit
+from pecos.qec._replay import _replay_measurements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -82,6 +83,7 @@ class SurfaceDetectorDescriptor(TypedDict):
 
     id: int
     detector_id: int
+    fault_sector: str | None
     stabilizer_kind: str
     stabilizer_index: int
     round: int
@@ -147,9 +149,12 @@ class OpType(Enum):
     SZDG = auto()  # sqrt Z dagger
     X = auto()  # Pauli X
     Z = auto()  # Pauli Z
+    T = auto()  # diag(1, exp(i*pi/4)); raw magic-state injection
+    TDG = auto()  # T dagger
 
     # Two-qubit gates
     CX = auto()  # CNOT
+    CZ = auto()  # Controlled Z
     SZZ = auto()  # sqrt ZZ
     SZZDG = auto()  # sqrt ZZ dagger
 
@@ -724,7 +729,7 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
             for q in op.qubits:
                 discharge_for_two_qubit(q, host_index, op)
             continue
-        if op.op_type == OpType.CX:
+        if op.op_type in {OpType.CX, OpType.CZ}:
             msg = "SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
@@ -856,7 +861,7 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             append_prefix_ticks(virtual_steps, physical_steps)
             lowered.append(op)
             continue
-        if op.op_type == OpType.CX:
+        if op.op_type in {OpType.CX, OpType.CZ}:
             msg = "SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
@@ -951,6 +956,19 @@ def build_surface_code_circuit(
     if twirl is not None:
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
+
+    if resolved_plan.interaction_basis == "cx" and twirl is None and clifford_frame_policy is None:
+        from pecos.qec.surface.gadgets import memory_gadgets
+
+        gadgets = memory_gadgets(
+            patch,
+            num_rounds,
+            basis,
+            round_order=cnot_round_order,
+            ancilla_budget=ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
+        return [step for gadget in gadgets for step in gadget.steps], gadgets[0].allocations[0]
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
@@ -1640,15 +1658,20 @@ def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d
 def _build_detector_descriptors(
     detectors: list[dict[str, object]],
     patch: SurfacePatch,
+    num_measurements: int,
 ) -> list[SurfaceDetectorDescriptor]:
-    """Build enriched detector descriptors from TickCircuit detector metadata."""
+    """Build enriched detector descriptors from resolved circuit definitions."""
+    for det in detectors:
+        if det["coords"] is None:
+            msg = f"Detector {det['id']} requires coordinates for a surface descriptor"
+            raise ValueError(msg)
     num_x_anc = len(patch.x_stabilizers)
     final_round = max((int(det["coords"][2]) for det in detectors), default=-1)
     descriptors: list[SurfaceDetectorDescriptor] = []
 
     for det in detectors:
         coords = [int(value) for value in det["coords"]]
-        records = [int(value) for value in det["records"]]
+        records = [position - num_measurements for position in det["measurements"]]
         raw_index = coords[0]
         if coords[1] == 0:
             stab_kind = "X"
@@ -1662,6 +1685,7 @@ def _build_detector_descriptors(
             {
                 "id": int(det["id"]),
                 "detector_id": int(det["id"]),
+                "fault_sector": det["fault_sector"],
                 "stabilizer_kind": descriptor["stabilizer_kind"],
                 "stabilizer_index": descriptor["stabilizer_index"],
                 "round": coords[2],
@@ -1687,15 +1711,16 @@ def _build_observable_descriptors(
     observables: list[dict[str, object]],
     patch: SurfacePatch,
     basis: str,
+    num_measurements: int,
 ) -> list[SurfaceObservableDescriptor]:
-    """Build enriched logical observable descriptors from TickCircuit metadata."""
+    """Build enriched logical observable descriptors from resolved circuit definitions."""
     logical = patch.get_logical_descriptor(basis.upper())
     return [
         {
             "id": int(obs["id"]),
             "observable_id": int(obs["id"]),
             "basis": basis.upper(),
-            "records": [int(value) for value in obs["records"]],
+            "records": [position - num_measurements for position in obs["measurements"]],
             "logical_type": logical["logical_type"],
             "data_qubits": logical["data_qubits"],
             "data_qubit_positions": logical["data_qubit_positions"],
@@ -1757,6 +1782,15 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
+        if any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
+            msg = "Stim cannot represent non-Clifford T/TDG injection; use Guppy or TickCircuit"
+            raise ValueError(msg)
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = (
+                "StimRenderer: detector annotation is unsupported for step lists with CZ "
+                "(the fold-transversal SZ layer)"
+            )
+            raise ValueError(msg)
         geom = patch.geometry
         num_x_anc = len(geom.x_stabilizers)
 
@@ -1809,9 +1843,9 @@ class StimRenderer(CircuitRenderer):
                 if self.p1 > 0:
                     lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
 
-            elif op.op_type == OpType.CX:
+            elif op.op_type in {OpType.CX, OpType.CZ}:
                 c, t = op.qubits
-                lines.append(f"CX {c} {t}")
+                lines.append(f"{op.op_type.name} {c} {t}")
                 if self.p2 > 0:
                     lines.append(f"DEPOLARIZE2({self.p2}) {c} {t}")
 
@@ -1954,16 +1988,16 @@ class StimRenderer(CircuitRenderer):
 
 
 class GuppyRenderer(CircuitRenderer):
-    """Render circuit operations to Guppy source code.
+    """Generate a reusable Guppy module for the patch, independent of the input op list.
 
-    This renderer produces the same modular Guppy code structure as
-    pecos.guppy_gen.surface.generate_guppy_source(), ensuring consistency.
+    Default CX functions are rendered from physical gadgets. The module provides
+    both bases and factories accepting the desired number of rounds.
     """
 
     def render(
         self,
         _ops: list[SurfaceCircuitStep],
-        _allocation: QubitAllocation,
+        allocation: QubitAllocation,
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
@@ -1980,9 +2014,21 @@ class GuppyRenderer(CircuitRenderer):
         - Logical operator functions
         - Memory experiment factories (make_memory_z, make_memory_x)
         """
+        from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
 
-        # Use the canonical Guppy generator to ensure identical output
+        if any(op.op_type in {OpType.T, OpType.TDG} for op in _ops):
+            msg = "GuppyRenderer generates memory modules; use render_gadget_function for a magic injection seed"
+            raise ValueError(msg)
+        ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+        if len(set(ancillas)) < len(ancillas):
+            msg = "GuppyRenderer cannot honour ancilla_budget; use render_surface_gadget_module with ancilla_budget"
+            raise ValueError(msg)
+
+        resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
+        if resolved_plan.interaction_basis == "cx":
+            return render_surface_gadget_module(patch)
+        # Other interaction configurations migrate to gadgets in a later slice.
         return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
@@ -1998,7 +2044,7 @@ class DagCircuitRenderer(CircuitRenderer):
         _basis: str,
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
-        from pecos_rslib import DagCircuit, Gate, GateType
+        from pecos_rslib import DagCircuit
 
         circuit = DagCircuit()
         allocated: set[int] = set()
@@ -2023,10 +2069,10 @@ class DagCircuitRenderer(CircuitRenderer):
                 circuit.h([op.qubits[0]])
 
             elif op.op_type == OpType.SX:
-                circuit.add_gate(Gate(GateType.SX, qubits=[op.qubits[0]]))
+                circuit.sx([op.qubits[0]])
 
             elif op.op_type == OpType.SXDG:
-                circuit.add_gate(Gate(GateType.SXdg, qubits=[op.qubits[0]]))
+                circuit.sxdg([op.qubits[0]])
 
             elif op.op_type == OpType.SZ:
                 circuit.sz([op.qubits[0]])
@@ -2040,8 +2086,17 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.Z:
                 circuit.z([op.qubits[0]])
 
+            elif op.op_type == OpType.T:
+                circuit.t(op.qubits)
+
+            elif op.op_type == OpType.TDG:
+                circuit.tdg(op.qubits)
+
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
+
+            elif op.op_type == OpType.CZ:
+                circuit.cz([(op.qubits[0], op.qubits[1])])
 
             elif op.op_type == OpType.SZZ:
                 circuit.szz([(op.qubits[0], op.qubits[1])])
@@ -2067,6 +2122,10 @@ class DagCircuitRenderer(CircuitRenderer):
                 )
                 raise NotImplementedError(msg)
 
+            else:
+                msg = f"Unsupported DagCircuit operation: {op.op_type.name}"
+                raise ValueError(msg)
+
         return circuit
 
 
@@ -2079,9 +2138,17 @@ class TickCircuitRenderer(CircuitRenderer):
 
     When qubit conflicts occur within a tick (same qubit used twice),
     a new tick is automatically created to maintain valid parallel structure.
+    Unlike logical_circuit._CircuitGenerator._emit_steps, this silent same-type
+    split is retained until the non-rotated schedule is fixed.
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.
+
+    This renderer computes a reference for the observable it is given and trusts
+    the caller to establish determinism. ``build_surface_code_circuit`` supplies
+    a pure memory experiment whose logical readout is deterministic by construction.
+    A hand-assembled step list with an undetermined terminal readout gets a
+    reference for a quantity that has none; validation belongs at that boundary.
     """
 
     def __init__(
@@ -2127,11 +2194,17 @@ class TickCircuitRenderer(CircuitRenderer):
         Metadata is stored at three levels:
         - Circuit-level (preserved in DagCircuit):
             - 'detectors': JSON list of {id, coords, records}
-            - 'observables': JSON list of {id, records}
+            - 'observables': JSON list of {id, records, reference}
             - 'num_measurements', 'num_detectors', 'basis'
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
+        if self.add_detectors and any(op.op_type in {OpType.T, OpType.TDG} for op in ops):
+            msg = "TickCircuitRenderer: memory detector annotations are invalid for magic-state injection"
+            raise ValueError(msg)
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal SZ)"
+            raise ValueError(msg)
         import json
 
         from pecos_rslib.quantum import TickCircuit
@@ -2237,7 +2310,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 metadata["touch_label"] = get_stabilizer_touch_label(
                     stabilizer_by_label[stab_label],
                     patch,
-                    data_qubit,
+                    allocation.data_qubits.index(data_qubit),
                 )
             if current_cx_round > 0:
                 metadata["cx_round_0based"] = current_cx_round - 1
@@ -2334,6 +2407,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
+                elif op.label in {"fold-transversal SZ layer", "fold-transversal SZdg layer"}:
+                    current_phase = "fold_sdg" if "SZdg" in op.label else "fold_s"
+                    current_cx_round = 0
                 elif "SZZ round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"szz_round_{current_cx_round}"
@@ -2376,6 +2452,13 @@ class TickCircuitRenderer(CircuitRenderer):
                 if op.label:
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type in {OpType.T, OpType.TDG}:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q])
+                tick = tick.t([q]) if op.op_type == OpType.T else tick.tdg([q])
+                mark_qubits_used([q])
+                apply_gate_metadata(tick, get_ancilla_gate_metadata(q, op.label) or None)
 
             elif op.op_type == OpType.F:
                 q = op.qubits[0]
@@ -2478,6 +2561,13 @@ class TickCircuitRenderer(CircuitRenderer):
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
 
+            elif op.op_type == OpType.CZ:
+                qubits = op.qubits
+                tick = get_tick_for_qubits(qubits).cz([(qubits[0], qubits[1])])
+                mark_qubits_used(qubits)
+                # Fold pairs join data to data or ancilla to ancilla, not check touches.
+                apply_gate_metadata(tick, {"label": op.label} if op.label else None)
+
             elif op.op_type == OpType.SZZ:
                 qubits = op.qubits
                 tick = get_tick_for_qubits(qubits).szz([(qubits[0], qubits[1])])
@@ -2522,8 +2612,8 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif op.label.startswith("final"):
                     if "final[0]" in op.label:
                         final_meas_start = meas_count
-                    # Track all final measurement refs by data qubit
-                    final_meas_refs_by_qubit[q] = meas_refs
+                    # Geometry and typed annotation supports use register indices.
+                    final_meas_refs_by_qubit[allocation.data_qubits.index(q)] = meas_refs
                 meas_count += 1
 
             elif op.op_type == OpType.TICK:
@@ -2587,6 +2677,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2596,6 +2687,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "X",
                                     "coords": [s.index, 0, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2607,6 +2699,7 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
+                                "fault_sector": "X",
                                 "coords": [s.index, 0, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2629,6 +2722,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset, -init_offset],
                                 },
@@ -2638,6 +2732,7 @@ class TickCircuitRenderer(CircuitRenderer):
                             detectors.append(
                                 {
                                     "id": detector_id,
+                                    "fault_sector": "Z",
                                     "coords": [det_x, 1, rnd],
                                     "records": [-curr_offset],
                                 },
@@ -2649,6 +2744,7 @@ class TickCircuitRenderer(CircuitRenderer):
                         detectors.append(
                             {
                                 "id": detector_id,
+                                "fault_sector": "Z",
                                 "coords": [det_x, 1, rnd],
                                 "records": [-curr_offset, -prev_offset],
                             },
@@ -2676,6 +2772,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 detectors.append(
                     {
                         "id": detector_id,
+                        "fault_sector": stab_type,
                         "coords": [det_x, det_y, num_rounds],
                         "records": records,
                     },
@@ -2684,10 +2781,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
             # Logical observable
             logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
+            reference_measurements = _replay_measurements(circuit, meas_count) if logical_rec_offsets else []
             observables = [
                 {
                     "id": 0,
                     "records": logical_rec_offsets,
+                    "reference": sum(reference_measurements[rec] for rec in logical_rec_offsets) % 2,
                 },
             ]
 
@@ -2947,7 +3046,7 @@ def generate_tick_circuit_from_patch(
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata:
     - 'detectors': JSON list of {id, coords, records}
-    - 'observables': JSON list of {id, records}
+    - 'observables': JSON list of {id, records, reference}
     - 'num_measurements': total measurement count
     - 'num_detectors': number of detectors
 
@@ -3029,8 +3128,8 @@ def get_detector_descriptors_from_tick_circuit(
     if cached:
         return json.loads(cached)
 
-    detectors = json.loads(tick_circuit.get_meta("detectors") or "[]")
-    descriptors = _build_detector_descriptors(detectors, patch)
+    definitions = tick_circuit.circuit_definitions()
+    descriptors = _build_detector_descriptors(definitions["detectors"], patch, definitions["num_measurements"])
     tick_circuit.set_meta("detector_descriptors", json.dumps(descriptors))
     return descriptors
 
@@ -3040,6 +3139,8 @@ def get_observable_descriptors_from_tick_circuit(
     patch: SurfacePatch,
 ) -> list[SurfaceObservableDescriptor]:
     """Return structured logical observable descriptors for a TickCircuit.
+
+    The reference belongs to the observable definition in ``circuit_definitions()``, not to descriptors.
 
     Example:
         >>> from pecos.qec.surface import SurfacePatch, generate_tick_circuit_from_patch
@@ -3054,9 +3155,14 @@ def get_observable_descriptors_from_tick_circuit(
     if cached:
         return json.loads(cached)
 
-    observables = json.loads(tick_circuit.get_meta("observables") or "[]")
+    definitions = tick_circuit.circuit_definitions()
     basis = tick_circuit.get_meta("basis") or "Z"
-    descriptors = _build_observable_descriptors(observables, patch, basis)
+    descriptors = _build_observable_descriptors(
+        definitions["observables"],
+        patch,
+        basis,
+        definitions["num_measurements"],
+    )
     tick_circuit.set_meta("observable_descriptors", json.dumps(descriptors))
     return descriptors
 
@@ -3134,6 +3240,9 @@ def tick_circuit_to_stim(
             ``"SZ"``, and ``"SZdg"``. The surface SZZ reference path uses
             this to mirror the staged PECOS device model where Z/SZ/SZdg frame
             updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -3141,8 +3250,9 @@ def tick_circuit_to_stim(
     Returns:
         Stim circuit string
     """
-    import json
     import math
+
+    from pecos_rslib import is_supported_noop_or_metadata_gate
 
     lines = []
 
@@ -3222,7 +3332,7 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RZZ angle: {angle!r}"
             raise ValueError(msg)
 
-        if gate_name == "R1XY":
+        if gate_name == "RXY1Q":
             if len(gate.angles) < 2:
                 return [], None
             theta = float(gate.angles[0])
@@ -3252,10 +3362,35 @@ def tick_circuit_to_stim(
                     return [("SQRT_X", qubits)], "single"
                 if _is_close_turn(phi, 3 * math.pi / 2):
                     return [("SQRT_Y", qubits)], "single"
-            msg = f"Unsupported traced Clifford R1XY angles: theta={theta!r}, phi={phi!r}"
+            msg = f"Unsupported traced Clifford RXY1Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
-        return [], None
+        if gate_name == "RXYXY2Q":
+            if len(gate.angles) < 2:
+                return [], None
+            theta = float(gate.angles[0])
+            phi = float(gate.angles[1])
+            if _is_close_turn(theta, 0.0):
+                return [], None
+            axis = None
+            if _is_close_turn(phi, 0.0) or _is_close_turn(phi, math.pi):
+                axis = "X"
+            elif _is_close_turn(phi, math.pi / 2) or _is_close_turn(phi, 3 * math.pi / 2):
+                axis = "Y"
+            if axis is not None:
+                if _is_close_turn(theta, math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}", qubits)], "two"
+                if _is_close_turn(theta, 3 * math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}_DAG", qubits)], "two"
+                if _is_close_turn(theta, math.pi):
+                    return [(axis, qubits)], "two"
+            msg = f"Unsupported traced Clifford RXYXY2Q angles: theta={theta!r}, phi={phi!r}"
+            raise ValueError(msg)
+
+        if is_supported_noop_or_metadata_gate(gate.gate_type):
+            return [], None
+        msg = f"Unsupported gate for Stim export: {gate_name}"
+        raise ValueError(msg)
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
@@ -3286,28 +3421,18 @@ def tick_circuit_to_stim(
         if tick_idx < tc.num_ticks() - 1:
             lines.append("TICK")
 
-    # Add DETECTOR annotations from TickCircuit metadata
-    detectors_json = tc.get_meta("detectors")
-    if detectors_json:
-        detectors = json.loads(detectors_json)
-        num_measurements = int(tc.get_meta("num_measurements") or "0")
-        for det in detectors:
-            coords = det["coords"]
-            records = _metadata_record_offsets(det, num_measurements)
-            coord_str = ", ".join(str(c) for c in coords)
-            record_str = " ".join(f"rec[{r}]" for r in records)
-            lines.append(f"DETECTOR({coord_str}) {record_str}")
+    definitions = tc.circuit_definitions()
+    num_measurements = definitions["num_measurements"]
+    for det in definitions["detectors"]:
+        coords = det["coords"]
+        coord_str = "" if coords is None else "(" + ", ".join(str(c) for c in coords) + ")"
+        record_str = " ".join(f"rec[{position - num_measurements}]" for position in det["measurements"])
+        lines.append(f"DETECTOR{coord_str} {record_str}")
 
-    # Add OBSERVABLE_INCLUDE from metadata
-    observables_json = tc.get_meta("observables")
-    if observables_json:
-        observables = json.loads(observables_json)
-        num_measurements = int(tc.get_meta("num_measurements") or "0")
-        for obs in observables:
-            obs_id = obs["id"]
-            records = _metadata_record_offsets(obs, num_measurements)
-            record_str = " ".join(f"rec[{r}]" for r in records)
-            lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
+    for obs in definitions["observables"]:
+        obs_id = obs["id"]
+        record_str = " ".join(f"rec[{position - num_measurements}]" for position in obs["measurements"])
+        lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
 
     return "\n".join(lines)
 
@@ -3349,7 +3474,7 @@ def generate_dem_from_patch(
         p_prep=p,
     )
     circuit = stim.Circuit(circuit_str)
-    return str(circuit.detector_error_model())
+    return str(circuit.detector_error_model().flattened())
 
 
 def generate_dem_from_tick_circuit_via_pauli_frame(
@@ -3362,6 +3487,8 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     p_prep: float = 0.01,
 ) -> str:
     """Generate DEM from TickCircuit using pure Python Pauli frame simulation.
+
+    Deprecated: will be removed; use ``DetectorErrorModel.from_circuit``.
 
     This is a PECOS-native DEM generator that does not depend on Stim or Rust.
     It uses Pauli frame simulation to track error propagation through
@@ -3384,7 +3511,15 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         DEM string in Stim-compatible format
     """
     import json
+    import warnings
     from collections import defaultdict
+
+    warnings.warn(
+        "generate_dem_from_tick_circuit_via_pauli_frame is deprecated and will be removed; "
+        "use DetectorErrorModel.from_circuit instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     # Parse detector and observable annotations from metadata
     detectors_json = tc.get_meta("detectors")
@@ -3672,6 +3807,9 @@ def generate_dem_from_tick_circuit_via_stim(
             depolarizing rates. Gate names are PECOS ``GateType`` names. The
             surface SZZ reference path uses this to mirror the staged PECOS
             device model where Z/SZ/SZdg frame updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
@@ -3700,51 +3838,15 @@ def generate_dem_from_tick_circuit_via_stim(
         p_prep=p_prep,
     )
     circuit = stim.Circuit(stim_str)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition).flattened()
     if maximal_decomposition:
         return _maximally_decompose_graphlike_dem(str(dem))
     return str(dem)
 
 
-def _extract_measurement_order(tc: TickCircuit) -> list[int]:
-    """Extract the measurement order from a TickCircuit.
-
-    Returns a list of qubit indices in the order they were measured.
-    measurement_order[i] is the qubit measured at TickCircuit measurement index i.
-
-    This allows proper mapping between record offsets (which use TickCircuit
-    measurement order) and influence map indices (which use DAG topological order).
-
-    Args:
-        tc: TickCircuit to extract measurement order from.
-
-    Returns:
-        List of qubit indices in measurement execution order.
-    """
-    measurement_order = []
-
-    for tick_idx in range(tc.num_ticks()):
-        tick = tc.get_tick(tick_idx)
-        if tick is None:
-            continue
-        gates = tick.gate_batches()
-        for gate in gates:
-            gate_type = str(gate.gate_type)
-            if "MZ" in gate_type or "MeasureFree" in gate_type:
-                # Add each measured qubit to the order
-                for qubit in gate.qubits:
-                    # Qubit might be an int or a QubitId object
-                    if hasattr(qubit, "index"):
-                        measurement_order.append(qubit.index())
-                    else:
-                        measurement_order.append(int(qubit))
-
-    return measurement_order
-
-
 def get_measurement_order_from_tick_circuit(tc: TickCircuit) -> list[int]:
-    """Public wrapper returning the TickCircuit measurement execution order."""
-    return _extract_measurement_order(tc)
+    """Return one qubit per emitted measurement, retaining repeated measurements."""
+    return [qubit for qubit, _ in tc.measurement_emission()]
 
 
 def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
@@ -3823,19 +3925,6 @@ def _build_canonical_dem_influence_map(
         if merge_dem_outputs is not None:
             merge_dem_outputs(annotation_map)
     return influence_map
-
-
-def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
-    """Return whether detector/observable metadata uses positional records."""
-    import json
-
-    for metadata_json in metadata_jsons:
-        if not metadata_json:
-            continue
-        for entry in json.loads(metadata_json):
-            if entry.get("records"):
-                return True
-    return False
 
 
 def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
@@ -3950,12 +4039,6 @@ def generate_dem_from_tick_circuit(
 
     num_measurements = int(tc.get_meta("num_measurements") or "0")
 
-    # Extract measurement order from TickCircuit: list of qubits in measurement execution order
-    # This allows proper mapping between record offsets (TickCircuit order) and
-    # influence map indices (DAG topological order).
-    measurement_order = _extract_measurement_order(tc)
-    metadata_uses_records = _metadata_uses_record_offsets(detectors_json, observables_json)
-
     # Convert TickCircuit to DagCircuit and build influence map
     dag = tc.to_dag_circuit()
     influence_map = _build_canonical_dem_influence_map(dag)
@@ -3988,8 +4071,6 @@ def generate_dem_from_tick_circuit(
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(dag)
     builder.with_num_measurements(num_measurements)
-    if metadata_uses_records:
-        builder.with_measurement_order(measurement_order)
     builder.with_detectors_json(detectors_json)
     if observables_json:
         builder.with_observables_json(observables_json)

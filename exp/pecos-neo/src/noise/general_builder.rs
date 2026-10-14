@@ -58,21 +58,17 @@ use std::collections::BTreeMap;
 ///
 /// # Mixing Channel Types
 ///
-/// You can mix traditional channels with composite channels using [`with_channel`]:
+/// Add existing channels using [`with_channel`]. Composite primitives additionally
+/// require the `composite-noise` feature:
 ///
 /// ```no_run
 /// use pecos_neo::noise::GeneralNoiseModelBuilder;
-/// use pecos_neo::noise::composite::prelude::*;
+/// use pecos_neo::noise::TwoQubitChannel;
 ///
 /// let model = GeneralNoiseModelBuilder::new()
 ///     .with_p1(0.001)                    // Traditional 1Q channel
 ///     .with_p_meas(0.02, 0.03)           // Traditional measurement channel
-///     .with_channel(                      // Custom composite channel for 2Q
-///         CompositeChannelBuilder::two_qubit("custom_2q", seq![
-///             skip_if_leaked(),
-///             prob(0.01, pauli()),
-///         ])
-///     )
+///     .with_channel(TwoQubitChannel::depolarizing(0.01))
 ///     .build();
 /// ```
 ///
@@ -205,16 +201,11 @@ impl GeneralNoiseModelBuilder {
     ///
     /// ```no_run
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
-    /// use pecos_neo::noise::composite::prelude::*;
+    /// use pecos_neo::noise::TwoQubitChannel;
     ///
     /// let model = GeneralNoiseModelBuilder::new()
     ///     .with_p1(0.001)  // Traditional single-qubit noise
-    ///     .with_channel(   // Custom composite channel
-    ///         CompositeChannelBuilder::two_qubit("leaky_2q", seq![
-    ///             skip_if_leaked(),
-    ///             prob(0.01, when_leaked(seep(), pauli())),
-    ///         ])
-    ///     )
+    ///     .with_channel(TwoQubitChannel::depolarizing(0.01))
     ///     .build();
     /// ```
     #[must_use]

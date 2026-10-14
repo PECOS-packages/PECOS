@@ -12,11 +12,26 @@ from __future__ import annotations
 
 import json
 import math
+from importlib import import_module
 from itertools import combinations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+def _require_pecos_rslib_exp(caller: str) -> None:
+    """Raise a clear ImportError when the source-built pecos-rslib-exp package is absent."""
+    try:
+        import_module("pecos_rslib_exp")
+    except ModuleNotFoundError as exc:
+        if exc.name != "pecos_rslib_exp":
+            raise
+        message = (
+            f"{caller} requires the optional pecos-rslib-exp package, which is not published to PyPI; "
+            "build it from a PECOS source checkout with `just build`"
+        )
+        raise ImportError(message) from exc
 
 
 def logical_x_from_data(d: int, data: Sequence[int]) -> int:
@@ -578,6 +593,7 @@ def empirical_correlation_table(
         for indices, prob in table:
             print(f"P({indices}) = {prob:.6f}")
     """
+    _require_pecos_rslib_exp("empirical_correlation_table")
     from pecos_rslib_exp import (
         meas_sampling,
         monte_carlo,
@@ -612,38 +628,9 @@ def empirical_correlation_table(
             msg,
         )
 
-    det_json = json.loads(tick_circuit.get_meta("detectors"))
-    obs_json_str = tick_circuit.get_meta("observables")
-    obs_json = json.loads(obs_json_str) if obs_json_str else []
-    num_meas = int(tick_circuit.get_meta("num_measurements"))
-    len(det_json)
+    from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 
-    # Extract fired detectors and observables per shot
-    fired_per_shot: list[list[int]] = []
-    obs_per_shot: list[list[int]] = []
-    for r in results:
-        meas = list(r)
-        fired: list[int] = []
-        for i, det in enumerate(det_json):
-            val = 0
-            for rec in det["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                fired.append(i)
-        fired_per_shot.append(fired)
-
-        obs_fired: list[int] = []
-        for i, obs in enumerate(obs_json):
-            val = 0
-            for rec in obs["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                obs_fired.append(i)
-        obs_per_shot.append(obs_fired)
+    fired_per_shot, obs_per_shot = extract_detection_events_and_observables(tick_circuit, results)
 
     # Compute detector k-body rates with string labels
     inv_shots = 1.0 / shots
@@ -702,6 +689,7 @@ def fit_dem_from_simulation(
     Returns:
         Stim-format DEM string with simulation-fitted probabilities.
     """
+    _require_pecos_rslib_exp("fit_dem_from_simulation")
     if max_correlation_order < 1:
         msg = "max_correlation_order must be at least 1"
         raise ValueError(msg)
@@ -747,9 +735,8 @@ def fit_dem_from_simulation(
             mechs.append((prob, ds, os))
 
     # Step 2: Run simulation and extract empirical rates
-    det_json = json.loads(tick_circuit.get_meta("detectors"))
-    num_meas = int(tick_circuit.get_meta("num_measurements"))
-    num_dets = len(det_json)
+    definitions = tick_circuit.circuit_definitions()
+    num_dets = max((det["id"] for det in definitions["detectors"]), default=-1) + 1
 
     if backend == "meas_sampling":
         results = (
@@ -775,18 +762,14 @@ def fit_dem_from_simulation(
         msg = f"Unknown backend {backend!r}. Supported: {supported}."
         raise ValueError(msg)
 
+    from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+
+    fired_per_shot, _ = extract_detection_events_and_observables(tick_circuit, results)
     inv_shots = 1.0 / shots
     emp_marginals = [0.0] * num_dets
-    for r in results:
-        meas = list(r)
-        for i, det in enumerate(det_json):
-            val = 0
-            for rec in det["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(meas):
-                    val ^= meas[idx]
-            if val:
-                emp_marginals[i] += inv_shots
+    for fired in fired_per_shot:
+        for detector_id in fired:
+            emp_marginals[detector_id] += inv_shots
 
     # Step 3: Fit mechanism probabilities to empirical marginals
     fitted, _residuals = fit_dem_to_marginals(mechs, emp_marginals)
@@ -817,6 +800,7 @@ def build_adaptive_dem(
         Tuple of (json_str, dem_str) — noise characterization JSON and
         Stim DEM string.
     """
+    _require_pecos_rslib_exp("build_adaptive_dem")
     idle_rz = noise_params.get("idle_rz", 0.0)
 
     if idle_rz == 0.0 or idle_rz < 1e-10:

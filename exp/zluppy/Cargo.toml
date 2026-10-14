@@ -19,12 +19,19 @@ doctest = false
 # Skip unit tests - all testing should be done through Python
 test = false
 
+[features]
+extension-module = [
+    "pyo3/extension-module",
+    "pyo3/abi3-py312",
+    "pyo3/generate-import-lib",
+]
+
 [dependencies]
 # The zlup library crate (with HUGR support for compilation to HUGR)
 zlup = { path = "../zlup", features = ["hugr"] }
 
 # PyO3 for Python bindings
-pyo3 = { workspace = true, features = ["extension-module", "abi3-py312"] }
+pyo3.workspace = true
 
 # Serialization
 serde_json.workspace = true

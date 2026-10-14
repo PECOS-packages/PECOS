@@ -17,78 +17,36 @@ use crate::bit_int_bindings::PyBitInt;
 use crate::prelude::BitUInt;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
-use pyo3::types::PyInt;
+use pyo3::types::{PyBool, PyString};
 
-/// Helper to extract a u64 value from Python objects (`BitUInt`, `BitInt`, int, or str).
-fn extract_uint_operand_value(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
-    if let Ok(bit_uint) = obj.extract::<PyRef<PyBitUInt>>() {
-        return Ok(bit_uint.inner.to_u64().unwrap_or(0));
+/// Convert an inbound value, preserving same-class widths for the core operators.
+fn operand_to_bituint(size: u16, other: &Bound<'_, PyAny>) -> PyResult<BitUInt> {
+    if let Ok(value) = other.extract::<PyRef<PyBitUInt>>() {
+        return Ok(value.inner.clone());
     }
-
-    if let Ok(bit_int) = obj.extract::<PyRef<PyBitInt>>() {
-        let val = bit_int.to_int().unwrap_or(0);
-        #[allow(clippy::cast_sign_loss)]
-        return Ok(val as u64);
+    if let Ok(value) = other.extract::<PyRef<PyBitInt>>() {
+        return Ok(value.inner.inner().resize_sign_extend(size));
     }
-
-    if let Ok(value) = obj.extract::<u64>() {
-        return Ok(value);
+    if let Ok(value) = other.extract::<u64>() {
+        return Ok(BitUInt::new(size, value));
     }
-
-    if let Ok(value) = obj.extract::<i64>() {
-        #[allow(clippy::cast_sign_loss)]
-        return Ok(value as u64);
+    if let Ok(value) = other.extract::<i64>() {
+        return Ok(BitUInt::new(64, value.cast_unsigned()).resize_sign_extend(size));
     }
-
-    if let Ok(s) = obj.extract::<String>() {
-        let stripped = s
-            .strip_prefix("0b")
-            .or_else(|| s.strip_prefix("0B"))
-            .unwrap_or(&s);
-
-        if stripped.chars().all(|c| c == '0' || c == '1') {
-            return u64::from_str_radix(stripped, 2).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid binary string: {e}"
-                ))
-            });
-        }
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "String must contain only '0' and '1' characters",
-        ));
-    }
-
-    // Large Python int (doesn't fit in u64/i64): extract lower 64 bits
-    if obj.is_instance_of::<PyInt>() {
-        let words = bit_conversion::pyint_to_u64_words(obj, 1)?;
-        return Ok(words[0]);
-    }
-
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "Operand must be BitUInt, BitInt, int, or binary string",
-    ))
+    let value = bit_conversion::operand_to_pyint(other)?;
+    let words = bit_conversion::pyint_to_u64_words(&value, size)?;
+    Ok(BitUInt::from_raw_words(size, words.into_boxed_slice()))
 }
 
-/// Helper to convert an operand to a `BitUInt` with the given size.
-fn operand_to_bituint(size: u16, other: &Bound<'_, PyAny>) -> PyResult<BitUInt> {
-    if let Ok(bit_uint) = other.extract::<PyRef<PyBitUInt>>() {
-        return Ok(bit_uint.inner.clone());
+/// Convert a constructor or setter value, wrapping it to the declared width.
+fn value_to_bituint(size: u16, value: &Bound<'_, PyAny>) -> PyResult<BitUInt> {
+    let operand = operand_to_bituint(size, value)?;
+    if operand.size() == size {
+        return Ok(operand);
     }
-
-    // Fast path for values fitting in u64/i64
-    if let Ok(val) = extract_uint_operand_value(other) {
-        return Ok(BitUInt::new(size, val));
-    }
-
-    // Large Python int
-    if other.is_instance_of::<PyInt>() {
-        let n_words = (size as usize).div_ceil(64);
-        let words = bit_conversion::pyint_to_u64_words(other, n_words)?;
-        return Ok(BitUInt::from_raw_words(size, words.into_boxed_slice()));
-    }
-
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "Operand must be BitUInt, BitInt, int, or binary string",
+    Ok(BitUInt::from_raw_words(
+        size,
+        operand.to_words().into_boxed_slice(),
     ))
 }
 
@@ -124,33 +82,7 @@ impl PyBitUInt {
     #[pyo3(signature = (size, value=None))]
     pub fn new(size: &Bound<'_, PyAny>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         if let Ok(s) = size.extract::<String>() {
-            let s = s.as_str();
-            if s.is_empty() {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Binary string must not be empty",
-                ));
-            }
-            if !s.chars().all(|c| c == '0' || c == '1') {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Binary string must contain only '0' and '1' characters",
-                ));
-            }
-
-            let size_u16 = u16::try_from(s.len()).map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Binary string exceeds maximum BitUInt size",
-                )
-            })?;
-
-            let val = u64::from_str_radix(s, 2).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid binary string: {e}"
-                ))
-            })?;
-
-            return Ok(PyBitUInt {
-                inner: BitUInt::new(size_u16, val),
-            });
+            return Self::from_binary(&s);
         }
 
         let size: u16 = size.extract().map_err(|_| {
@@ -165,22 +97,8 @@ impl PyBitUInt {
             ));
         }
 
-        let inner = if let Some(val_obj) = value {
-            // Fast path: value fits in u64
-            if let Ok(v) = val_obj.extract::<u64>() {
-                BitUInt::new(size, v)
-            } else if let Ok(v) = val_obj.extract::<i64>() {
-                #[allow(clippy::cast_sign_loss)]
-                BitUInt::new(size, v as u64)
-            } else if val_obj.is_instance_of::<PyInt>() {
-                // Arbitrary-precision Python int
-                let n_words = (size as usize).div_ceil(64);
-                let words = bit_conversion::pyint_to_u64_words(val_obj, n_words)?;
-                BitUInt::from_raw_words(size, words.into_boxed_slice())
-            } else {
-                let v = extract_uint_operand_value(val_obj)?;
-                BitUInt::new(size, v)
-            }
+        let inner = if let Some(value) = value {
+            value_to_bituint(size, value)?
         } else {
             BitUInt::zero(size)
         };
@@ -201,14 +119,13 @@ impl PyBitUInt {
                 "Binary string must contain only '0' and '1' characters",
             ));
         }
-        let size = u16::try_from(s.len()).map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("Binary string too long")
-        })?;
-        let val = u64::from_str_radix(s, 2).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid binary string: {e}"))
-        })?;
+        if s.len() > 65535 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Binary string too long",
+            ));
+        }
         Ok(PyBitUInt {
-            inner: BitUInt::new(size, val),
+            inner: BitUInt::from_binary_str(s),
         })
     }
 
@@ -259,18 +176,7 @@ impl PyBitUInt {
     /// Set the value.
     pub fn set(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let size = self.inner.size();
-        if let Ok(v) = value.extract::<u64>() {
-            self.inner = BitUInt::new(size, v);
-        } else if let Ok(v) = value.extract::<i64>() {
-            #[allow(clippy::cast_sign_loss)]
-            {
-                self.inner = BitUInt::new(size, v as u64);
-            }
-        } else {
-            let n_words = (size as usize).div_ceil(64);
-            let words = bit_conversion::pyint_to_u64_words(value, n_words)?;
-            self.inner = BitUInt::from_raw_words(size, words.into_boxed_slice());
-        }
+        self.inner = value_to_bituint(size, value)?;
         Ok(())
     }
 
@@ -329,15 +235,17 @@ impl PyBitUInt {
 
     /// Clamp the value to fit within the specified bit size.
     pub fn clamp(&mut self, size: u16) {
-        if size < self.inner.size()
-            && let Some(v) = self.inner.to_u64()
-        {
-            let mask = if size >= 64 {
-                u64::MAX
+        if size < self.inner.size() {
+            if size == 0 {
+                self.inner = BitUInt::zero(self.inner.size());
             } else {
-                (1u64 << size) - 1
-            };
-            self.inner = BitUInt::new(self.inner.size(), v & mask);
+                let pattern =
+                    BitUInt::from_raw_words(size, self.inner.to_words().into_boxed_slice());
+                self.inner = BitUInt::from_raw_words(
+                    self.inner.size(),
+                    pattern.to_words().into_boxed_slice(),
+                );
+            }
         }
     }
 
@@ -390,18 +298,14 @@ impl PyBitUInt {
     }
 
     pub fn __lshift__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyBitUInt> {
-        let n = extract_uint_operand_value(other)?;
-        #[allow(clippy::cast_possible_truncation)]
-        let n = n as u16;
+        let n = bit_conversion::shift_count(other)?;
         Ok(PyBitUInt {
             inner: &self.inner << n,
         })
     }
 
     pub fn __rshift__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyBitUInt> {
-        let n = extract_uint_operand_value(other)?;
-        #[allow(clippy::cast_possible_truncation)]
-        let n = n as u16;
+        let n = bit_conversion::shift_count(other)?;
         Ok(PyBitUInt {
             inner: &self.inner >> n,
         })
@@ -475,32 +379,27 @@ impl PyBitUInt {
     // Comparison
     // ========================================================================
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        let other_uint = operand_to_bituint(self.inner.size(), other)?;
-        Ok(match op {
-            CompareOp::Eq => self.inner == other_uint,
-            CompareOp::Ne => self.inner != other_uint,
-            CompareOp::Lt => self.inner < other_uint,
-            CompareOp::Le => self.inner <= other_uint,
-            CompareOp::Gt => self.inner > other_uint,
-            CompareOp::Ge => self.inner >= other_uint,
-        })
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        let py = other.py();
+        let result = if let Ok(value) = other.extract::<PyRef<PyBitUInt>>() {
+            op.matches(self.inner.cmp(&value.inner))
+        } else if other.is_instance_of::<PyString>() || other.get_type().hasattr("__index__")? {
+            self.__int__(py)?
+                .rich_compare(bit_conversion::operand_to_pyint(other)?, op)?
+                .is_truthy()?
+        } else {
+            // An operand with no integer value is not comparable: equality then
+            // falls back to identity, so containers holding floats keep working.
+            return Ok(py.NotImplemented());
+        };
+        Ok(PyBool::new(py, result).to_owned().into_any().unbind())
     }
 
-    pub fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.size().hash(&mut hasher);
-        false.hash(&mut hasher);
-        if let Some(val) = self.inner.to_u64() {
-            val.hash(&mut hasher);
-        } else {
-            for word in self.inner.to_words() {
-                word.hash(&mut hasher);
-            }
-        }
-        hasher.finish()
-    }
+    // Values change in place through set, set_clip, set_bit, __setitem__ and
+    // clamp, so a value-based hash would strand a mutated key in its dict or
+    // set. Mutable types are unhashable, as list and bytearray are.
+    #[classattr]
+    const __hash__: Option<Py<PyAny>> = None;
 
     pub fn __str__(&self) -> String {
         format!("{}", self.inner)
@@ -595,7 +494,7 @@ impl PyBitUInt {
     }
 
     /// Returns the unsigned integer value as a Python int (arbitrary precision).
-    fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    pub(crate) fn __int__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         // Fast path: value fits in u64
         if let Some(val) = self.inner.to_u64() {
             return Ok(val

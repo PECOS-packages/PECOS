@@ -147,13 +147,11 @@ try:
     )
 
     # Circuit representation types
-    # HUGR conversion utilities
     from pecos_rslib.quantum import (
         DagCircuit,
         DagCircuitWouldCycleError,
         Gate,
         GateType,
-        HugrConversionError,
         QubitConflictError,
         QubitId,
         Tick,
@@ -161,10 +159,6 @@ try:
         TickHandle,
         TickMeasureHandle,
         TickPrepHandle,
-        gate_type_to_hugr_op,
-        hugr_op_to_gate_type,
-        hugr_to_dag_circuit,
-        is_quantum_operation,
     )
 except ImportError as e:
     # Provide helpful error message if Rust bindings not built
@@ -314,7 +308,6 @@ __all__ = [
     "H",
     "HostedGateRecord",
     "HostedOperationBinding",
-    "HugrConversionError",
     "LogicalOperatorInfo",
     "ParityCheckMatrix",
     "Pauli",
@@ -348,10 +341,6 @@ __all__ = [
     "adjust_tableau_string",
     "commute",
     "gate_groups",
-    "gate_type_to_hugr_op",
-    "hugr_op_to_gate_type",
-    "hugr_to_dag_circuit",
-    "is_quantum_operation",
     "pauli_string",
     "sparse_stab",
     "validate_hosted_operations",

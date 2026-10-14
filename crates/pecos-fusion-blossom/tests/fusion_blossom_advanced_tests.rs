@@ -176,8 +176,14 @@ mod tests {
         let result_mwpm = decoder_mwpm.decode(&syndrome.view()).unwrap();
 
         // Both should find valid matchings, but may differ
-        assert!(!result_uf.matched_edges.is_empty());
-        assert!(!result_mwpm.matched_edges.is_empty());
+        assert!(
+            !result_uf.matched_edges.is_empty(),
+            "union-find decoder returned no matched edges"
+        );
+        assert!(
+            !result_mwpm.matched_edges.is_empty(),
+            "MWPM decoder returned no matched edges"
+        );
     }
 
     #[test]
@@ -215,8 +221,14 @@ mod tests {
         let result_uf = decoder_uf.decode(&syndrome.view()).unwrap();
         let result_mwpm = decoder_mwpm.decode(&syndrome.view()).unwrap();
 
-        assert!(!result_uf.matched_edges.is_empty());
-        assert!(!result_mwpm.matched_edges.is_empty());
+        assert!(
+            !result_uf.matched_edges.is_empty(),
+            "union-find decoder returned no matched edges"
+        );
+        assert!(
+            !result_mwpm.matched_edges.is_empty(),
+            "MWPM decoder returned no matched edges"
+        );
         assert_ne!(result_uf.matched_edges, result_mwpm.matched_edges);
     }
 

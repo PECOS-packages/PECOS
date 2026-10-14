@@ -19,6 +19,7 @@ which local owns each logical slot while recursive descent emits statements.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -102,14 +103,15 @@ FUNCTIONAL_GATES: dict[GateKind, str] = {
 
 # Native Guppy parameterized rotation gates: `fn(qubit..., angle)`.
 # Guppy's `angle` type stores half-turns (pi radians = 1.0 half-turn),
-# which is exactly `angle64.to_half_turns_signed()`, so the angle is
-# emitted as `angle(<half_turns>)` with no radians/pi conversion.
+# Stored rotations use `angle64.to_half_turns_signed()`; controlled boundary
+# spellings convert their unreduced radians float to Guppy half turns here.
 PARAMETERIZED_FUNCTIONAL_GATES: dict[GateKind, str] = {
     GateKind.RX: "rx",
     GateKind.RY: "ry",
     GateKind.RZ: "rz",
     GateKind.CRZ: "crz",
 }
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 FUNCTIONAL_GATE_IMPORTS = ", ".join(
     sorted(set(FUNCTIONAL_GATES.values()) | set(PARAMETERIZED_FUNCTIONAL_GATES.values()) | {"reset"}),
@@ -199,19 +201,30 @@ _ZZ_PHASE_GATES = frozenset(
 )
 
 
-def _param_to_half_turns(param: object, gate_name: str) -> float:
-    """Resolve a user gate angle param to signed half-turns for Guppy `angle`.
+def _param_to_half_turns(param: object, gate: GateKind) -> float:
+    """Resolve a gate parameter to half turns for Guppy's `angle`.
 
-    Guppy's `angle` is half-turn based (pi rad = 1.0), which is exactly
-    ``angle64.to_half_turns_signed()``. Requires a typed `Angle`
-    (`rad(...)` / `turns(...)`) -- a non-`Angle` param (bare float, or a
-    non-literal classical expression at a gate-param position) fails loud.
+    Stored rotations use a typed `Angle`. Controlled-rotation boundary
+    spellings use an unreduced real radians literal because Guppy owns their
+    external spellings.
     """
     from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
+    if gate in CONTROLLED_ROTATION_GATES:
+        if (
+            isinstance(param, LiteralExpr)
+            and isinstance(param.value, int | float)
+            and not isinstance(param.value, bool)
+        ):
+            return float(param.value) / math.pi
+        msg = (
+            f"AST -> Guppy v1: controlled rotation {gate.name} requires an "
+            f"unreduced real radians literal; got {param!r}"
+        )
+        raise GuppyCodegenError(msg)
     if not isinstance(param, LiteralExpr) or not isinstance(param.value, Angle):
         msg = (
-            f"AST -> Guppy v1: parameterized gate {gate_name} requires a typed `Angle` "
+            f"AST -> Guppy v1: parameterized gate {gate.name} requires a typed `Angle` "
             f"parameter (use `rad(...)` / `turns(...)`); got {param!r}"
         )
         raise GuppyCodegenError(msg)
@@ -256,10 +269,9 @@ class GuppyContext:
     temp_counter: int = 0
     # Single namespace-wide slot -> Guppy-local table. Populated
     # by `populate_slot_locals` after declarations are collected (so
-    # the registers + allocator names are known); read by both
-    # `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
-    # `AstToGuppy._local_name` so all three sites that emit a slot
-    # name agree (the bug class the xfail tracked).
+    # the registers + allocator names are known); read by
+    # `GuppyLinearityState.from_allocators(..., slot_locals=...)`, so the
+    # entry unpack and every later rebinding of a slot use the same names.
     slot_locals: dict[Slot, str] = field(default_factory=dict)
 
     def indent(self) -> str:
@@ -286,9 +298,8 @@ class GuppyContext:
         Default name is `f"{allocator}_{index}"`; if that collides with
         any declared allocator name, register name, or previously
         assigned slot local, suffix `_` until unique. The output is the
-        authority used by both linearity-state binding init and the
-        emitter's `_local_name` so the entry-unpack LHS, the linearity
-        bindings, and per-slot references all agree (this disambiguation
+        authority used by linearity-state binding init, so the entry-unpack
+        LHS, the linearity bindings, and per-slot references all agree (this disambiguation
         prevents `q_0, q_1 = q` from shadowing a separately declared
         `QReg("q_0", ...)` parameter). Idempotent: caller may invoke
         once after `_collect_declarations` populates allocators+regs.
@@ -375,10 +386,7 @@ class AstToGuppy:
         else:
             body_lines.extend(self._emit_end_cleanup())
 
-        if body_lines:
-            lines.extend(body_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        lines.extend(self._suite(body_lines))
 
         self.context.pop_indent()
         return lines
@@ -566,10 +574,7 @@ class AstToGuppy:
         else:
             body_lines.extend(self._emit_end_cleanup())
 
-        if body_lines:
-            lines.extend(body_lines)
-        else:
-            lines.append(f"{self.context.indent()}pass")
+        lines.extend(self._suite(body_lines))
 
         self.context.pop_indent()
         self.context = saved_context
@@ -1165,18 +1170,14 @@ class AstToGuppy:
     def _emit_parameterized_gate(self, node: GateOp) -> list[str]:
         """Emit a native Guppy rotation: `fn(qubit..., angle(half_turns))`.
 
-        Guppy's `angle` stores half-turns (pi rad == 1.0 half-turn), so
-        the typed `Angle` param is emitted via
-        ``angle64.to_half_turns_signed()`` -- no radians/pi conversion.
-        Only typed `Angle` params are supported (a bare float or a
-        non-literal classical expression at a gate-param position fails
-        loud, mirroring the QIR backend's parameterized guard).
+        Stored rotations use typed `Angle` parameters, while controlled
+        rotations use unreduced real radians values.
         """
         gate = PARAMETERIZED_FUNCTIONAL_GATES[node.gate]
         if not node.params:
             msg = f"AST -> Guppy v1: parameterized gate {node.gate.name} requires an angle parameter"
             raise GuppyCodegenError(msg)
-        angle_args = [f"angle({_param_to_half_turns(param, node.gate.name)})" for param in node.params]
+        angle_args = [f"angle({_param_to_half_turns(param, node.gate)})" for param in node.params]
         angle_str = ", ".join(angle_args)
 
         slots = [self._slot_from_ref(target) for target in node.targets]
@@ -1232,7 +1233,7 @@ class AstToGuppy:
                 raise GuppyCodegenError(msg)
             # User params resolve to half-turns; the forwarding lambdas
             # (`p[0]`) then carry half-turns, matching the constant specs.
-            resolved_params = tuple(_param_to_half_turns(param, node.gate.name) for param in params)
+            resolved_params = tuple(_param_to_half_turns(param, node.gate) for param in params)
 
         linearity = self._linearity()
         lines: list[str] = []
@@ -1276,12 +1277,11 @@ class AstToGuppy:
         linearity = self._linearity()
         for index in slots:
             slot = Slot(node.allocator, index)
-            local = self._local_name(slot)
             if linearity.status(slot) is SlotState.LIVE:
                 cur = linearity.live(slot)
                 lines.append(f"{self.context.indent()}{cur} = reset({cur})")
             else:
-                cur = local
+                cur = linearity.refill(slot)
                 lines.append(f"{self.context.indent()}{cur} = qubit()")
             lines.extend(f"{self.context.indent()}{cur} = {FUNCTIONAL_GATES[gk]}({cur})" for gk in tail)
             linearity.set_live(slot, cur)
@@ -1315,6 +1315,12 @@ class AstToGuppy:
             return []
         return [f"{self.context.indent()}# {line.strip()}" for line in node.text.splitlines()]
 
+    def _suite(self, body_lines: list[str]) -> list[str]:
+        """Return an indented body that Python accepts, even when it is only comments."""
+        if any(line.strip() and not line.lstrip().startswith("#") for line in body_lines):
+            return body_lines
+        return [*body_lines, f"{self.context.indent()}pass"]
+
     def _emit_if(self, node: IfStmt) -> list[str]:
         linearity = self._linearity()
         before = linearity.snapshot()
@@ -1324,7 +1330,7 @@ class AstToGuppy:
 
         self.context.push_indent()
         then_lines = self._emit_block(node.then_body)
-        lines.extend(then_lines or [f"{self.context.indent()}pass"])
+        lines.extend(self._suite(then_lines))
         self.context.pop_indent()
         then_state = linearity.snapshot()
 
@@ -1334,7 +1340,7 @@ class AstToGuppy:
             lines.append(f"{self.context.indent()}else:")
             self.context.push_indent()
             else_lines = self._emit_block(node.else_body)
-            lines.extend(else_lines or [f"{self.context.indent()}pass"])
+            lines.extend(self._suite(else_lines))
             self.context.pop_indent()
             else_state = linearity.snapshot()
 
@@ -1348,7 +1354,7 @@ class AstToGuppy:
 
         self.context.push_indent()
         body_lines = self._emit_block(node.body)
-        lines.extend(body_lines or [f"{self.context.indent()}pass"])
+        lines.extend(self._suite(body_lines))
         self.context.pop_indent()
 
         after = linearity.snapshot()
@@ -1369,7 +1375,7 @@ class AstToGuppy:
         lines = [f"{self.context.indent()}{header}"]
         self.context.push_indent()
         body_lines = self._emit_block(node.body)
-        lines.extend(body_lines or [f"{self.context.indent()}pass"])
+        lines.extend(self._suite(body_lines))
         self.context.pop_indent()
 
         after = linearity.snapshot()
@@ -1714,11 +1720,8 @@ class AstToGuppy:
             return self._unpack_return_array(out_name, ret_temp)
         if kind == "single_qubit":
             outer_alloc, outer_index = info
-            # Bind the returned qubit to a fresh local that the linearity tracker
-            # treats as the new owner of the outer slot. Uses the standard
-            # `{allocator}_{index}` naming so subsequent gates resolve cleanly.
-            new_local = f"{outer_alloc}_{outer_index}"
-            linearity.set_live(Slot(outer_alloc, outer_index), new_local)
+            # The call consumed the outer slot; refill it with the returned qubit.
+            new_local = linearity.refill(Slot(outer_alloc, outer_index))
             return [f"{self.context.indent()}{new_local} = {ret_temp}"]
         if kind == "single_bit":
             # Write the mutated bit back into the outer CReg. Bits are copyable
@@ -1727,14 +1730,12 @@ class AstToGuppy:
             return [f"{self.context.indent()}{register}[{bit_index}] = {ret_temp}[0]"]
         if kind == "qubit_bundle":
             # Destructure the returned array back into the SAME outer slots the
-            # bundle consumed, rebinding each via the canonical local name.
-            new_locals = [f"{alloc}_{idx}" for alloc, idx in info]
+            # bundle consumed, refilling each with its returned qubit.
+            new_locals = [linearity.refill(Slot(alloc, idx)) for alloc, idx in info]
             if len(new_locals) == 1:
                 line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
             else:
                 line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
-            for (alloc, idx), local in zip(info, new_locals, strict=True):
-                linearity.set_live(Slot(alloc, idx), local)
             return [line]
         msg = f"Unsupported return kind {kind!r}"  # pragma: no cover
         raise GuppyCodegenError(msg)
@@ -1755,14 +1756,12 @@ class AstToGuppy:
 
     def _unpack_return_array(self, out_name: str, ret_temp: str) -> list[str]:
         size = self.context.root_allocators[out_name]
-        new_locals = [f"{out_name}_{i}" for i in range(size)]
+        linearity = self._linearity()
+        new_locals = [linearity.refill(Slot(out_name, i)) for i in range(size)]
         if size == 1:
             line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
         else:
             line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
-        linearity = self._linearity()
-        for i, local in enumerate(new_locals):
-            linearity.set_live(Slot(out_name, i), local)
         return [line]
 
     def _emit_block(self, body: tuple[Statement, ...]) -> list[str]:
@@ -1931,18 +1930,6 @@ class AstToGuppy:
             msg = f"AST -> Guppy v1 does not support allocator {ref.allocator!r}"
             raise GuppyCodegenError(msg)
         return Slot(ref.allocator, ref.index)
-
-    def _local_name(self, slot: Slot) -> str:
-        # Read from the disambiguated slot-locals table populated
-        # by `GuppyContext.populate_slot_locals` so this site agrees
-        # with the linearity-state binding and the entry-unpack LHS.
-        # Fall back to the bare formula only if a caller emits a slot
-        # before the table is populated (defensive; should not happen
-        # on a normal emission path).
-        cached = self.context.slot_locals.get(slot)
-        if cached is not None:
-            return cached
-        return f"{slot.allocator}_{slot.index}"
 
     def _render_bit_ref(self, ref: BitRef) -> str:
         if ref.register not in self.context.registers:

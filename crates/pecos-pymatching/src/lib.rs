@@ -14,6 +14,7 @@ pub mod bridge;
 pub mod builder;
 pub mod core_traits;
 pub mod decoder;
+pub mod edge_decoder;
 pub mod errors;
 pub mod iterators;
 pub mod zero_copy;
@@ -27,6 +28,7 @@ pub use decoder::{
     EdgeData, MatchedPair, MatchedPairsDict, MergeStrategy, NoiseResult, PyMatchingConfig,
     PyMatchingDecoder,
 };
+pub use edge_decoder::PyMatchingEdgeDecoder;
 pub use errors::{CheckMatrixError, PyMatchingError};
 pub use iterators::{BoundaryIterator, EdgeIterator};
 pub use zero_copy::DecodeBuffer;

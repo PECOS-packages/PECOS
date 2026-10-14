@@ -1085,10 +1085,10 @@ class TestQubitBundleInputSupport:
             warnings.simplefilter("ignore", DeprecationWarning)
             result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(5).seed(42).run(8)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-15:
+        # Re-pinned for global per-shot seeding (2026-10-11).
         assert raw == {
-            "measurement_0": [1, 0, 0, 1, 0, 0, 0, 1],
-            "measurement_1": [1, 0, 0, 1, 0, 0, 0, 1],
+            "measurement_0": [0, 1, 0, 0, 1, 0, 1, 1],
+            "measurement_1": [0, 1, 0, 0, 1, 0, 1, 1],
         }, raw
         # Bell correlation: bundled slots a[2] and b[0] measure identically.
         assert raw["measurement_0"] == raw["measurement_1"], raw
@@ -2606,8 +2606,8 @@ class TestScratchEffectS1:
         raw = result.to_dict() if hasattr(result, "to_dict") else result
         # Probe-pinned: both Checks see the same |00> data, same seed.
         assert raw == {
-            "measurement_0": [1, 0, 0, 1],
-            "measurement_1": [1, 0, 0, 1],
+            "measurement_0": [0, 1, 0, 0],
+            "measurement_1": [0, 1, 0, 0],
         }, raw
 
     def test_scratch_outer_slot_misuse_rejected(self) -> None:
@@ -2865,14 +2865,14 @@ class TestScratchCheckS4ProductionLockIn:
         # (design R2: parity is on behavioral records, not qubit count).
         result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(10).seed(42).run(4)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
+        # Re-pinned for global per-shot seeding (2026-10-11).
         assert raw == {
             "measurement_0": [0, 0, 0, 0],
             "measurement_1": [0, 0, 0, 0],
             "measurement_2": [0, 0, 0, 0],
-            "measurement_3": [1, 1, 0, 1],
-            "measurement_4": [0, 0, 1, 0],
-            "measurement_5": [0, 0, 1, 0],
+            "measurement_3": [0, 1, 0, 0],
+            "measurement_4": [1, 1, 1, 1],
+            "measurement_5": [0, 1, 1, 0],
         }, raw
 
     def test_color488_syn_extract_bare_routes_and_runs(self) -> None:
@@ -2910,9 +2910,9 @@ class TestScratchCheckS4ProductionLockIn:
             "measurement_0": [0, 0, 0, 0],
             "measurement_1": [0, 0, 0, 0],
             "measurement_2": [0, 0, 0, 0],
-            "measurement_3": [1, 1, 0, 1],
-            "measurement_4": [0, 0, 1, 0],
-            "measurement_5": [0, 0, 1, 0],
+            "measurement_3": [0, 1, 0, 0],
+            "measurement_4": [1, 1, 1, 1],
+            "measurement_5": [0, 1, 1, 0],
         }, raw
 
 
@@ -2960,7 +2960,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
             .run(4)
         )
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
+        # Re-pinned for global per-shot seeding (2026-10-11).
         assert raw == {
             "measurement_0": [0, 0, 0, 0],
             "measurement_1": [0, 0, 0, 0],
@@ -2968,16 +2968,16 @@ class TestScratchCheck1FlagS5ProductionLockIn:
             "measurement_3": [0, 0, 0, 0],
             "measurement_4": [0, 0, 0, 0],
             "measurement_5": [0, 0, 0, 0],
-            "measurement_6": [1, 1, 0, 1],
+            "measurement_6": [0, 1, 0, 0],
             "measurement_7": [0, 0, 0, 0],
-            "measurement_8": [0, 0, 1, 0],
+            "measurement_8": [1, 1, 1, 1],
             "measurement_9": [0, 0, 0, 0],
-            "measurement_10": [0, 0, 1, 0],
+            "measurement_10": [0, 1, 1, 0],
             "measurement_11": [0, 0, 0, 0],
         }, raw
 
     def test_check1flag_h_branch_compiles_qasm_only(self) -> None:
-        """The CH (`ops="H"`) branch hits a non-Clifford R1XY at runtime
+        """The CH (`ops="H"`) branch hits a non-Clifford RXY1Q at runtime
         (Selene cannot execute it), so lock in compile + QASM parity
         only: it must still route through a BlockCall and lower cleanly
         (structural check -- not a Selene assertion).

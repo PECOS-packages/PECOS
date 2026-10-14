@@ -16,7 +16,7 @@ This module contains experimental features that are under active development.
 APIs in this module may change without notice.
 
 Currently available:
-- Symbolic HUGR execution for efficient sampling of Clifford circuits
+- Symbolic circuit execution for efficient sampling of Clifford circuits
 - Noisy symbolic execution with depolarizing noise model
 """
 
@@ -25,8 +25,6 @@ from pecos_rslib.experimental import (
     SymbolicExecutionResult,
     execute_dag_circuit_symbolic,
     execute_dag_circuit_symbolic_noisy,
-    execute_hugr_symbolic,
-    execute_hugr_symbolic_noisy,
 )
 
 __all__ = [
@@ -34,6 +32,4 @@ __all__ = [
     "SymbolicExecutionResult",
     "execute_dag_circuit_symbolic",
     "execute_dag_circuit_symbolic_noisy",
-    "execute_hugr_symbolic",
-    "execute_hugr_symbolic_noisy",
 ]

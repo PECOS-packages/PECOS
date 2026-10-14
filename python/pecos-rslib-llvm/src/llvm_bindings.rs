@@ -586,6 +586,12 @@ unsafe impl Sync for PyIntType {}
 
 #[pymethods]
 impl PyIntType {
+    /// Integer storage width in bits.
+    #[getter]
+    fn width(&self) -> u32 {
+        self.ll_type.as_int_type().get_bit_width()
+    }
+
     fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
         lltype_richcmp(py, self.ll_type, other, op)
     }
@@ -878,6 +884,25 @@ impl PyIRBuilder {
     #[pyo3(signature = (lhs, rhs, name=""))]
     fn or_(&mut self, lhs: PyLLValue, rhs: PyLLValue, name: &str) -> PyResult<PyLLValue> {
         self.or(lhs, rhs, name)
+    }
+
+    /// Select one of two values using a boolean condition.
+    #[pyo3(signature = (cond, then_value, else_value, name=""))]
+    fn select(
+        &mut self,
+        cond: PyLLValue,
+        then_value: PyLLValue,
+        else_value: PyLLValue,
+        name: &str,
+    ) -> PyResult<PyLLValue> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        let result = builder
+            .select(cond.value, then_value.value, else_value.value, name)
+            .map_err(|e| PyRuntimeError::new_err(format!("select failed: {e}")))?;
+        Ok(PyLLValue {
+            value: result,
+            context_ptr: self.context_ptr,
+        })
     }
 
     /// Logical shift right

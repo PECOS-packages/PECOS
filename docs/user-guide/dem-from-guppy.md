@@ -121,7 +121,7 @@ same measurements):
 - `"meas_ids": [0, 4]` — stable stamped `MeasId`s, resolved against the
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
-  structurally from the compiled HUGR. The tag→measurement binding follows
+  structurally from the compiled HUGR in Python. The tag→measurement binding follows
   **dataflow, not syntax**: `m = measure(q).read()` followed later by
   `result("tag", m)` is fully supported, in any order. Restrictions: the
   tagged value must be a raw scalar measurement (computed, constant, and
@@ -242,8 +242,9 @@ assert stats.num_shots == batch.num_shots
 `.logical_error_rate` hold aggregates, optional `.predictions` preserves shot
 order, and optional `.stats` holds timing statistics. With the default
 `workers=None`, the execution planner selects the native-batch, sequential, or
-parallel path. Pass `workers=N` to request a specific worker count and inspect
-`.execution_path` to see which path ran. A former raw-list call such as
+parallel path. Pass `workers=N` to request up to that many workers, never more
+than one per shot, and inspect `.execution_path` and `.workers_used` to see
+which path ran and how many workers it used. A former raw-list call such as
 `detectors, observables = sampler.sample_batch(...)` becomes a batch call
 followed by the two bulk accessors shown above.
 
@@ -579,10 +580,24 @@ error model. The export itself has no extra dependency.
 `dem.to_string_decomposed()` uses decomposition components attached to the
 original fault source, writing `^`-separated components when that provenance
 is available. It preserves residual hyperedges when a true hyperedge has no
-source-attached decomposition. Graph matchers instead need
-`dem.to_string_terminal_graphlike_decomposed()`, an explicitly lossy
-hyperedge-to-edge projection based on detector terminals rather than a proof
-of source provenance.
+source-attached decomposition. For graph matchers, prefer
+`dem.to_string_source_graphlike_decomposed()`: it uses source provenance to
+choose graphlike components. Any residual hyperedges still require a decoder
+that supports them.
+
+`dem.to_string_terminal_graphlike_decomposed()` is a coordinate-based
+approximation. It invents graphlike components that need not be physical error
+mechanisms, so consistent labels do not imply accuracy comparable to source
+decomposition. It seeds a label table with standalone graphlike mechanisms,
+then decomposes effects by descending grouped probability (ties use effect order).
+Every emitted detector set keeps the same observable label in later effects. The
+last component absent from the table receives the remaining observable XOR.
+Pairings minimize coordinate distance up to 20 detectors; larger effects use
+deterministic nearest-neighbor search with consistency backtracking. Each effect
+allows at most 100,000 search visits, 4,096 cached states, and 256 terminals.
+Conflicting standalone labels, impossible pairings, and search exhaustion raise
+`ValueError`. A final check also rejects any conflicting labels in the output.
+The Rust method returns `Result<String, TerminalDecompositionError>`.
 
 <!--test-name: dem_from_guppy_stim_export-->
 ```python
@@ -617,7 +632,7 @@ dem = DetectorErrorModel.from_guppy(
 
 raw_text = dem.to_string()
 source_decomposed_text = dem.to_string_decomposed()
-graphlike_text = dem.to_string_terminal_graphlike_decomposed()
+graphlike_text = dem.to_string_source_graphlike_decomposed()
 
 print(raw_text)
 print(source_decomposed_text)
@@ -663,7 +678,7 @@ dem = DetectorErrorModel.from_guppy(
 
 stim.DetectorErrorModel(dem.to_string())
 stim.DetectorErrorModel(dem.to_string_decomposed())
-stim.DetectorErrorModel(dem.to_string_terminal_graphlike_decomposed())
+stim.DetectorErrorModel(dem.to_string_source_graphlike_decomposed())
 ```
 
 ## Decoding: PyMatching, Tesseract, and BP-OSD
@@ -704,7 +719,7 @@ dem = DetectorErrorModel.from_guppy(
 batch = dem.to_sampler().sample_batch(1000, 0)
 error_counts = {
     "pymatching": batch.decode(
-        dem.to_string_terminal_graphlike_decomposed(),
+        dem.to_string_source_graphlike_decomposed(),
         pymatching(correlated=True),
     ).num_errors,
     "tesseract": batch.decode(
@@ -731,8 +746,9 @@ assert bp_osd_result.observable_flips.mask >= 0
 For direct PyMatching construction, use the
 `PyMatchingDecoder.from_dem(...)` pattern in the
 [surface-memory example](#surface-code-memory-dem). That DEM's source-attached
-decomposition is already graph-like; in general, matching decoders require the
-terminal-decomposed graph-like projection. Tesseract and BP-OSD can consume the
+decomposition is already graph-like. Prefer the source-informed graphlike
+decomposition for matching decoders, checking that no residual hyperedges remain.
+Tesseract and BP-OSD can consume the
 raw hyperedge DEM directly; the batch comparison above uses the established
 source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
 
@@ -744,8 +760,9 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
   `if measure(q).read(): x(other)`) would yield a DEM built from a single sampled
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
-  before tracing; built-in generators such as `make_surface_code` cross
-  this boundary through a trusted program-bound layout certificate.
+  before tracing; built-in generators such as `make_surface_code` and
+  `make_surface_memory` cross this boundary through a trusted program-bound
+  layout certificate.
   Statically-scheduled gates after measurements (every QEC round has them)
   are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named

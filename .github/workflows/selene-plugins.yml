@@ -8,26 +8,29 @@ env:
   RUSTFLAGS: -C debuginfo=0
 
 on:
+  # Merges into the main branches always run, whatever they touch.
   push:
-    branches: [master, development, dev]
-    paths:
-      - 'python/selene-plugins/**'
-      - 'crates/pecos-simulators/**'
-      - 'crates/pecos-core/**'
-      - 'exp/pecos-stab-tn/**'
-      - '.github/workflows/selene-plugins.yml'
+    tags: [ "py-*", "jl-*", "rs-*" ]
+    branches: [main, master, development, dev]
+  # No `paths:` filter: GitHub applies it to label events too, so adding
+  # ci:selene-plugins could never start a run on a PR that leaves
+  # python/selene-plugins/ alone. The selene-changes job decides instead
+  # (scripts/ci/pr-lane-should-run.sh).
   pull_request:
-    branches: [master, development, dev]
-    paths:
-      - 'python/selene-plugins/**'
-      - 'crates/pecos-simulators/**'
-      - 'crates/pecos-core/**'
-      - 'exp/pecos-stab-tn/**'
-      - '.github/workflows/selene-plugins.yml'
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main, master, development, dev]
   workflow_dispatch:
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
+  schedule:
+    - cron: "7 21 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation or cache save to a later merge.
+  # Unrelated label events must not cancel an active run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selene-plugins' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 defaults:
@@ -35,10 +38,47 @@ defaults:
     shell: bash
 
 jobs:
+  selene-changes:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:selene-plugins'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether to run Selene plugin CI
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        # Assign on its own line so a git failure aborts the step (fail closed).
+        run: |
+          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml scripts/ci/smoke_selene_wheel.py Cargo.toml Cargo.lock uv.lock)"
+          case "$run" in
+            true|false) ;;
+            *)
+              echo "unexpected pr-lane-should-run output: <$run>" >&2
+              exit 1
+              ;;
+          esac
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+
   # Build and test on the current platform (fast feedback)
   test:
+    needs: selene-changes
+    if: needs.selene-changes.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Linux non-PR runs include the extended semantic suite as well.
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request' && 60 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +101,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
           enable-cache: true
@@ -71,12 +111,25 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
-          key: ${{ matrix.os }}
+          # One cache per runner OS/arch, shared with build-wheels. Per-plugin caches
+          # (6 plugins x 4 runners) filled the 10 GB repository cache on every dev
+          # push and evicted the caches the PR core gate restores.
+          shared-key: selene-plugins
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+
+      # `uv pip install` re-resolves from PyPI and does NOT read uv.lock, so the
+      # plugins' test extras drifted to whatever PyPI offered. Exporting the lock
+      # as a constraints file keeps this lane on the same versions as every other
+      # recipe. Reproducibility comes from uv.lock, not from tightening the
+      # sub-packages' requires-dist -- those ship to PyPI and must stay installable.
+      - name: Export locked versions as pip constraints
+        run: |
+          uv export --frozen --no-hashes --all-packages --no-emit-workspace \
+            -o "${{ runner.temp }}/uv-constraints.txt"
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -101,7 +154,7 @@ jobs:
             DEST="python/selene-plugins/$PLUGIN/python/${LIB_NAME}/_dist/lib"
             mkdir -p "$DEST"
             cp "target/release/lib${LIB_NAME}.$EXT" "$DEST/"
-            uv pip install --system -e "${DIR}[test]"
+            uv pip install --system -c "${{ runner.temp }}/uv-constraints.txt" -e "${DIR}[test]"
           done
 
       - name: Build and install Selene plugins (Windows)
@@ -120,32 +173,29 @@ jobs:
           }
 
           foreach ($pluginDir in (Get-ChildItem -Directory python/selene-plugins/pecos-selene-*)) {
-            uv pip install --system -e "$($pluginDir.FullName)[test]"
+            uv pip install --system -c "$env:RUNNER_TEMP/uv-constraints.txt" -e "$($pluginDir.FullName)[test]"
           }
 
       - name: Run tests
         run: |
-          pytest python/selene-plugins/ -v --tb=short
+          pytest python/selene-plugins/ -m "not slow" -v --tb=short
+
+      - name: Run extended semantic tests
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        run: |
+          pytest python/selene-plugins/ -m slow -v --tb=short
 
   # Build wheels for distribution
   build-wheels:
     needs: test
     runs-on: ${{ matrix.os }}
+    # Six sequential builds need headroom on the slower Intel macOS runner:
+    # one plugin's Intel build alone has taken up to 338 s.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
-        plugin:
-          - name: pecos-selene-stabilizer
-            package: pecos_selene_stabilizer
-          - name: pecos-selene-statevec
-            package: pecos_selene_statevec
-          - name: pecos-selene-stab-vec
-            package: pecos_selene_stab_vec
-          - name: pecos-selene-stab-mps
-            package: pecos_selene_stab_mps
-          - name: pecos-selene-mast
-            package: pecos_selene_mast
 
     steps:
       - name: Harden the runner (egress audit)
@@ -164,7 +214,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
           enable-cache: true
@@ -174,55 +224,76 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
-          key: ${{ matrix.os }}-${{ matrix.plugin.name }}
+          # Restore the test job's release build of every plugin; only that job saves.
+          shared-key: selene-plugins
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+          save-if: false
 
-      - name: Build Rust library (Unix)
-        if: runner.os != 'Windows'
+      # Build separately to avoid unifying features across shipped libraries.
+      # The test job uses editable installs; smoke-test each shipped wheel in
+      # its own clean environment outside the checkout.
+      - name: Build and smoke-test all plugin wheels
+        shell: bash
         run: |
-          cargo build --locked --release -p ${{ matrix.plugin.name }}
+          uv export --frozen --no-hashes --all-packages --no-emit-workspace -o "$RUNNER_TEMP/uv-constraints.txt"
+          case "$RUNNER_OS" in
+            Linux) prefix=lib; extension=so ;;
+            macOS) prefix=lib; extension=dylib ;;
+            Windows) prefix=; extension=dll ;;
+            *) echo "::error::Unsupported runner OS: $RUNNER_OS"; exit 1 ;;
+          esac
 
-      - name: Build Rust library (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo build --locked --release -p ${{ matrix.plugin.name }}
+          build_plugin() {
+            stage=build
+            cargo build --locked --release -p "$plugin" || return
+            stage=copy
+            destination="$directory/python/$package/_dist/lib"
+            mkdir -p "$destination" || return
+            cp "target/release/$prefix$package.$extension" "$destination/" || return
+            stage=wheel
+            (cd "$directory" && uv build --wheel --out-dir "$RUNNER_TEMP/selene-wheels") || return
+            stage=smoke
+            venv="$(mktemp -d "$RUNNER_TEMP/wheel-$plugin.XXXXXX")" || return
+            uv venv "$venv" --python 3.12 || return
+            uv pip install --python "$venv" -c "$RUNNER_TEMP/uv-constraints.txt" "$RUNNER_TEMP/selene-wheels/$package"-*.whl || return
+            venv_python="$venv/bin/python"
+            if [ "$RUNNER_OS" = "Windows" ]; then venv_python="$venv/Scripts/python.exe"; fi
+            (cd "$RUNNER_TEMP" && "$venv_python" "$GITHUB_WORKSPACE/scripts/ci/smoke_selene_wheel.py" "$package") || return
+          }
 
-      - name: Copy library to Python package (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            EXT="dylib"
-          else
-            EXT="so"
+          shopt -s nullglob
+          directories=(python/selene-plugins/pecos-selene-*/)
+          if [ "${#directories[@]}" -eq 0 ]; then
+            echo "::error::No Selene plugins discovered"
+            exit 1
           fi
-          PLUGIN_DIR="python/selene-plugins/${{ matrix.plugin.name }}"
-          mkdir -p "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib"
-          cp "target/release/lib${{ matrix.plugin.package }}.$EXT" "$PLUGIN_DIR/python/${{ matrix.plugin.package }}/_dist/lib/"
-
-      - name: Copy library to Python package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $pluginDir = "python/selene-plugins/${{ matrix.plugin.name }}"
-          New-Item -ItemType Directory -Force -Path "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib"
-          Copy-Item "target/release/${{ matrix.plugin.package }}.dll" "$pluginDir/python/${{ matrix.plugin.package }}/_dist/lib/"
-
-      - name: Build wheel
-        run: |
-          cd python/selene-plugins/${{ matrix.plugin.name }}
-          uv pip install --system build
-          python -m build --wheel --outdir dist
+          failures=()
+          for directory in "${directories[@]}"; do
+            plugin="$(basename "$directory")"
+            package="${plugin//-/_}"
+            echo "::group::$plugin"
+            # Conditional functions do not inherit errexit: every stage above
+            # explicitly returns on error so later plugins still get attempted.
+            if build_plugin; then
+              echo "$plugin: wheel and smoke test passed"
+            else
+              failures+=("$plugin ($stage)")
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failures[@]}" -gt 0 ]; then
+            printf '::error::Failed plugin: %s\n' "${failures[@]}"
+            exit 1
+          fi
 
       - name: Upload wheel
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: wheel-${{ matrix.plugin.name }}-${{ matrix.os }}
-          path: python/selene-plugins/${{ matrix.plugin.name }}/dist/*.whl
+          name: wheel-${{ matrix.os }}
+          path: ${{ runner.temp }}/selene-wheels/*.whl
           if-no-files-found: error
 
   # Collect all wheels into a single artifact
@@ -235,12 +306,19 @@ jobs:
         with:
           egress-policy: audit
 
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
       - name: Download all wheel artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: wheels/
           pattern: wheel-*
           merge-multiple: true
+
+      - name: Assert complete wheel set
+        run: python3 scripts/ci/check_selene_wheels.py wheels/
 
       - name: List wheels
         run: |

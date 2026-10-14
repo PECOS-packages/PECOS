@@ -19,7 +19,7 @@ fn main() {
 
     let tick = build_surface_memory(distance, rounds);
     let dag = DagCircuit::try_from(&tick).unwrap();
-    let dem = DemBuilder::from_circuit(&dag, 0.001, 0.001, 0.001, 0.001);
+    let dem = DemBuilder::from_circuit(&dag, 0.001, 0.001, 0.001, 0.001).unwrap();
     let mechanism_count = dem.to_mechanisms().0.len();
 
     let started = Instant::now();
@@ -122,13 +122,14 @@ fn measurement_ids(measurements: &[TickMeasRef]) -> Vec<usize> {
 fn annotations_json(annotations: &[Vec<usize>]) -> String {
     let entries = annotations
         .iter()
-        .map(|ids| {
+        .enumerate()
+        .map(|(id, ids)| {
             let ids = ids
                 .iter()
                 .map(usize::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            format!(r#"{{"meas_ids":[{ids}]}}"#)
+            format!(r#"{{"id":{id},"meas_ids":[{ids}]}}"#)
         })
         .collect::<Vec<_>>()
         .join(",");

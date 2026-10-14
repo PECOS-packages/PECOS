@@ -313,8 +313,8 @@ class TestIsClosePolymorphic:
 class TestRealWorldUseCases:
     """Test polymorphic functions in realistic quantum simulation scenarios."""
 
-    def test_quantum_gate_matrix_r1xy(self) -> None:
-        """Test using exp, cos, sin for R1XY gate matrix construction."""
+    def test_quantum_gate_matrix_rxy1q(self) -> None:
+        """Test using exp, cos, sin for RXY1Q gate matrix construction."""
         # From find_cliffs.py
         theta = math.pi / 2  # 90 degree rotation
         phi = 0.0
@@ -322,7 +322,7 @@ class TestRealWorldUseCases:
         c = cos(theta * 0.5)
         s = sin(theta * 0.5)
 
-        # Construct R1XY matrix elements
+        # Construct RXY1Q matrix elements
         elem_00 = c
         elem_01 = -1j * exp(-1j * phi) * s
         elem_10 = -1j * exp(1j * phi) * s

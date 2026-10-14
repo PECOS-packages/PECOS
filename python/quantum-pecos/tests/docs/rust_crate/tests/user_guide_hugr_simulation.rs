@@ -5,18 +5,19 @@
 
 #[test]
 fn test_user_guide_hugr_simulation_rust_1() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
-    use pecos_hugr::{hugr_engine, hugr_sim};
-    use std::path::PathBuf;
-    let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
+    use pecos::prelude::*;
 
+let program = Qasm::from_string(r#"
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    creg c[2];
+    h q[0];
+    cx q[0], q[1];
+    measure q -> c;
+"#);
 
-// Load a pre-compiled HUGR file
-let results = hugr_sim(&hugr_path)
-    .seed(42)
-    .run(1000)?;
-
+let results = sim(program).seed(42).shots(1000).run()?;
 println!("Results: {:?}", results);
 
     Ok(())
@@ -26,24 +27,21 @@ println!("Results: {:?}", results);
 
 #[test]
 fn test_user_guide_hugr_simulation_rust_2() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
-    use pecos_hugr::{hugr_engine, hugr_sim};
-    use std::path::PathBuf;
-    let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
+    use pecos::prelude::*;
 
+let program = Qasm::from_string(r#"
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    creg c[2];
+    h q[0];
+    cx q[0], q[1];
+    measure q -> c;
+"#);
 
-// Quick simulation from file
-let results = hugr_sim(&hugr_path)
-    .seed(42)
-    .run(1000)?;
-
-// Or use the builder for more control
-let engine = hugr_engine()
-    .hugr_file(&hugr_path)
-    .build()?;
-
-println!("Circuit uses {} qubits", engine.num_qubits());
+let mut experiment = sim(program).seed(42).build()?;
+let results = experiment.run(1000)?;
+println!("Results: {:?}", results);
 
     Ok(())
 }

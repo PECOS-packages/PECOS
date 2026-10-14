@@ -10,7 +10,7 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
@@ -222,6 +222,26 @@ impl PyMast {
     }
 
     #[getter]
+    fn summed_discarded_weight(&self) -> f64 {
+        self.inner.summed_discarded_weight()
+    }
+
+    #[getter]
+    fn lifetime_peak_bond(&self) -> usize {
+        self.inner.lifetime_peak_bond()
+    }
+
+    #[getter]
+    fn branch_vanish_retry_count(&self) -> u64 {
+        self.inner.branch_vanish_retry_count()
+    }
+
+    #[getter]
+    fn deferred_branch_lost_count(&self) -> u64 {
+        self.inner.deferred_branch_lost_count()
+    }
+
+    #[getter]
     /// Number of SVDs where `max_bond_dim` was the binding cap.
     ///
     /// This is a pure stored-state diagnostic: pending merged rotations are not
@@ -370,11 +390,11 @@ impl PyMast {
                 Ok(None)
             }
             "T" => {
-                self.inner.rz(Angle64::QUARTER_TURN / 2u64, q);
+                self.inner.t(q);
                 Ok(None)
             }
             "Tdg" => {
-                self.inner.rz(-(Angle64::QUARTER_TURN / 2u64), q);
+                self.inner.tdg(q);
                 Ok(None)
             }
             "PZ" | "Init" | "init |0>" => {

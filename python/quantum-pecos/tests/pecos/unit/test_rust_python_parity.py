@@ -45,23 +45,27 @@ def run_both(
     if qsim:
         kw["qsim"] = qsim
 
-    py_i = PhirClassicalInterpreter()
-    py_r = HybridEngine(cinterp=py_i, **kw).run(
-        phir,
-        foreign_object=foreign_object,
-        shots=shots,
-        seed=seed,
-        return_int=return_int,
-    )
-
-    rs_i = RustPhirClassicalInterpreter()
-    rs_r = HybridEngine(cinterp=rs_i, **kw).run(
-        phir,
-        foreign_object=foreign_object,
-        shots=shots,
-        seed=seed,
-        return_int=return_int,
-    )
+    results = []
+    errors = []
+    for interpreter in (PhirClassicalInterpreter(), RustPhirClassicalInterpreter()):
+        try:
+            result = HybridEngine(cinterp=interpreter, **kw).run(
+                phir,
+                foreign_object=foreign_object,
+                shots=shots,
+                seed=seed,
+                return_int=return_int,
+            )
+        except (ValueError, RuntimeError) as error:
+            if "Negative shift amount:" not in str(error):
+                raise
+            errors.append(str(error))
+        else:
+            results.append(result)
+    if errors:
+        assert len(errors) == 2, "Only one interpreter rejected a negative shift count"
+        return {}, {}
+    py_r, rs_r = results
 
     return py_r, rs_r
 
@@ -388,11 +392,10 @@ FUZZ_COPS = ["+", "-", "*", "&", "|", "^", ">>", "<<", "/", "%", "==", "!=", "<"
 def _random_expr(rng: random.Random, vars_info: list, depth: int):
     """Generate a random (possibly nested) classical expression.
 
-    Nests binary ops and the unary ``~`` so the interpreters' expression
-    recursion is exercised, not just flat one-level ops. Division/modulo use a
-    nonzero literal divisor and shifts a bounded literal amount, so no generated
-    program divides by zero or shifts wildly (both interpreters would agree on
-    those, but they'd raise/short-circuit and stop the differential).
+    Nests binary ops and unary ``~``. Division/modulo use nonzero literal
+    divisors. Shifts sample small, boundary, unsigned high-bit, and negative
+    literals plus register counts; parity includes agreement on errors.
+    Counts stay within the PHIR JSON i64/u64 literal domain.
     """
     if depth <= 0 or rng.random() < 0.4:
         # Leaf: a variable reference or a small literal.
@@ -406,7 +409,9 @@ def _random_expr(rng: random.Random, vars_info: list, depth: int):
     if cop in ("/", "%"):
         rhs = rng.randint(1, 15)
     elif cop in (">>", "<<"):
-        rhs = rng.randint(0, 15)
+        rhs = rng.choice(
+            [*range(16), 31, 32, 33, 63, 64, 65, 65535, 65536, 2**63, 2**64 - 1, -1, -64, rng.choice(vars_info)[0]],
+        )
     else:
         rhs = _random_expr(rng, vars_info, depth - 1)
     return {"cop": cop, "args": [lhs, rhs]}
@@ -426,6 +431,11 @@ def _make_random_classical_program(rng: random.Random) -> dict:
         size = rng.randint(1, max_size)
         name = f"v{i}"
         ops.append({"data": "cvar_define", "data_type": dtype, "variable": name, "size": size})
+        vars_info.append((name, dtype, size))
+
+    for name, dtype, size, value in [("negative_count", "i64", 63, -1), ("unsigned_count", "u64", 64, 2**63)]:
+        ops.append({"data": "cvar_define", "data_type": dtype, "variable": name, "size": size})
+        ops.append({"cop": "=", "returns": [name], "args": [value]})
         vars_info.append((name, dtype, size))
 
     for _ in range(rng.randint(3, 10)):
@@ -1297,3 +1307,77 @@ def test_overflow_wraps_to_min(size: int) -> None:
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
     assert int(py_r["v"]) == expected, f"max+1 in size={size}: expected {expected}, got {int(py_r['v'])}"
+
+
+def test_metadata_machine_duration_parity() -> None:
+    """Default operation metadata supports preparation, gates, duration and measurement."""
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 1},
+            {"qop": "Init", "args": [["q", 0]]},
+            {"qop": "H", "args": [["q", 0]]},
+            {"mop": "Idle", "args": [["q", 0]], "duration": [2, "ms"]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+        ],
+    }
+    interp = PhirClassicalInterpreter()
+    interp.init(phir)
+    assert interp.program.ops[2].metadata == {"duration": [2, "ms"]}
+    py_result, rust_result = run_both(phir, shots=10, seed=925, qsim="stabilizer")
+    assert py_result == rust_result == {"m": ["0", "0", "0", "0", "0", "0", "1", "1", "0", "0"]}
+
+
+def test_shift_rule_parity_boundaries() -> None:
+    """Fix demonstration: logical and arithmetic saturation agree with the rule."""
+    for count in (63, 64, 65, 65535, 65536, 2**63, 2**64 - 1):
+        phir = _make_classical_program(
+            [("l", "u64", 64), ("r", "u64", 64), ("s", "i64", 63), ("count", "u64", 64)],
+            [
+                {"cop": "=", "returns": ["count"], "args": [count]},
+                {"cop": "=", "returns": ["l"], "args": [{"cop": "<<", "args": [1, "count"]}]},
+                {"cop": "=", "returns": ["r"], "args": [{"cop": ">>", "args": [2**63, "count"]}]},
+                {"cop": "=", "returns": ["s"], "args": [{"cop": ">>", "args": [-8, "count"]}]},
+            ],
+        )
+        py, rs = _run_classical(phir)
+        assert py == rs == {"l": 1 << count if count < 64 else 0, "r": 2**63 >> count, "s": -1, "count": count}
+
+
+def test_shift_rule_parity_negative() -> None:
+    """Compatibility pin: both raise on signed negative literal/register counts."""
+    for count in (-1, "count"):
+        phir = _make_classical_program(
+            [("x", "u64", 64), ("count", "i64", 63)],
+            [
+                {"cop": "=", "returns": ["count"], "args": [-1]},
+                {"cop": "=", "returns": ["x"], "args": [{"cop": "<<", "args": [1, count]}]},
+            ],
+        )
+        for interpreter, error in [
+            (PhirClassicalInterpreter(), ValueError),
+            (RustPhirClassicalInterpreter(), RuntimeError),
+        ]:
+            with pytest.raises(error, match="Negative shift amount: -1"):
+                HybridEngine(cinterp=interpreter, qsim="stabilizer").run(phir)
+
+
+def test_shift_rule_fuzzer_coverage() -> None:
+    """Fix demonstration: seed 879 reaches counts that clamping to 15 misses."""
+    counts = []
+
+    def collect(expr):
+        if isinstance(expr, dict):
+            if expr["cop"] in ("<<", ">>"):
+                counts.append(expr["args"][1])
+            for arg in expr["args"]:
+                collect(arg)
+
+    rng = random.Random(879)
+    for _ in range(5000):
+        collect(_random_expr(rng, [("negative_count", "i64", 63), ("unsigned_count", "u64", 64)], 3))
+    assert {31, 32, 33, 63, 64, 65, 65535, 65536, 2**63, 2**64 - 1, -1, "negative_count", "unsigned_count"} <= set(
+        counts,
+    )

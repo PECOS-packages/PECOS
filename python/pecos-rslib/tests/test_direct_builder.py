@@ -45,6 +45,44 @@ class TestDirectBuilder:
         assert 0 in counts
         assert 3 in counts
 
+    def test_noise_accepts_parameter_conversion_protocol(self) -> None:
+        """Portable parameter objects are converted when attached to ``sim()``."""
+
+        class Parameters:
+            def __init__(self) -> None:
+                self.converted = False
+
+            def __pecos_noise_builder__(self) -> GeneralNoiseModelBuilder:
+                self.converted = True
+                return GeneralNoiseModelBuilder().with_seed(17).with_p_meas_0(1.0)
+
+        program = Qasm.from_string("""
+            OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            creg c[1];
+            measure q[0] -> c[0];
+            """)
+        parameters = Parameters()
+
+        simulation = sim(program).noise(parameters)
+
+        assert parameters.converted
+        assert simulation.run(4).to_dict()["c"] == [1] * 4
+
+    def test_noise_propagates_parameter_conversion_errors(self) -> None:
+        """A conversion error reaches the caller without being obscured."""
+
+        class InvalidParameters:
+            def __pecos_noise_builder__(self) -> GeneralNoiseModelBuilder:
+                message = "portable noise configuration is invalid"
+                raise ValueError(message)
+
+        program = Qasm.from_string("OPENQASM 2.0; qreg q[1];")
+
+        with pytest.raises(ValueError, match="portable noise configuration is invalid"):
+            sim(program).noise(InvalidParameters())
+
     def test_builder_with_pauli_model(self) -> None:
         """Test builder with Pauli error models."""
         qasm = """

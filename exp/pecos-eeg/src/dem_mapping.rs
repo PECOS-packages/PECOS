@@ -13,7 +13,7 @@ use crate::circuit::PropagatedEeg;
 use crate::eeg::EegType;
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Pauli, PauliString};
+use pecos_core::{Pauli, PauliString, Phase};
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -33,10 +33,10 @@ pub enum HFormula {
     Taylor,
     /// p = sin^2(h_eff) applied to the Taylor quadratic form.
     SinSquared,
-    /// Exact product formula for commuting generators:
-    ///   p = (1/2)(1 - Re(prod_j factor_j))
-    /// where factor_j depends on whether P_j or D·P_j is a stabilizer.
-    /// Captures all orders for the commuting case.
+    /// Independent-rotation product: p = (1 - prod_j cos(2 h_j))/2.
+    /// Ignores interference between generators. For commuting generators it
+    /// is exact only when no product of two or more event labels is (up to
+    /// sign) a stabilizer. Use `ExactSubset` for all-orders interference.
     ExactCommuting,
     /// Exact subset sum formula for commuting generators:
     ///   p = (1/2)(1 - Re(Σ_S i^|S| Π sin · Π cos · ε_S))
@@ -54,7 +54,7 @@ pub enum BchOrder {
     #[default]
     First,
     /// Second-order: G_c = sum G_i + (1/2) sum [G_i, G_j].
-    /// Adds new H generators from [H_P, H_Q] = 2i H_{PQ} for anticommuting P,Q.
+    /// Adds new H generators from [H_P, H_Q] = -2i H_{PQ} for anticommuting P,Q.
     /// Also adds Zassenhaus W_2 cross-event [H,S] → C corrections.
     Second,
 }
@@ -118,7 +118,7 @@ impl EegConfig {
         self
     }
 
-    /// Use exact product formula for commuting H-type generators.
+    /// Use the independent-rotation product; see [`HFormula::ExactCommuting`].
     #[must_use]
     pub fn exact_commuting(mut self) -> Self {
         self.h_formula = HFormula::ExactCommuting;
@@ -265,7 +265,7 @@ fn classify_xz(
 /// Build a DEM from propagated EEG generators.
 ///
 /// Groups generators by DEM event class, then computes probabilities:
-/// - **S-only event**: p = (1/2)(1 - exp(-2 * sum_rates)) [exact]
+/// - **S-only event**: p = (1/2)(1 - exp(2 * sum_coefficients)) [exact]
 /// - **H-only event**: p = sum_j h_j^2 [leading order, diagonal terms]
 ///   (Off-diagonal coherent interference captured at second order via beta)
 /// - **Mixed**: S at O(epsilon) + H^2 at O(epsilon^2)
@@ -276,10 +276,12 @@ fn classify_xz(
 /// we need to check if pairs of H generators anticommute with the same
 /// detectors AND their product Q_j*Q_k is a stabilizer of |psi>.
 ///
-/// For the first implementation, we use the diagonal approximation for H
-/// and the exact formula for S. This gives correct results for stochastic
-/// noise and a Pauli-twirled approximation for coherent noise. The full
-/// coherent formula (with off-diagonal beta terms) is future work.
+/// Without a stabilizer group H uses the diagonal approximation. Use
+/// [`build_dem_with_stabilizers`] to include coherent interference and C/A.
+///
+/// # Panics
+/// Panics for C/A input without `label2` or without a stabilizer group,
+/// including zero coefficients, or an event probability below -1e-12.
 #[must_use]
 pub fn build_dem(
     generators: &[PropagatedEeg],
@@ -289,7 +291,17 @@ pub fn build_dem(
     build_dem_with_stabilizers(generators, detectors, observables, None)
 }
 
-/// Build DEM with stabilizer group for coherent interference.
+/// Build DEM with stabilizer group for coherent interference and C/A.
+///
+/// Equal-event commuting C labels contribute `2 c <PQ>`; anticommuting A
+/// labels contribute `-2 i a <PQ>`. These are folded into the S coefficient
+/// sum before exponentiation. Thus `C_{P,P}(c) = S_P(-2c)` exactly.
+/// The C fold is exact alone and with S labels commuting with PQ; the A fold
+/// agrees to first order (its exact pattern probability is linear in a).
+///
+/// # Panics
+/// Panics for C/A input without `label2` or without a stabilizer group,
+/// including zero coefficients, or an event probability below -1e-12.
 #[must_use]
 pub fn build_dem_with_stabilizers(
     generators: &[PropagatedEeg],
@@ -308,6 +320,11 @@ pub fn build_dem_with_stabilizers(
 }
 
 /// Build DEM with all options via config struct.
+///
+/// # Panics
+/// Panics for C/A input without `label2` or without a stabilizer group,
+/// including zero coefficients, or an event probability below -1e-12.
+/// `ExactSubset` panics when an event has more than 25 H labels.
 #[must_use]
 pub fn build_dem_configured(
     generators: &[PropagatedEeg],
@@ -327,6 +344,11 @@ pub fn build_dem_configured(
 }
 
 /// Build DEM with individual options (convenience).
+///
+/// # Panics
+/// Panics for C/A input without `label2` or without a stabilizer group,
+/// including zero coefficients, or an event probability below -1e-12.
+/// `ExactSubset` panics when an event has more than 25 H labels.
 #[must_use]
 pub fn build_dem_with_options(
     generators: &[PropagatedEeg],
@@ -346,51 +368,73 @@ pub fn build_dem_with_options(
     )
 }
 
-fn build_dem_inner(
+/// Return the ExactSubset event-size violation for the inputs a DEM build uses.
+///
+/// Returns `None` for other formulas. Counts distinct, non-negligible H labels
+/// after same-label accumulation and the configured BCH corrections, using
+/// the same event preparation and error message as the builder. Other input
+/// validity conditions are not checked here.
+#[must_use]
+pub fn exact_subset_violation(
     generators: &[PropagatedEeg],
     detectors: &[Detector],
     observables: &[Observable],
-    stabilizer_group: Option<&StabilizerGroup>,
-    h_formula: HFormula,
-    bch_order: BchOrder,
-) -> Vec<DemEntry> {
-    // First-order BCH: combine generators with the same Pauli label.
-    // This is where coherent accumulation happens: h1 + h2 for same label.
-    let mut h_by_label: BTreeMap<Bm, f64> = BTreeMap::new();
-    let mut s_by_label: BTreeMap<Bm, f64> = BTreeMap::new();
+    config: &EegConfig,
+) -> Option<String> {
+    if config.h_formula != HFormula::ExactSubset {
+        return None;
+    }
+    prepare_h_events(
+        collect_h_coefficients(generators),
+        detectors,
+        observables,
+        config.bch_order,
+    )
+    .exact_subset_violation(config.h_formula)
+}
 
-    // C and A type generators: two labels, first-order contribution.
-    // Key = (label1, label2), value = coefficient.
-    let mut c_generators: Vec<(Bm, Bm, f64)> = Vec::new();
-    let mut a_generators: Vec<(Bm, Bm, f64)> = Vec::new();
+struct HEvents {
+    coefficients: BTreeMap<DemEvent, Vec<f64>>,
+    labels: BTreeMap<DemEvent, Vec<Bm>>,
+}
 
-    for g in generators {
-        match g.eeg_type {
-            EegType::H => {
-                *h_by_label.entry(g.label.clone()).or_insert(0.0) += g.coeff;
-            }
-            EegType::S => {
-                *s_by_label.entry(g.label.clone()).or_insert(0.0) += g.coeff;
-            }
-            EegType::C => {
-                if let Some(l2) = g.label2.clone() {
-                    c_generators.push((g.label.clone(), l2, g.coeff));
-                }
-            }
-            EegType::A => {
-                if let Some(l2) = g.label2.clone() {
-                    a_generators.push((g.label.clone(), l2, g.coeff));
-                }
-            }
+impl HEvents {
+    fn exact_subset_violation(&self, formula: HFormula) -> Option<String> {
+        if formula != HFormula::ExactSubset {
+            return None;
+        }
+        self.coefficients.iter().find_map(|(event, coefficients)| {
+            (coefficients.len() > 25).then(|| {
+                format!(
+                    "ExactSubset limit is 25 H labels per event; got {} for event {event:?}",
+                    coefficients.len()
+                )
+            })
+        })
+    }
+}
+
+fn collect_h_coefficients(generators: &[PropagatedEeg]) -> BTreeMap<Bm, f64> {
+    let mut coefficients = BTreeMap::new();
+    for generator in generators {
+        if generator.eeg_type == EegType::H {
+            *coefficients.entry(generator.label.clone()).or_insert(0.0) += generator.coeff;
         }
     }
+    coefficients
+}
 
+fn prepare_h_events(
+    mut h_by_label: BTreeMap<Bm, f64>,
+    detectors: &[Detector],
+    observables: &[Observable],
+    bch_order: BchOrder,
+) -> HEvents {
     // Second-order BCH: [H_P, H_Q] = -2i H_{PQ} for anticommuting P, Q.
     // PQ = i^k * R (from multiply_with_phase), so H_{PQ} = i^k * H_R.
     // BCH coefficient: (1/2) * (-2i) * i^k * h_i * h_j = -i^{k+1} * h_i * h_j.
-    // This can be real or imaginary depending on k.
+    // Anticommuting Hermitian Paulis have odd k, so this is always real.
     let mut h_bch2_re_by_label: BTreeMap<Bm, f64> = BTreeMap::new();
-    let mut h_imag_by_label: BTreeMap<Bm, f64> = BTreeMap::new();
 
     if bch_order == BchOrder::Second {
         let h_entries: Vec<(Bm, f64)> = h_by_label.iter().map(|(l, &c)| (l.clone(), c)).collect();
@@ -408,32 +452,91 @@ fn build_dem_inner(
                 let (product, phase_k) = p_i.multiply_with_phase(p_j);
                 let mag = h_i * h_j;
                 let phase = (phase_k + 3) % 4; // -i^{k+1} = i^{k+3}
-                let (re_coeff, im_coeff) = match phase {
-                    0 => (mag, 0.0),  // 1
-                    1 => (0.0, mag),  // i
-                    2 => (-mag, 0.0), // -1
-                    3 => (0.0, -mag), // -i
-                    _ => unreachable!(),
+                let coeff = match phase {
+                    0 => mag,
+                    2 => -mag,
+                    _ => unreachable!("anticommuting Pauli product has odd phase"),
                 };
-
-                *h_bch2_re_by_label.entry(product.clone()).or_insert(0.0) += re_coeff;
-                *h_imag_by_label.entry(product).or_insert(0.0) += im_coeff;
+                *h_bch2_re_by_label.entry(product).or_insert(0.0) += coeff;
             }
         }
     }
 
-    // Zassenhaus W_2: cross-event commutators produce generators in new or
-    // existing event classes. These are iteratively decomposed by event class
-    // and their detection contributions computed (paper step 4).
-    //
-    // [H_P, S_Q] = i C_{Q, [Q,P]} → C-type with imaginary coeff i·h·s
-    // [H_P, H_Q] = -i H_{[P,Q]} → H-type with imaginary coeff (already in BCH2 above)
-    // [S_P, S_Q] = 0 → no contribution
-    //
-    // The [H,S] cross-terms produce C-type generators. At leading order,
-    // their purely imaginary coefficients give zero contribution to
-    // detection: Re(i·h·s · β) = 0 for real β. The paper's O(ε^{3/2})
-    // error bound accounts for this.
+    // Merge the real BCH2 correction into the signed H coefficients.
+    for (label, &coeff) in &h_bch2_re_by_label {
+        *h_by_label.entry(label.clone()).or_insert(0.0) += coeff;
+    }
+
+    // Group BCH-combined generators by DEM event class.
+    let mut h_events: BTreeMap<DemEvent, Vec<f64>> = BTreeMap::new();
+    let mut event_pauli_labels: BTreeMap<DemEvent, Vec<Bm>> = BTreeMap::new();
+
+    for (label, &coeff) in &h_by_label {
+        if coeff.abs() < 1e-20 {
+            continue;
+        }
+        let event = classify(label, detectors, observables);
+        if event.detectors.is_empty() && event.observables.is_empty() {
+            continue;
+        }
+        h_events.entry(event.clone()).or_default().push(coeff);
+        event_pauli_labels
+            .entry(event)
+            .or_default()
+            .push(label.clone());
+    }
+
+    HEvents {
+        coefficients: h_events,
+        labels: event_pauli_labels,
+    }
+}
+
+fn build_dem_inner(
+    generators: &[PropagatedEeg],
+    detectors: &[Detector],
+    observables: &[Observable],
+    stabilizer_group: Option<&StabilizerGroup>,
+    h_formula: HFormula,
+    bch_order: BchOrder,
+) -> Vec<DemEntry> {
+    // First-order BCH: combine generators with the same Pauli label.
+    // This is where coherent accumulation happens: h1 + h2 for same label.
+    let h_by_label = collect_h_coefficients(generators);
+    let mut s_by_label: BTreeMap<Bm, f64> = BTreeMap::new();
+
+    // C and A type generators: two labels, first-order contribution.
+    // Key = (label1, label2), value = coefficient.
+    let mut c_generators: Vec<(Bm, Bm, f64)> = Vec::new();
+    let mut a_generators: Vec<(Bm, Bm, f64)> = Vec::new();
+
+    for g in generators {
+        match g.eeg_type {
+            EegType::H => {}
+            EegType::S => {
+                *s_by_label.entry(g.label.clone()).or_insert(0.0) += g.coeff;
+            }
+            EegType::C | EegType::A => {
+                let l2 = g.label2.clone().expect("C/A generator requires label2");
+                assert!(
+                    stabilizer_group.is_some(),
+                    "C/A generator requires a stabilizer group"
+                );
+                let target = if g.eeg_type == EegType::C {
+                    &mut c_generators
+                } else {
+                    &mut a_generators
+                };
+                target.push((g.label.clone(), l2, g.coeff));
+            }
+        }
+    }
+
+    // Zassenhaus W_2 [H,S] placeholders. For anticommuting P,Q,
+    // QP = i^k R has odd k, so the C coefficient i^{k+1} h s is real.
+    // Q and R anticommute: their C pattern contribution is zero under the
+    // equal-event rule below. Retain the internal zero entries; they are not
+    // user input and need neither a stabilizer group nor validation.
     if bch_order == BchOrder::Second {
         let h_entries: Vec<(Bm, f64)> = h_by_label.iter().map(|(l, &c)| (l.clone(), c)).collect();
         let s_entries: Vec<(Bm, f64)> = s_by_label.iter().map(|(l, &c)| (l.clone(), c)).collect();
@@ -444,52 +547,17 @@ fn build_dem_inner(
                     continue;
                 }
 
-                // [H_P, S_Q] = i C_{Q, QP} (for anticommuting P,Q: [Q,P]=2QP)
-                // QP = i^k * R (from multiply_with_phase).
-                // Zassenhaus (1/2) factor: coeff = (1/2)·h·s·i·2·i^k = i^{k+1}·h·s
-                // For k=0: purely imaginary → zero real contribution at leading order.
-                // For k≠0: may have real part, but still O(ε^{3/2}).
                 let (qp, _phase) = q.multiply_with_phase(p);
                 c_generators.push((q.clone(), qp, 0.0));
             }
         }
     }
 
-    // Merge real and imaginary H-type generators into complex coefficients.
-    // BCH2 can contribute both real and imaginary parts to generator labels.
-    // Merge BCH2 real parts into h_by_label.
-    for (label, &re) in &h_bch2_re_by_label {
-        *h_by_label.entry(label.clone()).or_insert(0.0) += re;
+    let h_events = prepare_h_events(h_by_label, detectors, observables, bch_order);
+    if let Some(message) = h_events.exact_subset_violation(h_formula) {
+        panic!("{message}");
     }
-
-    let all_h_labels: std::collections::BTreeSet<Bm> = h_by_label
-        .keys()
-        .chain(h_imag_by_label.keys())
-        .cloned()
-        .collect();
-
-    // Group BCH-combined generators by DEM event class.
-    // Store (real, imag) coefficient pairs per label.
-    let mut h_events: BTreeMap<DemEvent, Vec<(f64, f64)>> = BTreeMap::new();
     let mut s_events: BTreeMap<DemEvent, Vec<f64>> = BTreeMap::new();
-    let mut event_pauli_labels: BTreeMap<DemEvent, Vec<Bm>> = BTreeMap::new();
-
-    for label in &all_h_labels {
-        let re = h_by_label.get(label).copied().unwrap_or(0.0);
-        let im = h_imag_by_label.get(label).copied().unwrap_or(0.0);
-        if re.abs() < 1e-20 && im.abs() < 1e-20 {
-            continue;
-        }
-        let event = classify(label, detectors, observables);
-        if event.detectors.is_empty() && event.observables.is_empty() {
-            continue;
-        }
-        h_events.entry(event.clone()).or_default().push((re, im));
-        event_pauli_labels
-            .entry(event)
-            .or_default()
-            .push(label.clone());
-    }
 
     for (label, &coeff) in &s_by_label {
         let event = classify(label, detectors, observables);
@@ -499,88 +567,43 @@ fn build_dem_inner(
         s_events.entry(event).or_default().push(coeff);
     }
 
-    let mut entries = Vec::new();
-
-    // S-only events: exact formula
-    // p_D = (1/2)(1 - exp(2 * sum_rates))
-    // Note: S rates are negative (e.g., -p/3), so 2*sum is negative,
-    // exp(2*sum) < 1, and p_D > 0.
-    for (event, rates) in &s_events {
-        let sum_rate: f64 = rates.iter().sum();
-        let prob = (1.0 - (2.0 * sum_rate).exp()) / 2.0;
-        if prob.abs() > 1e-15 {
-            entries.push(DemEntry {
-                event: event.clone(),
-                probability: prob.abs(),
-            });
+    // For the pattern projector Pi_E = prod_i (1 - d_i D_i)/2,
+    // equal-event labels give delta p = 2 c <PQ> (C) or -2 i a <PQ> (A),
+    // independently of |E|: Pi_E annihilates |psi> and preserves P|psi>,
+    // Q|psi>. Thus Tr(Pi_E P rho Q)=<QP>, Tr(Pi_E Q rho P)=<PQ>,
+    // and the anticommutator terms vanish. Their sum (C) or i times their
+    // difference (A) gives the expressions above. No detector-product sign
+    // enters this rule.
+    if let Some(stab_group) = stabilizer_group {
+        for (is_c, gens) in [(true, &c_generators), (false, &a_generators)] {
+            for (p, q, coeff) in gens {
+                let event = classify(p, detectors, observables);
+                if event != classify(q, detectors, observables)
+                    || (event.detectors.is_empty() && event.observables.is_empty())
+                    || p.commutes_with(q) != is_c
+                {
+                    continue;
+                }
+                let expectation = stab_group.product_expectation([p, q]);
+                let delta_p = expectation.map_or(0.0, |phase| {
+                    let value = phase.to_complex();
+                    2.0 * coeff * if is_c { value.re } else { value.im }
+                });
+                s_events.entry(event).or_default().push(-delta_p);
+            }
         }
     }
 
-    // C-type and A-type first-order contributions.
-    // β(ψ, C_{Q1,Q2}, P) = ±4 if [Q1,Q2]=0, [Q1,P]≠0, [Q2,P]≠0, Q1Q2|ψ⟩=∓|ψ⟩
-    // β(ψ, A_{Q1,Q2}, P) = ±4 if [Q1,Q2]≠0, [Q1,P]≠0, [Q2,P]≠0, iQ1Q2|ψ⟩=±|ψ⟩
-    // These contribute at first order (same as S).
-    if let Some(stab_group) = stabilizer_group {
-        for &(ref q1, ref q2, coeff) in c_generators.iter().chain(a_generators.iter()) {
-            // Classify: both Q1 and Q2 must anticommute with the same detectors
-            let event1 = classify(q1, detectors, observables);
-            let event2 = classify(q2, detectors, observables);
-            if event1 != event2 || (event1.detectors.is_empty() && event1.observables.is_empty()) {
-                continue;
-            }
-            let event = event1;
-
-            // Check commutativity condition
-            let q1_q2_commute = q1.commutes_with(q2);
-            let is_c_type = c_generators.iter().any(|(a, b, _)| a == q1 && b == q2);
-
-            // C requires [Q1,Q2]=0, A requires [Q1,Q2]≠0
-            if is_c_type && !q1_q2_commute {
-                continue;
-            }
-            if !is_c_type && q1_q2_commute {
-                continue;
-            }
-
-            // Check product stabilizer status
-            let product = q1.multiply(q2);
-            let beta = if product.is_identity() {
-                Some(true)
-            } else {
-                stab_group.is_stabilizer(&product)
-            };
-
-            // β = ±4, contribution to p_D = coeff * β / (-2) at first order
-            // (detection probability p = (1/2)(1 - ⟨Q⟩), ⟨Q⟩ ≈ 1 + β·ε)
-            // For C: β = ±4 → p contribution = -coeff * (±4) / 2 = ∓2·coeff
-            // For A: β = ±4 → same
-            if let Some(sign) = beta {
-                let beta_val = if sign { -4.0 } else { 4.0 };
-                // For A-type, the stabilizer check is on iQ1Q2, not Q1Q2.
-                // Since we check Q1Q2, the sign interpretation differs for A.
-                // A: iQ1Q2|ψ⟩=±|ψ⟩ → Q1Q2|ψ⟩=∓i|ψ⟩. For real stabilizer
-                // eigenvalues (±1), this means Q1Q2 is NOT a real stabilizer.
-                // A-type only contributes when iQ1Q2 has eigenvalue ±1,
-                // which means Q1Q2 has eigenvalue ∓i. Skip for now since
-                // stabilizer eigenvalues are always ±1.
-                if !is_c_type {
-                    continue;
-                }
-
-                let prob_contribution = -coeff * beta_val / 2.0;
-                if prob_contribution.abs() > 1e-15 {
-                    if let Some(existing) = entries.iter_mut().find(|e| e.event == event) {
-                        let p_s = existing.probability;
-                        existing.probability =
-                            p_s + prob_contribution.abs() - 2.0 * p_s * prob_contribution.abs();
-                    } else {
-                        entries.push(DemEntry {
-                            event: event.clone(),
-                            probability: prob_contribution.abs(),
-                        });
-                    }
-                }
-            }
+    let mut entries = Vec::new();
+    // S and effective C/A rates combine BEFORE the exact S exponential.
+    for (event, rates) in &s_events {
+        let sum_rate: f64 = rates.iter().sum();
+        let prob = checked_event_probability((1.0 - (2.0 * sum_rate).exp()) / 2.0, event);
+        if prob > 1e-15 {
+            entries.push(DemEntry {
+                event: event.clone(),
+                probability: prob,
+            });
         }
     }
 
@@ -597,39 +620,38 @@ fn build_dem_inner(
     // Off-diagonal with anti-stabilizer: contributes -h_j*h_k (destructive)
     //
     // If stabilizer_group is None, fall back to diagonal approximation.
-    for (event, coeffs) in &h_events {
-        // Collect the detector stabilizers for this event (for ExactCommuting)
-        let event_det_stab =
-            if h_formula == HFormula::ExactCommuting || h_formula == HFormula::ExactSubset {
-                // XOR of all detector stabilizers in this event
-                let mut stab = Bm::default();
-                for &d_id in &event.detectors {
-                    if let Some(det) = detectors.iter().find(|d| d.id == d_id) {
-                        stab = stab.multiply(&det.stabilizer);
-                    }
+    for (event, coeffs) in &h_events.coefficients {
+        // Collect the detector stabilizers for ExactSubset.
+        let event_det_stab = if h_formula == HFormula::ExactSubset {
+            // Producers use Z-only measurement parities, so this product has no phase.
+            let mut stab = Bm::default();
+            for &d_id in &event.detectors {
+                if let Some(det) = detectors.iter().find(|d| d.id == d_id) {
+                    stab = stab.multiply(&det.stabilizer);
                 }
-                Some(stab)
-            } else {
-                None
-            };
+            }
+            Some(stab)
+        } else {
+            None
+        };
 
         let prob = if let Some(stab_group) = stabilizer_group {
             compute_h_probability_full(
                 coeffs,
-                generators,
-                &event_pauli_labels,
+                &h_events.labels,
                 event,
                 stab_group,
                 h_formula,
                 event_det_stab.as_ref(),
             )
         } else {
-            coeffs.iter().map(|&(re, im)| re * re + im * im).sum()
+            checked_event_probability(coeffs.iter().map(|h| h * h).sum(), event)
         };
         if prob > 1e-15 {
             if let Some(existing) = entries.iter_mut().find(|e| e.event == *event) {
                 let p_s = existing.probability;
-                existing.probability = p_s + prob - 2.0 * p_s * prob;
+                existing.probability =
+                    checked_event_probability(p_s + prob - 2.0 * p_s * prob, event);
             } else {
                 entries.push(DemEntry {
                     event: event.clone(),
@@ -652,8 +674,7 @@ fn build_dem_inner(
 /// - If [Q_j, Q_k] = 0 and Q_j*Q_k is -1 stabilizer: beta = +4 → -h_j*h_k
 /// - Otherwise: beta = 0
 fn compute_h_probability_full(
-    coeffs: &[(f64, f64)],
-    _generators: &[PropagatedEeg],
+    coeffs: &[f64],
     event_labels: &BTreeMap<DemEvent, Vec<Bm>>,
     event: &DemEvent,
     stab_group: &StabilizerGroup,
@@ -666,18 +687,13 @@ fn compute_h_probability_full(
 
     let n = coeffs.len();
 
-    // --- ExactCommuting: product formula for commuting generators ---
-    if h_formula == HFormula::ExactCommuting
-        && let Some(det_stab) = det_stabilizer
-    {
-        return compute_exact_commuting(coeffs, labels, stab_group, det_stab);
+    if h_formula == HFormula::ExactCommuting {
+        return compute_exact_commuting(coeffs, event);
     }
-
-    // --- ExactSubset: enumerate all even-size subsets ---
     if h_formula == HFormula::ExactSubset
         && let Some(det_stab) = det_stabilizer
     {
-        return compute_exact_subset(coeffs, labels, stab_group, det_stab);
+        return compute_exact_subset(coeffs, labels, stab_group, det_stab, event);
     }
 
     // --- Taylor or SinSquared: quadratic form with beta ---
@@ -685,41 +701,18 @@ fn compute_h_probability_full(
 
     for j in 0..n {
         for k in 0..n {
-            let (re_j, im_j) = coeffs[j];
-            let (re_k, im_k) = coeffs[k];
-            let re_product = re_j * re_k - im_j * im_k;
-
             if j == k {
-                total += re_j * re_j + im_j * im_j;
-            } else {
-                let q_j = &labels[j];
-                let q_k = &labels[k];
-
-                if !q_j.commutes_with(q_k) {
-                    continue;
-                }
-
-                let product = q_j.multiply(q_k);
-
-                if product.is_identity() {
-                    total += re_product;
-                    continue;
-                }
-
-                match stab_group.is_stabilizer(&product) {
-                    Some(true) => {
-                        total += re_product;
-                    }
-                    Some(false) => {
-                        total -= re_product;
-                    }
-                    None => {}
-                }
+                total += coeffs[j] * coeffs[j];
+            } else if labels[j].commutes_with(&labels[k]) {
+                let beta = stab_group
+                    .product_expectation([&labels[j], &labels[k]])
+                    .map_or(0.0, |phase| phase.to_complex().re);
+                total += coeffs[j] * coeffs[k] * beta;
             }
         }
     }
 
-    let total = total.max(0.0);
+    let total = checked_event_probability(total, event);
 
     match h_formula {
         HFormula::SinSquared => {
@@ -730,74 +723,19 @@ fn compute_h_probability_full(
     }
 }
 
-/// Exact product formula for commuting H-type generators.
-///
-/// For each generator P_j with rate h_j:
-/// - If P_j is a ±1 stabilizer: factor = exp(±2i h_j) → contributes to phase
-/// - If D·P_j is a ±1 stabilizer: factor = exp(∓2i h_j) → contributes to phase
-/// - Neither: factor = cos(2h_j) → real damping
-///
-/// p_D = (1/2)(1 - Re(prod_j factor_j))
-fn compute_exact_commuting(
-    coeffs: &[(f64, f64)],
-    labels: &[Bm],
-    stab_group: &StabilizerGroup,
-    det_stab: &Bm,
-) -> f64 {
-    let n = coeffs.len();
-    // Accumulate product as (real, imag) complex number
-    let mut prod_re = 1.0_f64;
-    let mut prod_im = 0.0_f64;
+/// Reject materially negative event probabilities; tolerate roundoff only.
+fn checked_event_probability(probability: f64, event: &DemEvent) -> f64 {
+    assert!(
+        probability >= -1e-12,
+        "negative probability {probability} for event {event:?}"
+    );
+    probability.max(0.0)
+}
 
-    for j in 0..n {
-        let (h_re, h_im) = coeffs[j];
-        // For simplicity, use magnitude of complex coefficient
-        let h = (h_re * h_re + h_im * h_im).sqrt();
-        if h < 1e-20 {
-            continue;
-        }
-
-        let label = &labels[j];
-
-        // Check if P_j is a stabilizer (directly in expanded frame)
-        let p_stab = if label.is_identity() {
-            Some(true)
-        } else {
-            stab_group.is_stabilizer(label)
-        };
-
-        let (factor_re, factor_im) = if let Some(sign) = p_stab {
-            let s = if sign { 1.0 } else { -1.0 };
-            let angle = 2.0 * s * h;
-            (angle.cos(), angle.sin())
-        } else {
-            // Check D·P_j
-            let dp = det_stab.multiply(label);
-            let dp_stab = if dp.is_identity() {
-                Some(true)
-            } else {
-                stab_group.is_stabilizer(&dp)
-            };
-
-            if let Some(sign) = dp_stab {
-                let s = if sign { 1.0 } else { -1.0 };
-                let angle = -2.0 * s * h;
-                (angle.cos(), angle.sin())
-            } else {
-                ((2.0 * h).cos(), 0.0)
-            }
-        };
-
-        // Complex multiply: prod *= factor
-        let new_re = prod_re * factor_re - prod_im * factor_im;
-        let new_im = prod_re * factor_im + prod_im * factor_re;
-        prod_re = new_re;
-        prod_im = new_im;
-    }
-
-    // p_D = (1/2)(1 - Re(product))
-    let prob = 0.5 * (1.0 - prod_re);
-    prob.max(0.0)
+/// Independent rotations, ignoring interference (see HFormula::ExactCommuting).
+fn compute_exact_commuting(coeffs: &[f64], event: &DemEvent) -> f64 {
+    let product: f64 = coeffs.iter().map(|h| (2.0 * h).cos()).product();
+    checked_event_probability(0.5 * (1.0 - product), event)
 }
 
 /// Exact subset-sum formula for commuting H-type generators.
@@ -812,23 +750,18 @@ fn compute_exact_commuting(
 /// This captures all orders of multi-body interference. Exact when all
 /// generators commute. Cost: O(2^N) where N = number of generators.
 fn compute_exact_subset(
-    coeffs: &[(f64, f64)],
+    coeffs: &[f64],
     labels: &[Bm],
     stab_group: &StabilizerGroup,
     det_stab: &Bm,
+    event: &DemEvent,
 ) -> f64 {
     let n = coeffs.len();
-
-    // Guard: too many generators → fall back to ExactCommuting
-    if n > 25 {
-        return compute_exact_commuting(coeffs, labels, stab_group, det_stab);
-    }
 
     // Precompute sin(2h_j) and cos(2h_j) for each generator
     let mut sin2h = Vec::with_capacity(n);
     let mut cos2h = Vec::with_capacity(n);
-    for &(h_re, h_im) in coeffs.iter().take(n) {
-        let h = (h_re * h_re + h_im * h_im).sqrt();
+    for &h in coeffs.iter().take(n) {
         sin2h.push((2.0 * h).sin());
         cos2h.push((2.0 * h).cos());
     }
@@ -848,26 +781,16 @@ fn compute_exact_subset(
             continue; // odd-size subsets have Im(i^|S|) only → Re = 0
         }
 
-        // Compute product of labels in S, multiplied by det_stab (D)
-        let mut product = det_stab.clone();
-        for (j, label) in labels.iter().enumerate().take(n) {
-            if mask & (1u64 << j) != 0 {
-                product = product.multiply(label);
-            }
-        }
-
-        // Check if this product is a stabilizer
-        let eigenvalue = if product.is_identity() {
-            Some(true)
-        } else {
-            stab_group.is_stabilizer(&product)
-        };
-
-        let epsilon = match eigenvalue {
-            Some(true) => 1.0,
-            Some(false) => -1.0,
-            None => continue, // not a stabilizer, ε=0
-        };
+        let factors = std::iter::once(det_stab).chain(
+            labels
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| mask & (1u64 << j) != 0)
+                .map(|(_, label)| label),
+        );
+        let epsilon = stab_group
+            .product_expectation(factors)
+            .map_or(0.0, |phase| phase.to_complex().re);
 
         // Coefficient: (-1)^{|S|/2} · Π_{j∈S} sin(2h_j) · Π_{j∉S} cos(2h_j)
         let sign = if (size / 2).is_multiple_of(2) {
@@ -889,7 +812,7 @@ fn compute_exact_subset(
     }
 
     let prob = 0.5 * (1.0 - sum_re);
-    prob.max(0.0)
+    checked_event_probability(prob, event)
 }
 
 /// Sensitivity matrix M_E for a DEM event E (Hines Eq. 21).
@@ -954,15 +877,11 @@ pub fn sensitivity_matrix(
                 let beta_val: f64 = if i == j {
                     1.0 // diagonal: beta = -4, but -(1/4)*(-4) = 1
                 } else if label_i.commutes_with(label_j) {
-                    let product = label_i.multiply(label_j);
-                    if product.is_identity() {
+                    if let Some(stab) = stabilizer_group {
+                        stab.product_expectation([label_i, label_j])
+                            .map_or(0.0, |phase| phase.to_complex().re)
+                    } else if label_i == label_j {
                         1.0
-                    } else if let Some(stab) = stabilizer_group {
-                        match stab.is_stabilizer(&product) {
-                            Some(true) => 1.0,
-                            Some(false) => -1.0,
-                            None => 0.0,
-                        }
                     } else {
                         0.0
                     }
@@ -988,6 +907,11 @@ pub fn sensitivity_matrix(
 ///
 /// Same as `build_dem_configured` but includes X/Z component decomposition
 /// for each mechanism, enabling proper graphlike decomposition for MWPM decoders.
+///
+/// # Panics
+/// Panics for C/A input without `label2` or without a stabilizer group,
+/// including zero coefficients, or an event probability below -1e-12.
+/// `ExactSubset` panics when an event has more than 25 H labels.
 #[must_use]
 pub fn build_dem_decomposable(
     generators: &[PropagatedEeg],
@@ -1340,7 +1264,7 @@ mod tests {
 
     #[test]
     fn test_s_only_probability() {
-        // Single S_X with rate -0.01 → p ≈ 0.00995
+        // Single S_X generator coefficient -0.01 → (1 - e^{-0.02})/2 ≈ 0.0099007
         let gens = vec![PropagatedEeg {
             eeg_type: EegType::S,
             label: Bm::x(0),
@@ -1720,16 +1644,9 @@ mod tests {
 
     #[test]
     fn test_bch2_anticommuting_h_generators() {
-        // Two H generators with anticommuting labels: H_X and H_Z on same qubit.
-        // [H_X, H_Z] = -2i H_{XZ} = -2i H_Y → BCH2 adds imaginary H_Y.
-        // BCH coefficient: -i * h_X * h_Z.
-        //
-        // Both X and Z flip the Z detector. Y also flips Z detector.
-        // The imaginary BCH2 generator contributes to probability via
-        // re_product = re_j * re_k - im_j * im_k.
-        //
-        // Diagonal of imaginary generator: |im|² = (h_X * h_Z)².
-        // Cross with real generators: Re(re * (-im)) = re * im (but im is negative).
+        // [H_X, H_Z] = -2i H_{XZ} = -2 H_Y since XZ = -iY.
+        // BCH2 therefore adds a REAL H_Y coefficient -h_x*h_z.
+        // X and Y flip Z; their anticommuting cross term vanishes.
         let h_x = 0.1;
         let h_z = 0.05;
 
@@ -1761,14 +1678,7 @@ mod tests {
             h_x * h_x
         );
 
-        // With BCH2: adds H_Y with imaginary coeff -i * h_x * h_z.
-        // Y anticommutes with Z detector → flips it.
-        // Diagonal of imaginary Y: (h_x * h_z)² = 0.000025.
-        // Cross-term X with imaginary Y: Re(h_x * (i * h_x * h_z)) = 0 (imaginary × real = imaginary, Re=0)
-        // Wait, im_Y = -h_x * h_z (negative, from sign fix). Cross: re_X * re_Y - im_X * im_Y.
-        // re_X = h_x, im_X = 0. re_Y = 0, im_Y = -h_x*h_z.
-        // re_product = h_x * 0 - 0 * (-h_x*h_z) = 0. Cross-term is zero.
-        // So BCH2 only adds the diagonal of the Y generator: |im_Y|² = (h_x * h_z)² = 0.000025.
+        // The added real Y coefficient contributes (h_x*h_z)^2 diagonally.
         let entries_k2 =
             build_dem_with_options(&gens, &dets, &[], None, HFormula::Taylor, BchOrder::Second);
         let p_k2: f64 = entries_k2.iter().map(|e| e.probability).sum();

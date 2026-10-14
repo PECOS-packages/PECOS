@@ -1,15 +1,10 @@
 """Check HUGR format from guppylang."""
 
-import pytest
-
 
 def test_check_hugr_format() -> None:
     """Check what HUGR format guppylang produces."""
-    try:
-        from guppylang import guppy
-        from guppylang.std.quantum import h, measure, qubit
-    except ImportError:
-        pytest.skip("guppylang not available")
+    from guppylang import guppy
+    from guppylang.std.quantum import h, measure, qubit
 
     @guppy
     def simple() -> bool:

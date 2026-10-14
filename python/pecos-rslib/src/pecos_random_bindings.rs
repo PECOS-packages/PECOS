@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use pecos_random::PCG32_INIT_STATE;
 use pyo3::prelude::*;
 
 // use core::prelude::rng_pcg::PCGRandom;
@@ -47,7 +48,7 @@ impl RngPcg {
     /// to the underlying `u64` sequence value.
     pub fn srandom(&mut self, seq: i128) -> PyResult<()> {
         let seq_u64 = normalize_seed(seq)?;
-        PCGRandom::pcg32_srandom_r(&mut self.global_state, 42_u64, seq_u64);
+        PCGRandom::pcg32_srandom_r(&mut self.global_state, PCG32_INIT_STATE, seq_u64);
         Ok(())
     }
 

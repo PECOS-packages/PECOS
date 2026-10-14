@@ -224,10 +224,14 @@ entry:
         // Verify the RON contains expected quantum ops
         assert!(ron_string.contains("Alloc"), "RON should contain Alloc");
         assert!(ron_string.contains("RZ("), "RON should contain RZ");
-        assert!(ron_string.contains("R1XY("), "RON should contain R1XY");
+        assert!(ron_string.contains("RXY1Q("), "RON should contain RXY1Q");
         assert!(ron_string.contains("RZZ("), "RON should contain RZZ");
         assert!(ron_string.contains("Measure"), "RON should contain Measure");
         assert!(ron_string.contains("Dealloc"), "RON should contain Dealloc");
+
+        let legacy_ron = ron_string.replace("RXY1Q(", "R1XY(");
+        let legacy_module = from_ron(&legacy_ron).unwrap();
+        assert_eq!(module, legacy_module);
 
         // Deserialize back
         let module2 = from_ron(&ron_string).unwrap();
@@ -313,7 +317,7 @@ entry:
                 .operations
                 .iter()
                 .filter_map(|i| match &i.operation {
-                    Operation::Quantum(QuantumOp::R1XY(theta, phi)) => {
+                    Operation::Quantum(QuantumOp::RXY1Q(theta, phi)) => {
                         Some(theta.to_radians() + phi.to_radians())
                     }
                     Operation::Quantum(QuantumOp::RZ(angle) | QuantumOp::RZZ(angle)) => {
@@ -340,5 +344,45 @@ entry:
                 "angle {before} lost precision in RON roundtrip"
             );
         }
+    }
+    #[test]
+    fn test_rpp_pipeline_ron_roundtrip() {
+        let ir = r"
+declare void @___rpp(i64, i64, double, double)
+declare i64 @___qalloc()
+define void @main() {
+entry:
+  %q0 = call i64 @___qalloc()
+  %q1 = call i64 @___qalloc()
+  %q2 = call i64 @___qalloc()
+  call void @___rpp(i64 %q2, i64 %q0, double -0.73, double 0.41)
+  ret void
+}
+";
+        let module = crate::parse_qis_to_quantum(ir).unwrap();
+        let ron = to_ron(&module).unwrap();
+        assert!(ron.contains("RXYXY2Q("));
+        assert_eq!(from_ron(&ron).unwrap(), module);
+        let gate = module.body.blocks[0]
+            .operations
+            .iter()
+            .find(|instruction| {
+                matches!(
+                    instruction.operation,
+                    crate::ops::Operation::Quantum(crate::ops::QuantumOp::RXYXY2Q(..))
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            gate.operands,
+            vec![crate::ops::SSAValue::new(2), crate::ops::SSAValue::new(0)]
+        );
+        assert_eq!(
+            gate.operation,
+            crate::ops::Operation::Quantum(crate::ops::QuantumOp::RXYXY2Q(
+                pecos_core::Angle64::from_radians(-0.73),
+                pecos_core::Angle64::from_radians(0.41)
+            ))
+        );
     }
 }

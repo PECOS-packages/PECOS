@@ -58,6 +58,7 @@ fn test_tesseract_config_to_ffi_repr() {
         beam_climbing: true,
         no_revisit_dets: false,
         verbose: true,
+        merge_errors: true,
         pqlimit: 5000,
         det_penalty: 0.05,
     };
@@ -67,6 +68,7 @@ fn test_tesseract_config_to_ffi_repr() {
     assert!(ffi_repr.beam_climbing);
     assert!(!ffi_repr.no_revisit_dets);
     assert!(ffi_repr.verbose);
+    assert!(ffi_repr.merge_errors);
     assert_eq!(ffi_repr.pqlimit, 5000);
     assert!(
         (ffi_repr.det_penalty - 0.05).abs() < f64::EPSILON,

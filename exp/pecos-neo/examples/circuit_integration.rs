@@ -53,7 +53,8 @@ fn example_tick_circuit_execution() {
     println!("  TickCircuit with {} ticks", circuit.num_ticks());
 
     // Convert to CommandQueue and execute
-    let commands = pecos_neo::command::CommandQueue::from(&circuit);
+    let commands = pecos_neo::command::CommandQueue::try_from(&circuit)
+        .expect("TickCircuit should convert to pecos-neo commands");
     let mut state = SparseStab::new(2);
     let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
@@ -93,7 +94,8 @@ fn example_dag_circuit_execution() {
     println!("  DagCircuit with {} gates", dag.topological_order().len());
 
     // Convert to CommandQueue and execute
-    let commands = pecos_neo::command::CommandQueue::from(&dag);
+    let commands = pecos_neo::command::CommandQueue::try_from(&dag)
+        .expect("DagCircuit should convert to pecos-neo commands");
     let mut state = SparseStab::new(3);
     let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 
@@ -146,7 +148,8 @@ fn example_tick_with_noise() {
     let mut correlated = 0;
     let mut anti_correlated = 0;
 
-    let commands = pecos_neo::command::CommandQueue::from(&circuit);
+    let commands = pecos_neo::command::CommandQueue::try_from(&circuit)
+        .expect("TickCircuit should convert to pecos-neo commands");
     for _ in 0..1000 {
         state.reset();
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
@@ -186,14 +189,16 @@ fn example_round_trip() {
     println!("  Original CommandQueue: {} commands", original.len());
 
     // Convert to TickCircuit
-    let tick_circuit = TickCircuit::from(&original);
+    let tick_circuit =
+        TickCircuit::try_from(&original).expect("CommandQueue should convert to TickCircuit");
     println!(
         "  Converted to TickCircuit: {} ticks",
         tick_circuit.num_ticks()
     );
 
     // Convert back to CommandQueue
-    let back = pecos_neo::command::CommandQueue::from(&tick_circuit);
+    let back = pecos_neo::command::CommandQueue::try_from(&tick_circuit)
+        .expect("TickCircuit should convert back to commands");
     println!("  Converted back to CommandQueue: {} commands", back.len());
 
     // Both should produce statistically identical results
@@ -282,7 +287,8 @@ fn example_qec_style_circuit() {
 
     let mut syndrome_counts: HashMap<String, usize> = HashMap::new();
 
-    let commands = pecos_neo::command::CommandQueue::from(&circuit);
+    let commands = pecos_neo::command::CommandQueue::try_from(&circuit)
+        .expect("TickCircuit should convert to pecos-neo commands");
     for _ in 0..1000 {
         state.reset();
         let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();

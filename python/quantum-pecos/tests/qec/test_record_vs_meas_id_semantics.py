@@ -9,19 +9,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Characterize what ``records`` offsets mean relative to ``meas_ids``.
+"""Records count measurement emission order; meas_ids name stable identities.
 
-The two spellings resolve through different code paths: ``records`` becomes an
-absolute index into the measurement record, while ``meas_ids`` is looked up by
-position in the influence map's stamped ids. They coincide whenever the
-influence order matches the canonical order, which is the case for every
-runtime available here. These tests pin that agreement so a change that makes
-the two diverge -- a reordering runtime, or a change to either resolver --
-fails loudly instead of silently rebinding detectors.
-
-The builder's redundancy rule is the oracle: co-present ``records`` and
-``meas_ids`` must resolve to the same measurement set, so an accepted pair
-proves the two spellings name the same measurement.
+Circuit-backed builders resolve both forms through the shared reader and accept
+co-present references only when they name the same measurement multiset. Stamps
+can differ from emission positions: the first measurement of [2, 0, 1] has id 2,
+so records[-3] names id 2, not the smallest id.
 """
 
 from __future__ import annotations
@@ -102,5 +95,6 @@ def test_traced_records_reject_every_other_meas_id() -> None:
 
 
 def test_stamped_circuit_records_agree_with_meas_ids() -> None:
-    assert _accepts('[{"id":0,"records":[-3],"meas_ids":[0]}]', circuit=_stamped_circuit())
-    assert not _accepts('[{"id":0,"records":[-3],"meas_ids":[2]}]', circuit=_stamped_circuit())
+    # The batch emits q2/id2, q0/id0, q1/id1; -3 names the first, id 2.
+    assert _accepts('[{"id":0,"records":[-3],"meas_ids":[2]}]', circuit=_stamped_circuit())
+    assert not _accepts('[{"id":0,"records":[-3],"meas_ids":[0]}]', circuit=_stamped_circuit())

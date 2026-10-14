@@ -26,6 +26,12 @@ import pecos as pc
 from pecos.engines.circuit_runners import Standard
 from pecos.simulators import SparseStab
 
+__all__ = [
+    "find_pauli_fault",
+    "get_all_spacetime",
+    "get_wt_paulis",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 

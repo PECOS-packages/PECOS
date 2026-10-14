@@ -249,18 +249,35 @@ pub(super) fn cuda_python_group() -> &'static str {
     if is_cuda12 { "cuda12" } else { "cuda13" }
 }
 
+const CUDA_PYTHON_SYNC_ARGS: &[&str] = &[
+    "sync",
+    "--locked",
+    "--inexact",
+    "--no-install-package",
+    "pecos-rslib",
+    "--no-install-package",
+    "pecos-rslib-llvm",
+];
+
 /// Run `uv sync --locked --group <cuda12|cuda13>` to install Python CUDA packages.
 ///
 /// Reusable from other CLI commands (e.g. `pecos setup`) once they've already
 /// confirmed the user wants this. Does NOT validate toolkit presence -- caller
 /// is responsible for that check.
+///
+/// The group depends on quantum-pecos, which pins pecos-rslib and
+/// pecos-rslib-llvm. Those two are excluded from installation so uv does not
+/// build a release wheel of each that `pecos python build` replaces, and the
+/// sync is inexact so an excluded package already installed by that build is
+/// left in place rather than removed.
 pub(super) fn install_cuda_python_packages() -> Result<()> {
     let group = cuda_python_group();
     println!("Installing CUDA Python packages (cupy, cuquantum, pytket-cutensornet) [{group}]...");
     println!();
 
     let status = Command::new("uv")
-        .args(["sync", "--locked", "--group", group])
+        .args(CUDA_PYTHON_SYNC_ARGS)
+        .args(["--group", group])
         .status();
 
     match status {
@@ -274,7 +291,7 @@ pub(super) fn install_cuda_python_packages() -> Result<()> {
             eprintln!("Failed to install CUDA Python packages.");
             eprintln!();
             eprintln!("You may need to install manually:");
-            eprintln!("  uv sync --locked --group {group}");
+            eprintln!("  uv {} --group {group}", CUDA_PYTHON_SYNC_ARGS.join(" "));
             Err(Error::Cuda(
                 "Failed to install CUDA Python packages".to_string(),
             ))

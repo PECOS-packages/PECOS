@@ -8,14 +8,18 @@ import math
 
 import pecos_rslib_exp as exp
 import pytest
-from pecos.quantum import TickCircuit
+from pecos.simulators import StateVec
 
 STATS_KEYS = {
     "total_nonclifford",
     "single_site",
     "multi_disent",
+    "deferred_disent_bypass",
     "numerical_redetect",
     "multi_std",
+    "multi_std_add",
+    "multi_std_cascade",
+    "signed_eigenstate_candidates",
     "stabilizer",
     "ofd_in_span",
     "ofd_new_dim",
@@ -31,44 +35,221 @@ def assert_complex_tuple(value):
     assert all(isinstance(component, float) for component in value)
 
 
-def test_sim_neo_stab_mps_boolean_builder_options():
+def assert_state_vector_up_to_phase(actual, expected):
+    assert len(actual) == len(expected)
+    actual = [complex(*amplitude) for amplitude in actual]
+    expected = [complex(*amplitude) for amplitude in expected]
+    overlap = sum(a * b.conjugate() for a, b in zip(actual, expected, strict=True))
+    assert abs(overlap) > 1e-12
+    phase = overlap / abs(overlap)
+    for a, b in zip(actual, expected, strict=True):
+        assert abs(a - phase * b) < 1e-12
+
+
+def test_sim_neo_stab_mps_measurement_and_boolean_builder_options():
+    from pecos.quantum import TickCircuit
+
     circuit = TickCircuit()
     circuit.tick().x([0])
     circuit.tick().mz([0])
 
     backends = [
-        exp.stab_mps().lazy_measure().merge_rz(),
-        exp.stab_mps().lazy_measure(True).merge_rz(True),
-        exp.stab_mps().lazy_measure(False).merge_rz(False),
+        exp.stab_mps().measurement("exact").merge_rz(),
+        exp.stab_mps().measurement("lazy").merge_rz(True),
+        exp.stab_mps().measurement("pragmatic").merge_rz(False),
     ]
     for backend in backends:
         result = exp.sim_neo(circuit).quantum(backend).sampling(exp.monte_carlo(1)).seed(7).run()
         assert [list(row) for row in result] == [[1]]
 
+    with pytest.raises(ValueError, match="measurement must be one of"):
+        exp.stab_mps().measurement("eager")
+
+
+def test_sim_neo_rejects_rotation_with_wrong_angle_arity():
+    from pecos_rslib.quantum import Gate, GateType
+
+    class Tick:
+        def __init__(self):
+            self.calls = 0
+
+        def gate_batches(self):
+            self.calls += 1
+            if self.calls == 1:
+                return [Gate(GateType.RZ, params=[0.5], qubits=[0])]
+            return [Gate(GateType.RZ, qubits=[0])]
+
+    class Circuit:
+        def __init__(self):
+            self.tick = Tick()
+
+        def num_ticks(self):
+            return 1
+
+        def get_tick(self, _index):
+            return self.tick
+
+        def annotations(self):
+            return []
+
+    with pytest.raises(ValueError, match="Gate RZ expected 1 angle parameters, got 0"):
+        exp.sim_neo(Circuit())
+
+
+def _boundary_circuit(ticks):
+    """Keep boundary rotations in Python so sim_neo must call extract_commands."""
+
+    class GateType:
+        def __init__(self, name):
+            self.name = name
+
+        def __repr__(self):
+            return f"GateType.{self.name}"
+
+    class Gate:
+        def __init__(self, name, qubits, angles=()):
+            self.gate_type = GateType(name)
+            self.qubits = list(qubits)
+            self.angles = list(angles)
+
+    class Tick:
+        def __init__(self, gates):
+            self.gates = [Gate(*gate) for gate in gates]
+
+        def gate_batches(self):
+            return self.gates
+
+    class Circuit:
+        def __init__(self):
+            self.ticks = [Tick(gates) for gates in ticks]
+
+        def num_ticks(self):
+            return len(self.ticks)
+
+        def get_tick(self, index):
+            return self.ticks[index]
+
+        def annotations(self):
+            return []
+
+    return Circuit()
+
+
+def test_sim_neo_python_fallback_crz_preserves_full_matrix():
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, -math.tau, 3 * math.pi, 3 * math.tau, -3 * math.tau):
+        columns = []
+        for basis in range(4):
+            prep = [("X", [qubit]) for qubit in range(2) if basis & (1 << qubit)]
+            circuit = _boundary_circuit([prep, [("CRZ", [1, 0], [theta])]])
+            native = exp.neo_fallback_native_gates(circuit)
+            simulator = StateVec(2)
+            for _, name, qubits, angles in native:
+                if name in {"X", "Z", "RZ"}:
+                    params = {"angle": angles[0]} if name == "RZ" else None
+                    for qubit in qubits:
+                        simulator.backend.run_1q_gate(name, qubit, params)
+                elif name == "RZZ":
+                    for offset in range(0, len(qubits), 2):
+                        simulator.backend.run_2q_gate(
+                            name,
+                            (qubits[offset], qubits[offset + 1]),
+                            {"angle": angles[0]},
+                        )
+                else:
+                    msg = f"unexpected neo fallback gate {name}"
+                    raise AssertionError(msg)
+            columns.append([complex(value) for value in simulator.backend.vector])
+
+        half = theta / 2
+        reference = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, complex(math.cos(half), -math.sin(half)), 0],
+            [0, 0, 0, complex(math.cos(half), math.sin(half))],
+        ]
+        for column in range(4):
+            for row in range(4):
+                assert abs(columns[column][row] - reference[row][column]) < 1e-12
+
+
+@pytest.mark.parametrize("symbol", ["CRX", "CRY", "CRZ"])
+@pytest.mark.parametrize("operands", [(0, 1), (1, 0)])
+@pytest.mark.parametrize("theta", [math.tau, -math.tau, 3 * math.tau, -3 * math.tau])
+def test_sim_neo_extract_commands_control_interference(symbol, operands, theta):
+    control, target = operands
+    circuit = _boundary_circuit(
+        [
+            [("PZ", [0, 1])],
+            [("H", [control])],
+            [(symbol, [control, target], [theta])],
+            [("H", [control])],
+            [("MZ", [control, target])],
+        ],
+    )
+    # Every controlled rotation at an odd full turn is Z on its control.
+    # The final H turns the relative sign into a deterministic measurement.
+    result = exp.sim_neo(circuit).quantum(exp.statevec()).sampling(exp.monte_carlo(4)).seed(670).run()
+    assert [list(row) for row in result] == [[1, 0]] * 4
+
+
+@pytest.mark.parametrize("symbol", ["CRX", "CRY", "CRZ"])
+@pytest.mark.parametrize("operands", [(0, 1), (1, 0)])
+@pytest.mark.parametrize("theta", [math.tau, -math.tau, 3 * math.tau, -3 * math.tau])
+def test_sim_neo_extract_commands_control_and_target_interference(symbol, operands, theta):
+    control, target = operands
+    circuit = _boundary_circuit(
+        [
+            [("PZ", [0, 1])],
+            [("H", [control, target])],
+            [(symbol, [control, target], [theta])],
+            [("H", [control, target])],
+            [("MZ", [control, target])],
+        ],
+    )
+    # Superpose the target too: an extra target Z must change its final bit.
+    result = exp.sim_neo(circuit).quantum(exp.statevec()).sampling(exp.monte_carlo(4)).seed(670).run()
+    assert [list(row) for row in result] == [[1, 0]] * 4
+
+
+def test_stab_mps_measurement_selection_precedence_and_reset_retention():
+    assert exp.StabMps(1).measurement == "exact"
+    assert exp.StabMps(1, measurement="pragmatic").measurement == "pragmatic"
+    assert exp.StabMps(1, measurement="lazy").measurement == "lazy"
+    assert exp.StabMps(1, for_qec=True).measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="exact").measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="pragmatic").measurement == "pragmatic"
+    lazy = exp.StabMps(1, for_qec=True, measurement="lazy")
+    assert lazy.measurement == "lazy"
+    assert lazy.reset().measurement == "lazy"
+
+    with pytest.raises(ValueError, match="measurement must be one of"):
+        exp.StabMps(1, measurement="eager")
+
 
 def test_stab_mps_analysis_and_noise_exposure():
+    telemetry_enabled = exp.StabMps(1, saturation_telemetry=True)
+    assert telemetry_enabled.stats()["signed_eigenstate_candidates"] == 0
+
     bell = exp.StabMps(2, seed=7)
     bell.run_1q_gate("H", 0)
     bell.run_2q_gate("CX", (0, 1))
 
-    amplitude = bell.amplitude([False, False])
+    amplitude = bell.amplitude_up_to_phase([False, False])
     assert_complex_tuple(amplitude)
-    assert math.isclose(amplitude[0], 1 / math.sqrt(2), abs_tol=1e-12)
-    assert math.isclose(amplitude[1], 0.0, abs_tol=1e-12)
+    assert math.isclose(abs(complex(*amplitude)), 1 / math.sqrt(2), abs_tol=1e-12)
 
-    iterative = bell.amplitude_iterative([False, False])
+    iterative = bell.amplitude_iterative_up_to_phase([False, False])
     assert_complex_tuple(iterative)
     assert math.isclose(iterative[0], amplitude[0], abs_tol=1e-12)
     assert math.isclose(iterative[1], amplitude[1], abs_tol=1e-12)
 
-    overlap = bell.overlap_with_stabilizer(
+    overlap = bell.overlap_magnitude_with_stabilizer(
         [[(0, "X"), (1, "X")], [(0, "Z"), (1, "Z")]],
         num_samples=32,
         rng_seed=11,
     )
-    assert_complex_tuple(overlap)
-    assert math.isclose(overlap[0], 1.0, abs_tol=1e-12)
-    assert math.isclose(overlap[1], 0.0, abs_tol=1e-12)
+    assert isinstance(overlap, float)
+    assert math.isclose(overlap, 1.0, abs_tol=1e-12)
 
     product = exp.StabMps(2)
     assert math.isclose(product.renyi_s2(1), 0.0, abs_tol=1e-12)
@@ -101,29 +282,60 @@ def test_stab_mps_analysis_and_noise_exposure():
     )
 
 
+def test_stab_mps_named_t_has_conventional_relative_amplitudes():
+    inv_sqrt_2 = 1 / math.sqrt(2)
+
+    ht = exp.StabMps(1, merge_rz=False)
+    ht.run_1q_gate("H", 0)
+    ht.run_1q_gate("T", 0)
+    assert_state_vector_up_to_phase(ht.state_vector_up_to_phase(), [(inv_sqrt_2, 0.0), (0.5, 0.5)])
+
+    t_squared = exp.StabMps(1, merge_rz=False)
+    t_squared.run_1q_gate("H", 0)
+    t_squared.run_1q_gate("T", 0)
+    t_squared.run_1q_gate("T", 0)
+
+    s = exp.StabMps(1, merge_rz=False)
+    s.run_1q_gate("H", 0)
+    s.run_1q_gate("S", 0)
+    expected = [(inv_sqrt_2, 0.0), (0.0, inv_sqrt_2)]
+    assert_state_vector_up_to_phase(t_squared.state_vector_up_to_phase(), expected)
+    assert_state_vector_up_to_phase(s.state_vector_up_to_phase(), expected)
+
+
 def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     q0_one = exp.StabMps(2, seed=13)
     q0_one.run_1q_gate("X", 0)
+    assert not hasattr(q0_one, "sample_bit" + "string")
+    assert hasattr(q0_one, "sample_bit" + "strings")
     assert q0_one.sample_bitstrings(4) == [[True, False]] * 4
-    assert q0_one.state_vector() == [
-        (0.0, 0.0),
-        (1.0, 0.0),
-        (0.0, 0.0),
-        (0.0, 0.0),
-    ]
-    assert q0_one.amplitude([True, False]) == (1.0, 0.0)
-    assert q0_one.amplitude_iterative([True, False]) == (1.0, 0.0)
+    assert_state_vector_up_to_phase(
+        q0_one.state_vector_up_to_phase(),
+        [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0),
+        ],
+    )
+    amplitude = q0_one.amplitude_up_to_phase([True, False])
+    assert math.isclose(abs(complex(*amplitude)), 1.0, abs_tol=1e-12)
+    assert q0_one.amplitude_iterative_up_to_phase([True, False]) == amplitude
     assert math.isclose(q0_one.prob_bitstring([True, False]), 1.0)
+    assert q0_one.prob_bitstrings(
+        [[True, False], [False, False], [True, False]],
+    ) == [1.0, 0.0, 1.0]
+    assert q0_one.prob_bitstrings([]) == []
 
     merged = exp.StabMps(2, seed=17, merge_rz=True)
     merged.run_1q_gate("H", 0)
     merged.run_1q_gate("T", 0)
     assert merged.is_state_exact() is False
-    merged_amplitude = merged.amplitude([True, False])
+    merged_amplitude = merged.amplitude_up_to_phase([True, False])
     assert_complex_tuple(merged_amplitude)
     assert merged.is_state_exact() is True
 
-    lazy = exp.StabMps(2, seed=19, lazy_measure=True)
+    lazy = exp.StabMps(2, seed=19, measurement="lazy")
     lazy.run_1q_gate("H", 1)
     lazy.run_1q_gate("T", 1)
     lazy.run_1q_gate("S", 0)
@@ -131,17 +343,38 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     lazy.run_2q_gate("CX", (0, 1))
     lazy.run_1q_gate("MZ", 0)
     assert lazy.is_state_exact() is False
-    assert len(lazy.state_vector()) == 4
-    assert lazy.is_state_exact() is True
+    assert len(lazy.state_vector_up_to_phase()) == 4
+    assert lazy.is_state_exact() is False
+    assert lazy.uncompensated_pre_reduction_count == 0
+    assert lazy.summed_discarded_weight == 0.0
+    assert lazy.branch_vanish_retry_count == 0
+    assert lazy.deferred_branch_lost_count == 0
+    assert isinstance(lazy.lifetime_peak_bond, int)
 
     with pytest.raises(ValueError, match="bitstring length 1, expected 2"):
-        q0_one.amplitude([True])
+        q0_one.amplitude_up_to_phase([True])
     with pytest.raises(ValueError, match="bitstring item 0 must be bool"):
         q0_one.prob_bitstring([1, False])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: query 0: bitstring item 0 must be bool",
+    ):
+        q0_one.prob_bitstrings([[1, False]])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: query 1: bitstring length 1, expected 2",
+    ):
+        q0_one.prob_bitstrings([[True, False], [True]])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: queries must be an iterable of bitstrings",
+    ):
+        q0_one.prob_bitstrings(1)
+    framed = exp.StabMps(2, pauli_frame_tracking=True)
     with pytest.raises(IndexError):
-        q0_one.frame_x_bit(2)
+        framed.frame_x_bit(2)
     with pytest.raises(IndexError):
-        q0_one.frame_x_bit(-1)
+        framed.frame_x_bit(-1)
     with pytest.raises(IndexError):
         q0_one.pauli_expectation([(2, "Z")])
     with pytest.raises(ValueError, match="Unknown Pauli: A"):
@@ -324,3 +557,59 @@ def test_stab_mps_compile_dispatch_accessors_and_advice():
 
     assert compile_only.reset() is compile_only
     assert compile_only.total_nonclifford == 0
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["inject_x_in_frame", "inject_y_in_frame", "inject_z_in_frame", "frame_x_bit", "frame_z_bit"],
+)
+@pytest.mark.parametrize("qubit", [0, -1, 2])
+def test_stab_mps_frame_methods_require_tracking_before_index_check(method, qubit):
+    sim = exp.StabMps(2)
+    with pytest.raises(ValueError, match="construct StabMps with pauli_frame_tracking=True"):
+        getattr(sim, method)(qubit)
+    framed = exp.StabMps(2, pauli_frame_tracking=True)
+    if qubit == 0:
+        getattr(framed, method)(qubit)
+    else:
+        with pytest.raises(IndexError):
+            getattr(framed, method)(qubit)
+
+
+@pytest.mark.parametrize("paulis", [[], [(0, "X")], [(-1, "X")], [(2, "Z")]])
+def test_stab_mps_bulk_frame_injection_requires_tracking(paulis):
+    sim = exp.StabMps(2)
+    with pytest.raises(ValueError, match="construct StabMps with pauli_frame_tracking=True"):
+        sim.inject_paulis_in_frame(paulis)
+    framed = exp.StabMps(2, pauli_frame_tracking=True)
+    if paulis and paulis[0][0] in (-1, 2):
+        with pytest.raises(IndexError):
+            framed.inject_paulis_in_frame(paulis)
+    else:
+        framed.inject_paulis_in_frame(paulis)
+
+
+@pytest.mark.parametrize("attribute", ["num_measurements", "detectors", "observables"])
+def test_sim_neo_rebuild_rejects_non_string_metadata(attribute):
+    from pecos.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().mz([0])
+    circuit.set_meta(attribute, 42)
+    with pytest.raises(ValueError, match=rf"{attribute}.*must be a string"):
+        exp.sim_neo(circuit)
+
+
+def test_sim_neo_coherent_rebuild_accepts_duck_typed_circuit_without_metadata():
+    circuit = _boundary_circuit([[("PZ", [0])], [("MZ", [0])]])
+    rows = (
+        exp.sim_neo(circuit)
+        .quantum(exp.meas_sampling())
+        .noise(exp.depolarizing().idle_rz(0.125))
+        .sampling(exp.monte_carlo(128))
+        .seed(1046)
+        .run()
+    )
+    # No definition covers the measurement, so the coherent path leaves it at
+    # its noiseless value: |0> measured in Z is always 0.
+    assert {tuple(row) for row in rows} == {(0,)}

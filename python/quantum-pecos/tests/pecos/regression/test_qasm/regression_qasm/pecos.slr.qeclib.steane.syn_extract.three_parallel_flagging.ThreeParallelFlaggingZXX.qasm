@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 // Z check 1, X check 2, X check 3
 // ===============================
 reset a_test[0];

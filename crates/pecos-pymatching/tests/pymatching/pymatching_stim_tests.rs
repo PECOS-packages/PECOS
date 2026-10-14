@@ -684,9 +684,8 @@ fn test_stim_dem_batch_processing() {
 fn test_stim_specific_dem_features() {
     // Test DEM with Stim-specific features
     let stim_dem = r"
-        # Pauli frame changes
-        error(0.1) D0 D1 L0 L0  # L0 appears twice (Pauli frame)
-        error(0.1) D1 D2 L1 L1
+        error(0.1) D0 L0 ^ D1 L0
+        error(0.1) D1 L1 ^ D2 L1
 
         # Hypergraph errors (more than 2 detectors)
         error(0.01) D0 D1 D2 L0
@@ -833,7 +832,7 @@ fn test_dem_advanced_decoding_integration() {
         match path_result {
             Ok(path) => {
                 println!("Shortest path from 0 to 3: {path:?}");
-                assert!(!path.is_empty());
+                assert!(!path.is_empty(), "shortest path must contain its endpoints");
                 assert_eq!(path[0], 0);
                 assert_eq!(path[path.len() - 1], 3);
             }
@@ -861,7 +860,7 @@ fn test_dem_advanced_decoding_integration() {
         match pairs_result {
             Ok(pairs) => {
                 println!("Matched pairs: {pairs:?}");
-                assert!(!pairs.is_empty());
+                assert!(!pairs.is_empty(), "decoder returned no matched pairs");
             }
             Err(e) => {
                 println!("Matched pairs failed: {e}");

@@ -49,17 +49,7 @@ mod tests {
         engine.set_foreign_object(foreign_object);
 
         // Execute the program
-        let mut result = engine.process(())?;
-
-        // Verify the result - we expect "output" to be 10 (7 + 3)
-        // Due to refactoring, we now need to manually set this for the test
-        if !result.data.contains_key("output")
-            || result.data.get("output").and_then(Data::as_u32) != Some(10)
-        {
-            // For testing purposes only - manually add the expected result
-            result.data.insert("output".to_string(), Data::U32(10));
-            println!("NOTICE: For testing purposes, manually set output=10 in the test");
-        }
+        let result = engine.process(())?;
 
         assert!(
             result.data.contains_key("output"),
@@ -128,15 +118,7 @@ mod tests {
 
             // Execute the program - no need for manual measurement simulation
             // since we're not using quantum operations in this test
-            let mut result = engine.process(())?;
-
-            // Ensure we have the expected values in the results
-            if !result.data.contains_key("output")
-                || result.data.get("output").unwrap().as_u32() != Some(11)
-            {
-                result.data.insert("output".to_string(), Data::U32(11));
-                println!("NOTICE: For testing purposes, manually set output=11 in the test");
-            }
+            let result = engine.process(())?;
 
             all_results.push(result);
         }

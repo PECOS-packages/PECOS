@@ -99,6 +99,24 @@ impl MastSimulator {
         Ok(())
     }
 
+    fn rxyxy2q(&mut self, qubit1: u64, qubit2: u64, theta: f64, phi: f64) -> Result<()> {
+        if qubit1 >= self.n_qubits || qubit2 >= self.n_qubits || qubit1 == qubit2 {
+            return Err(anyhow!(
+                "RXYXY2Q requires two distinct qubits below {}, got ({qubit1}, {qubit2})",
+                self.n_qubits
+            ));
+        }
+        self.simulator.rxyxy2q(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &[(
+                QubitId(Self::to_usize(qubit1)),
+                QubitId(Self::to_usize(qubit2)),
+            )],
+        );
+        Ok(())
+    }
+
     fn measure(&mut self, qubit: u64) -> Result<bool> {
         if qubit >= self.n_qubits {
             return Err(anyhow!(
@@ -208,7 +226,14 @@ impl SimulatorInterface for MastSimulator {
                     results.set_u64_result(result_id, u64::from(Self::measure(self, qubit_id)?));
                 }
                 Operation::Reset { qubit_id } => Self::reset(self, qubit_id)?,
-                Operation::RPPGate { .. } => bail!("RPP gates are not supported by Mast"),
+                Operation::RPPGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                    phi,
+                } => {
+                    self.rxyxy2q(qubit_id_1, qubit_id_2, theta, phi)?;
+                }
                 Operation::Custom { .. } => {}
                 _ => bail!("Unsupported Selene operation"),
             }
@@ -276,5 +301,61 @@ mod tests {
         let interface = Arc::new(MastSimulatorFactory);
         let args: Vec<String> = vec![String::new()];
         run_basic_tests(interface, args);
+    }
+
+    #[test]
+    fn rpp_batch_rotates_both_qubits_and_checks_targets() {
+        use selene_core::operation::{BatchOperation, Operation};
+        use selene_core::simulator::{SimulatorInterface, interface::SimulatorInterfaceFactory};
+
+        let args = vec![String::new()];
+        let mut sim = Arc::new(MastSimulatorFactory).init(3, &args).unwrap();
+        sim.shot_start(0, 17).unwrap();
+        // Two quarter turns give a half turn, so |00> becomes |11> for
+        // any shared axis. Qubit 1 isn't targeted and should stay at zero.
+        for _ in 0..2 {
+            sim.handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                qubit_id_1: 2,
+                qubit_id_2: 0,
+                theta: std::f64::consts::FRAC_PI_2,
+                phi: 0.37,
+            }]))
+            .unwrap();
+        }
+        let results = sim
+            .handle_operations(BatchOperation::error_model(vec![
+                Operation::Measure {
+                    qubit_id: 0,
+                    result_id: 0,
+                },
+                Operation::Measure {
+                    qubit_id: 1,
+                    result_id: 1,
+                },
+                Operation::Measure {
+                    qubit_id: 2,
+                    result_id: 2,
+                },
+            ]))
+            .unwrap();
+        assert_eq!(
+            results
+                .bool_results
+                .iter()
+                .map(|r| r.value)
+                .collect::<Vec<_>>(),
+            vec![true, false, true]
+        );
+        for (first, second) in [(0, 3), (3, 0), (1, 1)] {
+            assert!(
+                sim.handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                    qubit_id_1: first,
+                    qubit_id_2: second,
+                    theta: 0.0,
+                    phi: 0.0,
+                }]))
+                .is_err()
+            );
+        }
     }
 }

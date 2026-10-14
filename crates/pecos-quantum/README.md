@@ -23,3 +23,10 @@ let h = circuit.add_gate(Gate::h(&[0]));
 let cx = circuit.add_gate(Gate::cx(&[(0, 1)]));
 circuit.connect(h, cx, QubitId::from(0)).unwrap();
 ```
+
+### Gate validation
+
+`Gate` constructors check native angle arity, and DAG insertion and mutation
+validate gate payloads. `Gate` fields remain public: these checks do not make
+malformed states unrepresentable. Full encapsulation of both the gate type and
+angles is separate work.

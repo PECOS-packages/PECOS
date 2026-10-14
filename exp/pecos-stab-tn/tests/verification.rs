@@ -17,7 +17,10 @@ use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StabVec};
 use pecos_stab_tn::mps::MpsConfig;
 use pecos_stab_tn::stab_mps::mast::{Mast, ProjectionOrder};
-use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
+use pecos_stab_tn::stab_mps::{
+    MeasurementMode, MultiStdSubtype, PauliKind, ProjectionConstruction, SignedEigenstateTelemetry,
+    StabMps,
+};
 use rayon::prelude::*;
 
 /// Check that two state vectors match up to global phase.
@@ -170,7 +173,7 @@ fn run_circuit_on_both(
         }
     }
 
-    (stn.state_vector(), crz.state_vector())
+    (stn.state_vector_up_to_phase(), crz.state_vector())
 }
 
 // ============================================================================
@@ -500,7 +503,7 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
         }
     }
 
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let ref_sv: Vec<Complex64> = (0..dim).map(|i| crz.get_amplitude(i)).collect();
 
@@ -574,7 +577,7 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
                     dsv2.rx(a, &[QubitId(q0s)]);
                 }
             }
-            let sv2 = stn2.state_vector();
+            let sv2 = stn2.state_vector_up_to_phase();
             let rv2: Vec<Complex64> = (0..dim).map(|i| dsv2.get_amplitude(i)).collect();
             let ov: Complex64 = sv2.iter().zip(rv2.iter()).map(|(a, b)| a.conj() * b).sum();
             if (ov.norm_sqr() - 1.0).abs() > tol {
@@ -650,9 +653,9 @@ fn test_fuzz_seed_115_mps_check() {
     approx::assert_relative_eq!(mps8[0].re, 0.8639, epsilon = 0.01);
     approx::assert_relative_eq!(mps8[0].im, -0.5036, epsilon = 0.01);
 
-    // Compare state_vector vs DenseStateVec
+    // Compare state_vector_up_to_phase vs DenseStateVec
     stn.cx(&[(q0, q1)]); // Step 9
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let mut dsv = pecos_simulators::DenseStateVec::new(2);
     dsv.cx(&[(q0, q1)]);
     dsv.cz(&[(q0, q1)]);
@@ -707,7 +710,7 @@ fn test_fuzz_seed_101_measurement_stats() {
     stn_ref.x(&[QubitId(0)]);
     stn_ref.x(&[QubitId(0)]);
     stn_ref.rz(t, &[QubitId(0)]);
-    let sv = stn_ref.state_vector();
+    let sv = stn_ref.state_vector_up_to_phase();
     // sv[i] uses DenseStateVec convention: bit 0 = q0, bit 1 = q1
     let expected_probs: Vec<f64> = sv.iter().map(num_complex::Complex::norm_sqr).collect();
 
@@ -758,28 +761,28 @@ fn test_fuzz_debug_seed_101() {
     stn.rz(t, &[QubitId(1)]);
     crz.rz(t, &[QubitId(1)]);
 
-    let s1 = stn.state_vector();
+    let s1 = stn.state_vector_up_to_phase();
     let c1 = crz.state_vector();
     assert_states_match(&s1, &c1, "after T(1)");
 
     // Step 1: H on q0
     stn.h(&[QubitId(0)]);
     crz.h(&[QubitId(0)]);
-    let s2 = stn.state_vector();
+    let s2 = stn.state_vector_up_to_phase();
     let c2 = crz.state_vector();
     assert_states_match(&s2, &c2, "after H(0)");
 
     // Step 2: S on q1
     stn.sz(&[QubitId(1)]);
     crz.sz(&[QubitId(1)]);
-    let s3 = stn.state_vector();
+    let s3 = stn.state_vector_up_to_phase();
     let c3 = crz.state_vector();
     assert_states_match(&s3, &c3, "after S(1)");
 
     // Step 3: S on q0
     stn.sz(&[QubitId(0)]);
     crz.sz(&[QubitId(0)]);
-    let s4 = stn.state_vector();
+    let s4 = stn.state_vector_up_to_phase();
     let c4 = crz.state_vector();
     assert_states_match(&s4, &c4, "after S(0)");
 
@@ -791,7 +794,7 @@ fn test_fuzz_debug_seed_101() {
         stn.mps().norm_squared(),
         stn.mps().bond_dims()
     );
-    let s5 = stn.state_vector();
+    let s5 = stn.state_vector_up_to_phase();
     let c5 = crz.state_vector();
     assert_states_match(&s5, &c5, "after RZ(0)");
 
@@ -804,7 +807,7 @@ fn test_fuzz_debug_seed_101() {
         stn.mps().norm_squared(),
         stn.mps().bond_dims()
     );
-    let s5h = stn.state_vector();
+    let s5h = stn.state_vector_up_to_phase();
     let c5h = crz.state_vector();
     assert_states_match(&s5h, &c5h, "after RZ then H");
 
@@ -832,7 +835,7 @@ fn test_fuzz_debug_seed_101() {
             .collect::<Vec<_>>()
     );
     eprintln!("Step5 ref: [0.4714+0.0969i, 0, 0.2176+0.8492i, 0]");
-    let s5r = stn.state_vector();
+    let s5r = stn.state_vector_up_to_phase();
     let c5r = crz.state_vector();
     assert_states_match(&s5r, &c5r, "after step 5");
 
@@ -842,7 +845,11 @@ fn test_fuzz_debug_seed_101() {
     stn.h(&[QubitId(1)]);
     crz.h(&[QubitId(1)]);
     eprintln!("step 6a (H1): norm={:.6}", stn.mps().norm_squared());
-    assert_states_match(&stn.state_vector(), &crz.state_vector(), "step 6a");
+    assert_states_match(
+        &stn.state_vector_up_to_phase(),
+        &crz.state_vector(),
+        "step 6a",
+    );
 
     stn.rz(rx_angle2, &[QubitId(1)]);
     crz.rz(rx_angle2, &[QubitId(1)]);
@@ -862,9 +869,9 @@ fn test_fuzz_debug_seed_101() {
     );
     // Reference: [0.4259+0.0876i, 0.202+0.0415i, 0.1966+0.7672i, 0.0933+0.3639i]
     eprintln!("  Ref  MPS: [0.4259+0.0876i, 0.2020+0.0415i, 0.1966+0.7672i, 0.0933+0.3639i]");
-    // Check MPS directly vs through state_vector
+    // Check MPS directly vs through state_vector_up_to_phase
     let mps_sv = stn.mps().state_vector();
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let crz_sv = crz.state_vector();
     eprintln!(
         "MPS SV: {:?}",
@@ -892,28 +899,28 @@ fn test_fuzz_debug_seed_101() {
     stn.h(&[QubitId(1)]);
     crz.h(&[QubitId(1)]);
     eprintln!("step 6c (H1): norm={:.6}", stn.mps().norm_squared());
-    let s6 = stn.state_vector();
+    let s6 = stn.state_vector_up_to_phase();
     let c6 = crz.state_vector();
     assert_states_match(&s6, &c6, "step 6c");
 
     // Step 7: X on q0
     stn.x(&[QubitId(0)]);
     crz.x(&[QubitId(0)]);
-    let s7 = stn.state_vector();
+    let s7 = stn.state_vector_up_to_phase();
     let c7 = crz.state_vector();
     assert_states_match(&s7, &c7, "after step 7");
 
     // Step 8: X on q0
     stn.x(&[QubitId(0)]);
     crz.x(&[QubitId(0)]);
-    let s8 = stn.state_vector();
+    let s8 = stn.state_vector_up_to_phase();
     let c8 = crz.state_vector();
     assert_states_match(&s8, &c8, "after step 8");
 
     // Step 9: T on q0
     stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
     crz.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
-    let s9 = stn.state_vector();
+    let s9 = stn.state_vector_up_to_phase();
     let c9 = crz.state_vector();
     assert_states_match(&s9, &c9, "after step 9");
 }
@@ -1002,7 +1009,7 @@ fn test_debug_seed_502() {
             }
         }
 
-        let stn_sv = stn.state_vector();
+        let stn_sv = stn.state_vector_up_to_phase();
         let ref_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
         let overlap: Complex64 = stn_sv
             .iter()
@@ -1108,7 +1115,7 @@ fn test_rx_pi_after_nonclifford() {
             _ => {}
         }
     }
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dsv_sv: Vec<Complex64> = (0..4).map(|i| dsv.get_amplitude(i)).collect();
     eprintln!(
         "STN: {:?}",
@@ -1147,7 +1154,7 @@ fn test_rx_pi_after_nonclifford() {
     dsv2.cx(&[(QubitId(0), QubitId(1))]);
     stn2.rz(t, &[QubitId(1)]);
     dsv2.rz(t, &[QubitId(1)]);
-    let sv_before = stn2.state_vector();
+    let sv_before = stn2.state_vector_up_to_phase();
     let dv_before: Vec<Complex64> = (0..4).map(|i| dsv2.get_amplitude(i)).collect();
     let ov_before: Complex64 = sv_before
         .iter()
@@ -1167,7 +1174,7 @@ fn test_seed319_minimal() {
         ("h", vec![1], None),
         ("rz", vec![3], Some(Angle64::from_radians(3.3427))),
         ("cz", vec![0, 3], None),
-        ("rz", vec![1], Some(t)), // T gate = RZ(pi/4)
+        ("rz", vec![1], Some(t)), // RZ(pi/4) equals T up to global phase.
         ("cz", vec![1, 2], None),
         ("sz", vec![1], None),
         ("h", vec![2], None),
@@ -1286,7 +1293,7 @@ fn test_seed502_prefix() {
             }
             _ => panic!("unknown gate"),
         }
-        let sv = stn.state_vector();
+        let sv = stn.state_vector_up_to_phase();
         let rv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
         let ov: Complex64 = sv.iter().zip(rv.iter()).map(|(a, b)| a.conj() * b).sum();
         if (ov.norm_sqr() - 1.0).abs() > 0.01 {
@@ -1327,7 +1334,7 @@ fn test_seed502_prefix() {
             break;
         }
     }
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dsv_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
 
     // Brute-force: compute |ψ⟩ = Σ_x ν_x * D^x * |stab⟩ directly from tableau
@@ -1577,7 +1584,7 @@ fn measurement_probability_check(num_qubits: usize, num_gates: usize, seed: u64)
     }
 
     // Get expected probabilities from state vector
-    let sv = stn_ref.state_vector();
+    let sv = stn_ref.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let expected_probs: Vec<f64> = sv.iter().map(num_complex::Complex::norm_sqr).collect();
 
@@ -1694,7 +1701,7 @@ fn test_disentangle_various_circuits() {
         let _ = stn.disentangle(5);
         let expected = oracle.state();
         assert_states_match(
-            &stn.state_vector(),
+            &stn.state_vector_up_to_phase(),
             &expected,
             &format!("disentangle circuit {i}"),
         );
@@ -1750,7 +1757,7 @@ fn test_accepted_heuristic_disentangler_keeps_all_reads_in_one_frame() {
 
     let expected = oracle.state();
     assert_states_close(
-        &stn.state_vector(),
+        &stn.state_vector_up_to_phase(),
         &expected,
         1e-10,
         "accepted heuristic state_vector",
@@ -1791,7 +1798,7 @@ fn test_accepted_heuristic_disentangler_keeps_all_reads_in_one_frame() {
 fn test_disentangle_flushes_lazy_measurement_and_merged_rz() {
     let mut stn = StabMps::builder(2)
         .seed(19)
-        .lazy_measure(true)
+        .measurement(MeasurementMode::Lazy)
         .merge_rz(true)
         .svd_cutoff(0.0)
         .max_truncation_error(0.0)
@@ -1832,11 +1839,11 @@ fn test_disentangle_flushes_lazy_measurement_and_merged_rz() {
 
     let _ = stn.disentangle(1);
     assert!(
-        stn.is_state_exact(),
-        "disentangle should flush deferred operations and merged RZs"
+        !stn.is_state_exact(),
+        "Lazy mode remains a conservative exactness guard after flushing"
     );
     assert_states_close(
-        &stn.state_vector(),
+        &stn.state_vector_up_to_phase(),
         &expected,
         1e-10,
         "lazy measurement followed by disentangle",
@@ -1892,7 +1899,7 @@ fn test_t_on_every_qubit_product_state() {
 
 #[test]
 fn test_tdg_gate() {
-    // T-dagger = RZ(-pi/4)
+    // RZ(-pi/4) equals T-dagger up to global phase.
     let tdg = -(Angle64::QUARTER_TURN / 2u64);
     let gates = vec![("h", vec![0], None), ("rz", vec![0], Some(tdg))];
     let (stn_sv, crz_sv) = run_circuit_on_both(1, &gates, 42);
@@ -1928,7 +1935,7 @@ fn test_stn_reset_and_reuse() {
     // After reset, should behave like fresh simulator
     stn.h(&[QubitId(0)]);
     stn.cx(&[(QubitId(0), QubitId(1))]);
-    let sv = stn.state_vector();
+    let sv = stn.state_vector_up_to_phase();
     let norm: f64 = sv.iter().map(num_complex::Complex::norm_sqr).sum();
     assert!(
         (norm - 1.0).abs() < 0.01,
@@ -2082,7 +2089,7 @@ fn fuzz_with_rzz(num_qubits: usize, num_gates: usize, seed: u64) {
         }
     }
 
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let ref_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
     let tol = 0.01 + 0.002 * num_gates as f64;
@@ -2297,7 +2304,7 @@ fn bitstring_counts(shots: &[Vec<bool>], num_qubits: usize) -> Vec<usize> {
 }
 
 fn dense_state_vector_probabilities(stn: &StabMps) -> Vec<f64> {
-    let state_vector = stn.state_vector();
+    let state_vector = stn.state_vector_up_to_phase();
     let norm: f64 = state_vector
         .iter()
         .map(num_complex::Complex::norm_sqr)
@@ -2396,7 +2403,7 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
     stn.x(&[QubitId(1)]);
 
     let rows = stn.sample_bitstrings(64);
-    let state_vector = stn.state_vector();
+    let state_vector = stn.state_vector_up_to_phase();
     assert!(rows.iter().any(|row| row[0]));
     assert!(rows.iter().any(|row| !row[0]));
 
@@ -2412,7 +2419,7 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
             "bits={bits:?}: probability={actual_probability}, expected={}",
             expected_amplitude.norm_sqr()
         );
-        let actual_amplitude = stn.amplitude(&bits);
+        let actual_amplitude = stn.amplitude_up_to_phase(&bits);
         assert!(
             (actual_amplitude - expected_amplitude).norm() <= 1e-12,
             "bits={bits:?}: amplitude={actual_amplitude}, expected={expected_amplitude}"
@@ -2423,15 +2430,20 @@ fn test_sampled_bitstring_round_trips_through_probability_and_amplitude() {
 fn assert_honest_clifford_t_readouts_match_dense(
     qubit_counts: std::ops::RangeInclusive<usize>,
     seed_families: &[u64],
+    max_truncation_error: f64,
     label: &str,
 ) {
     // This family deliberately puts H, S, and CX between non-Clifford gates,
     // plus a target H after roughly half of them. That exposes sequential
     // forced-projection frame errors hidden by diagonal-only circuit tails.
-    const TOLERANCE: f64 = 1e-12;
+    const NUMERICAL_FLOOR: f64 = 1e-12;
+    let adaptive = max_truncation_error > 0.0;
     let mut circuits = 0;
+    let mut circuits_with_discarded_weight = 0;
     let mut worst_probability_delta = 0.0_f64;
     let mut worst_iterative_delta = 0.0_f64;
+    let mut largest_recorded_weight = 0.0_f64;
+    let mut largest_allowed_delta = NUMERICAL_FLOOR;
     for num_qubits in qubit_counts {
         for t_count in 3..=6 {
             for &seed_family in seed_families {
@@ -2440,38 +2452,77 @@ fn assert_honest_clifford_t_readouts_match_dense(
                 let mut stn = StabMps::builder(num_qubits)
                     .seed(circuit_seed)
                     .merge_rz(false)
-                    .max_truncation_error(0.0)
+                    .max_truncation_error(max_truncation_error)
                     .build();
                 apply_seeded_clifford_t_to_stn(&mut stn, &gates);
                 stn.flush();
 
-                let dense_probabilities = dense_state_vector_probabilities(&stn);
-                for (outcome, &expected) in dense_probabilities.iter().enumerate() {
-                    let bits = (0..num_qubits)
-                        .map(|q| ((outcome >> q) & 1) != 0)
-                        .collect::<Vec<_>>();
-                    let actual = stn.prob_bitstring(&bits);
+                let recorded_weight = stn.summed_discarded_weight();
+                if recorded_weight > 0.0 {
+                    circuits_with_discarded_weight += 1;
+                }
+                largest_recorded_weight = largest_recorded_weight.max(recorded_weight);
+                // The non-commutative union bound turns summed discarded
+                // weight into at most 2*sqrt(weight) distinguishability.
+                // Keep the exact configuration's original numerical ceiling.
+                let allowed_delta = if adaptive {
+                    2.0 * recorded_weight.sqrt() + NUMERICAL_FLOOR
+                } else {
+                    NUMERICAL_FLOOR
+                };
+                largest_allowed_delta = largest_allowed_delta.max(allowed_delta);
+                let dense_probabilities = if adaptive {
+                    let mut oracle = StabMps::builder(num_qubits)
+                        .seed(circuit_seed)
+                        .merge_rz(false)
+                        .max_truncation_error(0.0)
+                        .build();
+                    apply_seeded_clifford_t_to_stn(&mut oracle, &gates);
+                    oracle.flush();
+                    dense_state_vector_probabilities(&oracle)
+                } else {
+                    dense_state_vector_probabilities(&stn)
+                };
+                let bitstrings = (0..dense_probabilities.len())
+                    .map(|outcome| {
+                        (0..num_qubits)
+                            .map(|q| ((outcome >> q) & 1) != 0)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let batched_probabilities = stn.prob_bitstrings(&bitstrings);
+                for (outcome, ((bits, &actual), &expected)) in bitstrings
+                    .iter()
+                    .zip(&batched_probabilities)
+                    .zip(&dense_probabilities)
+                    .enumerate()
+                {
                     let probability_delta = (actual - expected).abs();
                     worst_probability_delta = worst_probability_delta.max(probability_delta);
                     assert!(
-                        probability_delta <= TOLERANCE,
+                        probability_delta <= allowed_delta,
                         "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
-                         outcome={outcome}: prob_bitstring={actual:.16}, \
-                         dense={expected:.16}, delta={probability_delta:.3e}, gates={gates:?}"
+                         outcome={outcome}: prob_bitstrings={actual:.16}, \
+                         dense={expected:.16}, delta={probability_delta:.3e}, \
+                         recorded_weight={recorded_weight:.3e}, \
+                         allowed_delta={allowed_delta:.3e}, gates={gates:?}"
                     );
 
                     // The unnormalized sibling projector must preserve the
                     // same probability weight. Complex-phase behavior has
                     // separate unit coverage; this assertion isolates the
                     // sequential projection machinery shared with the issue.
-                    let iterative_probability = stn.amplitude_iterative(&bits).norm_sqr();
+                    let iterative_probability =
+                        stn.amplitude_iterative_up_to_phase(bits).norm_sqr();
                     let iterative_delta = (iterative_probability - expected).abs();
                     worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
                     assert!(
-                        iterative_delta <= TOLERANCE,
+                        iterative_delta <= allowed_delta,
                         "{label}: n={num_qubits} t={t_count} seed={circuit_seed} \
-                         outcome={outcome}: |amplitude_iterative|^2={iterative_probability:.16}, \
-                         dense={expected:.16}, delta={iterative_delta:.3e}, gates={gates:?}"
+                         outcome={outcome}: |amplitude_iterative_up_to_phase|^2={iterative_probability:.16}, \
+                         dense={expected:.16}, delta={iterative_delta:.3e}, \
+                         recorded_weight={recorded_weight:.3e}, \
+                         allowed_delta={allowed_delta:.3e}, gates={gates:?}"
                     );
                 }
                 circuits += 1;
@@ -2479,7 +2530,7 @@ fn assert_honest_clifford_t_readouts_match_dense(
         }
     }
     eprintln!(
-        "{label}: circuits={circuits}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative|^2 delta={worst_iterative_delta:.3e}"
+        "{label}: circuits={circuits}, circuits with discarded weight={circuits_with_discarded_weight}, largest recorded weight={largest_recorded_weight:.3e}, largest allowed delta={largest_allowed_delta:.3e}, worst prob_bitstrings delta={worst_probability_delta:.3e}, worst |amplitude_iterative_up_to_phase|^2 delta={worst_iterative_delta:.3e}"
     );
 }
 
@@ -2487,14 +2538,433 @@ fn assert_honest_clifford_t_readouts_match_dense(
 fn test_prob_bitstring_honest_clifford_t_family_matches_dense_state_vector() {
     // Keep a known formerly failing small-n family (n=4, t=6, seed=21406)
     // in the default lane while bounding debug-suite runtime.
-    assert_honest_clifford_t_readouts_match_dense(3..=4, &[10, 21], "fast issue #557 sweep");
+    assert_honest_clifford_t_readouts_match_dense(3..=4, &[10, 21], 0.0, "fast issue #557 sweep");
 }
 
 #[test]
 #[ignore = "wide issue #557 sweep; run in release mode"]
 fn test_prob_bitstring_honest_clifford_t_wide_seed_sweep_matches_dense_state_vector() {
     let seed_families = (10..50_u64).collect::<Vec<_>>();
-    assert_honest_clifford_t_readouts_match_dense(3..=6, &seed_families, "wide issue #557 sweep");
+    assert_honest_clifford_t_readouts_match_dense(
+        3..=6,
+        &seed_families,
+        0.0,
+        "wide issue #557 exact sweep",
+    );
+    // The 1e-8 adaptive budget never binds on this Clifford+T family at
+    // n <= 6 (zero recorded weight over all 640 circuits), so a second sweep
+    // arm here would duplicate the exact arm byte for byte. Nonzero-budget
+    // read coverage lives in the weak-branch fixture below, whose branch is
+    // engineered to sit under the budget.
+}
+
+#[test]
+fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
+    fn query_set(num_qubits: usize, seed: u64) -> Vec<Vec<bool>> {
+        let mut random = seed;
+        let mut queries = vec![vec![false; num_qubits], vec![true; num_qubits]];
+
+        // Four queries share a deliberately long prefix; the following four
+        // are independently generated and normally split near the root.
+        for suffix_index in 0..4 {
+            let mut bits = vec![false; num_qubits];
+            let shared_depth = num_qubits.saturating_sub(2);
+            for (q, bit) in bits.iter_mut().enumerate().skip(shared_depth) {
+                *bit = (suffix_index >> (q - shared_depth)) & 1 != 0;
+            }
+            queries.push(bits);
+        }
+        for _ in 0..4 {
+            queries.push(
+                (0..num_qubits)
+                    .map(|_| next_seeded_gate_choice(&mut random) & 1 != 0)
+                    .collect(),
+            );
+        }
+
+        // Preserve duplicate positions rather than deduplicating trie leaves.
+        queries.push(queries[0].clone());
+        queries.push(queries[3].clone());
+        queries
+    }
+
+    let mut truncating_circuits_with_discarded_weight = 0;
+    let mut locality_direct_sum_events = 0;
+    let mut locality_block_write_events = 0;
+    for truncating in [false, true] {
+        for num_qubits in 3..=6 {
+            for seed_family in 0..4_u64 {
+                let circuit_seed = 0xBA7C_0000
+                    + u64::from(truncating) * 0x10_0000
+                    + num_qubits as u64 * 100
+                    + seed_family;
+                let gates = seeded_clifford_t_circuit(num_qubits, num_qubits + 2, circuit_seed);
+                let (max_bond_dim, svd_cutoff, max_truncation_error) = if truncating {
+                    (2, 1e-10, 1e-6)
+                } else {
+                    (64, 0.0, 0.0)
+                };
+                let mut stn = StabMps::builder(num_qubits)
+                    .seed(circuit_seed)
+                    .max_bond_dim(max_bond_dim)
+                    .svd_cutoff(svd_cutoff)
+                    .max_truncation_error(max_truncation_error)
+                    .merge_rz(false)
+                    .build();
+                apply_seeded_clifford_t_to_stn(&mut stn, &gates);
+                stn.flush();
+                if truncating && stn.summed_discarded_weight() > 0.0 {
+                    truncating_circuits_with_discarded_weight += 1;
+                }
+
+                let queries = query_set(num_qubits, circuit_seed ^ 0x5151_5151);
+                let singular = queries
+                    .iter()
+                    .map(|bits| stn.prob_bitstring(bits))
+                    .collect::<Vec<_>>();
+                let batched = stn.prob_bitstrings(&queries);
+                let (profiled, profile) = stn.prob_bitstrings_profiled(&queries);
+                let (locality_profiled, locality_profile) =
+                    stn.prob_bitstrings_profiled_with_projection_locality(&queries);
+                assert_eq!(batched.len(), queries.len());
+                assert_eq!(
+                    profiled
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    batched
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "profiled query changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
+                );
+                assert_eq!(
+                    locality_profiled
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    batched
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "locality diagnostics changed outputs for truncating={truncating} n={num_qubits} seed={circuit_seed}"
+                );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .all(|depth| depth.projection_qr_locality.is_empty()),
+                    "ordinary query profiling unexpectedly collected locality snapshots"
+                );
+                let locality_events = locality_profile
+                    .by_depth
+                    .iter()
+                    .flat_map(|depth| &depth.projection_qr_locality)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    locality_events.len() as u64,
+                    locality_profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection_qr.calls)
+                        .sum::<u64>(),
+                    "every post-projection QR must have one locality event"
+                );
+                for event in locality_events {
+                    assert_eq!(
+                        event.normalization_preserved_center,
+                        Some(true),
+                        "normalization invalidated or failed to validate the post-projection center"
+                    );
+                    let expected_skippable = if event.center_before_qr_is_valid
+                        || !event.center_before_projection_write_is_valid
+                    {
+                        0
+                    } else {
+                        let center = event
+                            .center_before_projection_write
+                            .expect("a valid pre-write center must have a site");
+                        let frontier = event
+                            .touched_site_max
+                            .map_or(center, |site| center.max(site));
+                        (event.chain_length - 1).saturating_sub(frontier)
+                    };
+                    assert_eq!(
+                        event.qr_sites_skippable_by_locality, expected_skippable,
+                        "QR locality headroom does not match the gauge frontier"
+                    );
+                    let expected_center_ceiling = if event.center_before_qr_is_valid
+                        || !event.center_before_projection_write_is_valid
+                    {
+                        0
+                    } else {
+                        let center = event
+                            .center_before_projection_write
+                            .expect("a valid pre-write center must have a site");
+                        (event.chain_length - 1).saturating_sub(center)
+                    };
+                    assert_eq!(
+                        event.qr_sites_skippable_by_center_ceiling, expected_center_ceiling,
+                        "QR center-only ceiling does not match the pre-write center frontier"
+                    );
+                    assert!(event.qr_sites_skippable_by_locality <= event.qr_sites);
+                    assert!(
+                        event.qr_sites_skippable_by_locality
+                            <= event.qr_sites_skippable_by_center_ceiling
+                    );
+                    assert!(event.qr_sites_skippable_by_center_ceiling <= event.qr_sites);
+                    match event.construction {
+                        ProjectionConstruction::DirectSum => {
+                            locality_direct_sum_events += 1;
+                            // `Mps::add` currently changes every tensor's
+                            // shape, so its bitwise footprint is uninformative
+                            // and is explicitly exempt from the support guard.
+                        }
+                        ProjectionConstruction::LocalBlockWrite => {
+                            locality_block_write_events += 1;
+                            assert!(event.changed_tensor_max <= event.touched_site_max);
+                        }
+                        ProjectionConstruction::ScalarScale => {
+                            assert!(event.changed_tensor_max <= event.touched_site_max);
+                        }
+                    }
+                }
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.expectation.calls)
+                        .sum::<u64>()
+                        > 0,
+                    "profiled query recorded no projection calls"
+                );
+                assert!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection_svd.svd_operations)
+                        .sum::<u64>()
+                        > 0,
+                    "profiled query recorded no post-projection SVDs"
+                );
+                // Every phase bucket must record calls. A time-share bound
+                // cannot do this job: a scope worth 0.4% of the query (or a
+                // sub-0.01% bucket) can be deleted outright and still sit
+                // inside any tolerance that survives timing noise. Call
+                // counts are immune to that and to machine speed.
+                for (label, calls) in [
+                    (
+                        "expectation",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.expectation.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "pre_reduction",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.pre_reduction.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "projection",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.projection.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "post_projection_qr",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.post_projection_qr.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "post_projection_svd",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.post_projection_svd.calls)
+                            .sum::<u64>(),
+                    ),
+                    (
+                        "survival",
+                        profile
+                            .by_depth
+                            .iter()
+                            .map(|d| d.survival.calls)
+                            .sum::<u64>(),
+                    ),
+                ] {
+                    assert!(calls > 0, "phase scope {label} recorded no calls");
+                }
+                assert!(
+                    profile.phase_scopes_disjoint(),
+                    "query phases overlapped or did not close"
+                );
+                assert!(
+                    profile.attributed_wall_time_seconds() <= profile.whole_call_wall_time_seconds,
+                    "disjoint phase sum exceeded the complete query call"
+                );
+                // A lower bound belongs here in principle, but not at this
+                // scale: these queries run in microseconds, where `Instant`
+                // overhead alone is ~11% of the call. The residual bound is
+                // enforced in the campaign example instead, where calls are
+                // long enough for it to mean something.
+                assert_eq!(
+                    profile
+                        .by_depth
+                        .iter()
+                        .map(|depth| depth.post_projection_qr.svd_operations)
+                        .sum::<u64>(),
+                    0,
+                    "the exact QR bucket must not contain SVD operations"
+                );
+                for (query_index, (&actual, &expected)) in batched.iter().zip(&singular).enumerate()
+                {
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "truncating={truncating} n={num_qubits} seed={circuit_seed} \
+                         query={query_index} bits={:?}: batched={actual:.17e}, \
+                         singular={expected:.17e}",
+                        queries[query_index]
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        truncating_circuits_with_discarded_weight > 0,
+        "truncating agreement arm never exercised a discarded-weight state"
+    );
+    assert!(
+        locality_direct_sum_events > 0,
+        "locality diagnostics never exercised direct-sum construction"
+    );
+    assert!(
+        locality_block_write_events > 0,
+        "locality diagnostics never exercised block-write construction"
+    );
+
+    // Every false-q0 query is an endpoint-zero subtree. It must be pruned to
+    // the same positive zero returned by the singular API, while the inhabited
+    // branch and duplicate leaf retain their ordinary probabilities.
+    let mut endpoint = StabMps::new(4);
+    endpoint.x(&[QubitId(0)]);
+    let endpoint_queries = vec![
+        vec![false, false, false, false],
+        vec![false, false, false, true],
+        vec![false, true, true, true],
+        vec![true, false, false, false],
+        vec![true, false, false, false],
+    ];
+    let singular = endpoint_queries
+        .iter()
+        .map(|bits| endpoint.prob_bitstring(bits))
+        .collect::<Vec<_>>();
+    let batched = endpoint.prob_bitstrings(&endpoint_queries);
+    assert_eq!(
+        batched
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>(),
+        singular
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(batched[..3], [0.0; 3]);
+    assert_eq!(batched[3..], [1.0; 2]);
+
+    let empty: Vec<Vec<bool>> = Vec::new();
+    let probabilities = endpoint.prob_bitstrings(&empty);
+    assert!(
+        probabilities.is_empty(),
+        "expected no bitstring probabilities, got {probabilities:?}"
+    );
+}
+
+fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {
+    let t = Angle64::QUARTER_TURN / 2u64;
+    for q in 0..4 {
+        stn.h(&[QubitId(q)]);
+        stn.rz(t, &[QubitId(q)]);
+    }
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    stn.cx(&[(QubitId(1), QubitId(2))]);
+    stn.cx(&[(QubitId(2), QubitId(3))]);
+    // This creates a 2.5e-9-weight coefficient branch: below the configured
+    // 1e-8 adaptive budget, but above numerical zero.
+    stn.rz(Angle64::from_radians(1e-4), &[QubitId(3)]);
+    // Uncompute the entangler and rotate every affected axis so the weak
+    // branch changes computational-basis probabilities, then retain a
+    // nonlocal tableau frame for the sequential forced-projection readers.
+    stn.cx(&[(QubitId(2), QubitId(3))]);
+    stn.cx(&[(QubitId(1), QubitId(2))]);
+    stn.cx(&[(QubitId(0), QubitId(1))]);
+    for q in 0..4 {
+        stn.h(&[QubitId(q)]);
+    }
+    stn.cx(&[(QubitId(3), QubitId(1))]);
+    stn.h(&[QubitId(2)]);
+    stn.flush();
+}
+
+#[test]
+#[ignore = "adaptive issue #557 readout bound; run in release mode"]
+fn test_prob_bitstring_adaptive_truncation_respects_recorded_weight_bound() {
+    const NUM_QUBITS: usize = 4;
+    const NUMERICAL_FLOOR: f64 = 1e-12;
+    let mut oracle = StabMps::builder(NUM_QUBITS)
+        .merge_rz(false)
+        .svd_cutoff(0.0)
+        .max_truncation_error(0.0)
+        .build();
+    let mut adaptive = StabMps::builder(NUM_QUBITS)
+        .merge_rz(false)
+        .svd_cutoff(0.0)
+        .max_truncation_error(1e-8)
+        .build();
+    apply_weak_branch_readout_fixture(&mut oracle);
+    apply_weak_branch_readout_fixture(&mut adaptive);
+
+    let recorded_weight = adaptive.summed_discarded_weight();
+    assert!(
+        recorded_weight > 0.0 && recorded_weight <= 1e-8,
+        "adaptive fixture recorded weight {recorded_weight:.16e}"
+    );
+    let allowed_delta = 2.0 * recorded_weight.sqrt() + NUMERICAL_FLOOR;
+    let exact_probabilities = dense_state_vector_probabilities(&oracle);
+    let mut worst_probability_delta = 0.0_f64;
+    let mut worst_iterative_delta = 0.0_f64;
+    for (outcome, &expected) in exact_probabilities.iter().enumerate() {
+        let bits = (0..NUM_QUBITS)
+            .map(|q| ((outcome >> q) & 1) != 0)
+            .collect::<Vec<_>>();
+        let probability_delta = (adaptive.prob_bitstring(&bits) - expected).abs();
+        let iterative_delta =
+            (adaptive.amplitude_iterative_up_to_phase(&bits).norm_sqr() - expected).abs();
+        worst_probability_delta = worst_probability_delta.max(probability_delta);
+        worst_iterative_delta = worst_iterative_delta.max(iterative_delta);
+        assert!(
+            probability_delta <= allowed_delta,
+            "outcome={outcome}: prob_bitstring delta={probability_delta:.3e}, recorded_weight={recorded_weight:.3e}, bound={allowed_delta:.3e}"
+        );
+        assert!(
+            iterative_delta <= allowed_delta,
+            "outcome={outcome}: amplitude_iterative_up_to_phase probability delta={iterative_delta:.3e}, recorded_weight={recorded_weight:.3e}, bound={allowed_delta:.3e}"
+        );
+    }
+    eprintln!(
+        "adaptive issue #557 fixture: recorded weight={recorded_weight:.3e}, bound={allowed_delta:.3e}, worst prob_bitstring delta={worst_probability_delta:.3e}, worst |amplitude_iterative_up_to_phase|^2 delta={worst_iterative_delta:.3e}"
+    );
 }
 
 #[test]
@@ -2534,9 +3004,7 @@ fn test_prob_bitstring_nonzero_trivial_coefficient_basis_matches_dense_state_vec
 #[test]
 fn test_prefix_tree_sampler_random_clifford_t_distributions() {
     // Compare the exact forced-projection prefix sampler with the independent
-    // dense state vector. Do not use `sample_bitstring` as an oracle: that API
-    // deliberately retains the pre-existing pragmatic measurement path and
-    // its documented drift.
+    // dense state vector.
     let num_shots = 5000usize;
     for num_qubits in 3..=5 {
         for t_count in 2..=5 {
@@ -2553,11 +3021,11 @@ fn test_prefix_tree_sampler_random_clifford_t_distributions() {
                 "n={num_qubits} t={t_count}: exact probabilities sum to {total}"
             );
 
-            let state_before = state.state_vector();
+            let state_before = state.state_vector_up_to_phase();
             let mut prefix_sampler = state.clone();
             let prefix_shots = prefix_sampler.sample_bitstrings(num_shots);
             assert_eq!(
-                prefix_sampler.state_vector(),
+                prefix_sampler.state_vector_up_to_phase(),
                 state_before,
                 "n={num_qubits} t={t_count}: prefix sampler mutated state"
             );
@@ -2628,24 +3096,27 @@ fn test_prefix_tree_sampler_flushes_supported_modes_on_working_clone() {
     let mut merged = StabMps::builder(2).seed(502).merge_rz(true).build();
     merged.h(&[QubitId(0)]);
     merged.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
-    let before = merged.state_vector();
+    let before = merged.state_vector_up_to_phase();
     let merged_shots = merged.sample_bitstrings(200);
     assert_eq!(
-        merged.state_vector(),
+        merged.state_vector_up_to_phase(),
         before,
         "caller's pending RZ state was mutated"
     );
     let q0_ones = merged_shots.iter().filter(|shot| shot[0]).count();
     assert!((70..=130).contains(&q0_ones));
 
-    let mut lazy = StabMps::builder(3).seed(503).lazy_measure(true).build();
+    let mut lazy = StabMps::builder(3)
+        .seed(503)
+        .measurement(MeasurementMode::Lazy)
+        .build();
     lazy.h(&[QubitId(0), QubitId(1)]);
     lazy.cx(&[(QubitId(0), QubitId(2))]);
     let _ = lazy.mz(&[QubitId(1)]);
-    let before = lazy.state_vector();
+    let before = lazy.state_vector_up_to_phase();
     let _ = lazy.sample_bitstrings(100);
     assert_eq!(
-        lazy.state_vector(),
+        lazy.state_vector_up_to_phase(),
         before,
         "caller's lazy frame state was mutated"
     );
@@ -2907,7 +3378,7 @@ fn test_numerical_flag_redetection_random_probabilities() {
             }
         }
 
-        let state_vector = stn.state_vector();
+        let state_vector = stn.state_vector_up_to_phase();
         for (idx, amplitude) in state_vector.iter().enumerate() {
             let bits = (0..n).map(|q| ((idx >> q) & 1) != 0).collect::<Vec<_>>();
             let actual = stn.prob_bitstring(&bits);
@@ -2927,6 +3398,7 @@ fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
     let mut stn = StabMps::builder(2)
         .merge_rz(false)
         .numerical_flag_redetection(true)
+        .saturation_telemetry(true)
         .build();
     let mut oracle = pecos_simulators::DenseStateVec::new(2);
 
@@ -2942,11 +3414,22 @@ fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
     oracle.rz(final_angle, &[QubitId(1)]);
 
     assert_eq!(stn.stats.numerical_redetect, 1);
+    assert_eq!(
+        stn.stats.signed_eigenstate_candidates, 0,
+        "a stale flag repaired to +Z is not signed-eigenstate headroom"
+    );
+    assert_eq!(
+        stn.saturation_profile()
+            .signed_eigenstates
+            .multi_disent
+            .events,
+        1
+    );
     let expected = (0..4)
         .map(|idx| oracle.get_amplitude(idx))
         .collect::<Vec<_>>();
     assert_states_close(
-        &stn.state_vector(),
+        &stn.state_vector_up_to_phase(),
         &expected,
         1e-12,
         "cancelled rotation re-detection",
@@ -2960,6 +3443,7 @@ fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
     let mut stn = StabMps::builder(2)
         .merge_rz(false)
         .numerical_flag_redetection(true)
+        .saturation_telemetry(true)
         .build();
     let mut oracle = pecos_simulators::DenseStateVec::new(2);
 
@@ -2974,14 +3458,122 @@ fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
 
     assert_eq!(stn.stats.numerical_redetect, 0);
     assert_eq!(stn.stats.multi_std, 1);
+    assert_eq!(stn.stats.multi_std_add + stn.stats.multi_std_cascade, 1);
+    assert_eq!(stn.saturation_profile().multi_std_events.len(), 1);
     let expected = (0..4)
         .map(|idx| oracle.get_amplitude(idx))
         .collect::<Vec<_>>();
     assert_states_close(
-        &stn.state_vector(),
+        &stn.state_vector_up_to_phase(),
         &expected,
         1e-12,
         "nonzero product site rejection",
+    );
+}
+
+fn prepared_two_site_subtype_simulator(saturation_telemetry: bool) -> StabMps {
+    let mut simulator = StabMps::builder(2)
+        .merge_rz(false)
+        .saturation_telemetry(saturation_telemetry)
+        .build();
+    for site in 0..2 {
+        simulator.h(&[QubitId(site)]);
+        simulator.t(&[QubitId(site)]);
+    }
+    simulator
+}
+
+#[test]
+fn test_multi_std_subtype_labels_distinguish_add_and_cascade() {
+    let angle = Angle64::from_radians(0.37);
+
+    let mut add = prepared_two_site_subtype_simulator(true);
+    add.cx(&[(QubitId(0), QubitId(1))]);
+    add.rz(angle, &[QubitId(1)]);
+    assert_eq!(add.stats.multi_std_add, 1);
+    assert_eq!(add.stats.multi_std_cascade, 0);
+    assert_eq!(add.saturation_profile().multi_std_events.len(), 1);
+    assert_eq!(
+        add.saturation_profile().multi_std_events[0].subtype,
+        MultiStdSubtype::Add
+    );
+    assert_eq!(
+        add.saturation_profile()
+            .signed_eigenstates
+            .multi_std_add
+            .events,
+        1
+    );
+    assert_eq!(
+        add.saturation_profile()
+            .signed_eigenstates
+            .multi_std_add
+            .sites_tested,
+        2
+    );
+    assert_eq!(
+        add.saturation_profile()
+            .signed_eigenstates
+            .multi_std_cascade
+            .events,
+        0
+    );
+
+    let mut cascade = prepared_two_site_subtype_simulator(true);
+    cascade.cz(&[(QubitId(0), QubitId(1))]);
+    cascade.h(&[QubitId(0)]);
+    cascade.rz(angle, &[QubitId(0)]);
+    assert_eq!(cascade.stats.multi_std_add, 0);
+    assert_eq!(cascade.stats.multi_std_cascade, 1);
+    assert_eq!(cascade.saturation_profile().multi_std_events.len(), 1);
+    assert_eq!(
+        cascade.saturation_profile().multi_std_events[0].subtype,
+        MultiStdSubtype::Cascade
+    );
+    assert_eq!(
+        cascade
+            .saturation_profile()
+            .signed_eigenstates
+            .multi_std_cascade
+            .events,
+        1
+    );
+    assert_eq!(
+        cascade
+            .saturation_profile()
+            .signed_eigenstates
+            .multi_std_cascade
+            .sites_tested,
+        2
+    );
+    assert_eq!(
+        cascade
+            .saturation_profile()
+            .signed_eigenstates
+            .multi_std_add
+            .events,
+        0
+    );
+}
+
+#[test]
+fn test_saturation_telemetry_flag_off_records_no_expensive_diagnostics() {
+    let mut simulator = prepared_two_site_subtype_simulator(false);
+    simulator.cx(&[(QubitId(0), QubitId(1))]);
+    simulator.rz(Angle64::from_radians(0.37), &[QubitId(1)]);
+
+    assert_eq!(simulator.stats.multi_std_add, 1);
+    assert_eq!(simulator.stats.signed_eigenstate_candidates, 0);
+    assert!(simulator.saturation_profile().multi_std_events.is_empty());
+    assert!(
+        simulator
+            .saturation_profile()
+            .multi_disent_events
+            .is_empty()
+    );
+    assert_eq!(
+        simulator.saturation_profile().signed_eigenstates,
+        SignedEigenstateTelemetry::default()
     );
 }
 
@@ -3024,7 +3616,7 @@ fn test_many_t_gates_bond_dim_growth() {
         stn.max_bond_dim()
     );
 
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let ref_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
     assert_states_close(&stn_sv, &ref_sv, 0.05, "many T gates on entangled state");
@@ -3068,7 +3660,7 @@ fn test_ghz_plus_t_ladder() {
         dsv.rz(t, &[QubitId(q)]);
     }
 
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let ref_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
     assert_states_close(&stn_sv, &ref_sv, 0.05, "GHZ+T ladder");
@@ -3104,7 +3696,7 @@ fn test_repeated_t_layers_4qubit() {
         }
     }
 
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let ref_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
     // 3 layers * 4 T gates = 12 non-Clifford gates, deep circuit
@@ -3233,7 +3825,7 @@ fn fuzz_with_tdg(num_qubits: usize, num_gates: usize, seed: u64) {
             }
         }
     }
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let dim = 1usize << num_qubits;
     let ref_sv: Vec<Complex64> = (0..dim).map(|i| dsv.get_amplitude(i)).collect();
     let tol = 0.01 + 0.002 * num_gates as f64;
@@ -3309,7 +3901,7 @@ fn test_fuzz_szdg_circuits() {
                 }
             }
         }
-        let stn_sv = stn.state_vector();
+        let stn_sv = stn.state_vector_up_to_phase();
         let ref_sv: Vec<Complex64> = (0..4).map(|i| dsv.get_amplitude(i)).collect();
         assert_states_close(&stn_sv, &ref_sv, 0.04, &format!("szdg fuzz seed={seed}"));
     }
@@ -3345,7 +3937,7 @@ fn test_post_measurement_state_consistency() {
         stn.rz(t, &[QubitId(1)]);
 
         // Check <Z_0> before measurement matches state vector
-        let sv_before = stn.state_vector();
+        let sv_before = stn.state_vector_up_to_phase();
         let ev_z0_sv: f64 = sv_before
             .iter()
             .enumerate()
@@ -3364,8 +3956,8 @@ fn test_post_measurement_state_consistency() {
         // Measure q0
         let r0 = stn.mz(&[QubitId(0)])[0].outcome;
 
-        // After measurement: <Z_1> from expectation value should match state_vector
-        let sv_after = stn.state_vector();
+        // After measurement: <Z_1> from expectation value should match state_vector_up_to_phase
+        let sv_after = stn.state_vector_up_to_phase();
         let ev_z1_sv: f64 = sv_after
             .iter()
             .enumerate()
@@ -3386,7 +3978,7 @@ fn test_post_measurement_state_consistency() {
             pecos_stab_tn::stab_mps::measure::z_expectation_value(stn.tableau(), stn.mps(), 0).re;
         let expected_ev = if r0 { -1.0 } else { 1.0 };
         // Also check via state vector (brute-force)
-        let sv_after = stn.state_vector();
+        let sv_after = stn.state_vector_up_to_phase();
         let ev_z0_sv: f64 = sv_after
             .iter()
             .enumerate()
@@ -3447,8 +4039,8 @@ fn test_post_measurement_multisite_collapse() {
             "trial {trial}: multi-site re-measurement should give same outcome"
         );
 
-        // Verify expectation value consistency: <Z_q> from MPS should match state_vector
-        let sv = stn.state_vector();
+        // Verify expectation value consistency: <Z_q> from MPS should match state_vector_up_to_phase
+        let sv = stn.state_vector_up_to_phase();
         for q in 0..3 {
             let ev_sv: f64 = sv
                 .iter()
@@ -3486,7 +4078,7 @@ fn test_post_measurement_state_3qubit() {
         let _ = stn.mz(&[QubitId(0)])[0].outcome;
 
         // After measurement: check expectation values match state vector
-        let sv = stn.state_vector();
+        let sv = stn.state_vector_up_to_phase();
         for q in 1..3 {
             let ev_sv: f64 = sv
                 .iter()
@@ -3563,7 +4155,7 @@ fn test_fuzz_single_qubit() {
                 }
             }
         }
-        let stn_sv = stn.state_vector();
+        let stn_sv = stn.state_vector_up_to_phase();
         let ref_sv: Vec<Complex64> = (0..2).map(|i| dsv.get_amplitude(i)).collect();
         assert_states_close(&stn_sv, &ref_sv, 0.01, &format!("1q fuzz seed={seed}"));
     }
@@ -3607,7 +4199,7 @@ fn test_rzz_clifford_angles() {
             "RZZ({angle:?}) should not grow bond dim"
         );
 
-        let stn_sv = stn.state_vector();
+        let stn_sv = stn.state_vector_up_to_phase();
         let ref_sv: Vec<Complex64> = (0..8).map(|i| dsv.get_amplitude(i)).collect();
         assert_states_match(&stn_sv, &ref_sv, &format!("RZZ Clifford angle {angle:?}"));
     }
@@ -3635,7 +4227,7 @@ fn test_rzz_then_non_clifford() {
     stn.rz(t, &[QubitId(2)]);
     dsv.rz(t, &[QubitId(2)]);
 
-    let stn_sv = stn.state_vector();
+    let stn_sv = stn.state_vector_up_to_phase();
     let ref_sv: Vec<Complex64> = (0..8).map(|i| dsv.get_amplitude(i)).collect();
     assert_states_close(&stn_sv, &ref_sv, 0.05, "RZZ then non-Clifford");
 }
@@ -3988,7 +4580,7 @@ fn test_property_disentangle_reduces_bond_dim() {
     let num_gates = stn.disentangle(5);
 
     let bond_after = stn.max_bond_dim();
-    let sv_after = stn.state_vector();
+    let sv_after = stn.state_vector_up_to_phase();
     let expected = oracle.state();
 
     eprintln!("Disentangle: bond {bond_before} -> {bond_after}, applied {num_gates} gates");
@@ -4110,11 +4702,18 @@ fn test_large_scale_50_qubits() {
     let (stn_bond, mast_bond) =
         large_scale_bond_dim_check(num_qubits, num_t, 3, configured_cap, 42);
     eprintln!("{num_qubits}q {num_t}T: STN bond={stn_bond}, MAST bond={mast_bond}");
-    // Exact-route data measurement saturates the configured cap at scale, so
-    // accuracy is truncation-limited here rather than merely bounded by it.
+    // Exact projection now removes direct-sum rank redundancy even when the
+    // stored bond is below the cap. This regression only requires the
+    // cross-word BitSet path to finish within the configured bound.
+    assert!(
+        mast_bond <= configured_cap,
+        "MAST exceeded its configured bond cap: {mast_bond} > {configured_cap}"
+    );
+    // A cap-only bound is near-vacuous because compression enforces the cap
+    // by construction; this seeded workload deterministically ends at bond 2.
     assert_eq!(
-        mast_bond, configured_cap,
-        "MAST did not saturate its configured bond cap"
+        mast_bond, 2,
+        "seeded 50-qubit MAST workload no longer compresses to its known bond"
     );
 }
 

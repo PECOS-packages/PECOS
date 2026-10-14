@@ -456,13 +456,14 @@ fn ref_meas_ids(refs: &[TickMeasRef]) -> Vec<usize> {
 fn meas_ids_json(annotations: &[Vec<usize>]) -> String {
     let entries: Vec<String> = annotations
         .iter()
-        .map(|ids| {
+        .enumerate()
+        .map(|(id, ids)| {
             let values = ids
                 .iter()
                 .map(usize::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            format!(r#"{{"meas_ids":[{values}]}}"#)
+            format!(r#"{{"id":{id},"meas_ids":[{values}]}}"#)
         })
         .collect();
     format!("[{}]", entries.join(","))

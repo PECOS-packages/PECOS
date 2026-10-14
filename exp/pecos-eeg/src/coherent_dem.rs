@@ -18,7 +18,11 @@
 //! and computes mechanism probabilities.
 //!
 //! For H-type (coherent) noise: amplitudes add, probability = sin²(total).
-//! For S-type (stochastic) noise: rates add, probability = (1-exp(2·total))/2.
+//! For S-type (stochastic) noise: independent flips compose with
+//! probability = (1 - product(1 - 2p))/2, where p = -rate.
+//! `UniformNoise` independent flips exactly represent categorical depolarizing
+//! for `p1 <= 3/4` and `p2 <= 15/16`; larger positive values panic.
+//! Exact Heisenberg targets use the separate physical channel view.
 
 use crate::Bm;
 use crate::dem_mapping::{DecomposableDemEntry, DemEntry, DemEvent, Detector, Observable};
@@ -51,6 +55,10 @@ struct NoiseContribution {
 ///
 /// This gives both correct mechanism structure AND correct coherent
 /// probabilities from a single framework.
+///
+/// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -58,16 +66,19 @@ pub fn build_coherent_dem(
     observables: &[Observable],
     expansion_gates: &[bool],
 ) -> Vec<DemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Step 1: Collect all noise sources and their Pauli labels
     let mut noise_sources: Vec<(usize, NoiseContribution)> = Vec::new();
 
     for (gate_idx, gate) in gates.iter().enumerate() {
-        if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
+        if expansion_gates[gate_idx] {
             continue;
         }
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
 
         for inj in injections {
             noise_sources.push((
@@ -153,8 +164,8 @@ pub fn build_coherent_dem(
     // coherently. Different labels (e.g., Z on qubit 1 vs Z on qubit 2)
     // are separate mechanisms even if they flip the same detectors.
     //
-    // For S-type: same grouping — different Pauli types at the same location
-    // are independent mechanisms.
+    // For S-type: compose independent flips exactly. UniformNoise matches
+    // categorical channels exactly for p1 <= 3/4 and p2 <= 15/16.
     //
     // After coherent accumulation per label, mechanisms with the same
     // detector set are combined independently (product formula).
@@ -179,9 +190,12 @@ pub fn build_coherent_dem(
                 *h_groups.entry(key).or_insert(0.0) += contrib.value;
             }
             EegType::S => {
-                *s_groups.entry(key).or_insert(0.0) += contrib.value;
+                let p = -contrib.value;
+                *s_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
             }
-            _ => {}
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
         }
     }
 
@@ -198,12 +212,12 @@ pub fn build_coherent_dem(
         }
     }
 
-    for ((event, _label), total_s) in &s_groups {
-        let prob = (1.0 - (2.0 * total_s).exp()) / 2.0;
-        if prob.abs() > 1e-15 {
+    for ((event, _label), product) in &s_groups {
+        let prob = (1.0 - product) / 2.0;
+        if prob > 1e-15 {
             entries.push(DemEntry {
                 event: event.clone(),
-                probability: prob.abs(),
+                probability: prob,
             });
         }
     }
@@ -218,6 +232,10 @@ pub fn build_coherent_dem(
 /// anticommutation separately. This produces `DecomposableDemEntry`s
 /// that know which detectors each component flips, enabling proper
 /// graphlike decomposition for pymatching.
+///
+/// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_decomposable(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -225,16 +243,19 @@ pub fn build_coherent_dem_decomposable(
     observables: &[Observable],
     expansion_gates: &[bool],
 ) -> Vec<DecomposableDemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Step 1: Collect noise sources (same as build_coherent_dem)
     let mut noise_sources: Vec<(usize, NoiseContribution)> = Vec::new();
 
     for (gate_idx, gate) in gates.iter().enumerate() {
-        if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
+        if expansion_gates[gate_idx] {
             continue;
         }
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
 
         for inj in injections {
             noise_sources.push((
@@ -374,15 +395,22 @@ pub fn build_coherent_dem_decomposable(
         };
 
         let key = (event.clone(), contrib.label.clone());
-        let groups = match contrib.eeg_type {
-            EegType::H => &mut h_groups,
-            EegType::S => &mut s_groups,
-            _ => continue,
-        };
-        groups
-            .entry(key)
-            .and_modify(|(val, _, _)| *val += contrib.value)
-            .or_insert((contrib.value, x_event, z_event));
+        match contrib.eeg_type {
+            EegType::H => {
+                h_groups
+                    .entry(key)
+                    .and_modify(|(val, _, _)| *val += contrib.value)
+                    .or_insert((contrib.value, x_event, z_event));
+            }
+            EegType::S => {
+                let p = -contrib.value;
+                let (product, _, _) = s_groups.entry(key).or_insert((1.0, x_event, z_event));
+                *product *= 1.0 - 2.0 * p;
+            }
+            EegType::C | EegType::A => {
+                unreachable!("C/A injections are rejected at ingress")
+            }
+        }
     }
 
     // Step 4: Compute probabilities with decomposition info
@@ -402,14 +430,14 @@ pub fn build_coherent_dem_decomposable(
         }
     }
 
-    for ((event, _label), (total_s, x_ev, z_ev)) in &s_groups {
-        let prob = (1.0 - (2.0 * total_s).exp()) / 2.0;
-        if prob.abs() > 1e-15 {
+    for ((event, _label), (product, x_ev, z_ev)) in &s_groups {
+        let prob = (1.0 - product) / 2.0;
+        if prob > 1e-15 {
             let has_x = !x_ev.detectors.is_empty() || !x_ev.observables.is_empty();
             let has_z = !z_ev.detectors.is_empty() || !z_ev.observables.is_empty();
             entries.push(DecomposableDemEntry {
                 event: event.clone(),
-                probability: prob.abs(),
+                probability: prob,
                 x_component: if has_x { Some(x_ev.clone()) } else { None },
                 z_component: if has_z { Some(z_ev.clone()) } else { None },
             });
@@ -458,7 +486,7 @@ fn merge_decomposable_dem_entries(
     merged
 }
 
-/// Build a coherent DEM with Heisenberg-exact marginals.
+/// Fit an independent DEM to Heisenberg-exact marginal targets.
 ///
 /// Uses the backward mechanism extraction for structure (which detectors
 /// each noise source flips) and fits mechanism probabilities to match
@@ -469,6 +497,10 @@ fn merge_decomposable_dem_entries(
 /// - Exact marginals from the Heisenberg walk
 /// - Best independent approximation via iterative fitting
 ///
+/// The fitted DEM is approximate: its mechanism probabilities are constrained
+/// below 0.5, so it cannot represent every categorical high-noise target or
+/// every coherent correlation exactly.
+///
 /// The `heisenberg_marginals` parameter should be a slice where
 /// `heisenberg_marginals[det_id] = exact_detection_probability`.
 ///
@@ -476,6 +508,10 @@ fn merge_decomposable_dem_entries(
 /// P(Di AND Dj) for detector pairs. When provided, the fit also matches
 /// pairwise correlations, significantly improving 2-body and 3-body accuracy.
 /// Each entry is `((det_i, det_j), joint_probability)`.
+///
+/// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -485,6 +521,8 @@ pub fn build_coherent_dem_exact(
     heisenberg_marginals: &[f64],
     heisenberg_pairwise: Option<&[((usize, usize), f64)]>,
 ) -> Vec<DemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Step 1-3: Get mechanism structure (same as approximate version)
     let approx = build_coherent_dem(gates, noise, detectors, observables, expansion_gates);
 
@@ -765,8 +803,12 @@ pub fn build_coherent_dem_exact(
 
 /// Build a coherent DEM with Heisenberg-exact marginals AND X/Z decomposition.
 ///
-/// Combines the exact probability fitting from `build_coherent_dem_exact`
+/// Combines the approximate fit to exact targets from `build_coherent_dem_exact`
 /// with the X/Z component tracking from `build_coherent_dem_decomposable`.
+///
+/// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_coherent_dem_exact_decomposable(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
@@ -776,6 +818,8 @@ pub fn build_coherent_dem_exact_decomposable(
     heisenberg_marginals: &[f64],
     heisenberg_pairwise: Option<&[((usize, usize), f64)]>,
 ) -> Vec<DecomposableDemEntry> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Get X/Z component structure from decomposable builder
     let decomposable =
         build_coherent_dem_decomposable(gates, noise, detectors, observables, expansion_gates);

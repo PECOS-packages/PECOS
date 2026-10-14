@@ -298,9 +298,9 @@ impl CommandBuilder {
         self
     }
 
-    /// Add R1XY rotation gates with two angles (theta, phi).
+    /// Add RXY1Q rotation gates with two angles (theta, phi).
     #[must_use]
-    pub fn r1xy(
+    pub fn rxy1q(
         mut self,
         qubits: &[impl Into<QubitId> + Copy],
         theta: impl Into<Angle64> + Copy,
@@ -308,7 +308,7 @@ impl CommandBuilder {
     ) -> Self {
         for &q in qubits {
             self.queue.push(GateCommand::with_angles(
-                GateType::R1XY,
+                GateType::RXY1Q,
                 smallvec::smallvec![q.into()],
                 smallvec::smallvec![theta.into(), phi.into()],
             ));
@@ -440,6 +440,24 @@ impl CommandBuilder {
             self.queue.push(GateCommand::new(
                 GateType::SWAP,
                 smallvec::smallvec![q0.into(), q1.into()],
+            ));
+        }
+        self
+    }
+
+    /// Add RXYXY2Q rotation gates with the same angles (theta, phi).
+    #[must_use]
+    pub fn rxyxy2q(
+        mut self,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+        theta: impl Into<Angle64> + Copy,
+        phi: impl Into<Angle64> + Copy,
+    ) -> Self {
+        for &(q0, q1) in pairs {
+            self.queue.push(GateCommand::with_angles(
+                GateType::RXYXY2Q,
+                smallvec::smallvec![q0.into(), q1.into()],
+                smallvec::smallvec![theta.into(), phi.into()],
             ));
         }
         self
@@ -655,9 +673,9 @@ mod tests {
 
         let cmds: Vec<_> = commands.iter().collect();
         assert_eq!(cmds[0].gate_type, GateType::RZ);
-        assert_eq!(cmds[0].angles.len(), 1);
+        assert_eq!(cmds[0].angles().len(), 1);
         assert_eq!(cmds[1].gate_type, GateType::RZZ);
-        assert_eq!(cmds[1].angles.len(), 1);
+        assert_eq!(cmds[1].angles().len(), 1);
     }
 
     #[test]

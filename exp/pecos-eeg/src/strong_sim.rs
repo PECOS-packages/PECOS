@@ -12,10 +12,11 @@
 //! where α(ψ,G,x) = 2^ζ Tr(|x⟩⟨x| G[|ψ⟩⟨ψ|]) encodes how each generator
 //! affects the probability of outcome x.
 //!
-//! At first order (l=1), only S-type generators contribute (H-type contributes
-//! at second order). The S-type α is:
-//!   α(x, S_P, ψ) = [x⊕a ∈ support(ψ)] - [x ∈ support(ψ)]
-//! where a is the X-component of P.
+//! S/C/A corrections enter at first order; the H·H correction enters at
+//! second order. The S-type α is:
+//!   α(x, S_P, ψ) = [x ∈ support(ψ)] - [x⊕a ∈ support(ψ)]
+//! where a is the X-component of P, using the PECOS convention
+//! S_P[rho] = rho - P rho P (physical coefficients are negative).
 
 use crate::Bm;
 use crate::circuit::PropagatedEeg;
@@ -40,13 +41,13 @@ pub struct OutcomeProbability {
 /// The outcome is a bit string (true = |1⟩, false = |0⟩) for each measured qubit.
 /// The generators should be propagated to the end of the expanded circuit.
 ///
-/// At first order, only S-type generators contribute:
-///   α(x, S_P, ψ) = [x⊕a ∈ support] - [x ∈ support]
+/// The first-order S-type correction is:
+///   α(x, S_P, ψ) = [x ∈ support] - [x⊕a ∈ support]
 /// where a is the X-component of P and "support" is the set of computational
-/// basis states with nonzero amplitude in |ψ⟩.
+/// basis states with nonzero amplitude in |ψ⟩. This uses the PECOS convention
+/// S_P[rho] = rho - P rho P, with negative physical coefficients.
 ///
-/// For a stabilizer state |ψ⟩ on n qubits: x is in the support iff
-/// all stabilizer generators have eigenvalue +1 on |x⟩.
+/// Z-diagonal stabilizers constrain the allowed computational outcomes.
 ///
 /// # Arguments
 /// * `generators` - Propagated EEG generators at end of circuit
@@ -54,14 +55,23 @@ pub struct OutcomeProbability {
 /// * `stabilizers` - Stabilizer generators of |ψ⟩ as Bm
 ///
 /// # Limitations
-/// Currently computes first-order (S-type) corrections only. H-type
-/// corrections require second-order computation with phase tracking.
+/// Computes S/C/A at first order and H at second order. Every supplied
+/// canonical Hermitian stabilizer generator is assumed to have eigenvalue +1;
+/// states requiring a negative generator sign cannot be represented by this API.
+///
+/// # Panics
+/// Panics for C/A generators without `label2`, including zero coefficients.
 #[must_use]
 pub fn outcome_probability(
     generators: &[PropagatedEeg],
     outcome: &[bool],
     stabilizers: &[Bm],
 ) -> OutcomeProbability {
+    for g in generators {
+        if matches!(g.eeg_type, EegType::C | EegType::A) {
+            assert!(g.label2.is_some(), "C/A generator requires label2");
+        }
+    }
     let n = outcome.len();
 
     // Check if x is in the support of |ψ⟩.
@@ -79,7 +89,7 @@ pub fn outcome_probability(
         0.0
     };
 
-    // First-order S-type corrections: α(x, S_P, ψ) = [x⊕a ∈ support] - [x ∈ support]
+    // First-order S-type corrections: α(x, S_P, ψ) = [x ∈ support] - [x⊕a ∈ support]
     let mut s_correction = 0.0;
     let scale = if zeta > 0 {
         1.0 / (1u64 << zeta) as f64
@@ -96,7 +106,7 @@ pub fn outcome_probability(
         let flipped_in_support = is_in_support(&x_flipped, stabilizers);
 
         let alpha =
-            (if flipped_in_support { 1.0 } else { 0.0 }) - (if x_in_support { 1.0 } else { 0.0 });
+            (if x_in_support { 1.0 } else { 0.0 }) - (if flipped_in_support { 1.0 } else { 0.0 });
 
         s_correction += scale * alpha * g.coeff;
     }
@@ -129,9 +139,7 @@ pub fn outcome_probability(
             // α(x, C_{P,Q}, ψ) for commuting P,Q:
             // = 2 Re(Φ(P,Q)) - 2 Re(Φ(PQ,I))
             let phi_pq = compute_phi(p, q, outcome, stabilizers, &stab_phases);
-            let pq = p.multiply(q);
-            let identity = Bm::default();
-            let phi_pq_i = compute_phi(&pq, &identity, outcome, stabilizers, &stab_phases);
+            let phi_pq_i = product_phi(p, q, outcome, stabilizers, &stab_phases);
 
             let alpha = if p.commutes_with(q) {
                 2.0 * phi_pq.0 - 2.0 * phi_pq_i.0
@@ -150,32 +158,22 @@ pub fn outcome_probability(
     for g in generators {
         match g.eeg_type {
             EegType::C => {
-                if let Some(ref q_label) = g.label2 {
-                    // α(x, C_{P,Q}) = 2 Re(Φ(P,Q)) - Re(Φ(PQ,I) + Φ(QP,I))
-                    let phi_pq = compute_phi(&g.label, q_label, outcome, stabilizers, &stab_phases);
-                    let pq = g.label.multiply(q_label);
-                    let qp = q_label.multiply(&g.label);
-                    let phi_pq_i =
-                        compute_phi(&pq, &Bm::default(), outcome, stabilizers, &stab_phases);
-                    let phi_qp_i =
-                        compute_phi(&qp, &Bm::default(), outcome, stabilizers, &stab_phases);
-                    let alpha = 2.0 * phi_pq.0 - (phi_pq_i.0 + phi_qp_i.0);
-                    ca_correction += scale * g.coeff * alpha;
-                }
+                let q_label = g.label2.as_ref().expect("C/A generator requires label2");
+                // alpha(C) = 2 Re(Phi(P,Q)) - Re(Phi(PQ,I) + Phi(QP,I)).
+                let phi_pq = compute_phi(&g.label, q_label, outcome, stabilizers, &stab_phases);
+                let phi_pq_i = product_phi(&g.label, q_label, outcome, stabilizers, &stab_phases);
+                let phi_qp_i = product_phi(q_label, &g.label, outcome, stabilizers, &stab_phases);
+                let alpha = 2.0 * phi_pq.0 - (phi_pq_i.0 + phi_qp_i.0);
+                ca_correction += scale * g.coeff * alpha;
             }
             EegType::A => {
-                if let Some(ref q_label) = g.label2 {
-                    // α(x, A_{P,Q}) = 2 Im(Φ(Q,P)) + Im(Φ(QP,I) - Φ(PQ,I))
-                    let phi_qp = compute_phi(q_label, &g.label, outcome, stabilizers, &stab_phases);
-                    let qp = q_label.multiply(&g.label);
-                    let pq = g.label.multiply(q_label);
-                    let phi_qp_i =
-                        compute_phi(&qp, &Bm::default(), outcome, stabilizers, &stab_phases);
-                    let phi_pq_i =
-                        compute_phi(&pq, &Bm::default(), outcome, stabilizers, &stab_phases);
-                    let alpha = 2.0 * phi_qp.1 + (phi_qp_i.1 - phi_pq_i.1);
-                    ca_correction += scale * g.coeff * alpha;
-                }
+                let q_label = g.label2.as_ref().expect("C/A generator requires label2");
+                // alpha(A) = 2 Im(Phi(Q,P)) + Im(Phi(QP,I) - Phi(PQ,I)).
+                let phi_qp = compute_phi(q_label, &g.label, outcome, stabilizers, &stab_phases);
+                let phi_qp_i = product_phi(q_label, &g.label, outcome, stabilizers, &stab_phases);
+                let phi_pq_i = product_phi(&g.label, q_label, outcome, stabilizers, &stab_phases);
+                let alpha = 2.0 * phi_qp.1 + (phi_qp_i.1 - phi_pq_i.1);
+                ca_correction += scale * g.coeff * alpha;
             }
             _ => {}
         }
@@ -188,6 +186,25 @@ pub fn outcome_probability(
         s_correction,
         h_correction,
         total,
+    }
+}
+
+/// Phi(PQ,I) = i^k Phi(R,I), retaining the ordered product's phase.
+fn product_phi(
+    p: &Bm,
+    q: &Bm,
+    outcome: &[bool],
+    stabilizers: &[Bm],
+    phases: &[bool],
+) -> (f64, f64) {
+    let (product, phase) = p.multiply_with_phase(q);
+    let (re, im) = compute_phi(&product, &Bm::default(), outcome, stabilizers, phases);
+    match phase {
+        0 => (re, im),
+        1 => (-im, re),
+        2 => (-re, -im),
+        3 => (im, -re),
+        _ => unreachable!(),
     }
 }
 
@@ -231,36 +248,40 @@ fn compute_phi(
         })
         .collect();
 
+    let mut row_sources: Vec<Vec<bool>> =
+        (0..n).map(|i| (0..n).map(|j| i == j).collect()).collect();
     let mut selected = vec![false; n];
     let mut target = Bm {
         x_bits: target_x.x_bits.clone(),
         z_bits: smallvec::SmallVec::default(),
     };
 
-    // GF(2) greedy elimination
+    // Build an echelon basis even when a target bit is zero. Each reduced
+    // row remembers its original generators so S_0 retains the correct phase.
+    let mut rank = 0;
     for bit in 0..outcome.len() {
-        if !target.x_bits.get_bit(bit) {
+        let Some(offset) = row_x[rank..].iter().position(|row| row.x_bits.get_bit(bit)) else {
             continue;
-        }
-        let found = row_x
-            .iter()
-            .enumerate()
-            .find(|(_, r)| r.x_bits.get_bit(bit));
-        if let Some((row_idx, _)) = found {
-            // Find the original stabilizer index for this row
-            // (rows may have been XOR-modified but indices track the original)
-            selected[row_idx] = true;
-            let pivot = row_x[row_idx].clone();
+        };
+        row_x.swap(rank, rank + offset);
+        row_sources.swap(rank, rank + offset);
+        let pivot = row_x[rank].clone();
+        let sources = row_sources[rank].clone();
+        if target.x_bits.get_bit(bit) {
             target = target.multiply(&pivot);
-            for (r, row) in row_x.iter_mut().enumerate().take(n) {
-                if r != row_idx && row.x_bits.get_bit(bit) {
-                    let p_clone = pivot.clone();
-                    *row = row.multiply(&p_clone);
+            for (chosen, source) in selected.iter_mut().zip(&sources) {
+                *chosen ^= source;
+            }
+        }
+        for r in rank + 1..n {
+            if row_x[r].x_bits.get_bit(bit) {
+                row_x[r] = row_x[r].multiply(&pivot);
+                for (source, pivot_source) in row_sources[r].iter_mut().zip(&sources) {
+                    *source ^= pivot_source;
                 }
             }
-        } else {
-            return (0.0, 0.0);
         }
+        rank += 1;
     }
 
     if !target.is_identity() {
@@ -447,12 +468,13 @@ mod tests {
         // p(0) ≈ 1 - 0.01 = 0.99 (S_X moves probability from 0 to 1)
         // p(1) ≈ 0 + 0.01 = 0.01
         assert!((p0.noiseless - 1.0).abs() < 1e-10);
-        assert!((p0.s_correction - 0.01).abs() < 1e-10);
+        assert!((p0.s_correction + 0.01).abs() < 1e-10);
         assert!((p0.h_correction).abs() < 1e-10); // no H generators
-        assert!((p0.total - 0.99).abs() < 0.02);
+        assert!((p0.total - 0.99).abs() < 1e-10);
 
         assert!((p1.noiseless - 0.0).abs() < 1e-10);
-        assert!((p1.s_correction + 0.01).abs() < 1e-10);
+        assert!((p1.s_correction - 0.01).abs() < 1e-10);
+        assert!((p1.total - 0.01).abs() < 1e-10);
     }
 
     #[test]
@@ -493,7 +515,7 @@ mod tests {
             source: None,
         }];
         let p0x = outcome_probability(&gens_x, &outcome_0, &stabs);
-        // X flips bit: α = [1∈supp] - [0∈supp] = 1-1 = 0 (both in support)
+        // X flips bit: α(S_X) = [0∈supp] - [1∈supp] = 1-1 = 0 (both in support)
         // So h_correction = 0 for |+⟩ with H_X too (both outcomes in support)
         assert!((p0x.h_correction).abs() < 1e-10);
     }
@@ -517,13 +539,13 @@ mod tests {
         let p1 = outcome_probability(&gens, &outcome_1, &stabs);
 
         // |0⟩: only outcome 0 is in support.
-        // α(S_X) for outcome 0: [1∈supp] - [0∈supp] = 0-1 = -1
-        // Diagonal H·H: h² · α = 0.01 · (-1) = -0.01
+        // α(C_{X,X})/2 = -α(S_X) for outcome 0: [1∈supp] - [0∈supp] = -1
+        // Diagonal H·H: h² · α(C_{X,X})/2 = 0.01 · (-1) = -0.01
         assert!((p0.h_correction + 0.01).abs() < 1e-10);
         assert!((p0.total - 0.99).abs() < 0.02);
 
-        // α(S_X) for outcome 1: [0∈supp] - [1∈supp] = 1-0 = +1
-        // h² · α = 0.01 · 1 = +0.01
+        // α(C_{X,X})/2 = -α(S_X) for outcome 1: [0∈supp] - [1∈supp] = +1
+        // h² · α(C_{X,X})/2 = 0.01 · 1 = +0.01
         assert!((p1.h_correction - 0.01).abs() < 1e-10);
         assert!((p1.total - 0.01).abs() < 0.02);
     }

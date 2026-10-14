@@ -35,12 +35,15 @@
 //! }
 //! ```
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
 
 use crate::ast::{
-    BinaryOp, Expr, FStringPart, FnDecl, ForRange, PrimitiveType, Stmt, TypeExpr, UnaryOp,
+    BinaryOp, Binding, Expr, FStringPart, FnDecl, ForRange, PrimitiveType, Stmt, TypeExpr, UnaryOp,
 };
+use crate::module::ModuleLoader;
 use crate::rational::Rational;
 use crate::semantic::{BitWidth, SemanticError, Type};
 
@@ -153,11 +156,10 @@ pub enum ComptimeValue {
 
 impl PartialEq for ComptimeValue {
     fn eq(&self, other: &Self) -> bool {
+        if let Some(ordering) = self.compare_numbers(other) {
+            return ordering == Some(Ordering::Equal);
+        }
         match (self, other) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => a == b,
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => a == b,
-            (ComptimeValue::Float(a), ComptimeValue::Float(b)) => a == b,
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => a == b,
             (ComptimeValue::Bool(a), ComptimeValue::Bool(b)) => a == b,
             (ComptimeValue::Type(a), ComptimeValue::Type(b)) => a == b,
             (ComptimeValue::Null, ComptimeValue::Null) => true,
@@ -231,6 +233,42 @@ impl fmt::Display for ComptimeValue {
 }
 
 impl ComptimeValue {
+    /// Compare numeric values. The outer None denotes nonnumeric operands;
+    /// the inner None denotes an unordered floating-point comparison (NaN).
+    fn compare_numbers(&self, other: &Self) -> Option<Option<Ordering>> {
+        if matches!(self, Self::Float(_)) || matches!(other, Self::Float(_)) {
+            return Some(self.as_float()?.partial_cmp(&other.as_float()?));
+        }
+        let (negative, numerator, denominator) = self.exact_ratio()?;
+        let (other_negative, other_numerator, other_denominator) = other.exact_ratio()?;
+        if negative != other_negative {
+            return Some(Some(other_negative.cmp(&negative)));
+        }
+        // Each factor fits in u64, so u128 cross-products are exact, including
+        // unsigned integers above i64::MAX and denominators above i64::MAX.
+        let left = u128::from(numerator) * u128::from(other_denominator);
+        let right = u128::from(other_numerator) * u128::from(denominator);
+        let ordering = left.cmp(&right);
+        Some(Some(if negative {
+            ordering.reverse()
+        } else {
+            ordering
+        }))
+    }
+
+    fn exact_ratio(&self) -> Option<(bool, u64, u64)> {
+        match self {
+            Self::Int(value) => Some((value.is_negative(), value.unsigned_abs(), 1)),
+            Self::Uint(value) => Some((false, *value, 1)),
+            Self::Rational(value) => Some((
+                value.numerator().is_negative(),
+                value.numerator().unsigned_abs(),
+                value.denominator(),
+            )),
+            _ => None,
+        }
+    }
+
     /// Get the type of this comptime value.
     pub fn get_type(&self) -> Type {
         match self {
@@ -1201,28 +1239,25 @@ impl ComptimeEvaluator {
         Ok(ComptimeValue::Bool(left != right))
     }
 
+    fn eval_numeric_comparison(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+        operator: &str,
+        predicate: fn(Ordering) -> bool,
+    ) -> ComptimeResult<ComptimeValue> {
+        let ordering = left.compare_numbers(right).ok_or_else(|| ComptimeError {
+            message: format!("cannot compare {left} {operator} {right}"),
+        })?;
+        Ok(ComptimeValue::Bool(ordering.is_some_and(predicate)))
+    }
+
     fn eval_lt(
         &self,
         left: &ComptimeValue,
         right: &ComptimeValue,
     ) -> ComptimeResult<ComptimeValue> {
-        match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a < b)),
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a < b)),
-            (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a < b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(a < b))
-            }
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
-                Ok(ComptimeValue::Bool(*a < Rational::from_int(*b)))
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(Rational::from_int(*a) < *b))
-            }
-            _ => Err(ComptimeError {
-                message: format!("cannot compare {} < {}", left, right),
-            }),
-        }
+        self.eval_numeric_comparison(left, right, "<", Ordering::is_lt)
     }
 
     fn eval_le(
@@ -1230,23 +1265,7 @@ impl ComptimeEvaluator {
         left: &ComptimeValue,
         right: &ComptimeValue,
     ) -> ComptimeResult<ComptimeValue> {
-        match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a <= b)),
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a <= b)),
-            (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a <= b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(a <= b))
-            }
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
-                Ok(ComptimeValue::Bool(*a <= Rational::from_int(*b)))
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(Rational::from_int(*a) <= *b))
-            }
-            _ => Err(ComptimeError {
-                message: format!("cannot compare {} <= {}", left, right),
-            }),
-        }
+        self.eval_numeric_comparison(left, right, "<=", Ordering::is_le)
     }
 
     fn eval_gt(
@@ -1254,23 +1273,7 @@ impl ComptimeEvaluator {
         left: &ComptimeValue,
         right: &ComptimeValue,
     ) -> ComptimeResult<ComptimeValue> {
-        match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a > b)),
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a > b)),
-            (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a > b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(a > b))
-            }
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
-                Ok(ComptimeValue::Bool(*a > Rational::from_int(*b)))
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(Rational::from_int(*a) > *b))
-            }
-            _ => Err(ComptimeError {
-                message: format!("cannot compare {} > {}", left, right),
-            }),
-        }
+        self.eval_numeric_comparison(left, right, ">", Ordering::is_gt)
     }
 
     fn eval_ge(
@@ -1278,23 +1281,7 @@ impl ComptimeEvaluator {
         left: &ComptimeValue,
         right: &ComptimeValue,
     ) -> ComptimeResult<ComptimeValue> {
-        match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a >= b)),
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a >= b)),
-            (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a >= b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(a >= b))
-            }
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
-                Ok(ComptimeValue::Bool(*a >= Rational::from_int(*b)))
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
-                Ok(ComptimeValue::Bool(Rational::from_int(*a) >= *b))
-            }
-            _ => Err(ComptimeError {
-                message: format!("cannot compare {} >= {}", left, right),
-            }),
-        }
+        self.eval_numeric_comparison(left, right, ">=", Ordering::is_ge)
     }
 
     // Logical operations
@@ -1453,6 +1440,17 @@ impl ComptimeEvaluator {
         result
     }
 
+    /// Run scoped evaluation without leaking bindings when evaluation fails.
+    fn with_scope<T>(
+        &mut self,
+        evaluate: impl FnOnce(&mut Self) -> ComptimeResult<T>,
+    ) -> ComptimeResult<T> {
+        self.context.push_scope();
+        let result = evaluate(self);
+        self.context.pop_scope();
+        result
+    }
+
     /// Inner expression evaluation (after depth check).
     fn eval_expr_inner(&mut self, expr: &Expr) -> ComptimeResult<ComptimeValue> {
         match expr {
@@ -1482,8 +1480,13 @@ impl ComptimeEvaluator {
                             // since radians involve pi (irrational)
                             // But we can try to detect if it represents n*pi/d
                             let radians = r.to_f64();
-                            if let Some(turns_rational) = Rational::radians_to_turns(radians) {
-                                return Ok(ComptimeValue::Rational(turns_rational));
+                            if let Some((numerator, denominator)) =
+                                Rational::from_f64_pi_multiple(radians)
+                            {
+                                return Ok(ComptimeValue::Rational(Rational::new(
+                                    numerator,
+                                    2 * denominator as i64,
+                                )));
                             }
                             let turns = radians / (2.0 * std::f64::consts::PI);
                             return Ok(ComptimeValue::Float(turns));
@@ -1504,9 +1507,12 @@ impl ComptimeEvaluator {
 
                 // For radian values, try to detect pi-multiples and preserve precision
                 if let AngleUnit::Rad = angle.unit
-                    && let Some(turns_rational) = Rational::radians_to_turns(numeric)
+                    && let Some((numerator, denominator)) = Rational::from_f64_pi_multiple(numeric)
                 {
-                    return Ok(ComptimeValue::Rational(turns_rational));
+                    return Ok(ComptimeValue::Rational(Rational::new(
+                        numerator,
+                        2 * denominator as i64,
+                    )));
                 }
 
                 // Fall back to float conversion
@@ -1614,6 +1620,11 @@ impl ComptimeEvaluator {
             Expr::Ident(ident) => {
                 // First check local context
                 if let Some(val) = self.context.lookup(&ident.name) {
+                    if matches!(val, ComptimeValue::Undefined) {
+                        return Err(ComptimeError {
+                            message: format!("variable '{}' is not known at comptime", ident.name),
+                        });
+                    }
                     return Ok(val.clone());
                 }
 
@@ -1647,23 +1658,16 @@ impl ComptimeEvaluator {
                 }
             }
 
-            Expr::Block(block) => {
-                self.context.push_scope();
-
+            Expr::Block(block) => self.with_scope(|evaluator| {
                 for stmt in &block.statements {
-                    self.eval_stmt(stmt)?;
+                    evaluator.eval_stmt(stmt)?;
                 }
-
-                // Evaluate trailing expression if present (block's return value)
-                let result = if let Some(trailing) = &block.trailing_expr {
-                    self.eval_expr(trailing)?
+                if let Some(trailing) = &block.trailing_expr {
+                    evaluator.eval_expr(trailing)
                 } else {
-                    ComptimeValue::Unit
-                };
-
-                self.context.pop_scope();
-                Ok(result)
-            }
+                    Ok(ComptimeValue::Unit)
+                }
+            }),
 
             Expr::Comptime(comptime) => {
                 // Already in comptime context, just evaluate inner
@@ -1794,39 +1798,26 @@ impl ComptimeEvaluator {
                             return Ok(cached_result.clone());
                         }
 
-                        // Create new scope for function execution
-                        self.context.push_scope();
-
-                        // Clone arg_values for binding (we need them for caching too)
-                        // Bind parameters to argument values
-                        for (param, value) in func.params.iter().zip(arg_values.clone()) {
-                            self.context.define(&param.name, value);
-                        }
-
-                        // Execute function body
-                        let mut result = ComptimeValue::Unit;
-                        for stmt in &func.body.statements {
-                            // Check for early return
-                            if let Stmt::Return(ret) = stmt {
-                                result = if let Some(value) = &ret.value {
-                                    self.eval_expr(value)?
-                                } else {
-                                    ComptimeValue::Unit
-                                };
-                                self.context.pop_scope();
-                                // Cache the result before returning
-                                self.memo_cache.insert(cache_key, result.clone());
-                                return Ok(result);
+                        let result = self.with_scope(|evaluator| {
+                            for (param, value) in func.params.iter().zip(arg_values) {
+                                evaluator.context.define(&param.name, value);
                             }
-                            self.eval_stmt(stmt)?;
-                        }
-
-                        // Evaluate trailing expression if present
-                        if let Some(trailing) = &func.body.trailing_expr {
-                            result = self.eval_expr(trailing)?;
-                        }
-
-                        self.context.pop_scope();
+                            for stmt in &func.body.statements {
+                                if let Stmt::Return(ret) = stmt {
+                                    return if let Some(value) = &ret.value {
+                                        evaluator.eval_expr(value)
+                                    } else {
+                                        Ok(ComptimeValue::Unit)
+                                    };
+                                }
+                                evaluator.eval_stmt(stmt)?;
+                            }
+                            if let Some(trailing) = &func.body.trailing_expr {
+                                evaluator.eval_expr(trailing)
+                            } else {
+                                Ok(ComptimeValue::Unit)
+                            }
+                        })?;
 
                         // Cache the result
                         self.memo_cache.insert(cache_key, result.clone());
@@ -2567,19 +2558,21 @@ impl ComptimeEvaluator {
                 let cond = self.eval_expr(&if_stmt.condition)?;
 
                 if cond.is_truthy() {
-                    self.context.push_scope();
-                    for stmt in &if_stmt.then_body.statements {
-                        self.eval_stmt(stmt)?;
-                    }
-                    self.context.pop_scope();
+                    self.with_scope(|evaluator| {
+                        for stmt in &if_stmt.then_body.statements {
+                            evaluator.eval_stmt(stmt)?;
+                        }
+                        Ok(())
+                    })?;
                 } else if let Some(else_branch) = &if_stmt.else_body {
                     match else_branch {
                         crate::ast::ElseBranch::Else(block) => {
-                            self.context.push_scope();
-                            for stmt in &block.statements {
-                                self.eval_stmt(stmt)?;
-                            }
-                            self.context.pop_scope();
+                            self.with_scope(|evaluator| {
+                                for stmt in &block.statements {
+                                    evaluator.eval_stmt(stmt)?;
+                                }
+                                Ok(())
+                            })?;
                         }
                         crate::ast::ElseBranch::ElseIf(nested_if) => {
                             self.eval_stmt(&Stmt::If(*nested_if.clone()))?;
@@ -2591,39 +2584,30 @@ impl ComptimeEvaluator {
 
             Stmt::For(for_stmt) => {
                 let values = self.eval_for_range(&for_stmt.range)?;
-
-                self.context.push_scope();
-
-                // Get binding name from captures
-                let binding = for_stmt.captures.first();
-
-                for value in values {
-                    if let Some(name) = binding {
-                        self.context.define(name, value);
+                self.with_scope(|evaluator| {
+                    let binding = for_stmt.captures.first();
+                    for value in values {
+                        if let Some(name) = binding {
+                            evaluator.context.define(name, value);
+                        }
+                        for stmt in &for_stmt.body.statements {
+                            evaluator.eval_stmt(stmt)?;
+                        }
                     }
-                    for stmt in &for_stmt.body.statements {
-                        self.eval_stmt(stmt)?;
-                    }
-                }
-
-                self.context.pop_scope();
-                Ok(ComptimeValue::Undefined)
+                    Ok(ComptimeValue::Undefined)
+                })
             }
 
-            Stmt::Block(block) => {
-                self.context.push_scope();
+            Stmt::Block(block) => self.with_scope(|evaluator| {
                 for stmt in &block.statements {
-                    self.eval_stmt(stmt)?;
+                    evaluator.eval_stmt(stmt)?;
                 }
-                // Evaluate trailing expression if present
-                let result = if let Some(trailing) = &block.trailing_expr {
-                    self.eval_expr(trailing)?
+                if let Some(trailing) = &block.trailing_expr {
+                    evaluator.eval_expr(trailing)
                 } else {
-                    ComptimeValue::Unit
-                };
-                self.context.pop_scope();
-                Ok(result)
-            }
+                    Ok(ComptimeValue::Unit)
+                }
+            }),
 
             Stmt::Defer(_) => Err(ComptimeError {
                 message: "defer not supported at comptime".to_string(),
@@ -2672,9 +2656,487 @@ impl ComptimeEvaluator {
     }
 }
 
+/// Create an evaluator for angle expressions.
+///
+/// Mathematical constants are plain numbers. An angle unit must come from an
+/// `AngleLit` at the use site or from a previously normalized `a64` binding.
+pub fn angle_evaluator() -> ComptimeEvaluator {
+    let mut evaluator = ComptimeEvaluator::new();
+    for (name, value) in [
+        ("PI", std::f64::consts::PI),
+        ("pi", std::f64::consts::PI),
+        ("TAU", std::f64::consts::TAU),
+        ("tau", std::f64::consts::TAU),
+        ("e", std::f64::consts::E),
+    ] {
+        evaluator.context.define(name, ComptimeValue::Float(value));
+    }
+    evaluator
+}
+
+/// Add an immutable binding to an angle evaluator when its value is known at
+/// compile time.
+pub fn define_comptime_binding(evaluator: &mut ComptimeEvaluator, binding: &Binding) -> bool {
+    if binding.is_mutable {
+        return false;
+    }
+    if let Some(expr) = &binding.value {
+        let value = import_path(expr).map_or_else(
+            || evaluator.eval_expr(expr),
+            |path| {
+                let mut loader = ModuleLoader::new();
+                let from_file = binding
+                    .location
+                    .as_ref()
+                    .and_then(|location| location.file.as_deref())
+                    .map(Path::new);
+                load_comptime_module(&mut loader, path, from_file)
+            },
+        );
+        if let Ok(value) = value {
+            evaluator.context.define(&binding.name, value);
+            return true;
+        }
+    }
+    false
+}
+
+fn import_path(expr: &Expr) -> Option<&str> {
+    let Expr::Builtin(builtin) = expr else {
+        return None;
+    };
+    if builtin.name != "import" {
+        return None;
+    }
+    match builtin.args.first() {
+        Some(Expr::StringLit(path)) => Some(path.value.as_str()),
+        _ => None,
+    }
+}
+
+fn load_comptime_module(
+    loader: &mut ModuleLoader,
+    import: &str,
+    from_file: Option<&Path>,
+) -> ComptimeResult<ComptimeValue> {
+    load_comptime_module_inner(loader, import, from_file, &mut Vec::new())
+}
+
+fn load_comptime_module_inner(
+    loader: &mut ModuleLoader,
+    import: &str,
+    from_file: Option<&Path>,
+    loading: &mut Vec<std::path::PathBuf>,
+) -> ComptimeResult<ComptimeValue> {
+    let module = loader
+        .load(import, from_file)
+        .map_err(|error| ComptimeError {
+            message: error.to_string(),
+        })?
+        .clone();
+
+    if let Some(cycle_start) = loading.iter().position(|path| path == &module.path) {
+        let mut cycle = loading[cycle_start..]
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        cycle.push(module.path.display().to_string());
+        return Err(ComptimeError {
+            message: format!("circular import detected: {}", cycle.join(" -> ")),
+        });
+    }
+    loading.push(module.path.clone());
+
+    let result = evaluate_comptime_module(loader, &module, loading);
+    let popped = loading.pop();
+    debug_assert_eq!(popped.as_ref(), Some(&module.path));
+    result
+}
+
+fn evaluate_comptime_module(
+    loader: &mut ModuleLoader,
+    module: &crate::module::Module,
+    loading: &mut Vec<std::path::PathBuf>,
+) -> ComptimeResult<ComptimeValue> {
+    let mut evaluator = angle_evaluator();
+    let mut fields = BTreeMap::new();
+
+    for decl in &module.program.declarations {
+        let crate::ast::TopLevelDecl::Binding(binding) = decl else {
+            continue;
+        };
+        if binding.is_mutable {
+            continue;
+        }
+        let Some(expr) = &binding.value else {
+            continue;
+        };
+        let value = if let Some(import) = import_path(expr) {
+            load_comptime_module_inner(loader, import, Some(&module.path), loading)?
+        } else {
+            evaluator.eval_expr(expr)?
+        };
+        evaluator.context.define(&binding.name, value.clone());
+        if binding.is_pub {
+            fields.insert(binding.name.clone(), value);
+        }
+    }
+
+    Ok(ComptimeValue::Struct {
+        name: module.path.display().to_string(),
+        fields,
+    })
+}
+
+/// Resolve a unit-bearing angle expression to the language's native turns.
+pub fn resolve_angle_turns(evaluator: &mut ComptimeEvaluator, expr: &Expr) -> ComptimeResult<f64> {
+    let value = evaluator.eval_expr(expr)?;
+    value.as_float().ok_or_else(|| ComptimeError {
+        message: format!("angle value {value:?} is not numeric"),
+    })
+}
+
+/// Name an angle expression for diagnostics, preferring the runtime value it
+/// references over a source position.
+pub fn angle_expression_name(expr: &Expr) -> String {
+    fn referenced_name(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Ident(ident) => Some(&ident.name),
+            Expr::Binary(binary) => {
+                referenced_name(&binary.left).or_else(|| referenced_name(&binary.right))
+            }
+            Expr::Unary(unary) => referenced_name(&unary.operand),
+            Expr::AngleLit(angle) => referenced_name(&angle.value),
+            Expr::TypeAscription(ascription) => referenced_name(&ascription.value),
+            Expr::Comptime(comptime) => referenced_name(&comptime.inner),
+            Expr::Index(index) => referenced_name(&index.object),
+            Expr::Field(field) => referenced_name(&field.object),
+            _ => None,
+        }
+    }
+
+    match (referenced_name(expr), expr.get_location()) {
+        (Some(name), Some(location)) => format!(
+            "{name} at line {}, column {}",
+            location.line, location.column
+        ),
+        (Some(name), None) => name.to_string(),
+        (None, Some(location)) => {
+            format!("line {}, column {}", location.line, location.column)
+        }
+        (None, None) => "<unknown>".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn assert_round4_numeric_comparisons(op: BinaryOp) {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let evaluator = ComptimeEvaluator::new();
+        let pairs = [
+            (
+                ComptimeValue::Float(0.25),
+                ComptimeValue::Rational(Rational::HALF),
+                Some(Less),
+            ),
+            (
+                ComptimeValue::Float(0.75),
+                ComptimeValue::Rational(Rational::HALF),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Rational(Rational::new(-1, 2)),
+                ComptimeValue::Int(-1),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Float(9_007_199_254_740_992.0),
+                ComptimeValue::Uint(9_007_199_254_740_993),
+                Some(Equal),
+            ),
+            (
+                ComptimeValue::Uint(u64::MAX),
+                ComptimeValue::Rational(Rational::new(1, i64::MAX) * Rational::HALF),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Rational(Rational::HALF),
+                ComptimeValue::Float(0.5),
+                Some(Equal),
+            ),
+            (
+                ComptimeValue::Int(1),
+                ComptimeValue::Float(1.0),
+                Some(Equal),
+            ),
+            (
+                ComptimeValue::Uint(1),
+                ComptimeValue::Float(1.0),
+                Some(Equal),
+            ),
+            (ComptimeValue::Int(1), ComptimeValue::Uint(1), Some(Equal)),
+            (
+                ComptimeValue::Rational(Rational::ONE),
+                ComptimeValue::Uint(1),
+                Some(Equal),
+            ),
+            (
+                ComptimeValue::Rational(Rational::ONE),
+                ComptimeValue::Int(1),
+                Some(Equal),
+            ),
+            (
+                ComptimeValue::Int(-1),
+                ComptimeValue::Uint(u64::MAX),
+                Some(Less),
+            ),
+            (
+                ComptimeValue::Uint(u64::MAX),
+                ComptimeValue::Rational(Rational::from_int(i64::MAX)),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Uint(9_007_199_254_740_993),
+                ComptimeValue::Int(9_007_199_254_740_992),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Rational(Rational::new(
+                    9_007_199_254_740_993,
+                    9_007_199_254_740_992,
+                )),
+                ComptimeValue::Int(1),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Rational(Rational::new(i64::MIN, 1)),
+                ComptimeValue::Uint(u64::MAX),
+                Some(Less),
+            ),
+            (
+                ComptimeValue::Uint(u64::MAX),
+                ComptimeValue::Rational(Rational::new(1, i64::MAX)),
+                Some(Greater),
+            ),
+            (ComptimeValue::Float(f64::NAN), ComptimeValue::Int(0), None),
+            (
+                ComptimeValue::Float(f64::INFINITY),
+                ComptimeValue::Uint(u64::MAX),
+                Some(Greater),
+            ),
+            (
+                ComptimeValue::Float(f64::NEG_INFINITY),
+                ComptimeValue::Int(i64::MIN),
+                Some(Less),
+            ),
+            (
+                ComptimeValue::Float(-0.0),
+                ComptimeValue::Rational(Rational::ZERO),
+                Some(Equal),
+            ),
+        ];
+        for (left, right, ordering) in pairs {
+            for (left, right, ordering) in [
+                (&left, &right, ordering),
+                (&right, &left, ordering.map(std::cmp::Ordering::reverse)),
+            ] {
+                let expected = match op {
+                    BinaryOp::Eq => ordering == Some(Equal),
+                    BinaryOp::Ne => ordering != Some(Equal),
+                    BinaryOp::Lt => ordering == Some(Less),
+                    BinaryOp::Le => matches!(ordering, Some(Less | Equal)),
+                    BinaryOp::Gt => ordering == Some(Greater),
+                    BinaryOp::Ge => matches!(ordering, Some(Greater | Equal)),
+                    _ => unreachable!(),
+                };
+                let actual = evaluator.eval_binary_op(op, left, right).unwrap();
+                assert_eq!(
+                    actual,
+                    ComptimeValue::Bool(expected),
+                    "{left:?} {op:?} {right:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_round4_numeric_value_equality() {
+        let left = ComptimeValue::Array(vec![
+            ComptimeValue::Rational(Rational::HALF),
+            ComptimeValue::Int(1),
+        ]);
+        let right = ComptimeValue::Array(vec![ComptimeValue::Float(0.5), ComptimeValue::Uint(1)]);
+        assert_eq!(left, right);
+        assert_eq!(
+            ComptimeValue::Slice { data: vec![left] },
+            ComptimeValue::Slice { data: vec![right] }
+        );
+        assert_eq!(
+            ComptimeValue::Struct {
+                name: "Pair".into(),
+                fields: BTreeMap::from([("x".into(), ComptimeValue::Int(1))])
+            },
+            ComptimeValue::Struct {
+                name: "Pair".into(),
+                fields: BTreeMap::from([("x".into(), ComptimeValue::Float(1.0))])
+            }
+        );
+    }
+
+    // Compatibility: nonnumeric equality and unordered floating comparisons retain their behavior.
+    #[test]
+    fn test_round4_compat_nonnumeric_and_nan() {
+        let evaluator = ComptimeEvaluator::new();
+        assert_ne!(ComptimeValue::Bool(true), ComptimeValue::Int(1));
+        assert_eq!(
+            ComptimeValue::String("x".into()),
+            ComptimeValue::String("x".into())
+        );
+        assert!(
+            evaluator
+                .eval_binary_op(
+                    BinaryOp::Lt,
+                    &ComptimeValue::Bool(false),
+                    &ComptimeValue::Int(0)
+                )
+                .is_err()
+        );
+        for op in [
+            BinaryOp::Eq,
+            BinaryOp::Lt,
+            BinaryOp::Le,
+            BinaryOp::Gt,
+            BinaryOp::Ge,
+        ] {
+            assert_eq!(
+                evaluator
+                    .eval_binary_op(
+                        op,
+                        &ComptimeValue::Float(f64::NAN),
+                        &ComptimeValue::Float(1.0)
+                    )
+                    .unwrap(),
+                ComptimeValue::Bool(false)
+            );
+        }
+        assert_eq!(
+            evaluator
+                .eval_binary_op(
+                    BinaryOp::Ne,
+                    &ComptimeValue::Float(f64::NAN),
+                    &ComptimeValue::Float(1.0)
+                )
+                .unwrap(),
+            ComptimeValue::Bool(true)
+        );
+    }
+    #[test]
+    fn test_round4_numeric_eq() {
+        assert_round4_numeric_comparisons(BinaryOp::Eq);
+    }
+    #[test]
+    fn test_round4_numeric_ne() {
+        assert_round4_numeric_comparisons(BinaryOp::Ne);
+    }
+    #[test]
+    fn test_round4_numeric_lt() {
+        assert_round4_numeric_comparisons(BinaryOp::Lt);
+    }
+    #[test]
+    fn test_round4_numeric_le() {
+        assert_round4_numeric_comparisons(BinaryOp::Le);
+    }
+    #[test]
+    fn test_round4_numeric_gt() {
+        assert_round4_numeric_comparisons(BinaryOp::Gt);
+    }
+    #[test]
+    fn test_round4_numeric_ge() {
+        assert_round4_numeric_comparisons(BinaryOp::Ge);
+    }
+
+    #[test]
+    fn test_review_statement_error_scope_cleanup() {
+        for statement in [
+            "{ n := 0.25; c; }",
+            "if true { n := 0.25; c; }",
+            "if false { n := 0.5; } else { n := 0.25; c; }",
+            "if false { n := 0.5; } else if true { n := 0.25; c; }",
+            "for i in 0..1 { n := 0.25; c; }",
+        ] {
+            let program =
+                crate::parse(&format!("pub fn main() -> unit {{ {statement} }}")).unwrap();
+            let crate::ast::TopLevelDecl::Fn(function) = &program.declarations[0] else {
+                panic!("expected function");
+            };
+            let mut evaluator = ComptimeEvaluator::new();
+            evaluator.context.define("n", ComptimeValue::Float(0.125));
+            evaluator.context.define("c", ComptimeValue::Undefined);
+            assert!(evaluator.eval_stmt(&function.body.statements[0]).is_err());
+            assert_eq!(evaluator.context.scopes.len(), 1, "{statement}");
+            assert_eq!(
+                evaluator.context.lookup("n"),
+                Some(&ComptimeValue::Float(0.125))
+            );
+        }
+    }
+
+    #[test]
+    fn test_review_function_error_scope_cleanup() {
+        for body in ["n := 0.25; return c;", "n := 0.25; c;", "n := 0.25; c"] {
+            let program = crate::parse(&format!(
+                "fn f() -> bool {{ {body} }} pub fn main() -> unit {{ f(); }}"
+            ))
+            .unwrap();
+            let crate::ast::TopLevelDecl::Fn(function) = &program.declarations[0] else {
+                panic!("expected function");
+            };
+            let crate::ast::TopLevelDecl::Fn(main) = &program.declarations[1] else {
+                panic!("expected main");
+            };
+            let Stmt::Expr(call) = &main.body.statements[0] else {
+                panic!("expected call");
+            };
+            let mut evaluator = ComptimeEvaluator::new();
+            evaluator.context.define("n", ComptimeValue::Float(0.125));
+            evaluator.context.define("c", ComptimeValue::Undefined);
+            evaluator
+                .context
+                .define("f", ComptimeValue::Function(Box::new(function.clone())));
+            assert!(evaluator.eval_expr(&call.expr).is_err());
+            assert_eq!(evaluator.context.scopes.len(), 1, "{body}");
+            assert_eq!(
+                evaluator.context.lookup("n"),
+                Some(&ComptimeValue::Float(0.125))
+            );
+            assert!(evaluator.memo_cache.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_runtime_binding_cannot_fold_a_comparison() {
+        let program = crate::parse("pub fn main() -> unit { if n == 1 { return unit; } }").unwrap();
+        let crate::ast::TopLevelDecl::Fn(function) = &program.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::If(statement) = &function.body.statements[0] else {
+            panic!("expected if")
+        };
+        let mut evaluator = ComptimeEvaluator::new();
+        evaluator.context.define("n", ComptimeValue::Undefined);
+        assert!(evaluator.eval_expr(&statement.condition).is_err());
+        evaluator.context.push_scope();
+        evaluator.context.define("n", ComptimeValue::Int(1));
+        assert_eq!(
+            evaluator.eval_expr(&statement.condition).unwrap(),
+            ComptimeValue::Bool(true)
+        );
+        evaluator.context.pop_scope();
+        assert!(evaluator.eval_expr(&statement.condition).is_err());
+    }
 
     #[test]
     fn test_comptime_value_display() {
@@ -2711,6 +3173,26 @@ mod tests {
             eval.eval_binary_op(BinaryOp::Mod, &a, &b).unwrap(),
             ComptimeValue::Int(1)
         );
+    }
+
+    #[test]
+    fn test_comptime_module_cycle_is_reported() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let a_path = temp_dir.path().join("a.zlp");
+        let b_path = temp_dir.path().join("b.zlp");
+        let main_path = temp_dir.path().join("main.zlp");
+
+        let mut a = std::fs::File::create(&a_path).unwrap();
+        writeln!(a, "pub b := @import(\"b.zlp\"); pub aa: a64 = 1/8 turns;").unwrap();
+        let mut b = std::fs::File::create(&b_path).unwrap();
+        writeln!(b, "pub a := @import(\"a.zlp\"); pub bb: a64 = 1/4 turns;").unwrap();
+
+        let mut loader = ModuleLoader::new();
+        let error = load_comptime_module(&mut loader, "a.zlp", Some(&main_path))
+            .expect_err("cyclic comptime import should fail");
+        assert!(error.message.contains("circular import detected"));
+        assert!(error.message.contains("a.zlp"));
+        assert!(error.message.contains("b.zlp"));
     }
 
     #[test]

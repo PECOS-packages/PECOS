@@ -1001,8 +1001,7 @@ class TestDemGeneration:
         """The traced-QIS PECOS DEM should exactly match the traced-QIS Stim DEM."""
         import re
 
-        stim = pytest.importorskip("stim")
-
+        import stim
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
             tick_circuit_to_stim,

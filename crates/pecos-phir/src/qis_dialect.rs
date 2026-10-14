@@ -36,8 +36,8 @@ impl Dialect for QisDialect {
             OperationDef {
                 name: "qalloc".to_string(),
                 description: "Allocate a qubit (___qalloc)".to_string(),
-                num_operands: 0,
-                num_results: 1, // returns qubit ID
+                num_operands: -1, // zero or one explicit index
+                num_results: 1,   // returns qubit ID
                 num_regions: 0,
                 traits: vec![],
             },
@@ -66,6 +66,32 @@ impl Dialect for QisDialect {
                 traits: vec![],
             },
         )?;
+
+        for (name, description, num_operands) in [
+            ("h", "Hadamard gate (___h)", 1),
+            ("x", "Pauli-X gate (___x)", 1),
+            ("y", "Pauli-Y gate (___y)", 1),
+            ("z", "Pauli-Z gate (___z)", 1),
+            ("s", "S gate (___s)", 1),
+            ("sdg", "S-dagger gate (___sdg)", 1),
+            ("t", "T gate (___t)", 1),
+            ("tdg", "T-dagger gate (___tdg)", 1),
+            ("sx", "Square-root-of-X gate (___sx)", 1),
+            ("sxdg", "Adjoint square-root-of-X gate (___sxdg)", 1),
+            ("cx", "Controlled-X gate (___cx)", 2),
+        ] {
+            registry.register_operation(
+                self.namespace(),
+                OperationDef {
+                    name: name.to_string(),
+                    description: description.to_string(),
+                    num_operands,
+                    num_results: 0,
+                    num_regions: 0,
+                    traits: vec![OpTrait::NoSideEffect],
+                },
+            )?;
+        }
 
         // Hardware-native rotation gates
         registry.register_operation(
@@ -99,6 +125,18 @@ impl Dialect for QisDialect {
                 description: "RZZ two-qubit rotation gate (___rzz)".to_string(),
                 num_operands: 3, // qubit1, qubit2, angle
                 num_results: 0,  // in-place operation
+                num_regions: 0,
+                traits: vec![OpTrait::NoSideEffect],
+            },
+        )?;
+
+        registry.register_operation(
+            self.namespace(),
+            OperationDef {
+                name: "rpp".to_string(),
+                description: "RXYXY2Q two-qubit rotation gate (___rpp)".to_string(),
+                num_operands: 4, // qubit1, qubit2, theta, phi
+                num_results: 0,
                 num_regions: 0,
                 traits: vec![OpTrait::NoSideEffect],
             },
@@ -173,13 +211,20 @@ impl Dialect for QisDialect {
                 // RZZ requires exactly 3 operands: qubit1, qubit2, angle
                 Ok(())
             }
+            "rpp" => {
+                // RPP requires exactly 4 operands: qubit1, qubit2, theta, phi
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
 
     fn get_operation_traits(&self, op_name: &str) -> Vec<OpTrait> {
         match op_name {
-            "rxy" | "rz" | "rzz" => vec![OpTrait::NoSideEffect],
+            "h" | "x" | "y" | "z" | "s" | "sdg" | "t" | "tdg" | "sx" | "sxdg" | "cx" | "rxy"
+            | "rz" | "rzz" | "rpp" => {
+                vec![OpTrait::NoSideEffect]
+            }
             _ => vec![],
         }
     }

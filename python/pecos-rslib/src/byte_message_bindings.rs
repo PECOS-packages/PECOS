@@ -79,6 +79,11 @@ impl PyByteMessageBuilder {
         self.inner.rzz(theta.0, &pairs);
     }
 
+    /// Add RXYXY2Q gate(s): `rxyxy2q(theta, phi, [(q0, q1)])`
+    fn rxyxy2q(&mut self, theta: AngleParam, phi: AngleParam, pairs: Vec<(usize, usize)>) {
+        self.inner.rxyxy2q(theta.0, phi.0, &pairs);
+    }
+
     /// Add CY gate(s): `cy([(c0, t0), (c1, t1)])`
     fn cy(&mut self, pairs: Vec<(usize, usize)>) {
         self.inner.cy(&pairs);
@@ -129,9 +134,9 @@ impl PyByteMessageBuilder {
         self.inner.ry(theta.0, &qubits);
     }
 
-    /// Add R1XY gate(s): `r1xy(theta, phi, [q0, q1])`
-    fn r1xy(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
-        self.inner.r1xy(theta.0, phi.0, &qubits);
+    /// Add RXY1Q gate(s): `rxy1q(theta, phi, [q0, q1])`
+    fn rxy1q(&mut self, theta: AngleParam, phi: AngleParam, qubits: Vec<usize>) {
+        self.inner.rxy1q(theta.0, phi.0, &qubits);
     }
 
     /// Add U gate(s): `u(theta, phi, lambda_, [q0, q1])`
@@ -274,10 +279,16 @@ impl PyByteMessage {
         PyBytes::new(py, self.inner.as_bytes()).into()
     }
 
-    /// Check if the message is empty
+    /// Check for zero bytes or a structurally valid zero-message batch.
+    ///
+    /// Raises `RuntimeError` if the batch framing is malformed.
     #[pyo3(text_signature = "($self)")]
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty().unwrap_or(true)
+    fn is_empty(&self) -> PyResult<bool> {
+        self.inner.is_empty().map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Failed to check message emptiness in Python bindings: {e}"
+            ))
+        })
     }
 
     /// Parse quantum operations from the message

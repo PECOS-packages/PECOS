@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod classical_interpreter;
+pub(crate) mod declarations;
 pub mod engine;
 pub mod foreign_objects;
 pub mod name_resolver;

@@ -154,6 +154,7 @@ def test_fuzzed_program_matches_python_reference(seed: int, tmp_path: Path) -> N
     source = (
         "from guppylang import guppy\n"
         "from guppylang.std.quantum import measure, qubit, x\n"
+        "from guppylang.std.builtins import result\n"
         "\n"
         "\n"
         "@guppy\n"
@@ -162,11 +163,12 @@ def test_fuzzed_program_matches_python_reference(seed: int, tmp_path: Path) -> N
         f"{body}\n"
         f"    if acc == {expected}:\n"
         "        x(q)\n"
-        "    return measure(q).read()\n"
+        "    value = measure(q).read()\n"
+        '    result("value", value)\n'
+        "    return value\n"
     )
     module = _load_guppy_module(tmp_path, seed, source)
 
     results = sim(Guppy(module.fuzz_prog)).qubits(2).quantum(state_vector()).seed(7).run(2).to_dict()
-    raw = results["measurements"]
-    values = [m[-1] if isinstance(m, list) else m for m in raw]
+    values = results["value"]
     assert values == [1, 1], f"seed {seed}: engine diverged from reference\n{source}"

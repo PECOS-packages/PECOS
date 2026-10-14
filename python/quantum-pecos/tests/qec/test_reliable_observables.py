@@ -20,10 +20,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
-stim = pytest.importorskip("stim")
-
-from pecos.qec.reliable_observables import (  # noqa: E402
+import stim
+from pecos.qec.reliable_observables import (
     _gf2_right_null_space,
     is_reliable,
     reliable_observables,

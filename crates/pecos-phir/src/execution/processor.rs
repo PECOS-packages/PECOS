@@ -13,7 +13,7 @@ use crate::ops::{ClassicalOp, MemoryOp, Operation, QuantumOp};
 use crate::phir::{Block, Module};
 use pecos_core::Gate;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// PHIR operation processor - converts PHIR operations to quantum instructions
 #[derive(Debug, Clone)]
@@ -26,8 +26,10 @@ pub struct PhirProcessor {
     current_block: usize,
     /// Current region being executed
     current_region: usize,
-    /// Measurement index to SSA ID mapping
-    pub measurement_mappings: Vec<u32>, // SSA IDs that will receive measurement results
+    /// SSA destinations of all measurements issued in this shot (for exports).
+    pub measurement_mappings: Vec<u32>,
+    /// Measurement destinations awaiting delivery for the current batch.
+    pending_measurements: Vec<Option<u32>>,
     /// Export mappings from Result operations (source SSA ID to export name)
     pub export_mappings: BTreeMap<u32, String>,
     /// SSA value storage (SSA ID to typed value)
@@ -38,6 +40,8 @@ pub struct PhirProcessor {
     pub final_exports: BTreeMap<String, TypedValue>,
     /// Memory store for alloca/load/store operations (pointer SSA ID -> value)
     memory: BTreeMap<u32, TypedValue>,
+    /// Indices currently reserved by quantum allocation.
+    allocated_qubits: BTreeSet<usize>,
     /// Number of qubits in the program
     qubit_count: usize,
 }
@@ -54,12 +58,14 @@ impl PhirProcessor {
             current_block: 0,
             current_region: 0,
             measurement_mappings: Vec::new(),
+            pending_measurements: Vec::new(),
             export_mappings: BTreeMap::new(),
             ssa_values: BTreeMap::new(),
             variable_ssa_map: BTreeMap::new(),
             final_exports: BTreeMap::new(),
             memory: BTreeMap::new(),
             qubit_count: 0,
+            allocated_qubits: BTreeSet::new(),
         }
     }
 
@@ -69,6 +75,8 @@ impl PhirProcessor {
         self.current_block = 0;
         self.current_region = 0;
         self.measurement_mappings.clear();
+        self.pending_measurements.clear();
+        self.allocated_qubits.clear();
 
         // Reset SSA values to defaults but keep variable definitions
         // We don't reset the environment completely because we need to preserve variable definitions
@@ -81,6 +89,7 @@ impl PhirProcessor {
                     TypedValue::U64(_) => TypedValue::U64(0),
                     TypedValue::Bool(_) => TypedValue::Bool(false),
                     TypedValue::BitVec(bv) => TypedValue::BitVec(vec![false; bv.len()]),
+                    TypedValue::Aggregate(_) => value.zero_like(),
                     _ => value.clone(),
                 };
                 self.ssa_values.insert(ssa_id, default_value.clone());
@@ -169,7 +178,7 @@ impl PhirProcessor {
                 Ok(false)
             }
             Operation::Memory(mem_op) => {
-                self.process_memory_operation(mem_op, instruction);
+                self.process_memory_operation(mem_op, instruction)?;
                 Ok(false)
             }
             Operation::Parsing(_) => {
@@ -203,6 +212,8 @@ impl PhirProcessor {
             QuantumOp::Sdg => self.process_single_qubit_gate("Sdg", instruction, message_builder),
             QuantumOp::T => self.process_single_qubit_gate("T", instruction, message_builder),
             QuantumOp::Tdg => self.process_single_qubit_gate("Tdg", instruction, message_builder),
+            QuantumOp::SX => self.process_single_qubit_gate("SX", instruction, message_builder),
+            QuantumOp::SXdg => self.process_single_qubit_gate("SXdg", instruction, message_builder),
 
             // Parameterized single-qubit gates
             QuantumOp::RX(angle) => {
@@ -220,9 +231,9 @@ impl PhirProcessor {
                 message_builder.rz(*angle, &[qubit_id]);
                 Ok(true)
             }
-            QuantumOp::R1XY(theta, phi) => {
-                let qubit_id = self.extract_single_qubit(instruction, "R1XY")?;
-                message_builder.r1xy(*theta, *phi, &[qubit_id]);
+            QuantumOp::RXY1Q(theta, phi) => {
+                let qubit_id = self.extract_single_qubit(instruction, "RXY1Q")?;
+                message_builder.rxy1q(*theta, *phi, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::U3(theta, phi, lambda) => {
@@ -234,6 +245,12 @@ impl PhirProcessor {
             // Two-qubit gates
             QuantumOp::CX => self.process_two_qubit_gate("CX", instruction, message_builder),
             QuantumOp::CZ => self.process_two_qubit_gate("CZ", instruction, message_builder),
+            QuantumOp::SXX => self.process_two_qubit_gate("SXX", instruction, message_builder),
+            QuantumOp::SXXdg => self.process_two_qubit_gate("SXXdg", instruction, message_builder),
+            QuantumOp::SYY => self.process_two_qubit_gate("SYY", instruction, message_builder),
+            QuantumOp::SYYdg => self.process_two_qubit_gate("SYYdg", instruction, message_builder),
+            QuantumOp::SZZ => self.process_two_qubit_gate("SZZ", instruction, message_builder),
+            QuantumOp::SZZdg => self.process_two_qubit_gate("SZZdg", instruction, message_builder),
             QuantumOp::SWAP => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "SWAP")?;
                 let gate = Gate::swap(&[(q1, q2)]);
@@ -245,10 +262,19 @@ impl PhirProcessor {
                 message_builder.rzz(*angle, &[(q1, q2)]);
                 Ok(true)
             }
+            QuantumOp::RXYXY2Q(theta, phi) => {
+                let (q1, q2) = self.extract_two_qubits(instruction, "RXYXY2Q")?;
+                message_builder.rxyxy2q(*theta, *phi, &[(q1, q2)]);
+                Ok(true)
+            }
             QuantumOp::CPhase(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "CPhase")?;
-                let gate = Gate::crz(*angle, &[(q1, q2)]);
-                message_builder.add_gate_command(&gate);
+                let gates = pecos_core::controlled_rotations::lower_cphase(
+                    angle.to_radians_signed(),
+                    q1.into(),
+                    q2.into(),
+                );
+                message_builder.add_gate_commands(&gates);
                 Ok(true)
             }
 
@@ -257,18 +283,55 @@ impl PhirProcessor {
 
             // Resource management
             QuantumOp::Alloc => {
-                if !instruction.results.is_empty() {
-                    let qubit_id = usize::try_from(instruction.results[0].id).unwrap_or(usize::MAX);
-                    self.qubit_count = self.qubit_count.max(qubit_id + 1);
-                    let gate = Gate::qalloc(&[qubit_id]);
-                    message_builder.add_gate_command(&gate);
+                if instruction.operands.len() > 1 {
+                    return Err(PhirError::internal(format!(
+                        "{} requires zero or one operand",
+                        instruction.operation.name()
+                    )));
                 }
+                if instruction.operands.is_empty() && instruction.results.is_empty() {
+                    return Ok(true);
+                }
+                let qubit_id = if instruction.operands.is_empty() {
+                    // The first gap in the sorted allocated indices is the lowest free index.
+                    self.allocated_qubits
+                        .iter()
+                        .copied()
+                        .zip(0..)
+                        .find_map(|(allocated, candidate)| {
+                            (allocated != candidate).then_some(candidate)
+                        })
+                        .unwrap_or(self.allocated_qubits.len())
+                } else {
+                    self.qubit_index(instruction, 0)?
+                };
+                // Explicit indices are checked by the resolver; dynamic allocation
+                // must also stop when the command protocol's index space is exhausted.
+                let allocation_index = u32::try_from(qubit_id).map_err(|_| {
+                    PhirError::internal(format!(
+                        "{}: qubit index space exhausted",
+                        instruction.operation.name()
+                    ))
+                })?;
+                if !self.allocated_qubits.insert(qubit_id) {
+                    return Err(PhirError::internal(format!(
+                        "{}: qubit index {qubit_id} is already allocated",
+                        instruction.operation.name()
+                    )));
+                }
+                if let Some(result) = instruction.results.first() {
+                    self.ssa_values
+                        .insert(result.id, TypedValue::I64(i64::from(allocation_index)));
+                }
+                self.qubit_count = self.qubit_count.max(qubit_id + 1);
+                let gate = Gate::qalloc(&[qubit_id]);
+                message_builder.add_gate_command(&gate);
                 Ok(true)
             }
             QuantumOp::Dealloc => {
                 if !instruction.operands.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = self.qubit_index(instruction, 0)?;
+                    self.allocated_qubits.remove(&qubit_id);
                     let gate = Gate::qfree(&[qubit_id]);
                     message_builder.add_gate_command(&gate);
                 }
@@ -276,8 +339,7 @@ impl PhirProcessor {
             }
             QuantumOp::Reset => {
                 if !instruction.operands.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = self.qubit_index(instruction, 0)?;
                     message_builder.pz(&[qubit_id]);
                 }
                 Ok(true)
@@ -285,8 +347,7 @@ impl PhirProcessor {
             QuantumOp::InitZero => {
                 // InitZero is equivalent to Reset (prepare |0>)
                 if !instruction.operands.is_empty() {
-                    let qubit_id =
-                        usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
+                    let qubit_id = self.qubit_index(instruction, 0)?;
                     message_builder.pz(&[qubit_id]);
                 }
                 Ok(true)
@@ -296,6 +357,37 @@ impl PhirProcessor {
                 "Quantum operation not yet implemented: {quantum_op:?}"
             ))),
         }
+    }
+
+    /// Resolve a physical qubit index from its integer operand value.
+    fn qubit_index(
+        &mut self,
+        instruction: &crate::phir::Instruction,
+        operand_index: usize,
+    ) -> Result<usize> {
+        let value = self.operand(instruction, operand_index)?;
+        let invalid_index = || {
+            PhirError::internal(format!(
+                "{}: invalid qubit index {value:?}",
+                instruction.operation.name()
+            ))
+        };
+        // Quantum command payloads encode qubit indices as u32.
+        let index = match value {
+            TypedValue::I8(v) => u32::try_from(*v),
+            TypedValue::I16(v) => u32::try_from(*v),
+            TypedValue::I32(v) => u32::try_from(*v),
+            TypedValue::I64(v) => u32::try_from(*v),
+            TypedValue::U8(v) => Ok(u32::from(*v)),
+            TypedValue::U16(v) => Ok(u32::from(*v)),
+            TypedValue::U32(v) => Ok(*v),
+            TypedValue::U64(v) => u32::try_from(*v),
+            _ => return Err(invalid_index()),
+        }
+        .map_err(|_| invalid_index())?;
+        let index = usize::try_from(index).map_err(|_| invalid_index())?;
+        self.qubit_count = self.qubit_count.max(index + 1);
+        Ok(index)
     }
 
     /// Extract a single qubit ID from instruction operands
@@ -310,9 +402,7 @@ impl PhirProcessor {
                 instruction.operands.len()
             )));
         }
-        let qubit_id = usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-        self.qubit_count = self.qubit_count.max(qubit_id + 1);
-        Ok(qubit_id)
+        self.qubit_index(instruction, 0)
     }
 
     /// Extract two qubit IDs from instruction operands
@@ -327,10 +417,8 @@ impl PhirProcessor {
                 instruction.operands.len()
             )));
         }
-        let q1 = usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-        let q2 = usize::try_from(instruction.operands[1].id).unwrap_or(usize::MAX);
-        self.qubit_count = self.qubit_count.max(q1 + 1);
-        self.qubit_count = self.qubit_count.max(q2 + 1);
+        let q1 = self.qubit_index(instruction, 0)?;
+        let q2 = self.qubit_index(instruction, 1)?;
         Ok((q1, q2))
     }
 
@@ -368,6 +456,12 @@ impl PhirProcessor {
             "Tdg" => {
                 message_builder.tdg(&[qubit_id]);
             }
+            "SX" => {
+                message_builder.sx(&[qubit_id]);
+            }
+            "SXdg" => {
+                message_builder.sxdg(&[qubit_id]);
+            }
             _ => {
                 return Err(PhirError::internal(format!(
                     "Unknown single-qubit gate: {gate_name}"
@@ -394,6 +488,24 @@ impl PhirProcessor {
             "CZ" => {
                 message_builder.cz(&[(q1, q2)]);
             }
+            "SXX" => {
+                message_builder.sxx(&[(q1, q2)]);
+            }
+            "SXXdg" => {
+                message_builder.sxxdg(&[(q1, q2)]);
+            }
+            "SYY" => {
+                message_builder.syy(&[(q1, q2)]);
+            }
+            "SYYdg" => {
+                message_builder.syydg(&[(q1, q2)]);
+            }
+            "SZZ" => {
+                message_builder.szz(&[(q1, q2)]);
+            }
+            "SZZdg" => {
+                message_builder.szzdg(&[(q1, q2)]);
+            }
             _ => {
                 return Err(PhirError::internal(format!(
                     "Unknown two-qubit gate: {gate_name}"
@@ -418,20 +530,15 @@ impl PhirProcessor {
 
         // For now, process single-qubit measurements
         // TODO: Support multi-qubit measurements
-        let qubit_id = usize::try_from(instruction.operands[0].id).unwrap_or(usize::MAX);
-
-        // Track maximum qubit index
-        self.qubit_count = self.qubit_count.max(qubit_id + 1);
+        let qubit_id = self.qubit_index(instruction, 0)?;
 
         message_builder.mz(&[qubit_id]);
 
-        // Track measurement mapping for later processing
-        // The measurement index maps to which variable should receive the result
-        let _measurement_index = self.measurement_mappings.len();
-
-        // Store the SSA ID that will receive this measurement result
-        if !instruction.results.is_empty() {
-            let result_ssa_id = instruction.results[0].id;
+        // Keep shot history for exports and one destination per pending outcome,
+        // including measurements whose results are discarded.
+        let destination = instruction.results.first().map(|result| result.id);
+        self.pending_measurements.push(destination);
+        if let Some(result_ssa_id) = destination {
             self.measurement_mappings.push(result_ssa_id);
         }
 
@@ -442,20 +549,50 @@ impl PhirProcessor {
     ///
     /// # Errors
     ///
-    /// Returns an error if type conversion fails
-    ///
-    /// # Panics
-    ///
-    /// Panics if a shift amount or constant value doesn't fit in the expected type
+    /// Returns an internal error for missing SSA operands or incompatible integer
+    /// types, or a runtime error if a signed shift count is negative.
     pub fn process_classical_operation(
         &mut self,
         classical_op: &crate::ops::ClassicalOp,
         instruction: &crate::phir::Instruction,
     ) -> Result<()> {
+        if !matches!(
+            classical_op,
+            ClassicalOp::Assign
+                | ClassicalOp::Select
+                | ClassicalOp::InsertValue(_)
+                | ClassicalOp::ExtractValue(_)
+        ) {
+            for operand in &instruction.operands {
+                if let Some(TypedValue::Aggregate(_)) = self.ssa_values.get(&operand.id) {
+                    return Err(PhirError::internal(format!(
+                        "{}: aggregate operand is unsupported",
+                        instruction.operation.name()
+                    )));
+                }
+            }
+        }
         match classical_op {
+            ClassicalOp::AggregateZero => {
+                let ty = instruction
+                    .result_types
+                    .first()
+                    .ok_or_else(|| PhirError::internal("aggregate_zero: missing result type"))?;
+                let value = TypedValue::zero(ty)?;
+                if let Some(result) = instruction.results.first() {
+                    self.ssa_values.insert(result.id, value);
+                }
+                Ok(())
+            }
+            ClassicalOp::InsertValue(path) => {
+                self.process_aggregate_operation(instruction, path, true)
+            }
+            ClassicalOp::ExtractValue(path) => {
+                self.process_aggregate_operation(instruction, path, false)
+            }
             // Constants
             ClassicalOp::ConstInt(value) => {
-                self.process_const_int_operation(*value, instruction);
+                self.process_const_int_operation(*value, instruction)?;
                 Ok(())
             }
             ClassicalOp::ConstFloat(value) => {
@@ -480,7 +617,7 @@ impl PhirProcessor {
                     "add",
                     i64::wrapping_add,
                     u64::wrapping_add,
-                );
+                )?;
                 Ok(())
             }
             ClassicalOp::Sub => {
@@ -489,7 +626,7 @@ impl PhirProcessor {
                     "sub",
                     i64::wrapping_sub,
                     u64::wrapping_sub,
-                );
+                )?;
                 Ok(())
             }
             ClassicalOp::Mul => {
@@ -498,7 +635,7 @@ impl PhirProcessor {
                     "mul",
                     i64::wrapping_mul,
                     u64::wrapping_mul,
-                );
+                )?;
                 Ok(())
             }
             ClassicalOp::Div => {
@@ -507,207 +644,246 @@ impl PhirProcessor {
                     "div",
                     |a, b| a.checked_div(b).unwrap_or(0),
                     |a, b| a.checked_div(b).unwrap_or(0),
-                );
+                )?;
                 Ok(())
             }
             ClassicalOp::Mod => {
                 self.process_binary_int_op(
                     instruction,
                     "mod",
-                    |a, b| if b == 0 { 0 } else { a % b },
-                    |a, b| if b == 0 { 0 } else { a % b },
-                );
+                    |a, b| a.checked_rem(b).unwrap_or(0),
+                    |a, b| a.checked_rem(b).unwrap_or(0),
+                )?;
                 Ok(())
+            }
+
+            ClassicalOp::UDiv => {
+                self.process_unsigned_int_op(instruction, |a, b| a.checked_div(b).unwrap_or(0))
+            }
+            ClassicalOp::UMod => {
+                self.process_unsigned_int_op(instruction, |a, b| a.checked_rem(b).unwrap_or(0))
             }
 
             // Bitwise
             ClassicalOp::And => {
-                self.process_binary_int_op(instruction, "and", |a, b| a & b, |a, b| a & b);
+                self.process_binary_int_op(instruction, "and", |a, b| a & b, |a, b| a & b)?;
                 Ok(())
             }
             ClassicalOp::Or => {
-                self.process_binary_int_op(instruction, "or", |a, b| a | b, |a, b| a | b);
+                self.process_binary_int_op(instruction, "or", |a, b| a | b, |a, b| a | b)?;
                 Ok(())
             }
             ClassicalOp::Xor => {
-                self.process_binary_int_op(instruction, "xor", |a, b| a ^ b, |a, b| a ^ b);
+                self.process_binary_int_op(instruction, "xor", |a, b| a ^ b, |a, b| a ^ b)?;
                 Ok(())
             }
-            ClassicalOp::Shl(shift) => {
-                if instruction.operands.len() >= 2 {
-                    // Binary mode: shift amount from second operand (used by QIS parser)
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    // shift amount is non-negative
+            ClassicalOp::Shl(shift) | ClassicalOp::Shr(shift) | ClassicalOp::LShr(shift) => {
+                let left = matches!(classical_op, ClassicalOp::Shl(_));
+                let count = if instruction.operands.len() >= 2 {
+                    let value = self.operand(instruction, 1)?;
+                    let negative = match value {
+                        TypedValue::I8(v) => *v < 0,
+                        TypedValue::I16(v) => *v < 0,
+                        TypedValue::I32(v) => *v < 0,
+                        TypedValue::I64(v) => *v < 0,
+                        _ => false,
+                    };
+                    if negative {
+                        return Err(Box::new(crate::error::RuntimeError::ExecutionFailed {
+                            message: format!("Negative shift amount: {value}"),
+                            location: instruction
+                                .location
+                                .clone()
+                                .unwrap_or_else(crate::error::SourceLocation::unknown),
+                        })
+                        .into());
+                    }
+                    u32::try_from(Self::integer_bits(value, &instruction.operation.name())?)
+                        .unwrap_or(u32::MAX)
+                } else {
+                    *shift
+                };
+                let signed = |v: i64| {
+                    if left {
+                        v.checked_shl(count).unwrap_or(0)
+                    } else {
+                        v.checked_shr(count).unwrap_or(if v < 0 { -1 } else { 0 })
+                    }
+                };
+                let unsigned = |v: u64| {
+                    if left {
+                        v.checked_shl(count).unwrap_or(0)
+                    } else {
+                        v.checked_shr(count).unwrap_or(0)
+                    }
+                };
+                if matches!(classical_op, ClassicalOp::LShr(_)) {
+                    if !instruction.operands.is_empty() && !instruction.results.is_empty() {
+                        let value = Self::integer_bits(
+                            self.operand(instruction, 0)?,
+                            &instruction.operation.name(),
+                        )?;
+                        self.ssa_values.insert(
+                            instruction.results[0].id,
+                            TypedValue::I64(i64::from_ne_bytes(
+                                value.checked_shr(count).unwrap_or(0).to_ne_bytes(),
+                            )),
+                        );
+                    }
+                } else if instruction.operands.len() >= 2 {
+                    // Keep the existing same-type and mixed-type result/coercion rules.
                     self.process_binary_int_op(
                         instruction,
-                        "shl",
-                        |a, b| a.wrapping_shl(b as u32),
-                        |a, b| a.wrapping_shl(b as u32),
-                    );
+                        "shift",
+                        |a, _| signed(a),
+                        |a, _| unsigned(a),
+                    )?;
                 } else {
-                    let s = *shift;
-                    self.process_unary_int_op(
-                        instruction,
-                        move |v: i64| v.wrapping_shl(s),
-                        move |v: u64| v.wrapping_shl(s),
-                    );
-                }
-                Ok(())
-            }
-            ClassicalOp::Shr(shift) => {
-                if instruction.operands.len() >= 2 {
-                    // Binary mode: shift amount from second operand (used by QIS parser)
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    // shift amount is non-negative
-                    self.process_binary_int_op(
-                        instruction,
-                        "shr",
-                        |a, b| a.wrapping_shr(b as u32),
-                        |a, b| a.wrapping_shr(b as u32),
-                    );
-                } else {
-                    let s = *shift;
-                    self.process_unary_int_op(
-                        instruction,
-                        move |v: i64| v.wrapping_shr(s),
-                        move |v: u64| v.wrapping_shr(s),
-                    );
+                    self.process_unary_int_op(instruction, signed, unsigned)?;
                 }
                 Ok(())
             }
             ClassicalOp::Not => {
                 if !instruction.operands.is_empty() && !instruction.results.is_empty() {
-                    let op_id = instruction.operands[0].id;
                     let res_id = instruction.results[0].id;
-                    if let Some(val) = self.ssa_values.get(&op_id) {
-                        let result = match val {
-                            TypedValue::Bool(v) => TypedValue::Bool(!v),
-                            TypedValue::I32(v) => TypedValue::I32(!v),
-                            TypedValue::I64(v) => TypedValue::I64(!v),
-                            TypedValue::U32(v) => TypedValue::U32(!v),
-                            TypedValue::U64(v) => TypedValue::U64(!v),
-                            other => other.clone(),
-                        };
-                        self.ssa_values.insert(res_id, result);
-                    }
+                    let val = self.operand(instruction, 0)?;
+                    let result = match val {
+                        TypedValue::Bool(v) => TypedValue::Bool(!v),
+                        TypedValue::I32(v) => TypedValue::I32(!v),
+                        TypedValue::I64(v) => TypedValue::I64(!v),
+                        TypedValue::U32(v) => TypedValue::U32(!v),
+                        TypedValue::U64(v) => TypedValue::U64(!v),
+                        other => other.clone(),
+                    };
+                    self.ssa_values.insert(res_id, result);
                 }
                 Ok(())
             }
             ClassicalOp::Neg => {
                 if !instruction.operands.is_empty() && !instruction.results.is_empty() {
-                    let op_id = instruction.operands[0].id;
                     let res_id = instruction.results[0].id;
-                    if let Some(val) = self.ssa_values.get(&op_id) {
-                        let result = match val {
-                            TypedValue::I32(v) => TypedValue::I32(v.wrapping_neg()),
-                            TypedValue::I64(v) => TypedValue::I64(v.wrapping_neg()),
-                            TypedValue::F64(v) => TypedValue::F64(-v),
-                            other => other.clone(),
-                        };
-                        self.ssa_values.insert(res_id, result);
-                    }
+                    let val = self.operand(instruction, 0)?;
+                    let result = match val {
+                        TypedValue::I32(v) => TypedValue::I32(v.wrapping_neg()),
+                        TypedValue::I64(v) => TypedValue::I64(v.wrapping_neg()),
+                        TypedValue::F64(v) => TypedValue::F64(-v),
+                        other => other.clone(),
+                    };
+                    self.ssa_values.insert(res_id, result);
                 }
                 Ok(())
             }
 
             // Comparisons
             ClassicalOp::Eq => {
-                self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Equal);
+                self.process_comparison(instruction, false, |ord| {
+                    ord == std::cmp::Ordering::Equal
+                })?;
                 Ok(())
             }
             ClassicalOp::Ne => {
-                self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Equal);
+                self.process_comparison(instruction, false, |ord| {
+                    ord != std::cmp::Ordering::Equal
+                })?;
                 Ok(())
             }
             ClassicalOp::Lt => {
-                self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Less);
+                self.process_comparison(instruction, false, |ord| ord == std::cmp::Ordering::Less)?;
                 Ok(())
             }
             ClassicalOp::Le => {
-                self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Greater);
+                self.process_comparison(instruction, false, |ord| {
+                    ord != std::cmp::Ordering::Greater
+                })?;
                 Ok(())
             }
             ClassicalOp::Gt => {
-                self.process_comparison(instruction, |ord| ord == std::cmp::Ordering::Greater);
+                self.process_comparison(instruction, false, |ord| {
+                    ord == std::cmp::Ordering::Greater
+                })?;
                 Ok(())
             }
             ClassicalOp::Ge => {
-                self.process_comparison(instruction, |ord| ord != std::cmp::Ordering::Less);
+                self.process_comparison(instruction, false, |ord| ord != std::cmp::Ordering::Less)?;
                 Ok(())
+            }
+
+            ClassicalOp::ULt => {
+                self.process_comparison(instruction, true, |ord| ord == std::cmp::Ordering::Less)
+            }
+            ClassicalOp::ULe => {
+                self.process_comparison(instruction, true, |ord| ord != std::cmp::Ordering::Greater)
+            }
+            ClassicalOp::UGt => {
+                self.process_comparison(instruction, true, |ord| ord == std::cmp::Ordering::Greater)
+            }
+            ClassicalOp::UGe => {
+                self.process_comparison(instruction, true, |ord| ord != std::cmp::Ordering::Less)
             }
 
             // Select (ternary)
             ClassicalOp::Select => {
                 if instruction.operands.len() >= 3 && !instruction.results.is_empty() {
-                    let cond_id = instruction.operands[0].id;
-                    let true_id = instruction.operands[1].id;
-                    let false_id = instruction.operands[2].id;
                     let res_id = instruction.results[0].id;
 
-                    let cond = self.ssa_values.get(&cond_id).is_some_and(|v| match v {
-                        TypedValue::Bool(b) => *b,
-                        TypedValue::U32(v) => *v != 0,
-                        TypedValue::I64(v) => *v != 0,
-                        _ => false,
-                    });
+                    let cond = Self::integer_bits(
+                        self.operand(instruction, 0)?,
+                        &instruction.operation.name(),
+                    )? != 0;
 
-                    let chosen_id = if cond { true_id } else { false_id };
-                    if let Some(val) = self.ssa_values.get(&chosen_id) {
-                        self.ssa_values.insert(res_id, val.clone());
-                    }
+                    let chosen_index = if cond { 1 } else { 2 };
+                    let val = self.operand(instruction, chosen_index)?;
+                    self.ssa_values.insert(res_id, val.clone());
                 }
                 Ok(())
             }
 
             // Type conversions
             ClassicalOp::Bitcast => {
-                self.process_bitcast_operation(instruction);
+                self.process_bitcast_operation(instruction)?;
                 Ok(())
             }
 
             // Assignment
             ClassicalOp::Assign => {
                 if !instruction.operands.is_empty() && !instruction.results.is_empty() {
-                    let src_id = instruction.operands[0].id;
                     let dst_id = instruction.results[0].id;
-                    if let Some(val) = self.ssa_values.get(&src_id) {
-                        self.ssa_values.insert(dst_id, val.clone());
-                    }
+                    let val = self.operand(instruction, 0)?;
+                    self.ssa_values.insert(dst_id, val.clone());
                 }
                 Ok(())
             }
 
             // Result export
             ClassicalOp::Result => {
-                self.process_result_operation(instruction);
+                self.process_result_operation(instruction)?;
                 Ok(())
             }
 
             // Float arithmetic
             ClassicalOp::FAdd => {
-                self.process_binary_float_op(instruction, |a, b| a + b);
+                self.process_binary_float_op(instruction, |a, b| a + b)?;
                 Ok(())
             }
             ClassicalOp::FSub => {
-                self.process_binary_float_op(instruction, |a, b| a - b);
+                self.process_binary_float_op(instruction, |a, b| a - b)?;
                 Ok(())
             }
             ClassicalOp::FMul => {
-                self.process_binary_float_op(instruction, |a, b| a * b);
+                self.process_binary_float_op(instruction, |a, b| a * b)?;
                 Ok(())
             }
             ClassicalOp::FDiv => {
                 self.process_binary_float_op(
                     instruction,
                     |a, b| if b == 0.0 { 0.0 } else { a / b },
-                );
+                )?;
                 Ok(())
             }
             ClassicalOp::FNeg => {
                 if !instruction.operands.is_empty() && !instruction.results.is_empty() {
-                    let op_id = instruction.operands[0].id;
                     let res_id = instruction.results[0].id;
-                    if let Some(TypedValue::F64(v)) = self.ssa_values.get(&op_id) {
+                    if let TypedValue::F64(v) = self.operand(instruction, 0)? {
                         self.ssa_values.insert(res_id, TypedValue::F64(-v));
                     }
                 }
@@ -721,6 +897,105 @@ impl PhirProcessor {
         }
     }
 
+    /// Traverse a constant path in a cloned aggregate, preserving the source.
+    fn process_aggregate_operation(
+        &mut self,
+        instruction: &crate::phir::Instruction,
+        path: &[usize],
+        insert: bool,
+    ) -> Result<()> {
+        if path.is_empty() {
+            return Err(PhirError::internal(format!(
+                "{}: empty index path",
+                instruction.operation.name()
+            )));
+        }
+        let mut aggregate = self.operand(instruction, 0)?.clone();
+        let mut field = &mut aggregate;
+        for &index in path {
+            let TypedValue::Aggregate(fields) = field else {
+                return Err(PhirError::internal(format!(
+                    "{}: indexing a non-aggregate",
+                    instruction.operation.name()
+                )));
+            };
+            field = fields.get_mut(index).ok_or_else(|| {
+                PhirError::internal(format!(
+                    "{}: index {index} out of range",
+                    instruction.operation.name()
+                ))
+            })?;
+        }
+        let value = if insert {
+            *field = self.operand(instruction, 1)?.clone();
+            aggregate
+        } else {
+            field.clone()
+        };
+        if let Some(result) = instruction.results.first() {
+            self.ssa_values.insert(result.id, value);
+        }
+        Ok(())
+    }
+
+    /// Read an SSA operand, reporting invalid IR at its first consumer.
+    fn operand(&self, instruction: &crate::phir::Instruction, index: usize) -> Result<&TypedValue> {
+        let id = instruction
+            .operands
+            .get(index)
+            .ok_or_else(|| {
+                PhirError::internal(format!(
+                    "{}: missing operand {index}",
+                    instruction.operation.name()
+                ))
+            })?
+            .id;
+        self.ssa_values.get(&id).ok_or_else(|| {
+            PhirError::internal(format!(
+                "{}: missing operand {index}, SSA id {id}",
+                instruction.operation.name()
+            ))
+        })
+    }
+
+    /// Interpret integers as 64-bit patterns without losing negative values.
+    fn integer_bits(value: &TypedValue, operation: &str) -> Result<u64> {
+        let signed = match value {
+            TypedValue::I8(v) => i64::from(*v),
+            TypedValue::I16(v) => i64::from(*v),
+            TypedValue::I32(v) => i64::from(*v),
+            TypedValue::I64(v) => *v,
+            TypedValue::U8(v) => return Ok(u64::from(*v)),
+            TypedValue::U16(v) => return Ok(u64::from(*v)),
+            TypedValue::U32(v) => return Ok(u64::from(*v)),
+            TypedValue::U64(v) => return Ok(*v),
+            TypedValue::Bool(v) => return Ok(u64::from(*v)),
+            _ => {
+                return Err(PhirError::internal(format!(
+                    "{operation}: expected integer operand, got {value}"
+                )));
+            }
+        };
+        Ok(u64::from_ne_bytes(signed.to_ne_bytes()))
+    }
+
+    fn process_unsigned_int_op(
+        &mut self,
+        instruction: &crate::phir::Instruction,
+        op: impl Fn(u64, u64) -> u64,
+    ) -> Result<()> {
+        if instruction.operands.len() < 2 || instruction.results.is_empty() {
+            return Ok(());
+        }
+        let a = Self::integer_bits(self.operand(instruction, 0)?, &instruction.operation.name())?;
+        let b = Self::integer_bits(self.operand(instruction, 1)?, &instruction.operation.name())?;
+        self.ssa_values.insert(
+            instruction.results[0].id,
+            TypedValue::I64(i64::from_ne_bytes(op(a, b).to_ne_bytes())),
+        );
+        Ok(())
+    }
+
     /// Helper: process a binary integer operation on two SSA operands
     fn process_binary_int_op(
         &mut self,
@@ -728,41 +1003,42 @@ impl PhirProcessor {
         _name: &str,
         signed_op: impl Fn(i64, i64) -> i64,
         unsigned_op: impl Fn(u64, u64) -> u64,
-    ) {
+    ) -> Result<()> {
         if instruction.operands.len() < 2 || instruction.results.is_empty() {
-            return;
+            return Ok(());
         }
-        let left_id = instruction.operands[0].id;
-        let right_id = instruction.operands[1].id;
         let res_id = instruction.results[0].id;
 
-        let left = self.ssa_values.get(&left_id).cloned();
-        let right = self.ssa_values.get(&right_id).cloned();
-
-        if let (Some(l), Some(r)) = (left, right) {
-            let result = match (&l, &r) {
-                (TypedValue::I32(a), TypedValue::I32(b)) =>
-                {
-                    #[allow(clippy::cast_possible_truncation)]
-                    TypedValue::I32(signed_op(i64::from(*a), i64::from(*b)) as i32)
-                }
-                (TypedValue::I64(a), TypedValue::I64(b)) => TypedValue::I64(signed_op(*a, *b)),
-                (TypedValue::U32(a), TypedValue::U32(b)) =>
-                {
-                    #[allow(clippy::cast_possible_truncation)]
-                    TypedValue::U32(unsigned_op(u64::from(*a), u64::from(*b)) as u32)
-                }
-                (TypedValue::U64(a), TypedValue::U64(b)) => TypedValue::U64(unsigned_op(*a, *b)),
-                // Mixed types: coerce to I64
-                _ => {
-                    let a = l.to_u64().unwrap_or(0);
-                    let b = r.to_u64().unwrap_or(0);
-                    #[allow(clippy::cast_possible_wrap)]
-                    TypedValue::I64(signed_op(a as i64, b as i64))
-                }
-            };
-            self.ssa_values.insert(res_id, result);
-        }
+        let l = self.operand(instruction, 0)?.clone();
+        let r = self.operand(instruction, 1)?.clone();
+        let result = match (&l, &r) {
+            (TypedValue::I32(a), TypedValue::I32(b)) =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                TypedValue::I32(signed_op(i64::from(*a), i64::from(*b)) as i32)
+            }
+            (TypedValue::I64(a), TypedValue::I64(b)) => TypedValue::I64(signed_op(*a, *b)),
+            (TypedValue::U32(a), TypedValue::U32(b)) =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                TypedValue::U32(unsigned_op(u64::from(*a), u64::from(*b)) as u32)
+            }
+            (TypedValue::U64(a), TypedValue::U64(b)) => TypedValue::U64(unsigned_op(*a, *b)),
+            (TypedValue::Bool(a), TypedValue::Bool(b)) => {
+                TypedValue::Bool(unsigned_op(u64::from(*a), u64::from(*b)) & 1 != 0)
+            }
+            // Mixed types: coerce to I64
+            _ => {
+                let a = Self::integer_bits(&l, &instruction.operation.name())?;
+                let b = Self::integer_bits(&r, &instruction.operation.name())?;
+                TypedValue::I64(signed_op(
+                    i64::from_ne_bytes(a.to_ne_bytes()),
+                    i64::from_ne_bytes(b.to_ne_bytes()),
+                ))
+            }
+        };
+        self.ssa_values.insert(res_id, result);
+        Ok(())
     }
 
     /// Helper: process a unary integer operation
@@ -771,25 +1047,24 @@ impl PhirProcessor {
         instruction: &crate::phir::Instruction,
         signed_op: impl Fn(i64) -> i64,
         unsigned_op: impl Fn(u64) -> u64,
-    ) {
+    ) -> Result<()> {
         if instruction.operands.is_empty() || instruction.results.is_empty() {
-            return;
+            return Ok(());
         }
-        let op_id = instruction.operands[0].id;
         let res_id = instruction.results[0].id;
 
-        if let Some(val) = self.ssa_values.get(&op_id).cloned() {
-            let result = match val {
-                #[allow(clippy::cast_possible_truncation)]
-                TypedValue::I32(v) => TypedValue::I32(signed_op(i64::from(v)) as i32),
-                TypedValue::I64(v) => TypedValue::I64(signed_op(v)),
-                #[allow(clippy::cast_possible_truncation)]
-                TypedValue::U32(v) => TypedValue::U32(unsigned_op(u64::from(v)) as u32),
-                TypedValue::U64(v) => TypedValue::U64(unsigned_op(v)),
-                other => other,
-            };
-            self.ssa_values.insert(res_id, result);
-        }
+        let val = self.operand(instruction, 0)?.clone();
+        let result = match val {
+            #[allow(clippy::cast_possible_truncation)]
+            TypedValue::I32(v) => TypedValue::I32(signed_op(i64::from(v)) as i32),
+            TypedValue::I64(v) => TypedValue::I64(signed_op(v)),
+            #[allow(clippy::cast_possible_truncation)]
+            TypedValue::U32(v) => TypedValue::U32(unsigned_op(u64::from(v)) as u32),
+            TypedValue::U64(v) => TypedValue::U64(unsigned_op(v)),
+            other => other,
+        };
+        self.ssa_values.insert(res_id, result);
+        Ok(())
     }
 
     /// Helper: process a binary float operation
@@ -797,40 +1072,39 @@ impl PhirProcessor {
         &mut self,
         instruction: &crate::phir::Instruction,
         op: impl Fn(f64, f64) -> f64,
-    ) {
+    ) -> Result<()> {
         if instruction.operands.len() < 2 || instruction.results.is_empty() {
-            return;
+            return Ok(());
         }
-        let left_id = instruction.operands[0].id;
-        let right_id = instruction.operands[1].id;
         let res_id = instruction.results[0].id;
 
-        if let (Some(TypedValue::F64(a)), Some(TypedValue::F64(b))) = (
-            self.ssa_values.get(&left_id),
-            self.ssa_values.get(&right_id),
-        ) {
+        if let (TypedValue::F64(a), TypedValue::F64(b)) =
+            (self.operand(instruction, 0)?, self.operand(instruction, 1)?)
+        {
             self.ssa_values.insert(res_id, TypedValue::F64(op(*a, *b)));
         }
+        Ok(())
     }
 
     /// Helper: process a comparison operation returning Bool
     fn process_comparison(
         &mut self,
         instruction: &crate::phir::Instruction,
+        unsigned: bool,
         cmp_fn: impl Fn(std::cmp::Ordering) -> bool,
-    ) {
+    ) -> Result<()> {
         if instruction.operands.len() < 2 || instruction.results.is_empty() {
-            return;
+            return Ok(());
         }
-        let left_id = instruction.operands[0].id;
-        let right_id = instruction.operands[1].id;
         let res_id = instruction.results[0].id;
 
-        let left = self.ssa_values.get(&left_id).cloned();
-        let right = self.ssa_values.get(&right_id).cloned();
-
-        if let (Some(l), Some(r)) = (left, right) {
-            let ordering = match (&l, &r) {
+        let l = self.operand(instruction, 0)?.clone();
+        let r = self.operand(instruction, 1)?.clone();
+        let ordering = if unsigned {
+            Self::integer_bits(&l, &instruction.operation.name())?
+                .cmp(&Self::integer_bits(&r, &instruction.operation.name())?)
+        } else {
+            match (&l, &r) {
                 (TypedValue::I32(a), TypedValue::I32(b)) => a.cmp(b),
                 (TypedValue::I64(a), TypedValue::I64(b)) => a.cmp(b),
                 (TypedValue::U32(a), TypedValue::U32(b)) => a.cmp(b),
@@ -838,14 +1112,15 @@ impl PhirProcessor {
                 (TypedValue::Bool(a), TypedValue::Bool(b)) => a.cmp(b),
                 // Mixed: coerce to i64
                 _ => {
-                    let a = l.to_u64().unwrap_or(0);
-                    let b = r.to_u64().unwrap_or(0);
-                    a.cmp(&b)
+                    let a = Self::integer_bits(&l, &instruction.operation.name())?;
+                    let b = Self::integer_bits(&r, &instruction.operation.name())?;
+                    i64::from_ne_bytes(a.to_ne_bytes()).cmp(&i64::from_ne_bytes(b.to_ne_bytes()))
                 }
-            };
-            self.ssa_values
-                .insert(res_id, TypedValue::Bool(cmp_fn(ordering)));
-        }
+            }
+        };
+        self.ssa_values
+            .insert(res_id, TypedValue::Bool(cmp_fn(ordering)));
+        Ok(())
     }
 
     /// Process a builtin operation
@@ -879,7 +1154,14 @@ impl PhirProcessor {
     ///
     /// Returns an error if measurement result handling fails
     pub fn handle_measurement_results(&mut self, outcomes: &[u8]) -> Result<()> {
-        // Process measurement outcomes
+        if outcomes.len() != self.pending_measurements.len() {
+            return Err(PhirError::internal(format!(
+                "Measurement delivery has {} outcomes for {} pending measurements",
+                outcomes.len(),
+                self.pending_measurements.len()
+            )));
+        }
+        let pending_measurements = std::mem::take(&mut self.pending_measurements);
 
         // Create a map to track which base variable each measurement SSA ID belongs to
         let mut measurement_to_base: BTreeMap<u32, (String, u32, usize)> = BTreeMap::new();
@@ -899,8 +1181,7 @@ impl PhirProcessor {
 
         // First, store individual measurement outcomes as bools
         for (i, &outcome) in outcomes.iter().enumerate() {
-            if i < self.measurement_mappings.len() {
-                let ssa_id = self.measurement_mappings[i];
+            if let Some(ssa_id) = pending_measurements[i] {
                 let value = TypedValue::Bool(outcome != 0);
                 // Store measurement outcome
                 self.ssa_values.insert(ssa_id, value);
@@ -919,34 +1200,29 @@ impl PhirProcessor {
         // Now combine measurement results for integer variables
         let mut combined_values: BTreeMap<u32, u32> = BTreeMap::new();
 
-        // Process each measurement and accumulate bits for its base variable
+        // Update only the bits delivered in this batch, retaining earlier batches.
         for (i, &outcome) in outcomes.iter().enumerate() {
-            if i < self.measurement_mappings.len() {
-                let meas_ssa_id = self.measurement_mappings[i];
-
-                if let Some((var_name, base_ssa_id, bit_offset)) =
+            if let Some(meas_ssa_id) = pending_measurements[i]
+                && let Some((var_name, base_ssa_id, bit_offset)) =
                     measurement_to_base.get(&meas_ssa_id)
-                {
-                    // Measurement contributes to variable bit
-
-                    // Only process if it's an integer variable
-                    if let Ok(Some(
-                        TypedValue::I64(_)
-                        | TypedValue::U32(_)
-                        | TypedValue::U64(_)
-                        | TypedValue::I32(_),
-                    )) = self.environment.get_variable(var_name)
-                    {
-                        let current_value = combined_values.entry(*base_ssa_id).or_insert(0);
-                        if outcome != 0 {
-                            *current_value |= 1 << bit_offset;
-                        }
-                    }
+                && let Ok(Some(
+                    value @ (TypedValue::I64(_)
+                    | TypedValue::U32(_)
+                    | TypedValue::U64(_)
+                    | TypedValue::I32(_)),
+                )) = self.environment.get_variable(var_name)
+            {
+                let bytes = Self::integer_bits(value, "measurement packing")?.to_le_bytes();
+                let previous = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                let current_value = combined_values.entry(*base_ssa_id).or_insert(previous);
+                let mask = 1 << bit_offset;
+                *current_value &= !mask;
+                if outcome != 0 {
+                    *current_value |= mask;
                 }
             }
         }
 
-        // Store the combined values for integer variables
         // Store the combined values for integer variables
         for (base_ssa_id, combined_value) in combined_values {
             // Find the variable name for this SSA ID
@@ -981,7 +1257,15 @@ impl PhirProcessor {
 
     /// Finalize export values after measurements are processed
     /// This should be called after `handle_measurement_results` to prepare exports
-    pub fn finalize_exports(&mut self) {
+    ///
+    /// # Errors
+    /// Returns an error when an export contains an aggregate.
+    pub fn finalize_exports(&mut self) -> Result<()> {
+        for id in self.export_mappings.keys() {
+            if matches!(self.ssa_values.get(id), Some(TypedValue::Aggregate(_))) {
+                return Err(PhirError::internal("arith.result: cannot export aggregate"));
+            }
+        }
         // Don't clear previous exports - they should persist and be updated
         // self.final_exports.clear();
 
@@ -1036,7 +1320,7 @@ impl PhirProcessor {
                 // SSA not found for export
             }
         }
-        // Export processing complete
+        Ok(())
     }
 
     /// Get the number of qubits used in the program
@@ -1207,29 +1491,12 @@ impl PhirProcessor {
         &mut self,
         mem_op: &MemoryOp,
         instruction: &crate::phir::Instruction,
-    ) {
+    ) -> Result<()> {
         match mem_op {
             MemoryOp::Alloc(alloc_type) if !instruction.results.is_empty() => {
                 let ptr_id = instruction.results[0].id;
                 let default = match alloc_type {
-                    #[allow(clippy::match_same_arms)]
-                    crate::ops::AllocType::Scalar(ty) => match ty {
-                        crate::types::Type::Int(
-                            crate::types::IntWidth::I8
-                            | crate::types::IntWidth::I16
-                            | crate::types::IntWidth::I32,
-                        ) => TypedValue::I32(0),
-                        crate::types::Type::Int(_) => TypedValue::I64(0),
-                        crate::types::Type::UInt(
-                            crate::types::IntWidth::I8
-                            | crate::types::IntWidth::I16
-                            | crate::types::IntWidth::I32,
-                        ) => TypedValue::U32(0),
-                        crate::types::Type::UInt(_) => TypedValue::U64(0),
-                        crate::types::Type::Bool => TypedValue::Bool(false),
-                        crate::types::Type::Float(_) => TypedValue::F64(0.0),
-                        _ => TypedValue::I64(0),
-                    },
+                    crate::ops::AllocType::Scalar(ty) => TypedValue::zero(ty)?,
                     _ => TypedValue::I64(0),
                 };
                 self.memory.insert(ptr_id, default);
@@ -1239,28 +1506,31 @@ impl PhirProcessor {
             {
                 let ptr_id = instruction.operands[0].id;
                 let res_id = instruction.results[0].id;
-                if let Some(val) = self.memory.get(&ptr_id) {
-                    self.ssa_values.insert(res_id, val.clone());
-                }
+                let val = self.memory.get(&ptr_id).ok_or_else(|| {
+                    PhirError::internal(format!(
+                        "{}: missing operand 0, SSA id {ptr_id} (memory)",
+                        instruction.operation.name()
+                    ))
+                })?;
+                self.ssa_values.insert(res_id, val.clone());
             }
             MemoryOp::Store if instruction.operands.len() >= 2 => {
-                let val_id = instruction.operands[0].id;
                 let ptr_id = instruction.operands[1].id;
-                if let Some(val) = self.ssa_values.get(&val_id) {
-                    self.memory.insert(ptr_id, val.clone());
-                }
+                let val = self.operand(instruction, 0)?;
+                self.memory.insert(ptr_id, val.clone());
             }
             _ => {} // Skip other memory ops
         }
+        Ok(())
     }
 
     /// Process a Result operation - immediately export the value
-    fn process_result_operation(&mut self, instruction: &crate::phir::Instruction) {
+    fn process_result_operation(&mut self, instruction: &crate::phir::Instruction) -> Result<()> {
         // Result operations export values immediately
         // {"cop": "Result", "args": ["m"], "returns": ["bell_result"]}
 
         if !instruction.operands.is_empty() {
-            let operand_ssa_id = instruction.operands[0].id;
+            let value = self.operand(instruction, 0)?.clone();
 
             // Get the export name from attributes
             let mut export_name = None;
@@ -1275,39 +1545,54 @@ impl PhirProcessor {
 
             if let Some(name) = export_name {
                 // Get the value to export
-                if let Some(value) = self.ssa_values.get(&operand_ssa_id) {
-                    self.final_exports.insert(name, value.clone());
-                }
+                self.final_exports.insert(name, value);
             }
         }
+        Ok(())
     }
 
-    /// Process a `ConstInt` operation - creates an integer constant
-    fn process_const_int_operation(&mut self, value: i64, instruction: &crate::phir::Instruction) {
-        if !instruction.results.is_empty() {
-            let result_ssa_id = instruction.results[0].id;
-            // Store the constant value as U32 for bit operations
-            // Quantum operations typically use small constants, wrapping is intentional
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let value_u32 = value as u32;
-            self.ssa_values
-                .insert(result_ssa_id, TypedValue::U32(value_u32));
+    /// Store an integer bit pattern using the instruction's declared result type.
+    fn integer_storage(bits: u64, instruction: &crate::phir::Instruction) -> Result<TypedValue> {
+        use crate::types::{IntWidth, Type};
+        Ok(match instruction.result_types.first() {
+            Some(Type::Int(_)) => TypedValue::I64(i64::from_ne_bytes(bits.to_ne_bytes())),
+            Some(Type::UInt(IntWidth::I32)) => {
+                let bytes = bits.to_le_bytes();
+                TypedValue::U32(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            }
+            Some(Type::UInt(IntWidth::I64)) => TypedValue::U64(bits),
+            Some(Type::Bool) => TypedValue::Bool(bits & 1 != 0),
+            ty => {
+                return Err(PhirError::internal(format!(
+                    "Unsupported integer result type: {ty:?}"
+                )));
+            }
+        })
+    }
+
+    /// Process a `ConstInt` using its declared storage type.
+    fn process_const_int_operation(
+        &mut self,
+        value: i64,
+        instruction: &crate::phir::Instruction,
+    ) -> Result<()> {
+        if let Some(result) = instruction.results.first() {
+            let value =
+                Self::integer_storage(u64::from_ne_bytes(value.to_ne_bytes()), instruction)?;
+            self.ssa_values.insert(result.id, value);
         }
+        Ok(())
     }
 
-    /// Process a Bitcast operation - converts bool to int
-    fn process_bitcast_operation(&mut self, instruction: &crate::phir::Instruction) {
+    /// Copy an integer pattern or convert a boolean to 0/1 in the declared storage.
+    fn process_bitcast_operation(&mut self, instruction: &crate::phir::Instruction) -> Result<()> {
         if !instruction.operands.is_empty() && !instruction.results.is_empty() {
-            let operand_ssa_id = instruction.operands[0].id;
-            let result_ssa_id = instruction.results[0].id;
-
-            // Get the bool value and convert to int
-            if let Some(TypedValue::Bool(bool_val)) = self.ssa_values.get(&operand_ssa_id) {
-                let int_val = u32::from(*bool_val);
-                self.ssa_values
-                    .insert(result_ssa_id, TypedValue::U32(int_val));
-            }
+            let bits =
+                Self::integer_bits(self.operand(instruction, 0)?, &instruction.operation.name())?;
+            let value = Self::integer_storage(bits, instruction)?;
+            self.ssa_values.insert(instruction.results[0].id, value);
         }
+        Ok(())
     }
 }
 

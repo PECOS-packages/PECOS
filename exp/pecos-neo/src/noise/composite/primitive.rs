@@ -1567,7 +1567,7 @@ pub mod primitives {
     /// Probability scaled by gate angle: p = `base_prob` * |angle/π|^power.
     ///
     /// This models angle-dependent error rates for parameterized gates like
-    /// RZZ, RXX, RYY, CRZ. The scaling factor is |θ/π|^power, which:
+    /// RZZ, RXX, RYY. The scaling factor is |θ/π|^power, which:
     /// - Is 0 when angle = 0 (no error for identity-like gates)
     /// - Is 1 when angle = π (full error for maximally-entangling gates)
     ///
@@ -1806,7 +1806,7 @@ mod tests {
         assert!(response.skips_gate());
         // X gate should NOT be injected because we stopped early
         let gates = response.collect_gates();
-        assert!(gates.is_empty());
+        assert_eq!(gates, []);
     }
 
     #[test]

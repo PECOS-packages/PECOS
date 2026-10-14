@@ -225,12 +225,6 @@ class TestRoundTripGuppy:
 class TestRoundTripStim:
     """Round-trip tests through Stim generation."""
 
-    @pytest.fixture
-    def _require_stim(self) -> object:
-        """Skip tests if stim is not available."""
-        return pytest.importorskip("stim")
-
-    @pytest.mark.usefixtures("_require_stim")
     def test_bell_state_stim_simulation(self) -> None:
         """Test Bell state can be simulated with Stim."""
         from pecos.slr.ast.codegen import ast_to_stim
@@ -256,7 +250,6 @@ class TestRoundTripStim:
         for sample in samples:
             assert sample[0] == sample[1], "Bell state qubits should be correlated"
 
-    @pytest.mark.usefixtures("_require_stim")
     def test_ghz_state_stim_simulation(self) -> None:
         """Test GHZ state can be simulated with Stim."""
         from pecos.slr.ast.codegen import ast_to_stim
@@ -283,7 +276,6 @@ class TestRoundTripStim:
         for sample in samples:
             assert sample[0] == sample[1] == sample[2], "GHZ state qubits should all be correlated"
 
-    @pytest.mark.usefixtures("_require_stim")
     def test_repeat_block_preserved(self) -> None:
         """Test repeat blocks are preserved in Stim."""
         from pecos.slr.ast.codegen import ast_to_stim_str
@@ -357,12 +349,6 @@ class TestRoundTripQuantumCircuit:
 class TestRoundTripQIR:
     """Round-trip tests through QIR generation."""
 
-    @pytest.fixture
-    def _require_llvm(self) -> object:
-        """Skip tests if LLVM is not available."""
-        return pytest.importorskip("pecos_rslib.llvm")
-
-    @pytest.mark.usefixtures("_require_llvm")
     def test_bell_state_qir_structure(self) -> None:
         """Test Bell state generates valid QIR."""
         from pecos.slr.ast.codegen import ast_to_qir
@@ -382,7 +368,6 @@ class TestRoundTripQIR:
         assert "__quantum__qis__cnot__body" in qir
         assert "ret void" in qir
 
-    @pytest.mark.usefixtures("_require_llvm")
     def test_qir_qubit_count_attribute(self) -> None:
         """Test QIR includes correct qubit count attribute."""
         from pecos.slr.ast.codegen import ast_to_qir
@@ -397,7 +382,6 @@ class TestRoundTripQIR:
 
         assert 'required_num_qubits"="5"' in qir
 
-    @pytest.mark.usefixtures("_require_llvm")
     def test_qir_measurement_count_attribute(self) -> None:
         """Test QIR includes correct measurement count attribute."""
         from pecos.slr.ast.codegen import ast_to_qir

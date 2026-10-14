@@ -93,8 +93,8 @@ pub enum ExportedSymbol {
         params: Vec<(String, TypeExpr)>,
         return_type: Option<TypeExpr>,
     },
-    /// A constant declaration.
-    Const { name: String },
+    /// A constant declaration with its declared type, when present.
+    Const { name: String, ty: Option<TypeExpr> },
     /// A type declaration (struct, enum, union).
     Type { name: String },
     /// An error set declaration (classical errors).
@@ -148,6 +148,7 @@ impl Module {
                         binding.name.clone(),
                         ExportedSymbol::Const {
                             name: binding.name.clone(),
+                            ty: binding.ty.clone(),
                         },
                     );
                 }
@@ -250,39 +251,79 @@ impl ModuleLoader {
         // Resolve the import path
         let resolved_path = self.resolve_path(import_path, from_file)?;
 
-        // Check cache
-        if self.cache.contains_key(&resolved_path) {
-            return Ok(self.cache.get(&resolved_path).unwrap());
+        // Check for circular imports
+        if let Some(cycle_start) = self.loading.iter().position(|path| path == &resolved_path) {
+            let mut cycle = self.loading[cycle_start..]
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>();
+            cycle.push(resolved_path.display().to_string());
+            return Err(ModuleError::CircularImport {
+                path: cycle.join(" -> "),
+            });
         }
 
-        // Check for circular imports
-        if self.loading.contains(&resolved_path) {
-            return Err(ModuleError::CircularImport {
-                path: resolved_path.display().to_string(),
-            });
+        // Check cache after the loading stack so an in-progress module can
+        // never hide a cycle.
+        if self.cache.contains_key(&resolved_path) {
+            return Ok(self
+                .cache
+                .get(&resolved_path)
+                .expect("cache key was checked immediately above"));
         }
 
         // Mark as loading
         self.loading.push(resolved_path.clone());
 
-        // Load and parse the file
-        let source = fs::read_to_string(&resolved_path).map_err(|e| ModuleError::ReadError {
-            path: resolved_path.display().to_string(),
-            source: e,
-        })?;
+        let result: ModuleResult<Module> = (|| {
+            // Load and parse the file
+            let source =
+                fs::read_to_string(&resolved_path).map_err(|e| ModuleError::ReadError {
+                    path: resolved_path.display().to_string(),
+                    source: e,
+                })?;
 
-        let filename = resolved_path.display().to_string();
-        let program = crate::parse_file(&source, &filename)?;
+            let filename = resolved_path.display().to_string();
+            let program = crate::parse_file(&source, &filename)?;
 
-        // Create module
-        let module = Module::new(resolved_path.clone(), program);
+            // Imports are module dependencies, so resolve them while the
+            // importing module remains on the loading stack.
+            let imports = program
+                .declarations
+                .iter()
+                .filter_map(|decl| {
+                    let TopLevelDecl::Binding(binding) = decl else {
+                        return None;
+                    };
+                    let crate::ast::Expr::Builtin(import) = binding.value.as_ref()? else {
+                        return None;
+                    };
+                    if import.name != "import" {
+                        return None;
+                    }
+                    match import.args.first() {
+                        Some(crate::ast::Expr::StringLit(path)) => Some(path.value.clone()),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            for import in imports {
+                self.load(&import, Some(&resolved_path))?;
+            }
 
-        // Remove from loading
-        self.loading.retain(|p| p != &resolved_path);
+            Ok(Module::new(resolved_path.clone(), program))
+        })();
+
+        let popped = self.loading.pop();
+        debug_assert_eq!(popped.as_ref(), Some(&resolved_path));
+        let module = result?;
 
         // Cache and return
         self.cache.insert(resolved_path.clone(), module);
-        Ok(self.cache.get(&resolved_path).unwrap())
+        Ok(self
+            .cache
+            .get(&resolved_path)
+            .expect("module was inserted immediately above"))
     }
 
     /// Resolve an import path to an absolute path.
@@ -568,14 +609,38 @@ mod tests {
         writeln!(file, "a := @import(\"a.zlp\");").unwrap();
         writeln!(file, "pub fn from_b() -> unit {{}}").unwrap();
 
-        // The loader itself doesn't detect cycles during parsing
-        // (that would require semantic analysis to process @import)
-        // But we can test the loading mechanism
         let mut loader = ModuleLoader::new();
+        let error = loader
+            .load("a.zlp", Some(&temp_dir.path().join("main.zlp")))
+            .expect_err("cyclic imports must be rejected by the module loader");
+        let ModuleError::CircularImport { path } = error else {
+            panic!("expected CircularImport, got {error:?}");
+        };
+        assert!(path.contains("a.zlp"), "cycle did not name a.zlp: {path}");
+        assert!(path.contains("b.zlp"), "cycle did not name b.zlp: {path}");
+    }
 
-        // Loading a.zlp should work (doesn't process imports during parse)
-        let result = loader.load("a.zlp", Some(&temp_dir.path().join("main.zlp")));
-        assert!(result.is_ok());
+    #[test]
+    fn test_import_parse_error_does_not_poison_loading_stack() {
+        let temp_dir = TempDir::new().unwrap();
+        let main_path = temp_dir.path().join("main.zlp");
+        let broken_path = temp_dir.path().join("broken.zlp");
+
+        let mut main = fs::File::create(&main_path).unwrap();
+        writeln!(main, "broken := @import(\"broken.zlp\");").unwrap();
+        let mut broken = fs::File::create(&broken_path).unwrap();
+        writeln!(broken, "pub fn broken( -> unit {{").unwrap();
+
+        let mut loader = ModuleLoader::new();
+        for attempt in 1..=2 {
+            let error = loader
+                .load("main.zlp", Some(&temp_dir.path().join("entry.zlp")))
+                .expect_err("a malformed imported module must fail");
+            assert!(
+                matches!(error, ModuleError::ParseError { ref path, .. } if path.ends_with("broken.zlp")),
+                "attempt {attempt} reported the wrong error: {error:?}"
+            );
+        }
     }
 
     #[test]

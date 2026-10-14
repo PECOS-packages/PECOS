@@ -30,7 +30,10 @@ from pecos.qec.surface._clifford_deformation import (
     normalize_surface_frame_policy,
     resolve_surface_clifford_frame,
 )
-from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+from pecos.qec.surface._detection_events import (
+    MissingObservableReferenceError,
+    extract_detection_events_and_observables,
+)
 from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
@@ -83,6 +86,8 @@ from pecos.qec.surface.decode import (
     surface_code_memory,
     syndromes_to_detection_events,
 )
+from pecos.qec.surface.hook_injection import HookInjection, hook_injection
+from pecos.qec.surface.injection import StateInjection, injection_correction_supports, state_injection
 from pecos.qec.surface.layouts import (
     StabilizerSupport,
     compute_rotated_x_stabilizers,
@@ -125,6 +130,11 @@ from pecos.qec.surface.schedule import (
     compute_cnot_schedule,
     get_stab_schedule,
 )
+from pecos.qec.surface.teleportation_decision import (
+    DecodedDecisionRun,
+    TeleportationDecisionModel,
+    t_teleportation_decision_model,
+)
 
 
 def __getattr__(name: str) -> type[NoiseParameters]:
@@ -141,6 +151,14 @@ def __getattr__(name: str) -> type[NoiseParameters]:
 
 
 __all__ = [
+    "TeleportationDecisionModel",
+    "DecodedDecisionRun",
+    "t_teleportation_decision_model",
+    "HookInjection",
+    "hook_injection",
+    "StateInjection",
+    "state_injection",
+    "injection_correction_supports",
     # Twirling config (Pauli-frame randomization)
     "GuppyRngMaskConfig",
     "TwirlConfig",
@@ -196,6 +214,7 @@ __all__ = [
     "build_stim_circuit_from_patch",
     "decode_native_samples",
     "demask_pauli_frame_records",
+    "MissingObservableReferenceError",
     "extract_detection_events_and_observables",
     "generate_circuit_level_dem",
     "generate_dem_from_patch",

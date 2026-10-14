@@ -1052,7 +1052,6 @@ fn build_noise_model(
 /// `HybridEngine.run()` output format.
 #[pyfunction]
 #[pyo3(signature = (phir_json, *, shots=1, seed=None, quantum="stabilizer", foreign_object=None, noise_model=None))]
-#[allow(clippy::too_many_arguments)]
 pub fn run_phir_sim(
     py: Python<'_>,
     phir_json: &str,

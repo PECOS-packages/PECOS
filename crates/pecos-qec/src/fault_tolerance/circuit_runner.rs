@@ -17,8 +17,9 @@
 
 use super::pauli_prop_checker::{
     CircuitIO, FaultClass, PropagationResult, anticommutes_with_logical, classify_fault,
-    get_syndrome_flips, propagate_faults,
+    get_syndrome_flips, propagate_faults_validated,
 };
+use super::propagator::UnsupportedGateError;
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, SpacetimeLocation,
 };
@@ -420,6 +421,16 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
         GateType::PZ => {
             sim.pz(&qubits);
         }
+        GateType::CS
+        | GateType::CSdg
+        | GateType::CCZ
+        | GateType::CCX
+        | GateType::CH
+        | GateType::T
+        | GateType::Tdg => panic!(
+            "Clifford circuit runner does not support {:?}",
+            gate.gate_type
+        ),
         _ => {}
     }
 }
@@ -438,7 +449,21 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
 /// # Returns
 ///
 /// The simulator state after execution (for inspection).
+///
+/// # Errors
+///
+/// Returns the first gate that cannot be Pauli-propagated, with its source location.
 pub fn run_circuit_with_faults<S: CliffordGateable>(
+    circuit: &TickCircuit,
+    sim: &mut S,
+    faults: &FaultConfiguration,
+) -> Result<(), UnsupportedGateError> {
+    super::propagator::validate_tick_circuit(circuit)?;
+    run_circuit_with_faults_validated(circuit, sim, faults);
+    Ok(())
+}
+
+fn run_circuit_with_faults_validated<S: CliffordGateable>(
     circuit: &TickCircuit,
     sim: &mut S,
     faults: &FaultConfiguration,
@@ -547,7 +572,7 @@ enum CircuitDistanceStoppingRule {
 /// circuit.tick().cx(&[(0, 1)]);
 /// circuit.tick().mz(&[0, 1]);
 ///
-/// let checker = FaultChecker::new(&circuit)
+/// let checker = FaultChecker::new(&circuit).unwrap()
 ///     .with_config(FaultCheckConfig::new().with_weight(1));
 ///
 /// // Check all faults, returning true for any "failure"
@@ -558,6 +583,9 @@ enum CircuitDistanceStoppingRule {
 /// );
 /// assert!(result.is_fault_tolerant());
 /// ```
+///
+/// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct FaultChecker<'a> {
     circuit: &'a TickCircuit,
     config: FaultCheckConfig,
@@ -567,16 +595,19 @@ pub struct FaultChecker<'a> {
 
 impl<'a> FaultChecker<'a> {
     /// Creates a new fault checker for the given circuit.
-    #[must_use]
-    pub fn new(circuit: &'a TickCircuit) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn new(circuit: &'a TickCircuit) -> Result<Self, UnsupportedGateError> {
+        super::propagator::validate_tick_circuit(circuit)?;
         let locations = extract_spacetime_locations(circuit, false);
         let io = CircuitIO::from_circuit(circuit);
-        Self {
+        Ok(Self {
             circuit,
             config: FaultCheckConfig::default(),
             locations,
             io,
-        }
+        })
     }
 
     /// Sets the fault check configuration.
@@ -680,7 +711,7 @@ impl<'a> FaultChecker<'a> {
             let fault_iter = super::PauliFaultIterator::new(self.locations.clone(), weight, config);
 
             for fault_config in fault_iter {
-                let prop = propagate_faults(self.circuit, &fault_config);
+                let prop = propagate_faults_validated(self.circuit, &fault_config);
                 let (z_syndrome_flips, x_syndrome_flips) =
                     get_syndrome_flips(&prop, z_ancillas, x_ancillas);
                 let logical_errors = logicals
@@ -816,7 +847,7 @@ impl<'a> FaultChecker<'a> {
             let mut sim = sim_factory();
 
             // Run circuit with faults
-            run_circuit_with_faults(self.circuit, &mut sim, &fault_config);
+            run_circuit_with_faults_validated(self.circuit, &mut sim, &fault_config);
 
             // Check for failure
             if failure_fn(&sim) {
@@ -869,7 +900,7 @@ impl<'a> FaultChecker<'a> {
             total_tested += 1;
 
             // Use PauliProp to efficiently classify the fault
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let classification = classify_fault(&prop, z_ancillas, x_ancillas, logicals);
 
             match classification {
@@ -928,7 +959,7 @@ impl<'a> FaultChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let classification = classify_fault(&prop, z_ancillas, x_ancillas, logicals);
 
             if matches!(classification, FaultClass::UndetectableLogicalError) {
@@ -974,7 +1005,7 @@ impl<'a> FaultChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let classification = classify_fault(&prop, z_ancillas, x_ancillas, logicals);
 
             // Both UndetectableLogicalError and UndetectableStabilizer have no syndrome
@@ -1018,7 +1049,7 @@ impl<'a> FaultChecker<'a> {
         for fault_config in fault_iter {
             total_tested += 1;
 
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
 
             // Count non-identity Paulis on output qubits
             let output_weight: usize = output_qubits
@@ -1078,12 +1109,12 @@ impl<'a> FaultChecker<'a> {
             total_tested += 1;
 
             // Run both Pauli propagation and full simulation
-            let prop = propagate_faults(self.circuit, &fault_config);
+            let prop = propagate_faults_validated(self.circuit, &fault_config);
             let classification = classify_fault(&prop, z_ancillas, x_ancillas, logicals);
 
             // Run full simulator
             let mut sim = sim_factory();
-            run_circuit_with_faults(self.circuit, &mut sim, &fault_config);
+            run_circuit_with_faults_validated(self.circuit, &mut sim, &fault_config);
 
             // Check for failure using both sources of information
             if sim_failure_fn(&sim, classification) {
@@ -1107,10 +1138,42 @@ mod tests {
     use pecos_simulators::SparseStab;
 
     #[test]
+    fn diagonal_gates_are_rejected_by_individual_and_tick_dispatch() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = pecos_core::Gate::simple(
+                gt,
+                (0..gt.quantum_arity()).map(QubitId).collect::<Vec<_>>(),
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let mut sim = pecos_simulators::SparseStab::new(3);
+                    apply_gate(&mut sim, &gate);
+                })
+                .is_err()
+            );
+            for count in [1, 8] {
+                let mut circuit = pecos_quantum::TickCircuit::new();
+                let mut tick = circuit.tick();
+                tick.try_add_gate(gate.clone()).unwrap();
+                for q in 3..(3 + count) {
+                    tick.h(&[q]);
+                }
+                assert!(
+                    std::panic::catch_unwind(|| {
+                        let mut sim = pecos_simulators::SparseStab::new(3 + count);
+                        apply_tick_gates(&mut sim, circuit.get_tick(0).unwrap());
+                    })
+                    .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_extract_spacetime_locations_empty_circuit() {
         let circuit = TickCircuit::new();
         let locations = extract_spacetime_locations(&circuit, false);
-        assert!(locations.is_empty());
+        assert_eq!(locations, []);
     }
 
     #[test]
@@ -1226,7 +1289,7 @@ mod tests {
         circuit.tick().h(&[0]);
         circuit.tick().cx(&[(0, 1)]);
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
         assert_eq!(checker.locations().len(), 2);
     }
 
@@ -1251,7 +1314,7 @@ mod tests {
         let mut sim = SparseStab::new(2);
         let empty_faults = FaultConfiguration::new();
 
-        run_circuit_with_faults(&circuit, &mut sim, &empty_faults);
+        run_circuit_with_faults(&circuit, &mut sim, &empty_faults).unwrap();
 
         // After Bell state prep, measuring both qubits should give correlated results
         // The state is (|00> + |11>)/sqrt(2)
@@ -1270,7 +1333,7 @@ mod tests {
         );
         let faults = FaultConfiguration::with_faults(vec![fault]);
 
-        run_circuit_with_faults(&circuit, &mut sim, &faults);
+        run_circuit_with_faults(&circuit, &mut sim, &faults).unwrap();
         // Circuit runs without crash - fault was injected
     }
 
@@ -1283,7 +1346,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         // For Bell state, we define "failure" as never happening for this test
         // (we just want to verify the iteration works)
@@ -1366,7 +1429,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         // Count how many fault configurations we test
         let result = checker.check(|_sim: &SparseStab| false, || SparseStab::new(5));
@@ -1391,7 +1454,7 @@ mod tests {
             .x_only()
             .stop_on_first(false);
 
-        let checker_x = FaultChecker::new(&circuit).with_config(config_x);
+        let checker_x = FaultChecker::new(&circuit).unwrap().with_config(config_x);
         let result_x = checker_x.check(|_sim: &SparseStab| false, || SparseStab::new(5));
 
         // Test Z-only mode
@@ -1400,7 +1463,7 @@ mod tests {
             .z_only()
             .stop_on_first(false);
 
-        let checker_z = FaultChecker::new(&circuit).with_config(config_z);
+        let checker_z = FaultChecker::new(&circuit).unwrap().with_config(config_z);
         let result_z = checker_z.check(|_sim: &SparseStab| false, || SparseStab::new(5));
 
         // Test all-paulis mode
@@ -1409,7 +1472,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker_all = FaultChecker::new(&circuit).with_config(config_all);
+        let checker_all = FaultChecker::new(&circuit).unwrap().with_config(config_all);
         let result_all = checker_all.check(|_sim: &SparseStab| false, || SparseStab::new(5));
 
         // X-only and Z-only should each test fewer configurations than all-paulis
@@ -1429,7 +1492,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
         let result = checker.check(|_sim: &SparseStab| false, || SparseStab::new(2));
 
         // Weight-2 should test more configurations than weight-1
@@ -1438,7 +1501,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker_w1 = FaultChecker::new(&circuit).with_config(config_w1);
+        let checker_w1 = FaultChecker::new(&circuit).unwrap().with_config(config_w1);
         let result_w1 = checker_w1.check(|_sim: &SparseStab| false, || SparseStab::new(2));
 
         assert!(result.total_tested > result_w1.total_tested);
@@ -1457,7 +1520,7 @@ mod tests {
             .x_only() // X flips will change measurement outcome
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         // Define failure as: measurement gave |1> instead of |0>
         // We detect this by checking if an X error was applied
@@ -1556,7 +1619,7 @@ mod tests {
             .z_only() // Only Z errors for X-stabilizer measurement
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
         let result = checker.check(|_sim: &SparseStab| false, || SparseStab::new(10));
 
         println!(
@@ -1577,7 +1640,7 @@ mod tests {
         circuit.tick().cx(&[(1, 3), (2, 4)]);
         circuit.tick().mz(&[3, 4]); // Only ancillas measured
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // Should detect input and output qubits
         assert!(checker.has_input_qubits(), "Should detect input qubits");
@@ -1599,12 +1662,16 @@ mod tests {
         circuit.tick().cx(&[(0, 2)]);
         // No measurement - outputs go to next stage
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         assert!(!checker.has_input_qubits(), "State prep has no inputs");
         assert!(checker.has_output_qubits(), "State prep has outputs");
 
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
         assert_eq!(checker.output_qubits().len(), 3);
     }
 
@@ -1613,7 +1680,7 @@ mod tests {
         // Self-contained: all qubits prepared and measured
         let circuit = bell_state_circuit(); // Prep and no measurement
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // Bell state circuit preps both qubits but doesn't measure
         assert!(!checker.has_input_qubits(), "Self-contained has no inputs");
@@ -1626,7 +1693,7 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().mz(&[0, 1, 2]); // Measure all
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         assert!(checker.has_input_qubits(), "Final measurement has inputs");
         assert!(
@@ -1635,7 +1702,11 @@ mod tests {
         );
 
         assert_eq!(checker.input_qubits().len(), 3);
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
     }
 
     // =========================================================================
@@ -1649,7 +1720,7 @@ mod tests {
         // Ancilla qubits 3,4 are prepared and measured
         let circuit = three_qubit_bitflip_syndrome_circuit();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // Data qubits should be detected as inputs (used in CX but not prepared)
         assert!(checker.has_input_qubits());
@@ -1730,7 +1801,7 @@ mod tests {
         // 7 data qubits (0-6), 3 ancilla qubits (7,8,9)
         let circuit = steane_code_x_syndrome_circuit();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // All 7 data qubits should be inputs
         assert!(checker.has_input_qubits());
@@ -1825,14 +1896,18 @@ mod tests {
         // State preparation: all qubits prepared, none measured
         let circuit = steane_code_state_prep();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // No input qubits (all are prepared within the gadget)
         assert!(
             !checker.has_input_qubits(),
             "State prep should have no inputs"
         );
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
 
         // All 7 qubits should be outputs
         assert!(
@@ -1855,7 +1930,11 @@ mod tests {
         assert_eq!(checker.ancilla_qubits().len(), 7);
 
         // No measured qubits
-        assert!(checker.measured_qubits().is_empty());
+        let measured_qubits = checker.measured_qubits();
+        assert!(
+            measured_qubits.is_empty(),
+            "expected no measured qubits, got {measured_qubits:?}"
+        );
 
         println!("Steane code state prep:");
         println!("  Circuit type: {}", checker.circuit_type());
@@ -1880,7 +1959,7 @@ mod tests {
         // Final measurement: all qubits are inputs, all are measured
         let circuit = steane_code_final_measurement();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // All 7 qubits should be inputs (used but not prepared)
         assert!(
@@ -1898,10 +1977,18 @@ mod tests {
             !checker.has_output_qubits(),
             "Final measurement should have no outputs"
         );
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
 
         // No ancillas (nothing is prepared)
-        assert!(checker.ancilla_qubits().is_empty());
+        let ancilla_qubits = checker.ancilla_qubits();
+        assert!(
+            ancilla_qubits.is_empty(),
+            "expected no ancilla qubits, got {ancilla_qubits:?}"
+        );
 
         // All qubits are measured
         assert_eq!(checker.measured_qubits().len(), 7);
@@ -1938,21 +2025,29 @@ mod tests {
         // Complete QEC: all qubits prepared, all measured (self-contained)
         let circuit = complete_three_qubit_qec();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // No input qubits (all are prepared)
         assert!(
             !checker.has_input_qubits(),
             "Complete QEC should have no inputs"
         );
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
 
         // No output qubits (all are measured)
         assert!(
             !checker.has_output_qubits(),
             "Complete QEC should have no outputs"
         );
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
 
         // All 5 qubits should be ancillas (prepared)
         assert_eq!(checker.ancilla_qubits().len(), 5);
@@ -1987,7 +2082,7 @@ mod tests {
         // Logical gate: all qubits are inputs and outputs
         let circuit = logical_cnot_gadget();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // All 6 qubits should be inputs
         assert!(checker.has_input_qubits());
@@ -1998,8 +2093,16 @@ mod tests {
         assert_eq!(checker.output_qubits().len(), 6);
 
         // No ancillas or measurements
-        assert!(checker.ancilla_qubits().is_empty());
-        assert!(checker.measured_qubits().is_empty());
+        let ancilla_qubits = checker.ancilla_qubits();
+        assert!(
+            ancilla_qubits.is_empty(),
+            "expected no ancilla qubits, got {ancilla_qubits:?}"
+        );
+        let measured_qubits = checker.measured_qubits();
+        assert!(
+            measured_qubits.is_empty(),
+            "expected no measured qubits, got {measured_qubits:?}"
+        );
 
         println!("Logical CNOT gadget:");
         println!("  Circuit type: {}", checker.circuit_type());
@@ -2037,7 +2140,7 @@ mod tests {
         // Flag-based syndrome extraction
         let circuit = flagged_syndrome_extraction();
 
-        let checker = FaultChecker::new(&circuit);
+        let checker = FaultChecker::new(&circuit).unwrap();
 
         // Data qubits 0, 1 should be inputs (used in CX but not prepared)
         // Note: qubit 2 is not used in this simplified circuit
@@ -2076,7 +2179,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         // Z ancillas are 3, 4 (detecting X errors)
         let z_ancillas = &[3, 4];
@@ -2122,7 +2225,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -2144,7 +2247,9 @@ mod tests {
     #[test]
     fn circuit_fault_distance_is_one_for_three_qubit_syndrome_extraction() {
         let circuit = three_qubit_bitflip_syndrome_circuit();
-        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().all_paulis());
+        let checker = FaultChecker::new(&circuit)
+            .unwrap()
+            .with_config(FaultCheckConfig::new().all_paulis());
         let logicals: &[(&[usize], &[usize])] = &[(&[], &[0, 1, 2])];
 
         let result = checker
@@ -2160,7 +2265,9 @@ mod tests {
     fn circuit_fault_distance_returns_none_without_a_logical_fault_in_budget() {
         let mut circuit = TickCircuit::new();
         circuit.tick().pz(&[0]);
-        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let checker = FaultChecker::new(&circuit)
+            .unwrap()
+            .with_config(FaultCheckConfig::new().x_only());
         let logicals: &[(&[usize], &[usize])] = &[(&[0], &[])];
 
         assert!(
@@ -2173,7 +2280,9 @@ mod tests {
     #[test]
     fn circuit_fault_distance_respects_a_budget_below_the_true_distance() {
         let circuit = unequal_logical_distance_circuit();
-        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let checker = FaultChecker::new(&circuit)
+            .unwrap()
+            .with_config(FaultCheckConfig::new().x_only());
         let logicals: &[(&[usize], &[usize])] = &[(&[0], &[])];
 
         assert!(
@@ -2193,7 +2302,9 @@ mod tests {
     #[test]
     fn per_logical_circuit_fault_distances_discriminate_and_bound_overall_distance() {
         let circuit = unequal_logical_distance_circuit();
-        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let checker = FaultChecker::new(&circuit)
+            .unwrap()
+            .with_config(FaultCheckConfig::new().x_only());
         let logicals: &[(&[usize], &[usize])] = &[(&[2], &[]), (&[0], &[])];
 
         let per_logical = checker.per_logical_circuit_fault_distances(&[], &[1], logicals, 2);
@@ -2226,7 +2337,9 @@ mod tests {
     #[test]
     fn circuit_fault_distance_is_deterministic() {
         let circuit = unequal_logical_distance_circuit();
-        let checker = FaultChecker::new(&circuit).with_config(FaultCheckConfig::new().x_only());
+        let checker = FaultChecker::new(&circuit)
+            .unwrap()
+            .with_config(FaultCheckConfig::new().x_only());
         let logicals: &[(&[usize], &[usize])] = &[(&[2], &[]), (&[0], &[])];
 
         let first = checker
@@ -2250,7 +2363,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -2275,7 +2388,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         // Output qubits are data qubits 0, 1, 2
         let output_qubits = &[0, 1, 2];
@@ -2301,7 +2414,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -2340,7 +2453,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];
@@ -2373,7 +2486,7 @@ mod tests {
             .all_paulis()
             .stop_on_first(false);
 
-        let checker = FaultChecker::new(&circuit).with_config(config);
+        let checker = FaultChecker::new(&circuit).unwrap().with_config(config);
 
         let z_ancillas = &[3, 4];
         let x_ancillas: &[usize] = &[];

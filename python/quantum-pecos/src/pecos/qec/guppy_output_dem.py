@@ -421,6 +421,10 @@ def infer_guppy_dem_annotations(
         {"id": index, "meas_ids": list(support), "inferred_from_result_tag": detector_tag}
         for index, support in enumerate(detector_supports)
     ]
+    # Coin-toss probes identify classical XOR support, not the noiseless quantum
+    # value or its determinism. Even an affine offset of zero cannot establish a
+    # reference. Leave it absent; the constant-one refusal above still protects
+    # the separate contract of representing the program's actual output parity.
     observables = [
         {
             "id": index,

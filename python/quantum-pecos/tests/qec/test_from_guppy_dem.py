@@ -15,6 +15,7 @@ from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos._qis_trace_replay import (
     _reject_partially_lowered_trace,
     _replay_lowered_qis_trace_into_tick_circuit,
+    _replay_qis_trace_chunks_into_tick_circuit,
     _replay_qis_trace_into_tick_circuit,
     named_result_traces_from_operation_trace,
 )
@@ -165,7 +166,7 @@ def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
     chunks = capture_guppy_operation_trace(_metadata_before_h_gate, num_qubits=1, seed=0)
     lowered_ops = [op for chunk in chunks for op in chunk.get("lowered_quantum_ops", [])]
 
-    assert lowered_ops[1]["gate_type"] == "R1XY"
+    assert lowered_ops[1]["gate_type"] == "RXY1Q"
     assert lowered_ops[1]["metadata"] == {
         "host_id": "probe:host",
         "local_role": "basis_prefix",
@@ -1419,24 +1420,29 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
         _reject_partially_lowered_trace(chunks)
 
 
-def test_reject_partially_lowered_trace_fails_on_unlowered_allocation() -> None:
-    """``AllocateQubit`` lowers to a prep (PZ), so an unlowered chunk that
-    carries only an allocation alongside a lowered chunk would silently drop
-    that prep -- it must fail loud too, not just chunks with raw gate ops."""
+@pytest.mark.parametrize("complete", [False, True])
+@pytest.mark.parametrize(
+    "operations",
+    [
+        [{"AllocateQubit": {"id": 1}}],
+        [{"AllocateQubit": {"id": 1}}, {"ReleaseQubit": {"id": 1}}],
+    ],
+)
+def test_reject_partially_lowered_trace_accepts_unused_allocation(operations, complete) -> None:
+    """Red/green: unused allocations emit no gates, including in a final chunk."""
     chunks = [
         {
             "operations": [{"Quantum": {"H": 0}}],
             "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
             "lowered_quantum_ops_complete": True,
         },
-        {  # allocation present (lowers to PZ) but not lowered -> would be dropped
-            "operations": [{"AllocateQubit": {"id": 1}}],
+        {
+            "operations": operations,
             "lowered_quantum_ops": [],
-            "lowered_quantum_ops_complete": False,
+            "lowered_quantum_ops_complete": complete,
         },
     ]
-    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
-        _reject_partially_lowered_trace(chunks)
+    _reject_partially_lowered_trace(chunks)
 
 
 def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
@@ -1503,6 +1509,97 @@ def test_non_lowered_replay_preserves_idle_ops() -> None:
     tc = _replay_qis_trace_into_tick_circuit(operations)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def _raw_replay_qubit_gates(chunks, qubit=0):
+    circuit = _replay_qis_trace_chunks_into_tick_circuit(chunks, allow_raw_measurement_id_fallback=True)
+    dag = circuit.to_dag_circuit()
+    return [
+        gate.gate_type.name for node in dag.nodes() if (gate := dag.gate(node)) is not None and qubit in gate.qubits
+    ]
+
+
+@pytest.mark.parametrize("first_op", ["Reset", "H"])
+def test_raw_replay_defers_prep_to_first_use(first_op) -> None:
+    """Red/green: prep is deferred across chunks; a first Reset counts as that prep."""
+    allocated = [{"AllocateQubit": {"id": 7}}]
+    assert _raw_replay_qubit_gates(
+        [{"operations": allocated}, {"operations": [{"Quantum": {first_op: 7}}, {"Quantum": {"X": 7}}]}],
+    ) == (["PZ", "X"] if first_op == "Reset" else ["PZ", "H", "X"])
+    assert _raw_replay_qubit_gates([{"operations": allocated}]) == []
+
+
+def test_raw_replay_legacy_multi_qubit_first_use() -> None:
+    """Red/green: every fresh legacy operand receives one prep, then stays prepared."""
+    chunks = [{"operations": [{"Quantum": {"CX": [7, 3]}}, {"Quantum": {"H": 7}}]}]
+    assert _raw_replay_qubit_gates(chunks, 0) == ["PZ", "CX", "H"]
+    assert _raw_replay_qubit_gates(chunks, 1) == ["PZ", "CX"]
+
+
+def test_raw_replay_unused_and_reallocated_lifetimes() -> None:
+    """Red/green: unused lifetimes have no prep; reused slots get one at first use."""
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 7}},
+                {"ReleaseQubit": {"id": 7}},
+                {"AllocateQubit": {"id": 7}},
+                {"Quantum": {"Reset": 7}},
+                {"Quantum": {"X": 7}},
+                {"ReleaseQubit": {"id": 7}},
+                {"AllocateQubit": {"id": 7}},
+                {"Quantum": {"H": 7}},
+                {"Quantum": {"Reset": 7}},
+            ],
+        },
+    ]
+    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "H", "PZ"]
+
+
+def test_raw_replay_unknown_release_preserves_legacy_prep() -> None:
+    """Red/green: releasing an unknown handle cannot suppress its first-use prep."""
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 0}},
+                {"Quantum": {"X": 0}},
+                {"ReleaseQubit": {"id": 0}},
+                {"ReleaseQubit": {"id": 9}},
+                {"Quantum": {"Measure": [9, 0]}},
+            ],
+        },
+    ]
+    assert _raw_replay_qubit_gates(chunks) == ["PZ", "X", "PZ", "MZ"]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        [{"AllocateQubit": {"id": 7}}, {"Quantum": {"H": 7}}],
+        [{"Quantum": {"Measure": [7, 0]}}],
+    ],
+)
+def test_raw_replay_rejects_duplicate_live_allocation(prefix) -> None:
+    """Red/green: explicit and legacy live handles cannot be allocated again."""
+    with pytest.raises(ValueError, match="already allocated"):
+        _raw_replay_qubit_gates([{"operations": [*prefix, {"AllocateQubit": {"id": 7}}]}])
+
+
+def test_raw_replay_rejects_use_after_release() -> None:
+    """Compatibility: raw replay still rejects use of an explicitly released handle."""
+    with pytest.raises(ValueError, match="program qubit 7"):
+        _raw_replay_qubit_gates(
+            [
+                {
+                    "operations": [
+                        {"AllocateQubit": {"id": 7}},
+                        {"Quantum": {"X": 7}},
+                        {"ReleaseQubit": {"id": 7}},
+                        {"Quantum": {"Measure": [7, 0]}},
+                    ],
+                },
+            ],
+        )
 
 
 def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
@@ -2067,40 +2164,96 @@ def test_copy_surface_metadata_propagates_descriptors() -> None:
     assert len(obs_desc) > 0
 
 
-def test_surface_metadata_records_bind_to_runtime_meas_ids() -> None:
-    remap = _measurement_index_remap_for_orders(
-        [0, 1, 0, 2],
-        [1, 0, 2, 0],
-    )
-    assert remap == {0: 1, 1: 0, 2: 3, 3: 2}
+@pytest.mark.parametrize("kind", ["detectors", "observables"])
+def test_surface_metadata_records_bind_to_runtime_meas_ids(kind) -> None:
+    from pecos_rslib.quantum import TickCircuit
 
-    metadata = json.dumps(
-        [
-            {"id": 0, "records": [-4, -2]},
-            {"id": 1, "records": [-3]},
-        ],
+    source = generate_tick_circuit_from_patch(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        add_typed_annotations=False,
     )
-    remapped = json.loads(
-        _remap_surface_record_metadata_json(
-            metadata,
-            measurement_index_remap=remap,
-            num_measurements=4,
+    # 4 prep checks + 2 * 8 counted checks + 9 data readouts = 29.
+    # Absolute record 0 and relative record -29 name position 0; -1 names 28.
+    entries = [
+        {"id": 3, "records": [0, 28], "label": "absolute", "extra": {"keep": True}},
+        {"id": 0, "meas_ids": [1, 27], "label": "ids"},
+        {"id": 1, "records": [-29, -1], "meas_ids": [0, 28], "label": "dual"},
+    ]
+    source.set_meta(kind, json.dumps(entries))
+    descriptor_key = "detector_descriptors" if kind == "detectors" else "observable_descriptors"
+    # Deliberately stale refs and a different entry order: only the id binds a descriptor.
+    source.set_meta(
+        descriptor_key,
+        json.dumps(
+            [
+                {"id": 1, "records": [999], "weight": 2},
+                {"id": 3, "meas_ids": [999], "weight": 3},
+                {"id": 0, "records": [], "extra": "cached"},
+            ],
         ),
     )
-    assert remapped == [
+    remap = {position: 100 + 2 * position for position in range(29)}
+    expected = [
+        {"id": 3, "meas_ids": [100, 156], "label": "absolute", "extra": {"keep": True}},
+        {"id": 0, "meas_ids": [102, 154], "label": "ids"},
+        {"id": 1, "meas_ids": [100, 156], "label": "dual"},
+    ]
+    assert (
+        json.loads(
+            _remap_surface_record_metadata_json(
+                source.get_meta(kind),
+                source_tc=source,
+                definition_kind=kind,
+                measurement_index_remap=remap,
+            ),
+        )
+        == expected
+    )
+    target = TickCircuit()
+    _copy_surface_tick_circuit_metadata(source, target, measurement_index_remap=remap)
+    assert json.loads(target.get_meta(kind)) == expected
+    assert json.loads(target.get_meta(descriptor_key)) == [
+        {"id": 1, "meas_ids": [100, 156], "weight": 2},
+        {"id": 3, "meas_ids": [100, 156], "weight": 3},
+        {"id": 0, "meas_ids": [102, 154], "extra": "cached"},
+    ]
+    assert json.loads(source.get_meta(kind)) == entries
+    assert target.get_meta("ancilla_budget") == source.get_meta("ancilla_budget")
+
+
+def test_surface_metadata_remap_preserves_qubit_occurrences() -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    remap = _measurement_index_remap_for_orders([0, 1, 0, 2], [1, 0, 2, 0])
+    assert remap == {0: 1, 1: 0, 2: 3, 3: 2}
+    source = TickCircuit()
+    source.tick().mz_with_ids([0, 1], [17, 9])
+    source.tick().mz_with_ids([0, 2], [31, 8])
+    source.set_meta(
+        "detectors",
+        json.dumps(
+            [
+                {"id": 0, "records": [-4, -2]},
+                {"id": 1, "records": [-3]},
+                {"id": 2, "meas_ids": [17, 8]},
+            ],
+        ),
+    )
+    assert json.loads(
+        _remap_surface_record_metadata_json(
+            source.get_meta("detectors"),
+            source_tc=source,
+            definition_kind="detectors",
+            measurement_index_remap=remap,
+        ),
+    ) == [
         {"id": 0, "meas_ids": [1, 3]},
         {"id": 1, "meas_ids": [0]},
+        {"id": 2, "meas_ids": [1, 2]},
     ]
-
-    existing_meas_ids = json.dumps([{"id": 2, "meas_ids": [0, 3]}])
-    rebound = json.loads(
-        _remap_surface_record_metadata_json(
-            existing_meas_ids,
-            measurement_index_remap=remap,
-            num_measurements=4,
-        ),
-    )
-    assert rebound == [{"id": 2, "meas_ids": [1, 2]}]
 
 
 def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
@@ -2172,7 +2325,7 @@ def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -
     assert all("meas_ids" in entry for entry in detectors + observables)
 
     logical_z_qubits = list(patch.geometry.logical_z.data_qubits)
-    assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits]}]
+    assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits], "reference": 0}]
 
 
 def test_surface_result_tags_reject_permuted_runtime_ids() -> None:
@@ -2264,28 +2417,15 @@ def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
 
 
 def test_result_tag_remap_validation_rejects_duplicate_traced_meas_ids() -> None:
-    # `mz_with_ids` rejects a repeated id, so a duplicate has to be supplied
-    # directly to reach this validator.
-    class FakeGate:
-        gate_type = "MZ"
-        qubits: ClassVar[list[int]] = [0, 1]
-        meas_ids: ClassVar[list[int]] = [7, 7]
+    from pecos_rslib.quantum import TickCircuit
 
-    class FakeTick:
-        def gate_batches(self):
-            return [FakeGate()]
-
-    class FakeCircuit:
-        def num_ticks(self) -> int:
-            return 1
-
-        def get_tick(self, tick_idx: int):
-            assert tick_idx == 0
-            return FakeTick()
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([0], [7])
+    tc.tick().mz_with_ids([1], [7])
 
     with pytest.raises(ValueError, match="duplicate measured MeasId"):
         _validate_result_tag_remap_against_traced_measurements(
-            FakeCircuit(),
+            tc,
             {0: 7, 1: 8},
             expected_measurements=2,
         )
@@ -2306,26 +2446,14 @@ def test_result_tag_remap_validation_rejects_unbound_traced_meas_ids() -> None:
 
 
 def test_result_tag_remap_validation_rejects_unstamped_measurements() -> None:
-    class FakeGate:
-        gate_type = "MZ"
-        qubits: ClassVar[list[int]] = [0]
-        meas_ids: ClassVar[list[int]] = []
+    from pecos_rslib.quantum import TickCircuit
 
-    class FakeTick:
-        def gate_batches(self):
-            return [FakeGate()]
+    tc = TickCircuit()
+    tc.tick().add_gate("MZ", [0])
 
-    class FakeCircuit:
-        def num_ticks(self) -> int:
-            return 1
-
-        def get_tick(self, tick_idx: int):
-            assert tick_idx == 0
-            return FakeTick()
-
-    with pytest.raises(ValueError, match="carries 0 MeasId"):
+    with pytest.raises(ValueError, match="emission position 0 carries no MeasId"):
         _validate_result_tag_remap_against_traced_measurements(
-            FakeCircuit(),
+            tc,
             {0: 0},
             expected_measurements=1,
         )
@@ -2637,3 +2765,58 @@ def test_prep_and_measurement_channels_stay_exact() -> None:
         text = build.dem.to_string()
         assert f"error({probability})" in text, f"{setter}: {text}"
         assert build.dem.idle_noise_residuals == [], setter
+
+
+@pytest.mark.parametrize("p2_weights", [None, {"XX": 0.5, "~XX": 0.5}])
+def test_raw_surface_trace_sampler_matches_lowered_dem(p2_weights: dict[str, float] | None) -> None:
+    """The sampler accepts runtime-lowered Clifford rotations directly and produces the model of their named forms."""
+    from pecos_rslib.qec import DemSampler
+    from pecos_rslib.quantum import GateType
+
+    raw_tc = _build_surface_tick_circuit_for_native_model(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+    assert any(
+        gate.gate_type == GateType.RXY1Q
+        for tick_index in range(raw_tc.num_ticks())
+        for gate in raw_tc.get_tick(tick_index).gate_batches()
+    )
+    noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    raw_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
+    assert "error(" in raw_dem
+    raw_tc.lower_clifford_rotations()
+    assert not any(
+        gate.gate_type == GateType.RXY1Q
+        for tick_index in range(raw_tc.num_ticks())
+        for gate in raw_tc.get_tick(tick_index).gate_batches()
+    )
+    lowered_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
+    assert raw_dem == lowered_dem
+
+
+def test_raw_surface_trace_gate_rate_keys_name_scheduled_gates() -> None:
+    """Per-gate rates reject action names until the traced rotations are lowered."""
+    from pecos_rslib.qec import DemSampler
+
+    raw_tc = _build_surface_tick_circuit_for_native_model(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+    noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
+        DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
+        DetectorErrorModel.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+    scalar = DemSampler.from_circuit(raw_tc, **noise).to_detector_error_model().to_string()
+    keyed = DemSampler.from_circuit(raw_tc, p2_gate_rates={"RZZ": 0.05}, **noise).to_detector_error_model().to_string()
+    assert "error(" in keyed
+    assert scalar != keyed
+    raw_tc.lower_clifford_rotations()
+    DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)

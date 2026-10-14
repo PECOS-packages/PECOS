@@ -356,6 +356,11 @@ pub(crate) fn shot_map_to_dict_integers(py: Python<'_>, shot_map: &ShotMap) -> P
                 py_list.append(val)?;
             }
             py_dict.set_item(reg_name, py_list)?;
+        } else if let Ok(u64_values) = shot_map.try_u64s(reg_name) {
+            for val in u64_values {
+                py_list.append(val)?;
+            }
+            py_dict.set_item(reg_name, py_list)?;
         } else if let Ok(i64_values) = shot_map.try_i64s(reg_name) {
             for val in i64_values {
                 py_list.append(val)?;
@@ -381,6 +386,9 @@ pub(crate) fn shot_map_to_dict_integers(py: Python<'_>, shot_map: &ShotMap) -> P
                             py_inner_list.append(v)?;
                         }
                         Data::Bool(v) => {
+                            py_inner_list.append(v)?;
+                        }
+                        Data::U64(v) => {
                             py_inner_list.append(v)?;
                         }
                         Data::I64(v) => {
@@ -420,6 +428,11 @@ pub(crate) fn shot_map_to_dict_binary(py: Python<'_>, shot_map: &ShotMap) -> PyR
         } else if let Ok(u32_values) = shot_map.try_u32s(reg_name) {
             // Fallback for non-bit data
             for val in u32_values {
+                py_list.append(val)?;
+            }
+            py_dict.set_item(reg_name, py_list)?;
+        } else if let Ok(u64_values) = shot_map.try_u64s(reg_name) {
+            for val in u64_values {
                 py_list.append(val)?;
             }
             py_dict.set_item(reg_name, py_list)?;

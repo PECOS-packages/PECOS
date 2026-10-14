@@ -84,7 +84,11 @@ fn test_decode_empty_syndrome() {
         "Weight should be zero but was {}",
         decoding.weight
     );
-    assert!(decoding.matched_edges.is_empty());
+    assert!(
+        decoding.matched_edges.is_empty(),
+        "expected no matched edges, got {:?}",
+        decoding.matched_edges
+    );
 }
 
 #[test]

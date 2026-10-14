@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 creg m_bell[2];
 creg m_out[1];
 qreg sin_d[7];

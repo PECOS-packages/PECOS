@@ -16,7 +16,7 @@
 //!
 //! This module provides the [`Circuit`] trait, which defines a common interface
 //! for quantum circuit representations. This allows generic code to work with different
-//! circuit types like [`DagCircuit`](crate::DagCircuit) and [`SimpleHugr`](crate::hugr_convert::SimpleHugr).
+//! circuit types implementing the trait, such as [`DagCircuit`](crate::DagCircuit).
 
 use std::collections::BTreeMap;
 
@@ -46,7 +46,6 @@ pub type GateHandle = usize;
 /// # Implementors
 ///
 /// - [`DagCircuit`](crate::DagCircuit): Native DAG-based circuit representation
-/// - [`SimpleHugr`](crate::hugr_convert::SimpleHugr): Validated HUGR wrapper (when `hugr` feature enabled)
 pub trait Circuit {
     // ==================== Basic properties ====================
 

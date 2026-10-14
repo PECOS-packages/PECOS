@@ -125,6 +125,21 @@ impl DecompOp {
 }
 
 /// Where an angle value comes from in a decomposition.
+///
+/// There is deliberately no halving source. `Angle64` stores a 2pi-reduced
+/// fraction, so by the time an input angle reaches a decomposition its sheet is
+/// already gone: `2pi` and `0` are the same bits, and halving them both yields
+/// `0` where the first should yield `pi`. A decomposition that halved its input
+/// would therefore emit the identity for `CRZ(2pi)` instead of a control `Z`,
+/// turning `P(control = 1)` into 0 where 1 is correct -- silently, because the
+/// gate still applies and nothing reports an error.
+///
+/// No later arithmetic can recover the distinction, so this is a representation
+/// limit rather than a missing feature. Controlled rotations must be expressed
+/// through `pecos_core::controlled_rotations`, which still sees the unreduced
+/// `f64`: it halves the principal representative and carries the removed turn as
+/// a control `Z`, so the sheet survives as a gate rather than as bits in the
+/// angle. See #690.
 #[derive(Clone, Copy, Debug)]
 pub enum AngleSource {
     /// Use input angle at the given index.
@@ -133,8 +148,6 @@ pub enum AngleSource {
     Fixed(Angle64),
     /// Negate the input angle.
     NegInput(u8),
-    /// Half of the input angle.
-    HalfInput(u8),
 }
 
 impl AngleSource {
@@ -145,7 +158,6 @@ impl AngleSource {
             Self::Input(idx) => input_angles[idx as usize],
             Self::Fixed(a) => a,
             Self::NegInput(idx) => -input_angles[idx as usize],
-            Self::HalfInput(idx) => input_angles[idx as usize] / 2_u64,
         }
     }
 }
@@ -1071,16 +1083,6 @@ mod tests {
 
         // Negating quarter turn should give three-quarter turn
         assert_eq!(resolved, -Angle64::QUARTER_TURN);
-    }
-
-    #[test]
-    fn test_angle_source_half_input() {
-        let input_angles = [Angle64::QUARTER_TURN];
-        let src = AngleSource::HalfInput(0);
-        let resolved = src.resolve(&input_angles);
-
-        // Half of quarter turn is eighth turn
-        assert_eq!(resolved, Angle64::QUARTER_TURN / 2_u64);
     }
 
     #[test]

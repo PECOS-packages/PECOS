@@ -4,7 +4,7 @@ This module provides Python bindings for compiling and running Zluppy programs.
 
 Example:
     >>> import zluppy
-    >>> from pecos import hugr_engine
+    >>> import pecos
     >>>
     >>> # Compile and run a Bell state program
     >>> hugr_bytes = (
@@ -21,7 +21,7 @@ Example:
     ...     .to_hugr_bytes()
     ... )
     >>>
-    >>> result = hugr_engine().hugr_bytes(hugr_bytes).to_sim().run(shots=100)
+    >>> result = pecos.sim(pecos.Hugr(hugr_bytes)).qubits(2).run(100)
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from zluppy._zluppy import (
     ZluppyError,
     compile_to_slr,
     compile_to_slr_json,
+    compile_to_phir_json,
     compile_to_hugr,
     compile_file,
     compile_file_json,
@@ -57,6 +58,7 @@ __all__ = [
     # Source compilation
     "compile_to_slr",
     "compile_to_slr_json",
+    "compile_to_phir_json",
     "compile_to_hugr",
     "check",
     "parse_debug",
@@ -78,7 +80,7 @@ class ZluppyEngine:
     """Engine for compiling and running Zluppy programs.
 
     Wraps the Rust ZluppyEngine and adds convenience methods for running
-    through PECOS's hugr_engine.
+    through PECOS's Selene QIS route.
 
     Example:
         >>> result = (
@@ -99,7 +101,7 @@ class ZluppyEngine:
     Or with explicit steps:
         >>> engine = zluppy.ZluppyEngine().file("bell.zlp")
         >>> hugr_bytes = engine.to_hugr_bytes()
-        >>> result = hugr_engine().hugr_bytes(hugr_bytes).to_sim().run(shots=100)
+        >>> result = pecos.sim(pecos.Hugr(hugr_bytes)).qubits(2).run(100)
     """
 
     def __init__(self, strict: bool = False) -> None:
@@ -145,7 +147,7 @@ class ZluppyEngine:
         """Return the compiled HUGR bytes.
 
         Returns:
-            HUGR in binary envelope format, suitable for hugr_engine().
+            HUGR in binary envelope format, suitable for pecos.Hugr().
 
         Raises:
             ValueError: If no source has been compiled.
@@ -155,7 +157,7 @@ class ZluppyEngine:
     def run(self, shots: int = 1) -> ShotVec:
         """Run the compiled program through the simulator.
 
-        Convenience method that calls PECOS's hugr_engine with the compiled HUGR.
+        Lowers the compiled HUGR to QIS and runs it with Selene.
 
         Args:
             shots: Number of shots to run.
@@ -167,10 +169,10 @@ class ZluppyEngine:
             ValueError: If no source has been compiled.
             ImportError: If pecos is not installed.
         """
-        from pecos import hugr_engine
+        import pecos
 
         hugr_bytes = self.to_hugr_bytes()
-        return hugr_engine().hugr_bytes(hugr_bytes).to_sim().run(shots=shots)
+        return pecos.sim(pecos.Hugr(hugr_bytes)).qubits(self._rust_engine.num_qubits).run(shots)
 
     def __repr__(self) -> str:
         return repr(self._rust_engine)

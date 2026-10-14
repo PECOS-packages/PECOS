@@ -48,12 +48,18 @@ pecos-wasm = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
 
 [dev-dependencies]
+pecos-phir-json.workspace = true
+pecos-qec.workspace = true
+pecos-quantum.workspace = true
+
 # Testing
 tempfile.workspace = true
 # Required for doctests
 pest.workspace = true
 pecos-core.workspace = true
 pecos-engines.workspace = true
+pecos-simulators.workspace = true
+num-complex.workspace = true
 
 [lints]
 workspace = true

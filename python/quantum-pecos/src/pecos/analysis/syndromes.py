@@ -1,5 +1,9 @@
 """Module for syndrome difference calculations."""
 
+__all__ = [
+    "syn_diff",
+]
+
 
 def syn_diff(
     data: dict[str, list[str]],

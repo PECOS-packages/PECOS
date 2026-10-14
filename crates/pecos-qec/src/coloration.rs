@@ -338,7 +338,9 @@ mod tests {
 
     fn sample_annotation_parities(circuit: &TickCircuit, num_qubits: usize) -> Vec<bool> {
         let mut simulator = DenseStab::new(num_qubits);
-        let measurements = CircuitExecutor::new(circuit).run(&mut simulator);
+        let measurements = CircuitExecutor::new(circuit)
+            .run(&mut simulator)
+            .expect("coloration circuit contains supported Clifford gates");
         circuit
             .annotations()
             .iter()
@@ -366,7 +368,7 @@ mod tests {
         let dem = DemBuilder::try_from_tick_circuit(&circuit, 0.0, 0.0, 0.0, 0.0)
             .expect("fault-free circuit has a DEM");
         assert_eq!(dem.num_detectors(), expected_detectors);
-        assert!(dem.to_mechanisms().0.is_empty());
+        assert_eq!(dem.to_mechanisms().0, []);
 
         let total_qubits = hx.num_qubits() + hx.num_checks() + hz.num_checks();
         for _ in 0..4 {
@@ -451,7 +453,7 @@ mod tests {
 
         let dem = DemBuilder::try_from_tick_circuit(&coloration, 0.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(dem.num_detectors(), 144);
-        assert!(dem.to_mechanisms().0.is_empty());
+        assert_eq!(dem.to_mechanisms().0, []);
     }
 
     #[test]

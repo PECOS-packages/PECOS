@@ -141,6 +141,16 @@ pub fn parse_file(
 mod tests {
     use super::*;
 
+    /// Escape text embedded inside a Zlup quoted string, not a Rust literal.
+    pub(crate) fn escape_source_string(value: &str) -> String {
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    }
+
     #[test]
     fn test_version() {
         assert!(!VERSION.is_empty());

@@ -1,7 +1,6 @@
 """Test suite for complete quantum gate coverage in PECOS compiler."""
 
 import pecos_rslib
-import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.quantum import (
     ch,
@@ -23,6 +22,7 @@ from guppylang.std.quantum import (
     y,
     z,
 )
+from pecos import compilation_pipeline
 
 
 class TestBasicGates:
@@ -51,7 +51,7 @@ class TestBasicGates:
 
         for func in [test_x, test_y, test_z]:
             hugr = func.compile()
-            output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+            output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
             assert "tail call" in output
             assert "@___r" in output  # Should have rotation calls
 
@@ -72,7 +72,7 @@ class TestBasicGates:
 
         for func in [test_s, test_t]:
             hugr = func.compile()
-            output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+            output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
             assert "___rz" in output
             assert "tail call" in output
 
@@ -86,7 +86,7 @@ class TestBasicGates:
             return measure(q).read()
 
         hugr = test_h.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "___rz" in output
 
@@ -113,7 +113,7 @@ class TestAdjointGates:
 
         for func in [test_sdg_gate, test_tdg_gate]:
             hugr = func.compile()
-            output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+            output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
             assert "___rz" in output
             # Should have negative angle for adjoint
             assert "0xBF" in output  # Negative hex prefix
@@ -132,7 +132,7 @@ class TestRotationGates:
             return measure(q).read()
 
         hugr = test_rx_pi4.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "double 0.0" in output  # First angle should be 0 for Rx
 
@@ -146,7 +146,7 @@ class TestRotationGates:
             return measure(q).read()
 
         hugr = test_ry_pi2.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         # For Ry, second angle should be 0
 
@@ -160,7 +160,7 @@ class TestRotationGates:
             return measure(q).read()
 
         hugr = test_rz_pi.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rz" in output
         # Should have an angle parameter
         assert "double" in output
@@ -181,7 +181,7 @@ class TestControlGates:
             return measure(q0).read(), measure(q1).read()
 
         hugr = test_cx.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "___rzz" in output
         assert "___rz" in output
@@ -198,7 +198,7 @@ class TestControlGates:
             return measure(q0).read(), measure(q1).read()
 
         hugr = test_cy.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "___rzz" in output
         assert "___rz" in output
@@ -217,7 +217,7 @@ class TestControlGates:
             return measure(q0).read(), measure(q1).read()
 
         hugr = test_cz.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rzz" in output
         assert "___rz" in output
 
@@ -233,7 +233,7 @@ class TestControlGates:
             return measure(q0).read(), measure(q1).read()
 
         hugr = test_ch.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "___rz" in output
         # CH has its own decomposition
@@ -254,7 +254,7 @@ class TestComplexCircuits:
             return measure(q0).read(), measure(q1).read()
 
         hugr = bell.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "___rzz" in output
         assert "___lazy_measure" in output
@@ -274,7 +274,7 @@ class TestComplexCircuits:
             return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = ghz.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rzz" in output  # Has CX gates
         assert "___lazy_measure" in output  # Has measurements
 
@@ -293,7 +293,7 @@ class TestComplexCircuits:
             return measure(q0).read(), measure(q1).read()
 
         hugr = mixed.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
         assert "___rxy" in output
         assert "___rz" in output
         assert "___rzz" in output
@@ -312,7 +312,7 @@ class TestCompilerOutput:
             return measure(q).read()
 
         hugr = simple.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have the expected quantum operations
         assert "___qalloc" in output, "Should allocate qubit"
@@ -335,7 +335,7 @@ class TestCompilerOutput:
             return measure(q).read()
 
         hugr = only_h.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should declare only what's used
         assert "declare" in output

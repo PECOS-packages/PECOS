@@ -89,7 +89,8 @@ fn trace_d2_zbasis_generators() {
     let gates = build_d2_zbasis();
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(0.01);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates)
+        .expect("valid forward noise");
 
     eprintln!(
         "Expanded: {} qubits ({} orig + {} aux), {} measurements",
@@ -325,6 +326,13 @@ fn trace_d2_zbasis_generators() {
         stab_group.is_stabilizer(&Bm::z(1).multiply(&Bm::z(2)))
     );
 
+    let end = expanded
+        .gates
+        .iter()
+        .rposition(|g| g.gate_type != GateType::MZ)
+        .unwrap();
+    let expanded_stab = StabilizerGroup::from_circuit(&expanded.gates[..=end], expanded.num_qubits);
+
     for (det_name, bch) in [("D1", &d1_bch), ("D2", &d2_bch)] {
         let labels: Vec<Bm> = bch.keys().cloned().collect();
         let coeffs: Vec<f64> = bch.values().copied().collect();
@@ -344,30 +352,20 @@ fn trace_d2_zbasis_generators() {
                     offdiag_anticommute += 1;
                     continue;
                 }
-                let product = labels[j].multiply(&labels[k]);
-                let orig_product = expanded.map_to_original_frame(&product);
-
-                if orig_product.is_identity() {
-                    offdiag += 2.0 * coeffs[j] * coeffs[k];
-                    offdiag_plus += 1;
-                    continue;
-                }
-                match stab_group.is_stabilizer(&orig_product) {
-                    Some(true) => {
+                match expanded_stab.product_expectation([&labels[j], &labels[k]]) {
+                    Some(pecos_core::QuarterPhase::PlusOne) => {
                         offdiag += 2.0 * coeffs[j] * coeffs[k];
                         offdiag_plus += 1;
                     }
-                    Some(false) => {
+                    Some(pecos_core::QuarterPhase::MinusOne) => {
                         offdiag -= 2.0 * coeffs[j] * coeffs[k];
                         offdiag_minus += 1;
                     }
                     None => {
                         offdiag_zero += 1;
-                        eprintln!(
-                            "    beta=0: {:?} * {:?} = {:?} (orig: {:?})",
-                            labels[j], labels[k], product, orig_product
-                        );
+                        eprintln!("    beta=0: {:?} * {:?}", labels[j], labels[k]);
                     }
+                    Some(_) => unreachable!("commuting products have real expectation"),
                 }
             }
         }

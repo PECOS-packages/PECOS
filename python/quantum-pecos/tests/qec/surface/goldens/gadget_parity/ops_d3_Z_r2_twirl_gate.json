@@ -1,0 +1,3828 @@
+{
+ "allocation": {
+  "data": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8
+  ],
+  "x_anc": [
+   9,
+   10,
+   11,
+   12
+  ],
+  "z_anc": [
+   13,
+   14,
+   15,
+   16
+  ]
+ },
+ "ops": [
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "prep_z_basis"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    0
+   ],
+   "label": "data[0]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    1
+   ],
+   "label": "data[1]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    2
+   ],
+   "label": "data[2]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    3
+   ],
+   "label": "data[3]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    4
+   ],
+   "label": "data[4]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    5
+   ],
+   "label": "data[5]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    6
+   ],
+   "label": "data[6]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    7
+   ],
+   "label": "data[7]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    8
+   ],
+   "label": "data[8]"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "init_x_syndrome"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g0o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g0o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g0o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "X@g0o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Y@g0o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Z@g0o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g1o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g1o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g1o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g1o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g1o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g1o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "X@g2o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Y@g2o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Z@g2o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "X@g2o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Y@g2o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Z@g2o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    2
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    4
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    12,
+    8
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g3o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g3o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g3o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g3o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g3o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g3o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g4o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g4o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g4o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g4o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g4o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g4o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "X@g5o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Y@g5o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Z@g5o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g5o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g5o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g5o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    1
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    3
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    12,
+    7
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "X@g6o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Y@g6o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Z@g6o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g6o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g6o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g6o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g7o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g7o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g7o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g7o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g7o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g7o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g8o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g8o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g8o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g8o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g8o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g8o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    5
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    7
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "X@g9o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Y@g9o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Z@g9o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "X@g9o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Y@g9o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Z@g9o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g10o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g10o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g10o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g10o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g10o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g10o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g11o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g11o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g11o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "X@g11o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Y@g11o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Z@g11o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    0
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    4
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    6
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sx1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    11
+   ],
+   "label": "sx2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    12
+   ],
+   "label": "sx3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "syndrome_extraction round 1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    13
+   ],
+   "label": "az0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    14
+   ],
+   "label": "az1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    15
+   ],
+   "label": "az2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    16
+   ],
+   "label": "az3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g12o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g12o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g12o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "X@g12o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Y@g12o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Z@g12o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g13o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g13o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g13o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "X@g13o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Y@g13o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Z@g13o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g14o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g14o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g14o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g14o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g14o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g14o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g15o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g15o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g15o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g15o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g15o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g15o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g16o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g16o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g16o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g16o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g16o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g16o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "X@g17o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Y@g17o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Z@g17o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "X@g17o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Y@g17o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Z@g17o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    13
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    2
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    1,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    4
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    12,
+    8
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "X@g18o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Y@g18o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Z@g18o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "X@g18o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Y@g18o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Z@g18o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g19o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g19o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g19o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g19o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g19o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g19o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g20o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g20o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g20o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g20o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g20o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g20o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g21o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g21o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g21o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g21o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g21o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g21o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "X@g22o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Y@g22o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Z@g22o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g22o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g22o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g22o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "X@g23o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Y@g23o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Z@g23o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g23o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g23o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g23o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    6,
+    13
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    1
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    3
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    8,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    12,
+    7
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "X@g24o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Y@g24o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Z@g24o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g24o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g24o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g24o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g25o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g25o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g25o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g25o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g25o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g25o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "X@g26o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Y@g26o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Z@g26o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g26o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g26o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g26o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g27o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g27o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g27o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g27o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g27o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g27o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g28o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g28o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g28o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g28o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g28o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g28o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "X@g29o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Y@g29o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Z@g29o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "X@g29o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Y@g29o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Z@g29o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    5
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    0,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    7
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    2,
+    16
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "X@g30o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Y@g30o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Z@g30o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "X@g30o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Y@g30o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Z@g30o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g31o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g31o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g31o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g31o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g31o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g31o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g32o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g32o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g32o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g32o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g32o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g32o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g33o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g33o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g33o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "X@g33o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Y@g33o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Z@g33o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g34o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g34o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g34o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g34o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g34o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g34o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g35o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g35o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g35o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "X@g35o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Y@g35o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Z@g35o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    0
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    4
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    6
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    7,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    16
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sx1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    11
+   ],
+   "label": "sx2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    12
+   ],
+   "label": "sx3"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    13
+   ],
+   "label": "sz0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    14
+   ],
+   "label": "sz1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    15
+   ],
+   "label": "sz2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    16
+   ],
+   "label": "sz3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "syndrome_extraction round 2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    13
+   ],
+   "label": "az0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    14
+   ],
+   "label": "az1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    15
+   ],
+   "label": "az2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    16
+   ],
+   "label": "az3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g36o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g36o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g36o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "X@g36o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Y@g36o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Z@g36o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g37o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g37o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g37o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "X@g37o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Y@g37o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Z@g37o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g38o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g38o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g38o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g38o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g38o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g38o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g39o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g39o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g39o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g39o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g39o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g39o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g40o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g40o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g40o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g40o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g40o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g40o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "X@g41o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Y@g41o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Z@g41o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "X@g41o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Y@g41o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Z@g41o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    13
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    2
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    1,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    4
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    12,
+    8
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "X@g42o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Y@g42o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Z@g42o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "X@g42o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Y@g42o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    13
+   ],
+   "label": "Z@g42o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g43o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g43o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g43o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g43o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g43o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g43o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g44o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g44o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g44o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g44o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g44o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g44o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g45o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g45o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g45o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g45o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g45o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g45o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "X@g46o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Y@g46o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    8
+   ],
+   "label": "Z@g46o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g46o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g46o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g46o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "X@g47o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Y@g47o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    12
+   ],
+   "label": "Z@g47o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g47o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g47o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g47o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    6,
+    13
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    1
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    3
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    8,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    12,
+    7
+   ],
+   "label": "X3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "X@g48o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Y@g48o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Z@g48o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "X@g48o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Y@g48o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    1
+   ],
+   "label": "Z@g48o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g49o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g49o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g49o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g49o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g49o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g49o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "X@g50o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Y@g50o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Z@g50o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g50o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g50o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g50o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g51o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g51o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g51o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g51o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g51o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g51o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g52o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g52o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g52o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g52o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g52o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g52o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "X@g53o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Y@g53o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    2
+   ],
+   "label": "Z@g53o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "X@g53o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Y@g53o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Z@g53o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    1
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    5
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    0,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    7
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    2,
+    16
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "X@g54o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Y@g54o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    9
+   ],
+   "label": "Z@g54o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "X@g54o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Y@g54o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    0
+   ],
+   "label": "Z@g54o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "X@g55o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Y@g55o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    10
+   ],
+   "label": "Z@g55o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "X@g55o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Y@g55o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    4
+   ],
+   "label": "Z@g55o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "X@g56o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Y@g56o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    3
+   ],
+   "label": "Z@g56o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "X@g56o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Y@g56o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    14
+   ],
+   "label": "Z@g56o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "X@g57o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Y@g57o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    11
+   ],
+   "label": "Z@g57o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "X@g57o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Y@g57o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    6
+   ],
+   "label": "Z@g57o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "X@g58o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Y@g58o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    7
+   ],
+   "label": "Z@g58o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "X@g58o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Y@g58o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    15
+   ],
+   "label": "Z@g58o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "X@g59o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Y@g59o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    5
+   ],
+   "label": "Z@g59o0"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "X@g59o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Y@g59o1"
+  },
+  {
+   "op": "TRACKED_PAULI",
+   "qubits": [
+    16
+   ],
+   "label": "Z@g59o1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    9,
+    0
+   ],
+   "label": "X0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    10,
+    4
+   ],
+   "label": "X1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    11,
+    6
+   ],
+   "label": "X2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    7,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    16
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Hadamard on X ancillas"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    9
+   ],
+   "label": "ax0"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    10
+   ],
+   "label": "ax1"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    11
+   ],
+   "label": "ax2"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    12
+   ],
+   "label": "ax3"
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    9
+   ],
+   "label": "sx0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    10
+   ],
+   "label": "sx1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    11
+   ],
+   "label": "sx2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    12
+   ],
+   "label": "sx3"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    13
+   ],
+   "label": "sz0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    14
+   ],
+   "label": "sz1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    15
+   ],
+   "label": "sz2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    16
+   ],
+   "label": "sz3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "measure_z_basis"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    0
+   ],
+   "label": "final[0]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    1
+   ],
+   "label": "final[1]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    2
+   ],
+   "label": "final[2]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    3
+   ],
+   "label": "final[3]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    4
+   ],
+   "label": "final[4]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    5
+   ],
+   "label": "final[5]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    6
+   ],
+   "label": "final[6]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    7
+   ],
+   "label": "final[7]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    8
+   ],
+   "label": "final[8]"
+  }
+ ]
+}

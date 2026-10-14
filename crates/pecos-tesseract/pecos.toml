@@ -15,8 +15,14 @@ url = "https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.bz2"
 sha256 = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e"
 description = "C++ Boost libraries"
 
+[dependencies.nlohmann_json]
+version = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+url = "https://github.com/nlohmann/json/archive/9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03.tar.gz"
+sha256 = "0dbc5e40a01ff142e7e68c03e85247a4dcede2f592d12d3677dee3664d17975a"
+description = "JSON for Modern C++ (header-only), the commit Tesseract's MODULE.bazel pins"
+
 [dependencies.tesseract]
-version = "56dd8d5fee3834ef85ca9475a10e708f7d245bea"
-url = "https://github.com/quantumlib/tesseract-decoder/archive/56dd8d5fee3834ef85ca9475a10e708f7d245bea.tar.gz"
-sha256 = "8736ec264fb9a6310957470ac3c63a6d1ce2a26002821caeb64ad91148893e9e"
+version = "e7c762eef24161e304ba6fccb856a05b41f88c39"
+url = "https://github.com/quantumlib/tesseract-decoder/archive/e7c762eef24161e304ba6fccb856a05b41f88c39.tar.gz"
+sha256 = "fc594249fd8a1ba6f19326b05ea9d9c5631caf1e78eb687b1549adfcd8ae5f6a"
 description = "Tesseract decoder"

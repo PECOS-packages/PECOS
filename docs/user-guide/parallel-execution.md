@@ -160,7 +160,7 @@ Parallel(
 Here's a complete example showing parallel quantum phase estimation:
 
 ```python
-from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter, rad
+from pecos.slr import Main, Parallel, Block, QReg, CReg, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 import math
 
@@ -175,15 +175,15 @@ prog = Main(
         qb.H(q[2]),
     ),
     # Apply controlled rotations
-    qb.CRZ(rad(math.pi), q[0], q[3]),
-    qb.CRZ(rad(math.pi / 2), q[1], q[3]),
-    qb.CRZ(rad(math.pi / 4), q[2], q[3]),
+    qb.CRZ(math.pi, q[0], q[3]),
+    qb.CRZ(math.pi / 2, q[1], q[3]),
+    qb.CRZ(math.pi / 4, q[2], q[3]),
     # Inverse QFT on ancillas
     qb.H(q[0]),
-    qb.CRZ(rad(-math.pi / 2), q[0], q[1]),
+    qb.CRZ(-math.pi / 2, q[0], q[1]),
     qb.H(q[1]),
-    qb.CRZ(rad(-math.pi / 4), q[0], q[2]),
-    qb.CRZ(rad(-math.pi / 2), q[1], q[2]),
+    qb.CRZ(-math.pi / 4, q[0], q[2]),
+    qb.CRZ(-math.pi / 2, q[1], q[2]),
     qb.H(q[2]),
     # Measure ancillas
     Parallel(

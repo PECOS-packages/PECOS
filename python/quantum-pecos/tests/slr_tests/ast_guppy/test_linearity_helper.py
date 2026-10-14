@@ -235,3 +235,44 @@ def test_permute_rejects_unknown_slots() -> None:
             },
             label="bad Permute",
         )
+
+
+def test_init_rejects_two_slots_sharing_a_local() -> None:
+    bindings = {Slot("q", 0): Binding("x", SlotState.LIVE), Slot("q", 1): Binding("x", SlotState.CONSUMED)}
+
+    with pytest.raises(LinearityError, match="distinct locals"):
+        GuppyLinearityState(bindings)
+
+
+def test_joins_compare_live_locals_but_only_the_state_of_consumed_slots() -> None:
+    state = GuppyLinearityState.from_allocators({"q": 2})
+    q0, q1 = Slot("q", 0), Slot("q", 1)
+    consumed_swapped = {q0: Binding("q_1", SlotState.CONSUMED), q1: Binding("q_0", SlotState.CONSUMED)}
+    consumed_initial = {q0: Binding("q_0", SlotState.CONSUMED), q1: Binding("q_1", SlotState.CONSUMED)}
+    live_swapped = {q0: Binding("q_1", SlotState.LIVE), q1: Binding("q_0", SlotState.LIVE)}
+
+    state.merge_if(consumed_initial, consumed_swapped, consumed_initial, label="If(c[0])")
+    state.assert_same(consumed_initial, consumed_swapped, label="Repeat(2)")
+    with pytest.raises(LinearityError, match="divergent"):
+        state.merge_if(state.snapshot(), live_swapped, None, label="If(c[0])")
+    state.restore({q0: Binding("q_0", SlotState.LIVE), q1: Binding("q_1", SlotState.LIVE)})
+    with pytest.raises(LinearityError, match="changes Guppy slot state"):
+        state.assert_same(state.snapshot(), live_swapped, label="Repeat(2)")
+
+
+def test_refill_takes_the_initial_local_back_only_from_a_consumed_slot() -> None:
+    state = GuppyLinearityState.from_allocators({"q": 2})
+    q0, q1 = Slot("q", 0), Slot("q", 1)
+    state.permute({q0: q1, q1: q0}, label="Permute")
+    state.consume(q0)
+
+    # q[1] is live in q_0, so q[0] must keep its own local.
+    assert state.refill(q0) == "q_1"
+    state.consume(q0)
+    state.consume(q1)
+
+    # q[1] now holds q_0 only as a dead name, so q[0] trades it back.
+    assert state.refill(q0) == "q_0"
+    assert state.binding(q1) == Binding("q_1", SlotState.CONSUMED)
+    with pytest.raises(LinearityError, match="live and cannot be refilled"):
+        state.refill(q0)

@@ -26,9 +26,10 @@ if TYPE_CHECKING:
 
 import cupy as cp
 from pytket import Qubit
+from pytket.circuit import Op, OpType
 
 import pecos as pc
-from pecos.simulators.mps_pytket.gates_one_qubit import H
+from pecos.simulators.mps_pytket.gates_one_qubit import RZ, SX, H, SXdg
 
 
 def _apply_two_qubit_matrix(
@@ -173,6 +174,22 @@ def RYY(
     _apply_two_qubit_matrix(state, qubits, matrix)
 
 
+def RXYXY2Q(
+    state: MPS,
+    qubits: tuple[int, int],
+    angles: tuple[float, float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Apply pytket's exact PhasedXX equivalent (angles are in half-turns)."""
+    if len(angles) != 2:
+        msg = "RXYXY2Q requires exactly 2 angle parameters."
+        raise ValueError(msg)
+    theta, phi = angles
+    gate = Op.create(OpType.PhasedXX, [theta / pc.f64.pi, phi / pc.f64.pi])
+    matrix = cp.asarray(gate.get_unitary(), dtype=state.dtype)
+    _apply_two_qubit_matrix(state, qubits, matrix)
+
+
 def RZZ(
     state: MPS,
     qubits: tuple[int, int],
@@ -209,30 +226,13 @@ def CRX(
     angles: tuple[float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Controlled-RX gate (qubits[0] = control, qubits[1] = target).
-
-    Block-diag(I, RX(theta)) in q0-HIGH basis (MPS convention):
-        [[1, 0, 0, 0],
-         [0, 1, 0, 0],
-         [0, 0, cos(theta/2), -i sin(theta/2)],
-         [0, 0, -i sin(theta/2), cos(theta/2)]].
-    """
+    """Lower controlled-RX at the simulator boundary."""
     if len(angles) != 1:
         msg = "CRX gate requires exactly 1 angle parameter."
         raise ValueError(msg)
-    theta = angles[0]
-    c = cmath.cos(theta / 2)
-    s = cmath.sin(theta / 2)
-    matrix = cp.asarray(
-        [
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, c, -1j * s],
-            [0, 0, -1j * s, c],
-        ],
-        dtype=state.dtype,
-    )
-    _apply_two_qubit_matrix(state, qubits, matrix)
+    H(state, qubits[1])
+    CRZ(state, qubits, angles)
+    H(state, qubits[1])
 
 
 def CRY(
@@ -241,30 +241,13 @@ def CRY(
     angles: tuple[float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Controlled-RY gate (qubits[0] = control, qubits[1] = target).
-
-    Block-diag(I, RY(theta)) in q0-HIGH basis:
-        [[1, 0, 0, 0],
-         [0, 1, 0, 0],
-         [0, 0, cos(theta/2), -sin(theta/2)],
-         [0, 0, sin(theta/2), cos(theta/2)]].
-    """
+    """Lower controlled-RY at the simulator boundary."""
     if len(angles) != 1:
         msg = "CRY gate requires exactly 1 angle parameter."
         raise ValueError(msg)
-    theta = angles[0]
-    c = cmath.cos(theta / 2)
-    s = cmath.sin(theta / 2)
-    matrix = cp.asarray(
-        [
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, c, -s],
-            [0, 0, s, c],
-        ],
-        dtype=state.dtype,
-    )
-    _apply_two_qubit_matrix(state, qubits, matrix)
+    SX(state, qubits[1])
+    CRZ(state, qubits, angles)
+    SXdg(state, qubits[1])
 
 
 def CRZ(
@@ -273,25 +256,13 @@ def CRZ(
     angles: tuple[float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Controlled-RZ gate (qubits[0] = control, qubits[1] = target).
-
-    Block-diag(I, RZ(theta)) in q0-HIGH basis: diag(1, 1,
-    exp(-i theta/2), exp(i theta/2)).
-    """
+    """Lower controlled-RZ at the simulator boundary."""
     if len(angles) != 1:
         msg = "CRZ gate requires exactly 1 angle parameter."
         raise ValueError(msg)
-    theta = angles[0]
-    matrix = cp.asarray(
-        [
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, cmath.exp(-1j * theta / 2), 0],
-            [0, 0, 0, cmath.exp(1j * theta / 2)],
-        ],
-        dtype=state.dtype,
-    )
-    _apply_two_qubit_matrix(state, qubits, matrix)
+    half_theta = float(angles[0]) / 2
+    RZZ(state, qubits, (-half_theta,))
+    RZ(state, qubits[1], (half_theta,))
 
 
 def RXXRYYRZZ(

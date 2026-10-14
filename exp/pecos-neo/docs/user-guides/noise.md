@@ -36,7 +36,8 @@ and [Noise Channels](noise-channels.md).
 ## Full Noise Model Builder
 
 `CompositeNoiseModelBuilder` gives you control over leakage, emission, seepage,
-crosstalk, and more:
+crosstalk, and more. It and the presets below require the `composite-noise`
+Cargo feature on `pecos-neo`:
 
 ```rust
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;

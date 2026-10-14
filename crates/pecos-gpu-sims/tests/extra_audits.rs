@@ -12,7 +12,7 @@
 //! - `GpuDensityMatrix` measurement distribution vs `StateVecSoA` expectation over
 //!   many trials.
 //! - Gate fusion replay: force per-gate dispatch vs normal fused batching, the
-//!   two must produce bit-identical output (modulo f32 rounding) for any
+//!   two must produce bit-identical output (modulo floating-point rounding) for any
 //!   circuit.
 
 use pecos_core::{Angle64, QubitId};
@@ -286,7 +286,8 @@ fn fusion_replay_f64() {
     let unfused_state = unfused.state();
 
     assert_eq!(fused_state.len(), unfused_state.len());
-    let tol: f64 = 1e-5;
+    // f64 roundoff only; an f32 value leaking into the f64 path shows up at 1e-8 or worse.
+    let tol: f64 = 1e-10;
     let mut max_diff = 0.0f64;
     for ([fr, fi], [ur, ui]) in fused_state.iter().zip(unfused_state.iter()) {
         let dr = fr - ur;
@@ -437,7 +438,7 @@ fn fusion_replay_matches_cpu() {
         }
     }
     assert!(
-        max_diff < 1e-5,
+        max_diff < 1e-10,
         "GPU (fused) vs CPU ground truth diverged: max_diff = {max_diff:.3e}"
     );
 }

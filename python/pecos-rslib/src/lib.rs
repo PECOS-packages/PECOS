@@ -32,6 +32,7 @@
 mod prelude;
 
 mod array_buffer;
+mod batch_decoder_spec;
 mod bit_conversion;
 mod bit_int_bindings;
 mod bit_uint_bindings;
@@ -64,6 +65,8 @@ mod programs_module;
 mod py_foreign_decoder;
 mod py_foreign_simulator;
 mod quantum_info_bindings;
+mod qudit_bindings;
+mod scheduled_adapter;
 mod shot_results_bindings;
 mod sim;
 mod simulator_utils;
@@ -83,17 +86,19 @@ mod types_module;
 mod wasm_foreign_object_bindings;
 mod wasm_program_bindings;
 
-// Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
-
 use bit_int_bindings::PyBitInt;
 use bit_uint_bindings::PyBitUInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
-use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
+use engine_builders::{PyPhirJson, PyQasm, PyQis};
 use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
 use pecos_random_bindings::RngPcg;
 use pyo3::prelude::*;
+use qudit_bindings::{
+    PyDensityMatrixDiagnostics, PyInstrumentSample, PyKrausSample, PyMeasurementSample,
+    PyQuditDensityMatrix, PyQuditStateVec, PyQutritDensityMatrix, PyQutritStateVec,
+};
 use sparse_stab_bindings::PySparseStab;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use stab_bindings::PyStabilizer;
@@ -177,6 +182,12 @@ fn setup_cuda_library_path() {
     log::debug!("QuEST CUDA backend not found in standard locations");
 }
 
+/// Register package-relative native libraries without changing process environment variables.
+#[pyfunction]
+fn _set_qis_library_dir(path: std::path::PathBuf) -> PyResult<()> {
+    pecos_qis::set_bundled_library_dir(path).map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
 /// A Python module implemented in Rust.
 /// Users should import from `pecos` (quantum-pecos) which re-exports these types
 /// with additional Python-native enhancements.
@@ -190,61 +201,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Set up QuEST CUDA backend path for runtime loading (before any QuEST usage)
     setup_cuda_library_path();
 
-    // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
-    // This prevents conflicts with LLVM-21.1 when the Selene runtime is loaded later
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-
-        const RTLD_LAZY: i32 = 0x00001;
-        const RTLD_GLOBAL: i32 = 0x00100;
-
-        log::debug!("Unix detected, attempting Selene runtime preload...");
-
-        // Build search paths for libselene_simple_runtime.so:
-        // 1. PECOS_SELENE_PRELOAD env var (explicit override)
-        // 2. ~/.pecos/lib/
-        // 3. Relative development paths (target/debug, target/release)
-        let mut possible_paths: Vec<std::path::PathBuf> = Vec::new();
-
-        if let Ok(path) = std::env::var("PECOS_SELENE_PRELOAD") {
-            possible_paths.push(std::path::PathBuf::from(path));
-        }
-
-        if let Some(home) = dirs::home_dir() {
-            possible_paths.push(home.join(".pecos/lib/libselene_simple_runtime.so"));
-        }
-
-        possible_paths.push("target/debug/libselene_simple_runtime.so".into());
-        possible_paths.push("target/release/libselene_simple_runtime.so".into());
-
-        log::debug!("Checking for Selene runtime libraries...");
-        for path in &possible_paths {
-            let path_str = path.to_string_lossy();
-            log::trace!("Checking path: {path_str}");
-            if path.exists() {
-                log::debug!("Found Selene runtime! Attempting to preload: {path_str}");
-
-                unsafe {
-                    let path_cstr =
-                        CString::new(path_str.as_bytes()).expect("path contains null byte");
-                    let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
-                    if handle.is_null() {
-                        let error_ptr = libc::dlerror();
-                        if !error_ptr.is_null() {
-                            let error = std::ffi::CStr::from_ptr(error_ptr).to_string_lossy();
-                            log::warn!("Failed to preload {path_str}: {error}");
-                        }
-                    } else {
-                        log::info!(
-                            "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path_str}"
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    m.add_function(wrap_pyfunction!(_set_qis_library_dir, m)?)?;
 
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;
@@ -256,6 +213,30 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_class::<PyStateVec>()?;
+    m.add_class::<PyQuditStateVec>()?;
+    m.add_class::<PyQutritStateVec>()?;
+    m.add_class::<PyQuditDensityMatrix>()?;
+    m.add_class::<PyQutritDensityMatrix>()?;
+    m.add_class::<PyKrausSample>()?;
+    m.add_class::<PyMeasurementSample>()?;
+    m.add_class::<PyInstrumentSample>()?;
+    m.add_class::<PyDensityMatrixDiagnostics>()?;
+    for (name, class) in qudit_bindings::exception_classes(m.py())? {
+        m.add(name, class)?;
+    }
+    m.add_function(wrap_pyfunction!(qudit_bindings::py_basis_swap, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        qudit_bindings::py_embedded_qubit_unitary,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        qudit_bindings::py_qutrit_leakage_channel,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        qudit_bindings::py_qutrit_seepage_channel,
+        m
+    )?)?;
     m.add_class::<PyCoinToss>()?;
     m.add_class::<PyPauliProp>()?;
     m.add_class::<PyByteMessage>()?;
@@ -292,8 +273,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register engine builders (QasmEngineBuilder, etc.)
     engine_builders::register_engine_builders(m)?;
-
-    // Register HUGR compilation functions
 
     // Register numerical computing module (scipy.optimize replacements)
     num_bindings::register_num_module(m)?;
@@ -333,7 +312,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register program types
     m.add_class::<PyQasm>()?;
     m.add_class::<PyQis>()?;
-    m.add_class::<PyHugr>()?;
     m.add_class::<PyPhirJson>()?;
     wasm_program_bindings::register_wasm_programs(m)?;
 
@@ -344,6 +322,13 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(engine_builders::phir_json_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::phir_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::sim_builder, m)?)?;
+    scheduled_adapter::register(m)?;
+    m.add_class::<engine_builders::PyScheduledLocalNoise>()?;
+    m.add_function(wrap_pyfunction!(engine_builders::scheduled_local_noise, m)?)?;
+    m.add_class::<engine_builders::PyScheduledIdleNoise>()?;
+    m.add_function(wrap_pyfunction!(engine_builders::scheduled_idle_noise, m)?)?;
+    m.add_class::<engine_builders::PyScheduledIdleZ>()?;
+    m.add_function(wrap_pyfunction!(engine_builders::scheduled_idle_z, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::general_noise, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::depolarizing_noise, m)?)?;
     m.add_function(wrap_pyfunction!(
@@ -396,7 +381,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register types submodule containing core data types
     types_module::register_types_module(m)?;
 
-    // Register experimental submodule (symbolic HUGR execution)
+    // Register experimental submodule (symbolic circuit execution)
     experimental_bindings::register_experimental_module(m)?;
 
     // Register QEC fault tolerance submodule

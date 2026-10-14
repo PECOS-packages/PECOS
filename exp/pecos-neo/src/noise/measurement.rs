@@ -106,6 +106,10 @@ impl MeasurementChannel {
 }
 
 impl NoiseChannel for MeasurementChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterMeasurement)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if !self.is_active() {
             return false;
@@ -244,6 +248,10 @@ impl MeasurementStateFlipChannel {
 }
 
 impl NoiseChannel for MeasurementStateFlipChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::BeforeMeasurement)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if self.p <= 0.0 {
             return false;

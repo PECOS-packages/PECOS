@@ -1,4 +1,4 @@
-// Copyright 2024 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -11,6 +11,9 @@
 // the License.
 
 use crate::prelude::*;
+use crate::simulator_utils::{
+    SymbolEntry, extract_forced_outcome, supports_exact, validate_supported_symbol,
+};
 use pecos_core::BitSet;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -19,6 +22,108 @@ use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 #[pyclass(module = "pecos_rslib")]
 pub struct SparseSim {
     inner: SparseStab,
+}
+
+#[cfg(test)]
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { SparseSim::new(2) },
+    supports_forcing = true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_mz_matches_aliases,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    "MZ",
+    &["MZForced"],
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_pz_matches_aliases,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    "PZ",
+    &["PZForced"],
+    false
+);
+
+#[cfg(test)]
+crate::simulator_utils::random_z_surface_test!(
+    random_z_measurement_sentinel,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::random_z_surface_test!(
+    random_z_preparation_sentinel,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    false
+);
+
+#[cfg(test)]
+crate::simulator_utils::invalid_forced_z_surface_test!(SparseSim {
+    inner: SparseStab::with_seed(2, 0)
+});
+
+fn supports(entry: &SymbolEntry) -> bool {
+    supports_exact! { entry;
+        X => ["X"];
+        Y => ["Y"];
+        Z => ["Z"];
+        H => ["H"];
+        H2 => ["H2"];
+        H3 => ["H3"];
+        H4 => ["H4"];
+        H5 => ["H5"];
+        H6 => ["H6"];
+        F => ["F"];
+        Fdg => ["Fdg"];
+        F2 => ["F2"];
+        F2dg => ["F2dg"];
+        F3 => ["F3"];
+        F3dg => ["F3dg"];
+        F4 => ["F4"];
+        F4dg => ["F4dg"];
+        Sx => ["SX"];
+        Sxdg => ["SXdg"];
+        Sy => ["SY"];
+        Sydg => ["SYdg"];
+        Sz => ["SZ"];
+        Szdg => ["SZdg"];
+        Pz => ["PZ"];
+        PzForced => ["PZForced"];
+        Pnz => ["PNZ"];
+        Px => ["PX"];
+        Pnx => ["PNX"];
+        Py => ["PY"];
+        Pny => ["PNY"];
+        Mz => ["MZ"];
+        MzForced => ["MZForced"];
+        Mx => ["MX"];
+        My => ["MY"];
+        Cx => ["CX"];
+        Cy => ["CY"];
+        Cz => ["CZ"];
+        Sxx => ["SXX"];
+        Sxxdg => ["SXXdg"];
+        Syy => ["SYY"];
+        Syydg => ["SYYdg"];
+        Szz => ["SZZ"];
+        Szzdg => ["SZZdg"];
+        Swap => ["SWAP"];
+        G => ["G2"];
+    }
 }
 
 #[pymethods]
@@ -146,7 +251,13 @@ impl SparseSim {
                 self.inner.szdg(q);
                 Ok(None)
             }
-            "PZ" => {
+            "PZ" | "PZForced" => {
+                if let Some(forced_value) =
+                    extract_forced_outcome(params, symbol, symbol == "PZForced")?
+                {
+                    self.inner.pz_forced(location, forced_value);
+                    return Ok(None);
+                }
                 self.inner.pz(q);
                 Ok(None)
             }
@@ -170,31 +281,21 @@ impl SparseSim {
                 self.inner.pny(q);
                 Ok(None)
             }
-            "PZForced" => {
-                let forced_value = params
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>("PZForced requires params")
-                    })?
-                    .get_item("forced_outcome")?
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "PZForced requires a 'forced_outcome' parameter",
-                        )
-                    })?
-                    .call_method0("__bool__")?
-                    .extract::<bool>()?;
-                // pz_forced is an inherent method still using old API
-                self.inner.pz_forced(location, forced_value);
-                Ok(None)
-            }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self
-                        .inner
-                        .mz(q)
-                        .into_iter()
-                        .next()
-                        .expect("measurement returned no results"),
+                    "MZ" | "MZForced" => {
+                        if let Some(forced_value) =
+                            extract_forced_outcome(params, symbol, symbol == "MZForced")?
+                        {
+                            self.inner.mz_forced(location, forced_value)
+                        } else {
+                            self.inner
+                                .mz(q)
+                                .into_iter()
+                                .next()
+                                .expect("measurement returned no results")
+                        }
+                    }
                     "MX" => self
                         .inner
                         .mx(q)
@@ -207,24 +308,6 @@ impl SparseSim {
                         .into_iter()
                         .next()
                         .expect("measurement returned no results"),
-                    "MZForced" => {
-                        let forced_value = params
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "MZForced requires params",
-                                )
-                            })?
-                            .get_item("forced_outcome")?
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "MZForced requires a 'forced_outcome' parameter",
-                                )
-                            })?
-                            .call_method0("__bool__")?
-                            .extract::<bool>()?;
-                        // mz_forced is an inherent method still using old API
-                        self.inner.mz_forced(location, forced_value)
-                    }
                     _ => unreachable!(),
                 };
                 Ok(Some(u8::from(result.outcome)))
@@ -323,7 +406,8 @@ impl SparseSim {
         }
     }
 
-    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
+    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible).
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -395,6 +479,8 @@ impl SparseSim {
         py: Python<'_>,
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        validate_supported_symbol(symbol, &locations_set, supports)?;
 
         // Check if simulate_gate is False
         if let Some(p) = params
@@ -403,9 +489,6 @@ impl SparseSim {
         {
             return Ok(output.into());
         }
-
-        // Convert locations to a vector
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
 
         for location in locations_set.iter() {
             // Convert location to tuple
@@ -502,7 +585,9 @@ impl SparseSim {
         // Create a Rust GateBindingsDict directly
         let py = slf.py();
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(sim_obj))
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
     }
 
     #[getter]

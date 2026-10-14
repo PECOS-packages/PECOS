@@ -10,7 +10,10 @@ pub mod prelude;
 pub mod quantum;
 pub mod quantum_engine_builder;
 pub mod quantum_system;
+pub mod runtime_frame;
 pub mod sampling;
+pub mod scheduled_events;
+pub mod scheduled_frame;
 pub mod shot_results;
 pub mod sim_builder;
 

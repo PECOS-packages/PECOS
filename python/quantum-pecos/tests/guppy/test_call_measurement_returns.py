@@ -23,7 +23,7 @@ def test_measurement_return_crosses_call() -> None:
         value = measure_one(qubit())
         result("value", value)
 
-    values = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
+    values = sim(Guppy(main)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
     assert len(values) == 3
     assert set(values) <= {0, 1}
 
@@ -37,7 +37,7 @@ def test_measurement_result_in_same_block() -> None:
         h(q)
         result("value", measure(q).read())
 
-    values = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
+    values = sim(Guppy(main)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
     assert len(values) == 3
     assert set(values) <= {0, 1}
 
@@ -59,7 +59,7 @@ def test_measurement_return_crosses_two_calls() -> None:
         value = outer(qubit())
         result("value", value)
 
-    values = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
+    values = sim(Guppy(main)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()["value"]
     assert len(values) == 3
     assert set(values) <= {0, 1}
 
@@ -96,6 +96,6 @@ def test_struct_helper_and_array_measurement_returns() -> None:
         result("final", final_measurement(patch))
         discard(ax)
 
-    results = sim(Guppy(main)).quantum(state_vector()).seed(1).run(1).to_dict()
+    results = sim(Guppy(main)).qubits(5).quantum(state_vector()).seed(1).run(1).to_dict()
     assert len(results["initial"][0]) == 2
     assert len(results["final"][0]) == 4

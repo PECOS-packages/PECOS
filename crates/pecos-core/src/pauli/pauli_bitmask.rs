@@ -730,14 +730,14 @@ impl<B: BitmaskStorage> fmt::Debug for PauliBitmaskGeneric<B> {
 }
 
 // ============================================================
-// Clifford conjugation: U†PU = sign * P'
+// Clifford conjugation: U P U† = sign * P'
 // ============================================================
 
-/// Result of Clifford conjugation U†PU.
+/// Result of Clifford conjugation U P U†.
 #[derive(Clone, Debug)]
 pub struct Conjugated<B: BitmaskStorage = u128> {
     pub label: PauliBitmaskGeneric<B>,
-    /// True if the sign is negative (U†PU = -P').
+    /// True if the sign is negative (U P U† = -P').
     pub sign_negative: bool,
 }
 
@@ -1160,11 +1160,339 @@ pub fn conjugate_cy_in_place<B: BitmaskStorage>(
     conjugate_szdg_in_place(p, t) ^ conjugate_cx_in_place(p, c, t) ^ conjugate_sz_in_place(p, t)
 }
 
+/// Forward SZZ conjugation: P -> U P U†.
+///
+/// CX, SZ on q1, then CX.
+#[must_use]
+pub fn conjugate_szz<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_szz_in_place(&mut label, q0, q1);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place forward SZZ conjugation on q0 and q1.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_szz_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> bool {
+    conjugate_cx_in_place(p, q0, q1)
+        ^ conjugate_sz_in_place(p, q1)
+        ^ conjugate_cx_in_place(p, q0, q1)
+}
+
+/// Forward `SZZdg` conjugation: P -> U P U†.
+///
+/// CX, `SZdg` on q1, then CX.
+#[must_use]
+pub fn conjugate_szzdg<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_szzdg_in_place(&mut label, q0, q1);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place forward `SZZdg` conjugation on q0 and q1.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_szzdg_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> bool {
+    conjugate_cx_in_place(p, q0, q1)
+        ^ conjugate_szdg_in_place(p, q1)
+        ^ conjugate_cx_in_place(p, q0, q1)
+}
+
+/// Forward SXX conjugation: P -> U P U†.
+///
+/// Change basis with H on both qubits, conjugate by SZZ, then undo with H.
+#[must_use]
+pub fn conjugate_sxx<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_sxx_in_place(&mut label, q0, q1);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place forward SXX conjugation on q0 and q1.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sxx_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> bool {
+    conjugate_h_in_place(p, q0)
+        ^ conjugate_h_in_place(p, q1)
+        ^ conjugate_szz_in_place(p, q0, q1)
+        ^ conjugate_h_in_place(p, q0)
+        ^ conjugate_h_in_place(p, q1)
+}
+
+/// Forward `SXXdg` conjugation: P -> U P U†.
+///
+/// Change basis with H on both qubits, conjugate by `SZZdg`, then undo with H.
+#[must_use]
+pub fn conjugate_sxxdg<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_sxxdg_in_place(&mut label, q0, q1);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place forward `SXXdg` conjugation on q0 and q1.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_sxxdg_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> bool {
+    conjugate_h_in_place(p, q0)
+        ^ conjugate_h_in_place(p, q1)
+        ^ conjugate_szzdg_in_place(p, q0, q1)
+        ^ conjugate_h_in_place(p, q0)
+        ^ conjugate_h_in_place(p, q1)
+}
+
+/// Forward SYY conjugation: P -> U P U†.
+///
+/// Change basis with SX on both qubits, conjugate by SZZ, then undo with `SXdg`.
+#[must_use]
+pub fn conjugate_syy<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_syy_in_place(&mut label, q0, q1);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place forward SYY conjugation on q0 and q1.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_syy_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> bool {
+    conjugate_sx_in_place(p, q0)
+        ^ conjugate_sx_in_place(p, q1)
+        ^ conjugate_szz_in_place(p, q0, q1)
+        ^ conjugate_sxdg_in_place(p, q0)
+        ^ conjugate_sxdg_in_place(p, q1)
+}
+
+/// Forward `SYYdg` conjugation: P -> U P U†.
+///
+/// Change basis with SX on both qubits, conjugate by `SZZdg`, then undo with `SXdg`.
+#[must_use]
+pub fn conjugate_syydg<B: BitmaskStorage>(
+    p: &PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> Conjugated<B> {
+    let mut label = p.clone();
+    let sign_negative = conjugate_syydg_in_place(&mut label, q0, q1);
+    Conjugated {
+        label,
+        sign_negative,
+    }
+}
+
+/// In-place forward `SYYdg` conjugation on q0 and q1.
+///
+/// Returns `true` when the conjugation contributes a negative sign.
+#[must_use]
+pub fn conjugate_syydg_in_place<B: BitmaskStorage>(
+    p: &mut PauliBitmaskGeneric<B>,
+    q0: usize,
+    q1: usize,
+) -> bool {
+    conjugate_sx_in_place(p, q0)
+        ^ conjugate_sx_in_place(p, q1)
+        ^ conjugate_szzdg_in_place(p, q0, q1)
+        ^ conjugate_sxdg_in_place(p, q0)
+        ^ conjugate_sxdg_in_place(p, q1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
+
+    // Matrix order is |q0 q1>; use explicit complex arithmetic independently
+    // of the conjugation decompositions.
+    fn szz_family_pauli_matrix(
+        p: &PauliBitmask,
+        qubits: [usize; 2],
+    ) -> [[num_complex::Complex64; 4]; 4] {
+        use num_complex::Complex64;
+        let local =
+            |q: usize, row: usize, col: usize| match (p.x_bits.get_bit(q), p.z_bits.get_bit(q)) {
+                (false, false) => Complex64::new(f64::from(row == col), 0.0),
+                (true, false) => Complex64::new(f64::from(row != col), 0.0),
+                (false, true) => Complex64::new(
+                    if row == col {
+                        if row == 0 { 1.0 } else { -1.0 }
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ),
+                (true, true) => Complex64::new(
+                    0.0,
+                    if row == col {
+                        0.0
+                    } else if row == 0 {
+                        -1.0
+                    } else {
+                        1.0
+                    },
+                ),
+            };
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| local(qubits[0], r / 2, c / 2) * local(qubits[1], r % 2, c % 2))
+        })
+    }
+
+    #[test]
+    fn szz_family_matches_canonical_matrices() {
+        use crate::gate_type::GateType;
+        use num_complex::Complex64;
+        type Forward = fn(&PauliBitmask, usize, usize) -> Conjugated;
+        type InPlace = fn(&mut PauliBitmask, usize, usize) -> bool;
+        let cases: [(GateType, Forward, InPlace); 6] = [
+            (
+                GateType::SZZ,
+                conjugate_szz::<u128>,
+                conjugate_szz_in_place::<u128>,
+            ),
+            (
+                GateType::SZZdg,
+                conjugate_szzdg::<u128>,
+                conjugate_szzdg_in_place::<u128>,
+            ),
+            (
+                GateType::SXX,
+                conjugate_sxx::<u128>,
+                conjugate_sxx_in_place::<u128>,
+            ),
+            (
+                GateType::SXXdg,
+                conjugate_sxxdg::<u128>,
+                conjugate_sxxdg_in_place::<u128>,
+            ),
+            (
+                GateType::SYY,
+                conjugate_syy::<u128>,
+                conjugate_syy_in_place::<u128>,
+            ),
+            (
+                GateType::SYYdg,
+                conjugate_syydg::<u128>,
+                conjugate_syydg_in_place::<u128>,
+            ),
+        ];
+        for (gate, conjugate, in_place) in cases {
+            let flat = gate.canonical_2q_matrix().unwrap();
+            let u: [[Complex64; 4]; 4] = std::array::from_fn(|r| {
+                std::array::from_fn(|c| {
+                    Complex64::new(flat[2 * (4 * r + c)], flat[2 * (4 * r + c) + 1])
+                })
+            });
+            for qubits in [[0, 1], [2, 65], [65, 2]] {
+                let local = |q| {
+                    [
+                        PauliBitmask::default(),
+                        PauliBitmask::x(q),
+                        PauliBitmask::y(q),
+                        PauliBitmask::z(q),
+                    ]
+                };
+                let paulis: Vec<_> = local(qubits[0])
+                    .into_iter()
+                    .flat_map(|a| local(qubits[1]).map(|b| a.multiply(&b)))
+                    .collect();
+                for p in &paulis {
+                    let matrix = szz_family_pauli_matrix(p, qubits);
+                    let image: [[Complex64; 4]; 4] = std::array::from_fn(|r| {
+                        std::array::from_fn(|c| {
+                            (0..4)
+                                .flat_map(|i| {
+                                    (0..4).map(move |j| u[r][i] * matrix[i][j] * u[c][j].conj())
+                                })
+                                .sum()
+                        })
+                    });
+                    let matches: Vec<_> = paulis
+                        .iter()
+                        .flat_map(|candidate| {
+                            [false, true].map(move |negative| (candidate, negative))
+                        })
+                        .filter(|(candidate, negative)| {
+                            let expected = szz_family_pauli_matrix(candidate, qubits);
+                            let sign = if *negative { -1.0 } else { 1.0 };
+                            image
+                                .iter()
+                                .flatten()
+                                .zip(expected.iter().flatten())
+                                .all(|(a, b)| (*a - sign * b).norm() < 1e-12)
+                        })
+                        .collect();
+                    assert_eq!(matches.len(), 1);
+                    let result = conjugate(p, qubits[0], qubits[1]);
+                    assert_eq!(
+                        (&result.label, result.sign_negative),
+                        matches[0],
+                        "{gate:?} {qubits:?} {p:?}"
+                    );
+                    let mut label = *p;
+                    let sign = in_place(&mut label, qubits[0], qubits[1]);
+                    assert_eq!((&label, sign), matches[0], "in-place {gate:?} {p:?}");
+                }
+            }
+        }
+    }
 
     fn reference_phase_exponent<B: BitmaskStorage>(
         a: &PauliBitmaskGeneric<B>,

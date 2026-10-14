@@ -16,77 +16,90 @@
 //! fixed-width `BitUInt`/`BitInt` types that store values as `Vec<u64>` words.
 
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyInt};
 
-/// Extract a Python integer as a `Vec<u64>` words in little-endian order.
-///
-/// Works for arbitrarily large values, including negative ones.
-/// For negative values, the result contains the two's complement representation.
-/// The caller is responsible for masking to the desired bit width (typically
-/// done by `BitUInt::from_raw_words` / `BitInt::new_from_raw_inner`).
-pub fn pyint_to_u64_words(obj: &Bound<'_, PyAny>, n_words: usize) -> PyResult<Vec<u64>> {
-    // Fast path: value fits in u64
+/// Decode an integer's two's-complement value into the little-endian words that
+/// cover `bits`. Bits above `bits` in the top word may be set; callers mask them
+/// when building the fixed-width value.
+pub fn pyint_to_u64_words(obj: &Bound<'_, PyAny>, bits: u16) -> PyResult<Vec<u64>> {
+    let n_words = usize::from(bits).div_ceil(64);
     if let Ok(v) = obj.extract::<u64>() {
-        let mut words = vec![0u64; n_words];
+        let mut words = vec![0; n_words];
         words[0] = v;
         return Ok(words);
     }
-
-    // Fast path: value fits in i64 (handles small negative values)
     if let Ok(v) = obj.extract::<i64>() {
-        #[allow(clippy::cast_sign_loss)]
-        let raw = v as u64;
-        // Sign-extend: fill upper words with all-1s for negative, all-0s for positive
-        let fill = if v < 0 { u64::MAX } else { 0u64 };
-        let mut words = vec![fill; n_words];
-        words[0] = raw;
+        let mut words = vec![if v < 0 { u64::MAX } else { 0 }; n_words];
+        words[0] = v.cast_unsigned();
         return Ok(words);
     }
 
-    // Slow path: arbitrary precision Python int.
-    // Extract word by word: word_i = (value >> (64*i)) & 0xFFFFFFFFFFFFFFFF
-    let py = obj.py();
-    let mask = u64::MAX
-        .into_pyobject(py)
-        .expect("u64 to Python conversion failed")
-        .into_any();
-
-    let mut words = Vec::with_capacity(n_words);
-    let mut current = obj.clone();
-    for _ in 0..n_words {
-        let word_obj = current.call_method1("__and__", (&mask,))?;
-        let word: u64 = word_obj.extract()?;
-        words.push(word);
-        current = current.call_method1("__rshift__", (64u32,))?;
-    }
-
-    Ok(words)
+    let mask = 1u32.into_pyobject(obj.py())?.lshift(bits)?.sub(1)?;
+    let wrapped = obj.bitand(mask)?;
+    let bytes = wrapped.call_method1("to_bytes", (n_words * 8, "little"))?;
+    Ok(bytes
+        .cast::<PyBytes>()?
+        .as_bytes()
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|chunk| u64::from_le_bytes(*chunk))
+        .collect())
 }
 
-/// Convert `u64` words (little-endian, LSB first) to an unsigned Python integer.
+/// Convert little-endian words with Python's linear-time byte decoder.
 pub fn u64_words_to_pyint<'py>(py: Python<'py>, words: &[u64]) -> PyResult<Bound<'py, PyAny>> {
-    // Fast path: single word
     if words.len() == 1 || words.iter().skip(1).all(|&w| w == 0) {
-        return Ok(words[0]
-            .into_pyobject(py)
-            .expect("u64 to Python conversion failed")
+        return Ok(words
+            .first()
+            .copied()
+            .unwrap_or(0)
+            .into_pyobject(py)?
             .into_any());
     }
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    py.get_type::<PyInt>()
+        .call_method1("from_bytes", (PyBytes::new(py, &bytes), "little"))
+}
 
-    // Build value: iterate from MSB word to LSB word
-    let mut result = 0u64
-        .into_pyobject(py)
-        .expect("u64 to Python conversion failed")
-        .into_any();
-    for &word in words.iter().rev() {
-        result = result.call_method1("__lshift__", (64u32,))?;
-        let word_py = word
-            .into_pyobject(py)
-            .expect("u64 to Python conversion failed")
-            .into_any();
-        result = result.call_method1("__or__", (&word_py,))?;
+/// Read an accepted operand's mathematical value without receiver-width coercion.
+pub fn operand_to_pyint<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    if obj.is_instance_of::<PyInt>() {
+        return Ok(obj.clone());
     }
+    if let Ok(value) = obj.extract::<PyRef<crate::bit_int_bindings::PyBitInt>>() {
+        return value.__int__(obj.py());
+    }
+    if let Ok(value) = obj.extract::<PyRef<crate::bit_uint_bindings::PyBitUInt>>() {
+        return value.__int__(obj.py());
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        let bits = s
+            .strip_prefix("0b")
+            .or_else(|| s.strip_prefix("0B"))
+            .unwrap_or(&s);
+        if bits.is_empty() || !bits.bytes().all(|c| c == b'0' || c == b'1') {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Binary string must contain only '0' and '1' characters",
+            ));
+        }
+        return obj.py().get_type::<PyInt>().call1((bits, 2));
+    }
+    obj.py().import("operator")?.getattr("index")?.call1((obj,))
+}
 
-    Ok(result)
+/// Read a count once, rejecting negatives and saturating beyond all storage widths.
+pub fn shift_count(obj: &Bound<'_, PyAny>) -> PyResult<u16> {
+    let value = operand_to_pyint(obj)?;
+    if value.lt(0)? {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "negative shift count",
+        ));
+    }
+    if value.ge(u16::MAX)? {
+        return Ok(u16::MAX);
+    }
+    value.extract()
 }
 
 /// Convert `u64` words (little-endian) representing a two's complement value

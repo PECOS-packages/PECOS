@@ -55,7 +55,6 @@ def telep(prep_basis: str, meas_basis: str) -> str:
     )
 
 
-@pytest.mark.optional_dependency
 def test_bell_qir() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -71,7 +70,6 @@ def test_bell_qir() -> None:
     assert "__quantum__qis__h__body" in qir
 
 
-@pytest.mark.optional_dependency
 def test_bell_qreg_qir() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -87,7 +85,6 @@ def test_bell_qreg_qir() -> None:
     assert "__quantum__qis__h__body" in qir
 
 
-@pytest.mark.optional_dependency
 def test_qir_creg_size_too_large() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -107,7 +104,6 @@ def test_qir_creg_size_too_large() -> None:
         SlrConverter(prog).qir()
 
 
-@pytest.mark.optional_dependency
 def test_control_flow_qir() -> None:
     """Test a program with control flow into QIR."""
     prog = Main(
@@ -157,7 +153,6 @@ def test_control_flow_qir() -> None:
     assert "or i64" in qir, "whole-CReg pack must emit OR_i (zext c[i] << i)"
 
 
-@pytest.mark.optional_dependency
 def test_plus_qir() -> None:
     """Whole-CReg scalar arithmetic (`o.set(m + n)`) lowers via
     `_pack_creg` + i64 `add`, then unpacks back to `o`'s bits."""
@@ -185,7 +180,6 @@ def test_plus_qir() -> None:
         assert [v for (_t, v) in shot] == [2, 2, 4], shot
 
 
-@pytest.mark.optional_dependency
 def test_nested_xor_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(
@@ -204,7 +198,6 @@ def test_nested_xor_qir() -> None:
     assert "xor" in qir
 
 
-@pytest.mark.optional_dependency
 def test_minus_qir() -> None:
     """Whole-CReg scalar subtraction (`o.set(m - n)`) lowers via
     `_pack_creg` + i64 `sub`. Pure-classical + Clifford only -- runs
@@ -231,7 +224,6 @@ def test_minus_qir() -> None:
         assert [v for (_t, v) in shot] == [3, 1, 2], shot
 
 
-@pytest.mark.optional_dependency
 def test_steane_qir() -> None:
     """The Steane teleportation uses a classical scalar var
     (`smid_flag_x` -- a `CReg(..., 3)`); `_pack_creg` lowers
@@ -244,7 +236,6 @@ def test_steane_qir() -> None:
     assert "or i64" in qir, "Steane telep flag pack must emit OR_i (zext c[i] << i)"
 
 
-@pytest.mark.optional_dependency
 def test_steane_qir_bc() -> None:
     """Same Steane telep program through the QIR bitcode path.
     The bitcode builds (no longer fails loud on classical-variable
@@ -253,7 +244,6 @@ def test_steane_qir_bc() -> None:
     assert bc, "qir_bc must return non-empty bitcode for Steane telep"
 
 
-@pytest.mark.optional_dependency
 def test_sx_sxdg() -> None:
     """SX/SXdg lower to a verified executable-Clifford sequence.
 
@@ -286,7 +276,6 @@ def test_sx_sxdg() -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_parallel_qir() -> None:
     """Test that a parallel block can be compiled to QIR."""
     prog: Main = Main(
@@ -308,7 +297,6 @@ def test_parallel_qir() -> None:
     assert "__quantum__qis__z__body" in qir
 
 
-@pytest.mark.optional_dependency
 def test_nested_parallel_qir() -> None:
     """Test that nested parallel blocks can be compiled to QIR."""
     prog: Main = Main(
@@ -333,7 +321,6 @@ def test_nested_parallel_qir() -> None:
     assert "__quantum__qis__z__body" in qir
 
 
-@pytest.mark.optional_dependency
 def test_parallel_in_control_flow_qir() -> None:
     """Test parallel blocks within control flow structures in QIR."""
     prog: Main = Main(

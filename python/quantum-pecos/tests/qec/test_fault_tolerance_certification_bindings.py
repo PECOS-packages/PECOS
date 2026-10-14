@@ -356,3 +356,28 @@ def test_distance_problem_text_formats_have_expected_headers_and_soft_clauses() 
     wcnf_header = next(line for line in wcnf.splitlines() if not line.startswith("c "))
     assert wcnf_header.startswith("p wcnf ")
     assert sum(line.startswith("1 -") for line in wcnf.splitlines()) == problem.num_vars
+
+
+@pytest.mark.parametrize("gate", ["RZ", "T"])
+@pytest.mark.parametrize(
+    "method",
+    ["hook_errors", "flag_fault_condition", "fault_distance", "per_logical_fault_distances"],
+)
+def test_circuit_fault_analyzer_rejects_unsupported_gate(gate: str, method: str) -> None:
+    """Every propagation entry rejects with the original tick and gate index."""
+    circuit = TickCircuit()
+    circuit.tick().h([0])
+    if gate == "RZ":
+        circuit.tick().rz(0.3, [0])
+    else:
+        circuit.tick().t([0])
+    circuit.tick().mz([0])
+    analyzer = CircuitFaultAnalyzer(circuit)
+    arguments = {
+        "hook_errors": ([0], [0], [], [([0], [])], 1),
+        "flag_fault_condition": ([0], [], ([0], []), 1),
+        "fault_distance": ([0], [], [([0], [])], 1),
+        "per_logical_fault_distances": ([0], [], [([0], [])], 1),
+    }
+    with pytest.raises(ValueError, match=rf"unsupported gate {gate}.* at tick 1 gate 0 on qubits \[0\]"):
+        getattr(analyzer, method)(*arguments[method])

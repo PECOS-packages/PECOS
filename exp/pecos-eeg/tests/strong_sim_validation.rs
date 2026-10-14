@@ -210,7 +210,7 @@ fn test_two_h_generators_interference() {
 /// C-type first-order α: directly construct a C generator and verify.
 #[test]
 fn test_c_type_alpha() {
-    // |0⟩ with C_{X,X} = 2S_X. Should give same result as S_X at double rate.
+    // |0⟩ with C_{X,X}(c) = S_X(-2c) under the PECOS S convention.
     let stabs = vec![Bm::z(0)];
     let c = 0.005;
 
@@ -225,7 +225,7 @@ fn test_c_type_alpha() {
     let p0 = outcome_probability(&gens, &[false], &stabs);
     let p1 = outcome_probability(&gens, &[true], &stabs);
 
-    // C_{X,X} = 2S_X. α(C_{X,X}) at outcome 0:
+    // C_{X,X} = -2S_X. α(C_{X,X}) at outcome 0:
     // Φ(X,X) at 0 = 0 (flipped not in support), Φ(I,I) = 1.
     // Φ(XX,I) = Φ(I,I) = 1.
     // α = 2*Re(0) - Re(1 + 1) = -2.
@@ -276,4 +276,29 @@ fn test_a_type_alpha_zero_for_stabilizer() {
         "A on |0⟩ should not change p(0)"
     );
     assert!(p1.total.abs() < 1e-6, "A on |0⟩ should not change p(1)");
+}
+
+/// Forward S coefficients give p(1) = -s to first order, versus exact p.
+#[test]
+fn test_s_correction_matches_exact() {
+    let stabs = [Bm::z(0)];
+    for p in [0.0001_f64, 0.001, 0.01, 0.05] {
+        let s = 0.5 * (-2.0 * p).ln_1p();
+        let gens = [PropagatedEeg {
+            eeg_type: EegType::S,
+            label: Bm::x(0),
+            label2: None,
+            coeff: s,
+            source: None,
+        }];
+        let p0 = outcome_probability(&gens, &[false], &stabs);
+        let p1 = outcome_probability(&gens, &[true], &stabs);
+        let exact = (1.0 - (2.0 * s).exp()) / 2.0;
+        assert!((exact - p).abs() < 1e-12);
+        assert!((p1.total + s).abs() < 1e-12);
+        // -s - p = p² + 4p³/3 + ... . For p <= 0.05, 1.1p² bounds
+        // the first-order truncation error; 1e-12 allows roundoff.
+        assert!((p1.total - exact).abs() < 1.1 * p * p + 1e-12);
+        assert!((p0.total + p1.total - 1.0).abs() < 1e-12);
+    }
 }

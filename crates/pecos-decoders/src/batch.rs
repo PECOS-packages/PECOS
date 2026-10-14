@@ -1,4 +1,14 @@
-//! Deterministic planning and canonical-sampling primitives for batch decoding.
+//! Batch storage and execution, deterministic planning, and canonical-sampling primitives.
+
+mod execution;
+mod sample;
+mod scoring;
+
+pub use execution::{
+    BatchDecodeError, DecodeOptions, DecodeResult, DecoderFactory, logical_error_rate,
+};
+pub use sample::{SampleBatch, SampleBatchError, Shot};
+pub use scoring::{DecodeRangeResult, ShotDecodeError, decode_and_score_range};
 
 use std::fmt;
 use std::ops::Range;
@@ -319,6 +329,17 @@ pub const fn sampling_chunks(num_shots: usize) -> SamplingChunks {
 #[must_use]
 pub fn fused_worker_cap(num_shots: usize) -> usize {
     num_shots.div_ceil(SAMPLING_CHUNK_SHOTS).max(1)
+}
+
+/// Upper bound on useful workers for decoding a sampled batch.
+///
+/// Generic parallel workers pull chunks that shrink down to a single shot, so a
+/// worker beyond one per shot can never be given anything to do. Bounding the
+/// pool here keeps an oversized explicit request from spending its time
+/// spawning idle threads, and `workers_used` reports the bounded count.
+#[must_use]
+pub fn batch_worker_cap(num_shots: usize) -> usize {
+    num_shots.max(1)
 }
 
 /// The single seam constructing the canonical per-chunk RNG for sampling ABI v1.
@@ -644,6 +665,14 @@ mod tests {
         // Degenerate inputs stay safe for div_ceil.
         assert_eq!(parallel_chunk_shots(0, 4), 1);
         assert_eq!(parallel_chunk_shots(5, 0), 5);
+    }
+
+    #[test]
+    fn batch_worker_cap_is_one_worker_per_shot() {
+        assert_eq!(batch_worker_cap(0), 1);
+        assert_eq!(batch_worker_cap(1), 1);
+        assert_eq!(batch_worker_cap(2), 2);
+        assert_eq!(batch_worker_cap(100_000), 100_000);
     }
 
     #[test]

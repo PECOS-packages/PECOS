@@ -12,7 +12,9 @@ def pecos_rslib_cuda() -> types.ModuleType:
         import pecos_rslib_cuda
 
         return pecos_rslib_cuda
-    except ImportError:
+    except ModuleNotFoundError as error:
+        if error.name != "pecos_rslib_cuda":
+            raise
         pytest.skip("pecos_rslib_cuda not installed")
 
 
@@ -64,42 +66,14 @@ def test_custatevec_bell_state(pecos_rslib_cuda) -> None:
     assert correlations == trials
 
 
-@pytest.mark.cuda
-def test_custabilizer_creation(pecos_rslib_cuda) -> None:
-    """Test CuStabilizer creation (requires CUDA)."""
-    if not pecos_rslib_cuda.is_cuquantum_available():
-        pytest.skip("cuQuantum not available")
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [("CuStateVec", (4,)), ("CuTensorNet", ()), ("CuDensityMat", (2,))],
+)
+def test_constructors_report_missing_sdk(pecos_rslib_cuda, name, args) -> None:
+    """Without the cuQuantum SDK, every simulator constructor fails with the not-available error."""
+    if pecos_rslib_cuda.is_cuquantum_available():
+        pytest.skip("cuQuantum is available, so the missing-SDK error cannot occur")
 
-    try:
-        sim = pecos_rslib_cuda.CuStabilizer(100)
-        assert sim.num_qubits == 100
-    except RuntimeError as e:
-        if "not supported" in str(e).lower() or "API changed" in str(e):
-            pytest.skip("CuStabilizer API changed in cuQuantum 25.11+")
-        raise
-
-
-@pytest.mark.cuda
-def test_custabilizer_ghz_state(pecos_rslib_cuda) -> None:
-    """Test creating a GHZ state with stabilizer (requires CUDA)."""
-    if not pecos_rslib_cuda.is_cuquantum_available():
-        pytest.skip("cuQuantum not available")
-
-    try:
-        n = 10
-        sim = pecos_rslib_cuda.CuStabilizer(n)
-
-        # Create GHZ state: H on first qubit, then CX chain
-        sim.h([0])
-        for i in range(n - 1):
-            sim.cx([i, i + 1])
-
-        # All qubits should be correlated in measurement
-        results = sim.mz(list(range(n)))
-
-        # All should be the same value
-        assert all(r == results[0] for r in results)
-    except RuntimeError as e:
-        if "not supported" in str(e).lower() or "API changed" in str(e):
-            pytest.skip("CuStabilizer API changed in cuQuantum 25.11+")
-        raise
+    with pytest.raises(RuntimeError, match="cuQuantum SDK not available"):
+        getattr(pecos_rslib_cuda, name)(*args)

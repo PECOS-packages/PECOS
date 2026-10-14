@@ -12,11 +12,13 @@ use std::collections::BTreeMap;
 pub enum EegType {
     /// Hamiltonian: H_P[rho] = -i[P, rho]. Coherent rotations.
     H,
-    /// Stochastic: S_P[rho] = P rho P - rho. Pauli errors.
+    /// Stochastic: S_P[rho] = rho - P rho P. Pauli errors use negative
+    /// generator coefficients s, giving flip probability (1 - exp(2s))/2.
     S,
-    /// Correlation: C_{P,Q}. Two-Pauli correlations.
+    /// Correlation: C_{P,Q}[rho] = P rho Q + Q rho P - 1/2 {{P,Q}, rho}.
+    /// In the PECOS stochastic convention, C_{P,P} = -2 S_P.
     C,
-    /// Active: A_{P,Q}. Phase-dependent interference.
+    /// Active: A_{P,Q}[rho] = i (P rho Q - Q rho P + 1/2 {[P,Q], rho}).
     A,
 }
 

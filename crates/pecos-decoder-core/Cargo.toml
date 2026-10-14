@@ -19,5 +19,8 @@ pecos-random.workspace = true
 rayon.workspace = true
 smallvec.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

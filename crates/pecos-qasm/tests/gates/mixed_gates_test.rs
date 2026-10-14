@@ -55,7 +55,7 @@ fn test_mixed_gates_circuit() {
 
     // These gates will be expanded
     // rz stays as rz (or RZ)
-    // rx expands to H-RZ-H
+    // rx lowers to RXY1Q(theta, 0)
     // cx stays as cx (or CX)
     // cz expands to H-CX-H
 
@@ -101,8 +101,9 @@ fn test_angle_precision() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse angle precision test");
 
-    // Track the RZ gates and their angles after expansion
+    // Track the RZ and RX-family gates and their angles after expansion.
     let mut rz_angles = Vec::new();
+    let mut rx_angles = Vec::new();
 
     for op in &program.operations {
         match op {
@@ -121,6 +122,13 @@ fn test_angle_precision() {
                     rz_angles.push(angle.to_radians());
                 }
             }
+            Operation::NativeGate(gate)
+                if matches!(gate.gate_type, pecos_core::gate_type::GateType::RXY1Q) =>
+            {
+                if let Some(angle) = gate.angles.first() {
+                    rx_angles.push(angle.to_radians());
+                }
+            }
             _ => {}
         }
     }
@@ -134,20 +142,27 @@ fn test_angle_precision() {
     // Check that angles are preserved with reasonable precision
     // Note: Angle64 normalizes angles to [0, 2π), so 2.25*pi becomes 0.25*pi
     let pi = std::f64::consts::PI;
-    let expected_angles = vec![
+    let expected_rz_angles = [
         1.5 * pi, // rz(1.5*pi)
         0.5 * pi, // rz(0.5*pi)
-        // rx gates will contribute their angles too
+    ];
+    let expected_rx_angles = [
         0.085 * pi, // from rx(0.085*pi)
         0.25 * pi,  // from rx(2.25*pi) - normalized: 2.25*pi mod 2*pi = 0.25*pi
     ];
 
     // The angles might not be in the same order after expansion
-    for expected in &expected_angles {
+    for expected in &expected_rz_angles {
         let found = rz_angles
             .iter()
             .any(|&angle| (angle - expected).abs() < 1e-6); // Relaxed tolerance for angle normalization
         assert!(found, "Expected angle {expected} not found in RZ gates");
+    }
+    for expected in &expected_rx_angles {
+        let found = rx_angles
+            .iter()
+            .any(|&angle| (angle - expected).abs() < 1e-6);
+        assert!(found, "Expected angle {expected} not found in RXY1Q gates");
     }
 }
 

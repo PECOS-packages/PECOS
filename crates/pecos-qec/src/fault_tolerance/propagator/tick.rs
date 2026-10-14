@@ -19,10 +19,38 @@
 //! with DAG circuits, which provides 5-50x speedup through sparse traversal.
 
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, MeasurementId, TrackedPauliId};
-use super::{Direction, SpacetimeLocation, apply_gate, extract_spacetime_locations};
+use super::{
+    Direction, PauliPropagationOutcome, SpacetimeLocation, UnsupportedGateError,
+    UnsupportedGateLocation, apply_gate, apply_gate_unchecked, extract_spacetime_locations,
+    is_supported_prep_gate,
+};
 use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
 use pecos_simulators::PauliProp;
+
+/// Classify every tick-circuit gate through [`apply_gate`] and return the first
+/// unsupported gate in the source circuit's own coordinates.
+pub(crate) fn first_unsupported_tick_gate(circuit: &TickCircuit) -> Option<UnsupportedGateError> {
+    let mut scratch = PauliProp::new();
+    for (tick_idx, tick) in circuit.iter_ticks() {
+        for gate in tick.iter_gate_batches() {
+            if apply_gate(&mut scratch, gate.as_gate(), Direction::Forward)
+                == PauliPropagationOutcome::Unsupported
+            {
+                return Some(UnsupportedGateError {
+                    angles: gate.angles.to_vec(),
+                    gate_type: gate.gate_type,
+                    location: UnsupportedGateLocation::Tick {
+                        tick: tick_idx,
+                        gate_in_tick: gate.batch_index(),
+                    },
+                    qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
+                });
+            }
+        }
+    }
+    None
+}
 
 // ============================================================================
 // Tick-based Fault Analyzer
@@ -36,6 +64,9 @@ use pecos_simulators::PauliProp;
 ///
 /// For better performance on large circuits, consider using [`DagFaultAnalyzer`](super::DagFaultAnalyzer)
 /// which provides 5-50x speedup through true sparse DAG traversal.
+///
+/// Constructed only from a circuit that passed the whole-circuit Pauli-propagation preflight.
+/// The immutable circuit borrow preserves this invariant for all analysis methods.
 pub struct TickFaultAnalyzer<'a> {
     circuit: &'a TickCircuit,
     /// Fault locations extracted from the circuit.
@@ -48,8 +79,11 @@ pub struct TickFaultAnalyzer<'a> {
 
 impl<'a> TickFaultAnalyzer<'a> {
     /// Creates a new backward propagator for the given circuit.
-    #[must_use]
-    pub fn new(circuit: &'a TickCircuit) -> Self {
+    ///
+    /// # Errors
+    /// Returns the first unsupported gate with its circuit location.
+    pub fn new(circuit: &'a TickCircuit) -> Result<Self, UnsupportedGateError> {
+        super::validate_tick_circuit(circuit)?;
         let locations = extract_spacetime_locations(circuit, false);
 
         // Build tick index for O(1) lookup
@@ -71,12 +105,12 @@ impl<'a> TickFaultAnalyzer<'a> {
             }
         }
 
-        Self {
+        Ok(Self {
             circuit,
             locations,
             tick_locations,
             max_qubit,
-        }
+        })
     }
 
     /// Builds the complete fault influence map.
@@ -466,10 +500,7 @@ impl<'a> TickFaultAnalyzer<'a> {
     fn apply_gate_backward(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         let qubits = &gate.qubits;
 
-        if matches!(
-            gate.gate_type,
-            GateType::PX | GateType::PZ | GateType::QAlloc
-        ) {
+        if is_supported_prep_gate(gate.gate_type) {
             // Preparation resets the qubit - backward propagation stops here
             // Any Pauli on a prepared qubit doesn't propagate further back
             // Toggle off both X and Z if present
@@ -485,7 +516,9 @@ impl<'a> TickFaultAnalyzer<'a> {
             return;
         }
 
-        apply_gate(prop, gate, Direction::Backward);
+        // TickFaultAnalyzer::new preflights the whole circuit.
+        let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+        debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
     }
 
     /// Builds reverse maps (detector -> faults, tracked Pauli -> faults).

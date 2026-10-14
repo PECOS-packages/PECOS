@@ -14,6 +14,14 @@ fn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
 
+fn named_root_component(a: vec2<f32>, b: vec2<f32>, p: f32, d: f32) -> vec2<f32> {
+    let pb = b * p;
+    return vec2<f32>(
+        a.x + pb.x - d * a.y + d * pb.y,
+        a.y + pb.y + d * a.x - d * pb.x
+    ) * 0.5;
+}
+
 const GATE_SINGLE: u32 = 0u;
 const GATE_DIAGONAL: u32 = 1u;
 const GATE_CX: u32 = 2u;
@@ -115,47 +123,75 @@ fn apply_gate_queue_persistent(
                 }
             }
             case GATE_RXX: {
-                let theta = bitcast<f32>(gate_queue_buf[base + 4u]);
-                let c_val = cos(theta / 2.0);
-                let s_val = sin(theta / 2.0);
+                let named = bitcast<f32>(gate_queue_buf[base + 6u]) != 0.0;
+                let d = bitcast<f32>(gate_queue_buf[base + 5u]);
                 for (var i = tid; i < num_amplitudes; i += 256u) {
                     let partner = i ^ (1u << ctrl) ^ (1u << tgt);
                     if (i < partner) {
                         let amp0 = shared_state[i];
                         let amp1 = shared_state[partner];
-                        shared_state[i] = vec2<f32>(amp0.x * c_val + amp1.y * s_val, amp0.y * c_val - amp1.x * s_val);
-                        shared_state[partner] = vec2<f32>(amp1.x * c_val + amp0.y * s_val, amp1.y * c_val - amp0.x * s_val);
+                        if (named) {
+                            shared_state[i] = named_root_component(amp0, amp1, 1.0, d);
+                            shared_state[partner] = named_root_component(amp1, amp0, 1.0, d);
+                        } else {
+                            let theta = bitcast<f32>(gate_queue_buf[base + 4u]);
+                            let c_val = cos(theta / 2.0);
+                            let s_val = sin(theta / 2.0);
+                            shared_state[i] = vec2<f32>(amp0.x * c_val + amp1.y * s_val, amp0.y * c_val - amp1.x * s_val);
+                            shared_state[partner] = vec2<f32>(amp1.x * c_val + amp0.y * s_val, amp1.y * c_val - amp0.x * s_val);
+                        }
                     }
                 }
             }
             case GATE_RYY: {
-                let theta = bitcast<f32>(gate_queue_buf[base + 4u]);
-                let c_val = cos(theta / 2.0);
-                let s_abs = sin(theta / 2.0);
+                let named = bitcast<f32>(gate_queue_buf[base + 6u]) != 0.0;
+                let d = bitcast<f32>(gate_queue_buf[base + 5u]);
                 for (var i = tid; i < num_amplitudes; i += 256u) {
                     let partner = i ^ (1u << ctrl) ^ (1u << tgt);
                     if (i < partner) {
                         let bit_a = (i & (1u << ctrl)) != 0u;
                         let bit_b = (i & (1u << tgt)) != 0u;
-                        let s_val = select(s_abs, -s_abs, bit_a == bit_b);
                         let amp0 = shared_state[i];
                         let amp1 = shared_state[partner];
-                        shared_state[i] = vec2<f32>(amp0.x * c_val + amp1.y * s_val, amp0.y * c_val - amp1.x * s_val);
-                        shared_state[partner] = vec2<f32>(amp1.x * c_val + amp0.y * s_val, amp1.y * c_val - amp0.x * s_val);
+                        if (named) {
+                            let p = select(1.0, -1.0, bit_a == bit_b);
+                            shared_state[i] = named_root_component(amp0, amp1, p, d);
+                            shared_state[partner] = named_root_component(amp1, amp0, p, d);
+                        } else {
+                            let theta = bitcast<f32>(gate_queue_buf[base + 4u]);
+                            let c_val = cos(theta / 2.0);
+                            let s_abs = sin(theta / 2.0);
+                            let s_val = select(s_abs, -s_abs, bit_a == bit_b);
+                            shared_state[i] = vec2<f32>(amp0.x * c_val + amp1.y * s_val, amp0.y * c_val - amp1.x * s_val);
+                            shared_state[partner] = vec2<f32>(amp1.x * c_val + amp0.y * s_val, amp1.y * c_val - amp0.x * s_val);
+                        }
                     }
                 }
             }
             case GATE_RZZ: {
-                let theta = bitcast<f32>(gate_queue_buf[base + 4u]);
-                let half_theta = theta / 2.0;
+                let named = bitcast<f32>(gate_queue_buf[base + 6u]) != 0.0;
+                let d = bitcast<f32>(gate_queue_buf[base + 5u]);
                 for (var i = tid; i < num_amplitudes; i += 256u) {
                     let q1_set = (i & (1u << ctrl)) != 0u;
                     let q2_set = (i & (1u << tgt)) != 0u;
-                    let phase = select(half_theta, -half_theta, q1_set == q2_set);
-                    let c_val = cos(phase);
-                    let s_val = sin(phase);
-                    let amp = shared_state[i];
-                    shared_state[i] = vec2<f32>(amp.x * c_val - amp.y * s_val, amp.x * s_val + amp.y * c_val);
+                    if (named) {
+                        if (q1_set != q2_set) {
+                            let amp = shared_state[i];
+                            shared_state[i] = select(
+                                vec2<f32>(amp.y, -amp.x),
+                                vec2<f32>(-amp.y, amp.x),
+                                d > 0.0
+                            );
+                        }
+                    } else {
+                        let theta = bitcast<f32>(gate_queue_buf[base + 4u]);
+                        let half_theta = theta / 2.0;
+                        let phase = select(half_theta, -half_theta, q1_set == q2_set);
+                        let c_val = cos(phase);
+                        let s_val = sin(phase);
+                        let amp = shared_state[i];
+                        shared_state[i] = vec2<f32>(amp.x * c_val - amp.y * s_val, amp.x * s_val + amp.y * c_val);
+                    }
                 }
             }
             default: {}

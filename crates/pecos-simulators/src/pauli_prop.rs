@@ -1,4 +1,4 @@
-// Copyright 2024 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -563,6 +563,41 @@ impl PauliProp {
         self.set_x_component(q, x);
         self.set_z_component(q, z);
     }
+
+    #[inline]
+    /// The sign mask uses base-4 Pauli-pair indices in `I, X, Y, Z` order.
+    fn update_two_qubit_sign(&mut self, sign_mask: u16, q1: (bool, bool), q2: (bool, bool)) {
+        if self.sign.is_none() {
+            return;
+        }
+
+        let pauli_index = |(x, z)| match (x, z) {
+            (false, false) => 0,
+            (true, false) => 1,
+            (true, true) => 2,
+            (false, true) => 3,
+        };
+        let index = 4 * pauli_index(q1) + pauli_index(q2);
+        if sign_mask & (1 << index) != 0 {
+            self.flip_sign();
+        }
+    }
+
+    fn clear_qubits(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.clear_qubit(q.index());
+        }
+        self
+    }
+
+    fn clear_qubits_after_measurement(
+        &mut self,
+        qubits: &[QubitId],
+        results: Vec<MeasurementResult>,
+    ) -> Vec<MeasurementResult> {
+        self.clear_qubits(qubits);
+        results
+    }
 }
 
 impl fmt::Display for PauliProp {
@@ -572,6 +607,37 @@ impl fmt::Display for PauliProp {
 }
 
 impl CliffordGateable for PauliProp {
+    #[inline]
+    fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            if self.contains_z(q.index()) {
+                self.flip_sign();
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            let qu = q.index();
+            if self.contains_x(qu) ^ self.contains_z(qu) {
+                self.flip_sign();
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            if self.contains_x(q.index()) {
+                self.flip_sign();
+            }
+        }
+        self
+    }
+
     /// Applies the square root of Z gate (SZ or S gate) to the specified qubits.
     ///
     /// The SZ gate transforms Pauli operators as follows:
@@ -592,7 +658,12 @@ impl CliffordGateable for PauliProp {
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
-            if self.contains_x(qu) {
+            let x = self.contains_x(qu);
+            let z = self.contains_z(qu);
+            if x && z {
+                self.flip_sign();
+            }
+            if x {
                 self.track_z(&[qu]);
             }
         }
@@ -607,7 +678,12 @@ impl CliffordGateable for PauliProp {
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
-            if self.contains_x(qu) {
+            let x = self.contains_x(qu);
+            let z = self.contains_z(qu);
+            if x && !z {
+                self.flip_sign();
+            }
+            if x {
                 self.track_z(&[qu]);
             }
         }
@@ -641,6 +717,7 @@ impl CliffordGateable for PauliProp {
             let in_zs = self.contains_z(qu);
 
             if in_xs && in_zs {
+                self.flip_sign();
             } else if in_xs {
                 self.xs.remove(&qu);
                 self.zs.insert(qu);
@@ -659,7 +736,12 @@ impl CliffordGateable for PauliProp {
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
-            if self.contains_z(qu) {
+            let x = self.contains_x(qu);
+            let z = self.contains_z(qu);
+            if !x && z {
+                self.flip_sign();
+            }
+            if z {
                 self.track_x(&[qu]);
             }
         }
@@ -673,7 +755,12 @@ impl CliffordGateable for PauliProp {
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qu = q.index();
-            if self.contains_z(qu) {
+            let x = self.contains_x(qu);
+            let z = self.contains_z(qu);
+            if x && z {
+                self.flip_sign();
+            }
+            if z {
                 self.track_x(&[qu]);
             }
         }
@@ -689,6 +776,9 @@ impl CliffordGateable for PauliProp {
             let qu = q.index();
             let x = self.contains_x(qu);
             let z = self.contains_z(qu);
+            if x && !z {
+                self.flip_sign();
+            }
             self.set_components(qu, z, x);
         }
         self
@@ -703,6 +793,9 @@ impl CliffordGateable for PauliProp {
             let qu = q.index();
             let x = self.contains_x(qu);
             let z = self.contains_z(qu);
+            if !x && z {
+                self.flip_sign();
+            }
             self.set_components(qu, z, x);
         }
         self
@@ -732,6 +825,9 @@ impl CliffordGateable for PauliProp {
         for &(q1, q2) in pairs {
             let q1 = q1.index();
             let q2 = q2.index();
+            let components1 = (self.contains_x(q1), self.contains_z(q1));
+            let components2 = (self.contains_x(q2), self.contains_z(q2));
+            self.update_two_qubit_sign(0x0480, components1, components2);
             if self.contains_x(q1) {
                 self.track_x(&[q2]);
             }
@@ -752,6 +848,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x0820, (x1, z1), (x2, z2));
             self.set_components(q1, x1, z1 ^ x2 ^ z2);
             self.set_components(q2, x2 ^ x1, z2 ^ x1);
         }
@@ -768,6 +865,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x0240, (x1, z1), (x2, z2));
             self.set_components(q1, x1, z1 ^ x2);
             self.set_components(q2, x2, z2 ^ x1);
         }
@@ -784,6 +882,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x3088, (x1, z1), (x2, z2));
             let affected = z1 ^ z2;
             self.set_components(q1, x1 ^ affected, z1);
             self.set_components(q2, x2 ^ affected, z2);
@@ -803,6 +902,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x0344, (x1, z1), (x2, z2));
             let affected = z1 ^ z2;
             self.set_components(q1, x1 ^ affected, z1);
             self.set_components(q2, x2 ^ affected, z2);
@@ -820,6 +920,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x0252, (x1, z1), (x2, z2));
             self.set_components(q1, x2 ^ z1 ^ z2, x1 ^ x2 ^ z2);
             self.set_components(q2, x1 ^ z1 ^ z2, x1 ^ x2 ^ z1);
         }
@@ -838,6 +939,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x5808, (x1, z1), (x2, z2));
             self.set_components(q1, x2 ^ z1 ^ z2, x1 ^ x2 ^ z2);
             self.set_components(q2, x1 ^ z1 ^ z2, x1 ^ x2 ^ z1);
         }
@@ -854,6 +956,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x4904, (x1, z1), (x2, z2));
             let affected = x1 ^ x2;
             self.set_components(q1, x1, z1 ^ affected);
             self.set_components(q2, x2, z2 ^ affected);
@@ -873,6 +976,7 @@ impl CliffordGateable for PauliProp {
             let z1 = self.contains_z(q1);
             let x2 = self.contains_x(q2);
             let z2 = self.contains_z(q2);
+            self.update_two_qubit_sign(0x2092, (x1, z1), (x2, z2));
             let affected = x1 ^ x2;
             self.set_components(q1, x1, z1 ^ affected);
             self.set_components(q2, x2, z2 ^ affected);
@@ -894,6 +998,112 @@ impl CliffordGateable for PauliProp {
             self.set_components(q2, x1, z1);
         }
         self
+    }
+
+    #[inline]
+    fn px(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pnx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn py(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pny(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pnz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn mpx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mx(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpnx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mnx(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpy(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.my(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpny(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mny(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mz(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mnz(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| MeasurementResult {
+                outcome: self.contains_z(q.index()),
+                is_deterministic: true,
+            })
+            .collect()
+    }
+
+    #[inline]
+    fn my(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| {
+                let qu = q.index();
+                MeasurementResult {
+                    outcome: self.contains_x(qu) ^ self.contains_z(qu),
+                    is_deterministic: true,
+                }
+            })
+            .collect()
+    }
+
+    #[inline]
+    fn mnx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.mx(qubits)
+    }
+
+    #[inline]
+    fn mny(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.my(qubits)
+    }
+
+    #[inline]
+    fn mnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.mz(qubits)
     }
 
     /// Performs a Z-basis measurement on the specified qubits.
@@ -932,10 +1142,22 @@ impl CliffordGateable for PauliProp {
 mod tests {
     use super::*;
     use crate::clifford_matrix_oracle::{CliffordMatrixGate, all_pauli_strings, conjugate_pauli};
+    use pecos_core::{Pauli, PauliString, QuarterPhase, clifford_rep::CliffordRep};
     use std::collections::BTreeMap;
 
     fn prop_from_dense(input: &str) -> PauliProp {
         let mut prop = PauliProp::with_sign_tracking(input.len());
+        seed_prop_from_dense(&mut prop, input);
+        prop
+    }
+
+    fn untracked_prop_from_dense(input: &str) -> PauliProp {
+        let mut prop = PauliProp::new();
+        seed_prop_from_dense(&mut prop, input);
+        prop
+    }
+
+    fn seed_prop_from_dense(prop: &mut PauliProp, input: &str) {
         for (q, p) in input.chars().enumerate() {
             match p {
                 'I' => {}
@@ -945,7 +1167,71 @@ mod tests {
                 _ => panic!("invalid Pauli label {p}"),
             }
         }
-        prop
+    }
+
+    fn assert_prop_supports_match(prop: &PauliProp, expected: &PauliString, num_qubits: usize) {
+        for q in 0..num_qubits {
+            let (x, z) = match expected.get(q) {
+                Pauli::I => (false, false),
+                Pauli::X => (true, false),
+                Pauli::Y => (true, true),
+                Pauli::Z => (false, true),
+            };
+            assert_eq!(prop.contains_x(q), x, "qubit {q} X support");
+            assert_eq!(prop.contains_z(q), z, "qubit {q} Z support");
+        }
+    }
+
+    fn assert_single_gate_matches_clifford_rep<F>(name: &str, rep: &CliffordRep, mut apply: F)
+    where
+        F: FnMut(&mut PauliProp, &[QubitId]),
+    {
+        let qubits = [QubitId(0)];
+        for input in ["II", "XI", "YI", "ZI"] {
+            let input_pauli = PauliString::from_dense_str(input).unwrap();
+            let expected = rep.apply(&input_pauli);
+
+            let mut tracked = prop_from_dense(input);
+            apply(&mut tracked, &qubits);
+            assert_prop_supports_match(&tracked, &expected, 2);
+            assert_eq!(
+                tracked.get_sign(),
+                expected.phase() == QuarterPhase::MinusOne,
+                "{name}: {input} sign"
+            );
+            assert_eq!(tracked.get_img(), 0, "{name}: {input} imaginary phase");
+
+            let mut untracked = untracked_prop_from_dense(input);
+            apply(&mut untracked, &qubits);
+            assert_prop_supports_match(&untracked, &expected, 2);
+            assert_eq!(untracked.sign, None, "{name}: {input} untracked sign");
+        }
+    }
+
+    fn assert_two_qubit_gate_matches_clifford_rep<F>(name: &str, rep: &CliffordRep, mut apply: F)
+    where
+        F: FnMut(&mut PauliProp, &[(QubitId, QubitId)]),
+    {
+        let pairs = [(QubitId(0), QubitId(1))];
+        for input in all_pauli_strings(2) {
+            let input_pauli = PauliString::from_dense_str(&input).unwrap();
+            let expected = rep.apply(&input_pauli);
+
+            let mut tracked = prop_from_dense(&input);
+            apply(&mut tracked, &pairs);
+            assert_prop_supports_match(&tracked, &expected, 2);
+            assert_eq!(
+                tracked.get_sign(),
+                expected.phase() == QuarterPhase::MinusOne,
+                "{name}: {input} sign"
+            );
+            assert_eq!(tracked.get_img(), 0, "{name}: {input} imaginary phase");
+
+            let mut untracked = untracked_prop_from_dense(&input);
+            apply(&mut untracked, &pairs);
+            assert_prop_supports_match(&untracked, &expected, 2);
+            assert_eq!(untracked.sign, None, "{name}: {input} untracked sign");
+        }
     }
 
     fn assert_gate_table<F>(name: &str, table: &[(&str, &str)], mut apply: F)
@@ -1024,8 +1310,8 @@ mod tests {
             apply(&mut sequential, &pairs[1..2]);
 
             assert_eq!(
-                batched.dense_string(),
-                sequential.dense_string(),
+                batched.to_dense_string(),
+                sequential.to_dense_string(),
                 "{name} batched: {input}"
             );
         }
@@ -1394,5 +1680,201 @@ mod tests {
         assert_two_pair_batch_matches_sequential("SWAP", |prop, pairs| {
             prop.swap(pairs);
         });
+    }
+
+    #[test]
+    fn all_named_single_qubit_cliffords_match_clifford_rep() {
+        macro_rules! check {
+            ($name:literal, $rep:expr, $method:ident) => {
+                assert_single_gate_matches_clifford_rep($name, &$rep, |prop, qubits| {
+                    prop.$method(qubits);
+                });
+            };
+        }
+
+        check!("X", CliffordRep::x(0), x);
+        check!("Y", CliffordRep::y(0), y);
+        check!("Z", CliffordRep::z(0), z);
+        check!("SX", CliffordRep::sx(0), sx);
+        check!("SXdg", CliffordRep::sxdg(0), sxdg);
+        check!("SY", CliffordRep::sy(0), sy);
+        check!("SYdg", CliffordRep::sydg(0), sydg);
+        check!("SZ", CliffordRep::sz(0), sz);
+        check!("SZdg", CliffordRep::szdg(0), szdg);
+        check!("H", CliffordRep::h(0), h);
+        check!("H2", CliffordRep::h2(0), h2);
+        check!("H3", CliffordRep::h3(0), h3);
+        check!("H4", CliffordRep::h4(0), h4);
+        check!("H5", CliffordRep::h5(0), h5);
+        check!("H6", CliffordRep::h6(0), h6);
+        check!("F", CliffordRep::f(0), f);
+        check!("Fdg", CliffordRep::fdg(0), fdg);
+        check!("F2", CliffordRep::f2(0), f2);
+        check!("F2dg", CliffordRep::f2dg(0), f2dg);
+        check!("F3", CliffordRep::f3(0), f3);
+        check!("F3dg", CliffordRep::f3dg(0), f3dg);
+        check!("F4", CliffordRep::f4(0), f4);
+        check!("F4dg", CliffordRep::f4dg(0), f4dg);
+    }
+
+    #[test]
+    fn all_named_two_qubit_cliffords_match_clifford_rep() {
+        macro_rules! check {
+            ($name:literal, $rep:expr, $method:ident) => {
+                assert_two_qubit_gate_matches_clifford_rep($name, &$rep, |prop, pairs| {
+                    prop.$method(pairs);
+                });
+            };
+        }
+
+        check!("CX", CliffordRep::cx(0, 1), cx);
+        check!("CY", CliffordRep::cy(0, 1), cy);
+        check!("CZ", CliffordRep::cz(0, 1), cz);
+        check!("SXX", CliffordRep::sxx(0, 1), sxx);
+        check!("SXXdg", CliffordRep::sxxdg(0, 1), sxxdg);
+        check!("SYY", CliffordRep::syy(0, 1), syy);
+        check!("SYYdg", CliffordRep::syydg(0, 1), syydg);
+        check!("SZZ", CliffordRep::szz(0, 1), szz);
+        check!("SZZdg", CliffordRep::szzdg(0, 1), szzdg);
+        check!("SWAP", CliffordRep::swap(0, 1), swap);
+        check!("G", CliffordRep::g(0, 1), g);
+        check!("Gdg", CliffordRep::gdg(0, 1), gdg);
+        check!("ISWAP", CliffordRep::iswap(0, 1), iswap);
+        check!("ISWAPdg", CliffordRep::iswapdg(0, 1), iswapdg);
+    }
+
+    #[test]
+    fn preparations_clear_only_the_target_and_preserve_phase() {
+        let target = [QubitId(0)];
+        let labels = ['I', 'X', 'Y', 'Z'];
+
+        macro_rules! check_prep {
+            ($name:literal, $method:ident) => {
+                for target_label in labels {
+                    for neighbor_label in labels {
+                        let input = format!("{target_label}{neighbor_label}");
+                        let mut prop = prop_from_dense(&input);
+                        prop.flip_sign();
+                        prop.$method(&target);
+                        assert!(!prop.contains_x(0), "{}: {input} target X", $name);
+                        assert!(!prop.contains_z(0), "{}: {input} target Z", $name);
+                        assert_eq!(
+                            (prop.contains_x(1), prop.contains_z(1)),
+                            match neighbor_label {
+                                'I' => (false, false),
+                                'X' => (true, false),
+                                'Y' => (true, true),
+                                'Z' => (false, true),
+                                _ => unreachable!(),
+                            },
+                            "{}: {input} neighbor",
+                            $name
+                        );
+                        assert!(prop.get_sign(), "{}: {input} sign", $name);
+                        assert_eq!(prop.get_img(), 0, "{}: {input} phase", $name);
+                    }
+                }
+            };
+        }
+
+        check_prep!("PX", px);
+        check_prep!("PNX", pnx);
+        check_prep!("PY", py);
+        check_prep!("PNY", pny);
+        check_prep!("PZ", pz);
+        check_prep!("PNZ", pnz);
+    }
+
+    #[test]
+    fn measure_then_prepare_variants_report_then_clear() {
+        let target = [QubitId(0)];
+
+        macro_rules! check_prep {
+            ($name:literal, $method:ident, $outcomes:expr) => {
+                for (input, expected_outcome) in ["II", "XI", "YI", "ZI"].into_iter().zip($outcomes)
+                {
+                    let mut prop = prop_from_dense(input);
+                    prop.flip_sign();
+                    let results = prop.$method(&target);
+                    assert_eq!(results.len(), 1, "{}: {input} result count", $name);
+                    assert_eq!(
+                        results[0].outcome, expected_outcome,
+                        "{}: {input} outcome",
+                        $name
+                    );
+                    assert!(
+                        results[0].is_deterministic,
+                        "{}: {input} determinism",
+                        $name
+                    );
+                    assert!(prop.is_identity(), "{}: {input} frame", $name);
+                    assert!(prop.get_sign(), "{}: {input} sign", $name);
+                }
+            };
+        }
+
+        check_prep!("MPX", mpx, [false, false, true, true]);
+        check_prep!("MPNX", mpnx, [false, false, true, true]);
+        check_prep!("MPY", mpy, [false, true, false, true]);
+        check_prep!("MPNY", mpny, [false, true, false, true]);
+        check_prep!("MPZ", mpz, [false, true, true, false]);
+        check_prep!("MPNZ", mpnz, [false, true, true, false]);
+    }
+
+    #[test]
+    fn measurements_report_frame_flips_without_mutation() {
+        let target = [QubitId(0)];
+        for track_sign in [true, false] {
+            for (input, mx, my, mz) in [
+                ("II", false, false, false),
+                ("XI", false, true, true),
+                ("YI", true, false, true),
+                ("ZI", true, true, false),
+            ] {
+                let mut prop = if track_sign {
+                    prop_from_dense(input)
+                } else {
+                    untracked_prop_from_dense(input)
+                };
+                prop.flip_sign();
+                let before = prop.to_dense_string();
+                let before_sign = prop.sign;
+                let before_img = prop.img;
+
+                macro_rules! check_measurement {
+                    ($name:literal, $method:ident, $outcome:expr) => {
+                        assert_eq!(
+                            prop.$method(&target)[0].outcome,
+                            $outcome,
+                            "{}: {input}, track_sign={track_sign}",
+                            $name
+                        );
+                        assert_eq!(
+                            prop.to_dense_string(),
+                            before,
+                            "{} frame: {input}, track_sign={track_sign}",
+                            $name
+                        );
+                        assert_eq!(
+                            prop.sign, before_sign,
+                            "{} sign: {input}, track_sign={track_sign}",
+                            $name
+                        );
+                        assert_eq!(
+                            prop.img, before_img,
+                            "{} phase: {input}, track_sign={track_sign}",
+                            $name
+                        );
+                    };
+                }
+
+                check_measurement!("MX", mx, mx);
+                check_measurement!("MNX", mnx, mx);
+                check_measurement!("MY", my, my);
+                check_measurement!("MNY", mny, my);
+                check_measurement!("MZ", mz, mz);
+                check_measurement!("MNZ", mnz, mz);
+            }
+        }
     }
 }

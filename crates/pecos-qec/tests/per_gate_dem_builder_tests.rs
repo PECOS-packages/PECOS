@@ -34,13 +34,14 @@ fn uniform_equivalent_per_gate_matches_scalar_dem() {
     // produce the same DEM text as scalar `with_noise`.
     let dag = build_parity_check();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let scalar = DemBuilder::new(&influence)
         .with_noise(0.01, 0.02, 0.005, 0.003)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let per_gate = DemBuilder::new(&influence)
         .with_per_gate_noise(PerGateTypeNoise::from_base_noise(NoiseConfig::new(
@@ -48,7 +49,8 @@ fn uniform_equivalent_per_gate_matches_scalar_dem() {
         )))
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Both DEMs should contain the same mechanism set with matching probabilities.
     assert_eq!(scalar.num_contributions(), per_gate.num_contributions());
@@ -73,7 +75,7 @@ fn per_gate_override_produces_decomposed_dem_text() {
     // Specific per-gate CX rates should appear in the decomposed DEM text.
     let dag = build_parity_check();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let mut rates_2q = [0.0; 15];
     // IX = index 0, nonzero probability
@@ -88,7 +90,8 @@ fn per_gate_override_produces_decomposed_dem_text() {
         .with_per_gate_noise(cfg)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let text = dem.to_string_decomposed();
     let error_lines = text.lines().filter(|l| l.starts_with("error(")).count();
@@ -104,7 +107,7 @@ fn per_qubit_cx_override_changes_dem_probabilities() {
     // to baseline where only per-gate-type is set.
     let dag = build_parity_check();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let q0 = QubitId::from(0usize);
     let q2 = QubitId::from(2usize);
@@ -119,12 +122,14 @@ fn per_qubit_cx_override_changes_dem_probabilities() {
         .with_per_gate_noise(cfg_baseline)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
     let boosted = DemBuilder::new(&influence)
         .with_per_gate_noise(cfg_boost)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Both produce the same mechanism set (same circuit structure) but
     // the boosted DEM should have higher-average probabilities in its text.
@@ -156,7 +161,7 @@ fn idle_locations_contribute_to_dem_text() {
     dag.idle(TimeUnits::new(100), &[0]);
     dag.mz(&[0]);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let q0 = QubitId::from(0usize);
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.0, 0.0, 0.0, 0.0))
@@ -166,7 +171,8 @@ fn idle_locations_contribute_to_dem_text() {
         .with_per_gate_noise(cfg)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     let text = dem.to_string();
     assert!(
@@ -182,14 +188,15 @@ fn decomposed_dem_reflects_per_gate_noise() {
     // direct and decomposed-effect lines when per-gate noise is set.
     let dag = build_parity_check();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.005, 0.005, 0.005, 0.005));
     let dem = DemBuilder::new(&influence)
         .with_per_gate_noise(cfg)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     // Both formats should have content.
     let non_decomposed = dem.to_string();

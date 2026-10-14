@@ -1562,13 +1562,21 @@ mod tests {
     #[test]
     fn test_x_positions_empty_for_identity() {
         let p = PauliString::identity();
-        assert!(p.x_positions().is_empty());
+        let positions = p.x_positions();
+        assert!(
+            positions.is_empty(),
+            "expected no X positions, got {positions:?}"
+        );
     }
 
     #[test]
     fn test_z_positions_empty_for_identity() {
         let p = PauliString::identity();
-        assert!(p.z_positions().is_empty());
+        let positions = p.z_positions();
+        assert!(
+            positions.is_empty(),
+            "expected no Z positions, got {positions:?}"
+        );
     }
 
     // --- Algebraic property tests ---

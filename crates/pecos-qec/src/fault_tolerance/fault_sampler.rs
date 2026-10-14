@@ -42,30 +42,34 @@ use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
-/// Error returned when `build_fault_table` encounters an unsupported gate.
-#[derive(Clone, Debug)]
-pub struct UnsupportedGateError {
-    pub gate_type: GateType,
-    pub tick: usize,
-    pub gate_in_tick: usize,
-    pub qubits: Vec<usize>,
+mod stratified;
+pub use stratified::{FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate};
+
+use super::circuit_definitions::{
+    CircuitDefinitions, DefinitionError, definitions_from_tick_circuit,
+};
+
+pub use super::propagator::UnsupportedGateError;
+use super::propagator::{
+    UnsupportedGateLocation, is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+};
+
+/// Failure to build a fault catalog from circuit gates or definitions.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum FaultCatalogError {
+    /// A gate cannot be propagated by the catalog.
+    #[error(transparent)]
+    UnsupportedGate(#[from] UnsupportedGateError),
+    /// Detector or observable definitions are invalid.
+    #[error(transparent)]
+    Definition(#[from] Box<DefinitionError>),
 }
 
-impl fmt::Display for UnsupportedGateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Unsupported gate {:?} at tick {} gate {} on qubits {:?}. \
-             Supported: H, X, Y, Z, SZ, SZdg, SX, SXdg, SY, SYdg, F, Fdg, \
-             CX, CY, CZ, SXX, SXXdg, SYY, SYYdg, SZZ, SZZdg, SWAP, \
-             MZ/MeasureFree/MeasureLeaked, PZ, QAlloc, QFree, I, Idle, \
-             plus metadata (MeasCrosstalk*, TrackedPauliMeta).",
-            self.gate_type, self.tick, self.gate_in_tick, self.qubits
-        )
+impl From<DefinitionError> for FaultCatalogError {
+    fn from(error: DefinitionError) -> Self {
+        Self::Definition(Box::new(error))
     }
 }
-
-impl std::error::Error for UnsupportedGateError {}
 
 /// Standard single-qubit Clifford gates supported by `CliffordGateable`.
 pub const STANDARD_1Q_CLIFFORD_GATES: &[GateType] = &[
@@ -119,24 +123,6 @@ fn is_supported_measurement_gate(gate_type: GateType) -> bool {
     )
 }
 
-#[inline]
-fn is_supported_prep_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::PX | GateType::PZ | GateType::QAlloc)
-}
-
-#[inline]
-fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::QFree
-            | GateType::I
-            | GateType::Idle
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload
-            | GateType::TrackedPauliMeta
-    )
-}
-
 /// A fault mechanism: fires with probability `p`, then uniformly selects one
 /// of its alternatives to determine which measurements are flipped.
 ///
@@ -171,6 +157,8 @@ pub(crate) struct GateLoc {
     pub(crate) tick: usize,
     pub(crate) gate_index: usize,
     pub(crate) gate_type: GateType,
+    /// Propagation action, separate from scheduled-gate noise provenance.
+    pub(crate) clifford: pecos_core::CliffordLowering,
     pub(crate) qubits: Vec<usize>,
 }
 
@@ -219,16 +207,18 @@ pub(crate) enum PauliType {
 /// - `I`, `Idle`, `QFree`, `MeasCrosstalkGlobalPayload`,
 ///   `MeasCrosstalkLocalPayload`, `TrackedPauliMeta`
 ///
-/// Any gate not in the above lists returns [`UnsupportedGateError`].
+/// Rotations accepted by the shared Clifford lowering policy (including
+/// phase-shaped U on the Clifford grid) use their resolved action for propagation.
+/// Their scheduled one- or two-qubit type determines the fault channel and stays
+/// in the catalog's provenance. Other rotations return [`UnsupportedGateError`].
 ///
 /// # Errors
 ///
-/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-/// the supported Clifford/prep/measurement/metadata set.
+/// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
 pub fn build_fault_table(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
-) -> Result<Vec<FaultMechanism>, UnsupportedGateError> {
+) -> Result<Vec<FaultMechanism>, FaultCatalogError> {
     let mut catalog = FaultCatalog::from_circuit(tc)?;
     catalog.with_noise(noise);
     Ok(catalog.to_mechanisms())
@@ -238,18 +228,23 @@ pub fn build_fault_table(
 fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
     for (tick_idx, tick) in tc.iter_ticks() {
         for gate in tick.iter_gate_batches() {
-            if is_standard_1q_clifford_gate(gate.gate_type)
-                || is_standard_2q_clifford_gate(gate.gate_type)
-                || is_supported_measurement_gate(gate.gate_type)
-                || is_supported_prep_gate(gate.gate_type)
-                || is_supported_noop_or_metadata_gate(gate.gate_type)
+            if gate.as_gate().validate().is_ok()
+                && (is_standard_1q_clifford_gate(gate.gate_type)
+                    || is_standard_2q_clifford_gate(gate.gate_type)
+                    || is_supported_measurement_gate(gate.gate_type)
+                    || is_supported_prep_gate(gate.gate_type)
+                    || is_supported_noop_or_metadata_gate(gate.gate_type)
+                    || pecos_core::try_lower_rotation_to_clifford(gate.as_gate()).is_some())
             {
                 continue;
             }
             return Err(UnsupportedGateError {
+                angles: gate.angles.to_vec(),
                 gate_type: gate.gate_type,
-                tick: tick_idx,
-                gate_in_tick: gate.batch_index(),
+                location: UnsupportedGateLocation::Tick {
+                    tick: tick_idx,
+                    gate_in_tick: gate.batch_index(),
+                },
                 qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
             });
         }
@@ -285,6 +280,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
                 tick: tick_idx,
                 gate_index: gate.batch_index(),
                 gate_type: gate.gate_type(),
+                clifford: pecos_core::try_lower_rotation_to_clifford(&gate.to_gate())
+                    .unwrap_or(pecos_core::CliffordLowering::Named(gate.gate_type())),
                 qubits: qs,
             });
         }
@@ -453,7 +450,13 @@ fn propagate_forward(
     let mut affected = BTreeSet::new();
 
     for (loc_idx, loc) in gates.iter().enumerate().skip(start) {
-        match loc.gate_type {
+        // Bitmask propagation tracks Pauli support, so conjugation by a
+        // tensor product of Paulis leaves it unchanged (only signs differ).
+        let action = match loc.clifford {
+            pecos_core::CliffordLowering::Named(gate) => gate,
+            pecos_core::CliffordLowering::PerQubit(_) => GateType::I,
+        };
+        match action {
             GateType::H if !loc.qubits.is_empty() => {
                 prop.h(&[QubitId(loc.qubits[0])]);
             }
@@ -522,7 +525,7 @@ fn propagate_forward(
                 prop.swap(&pair);
             }
             // Preparation absorbs propagating errors on the reset qubit.
-            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            gate_type if is_supported_prep_gate(gate_type) && !loc.qubits.is_empty() => {
                 prop.clear_qubit(loc.qubits[0]);
             }
             // The X component flips the measurement and then survives the
@@ -694,9 +697,8 @@ impl FaultCatalog {
     ///
     /// # Errors
     ///
-    /// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-    /// the supported Clifford/prep/measurement/metadata set.
-    pub fn from_circuit(tc: &TickCircuit) -> Result<Self, UnsupportedGateError> {
+    /// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
+    pub fn from_circuit(tc: &TickCircuit) -> Result<Self, FaultCatalogError> {
         build_structural_fault_catalog(tc)
     }
 
@@ -782,6 +784,66 @@ impl FaultCatalog {
     #[must_use]
     pub fn fault_configurations(&self, k: usize) -> FaultConfigurationIter<'_> {
         FaultConfigurationIter::new(self, k)
+    }
+}
+
+/// Construct effects and stored probabilities for an ascending location selection.
+fn build_fault_configuration(
+    catalog: &FaultCatalog,
+    location_indices: Vec<usize>,
+    alternative_indices: Vec<usize>,
+) -> FaultConfiguration {
+    let mut meas_set = std::collections::BTreeSet::new();
+    let mut det_set = std::collections::BTreeSet::new();
+    let mut obs_set = std::collections::BTreeSet::new();
+    let mut tracked_pauli_set = std::collections::BTreeSet::new();
+    let mut selected_prob = 1.0;
+
+    for (&location_index, &alternative_index) in location_indices.iter().zip(&alternative_indices) {
+        let loc = &catalog.locations[location_index];
+        let alt = &loc.faults[alternative_index];
+        selected_prob *= alt.absolute_probability;
+        for &m in &alt.affected_measurements {
+            if !meas_set.remove(&m) {
+                meas_set.insert(m);
+            }
+        }
+        for &d in &alt.affected_detectors {
+            if !det_set.remove(&d) {
+                det_set.insert(d);
+            }
+        }
+        for &o in &alt.affected_observables {
+            if !obs_set.remove(&o) {
+                obs_set.insert(o);
+            }
+        }
+        for &op in &alt.affected_tracked_paulis {
+            if !tracked_pauli_set.remove(&op) {
+                tracked_pauli_set.insert(op);
+            }
+        }
+    }
+
+    let selected_set: std::collections::BTreeSet<usize> =
+        location_indices.iter().copied().collect();
+    let unselected_no_fault: f64 = catalog
+        .locations
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !selected_set.contains(i))
+        .map(|(_, loc)| loc.no_fault_probability)
+        .product();
+
+    FaultConfiguration {
+        location_indices,
+        alternative_indices,
+        affected_measurements: meas_set.into_iter().collect(),
+        affected_detectors: det_set.into_iter().collect(),
+        affected_observables: obs_set.into_iter().collect(),
+        affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
+        selected_probability: selected_prob,
+        configuration_probability: selected_prob * unselected_no_fault,
     }
 }
 
@@ -881,90 +943,18 @@ impl FaultConfigCursor {
 
     /// Build a `FaultConfiguration` from the current cursor state + catalog data.
     fn build(&self, catalog: &FaultCatalog) -> FaultConfiguration {
-        if self.k == 0 {
-            let no_fault_prob: f64 = catalog
-                .locations
-                .iter()
-                .map(|l| l.no_fault_probability)
-                .product();
-            return FaultConfiguration {
-                location_indices: Vec::new(),
-                alternative_indices: Vec::new(),
-                affected_measurements: Vec::new(),
-                affected_detectors: Vec::new(),
-                affected_observables: Vec::new(),
-                affected_tracked_paulis: Vec::new(),
-                selected_probability: 1.0,
-                configuration_probability: no_fault_prob,
-            };
-        }
-
-        let mut meas_set = std::collections::BTreeSet::new();
-        let mut det_set = std::collections::BTreeSet::new();
-        let mut obs_set = std::collections::BTreeSet::new();
-        let mut tracked_pauli_set = std::collections::BTreeSet::new();
-        let mut selected_prob = 1.0;
-
-        for i in 0..self.k {
-            let location_index = self.location_indices[self.combo[i]];
-            let alternative_index = self.alternative_indices[self.combo[i]][self.alt_indices[i]];
-            let loc = &catalog.locations[location_index];
-            let alt = &loc.faults[alternative_index];
-            selected_prob *= alt.absolute_probability;
-            for &m in &alt.affected_measurements {
-                if !meas_set.remove(&m) {
-                    meas_set.insert(m);
-                }
-            }
-            for &d in &alt.affected_detectors {
-                if !det_set.remove(&d) {
-                    det_set.insert(d);
-                }
-            }
-            for &o in &alt.affected_observables {
-                if !obs_set.remove(&o) {
-                    obs_set.insert(o);
-                }
-            }
-            for &op in &alt.affected_tracked_paulis {
-                if !tracked_pauli_set.remove(&op) {
-                    tracked_pauli_set.insert(op);
-                }
-            }
-        }
-
-        let selected_set: std::collections::BTreeSet<usize> = self
-            .combo
-            .iter()
-            .map(|&i| self.location_indices[i])
-            .collect();
-        let unselected_no_fault: f64 = catalog
-            .locations
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !selected_set.contains(i))
-            .map(|(_, loc)| loc.no_fault_probability)
-            .product();
-
-        FaultConfiguration {
-            location_indices: self
-                .combo
+        build_fault_configuration(
+            catalog,
+            self.combo
                 .iter()
                 .map(|&i| self.location_indices[i])
                 .collect(),
-            alternative_indices: self
-                .combo
+            self.combo
                 .iter()
-                .zip(self.alt_indices.iter())
+                .zip(&self.alt_indices)
                 .map(|(&loc_pos, &alt_pos)| self.alternative_indices[loc_pos][alt_pos])
                 .collect(),
-            affected_measurements: meas_set.into_iter().collect(),
-            affected_detectors: det_set.into_iter().collect(),
-            affected_observables: obs_set.into_iter().collect(),
-            affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
-            selected_probability: selected_prob,
-            configuration_probability: selected_prob * unselected_no_fault,
-        }
+        )
     }
 
     /// Drive the iterator: yield next configuration or None.
@@ -1037,41 +1027,31 @@ impl Iterator for OwnedFaultConfigIter {
 /// Returns per-location, per-alternative fault data including Pauli labels,
 /// affected detectors, observables, tracked Paulis, and probability fields.
 ///
-/// Reads detector/observable metadata and tracked-Pauli annotations
-/// from the circuit when present.
+/// Reads detector/observable metadata and annotations through the shared
+/// definition reader. Tracked-Pauli annotations use their separate propagation path.
 ///
 /// # Errors
 ///
-/// Returns [`UnsupportedGateError`] when the circuit contains a gate outside
-/// the supported Clifford/prep/measurement/metadata set.
+/// Returns [`FaultCatalogError`] for unsupported gates or invalid circuit definitions.
 pub fn build_fault_catalog(
     tc: &TickCircuit,
     noise: &StochasticNoiseParams,
-) -> Result<FaultCatalog, UnsupportedGateError> {
+) -> Result<FaultCatalog, FaultCatalogError> {
     let mut catalog = FaultCatalog::from_circuit(tc)?;
     catalog.with_noise(noise);
     Ok(catalog)
 }
 
-fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, UnsupportedGateError> {
+fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, FaultCatalogError> {
     validate_tick_circuit(tc)?;
     let (gates, meas_positions) = flatten_tick_circuit(tc);
 
-    // Parse detector/DEM-output records for measurement→detector/op mapping
-    let det_records = parse_detector_records(tc);
-    let obs_records = parse_observable_records(tc);
+    let definitions = definitions_from_tick_circuit(tc)?;
+    // Validated record-consuming gates have arity one. Both walks visit ticks,
+    // batches and instances in storage order, so these are the same positions.
+    assert_eq!(meas_positions.len(), definitions.num_measurements);
     let tracked_pauli_annotations = parse_tracked_pauli_annotations(tc);
-    let num_meas = tc
-        .get_meta("num_measurements")
-        .and_then(|a| {
-            if let pecos_quantum::Attribute::String(s) = a {
-                s.parse::<usize>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(meas_positions.len());
-    let record_effect_index = RecordEffectIndex::new(&det_records, &obs_records, num_meas);
+    let record_effect_index = RecordEffectIndex::new(&definitions);
 
     let mut locations = Vec::new();
 
@@ -1085,7 +1065,12 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
         let qubits = &loc.qubits;
 
         match gate_type {
-            gate_type if is_standard_1q_clifford_gate(gate_type) && !loc.qubits.is_empty() => {
+            gate_type
+                if (is_standard_1q_clifford_gate(gate_type)
+                    || (pecos_core::is_lowerable_rotation(gate_type)
+                        && gate_type.quantum_arity() == 1))
+                    && !loc.qubits.is_empty() =>
+            {
                 let q = loc.qubits[0];
                 let num_alts = 3;
                 let conditional_probability = 1.0 / 3.0;
@@ -1127,7 +1112,12 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            gate_type if is_standard_2q_clifford_gate(gate_type) && loc.qubits.len() >= 2 => {
+            gate_type
+                if (is_standard_2q_clifford_gate(gate_type)
+                    || (pecos_core::is_lowerable_rotation(gate_type)
+                        && gate_type.quantum_arity() == 2))
+                    && loc.qubits.len() >= 2 =>
+            {
                 let (q1, q2) = (loc.qubits[0], loc.qubits[1]);
                 let num_alts = 15;
                 let conditional_probability = 1.0 / 15.0;
@@ -1228,7 +1218,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            gate_type if is_supported_prep_gate(gate_type) && !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
                 let prep_fault = if gate_type == GateType::PX {
                     PauliType::Z
@@ -1333,21 +1323,6 @@ fn pauli_pair_to_string(p1: PauliType, q1: usize, p2: PauliType, q2: usize) -> P
     )
 }
 
-fn parse_records_from_meta(tc: &TickCircuit, key: &str) -> Vec<Vec<i32>> {
-    let Some(pecos_quantum::Attribute::String(json)) = tc.get_meta(key) else {
-        return Vec::new();
-    };
-    parse_records_array_list(json)
-}
-
-fn parse_detector_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
-    parse_records_from_meta(tc, "detectors")
-}
-
-fn parse_observable_records(tc: &TickCircuit) -> Vec<Vec<i32>> {
-    parse_records_from_meta(tc, "observables")
-}
-
 fn parse_tracked_pauli_annotations(tc: &TickCircuit) -> Vec<PauliString> {
     tc.annotations()
         .iter()
@@ -1383,53 +1358,28 @@ fn tracked_paulis_flipped_by(
         .collect()
 }
 
-/// Simple parser for `[{"records": [...]}, ...]` JSON without `serde_json`.
-fn parse_records_array_list(json: &str) -> Vec<Vec<i32>> {
-    let json = json.trim();
-    if json.is_empty() || json == "[]" {
-        return Vec::new();
-    }
-    let mut results = Vec::new();
-    // Find each "records": [...] within the JSON
-    let mut search_from = 0;
-    while let Some(pos) = json[search_from..].find("\"records\"") {
-        let pos = search_from + pos;
-        let rest = &json[pos..];
-        if let Some(arr_start) = rest.find('[') {
-            if let Some(arr_end) = rest[arr_start..].find(']') {
-                let arr_str = &rest[arr_start + 1..arr_start + arr_end];
-                let nums: Vec<i32> = arr_str
-                    .split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect();
-                results.push(nums);
-                search_from = pos + arr_start + arr_end + 1;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    results
-}
-
-fn record_absolute_index(num_meas: usize, rec: i32) -> Option<usize> {
-    let base = i64::try_from(num_meas).ok()?;
-    let abs_idx = base.checked_add(i64::from(rec))?;
-    usize::try_from(abs_idx).ok()
-}
-
 struct RecordEffectIndex {
     detectors_by_measurement: Vec<Vec<usize>>,
     observables_by_measurement: Vec<Vec<usize>>,
 }
 
 impl RecordEffectIndex {
-    fn new(det_records: &[Vec<i32>], obs_records: &[Vec<i32>], num_meas: usize) -> Self {
+    fn new(definitions: &CircuitDefinitions) -> Self {
         Self {
-            detectors_by_measurement: records_by_measurement(det_records, num_meas),
-            observables_by_measurement: records_by_measurement(obs_records, num_meas),
+            detectors_by_measurement: records_by_measurement(
+                definitions
+                    .detectors
+                    .iter()
+                    .map(|def| (def.id, def.measurements.as_slice())),
+                definitions.num_measurements,
+            ),
+            observables_by_measurement: records_by_measurement(
+                definitions
+                    .observables
+                    .iter()
+                    .map(|def| (def.id, def.measurements.as_slice())),
+                definitions.num_measurements,
+            ),
         }
     }
 
@@ -1454,15 +1404,14 @@ fn catalog_effect_parts(
     (affected, dets, obs, effect.affected_tracked_paulis)
 }
 
-fn records_by_measurement(records_by_output: &[Vec<i32>], num_meas: usize) -> Vec<Vec<usize>> {
+fn records_by_measurement<'a>(
+    records_by_output: impl Iterator<Item = (u32, &'a [usize])>,
+    num_meas: usize,
+) -> Vec<Vec<usize>> {
     let mut by_measurement = vec![Vec::new(); num_meas];
-    for (output_idx, records) in records_by_output.iter().enumerate() {
-        for &rec in records {
-            if let Some(meas_idx) = record_absolute_index(num_meas, rec)
-                && meas_idx < num_meas
-            {
-                by_measurement[meas_idx].push(output_idx);
-            }
+    for (id, records) in records_by_output {
+        for &position in records {
+            by_measurement[position].push(id as usize);
         }
     }
     by_measurement
@@ -1555,6 +1504,7 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
 ) -> Result<MeasurementHistory, MeasurementHistoryError> {
+    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
     use pecos_simulators::SymbolicSparseStab;
 
     let num_qubits = tc
@@ -1575,83 +1525,35 @@ pub fn symbolic_measurement_history(
             let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
+            let unsupported = || {
+                MeasurementHistoryError::UnsupportedGate(UnsupportedGateError {
+                    angles: gate.angles.to_vec(),
+                    gate_type: gate.gate_type,
+                    location: UnsupportedGateLocation::Tick {
+                        tick: tick_idx,
+                        gate_in_tick: gate_idx,
+                    },
+                    qubits: qs.clone(),
+                })
+            };
+            if let Some(lowering) = pecos_core::try_lower_rotation_to_clifford(gate.as_gate()) {
+                apply_lowered_clifford(&mut sim, lowering, &qs).map_err(|_| unsupported())?;
+                continue;
+            }
+            if apply_unitary_clifford(&mut sim, gate.gate_type, &qs).map_err(|_| unsupported())?
+                == Dispatch::Applied
+            {
+                continue;
+            }
+
             match gate.gate_type {
-                GateType::PX | GateType::PZ | GateType::QAlloc => {
+                gate_type if is_supported_prep_gate(gate_type) => {
                     for &q in &qs {
                         sim.pz(q);
                         if gate.gate_type == GateType::PX {
                             sim.h(&[q]);
                         }
                     }
-                }
-                GateType::H => {
-                    sim.h(&qs);
-                }
-                GateType::X => {
-                    sim.x(&qs);
-                }
-                GateType::Y => {
-                    sim.y(&qs);
-                }
-                GateType::Z => {
-                    sim.z(&qs);
-                }
-                GateType::SZ => {
-                    sim.sz(&qs);
-                }
-                GateType::SZdg => {
-                    sim.szdg(&qs);
-                }
-                GateType::SX => {
-                    sim.sx(&qs);
-                }
-                GateType::SXdg => {
-                    sim.sxdg(&qs);
-                }
-                GateType::SY => {
-                    sim.sy(&qs);
-                }
-                GateType::SYdg => {
-                    sim.sydg(&qs);
-                }
-                GateType::F => {
-                    sim.sx(&qs);
-                    sim.sz(&qs);
-                }
-                GateType::Fdg => {
-                    sim.szdg(&qs);
-                    sim.sxdg(&qs);
-                }
-                GateType::CX => {
-                    let pairs = symbolic_pairs(&qs);
-                    sim.cx(&pairs);
-                }
-                GateType::CY => {
-                    sim.cy(&symbolic_pairs(&qs));
-                }
-                GateType::CZ => {
-                    sim.cz(&symbolic_pairs(&qs));
-                }
-                GateType::SXX => {
-                    sim.sxx(&symbolic_pairs(&qs));
-                }
-                GateType::SXXdg => {
-                    sim.sxxdg(&symbolic_pairs(&qs));
-                }
-                GateType::SYY => {
-                    sim.syy(&symbolic_pairs(&qs));
-                }
-                GateType::SYYdg => {
-                    sim.syydg(&symbolic_pairs(&qs));
-                }
-                GateType::SZZ => {
-                    sim.szz(&symbolic_pairs(&qs));
-                }
-                GateType::SZZdg => {
-                    sim.szzdg(&symbolic_pairs(&qs));
-                }
-                GateType::SWAP => {
-                    sim.swap(&symbolic_pairs(&qs));
                 }
                 // `MeasureLeaked` consumes no measurement record, so it has no
                 // place in a record-aligned history -- but it does collapse its
@@ -1687,18 +1589,16 @@ pub fn symbolic_measurement_history(
                         }
                     }
                 }
-                GateType::I
-                | GateType::Idle
-                | GateType::QFree
-                | GateType::MeasCrosstalkGlobalPayload
-                | GateType::MeasCrosstalkLocalPayload
-                | GateType::TrackedPauliMeta => {}
+                gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
                 other => {
                     return Err(MeasurementHistoryError::UnsupportedGate(
                         UnsupportedGateError {
+                            angles: gate.angles.to_vec(),
                             gate_type: other,
-                            tick: tick_idx,
-                            gate_in_tick: gate_idx,
+                            location: UnsupportedGateLocation::Tick {
+                                tick: tick_idx,
+                                gate_in_tick: gate_idx,
+                            },
                             qubits: qs,
                         },
                     ));
@@ -1757,13 +1657,6 @@ fn remap_history_onto_records(
         );
     }
     Ok(remapped)
-}
-
-fn symbolic_pairs(qs: &[usize]) -> Vec<(usize, usize)> {
-    qs.chunks(2)
-        .filter(|c| c.len() == 2)
-        .map(|c| (c[0], c[1]))
-        .collect()
 }
 
 // ============================================================================
@@ -2074,9 +1967,22 @@ mod tests {
 
     #[test]
     fn test_record_effect_index_maps_measurement_effects_by_xor() {
-        let det_records = vec![vec![-1], vec![-2, -1], vec![-1, -1], vec![-4], vec![1]];
-        let obs_records = vec![vec![-2], vec![-1, -2]];
-        let index = RecordEffectIndex::new(&det_records, &obs_records, 3);
+        let mut tc = TickCircuit::new();
+        tc.tick().mz(&[0, 1, 2]);
+        tc.set_meta(
+            "detectors",
+            pecos_quantum::Attribute::String(
+                r#"[{"id":0,"records":[2]},{"id":1,"records":[1,2]},{"id":2,"records":[2,2]}]"#
+                    .into(),
+            ),
+        );
+        tc.set_meta(
+            "observables",
+            pecos_quantum::Attribute::String(
+                r#"[{"id":0,"records":[1]},{"id":1,"records":[2,1]}]"#.into(),
+            ),
+        );
+        let index = RecordEffectIndex::new(&definitions_from_tick_circuit(&tc).unwrap());
 
         assert_eq!(index.detectors_for_measurements(&[2]), vec![0, 1]);
         assert_eq!(index.detectors_for_measurements(&[1, 2]), vec![0]);
@@ -2580,7 +2486,7 @@ mod tests {
             p_prep: 0.0,
         };
         let faults = build_fault_table(&tc, &noise).unwrap();
-        assert!(faults.is_empty());
+        assert_eq!(faults, []);
     }
 
     #[test]
@@ -2599,10 +2505,17 @@ mod tests {
         };
         let result = build_fault_table(&tc, &noise);
         assert!(result.is_err(), "T should be rejected");
-        let err = result.unwrap_err();
+        let FaultCatalogError::UnsupportedGate(err) = result.unwrap_err() else {
+            panic!("expected unsupported gate");
+        };
         assert_eq!(err.gate_type, GateType::T);
-        assert_eq!(err.tick, 1, "T is in tick 1");
-        assert_eq!(err.gate_in_tick, 0, "T is gate 0 within that tick");
+        assert_eq!(
+            err.location,
+            UnsupportedGateLocation::Tick {
+                tick: 1,
+                gate_in_tick: 0,
+            }
+        );
         assert_eq!(err.qubits, vec![0], "full original qubit list");
     }
 
@@ -2701,6 +2614,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn symbolic_history_clifford_rotations_match_named() {
+        use pecos_core::{Angle64, Gate};
+        for (raw, named) in [
+            (Gate::rz(Angle64::QUARTER_TURN, &[0]), Gate::sz(&[0])),
+            (
+                Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
+                Gate::sx(&[0]),
+            ),
+            (
+                Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
+                Gate::szz(&[(0, 1)]),
+            ),
+            (Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]), Gate::z(&[0, 1])),
+        ] {
+            let history = |gate| {
+                let mut tc = TickCircuit::new();
+                tc.tick().pz(&[0, 1]);
+                tc.tick().h(&[0]);
+                tc.tick().try_add_gate(gate).unwrap();
+                tc.tick().h(&[0, 1]);
+                tc.tick().mz(&[0, 1]);
+                symbolic_measurement_history(&tc).unwrap().format_all()
+            };
+            assert_eq!(history(raw), history(named));
+        }
+    }
+
+    #[test]
+    fn symbolic_history_non_clifford_rotation_is_unsupported() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
+        let error = symbolic_measurement_history(&tc).unwrap_err();
+        assert!(matches!(
+            error,
+            MeasurementHistoryError::UnsupportedGate(UnsupportedGateError {
+                gate_type: GateType::RZ,
+                ..
+            })
+        ));
+    }
+
     // ---- symbolic_measurement_history tests ----
 
     #[test]
@@ -2715,7 +2671,10 @@ mod tests {
         match result.unwrap_err() {
             MeasurementHistoryError::UnsupportedGate(err) => {
                 assert_eq!(err.gate_type, GateType::T);
-                assert_eq!(err.tick, 1);
+                assert!(matches!(
+                    err.location,
+                    UnsupportedGateLocation::Tick { tick: 1, .. }
+                ));
                 assert_eq!(err.qubits, vec![0]);
             }
             other @ MeasurementHistoryError::LeakedMeasurementNotRepresentable { .. } => {
@@ -3247,9 +3206,9 @@ mod tests {
             "num_measurements",
             pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
         );
-        tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+        tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0), None)
             .unwrap();
-        tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+        tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
             .unwrap();
         tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
@@ -3285,7 +3244,11 @@ mod tests {
         assert_eq!(x_fault.affected_measurements, vec![0]);
         assert_eq!(x_fault.affected_detectors, vec![0]);
         assert_eq!(x_fault.affected_observables, vec![0]);
-        assert!(x_fault.affected_tracked_paulis.is_empty());
+        assert!(
+            x_fault.affected_tracked_paulis.is_empty(),
+            "expected no affected tracked paulis, got {:?}",
+            x_fault.affected_tracked_paulis
+        );
 
         let tracked_h_loc = catalog
             .locations
@@ -3297,9 +3260,21 @@ mod tests {
             .iter()
             .find(|fault| fault.pauli.as_ref() == Some(&PauliString::x(1)))
             .unwrap();
-        assert!(tracked_x_fault.affected_measurements.is_empty());
-        assert!(tracked_x_fault.affected_detectors.is_empty());
-        assert!(tracked_x_fault.affected_observables.is_empty());
+        assert!(
+            tracked_x_fault.affected_measurements.is_empty(),
+            "expected no affected measurements, got {:?}",
+            tracked_x_fault.affected_measurements
+        );
+        assert!(
+            tracked_x_fault.affected_detectors.is_empty(),
+            "expected no affected detectors, got {:?}",
+            tracked_x_fault.affected_detectors
+        );
+        assert!(
+            tracked_x_fault.affected_observables.is_empty(),
+            "expected no affected observables, got {:?}",
+            tracked_x_fault.affected_observables
+        );
         assert_eq!(tracked_x_fault.affected_tracked_paulis, vec![0]);
 
         let meas_fault = catalog
@@ -3311,7 +3286,11 @@ mod tests {
         assert_eq!(meas_fault.affected_measurements, vec![0]);
         assert_eq!(meas_fault.affected_detectors, vec![0]);
         assert_eq!(meas_fault.affected_observables, vec![0]);
-        assert!(meas_fault.affected_tracked_paulis.is_empty());
+        assert!(
+            meas_fault.affected_tracked_paulis.is_empty(),
+            "expected no affected tracked paulis, got {:?}",
+            meas_fault.affected_tracked_paulis
+        );
 
         assert!(catalog.to_mechanisms().iter().any(|mechanism| {
             mechanism
@@ -3346,9 +3325,9 @@ mod tests {
                 "num_measurements",
                 pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
             );
-            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0), None)
                 .unwrap();
-            tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+            tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
                 .unwrap();
             tc.tracked_pauli_labeled("tracked", tracked_pauli);
 
@@ -3598,9 +3577,9 @@ mod tests {
                 "num_measurements",
                 pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
             );
-            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0))
+            tc.add_detector_metadata(&[-1], None, Some("D0"), Some(0), None)
                 .unwrap();
-            tc.add_observable_metadata(&[-1], Some(0), Some("L0"))
+            tc.add_observable_metadata(&[-1], Some(0), Some("L0"), None)
                 .unwrap();
             tc.tracked_pauli_labeled("tracked_x1", PauliString::x(1));
             tc.tracked_pauli_labeled("tracked_y1", PauliString::y(1));
@@ -3671,13 +3650,13 @@ mod tests {
                 "num_measurements",
                 pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
             );
-            tc.add_detector_metadata(&[-2], None, Some("D0"), Some(0))
+            tc.add_detector_metadata(&[-2], None, Some("D0"), Some(0), None)
                 .unwrap();
-            tc.add_detector_metadata(&[-1], None, Some("D1"), Some(1))
+            tc.add_detector_metadata(&[-1], None, Some("D1"), Some(1), None)
                 .unwrap();
-            tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
+            tc.add_observable_metadata(&[-2], Some(0), Some("L0"), None)
                 .unwrap();
-            tc.add_observable_metadata(&[-1], Some(1), Some("L1"))
+            tc.add_observable_metadata(&[-1], Some(1), Some("L1"), None)
                 .unwrap();
             tc.tracked_pauli_labeled("tracked_x2", PauliString::x(2));
             tc.tracked_pauli_labeled("tracked_y2", PauliString::y(2));
@@ -3751,9 +3730,9 @@ mod tests {
             "num_measurements",
             pecos_quantum::Attribute::String(tc.num_measurements().to_string()),
         );
-        tc.add_detector_metadata(&[-2, -1], None, Some("D0"), Some(0))
+        tc.add_detector_metadata(&[-2, -1], None, Some("D0"), Some(0), None)
             .unwrap();
-        tc.add_observable_metadata(&[-2], Some(0), Some("L0"))
+        tc.add_observable_metadata(&[-2], Some(0), Some("L0"), None)
             .unwrap();
         tc.tracked_pauli_labeled("tracked_z2", PauliString::z(2));
 
@@ -3802,19 +3781,23 @@ mod tests {
             [0]
         );
         assert_eq!(catalog.locations[h1].faults[x1].affected_detectors, [0]);
+        let affected_observables = &catalog.locations[h1].faults[x1].affected_observables;
         assert!(
-            catalog.locations[h1].faults[x1]
-                .affected_observables
-                .is_empty()
+            affected_observables.is_empty(),
+            "expected no affected observables, got {affected_observables:?}"
         );
+        let affected_tracked_paulis = &catalog.locations[h1].faults[x1].affected_tracked_paulis;
         assert!(
-            catalog.locations[h1].faults[x1]
-                .affected_tracked_paulis
-                .is_empty()
+            affected_tracked_paulis.is_empty(),
+            "expected no affected tracked paulis, got {affected_tracked_paulis:?}"
         );
 
         assert_eq!(config.affected_measurements, [0, 1]);
-        assert!(config.affected_detectors.is_empty());
+        assert!(
+            config.affected_detectors.is_empty(),
+            "expected no affected detectors, got {:?}",
+            config.affected_detectors
+        );
         assert_eq!(config.affected_observables, [0]);
         assert_eq!(config.affected_tracked_paulis, [0]);
     }
@@ -3937,11 +3920,11 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         tc.set_meta(
             "observables",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
 
         let noise = StochasticNoiseParams {
@@ -4119,7 +4102,7 @@ mod tests {
         assert!(h_loc.faults.iter().any(|fault| {
             fault.affected_measurements.is_empty() && !fault.affected_tracked_paulis.is_empty()
         }));
-        assert!(catalog.to_mechanisms().is_empty());
+        assert_eq!(catalog.to_mechanisms(), []);
     }
 
     #[test]
@@ -4237,7 +4220,7 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records": [-1]}]"#.to_string()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         tc.set_meta(
             "observables",
@@ -4332,10 +4315,26 @@ mod tests {
         let configs: Vec<_> = catalog.fault_configurations(0).collect();
         assert_eq!(configs.len(), 1);
         let c = &configs[0];
-        assert!(c.location_indices.is_empty());
-        assert!(c.alternative_indices.is_empty());
-        assert!(c.affected_measurements.is_empty());
-        assert!(c.affected_detectors.is_empty());
+        assert!(
+            c.location_indices.is_empty(),
+            "expected no location indices, got {:?}",
+            c.location_indices
+        );
+        assert!(
+            c.alternative_indices.is_empty(),
+            "expected no alternative indices, got {:?}",
+            c.alternative_indices
+        );
+        assert!(
+            c.affected_measurements.is_empty(),
+            "expected no affected measurements, got {:?}",
+            c.affected_measurements
+        );
+        assert!(
+            c.affected_detectors.is_empty(),
+            "expected no affected detectors, got {:?}",
+            c.affected_detectors
+        );
         assert_close(c.selected_probability, 1.0);
         // config_prob = product of all no_fault_probability
         let expected: f64 = catalog
@@ -4535,7 +4534,7 @@ mod tests {
         );
         tc.set_meta(
             "detectors",
-            pecos_quantum::Attribute::String(r#"[{"records":[-1]}]"#.into()),
+            pecos_quantum::Attribute::String(r#"[{"records":[-1],"id":0}]"#.into()),
         );
         tc.set_meta("observables", pecos_quantum::Attribute::String("[]".into()));
 
@@ -4886,11 +4885,23 @@ mod tests {
         let raw = plan.sample_raw(0, 42);
 
         assert_eq!(raw.columns.len(), 2);
-        assert!(raw.columns[0].is_empty());
-        assert!(raw.columns[1].is_empty());
+        let columns = &raw.columns[0];
+        assert!(
+            columns.is_empty(),
+            "expected no samples in the column, got {columns:?}"
+        );
+        let columns = &raw.columns[1];
+        assert!(
+            columns.is_empty(),
+            "expected no samples in the column, got {columns:?}"
+        );
         assert_eq!(raw.r_source_measurements, vec![0]);
         assert_eq!(raw.r_columns.len(), 1);
-        assert!(raw.r_columns[0].is_empty());
+        let r_columns = &raw.r_columns[0];
+        assert!(
+            r_columns.is_empty(),
+            "expected no samples in the R column, got {r_columns:?}"
+        );
         assert_eq!(raw.shots, 0);
     }
 }

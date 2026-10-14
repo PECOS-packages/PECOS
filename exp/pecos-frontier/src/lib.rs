@@ -15,18 +15,48 @@
 //! The decoder performs ordered dynamic programming over independent binary
 //! fault mechanisms. Prefixes with identical active detector boundary and
 //! logical labels are merged by log-sum-exp, preserving degeneracy mass. The
-//! configured frontier width and log-mass window provide deterministic pruning
-//! for a fixed build and platform; underlying `ln`/`exp` implementations may
-//! differ across platforms.
+//! configured frontier width and log-mass window provide deterministic pruning,
+//! and the engine's `libm` transcendentals make outputs bit-identical across
+//! platforms.
 //! [`FrontierDecoder`] is the parity port of Leverrier and Urbanke's Frontier
 //! decoder. Its input-order defaults remain those of that port.
 
 use pecos_decoder_core::ObservableDecoder;
+pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, ObsMask, SparseDem, backward_deadline_column_order, deadline_column_order,
+    DecoderError, MetricMode, ObsMask, SparseDem, StreamingMode, TrellisOrdering,
+    TrellisStreamingDecoder, backward_deadline_column_order,
+    backward_deadline_column_order_for_factors, deadline_column_order,
+    deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::Instant;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+type TimerStart = Instant;
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+struct TimerStart;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn timer_start() -> TimerStart {
+    Instant::now()
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn timer_start() -> TimerStart {
+    TimerStart
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn timer_seconds(start: TimerStart) -> f64 {
+    start.elapsed().as_secs_f64()
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn timer_seconds(_: TimerStart) -> f64 {
+    0.0
+}
 
 /// Parity-port name for [`pecos_trellis::TrellisDecoder`].
 pub type FrontierDecoder = pecos_trellis::TrellisDecoder;
@@ -101,7 +131,13 @@ impl FrontierCommittee {
     /// Returns [`DecoderError::InvalidConfiguration`] when the configuration or
     /// DEM is invalid.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
-        let build_started = Instant::now();
+        let build_started = timer_start();
+        if config.metric_mode == MetricMode::MaxLogInt {
+            return Err(DecoderError::InvalidConfiguration(
+                "FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
+                    .into(),
+            ));
+        }
         let FrontierConfig {
             k,
             delta,
@@ -109,6 +145,8 @@ impl FrontierCommittee {
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         } = config;
         let mut forward_order = column_order.unwrap_or_else(|| (0..dem.mechanisms.len()).collect());
         let forward = FrontierDecoder::from_sparse_dem(
@@ -120,6 +158,8 @@ impl FrontierCommittee {
                 column_order: Some(forward_order.clone()),
                 merge_indistinguishable,
                 bp_score_iterations,
+                metric_mode,
+                int_metric_scale,
             },
         )?;
         forward_order.reverse();
@@ -130,9 +170,11 @@ impl FrontierCommittee {
             column_order: Some(forward_order),
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
-        let build_seconds = build_started.elapsed().as_secs_f64();
+        let build_seconds = timer_seconds(build_started);
         Ok(Self {
             forward,
             backward,
@@ -157,6 +199,30 @@ impl FrontierCommittee {
         Self::from_sparse_dem(&dem, config)
     }
 
+    /// Decode dense shots in input order with shared models and worker-local scratch.
+    ///
+    /// Workers are capped at one per shot, with one worker for an empty batch.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for pool creation failure.
+    /// Individual shot errors are retained in input order.
+    pub fn decode_batch(
+        &self,
+        shots: &[Vec<u8>],
+        workers: usize,
+    ) -> Result<Vec<Result<FrontierCommitteeResult, DecoderError>>, DecoderError> {
+        pecos_trellis::batch::decode_batch(
+            shots,
+            workers,
+            || Self {
+                forward: self.forward.fresh_worker(),
+                backward: self.backward.fresh_worker(),
+                build_seconds: self.build_seconds,
+            },
+            Self::decode,
+        )
+    }
+
     /// Decode with both processing directions and select the stronger result.
     ///
     /// Failure provenance comes from the engine's structured
@@ -178,6 +244,37 @@ impl FrontierCommittee {
         // shared by reference between the two code paths.
         let forward_attempt = self.forward.decode_attempt(syndrome);
         let backward_attempt = self.backward.decode_attempt(syndrome);
+        resolve_committee_attempts(forward_attempt, backward_attempt)
+    }
+
+    /// Decode like [`Self::decode`], running the backward leg on a second thread.
+    ///
+    /// The legs share no state, so the result is identical to [`Self::decode`];
+    /// only the wall-clock latency changes. This spawns one scoped thread per
+    /// call, so combining it with multi-worker [`Self::decode_batch`] would use
+    /// two threads per batch worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::decode`], plus `InternalError` when
+    /// the second thread cannot be spawned.
+    pub fn decode_parallel(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<FrontierCommitteeResult, DecoderError> {
+        let Self {
+            forward, backward, ..
+        } = self;
+        let (forward_attempt, backward_attempt) = std::thread::scope(|scope| {
+            let backward_leg = std::thread::Builder::new()
+                .spawn_scoped(scope, || backward.decode_attempt(syndrome))
+                .map_err(|error| DecoderError::InternalError(error.to_string()))?;
+            let forward_attempt = forward.decode_attempt(syndrome);
+            let backward_attempt = backward_leg
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+            Ok::<_, DecoderError>((forward_attempt, backward_attempt))
+        })?;
         resolve_committee_attempts(forward_attempt, backward_attempt)
     }
 }
@@ -308,11 +405,53 @@ fn committee_rank(result: Option<&FrontierResult>, is_forward: bool) -> [f64; 6]
 mod tests {
     use super::{
         CommitteeStatus, DecoderError, FrontierCommittee, FrontierConfig, FrontierDecodeAttempt,
-        FrontierLogicalMass, FrontierResult, FrontierStatus, SparseDem, committee_rank,
+        FrontierLogicalMass, FrontierResult, FrontierStatus, MetricMode, SparseDem, committee_rank,
         resolve_committee_attempts,
     };
     use pecos_decoder_core::obs_mask::ObsMask;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn committee_batch_matches_sequential() {
+        let dem =
+            SparseDem::from_dem_str("error(0.2) D0 D1 L0\nerror(0.1) D0\ndetector D2\n").unwrap();
+        let mut decoder = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: 1,
+                bp_score_iterations: 5,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap();
+        let shots: Vec<Vec<u8>> = (0..257)
+            .map(|i| (0..3).map(|bit| u8::from(i & (1 << bit) != 0)).collect())
+            .collect();
+        for workers in [1, 4] {
+            for (actual, shot) in decoder
+                .decode_batch(&shots, workers)
+                .unwrap()
+                .into_iter()
+                .zip(&shots)
+            {
+                match (actual, decoder.decode(shot)) {
+                    (Ok(mut actual), Ok(mut expected)) => {
+                        actual.selected.bp_seconds = 0.0;
+                        expected.selected.bp_seconds = 0.0;
+                        assert_eq!(actual, expected);
+                    }
+                    (Err(actual), Err(expected)) => {
+                        assert_eq!(actual.to_string(), expected.to_string());
+                    }
+                    _ => panic!("committee batch outcome differs"),
+                }
+            }
+        }
+        assert!(matches!(
+            decoder.decode_batch(&[], 0),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
+    }
 
     fn no_path_attempt() -> FrontierDecodeAttempt {
         FrontierDecodeAttempt::NoPath {
@@ -321,6 +460,7 @@ mod tests {
             ),
             transitions: 0,
             bp_seconds: 0.0,
+            dropped_states: 0,
         }
     }
 
@@ -381,6 +521,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -421,6 +563,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: true,
                 bp_score_iterations: 0,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -430,6 +574,28 @@ mod tests {
         assert_eq!(forward.processed_columns, 2);
         assert_eq!(backward.processed_columns, 2);
         assert_eq!(forward.processed_columns, backward.processed_columns);
+    }
+
+    #[test]
+    fn committee_rejects_maxlog_metric() {
+        let dem = SparseDem {
+            mechanisms: vec![(0.2, vec![0], vec![0])],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 1,
+            num_observables: 1,
+        };
+        let error = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                metric_mode: MetricMode::MaxLogInt,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration: FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
+        );
     }
 
     #[test]
@@ -453,6 +619,8 @@ mod tests {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 5,
+                metric_mode: MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();
@@ -479,6 +647,7 @@ mod tests {
             dropped_states: 0,
             dropped_log_mass: f64::NEG_INFINITY,
             bp_seconds: 0.0,
+            bp_runs: 0,
             escalation_rungs_used: 0,
             status: FrontierStatus::Exact,
             logical_masses: vec![FrontierLogicalMass {

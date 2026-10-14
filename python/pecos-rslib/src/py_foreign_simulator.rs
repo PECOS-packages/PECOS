@@ -26,6 +26,13 @@ use pyo3::prelude::*;
 /// - `rz(theta: float, qubits: list[int])`
 /// - `rzz(theta: float, pairs: list[tuple[int, int]])`
 ///
+/// This adapter is restricted to projective or measurement-only simulators.
+/// Its protocol has no operation for a global scalar, so the inherited `t`
+/// and `tdg` implementations apply the projectively equivalent symmetric RZ
+/// rotations. Do not use this adapter when absolute state-vector amplitudes,
+/// fidelity against a phase-sensitive reference, or phase-sensitive state
+/// serialization are observable through the wrapped Python object.
+///
 /// All other Clifford gates (X, Y, Z, SX, CZ, SWAP, etc.) are decomposed
 /// automatically into the 4 primitives.
 ///

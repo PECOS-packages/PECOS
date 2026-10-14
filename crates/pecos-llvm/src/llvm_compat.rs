@@ -869,6 +869,38 @@ impl<'ctx> LLIRBuilder<'ctx> {
         Ok(LLValue::Int(result))
     }
 
+    /// Select a value using an LLVM boolean condition.
+    pub fn select(
+        &self,
+        cond: LLValue<'ctx>,
+        then_value: LLValue<'ctx>,
+        else_value: LLValue<'ctx>,
+        name: &str,
+    ) -> LLResult<LLValue<'ctx>> {
+        let result = self
+            .builder
+            .build_select(
+                cond.as_int_value(),
+                then_value.to_basic_value(),
+                else_value.to_basic_value(),
+                name,
+            )
+            .map_err(|e| PecosError::Generic(format!("Failed to build select: {e}")))?;
+        Ok(match result {
+            BasicValueEnum::IntValue(v) => LLValue::Int(v),
+            BasicValueEnum::FloatValue(v) => LLValue::Float(v),
+            BasicValueEnum::PointerValue(v) => {
+                LLValue::Pointer(LLPointerValue::new(v, then_value.pointer_pointee_type()))
+            }
+            BasicValueEnum::ArrayValue(v) => LLValue::Array(v),
+            other => {
+                return Err(PecosError::Generic(format!(
+                    "select: unsupported value type: {other:?}"
+                )));
+            }
+        })
+    }
+
     pub fn lshr(
         &self,
         lhs: LLValue<'ctx>,

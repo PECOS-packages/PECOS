@@ -529,6 +529,7 @@ impl PyMatchingDecoder {
     /// # Errors
     /// Returns an error if the DEM string is invalid or cannot be parsed.
     pub fn from_dem(dem_string: &str) -> Result<Self> {
+        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)?;
         let graph = ffi::create_pymatching_graph_from_dem(dem_string)?;
 
         // Query graph for configuration
@@ -582,6 +583,7 @@ impl PyMatchingDecoder {
     /// # Errors
     /// Returns an error if the DEM string is invalid or cannot be parsed.
     pub fn from_dem_with_correlations(dem_string: &str, enable_correlations: bool) -> Result<Self> {
+        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)?;
         let graph = ffi::create_pymatching_graph_from_dem_with_correlations(
             dem_string,
             enable_correlations,
@@ -1626,7 +1628,7 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
                 .map(<[u8]>::to_vec)
                 .collect()
         } else {
-            vec![]
+            vec![Vec::new(); num_shots]
         };
 
         Self {
@@ -1640,6 +1642,28 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dem_validation_precedes_backend_parsing() {
+        for text in [
+            "error(0.1) D0 D0",
+            "error(0.1) D0 D1 ^ D1 D0",
+            "repeat 2 {\nerror(0.1) D0 D0\n}",
+            "@bad",
+        ] {
+            let expected = pecos_decoder_core::dem::grammar::validate_dem_text(text).unwrap_err();
+            let error = PyMatchingDecoder::from_dem(text).err().unwrap();
+            assert!(matches!(
+                error,
+                PyMatchingError::Dem(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
+            ));
+            assert_eq!(error.to_string(), expected.to_string());
+            let correlated = PyMatchingDecoder::from_dem_with_correlations(text, true)
+                .err()
+                .unwrap();
+            assert_eq!(correlated.to_string(), expected.to_string());
+        }
+    }
 
     #[test]
     fn test_create_graph() {
@@ -1732,6 +1756,49 @@ mod tests {
         assert_eq!(result_packed.predictions.len(), 2);
         assert_eq!(result_packed.weights.len(), 2);
         assert!(result_packed.bit_packed);
+    }
+
+    #[test]
+    fn test_batch_decode_without_observables() {
+        for correlated in [false, true] {
+            let mut decoder =
+                PyMatchingDecoder::from_dem_with_correlations("error(0.1) D0 D1", correlated)
+                    .unwrap();
+            assert_eq!(decoder.num_observables(), 0);
+            for bit_packed_input in [false, true] {
+                for bit_packed_output in [false, true] {
+                    for return_weights in [false, true] {
+                        for num_shots in [0, 2] {
+                            let shots: &[u8] = if num_shots == 0 {
+                                &[]
+                            } else if bit_packed_input {
+                                &[0, 3]
+                            } else {
+                                &[0, 0, 1, 1]
+                            };
+                            let result = decoder
+                                .decode_batch_with_config(
+                                    shots,
+                                    num_shots,
+                                    2,
+                                    BatchConfig {
+                                        bit_packed_input,
+                                        bit_packed_output,
+                                        return_weights,
+                                    },
+                                )
+                                .unwrap();
+                            assert_eq!(result.predictions, vec![Vec::<u8>::new(); num_shots]);
+                            assert_eq!(result.bit_packed, bit_packed_output);
+                            assert_eq!(
+                                result.weights.len(),
+                                if return_weights { num_shots } else { 0 }
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

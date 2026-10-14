@@ -5,7 +5,8 @@ use pecos_decoders::spec::{
     BpSchedule, EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig,
     MinSumBpConfig, MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig,
     PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig, RelayStoppingCriterion,
-    TesseractConfig, TesseractPreset, WindowedConfig, WindowedMode,
+    TesseractConfig, TesseractPreset, TesseractTrellisConfig, TesseractTrellisRankingMode,
+    WindowedConfig,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -230,20 +231,6 @@ fn belief_matching_mode(value: &str) -> PyResult<BeliefMatchingMode> {
     }
 }
 
-fn windowed_mode(value: &str) -> PyResult<WindowedMode> {
-    match value {
-        "auto" => Ok(WindowedMode::Auto),
-        "sandwich" => Ok(WindowedMode::Sandwich),
-        "overlap" => Ok(WindowedMode::Overlap),
-        "non_overlapping" => Ok(WindowedMode::NonOverlapping),
-        value => Err(invalid_choice(
-            "mode",
-            value,
-            "'auto', 'sandwich', 'overlap', 'non_overlapping'",
-        )),
-    }
-}
-
 fn mwpf_solver(value: &str) -> PyResult<MwpfSolverType> {
     match value {
         "union_find" => Ok(MwpfSolverType::UnionFind),
@@ -315,7 +302,7 @@ fn pymatching(correlated: bool, error_probability: Option<f64>) -> PyResult<PyDe
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, preset="default", det_beam=None, beam_climbing=None, verbose=None, no_revisit_dets=None, pqlimit=None, det_penalty=None))]
+#[pyo3(signature = (*, preset="default", det_beam=None, beam_climbing=None, verbose=None, no_revisit_dets=None, pqlimit=None, det_penalty=None, merge_errors=None))]
 fn tesseract(
     preset: &str,
     det_beam: Option<i64>,
@@ -324,6 +311,7 @@ fn tesseract(
     no_revisit_dets: Option<bool>,
     pqlimit: Option<i64>,
     det_penalty: Option<f64>,
+    merge_errors: Option<bool>,
 ) -> PyResult<PyDecoderSpec> {
     let det_beam = det_beam
         .map(|value| usize_value("det_beam", value, false))
@@ -342,6 +330,7 @@ fn tesseract(
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::Tesseract(
         TesseractConfig {
             preset: tesseract_preset(preset)?,
+            merge_errors,
             det_beam,
             beam_climbing,
             verbose,
@@ -350,6 +339,58 @@ fn tesseract(
             det_penalty: optional_non_negative("det_penalty", det_penalty)?,
         },
     )))
+}
+
+#[pyfunction]
+#[pyo3(signature = (*, beam_width=None, beam_eps=None, future_detcost_scale=None, verbose=None, merge_errors=None, ranking_mode=None))]
+fn tesseract_trellis(
+    beam_width: Option<i64>,
+    beam_eps: Option<f64>,
+    future_detcost_scale: Option<f64>,
+    verbose: Option<bool>,
+    merge_errors: Option<bool>,
+    ranking_mode: Option<&str>,
+) -> PyResult<PyDecoderSpec> {
+    let defaults = TesseractTrellisConfig::default();
+    Ok(PyDecoderSpec::new(
+        pecos_decoders::DecoderSpec::TesseractTrellis(TesseractTrellisConfig {
+            beam_width: beam_width
+                .map(|value| usize_value("beam_width", value, false))
+                .transpose()?
+                .unwrap_or(defaults.beam_width),
+            beam_eps: match optional_non_negative("beam_eps", beam_eps)? {
+                Some(value) if value >= 1.0 => {
+                    return Err(PyValueError::new_err(
+                        "beam_eps must be in [0, 1); at 1 or above the beam keeps a single state",
+                    ));
+                }
+                Some(value) => value,
+                None => defaults.beam_eps,
+            },
+            future_detcost_scale: optional_non_negative(
+                "future_detcost_scale",
+                future_detcost_scale,
+            )?
+            .unwrap_or(defaults.future_detcost_scale),
+            verbose: verbose.unwrap_or(defaults.verbose),
+            merge_errors: merge_errors.unwrap_or(defaults.merge_errors),
+            ranking_mode: match ranking_mode {
+                None => defaults.ranking_mode,
+                Some("mass") => TesseractTrellisRankingMode::MassOnly,
+                Some("future_detcost") => TesseractTrellisRankingMode::FutureDetcostRanked,
+                Some("future_active_detcost") => {
+                    TesseractTrellisRankingMode::FutureActiveDetcostRanked
+                }
+                Some(value) => {
+                    return Err(invalid_choice(
+                        "ranking_mode",
+                        value,
+                        "'mass', 'future_detcost', 'future_active_detcost'",
+                    ));
+                }
+            },
+        }),
+    ))
 }
 
 #[pyfunction]
@@ -490,32 +531,23 @@ fn belief_matching(mode: &str) -> PyResult<PyDecoderSpec> {
     ))
 }
 
+/// Whole-component streaming decoder; inner, buffer, and step are required.
+///
+/// Step must be at least 1. The buffer relates to code distance: a buffer of
+/// at least d is a sufficient worst-case condition for preserving fault distance
+/// (Bombin et al., https://arxiv.org/abs/2303.04846); smaller buffers are often
+/// enough in practice. Step is a latency and throughput choice: step=d with
+/// buffer=d favors throughput; step=1 with a small window favors latency.
+/// Real-time decoding requires one window to take less than step rounds of
+/// syndrome extraction (Skoric et al., https://arxiv.org/abs/2209.08552).
 #[pyfunction]
-#[pyo3(signature = (*, step=0, buffer=0, mode="auto", seam=0, core_extend=0, commit_weight_max=0.0, inner=None, sandwich_phase2=None))]
-fn windowed(
-    step: i64,
-    buffer: i64,
-    mode: &str,
-    seam: i64,
-    core_extend: i64,
-    commit_weight_max: f64,
-    inner: Option<PyRef<'_, PyDecoderSpec>>,
-    sandwich_phase2: Option<PyRef<'_, PyDecoderSpec>>,
-) -> PyResult<PyDecoderSpec> {
-    let defaults = WindowedConfig::default();
+#[pyo3(signature = (*, inner, buffer, step))]
+fn windowed(inner: PyRef<'_, PyDecoderSpec>, buffer: i64, step: i64) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::Windowed(
         WindowedConfig {
-            step_size: usize_value("step", step, true)?,
+            step_size: usize_value("step", step, false)?,
             buffer_size: usize_value("buffer", buffer, true)?,
-            mode: windowed_mode(mode)?,
-            seam_half_width: usize_value("seam", seam, true)?,
-            core_extend: usize_value("core_extend", core_extend, true)?,
-            commit_weight_max: non_negative("commit_weight_max", commit_weight_max)?,
-            inner: Box::new(cloned_or_default(inner, &defaults.inner)),
-            sandwich_phase2: Box::new(cloned_or_default(
-                sandwich_phase2,
-                &defaults.sandwich_phase2,
-            )),
+            inner: Box::new(inner.inner.clone()),
         },
     )))
 }
@@ -669,6 +701,7 @@ fn spec_family_name(spec: &pecos_decoders::DecoderSpec) -> &'static str {
     match spec {
         pecos_decoders::DecoderSpec::PyMatching(_) => "pymatching",
         pecos_decoders::DecoderSpec::Tesseract(_) => "tesseract",
+        pecos_decoders::DecoderSpec::TesseractTrellis(_) => "tesseract_trellis",
         pecos_decoders::DecoderSpec::KMwpm(_) => "k_mwpm",
         pecos_decoders::DecoderSpec::AStar => "astar",
         pecos_decoders::DecoderSpec::AStarFull => "astar_full",
@@ -698,10 +731,50 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
             push_option(&mut args, "error_probability", config.error_probability);
             finish_repr("pymatching", args)
         }
+        pecos_decoders::DecoderSpec::TesseractTrellis(config) => {
+            let defaults = TesseractTrellisConfig::default();
+            let mut args = Vec::new();
+            if config.beam_width != defaults.beam_width {
+                args.push(format!("beam_width={}", config.beam_width));
+            }
+            if config.beam_eps.partial_cmp(&defaults.beam_eps) != Some(std::cmp::Ordering::Equal) {
+                args.push(format!("beam_eps={}", config.beam_eps));
+            }
+            if config
+                .future_detcost_scale
+                .partial_cmp(&defaults.future_detcost_scale)
+                != Some(std::cmp::Ordering::Equal)
+            {
+                args.push(format!(
+                    "future_detcost_scale={}",
+                    config.future_detcost_scale
+                ));
+            }
+            if config.verbose != defaults.verbose {
+                args.push(format!("verbose={}", py_bool(config.verbose)));
+            }
+            if config.merge_errors != defaults.merge_errors {
+                args.push(format!("merge_errors={}", py_bool(config.merge_errors)));
+            }
+            if config.ranking_mode != defaults.ranking_mode {
+                let name = match config.ranking_mode {
+                    TesseractTrellisRankingMode::MassOnly => "mass",
+                    TesseractTrellisRankingMode::FutureDetcostRanked => "future_detcost",
+                    TesseractTrellisRankingMode::FutureActiveDetcostRanked => {
+                        "future_active_detcost"
+                    }
+                };
+                args.push(format!("ranking_mode={name:?}"));
+            }
+            finish_repr("tesseract_trellis", args)
+        }
         pecos_decoders::DecoderSpec::Tesseract(config) => {
             let mut args = Vec::new();
             if config.preset != TesseractPreset::Default {
                 args.push(format!("preset={:?}", tesseract_preset_name(config.preset)));
+            }
+            if let Some(value) = config.merge_errors {
+                args.push(format!("merge_errors={}", py_bool(value)));
             }
             push_option(&mut args, "det_beam", config.det_beam);
             if let Some(value) = config.beam_climbing {
@@ -896,35 +969,11 @@ fn relay_bp_repr(config: &RelayBpConfig) -> String {
 }
 
 fn windowed_repr(config: &WindowedConfig) -> String {
-    let default = WindowedConfig::default();
-    let mut args = Vec::new();
-    if config.step_size != default.step_size {
-        args.push(format!("step={}", config.step_size));
-    }
-    if config.buffer_size != default.buffer_size {
-        args.push(format!("buffer={}", config.buffer_size));
-    }
-    if config.mode != default.mode {
-        args.push(format!("mode={:?}", windowed_mode_name(config.mode)));
-    }
-    if config.seam_half_width != default.seam_half_width {
-        args.push(format!("seam={}", config.seam_half_width));
-    }
-    if config.core_extend != default.core_extend {
-        args.push(format!("core_extend={}", config.core_extend));
-    }
-    if config.commit_weight_max.to_bits() != default.commit_weight_max.to_bits() {
-        args.push(format!("commit_weight_max={:?}", config.commit_weight_max));
-    }
-    if config.inner != default.inner {
-        args.push(format!("inner={}", spec_repr(&config.inner)));
-    }
-    if config.sandwich_phase2 != default.sandwich_phase2 {
-        args.push(format!(
-            "sandwich_phase2={}",
-            spec_repr(&config.sandwich_phase2)
-        ));
-    }
+    let args = vec![
+        format!("inner={}", spec_repr(&config.inner)),
+        format!("buffer={}", config.buffer_size),
+        format!("step={}", config.step_size),
+    ];
     finish_repr("windowed", args)
 }
 
@@ -1028,14 +1077,6 @@ fn belief_matching_mode_name(value: BeliefMatchingMode) -> &'static str {
         BeliefMatchingMode::Hybrid => "hybrid",
     }
 }
-fn windowed_mode_name(value: WindowedMode) -> &'static str {
-    match value {
-        WindowedMode::Auto => "auto",
-        WindowedMode::Sandwich => "sandwich",
-        WindowedMode::Overlap => "overlap",
-        WindowedMode::NonOverlapping => "non_overlapping",
-    }
-}
 fn mwpf_solver_name(value: MwpfSolverType) -> &'static str {
     match value {
         MwpfSolverType::UnionFind => "union_find",
@@ -1058,6 +1099,7 @@ pub fn register_decoder_specs(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyDecoderSpec>()?;
     module.add_function(wrap_pyfunction!(pymatching, module)?)?;
     module.add_function(wrap_pyfunction!(tesseract, module)?)?;
+    module.add_function(wrap_pyfunction!(tesseract_trellis, module)?)?;
     module.add_function(wrap_pyfunction!(bp_osd, module)?)?;
     module.add_function(wrap_pyfunction!(bp_lsd, module)?)?;
     module.add_function(wrap_pyfunction!(fusion_blossom, module)?)?;

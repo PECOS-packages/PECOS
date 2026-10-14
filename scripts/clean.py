@@ -173,11 +173,19 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
             for pecos_rslib in site_packages.glob("pecos_rslib*"):
                 rmtree_safe(pecos_rslib, dry_run=dry_run)
 
-    # Clean uv cache for pecos-rslib (use --force to avoid blocking on cache lock)
+    # Clean the uv cache for the native workspace packages, the same set as
+    # reinstall-package in pyproject.toml (--force avoids blocking on the cache lock)
+    native_packages = [
+        "pecos-rslib",
+        "pecos-rslib-cuda",
+        "pecos-rslib-exp",
+        "pecos-rslib-llvm",
+        "pecos-selene-general-noise",
+    ]
     if not dry_run:
-        run_command(["uv", "cache", "clean", "--force", "pecos-rslib"])
+        run_command(["uv", "cache", "clean", "--force", *native_packages])
     else:
-        print("  Would run: uv cache clean --force pecos-rslib")
+        print(f"  Would run: uv cache clean --force {' '.join(native_packages)}")
 
 
 def _tree_has_any_file(directory: Path) -> bool:

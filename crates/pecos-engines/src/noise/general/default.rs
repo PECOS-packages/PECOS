@@ -128,6 +128,11 @@ impl Default for GeneralNoiseModel {
             p2_hook_order_after_gate: Vec::new(),
 
             pending_input: None,
+
+            scheduled_batch_active: false,
+            pending_crosstalk: None,
+            crosstalk_failed: false,
+            crosstalk_active: false,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),

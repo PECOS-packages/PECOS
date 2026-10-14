@@ -43,23 +43,31 @@
 //! ```
 
 use crate::code_matrix_bindings::PyParityCheckMatrix;
-use crate::dag_circuit_bindings::PyTickCircuit;
+use crate::dag_circuit_bindings::{PyDagCircuit, PyTickCircuit};
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
+use pecos_decoder_core::clifford_frame::{
+    TwoPatchClifford as RustTwoPatchClifford,
+    transform_two_patch_pauli as rust_transform_two_patch_pauli,
+};
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
     ContributionRenderRecord as RustContributionRenderRecord,
     ContributionRenderStrategy as RustContributionRenderStrategy,
-    ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
-    DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
-    DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
-    EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
-    MeasurementCrosstalkTransitionModel, NoiseConfig, OutputMode, PAULI_2Q_ORDER,
-    ParsedDem as RustParsedDem, PauliWeights, ReplacementBranchApproximation,
+    ContributionRenderSummary as RustContributionRenderSummary,
+    DemBoundaryKind as RustDemBoundaryKind, DemBuilder as RustDemBuilder,
+    DemDetectorPlacement as RustDemDetectorPlacement, DemSampler as RustNewDemSampler,
+    DemSamplerBuilder as RustNewDemSamplerBuilder, DemSlice as RustDemSlice,
+    DemSliceInstance as RustDemSliceInstance, DemSliceRoundSchedule as RustDemSliceRoundSchedule,
+    DemWindowSpec as RustDemWindowSpec, DetectorErrorModel as RustDetectorErrorModel,
+    DirectSourceFamily as RustDirectSourceFamily, EquivalenceResult as RustEquivalenceResult,
+    FaultContribution as RustFaultContribution, FaultSourceType as RustFaultSourceType,
+    IdleNoiseFamily, MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, NoiseConfig,
+    OutputMode, PAULI_2Q_ORDER, ParsedDem as RustParsedDem, PauliWeights,
+    ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -122,12 +130,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyString;
 
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
+use pecos_decoders::batch::{DecoderFactory, SampleBatch};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
+use std::sync::Arc;
 
 mod batch_decode;
 mod decoder_comparison;
-mod decoder_scoring;
 mod sample_corpus;
 mod sampler_decode;
 
@@ -219,8 +228,8 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
             );
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
-        let replacement_identity = replacement && label == "II";
-        if !replacement_identity && !PAULI_2Q_ORDER.contains(&label.as_str()) {
+        let identity_pair = label == "II";
+        if !identity_pair && !PAULI_2Q_ORDER.contains(&label.as_str()) {
             let msg = format!(
                 "p2_weights keys must be one of {PAULI_2Q_ORDER:?}, or use '~' / ':replace:' before a two-qubit Pauli label for a replacement branch; got {input_label:?}"
             );
@@ -278,35 +287,58 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
 mod p2_weight_parser_tests {
     use super::*;
 
+    fn parse_error(weights: BTreeMap<String, f64>) -> String {
+        pyo3::Python::initialize();
+        parse_p2_weights(weights).unwrap_err().to_string()
+    }
+
     #[test]
-    fn accepts_compact_and_explicit_replacement_labels() {
-        let weights = BTreeMap::from([("~II".to_string(), 0.4), (":replace:XX".to_string(), 0.6)]);
+    fn accepts_both_replacement_label_spellings_case_insensitively() {
+        use pecos_core::pauli::X;
 
-        let parsed = parse_p2_weights(weights).unwrap();
+        for label in [" ~xx ", " :RePlAcE:xX "] {
+            let parsed = parse_p2_weights(BTreeMap::from([(label.to_string(), 1.0)])).unwrap();
 
-        assert!(parsed.entries().is_empty());
-        assert_eq!(parsed.replacement_entries().len(), 2);
+            assert_eq!(parsed.entries(), []);
+            assert_eq!(parsed.replacement_entries(), &[(X(0) & X(1), 1.0)]);
+        }
+    }
+
+    #[test]
+    fn accepts_omission_only_replacement_label() {
+        let parsed = parse_p2_weights(BTreeMap::from([("~II".to_string(), 1.0)])).unwrap();
+
+        assert_eq!(parsed.entries(), []);
+        assert_eq!(
+            parsed.replacement_entries(),
+            &[(pecos_core::PauliString::identity(), 1.0)]
+        );
     }
 
     #[test]
     fn rejects_removed_star_replacement_syntax_with_migration_hint() {
-        let error = parse_p2_weights(BTreeMap::from([("*XX".to_string(), 1.0)])).unwrap_err();
-        let message = error.to_string();
+        let message = parse_error(BTreeMap::from([("*XX".to_string(), 1.0)]));
 
-        assert!(message.contains("removed '*' syntax"));
         assert!(message.contains("~XX"));
         assert!(message.contains(":replace:XX"));
     }
 
     #[test]
     fn rejects_duplicate_replacement_aliases_after_normalization() {
-        let error = parse_p2_weights(BTreeMap::from([
+        let message = parse_error(BTreeMap::from([
             ("~XX".to_string(), 0.5),
             (":replace:XX".to_string(), 0.5),
-        ]))
-        .unwrap_err();
+        ]));
 
-        assert!(error.to_string().contains("duplicate label"));
+        assert!(message.contains("duplicate label"));
+    }
+
+    #[test]
+    fn rejects_plain_identity_with_replacement_spelling_hint() {
+        let message = parse_error(BTreeMap::from([("II".to_string(), 1.0)]));
+
+        assert!(message.contains("~II"));
+        assert!(message.contains(":replace:II"));
     }
 }
 
@@ -1008,10 +1040,15 @@ impl PyDagFaultAnalyzer {
     ///
     /// Returns:
     ///     `DagFaultInfluenceMap` with O(1) fault classification.
-    fn build_influence_map(&self) -> PyDagFaultInfluenceMap {
+    ///
+    /// Raises:
+    ///     ValueError: The circuit contains a gate Pauli propagation cannot represent.
+    fn build_influence_map(&self) -> PyResult<PyDagFaultInfluenceMap> {
         let analyzer = RustDagFaultAnalyzer::new(&self.dag);
-        let inner = analyzer.build_influence_map();
-        PyDagFaultInfluenceMap { inner }
+        let inner = analyzer
+            .build_influence_map()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDagFaultInfluenceMap { inner })
     }
 
     /// Maximum node index in the DAG.
@@ -1178,11 +1215,13 @@ impl PyInfluenceBuilder {
     ///     `DagFaultInfluenceMap` with proper detector definitions and tracked Paulis.
     ///
     /// Raises:
-    ///     ValueError: A circuit annotation cannot be resolved -- an observable
+    ///     ValueError: A circuit gate cannot be Pauli-propagated, symbolic replay
+    ///         cannot represent a gate, or a circuit annotation cannot be resolved -- an observable
     ///         referencing a missing node or a non-measurement gate, or a
     ///         tracked Pauli with no meta gate.
     fn build(&self) -> PyResult<PyDagFaultInfluenceMap> {
-        let mut builder = RustInfluenceBuilder::new(&self.dag);
+        let mut builder = RustInfluenceBuilder::new(&self.dag)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         if !self.tracked_x_qubits.is_empty() {
             builder = builder.with_x(&self.tracked_x_qubits);
@@ -1489,7 +1528,6 @@ fn parse_fault_distance_osd_method(value: &str) -> PyResult<RustFaultDistanceOsd
 impl PyFaultDistanceUpperBoundConfig {
     #[new]
     #[pyo3(signature = (samples, seed, observable_subset_strategy, error_rate, max_iterations, bp_method, bp_schedule, min_sum_scaling_factor, osd_method, osd_order, omp_threads))]
-    #[allow(clippy::too_many_arguments)]
     fn new(
         samples: usize,
         seed: u64,
@@ -1614,7 +1652,454 @@ impl PyFaultDistanceUpperBoundResult {
 /// ```
 #[pyclass(subclass, name = "DetectorErrorModel", module = "pecos_rslib.qec")]
 pub struct PyDetectorErrorModel {
-    inner: RustDetectorErrorModel,
+    pub(crate) inner: RustDetectorErrorModel,
+}
+
+/// A decoder built directly from a structured PECOS detector error model.
+#[pyclass(name = "StructuredDemDecoder", module = "pecos_rslib.qec", unsendable)]
+pub struct PyStructuredDemDecoder {
+    inner: Box<dyn pecos_decoders::ObservableDecoder>,
+    num_observables: usize,
+}
+
+#[pymethods]
+impl PyStructuredDemDecoder {
+    /// Decode one detector-event syndrome.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyObservableFlips> {
+        self.inner
+            .decode_obs(&syndrome)
+            .map(|mask| PyObservableFlips::from_mask_value(mask, self.num_observables))
+            .map_err(decoder_build_error_to_py)
+    }
+
+    /// Number of detector bits expected by the decoder, when declared by the backend.
+    #[getter]
+    fn num_detectors(&self) -> Option<usize> {
+        self.inner.num_detectors()
+    }
+}
+
+/// One reusable, absolute-round-independent DEM slice compiled from a bounded physical fixture.
+#[pyclass(name = "CachedDemSlice", module = "pecos_rslib.qec")]
+pub struct PyCachedDemSlice {
+    inner: Arc<RustDemSlice>,
+}
+
+#[pymethods]
+impl PyCachedDemSlice {
+    /// Human-readable cached slice name.
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+
+    /// Validated ``(past_rounds, future_rounds)`` temporal horizon.
+    #[getter]
+    fn temporal_horizon(&self) -> (u32, u32) {
+        let horizon = self.inner.horizon();
+        (horizon.past_rounds, horizon.future_rounds)
+    }
+
+    /// Number of independent physical-source contributions in the cached slice.
+    #[getter]
+    fn num_contributions(&self) -> usize {
+        self.inner.contributions().len()
+    }
+
+    /// Slice-local standard DEM-output identities.
+    #[getter]
+    fn dem_outputs(&self) -> Vec<u32> {
+        self.inner.local_dem_outputs().collect()
+    }
+
+    /// Slice-local PECOS tracked-Pauli identities.
+    #[getter]
+    fn tracked_paulis(&self) -> Vec<u32> {
+        self.inner.local_tracked_paulis().collect()
+    }
+
+    fn __repr__(&self) -> String {
+        let (past, future) = self.temporal_horizon();
+        format!(
+            "CachedDemSlice(name={:?}, num_contributions={}, temporal_horizon=({}, {}))",
+            self.inner.name(),
+            self.inner.contributions().len(),
+            past,
+            future
+        )
+    }
+}
+
+/// A reusable round schedule compiled from one source-tracked DEM and annotated circuit.
+///
+/// Compile this once and call ``compose`` for each decoding window. The schedule
+/// owns its relative DEM slices, so subsequent window assembly does not repeat
+/// detector-stream discovery or source-ownership partitioning.
+#[pyclass(name = "DemSliceRoundSchedule", module = "pecos_rslib.qec")]
+pub struct PyDemSliceRoundSchedule {
+    inner: RustDemSliceRoundSchedule,
+}
+
+fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKind> {
+    match forward_boundary {
+        "soft" => Ok(RustDemBoundaryKind::Soft),
+        "hard" => Ok(RustDemBoundaryKind::Hard),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "forward_boundary must be 'soft' or 'hard', got {forward_boundary:?}"
+        ))),
+    }
+}
+
+type PySliceOutputRoutings = BTreeMap<i64, BTreeMap<u32, Vec<u32>>>;
+type PyDetectorOrderRoutings = BTreeMap<i64, BTreeMap<u32, u32>>;
+
+fn validate_detector_order_routings(
+    routings: Option<&PyDetectorOrderRoutings>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+) -> PyResult<()> {
+    let Some(routings) = routings else {
+        return Ok(());
+    };
+    for (&round, routing) in routings {
+        let Some(known) = known_by_round.get(&round) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detector_order_routings contains unknown owner round {round}"
+            )));
+        };
+        let sources: BTreeSet<_> = routing.keys().copied().collect();
+        let targets: BTreeSet<_> = routing.values().copied().collect();
+        if &sources != known || &targets != known {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detector_order_routings[{round}] must be a permutation of detector streams {known:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_slice_output_routings(
+    argument: &str,
+    routings: Option<&PySliceOutputRoutings>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+    declared_outputs: &BTreeSet<u32>,
+) -> PyResult<()> {
+    let Some(routings) = routings else {
+        return Ok(());
+    };
+    for (&round, local_routings) in routings {
+        let Some(known_outputs) = known_by_round.get(&round) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{argument} contains unknown owner round {round}"
+            )));
+        };
+        for (&local_output, global_outputs) in local_routings {
+            if !known_outputs.contains(&local_output) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{argument}[{round}] contains unknown local output {local_output}"
+                )));
+            }
+            for global_output in global_outputs {
+                if !declared_outputs.contains(global_output) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "{argument}[{round}][{local_output}] targets undeclared output {global_output}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_slice_output_schema(
+    kind: &str,
+    expected: &BTreeSet<u32>,
+    declared: &BTreeSet<u32>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+    routings: Option<&PySliceOutputRoutings>,
+) -> PyResult<()> {
+    if expected != declared {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "output_model declares {kind} {declared:?}, but the assembled circuit expects {expected:?}"
+        )));
+    }
+
+    for (&round, local_outputs) in known_by_round {
+        for &local_output in local_outputs {
+            let routed = routings
+                .and_then(|by_round| by_round.get(&round))
+                .and_then(|by_output| by_output.get(&local_output));
+            let unexpected = routed.map_or(!expected.contains(&local_output), |targets| {
+                targets.iter().any(|target| !expected.contains(target))
+            });
+            if unexpected {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "cached slice {kind} {local_output} at owner round {round} is not projected or routed into the expected output schema {expected:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[pymethods]
+impl PyDemSliceRoundSchedule {
+    /// Assemble a schedule from cached slices at requested absolute rounds.
+    ///
+    /// Identity stream and output mappings are used. ``output_model`` supplies
+    /// only standard-output and tracked-Pauli declarations; its detector and
+    /// contribution contents are ignored. ``coordinate_offset`` translates
+    /// every available cached slice-local detector coordinate at instantiation.
+    /// ``detector_coordinate_offsets`` adds a further translation selected by
+    /// local detector-stream ID, allowing independently placed code blocks.
+    /// ``detector_order_routings`` optionally supplies a full stream-order
+    /// permutation for selected absolute rounds. It changes dense detector-ID
+    /// order without changing stable stream identity or relative targeting.
+    /// Output routings select a GF(2) target set by owner round and local output;
+    /// repeated targets cancel, and an empty target set projects a column away.
+    /// The expected output lists are an independent declaration of the assembled
+    /// circuit schema. They must exactly match ``output_model`` and every
+    /// unprojected cached slice output must route into them.
+    #[staticmethod]
+    #[pyo3(signature = (output_model, cached_slices, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None, detector_order_routings=None))]
+    fn from_cached_slices(
+        py: Python<'_>,
+        output_model: &PyDetectorErrorModel,
+        cached_slices: Vec<(Py<PyCachedDemSlice>, i64)>,
+        expected_dem_outputs: Vec<u32>,
+        expected_tracked_paulis: Vec<u32>,
+        coordinate_offset: Option<(f64, f64)>,
+        detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
+        dem_output_routings: Option<PySliceOutputRoutings>,
+        tracked_pauli_routings: Option<PySliceOutputRoutings>,
+        detector_order_routings: Option<PyDetectorOrderRoutings>,
+    ) -> PyResult<Self> {
+        if let Some((x, y)) = coordinate_offset
+            && (!x.is_finite() || !y.is_finite())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "coordinate_offset values must be finite",
+            ));
+        }
+        if let Some(offsets) = &detector_coordinate_offsets {
+            for (&detector, &(x, y)) in offsets {
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets[{detector}] values must be finite"
+                    )));
+                }
+                let known = cached_slices.iter().any(|(cached_slice, _)| {
+                    cached_slice
+                        .borrow(py)
+                        .inner
+                        .detectors()
+                        .iter()
+                        .any(|candidate| candidate.id == detector)
+                });
+                if !known {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets contains unknown detector stream {detector}"
+                    )));
+                }
+            }
+        }
+        let mut known_dem_outputs = BTreeMap::<i64, BTreeSet<u32>>::new();
+        let mut known_tracked_paulis = BTreeMap::<i64, BTreeSet<u32>>::new();
+        let mut known_detectors = BTreeMap::<i64, BTreeSet<u32>>::new();
+        for (cached_slice, round) in &cached_slices {
+            let cached_slice = cached_slice.borrow(py);
+            known_detectors.entry(*round).or_default().extend(
+                cached_slice
+                    .inner
+                    .detectors()
+                    .iter()
+                    .map(|detector| detector.id),
+            );
+            known_dem_outputs
+                .entry(*round)
+                .or_default()
+                .extend(cached_slice.inner.local_dem_outputs());
+            known_tracked_paulis
+                .entry(*round)
+                .or_default()
+                .extend(cached_slice.inner.local_tracked_paulis());
+        }
+        let declared_dem_outputs = output_model
+            .inner
+            .observables()
+            .map(|output| output.id)
+            .collect();
+        let declared_tracked_paulis = output_model
+            .inner
+            .iter_tracked_paulis()
+            .map(|output| output.id)
+            .collect();
+        let expected_dem_outputs = expected_dem_outputs.into_iter().collect();
+        let expected_tracked_paulis = expected_tracked_paulis.into_iter().collect();
+        validate_detector_order_routings(detector_order_routings.as_ref(), &known_detectors)?;
+        validate_slice_output_routings(
+            "dem_output_routings",
+            dem_output_routings.as_ref(),
+            &known_dem_outputs,
+            &declared_dem_outputs,
+        )?;
+        validate_slice_output_routings(
+            "tracked_pauli_routings",
+            tracked_pauli_routings.as_ref(),
+            &known_tracked_paulis,
+            &declared_tracked_paulis,
+        )?;
+        validate_slice_output_schema(
+            "standard outputs",
+            &expected_dem_outputs,
+            &declared_dem_outputs,
+            &known_dem_outputs,
+            dem_output_routings.as_ref(),
+        )?;
+        validate_slice_output_schema(
+            "tracked Paulis",
+            &expected_tracked_paulis,
+            &declared_tracked_paulis,
+            &known_tracked_paulis,
+            tracked_pauli_routings.as_ref(),
+        )?;
+        let instances = cached_slices
+            .into_iter()
+            .map(|(cached_slice, round)| -> PyResult<_> {
+                let cached_slice = cached_slice.borrow(py);
+                let mut instance =
+                    RustDemSliceInstance::identity(Arc::clone(&cached_slice.inner), round);
+                if coordinate_offset.is_some() || detector_coordinate_offsets.is_some() {
+                    let (global_x, global_y) = coordinate_offset.unwrap_or((0.0, 0.0));
+                    for detector in cached_slice.inner.detectors() {
+                        if let Some([x, y]) = detector.coords {
+                            let (local_x, local_y) = detector_coordinate_offsets
+                                .as_ref()
+                                .and_then(|offsets| offsets.get(&detector.id))
+                                .copied()
+                                .unwrap_or((0.0, 0.0));
+                            let translated = [x + global_x + local_x, y + global_y + local_y];
+                            if !translated.into_iter().all(f64::is_finite) {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "translated detector coordinates must be finite",
+                                ));
+                            }
+                            instance = instance.with_detector_placement(
+                                detector.id,
+                                RustDemDetectorPlacement::new(detector.id).with_coords(translated),
+                            );
+                        }
+                    }
+                }
+                if let Some(routings) = dem_output_routings
+                    .as_ref()
+                    .and_then(|routings| routings.get(&round))
+                {
+                    for (&local_output, global_outputs) in routings {
+                        instance = instance
+                            .with_dem_output_targets(local_output, global_outputs.iter().copied());
+                    }
+                }
+                if let Some(routings) = tracked_pauli_routings
+                    .as_ref()
+                    .and_then(|routings| routings.get(&round))
+                {
+                    for (&local_output, global_outputs) in routings {
+                        instance = instance.with_tracked_pauli_targets(
+                            local_output,
+                            global_outputs.iter().copied(),
+                        );
+                    }
+                }
+                Ok(instance)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances)
+                .with_detector_order_routings(detector_order_routings.unwrap_or_default()),
+        })
+    }
+
+    /// Number of scheduled owner rounds.
+    #[getter]
+    fn num_instances(&self) -> usize {
+        self.inner.instances().len()
+    }
+
+    /// Owner rounds in deterministic assembly order.
+    fn rounds(&self) -> Vec<i64> {
+        self.inner
+            .instances()
+            .iter()
+            .map(RustDemSliceInstance::round)
+            .collect()
+    }
+
+    /// Extract one compiled owner-round slice for caching and later reuse.
+    fn cached_slice(&self, owner_round: i64) -> PyResult<PyCachedDemSlice> {
+        let instance = self
+            .inner
+            .instances()
+            .iter()
+            .find(|instance| instance.round() == owner_round)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "DEM round schedule has no cached slice at owner round {owner_round}"
+                ))
+            })?;
+        Ok(PyCachedDemSlice {
+            inner: Arc::clone(instance.slice()),
+        })
+    }
+
+    /// Return the exact minimum safe look-ahead for a commit region.
+    fn required_buffer_rounds(&self, start_round: i64, commit_rounds: u32) -> PyResult<u32> {
+        self.inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Assemble one structured commit-plus-buffer window.
+    ///
+    /// ``buffer_rounds=None`` derives the minimum safe look-ahead from this
+    /// schedule. An explicit undersized buffer fails instead of truncating a
+    /// commit-region correlation.
+    #[pyo3(signature = (start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn compose(
+        &self,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<PyDetectorErrorModel> {
+        let forward_boundary = parse_dem_boundary_kind(forward_boundary)?;
+        let buffer_rounds = match buffer_rounds {
+            Some(buffer_rounds) => buffer_rounds,
+            None => self
+                .inner
+                .required_buffer_rounds(start_round, commit_rounds)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        };
+        let composed = self
+            .inner
+            .compose(RustDemWindowSpec::new(
+                start_round,
+                commit_rounds,
+                buffer_rounds,
+                forward_boundary,
+            ))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDetectorErrorModel {
+            inner: composed.model,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DemSliceRoundSchedule(num_instances={}, rounds={:?})",
+            self.inner.instances().len(),
+            self.rounds()
+        )
+    }
 }
 
 fn split_dem_outputs_for_dem(
@@ -1862,9 +2347,14 @@ impl PyDetectorErrorModel {
     ///     >>> dem = DetectorErrorModel.from_circuit(tc, p2=0.01)
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
+    ///
+    /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -1985,6 +2475,133 @@ impl PyDetectorErrorModel {
         self.inner.num_tracked_paulis()
     }
 
+    /// Detector identities and their optional ``[x, y, time]`` coordinates.
+    fn detector_coordinates(&self) -> Vec<(u32, Option<[f64; 3]>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.coords))
+            .collect()
+    }
+
+    /// Detector identities and their optional fault sectors.
+    fn detector_fault_sectors(&self) -> Vec<(u32, Option<&str>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.fault_sector.as_deref()))
+            .collect()
+    }
+
+    /// Build a decoder without rendering and reparsing this model at the API boundary.
+    ///
+    /// Windowed and beam-search specifications consume the structured model directly;
+    /// backends that only expose a text parser are rendered at their leaf boundary.
+    fn build_decoder(&self, decoder: &Bound<'_, PyAny>) -> PyResult<PyStructuredDemDecoder> {
+        let spec = if decoder.is_instance_of::<PyString>() {
+            pecos_decoders::DecoderSpec::parse(decoder.extract::<&str>()?)
+                .map_err(decoder_parse_error_to_py)?
+        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
+            spec.inner.clone()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
+            ));
+        };
+        let model = self
+            .inner
+            .to_structured_decoder_dem()
+            .map_err(decoder_build_error_to_py)?;
+        let num_observables = model.num_observables;
+        let inner = spec
+            .build(&pecos_decoders::DecodeModel::StructuredDem(model))
+            .map_err(decoder_build_error_to_py)?;
+        Ok(PyStructuredDemDecoder {
+            inner,
+            num_observables,
+        })
+    }
+
+    /// Compile a reusable round schedule from this source-tracked model.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// the model. Every referenced gate must carry an integer
+    /// ``dem_slice_round`` attribute. Composed windows number detectors in this
+    /// model's order within each round.
+    fn round_schedule(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+    ) -> PyResult<PyDemSliceRoundSchedule> {
+        let inner = RustDemSliceRoundSchedule::from_annotated_circuit(
+            "python DEM round",
+            &self.inner,
+            &influence_map.inner,
+            &circuit.inner,
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDemSliceRoundSchedule { inner })
+    }
+
+    /// Return the minimum safe look-ahead for an annotated round window.
+    ///
+    /// Sources owned by the commit region, plus source-halo contributions that
+    /// reach it, determine the required buffer. The result includes all of
+    /// their later detector targets.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or round validation fails.
+    fn required_buffer_rounds(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+    ) -> PyResult<u32> {
+        let schedule = self.round_schedule(influence_map, circuit)?;
+        schedule
+            .inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Build a structured DEM for one annotated commit-plus-buffer round window.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// this source-tracked model. Every physical gate referenced by the map must
+    /// carry an integer ``dem_slice_round`` attribute. Detector ``[x, y, t]``
+    /// coordinates define stable streams and syndrome rounds.
+    ///
+    /// Args:
+    ///     influence_map: Source influence map for this model.
+    ///     circuit: Annotated physical DAG circuit.
+    ///     start_round: First round included in the window.
+    ///     commit_rounds: Number of rounds whose corrections may be committed.
+    ///     buffer_rounds: Look-ahead rounds after the commit region. ``None``
+    ///         derives the minimum safe value from source correlations.
+    ///     forward_boundary: ``"soft"`` for a sliding window or ``"hard"``
+    ///         for a terminal window.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or boundary validation fails.
+    #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn composed_round_window(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<Self> {
+        self.round_schedule(influence_map, circuit)?.compose(
+            start_round,
+            commit_rounds,
+            buffer_rounds,
+            forward_boundary,
+        )
+    }
+
     /// Compute exact fault distance when every mechanism is graphlike.
     ///
     /// Raises:
@@ -2068,9 +2685,11 @@ impl PyDetectorErrorModel {
 
     /// Convert the DEM to a source-informed graphlike decomposition.
     ///
-    /// Source-carried components are recursively decomposed only using
-    /// graphlike pieces that are themselves source-carried components in this
-    /// DEM. Residual hyperedges remain hyperedges.
+    /// Source-carried component structure is used first. Components that are
+    /// still hyperedges are decomposed with graphlike mechanisms that appear
+    /// as source-carried components or source-tracked alternatives in this
+    /// DEM, introducing graphlike remnants when needed. Residual hyperedges
+    /// remain hyperedges.
     fn to_string_source_graphlike_decomposed(&self) -> String {
         self.inner.to_string_source_graphlike_decomposed()
     }
@@ -2079,10 +2698,16 @@ impl PyDetectorErrorModel {
     ///
     /// Raw mechanisms are first grouped exactly as in `to_string()`. Each raw
     /// effect is then projected to graphlike terminal components using detector
-    /// coordinates. This is a decoder-facing representation for graph matchers,
-    /// not source-proof decomposition.
-    fn to_string_terminal_graphlike_decomposed(&self) -> String {
-        self.inner.to_string_terminal_graphlike_decomposed()
+    /// coordinates. Prefer `to_string_source_graphlike_decomposed()` for graph
+    /// matchers; this coordinate-based approximation can invent nonphysical
+    /// components and decode less accurately. Raises `ValueError` if observable labels
+    /// conflict, no consistent terminal pairing exists, or the bounded search
+    /// is exhausted. Effects are processed by descending grouped probability;
+    /// emitted labels constrain later effects, and the output is checked again.
+    fn to_string_terminal_graphlike_decomposed(&self) -> PyResult<String> {
+        self.inner
+            .to_string_terminal_graphlike_decomposed()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Convert the DEM using the explicit historical graphlike-search renderer.
@@ -2166,9 +2791,7 @@ impl PyDetectorErrorModel {
 
     /// Build a `DemSampler` directly from this DEM — no string round-trip.
     fn to_sampler(&self) -> PyResult<PyDemSampler> {
-        use pecos_qec::fault_tolerance::dem_builder::DemSampler;
-
-        let inner = DemSampler::from_detector_error_model(&self.inner);
+        let inner = self.inner.to_sampler();
         Ok(PyDemSampler { inner })
     }
 
@@ -2325,7 +2948,6 @@ pub struct PyDemBuilder {
     detectors_json: Option<String>,
     observables_json: Option<String>,
     num_measurements: Option<usize>,
-    measurement_order: Option<Vec<usize>>,
     exact_branch_circuit: Option<DagCircuit>,
 }
 
@@ -2343,7 +2965,6 @@ impl PyDemBuilder {
             detectors_json: None,
             observables_json: None,
             num_measurements: None,
-            measurement_order: None,
             exact_branch_circuit: None,
         }
     }
@@ -2361,8 +2982,13 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
+    ///
+    /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
         p1: f64,
@@ -2461,27 +3087,6 @@ impl PyDemBuilder {
         slf
     }
 
-    /// Set the measurement order from the original circuit.
-    ///
-    /// The measurement order is a list of qubits in the order they were measured
-    /// in the original circuit (e.g., `TickCircuit`). This allows proper mapping
-    /// between record offsets (which use `TickCircuit` order) and influence map
-    /// indices (which may use a different order based on DAG topology).
-    ///
-    /// Args:
-    ///     order: List of qubit indices in measurement execution order.
-    ///            order[i] is the qubit measured at `TickCircuit` measurement index i.
-    ///
-    /// Returns:
-    ///     Self for method chaining.
-    fn with_measurement_order(
-        mut slf: PyRefMut<'_, Self>,
-        order: Vec<usize>,
-    ) -> PyRefMut<'_, Self> {
-        slf.measurement_order = Some(order);
-        slf
-    }
-
     /// Attach the original circuit for exact replacement-branch replay.
     ///
     /// This is only needed when using `p2_replacement_approximation="exact_branch_replay"`
@@ -2515,10 +3120,6 @@ impl PyDemBuilder {
 
         if let Some(num) = self.num_measurements {
             builder = builder.with_num_measurements(num);
-        }
-
-        if let Some(ref order) = self.measurement_order {
-            builder = builder.with_measurement_order(order.clone());
         }
 
         if let Some(ref json) = self.detectors_json {
@@ -2594,7 +3195,10 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
                  See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
             )
         }
-        pecos_decoders::DecoderError::BackendUnavailable { .. } => {
+        // Malformed DEM text is bad caller input, as the other DEM surfaces
+        // already report it.
+        pecos_decoders::DecoderError::BackendUnavailable { .. }
+        | pecos_decoders::DecoderError::InvalidDemSyntax(_) => {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
         }
         pecos_decoders::DecoderError::InternalError(message) => {
@@ -2646,12 +3250,7 @@ fn create_observable_decoder(
 /// ```
 #[pyclass(name = "SampleBatch", module = "pecos_rslib.qec")]
 pub struct PySampleBatch {
-    /// Columnar bit-packed detector columns: det_columns[det_idx][word_idx]
-    det_columns: Vec<Vec<u64>>,
-    /// Columnar bit-packed observable columns: obs_columns[obs_idx][word_idx]
-    obs_columns: Vec<Vec<u64>>,
-    num_detectors: usize,
-    num_shots: usize,
+    samples: SampleBatch,
     raw_measurements: bool,
     seed: Option<u64>,
     dem: Option<String>,
@@ -2663,14 +3262,7 @@ pub struct PySampleBatch {
 impl PySampleBatch {
     /// Extract syndrome for one shot into a pre-allocated buffer.
     fn extract_syndrome(&self, shot: usize, buf: &mut [u8]) {
-        buf.fill(0);
-        let word_idx = shot / 64;
-        let bit_mask = 1u64 << (shot % 64);
-        for (det_idx, col) in self.det_columns.iter().enumerate() {
-            if col[word_idx] & bit_mask != 0 {
-                buf[det_idx] = 1;
-            }
-        }
+        self.samples.syndrome_into(shot, buf);
     }
 
     /// Reject raw-measurement batches before treating their rows as syndromes.
@@ -2686,15 +3278,7 @@ impl PySampleBatch {
     /// Extract the observable mask for one shot as a wide [`ObsMask`], with no
     /// 64-observable cap (the columnar storage already supports >64 columns).
     fn extract_obs_mask_wide(&self, shot: usize) -> pecos_decoder_core::obs_mask::ObsMask {
-        let word_idx = shot / 64;
-        let bit_mask = 1u64 << (shot % 64);
-        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
-        for (obs_idx, col) in self.obs_columns.iter().enumerate() {
-            if col[word_idx] & bit_mask != 0 {
-                mask.set(obs_idx);
-            }
-        }
-        mask
+        self.samples.observable_flips(shot)
     }
 
     /// Build from columnar sampling data.
@@ -2704,12 +3288,17 @@ impl PySampleBatch {
         num_shots: usize,
         seed: Option<u64>,
     ) -> Self {
-        let num_detectors = det_columns.len();
+        Self::from_samples(
+            SampleBatch::from_columnar(det_columns, obs_columns, num_shots)
+                .expect("sampler columns match the shot count"),
+            seed,
+        )
+    }
+
+    /// Wrap validated detector events with their resolved sampling seed.
+    fn from_samples(samples: SampleBatch, seed: Option<u64>) -> Self {
         Self {
-            det_columns,
-            obs_columns,
-            num_detectors,
-            num_shots,
+            samples,
             raw_measurements: false,
             seed,
             dem: None,
@@ -2792,36 +3381,13 @@ impl PySampleBatch {
         observable_masks: &[pecos_decoder_core::obs_mask::ObsMask],
         num_observables: usize,
     ) -> Self {
-        let num_shots = detection_events.len();
-        let num_detectors = detection_events.first().map_or(0, Vec::len);
-        let num_words = num_shots.div_ceil(64);
-
-        // Convert row-major → columnar
-        let mut det_columns = vec![vec![0u64; num_words]; num_detectors];
-        for (shot, row) in detection_events.iter().enumerate() {
-            let word_idx = shot / 64;
-            let bit_mask = 1u64 << (shot % 64);
-            for (det_idx, &val) in row.iter().enumerate() {
-                if val != 0 {
-                    det_columns[det_idx][word_idx] |= bit_mask;
-                }
-            }
-        }
-
-        let mut obs_columns = vec![vec![0u64; num_words]; num_observables];
-        for (shot, mask) in observable_masks.iter().enumerate() {
-            let word_idx = shot / 64;
-            let bit_mask = 1u64 << (shot % 64);
-            for obs_idx in mask.iter_set_bits() {
-                obs_columns[obs_idx][word_idx] |= bit_mask;
-            }
-        }
-
         Self {
-            det_columns,
-            obs_columns,
-            num_detectors,
-            num_shots,
+            samples: SampleBatch::from_row_major(
+                &detection_events,
+                observable_masks,
+                num_observables,
+            )
+            .expect("Python constructor validated rows and observable masks"),
             raw_measurements: false,
             seed: None,
             dem: None,
@@ -2833,10 +3399,12 @@ impl PySampleBatch {
 
     fn from_corpus(corpus: LoadedCorpus) -> Self {
         Self {
-            num_detectors: corpus.det_columns.len(),
-            det_columns: corpus.det_columns,
-            obs_columns: corpus.obs_columns,
-            num_shots: corpus.num_shots,
+            samples: SampleBatch::from_columnar(
+                corpus.det_columns,
+                corpus.obs_columns,
+                corpus.num_shots,
+            )
+            .expect("corpus loader validated packed columns"),
             raw_measurements: false,
             seed: corpus.seed,
             dem: Some(corpus.dem),
@@ -2946,7 +3514,7 @@ impl PySampleBatch {
     /// Number of shots in this batch.
     #[getter]
     fn num_shots(&self) -> usize {
-        self.num_shots
+        self.samples.num_shots()
     }
 
     /// Stored observable-column width, i.e. the length of one row of
@@ -2957,7 +3525,7 @@ impl PySampleBatch {
     /// observables, so this is a width rather than a promise about the code.
     #[getter]
     fn num_observables(&self) -> usize {
-        self.obs_columns.len()
+        self.samples.num_observables()
     }
 
     /// Resolved random seed used to generate this batch, if known.
@@ -3030,9 +3598,9 @@ impl PySampleBatch {
         sample_corpus::save(
             &path,
             CorpusToSave {
-                det_columns: &self.det_columns,
-                obs_columns: &self.obs_columns,
-                num_shots: self.num_shots,
+                det_columns: self.samples.det_columns(),
+                obs_columns: self.samples.obs_columns(),
+                num_shots: self.samples.num_shots(),
                 seed: self.seed,
                 dem,
                 metadata_json,
@@ -3051,13 +3619,13 @@ impl PySampleBatch {
 
     /// Get the syndrome for shot `i` as a list of u8 values.
     fn get_syndrome(&self, i: usize) -> PyResult<Vec<u8>> {
-        if i >= self.num_shots {
+        if i >= self.samples.num_shots() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "Shot index {i} out of range (num_shots={})",
-                self.num_shots
+                self.samples.num_shots()
             )));
         }
-        let mut buf = vec![0u8; self.num_detectors];
+        let mut buf = vec![0u8; self.samples.num_detectors()];
         self.extract_syndrome(i, &mut buf);
         Ok(buf)
     }
@@ -3066,7 +3634,7 @@ impl PySampleBatch {
     ///
     /// The result has shape (`num_shots`, `num_detectors`).
     fn detector_events(&self) -> Vec<Vec<bool>> {
-        Self::columns_as_rows(&self.det_columns, self.num_shots)
+        Self::columns_as_rows(self.samples.det_columns(), self.samples.num_shots())
     }
 
     /// Return all observable flips as shots-major boolean lists.
@@ -3078,7 +3646,7 @@ impl PySampleBatch {
     /// width zero). Sampler-produced columns contain all DEM outputs, which can
     /// be a superset of the logical observables.
     fn observable_flips(&self) -> Vec<Vec<bool>> {
-        Self::columns_as_rows(&self.obs_columns, self.num_shots)
+        Self::columns_as_rows(self.samples.obs_columns(), self.samples.num_shots())
     }
 
     /// Observable flips for shot `i` as an [`ObservableFlips`] value.
@@ -3089,27 +3657,28 @@ impl PySampleBatch {
     /// [`observable_flips`] and carries the same caveat about sampler-produced
     /// columns being a superset of the logical observables.
     fn get_observable_flips(&self, i: usize) -> PyResult<PyObservableFlips> {
-        if i >= self.num_shots {
+        if i >= self.samples.num_shots() {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "Shot index {i} out of range (num_shots={})",
-                self.num_shots
+                self.samples.num_shots()
             )));
         }
         Ok(PyObservableFlips::from_mask_value(
             self.extract_obs_mask_wide(i),
-            self.obs_columns.len(),
+            self.samples.num_observables(),
         ))
     }
 
     /// Decode and score every shot using a typed decoder specification or a
-    /// legacy decoder string.
+    /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
     /// batches require an explicit DEM. Automatic execution honors decoder
     /// statefulness, uses native batching where available, and otherwise chooses
     /// sequential or bounded parallel per-shot execution. Set `workers` to opt
-    /// into an exact worker count, `predictions` to retain wide per-shot masks,
-    /// and `timing` to retain per-shot elapsed-time statistics.
+    /// into that many workers, bounded by one per shot (and never below one)
+    /// and reported as `workers_used`; `predictions` to retain wide per-shot
+    /// masks; and `timing` to retain per-shot elapsed-time statistics.
     #[pyo3(signature = (dem=None, decoder=None, *, workers=None, predictions=false, timing=false, allow_dem_mismatch=false))]
     fn decode(
         &self,
@@ -3134,16 +3703,7 @@ impl PySampleBatch {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -3159,22 +3719,14 @@ impl PySampleBatch {
                 })
             })
             .transpose()?;
-        let traits = spec.execution_traits();
-        let plan =
-            pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
-                traits,
-                num_shots: self.num_shots,
-                native_batch_capable: spec.native_batch_capable(),
-                timing,
-                explicit_workers,
-                available_threads: rayon::current_num_threads(),
-            })
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-
+        let mut options = pecos_decoders::batch::DecodeOptions::default()
+            .predictions(predictions)
+            .timing(timing);
+        options.workers = explicit_workers;
         let output = py
-            .detach(|| batch_decode::execute(self, resolved_dem, &spec, &plan, predictions, timing))
-            .map_err(batch_decode::BatchExecutionError::into_pyerr)?;
-        batch_decode::PyDecodeResult::from_execution(py, self.num_shots, plan, output)
+            .detach(|| self.samples.decode_with(resolved_dem, &spec, &options))
+            .map_err(batch_decode::batch_error_to_py)?;
+        batch_decode::PyDecodeResult::from_result(py, output)
     }
 
     /// Decode every shot with a decoder under test (DUT) and a reference decoder.
@@ -3203,14 +3755,14 @@ impl PySampleBatch {
         alpha: f64,
         allow_dem_mismatch: bool,
     ) -> PyResult<PyDecoderComparisonResult> {
-        validate_comparison_arguments(self.num_shots, alpha)
+        validate_comparison_arguments(self.samples.num_shots(), alpha)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         self.ensure_dem_matches(dem, allow_dem_mismatch)?;
         let mut dut = create_observable_decoder(dem, dut_decoder_type)?;
         let mut reference = create_observable_decoder(dem, reference_decoder_type)?;
-        let mut syndrome = vec![0u8; self.num_detectors];
+        let mut syndrome = vec![0u8; self.samples.num_detectors()];
         let counts = compare_decoder_outcomes(
-            self.num_shots,
+            self.samples.num_shots(),
             &mut syndrome,
             |shot, buffer| {
                 self.extract_syndrome(shot, buffer);
@@ -3224,7 +3776,7 @@ impl PySampleBatch {
     }
 
     fn __repr__(&self) -> String {
-        format!("SampleBatch(num_shots={})", self.num_shots)
+        format!("SampleBatch(num_shots={})", self.samples.num_shots())
     }
 }
 
@@ -3361,9 +3913,14 @@ impl PyDemSampler {
     /// Example:
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
+    ///
+    /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -3474,37 +4031,18 @@ impl PyDemSampler {
         let mut mechanisms = Vec::new();
 
         for line in dem_string.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse: error(prob) D0 D3 L0
-            let Some(rest) = line.strip_prefix("error(") else {
+            let Some(instruction) = pecos_decoder_core::dem::grammar::parse_line(line)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
+            else {
                 continue;
             };
-            let Some(paren_end) = rest.find(')') else {
+            if instruction.kind != pecos_decoder_core::dem::grammar::Kind::Error {
                 continue;
-            };
-            let prob: f64 = rest[..paren_end].parse().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("bad probability: {e}"))
-            })?;
-            let tokens = rest[paren_end + 1..].split_whitespace();
-            let mut dets = Vec::new();
-            let mut obs = Vec::new();
-            for tok in tokens {
-                if let Some(d) = tok.strip_prefix('D') {
-                    let id: u32 = d.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
-                    })?;
-                    dets.push(id);
-                } else if let Some(l) = tok.strip_prefix('L') {
-                    let id: u32 = l.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
-                    })?;
-                    obs.push(id);
-                }
             }
+            let prob = instruction.args[0];
+            let (dets, obs) = instruction
+                .effect()
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             if prob > 0.0 {
                 mechanisms.push((prob, dets, obs));
             }
@@ -3538,9 +4076,14 @@ impl PyDemSampler {
     /// Create a sampler in detector-event mode.
     ///
     /// The `observables` argument defines observables.
+    ///
+    /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
         detectors: Vec<Vec<i32>>,
@@ -3643,6 +4186,13 @@ impl PyDemSampler {
         Ok(Self { inner })
     }
 
+    /// Reconstruct the detector error model from the compiled sampling mechanisms.
+    fn to_detector_error_model(&self) -> PyDetectorErrorModel {
+        PyDetectorErrorModel {
+            inner: self.inner.to_detector_error_model(),
+        }
+    }
+
     /// Number of mechanisms in the sampler.
     #[getter]
     fn num_mechanisms(&self) -> usize {
@@ -3731,8 +4281,11 @@ impl PyDemSampler {
                 Some(actual_seed),
             );
         }
-        let (det_columns, obs_columns) = self.inner.sample_batch_geometric(num_shots, &mut rng);
-        PySampleBatch::from_columnar(det_columns, obs_columns, num_shots, Some(actual_seed))
+        let samples = self
+            .inner
+            .sample_shots(num_shots, &mut rng)
+            .expect("raw-measurement mode returned above, so detector sampling cannot fail");
+        PySampleBatch::from_samples(samples, Some(actual_seed))
     }
 
     /// Sample multiple shots and XOR a known Pauli-frame mask into the outputs.
@@ -3958,10 +4511,11 @@ impl PyDemSampler {
     ///     dem: DEM text used to construct the decoder. It may deliberately be
     ///         a different projection from the sampler's own model.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     decoder: A typed `DecoderSpec` or legacy decoder string.
+    ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
     ///         `sampling_seed_used` and can replay the run.
-    ///     workers: Optional exact worker count.
+    ///     workers: Optional worker count, bounded by one per 1024-shot
+    ///         sampling chunk and reported as `workers_used`.
     ///     predictions: Retain predictions in absolute shot order.
     ///     timing: Retain decode-call timings. Sampling time is excluded from
     ///         individual samples but included in `wall_elapsed`.
@@ -3993,16 +4547,7 @@ impl PyDemSampler {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -4083,7 +4628,6 @@ pub struct PyDemSamplerBuilder {
     noise: NoiseConfig,
     detectors_json: Option<String>,
     observables_json: Option<String>,
-    measurement_order: Option<Vec<usize>>,
 }
 
 #[pymethods]
@@ -4096,13 +4640,17 @@ impl PyDemSamplerBuilder {
             noise: NoiseConfig::default(),
             detectors_json: None,
             observables_json: None,
-            measurement_order: None,
         }
     }
 
     /// Set noise parameters.
+    ///
+    /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
-    #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
         p1: f64,
@@ -4184,15 +4732,6 @@ impl PyDemSamplerBuilder {
         slf
     }
 
-    /// Set the measurement order mapping from `TickCircuit`.
-    fn with_measurement_order(
-        mut slf: PyRefMut<'_, Self>,
-        order: Vec<usize>,
-    ) -> PyRefMut<'_, Self> {
-        slf.measurement_order = Some(order);
-        slf
-    }
-
     /// Build the `DemSampler`.
     fn build(&self) -> PyResult<PyDemSampler> {
         let mut builder = RustNewDemSamplerBuilder::new(&self.influence_map)
@@ -4208,10 +4747,6 @@ impl PyDemSamplerBuilder {
             builder = builder
                 .with_observables_json(json)
                 .map_err(pyo3::exceptions::PyValueError::new_err)?;
-        }
-
-        if let Some(ref order) = self.measurement_order {
-            builder = builder.with_measurement_order(order.clone());
         }
 
         let inner = builder
@@ -4442,12 +4977,15 @@ impl PyParsedDem {
 
     /// Aggregate mechanisms by their effect.
     ///
-    /// Returns a dictionary mapping (`detector_tuple`, `observable_tuple`) to
-    /// combined probability. Probabilities are combined using the independent
+    /// Returns a dictionary mapping (detectors, observables, `tracked_paulis`) to
+    /// combined probability. Each field is a sorted tuple of integer IDs, with an
+    /// empty `tracked_paulis` tuple for mechanisms without tracked Paulis, so the
+    /// key matches the Rust effect key field for field.
+    /// Probabilities are combined using the independent
     /// error formula: p1*(1-p2) + p2*(1-p1).
     ///
     /// Returns:
-    ///     Dictionary of {(detectors, observables): probability}.
+    ///     Dictionary of {(detectors, observables, tracked_paulis): probability}.
     fn aggregate(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
         let agg = self.inner.aggregate();
         let dict = pyo3::types::PyDict::new(py);
@@ -4455,8 +4993,15 @@ impl PyParsedDem {
         for (key, prob) in agg {
             let det_tuple = pyo3::types::PyTuple::new(py, key.detectors.iter())?;
             let obs_tuple = pyo3::types::PyTuple::new(py, key.observables.iter())?;
-            let key_tuple =
-                pyo3::types::PyTuple::new(py, [det_tuple.as_any(), obs_tuple.as_any()])?;
+            let tracked_pauli_tuple = pyo3::types::PyTuple::new(py, key.tracked_paulis.iter())?;
+            let key_tuple = pyo3::types::PyTuple::new(
+                py,
+                [
+                    det_tuple.as_any(),
+                    obs_tuple.as_any(),
+                    tracked_pauli_tuple.as_any(),
+                ],
+            )?;
             dict.set_item(key_tuple, prob)?;
         }
 
@@ -5019,16 +5564,17 @@ impl PyLogicalSubgraphDecoder {
     ///     Number of logical errors.
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
         batch.ensure_detector_events()?;
-        let detection_events: Vec<Vec<u8>> = (0..batch.num_shots)
+        let detection_events: Vec<Vec<u8>> = (0..batch.samples.num_shots())
             .map(|i| {
-                let mut s = vec![0u8; batch.num_detectors];
+                let mut s = vec![0u8; batch.samples.num_detectors()];
                 batch.extract_syndrome(i, &mut s);
                 s
             })
             .collect();
-        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..batch.num_shots)
-            .map(|i| batch.extract_obs_mask_wide(i))
-            .collect();
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+            (0..batch.samples.num_shots())
+                .map(|i| batch.extract_obs_mask_wide(i))
+                .collect();
         self.inner
             .decode_count_batched(&detection_events, &observable_masks)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
@@ -5077,12 +5623,12 @@ impl PyLogicalSubgraphDecoder {
         let inner_str = inner_decoder
             .unwrap_or(self.inner_decoder.as_str())
             .to_string();
-        let n = batch.num_shots;
+        let n = batch.samples.num_shots();
 
         // Materialize row-major data for parallel decode.
         let events: Vec<Vec<u8>> = (0..n)
             .map(|i| {
-                let mut s = vec![0u8; batch.num_detectors];
+                let mut s = vec![0u8; batch.samples.num_detectors()];
                 batch.extract_syndrome(i, &mut s);
                 s
             })
@@ -5189,7 +5735,8 @@ impl PyLogicalSubgraphDecoder {
             });
         }
 
-        let edges = extract_ghost_edges_from_dem(dem, &sc);
+        let edges = extract_ghost_edges_from_dem(dem, &sc)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let num_qubits = sc.len();
         Ok((edges.len(), num_qubits))
     }
@@ -5198,8 +5745,8 @@ impl PyLogicalSubgraphDecoder {
     ///
     /// NOTE: these strings carry NO `detector(...)` coordinate lines (subgraph
     /// graphs drop coordinates), so they are NOT suitable for *time-windowed*
-    /// decoding -- a windowed decoder would see no detector times and collapse to
-    /// a single window. For windowing, use the coord-preserving
+    /// decoding: the window constructor rejects missing detector times.
+    /// For windowing, use the coord-preserving
     /// `LogicalSubgraphWindowPlan` path (the `WindowedLogicalSubgraphDecoder` /
     /// logical-circuit windowed budget already do). These strings are fine for
     /// full (non-windowed) per-subgraph decoding.
@@ -5235,16 +5782,15 @@ impl PyLogicalSubgraphDecoder {
 /// Prevents the observing region from spanning the full circuit.
 ///
 /// Partitions the DEM per observable, then windows each subgraph with proper
-/// sliding-window core-commit (only correction edges whose both endpoints lie
-/// in a window's core are committed). The inner decoder is the native
-/// edge-tracking union-find decoder, which core-commit requires.
+/// whole-component commits and a separate residual in each subgraph.
+/// The inner decoder is native union-find with complete correction edge reporting.
 ///
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
-///     step: Core window size in time steps.
-///     buffer: Buffer size on each side for matching context (0 =
-///         non-overlapping; recommend ~code distance).
+///     step: Required core window size in time steps, at least 1.
+///     buffer: Required forward matching context, at least the maximum column span.
+///         Recommend the code distance.
 #[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyWindowedLogicalSubgraphDecoder {
     inner: pecos_decoders::WindowedLogicalSubgraphDecoder,
@@ -5253,7 +5799,7 @@ pub struct PyWindowedLogicalSubgraphDecoder {
 #[pymethods]
 impl PyWindowedLogicalSubgraphDecoder {
     #[new]
-    #[pyo3(signature = (dem, stab_coords, step=8, buffer=4))]
+    #[pyo3(signature = (dem, stab_coords, step, buffer))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -5278,11 +5824,7 @@ impl PyWindowedLogicalSubgraphDecoder {
             });
         }
 
-        let config = pecos_decoders::WindowedConfig {
-            step_size: step,
-            buffer_size: buffer,
-            ..Default::default()
-        };
+        let config = pecos_decoders::WindowedConfig { step, buffer };
 
         let inner =
             pecos_decoders::WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, None, config)
@@ -5304,8 +5846,8 @@ impl PyWindowedLogicalSubgraphDecoder {
         use pecos_decoder_core::ObservableDecoder;
         batch.ensure_detector_events()?;
         let mut errors = 0usize;
-        let mut syndrome = vec![0u8; batch.num_detectors];
-        for i in 0..batch.num_shots {
+        let mut syndrome = vec![0u8; batch.samples.num_detectors()];
+        for i in 0..batch.samples.num_shots() {
             batch.extract_syndrome(i, &mut syndrome);
             let predicted = self
                 .inner
@@ -5343,14 +5885,120 @@ fn req_bit(
             ))
         })?
         .extract()?;
-    // Every boundary-gate bit indexes a u64 observable frame (`1u64 << bit`), so
-    // it must be < 64 -- reject out-of-range here rather than shift-overflow later.
-    if bit >= 64 {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "boundary gate '{gate_type}' field '{key}' = {bit} exceeds the 64-observable frame limit"
-        )));
-    }
     Ok(bit)
+}
+
+struct ParsedAlgorithmDescriptor<'py> {
+    full_dem: String,
+    segment_dicts: Vec<pyo3::Bound<'py, pyo3::types::PyDict>>,
+    algorithm: pecos_decoder_core::logical_algorithm::AlgorithmDescriptor,
+}
+
+/// Parse the cheap descriptor metadata needed for validation before constructing
+/// any full-DEM decoder or logical subgraphs.
+fn parse_algorithm_descriptor<'py>(
+    descriptor: &pyo3::Bound<'py, pyo3::types::PyDict>,
+) -> PyResult<ParsedAlgorithmDescriptor<'py>> {
+    use pecos_decoder_core::logical_algorithm::{
+        AlgorithmDescriptor, BoundaryGate, SegmentDescriptor,
+    };
+
+    let full_dem: String = descriptor
+        .get_item("full_dem")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
+        .extract()?;
+    let segment_dicts: Vec<pyo3::Bound<'py, pyo3::types::PyDict>> = descriptor
+        .get_item("segments")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("segments"))?
+        .extract()?;
+    let num_observables: usize = descriptor
+        .get_item("num_observables")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
+        .extract()?;
+    let num_frame_slots: usize = descriptor
+        .get_item("num_frame_slots")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_frame_slots"))?
+        .extract()?;
+
+    let mut segments = Vec::with_capacity(segment_dicts.len());
+    for (segment_index, segment) in segment_dicts.iter().enumerate() {
+        let num_detectors: usize = segment
+            .get_item("num_detectors")?
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_detectors"))?
+            .extract()?;
+        let segment_dem: String = segment
+            .get_item("dem")?
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("dem"))?
+            .extract()?;
+        let parsed_segment_dem = segment_dem.parse::<RustParsedDem>().map_err(|error| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "invalid DEM for algorithm segment {segment_index}: {error}"
+            ))
+        })?;
+        let segment_num_observables = usize::try_from(parsed_segment_dem.num_observables())
+            .map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "observable count for algorithm segment {segment_index} does not fit usize"
+                ))
+            })?;
+        segments.push(SegmentDescriptor {
+            num_detectors,
+            num_observables: segment_num_observables,
+        });
+    }
+
+    let boundary_dicts: Vec<Vec<pyo3::Bound<'py, pyo3::types::PyDict>>> = descriptor
+        .get_item("boundary_gates")?
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("boundary_gates"))?
+        .extract()?;
+    let mut boundary_gates = Vec::with_capacity(boundary_dicts.len());
+    for gates in &boundary_dicts {
+        let mut parsed_gates = Vec::with_capacity(gates.len());
+        for gate in gates {
+            let gate_type: String = gate
+                .get_item("type")?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("type"))?
+                .extract()?;
+            let parsed_gate = match gate_type.as_str() {
+                "Hadamard" => BoundaryGate::Hadamard {
+                    x_obs_bit: req_bit(gate, "x_obs_bit", &gate_type)?,
+                    z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
+                },
+                "Cnot" => BoundaryGate::Cnot {
+                    ctrl_x_bit: req_bit(gate, "ctrl_x_bit", &gate_type)?,
+                    ctrl_z_bit: req_bit(gate, "ctrl_z_bit", &gate_type)?,
+                    tgt_x_bit: req_bit(gate, "tgt_x_bit", &gate_type)?,
+                    tgt_z_bit: req_bit(gate, "tgt_z_bit", &gate_type)?,
+                },
+                "SZGate" => BoundaryGate::SZGate {
+                    x_obs_bit: req_bit(gate, "x_obs_bit", &gate_type)?,
+                    z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
+                },
+                "TGateInjection" => BoundaryGate::TGateInjection {
+                    z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
+                    ancilla_z_bit: req_bit(gate, "ancilla_z_bit", &gate_type)?,
+                },
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Unknown gate type: {gate_type}"
+                    )));
+                }
+            };
+            parsed_gates.push(parsed_gate);
+        }
+        boundary_gates.push(parsed_gates);
+    }
+
+    Ok(ParsedAlgorithmDescriptor {
+        full_dem,
+        segment_dicts,
+        algorithm: AlgorithmDescriptor {
+            segments,
+            boundary_gates,
+            num_observables,
+            num_frame_slots,
+        },
+    })
 }
 
 /// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and
@@ -5379,30 +6027,21 @@ impl PyLogicalAlgorithmDecoder {
         descriptor: &pyo3::Bound<'_, pyo3::types::PyDict>,
         inner_decoder: &str,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::logical_algorithm::{
-            AlgorithmDescriptor, BoundaryGate, LogicalAlgorithmDecoder, SegmentDescriptor,
-        };
+        use pecos_decoder_core::logical_algorithm::LogicalAlgorithmDecoder;
         use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM and stab_coords for full-circuit logical-subgraph decoder
-        let full_dem: String = descriptor
-            .get_item("full_dem")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
-            .extract()?;
+        let ParsedAlgorithmDescriptor {
+            full_dem,
+            segment_dicts: seg_list,
+            algorithm: algo_desc,
+        } = parse_algorithm_descriptor(descriptor)?;
+        algo_desc.validate().map_err(decoder_parse_error_to_py)?;
+        algo_desc
+            .reject_unsupported_decision_points()
+            .map_err(decoder_parse_error_to_py)?;
 
-        // Use first segment's stab_coords as the base (they have the
-        // original X/Z assignment; the full-circuit DEM uses original coords).
-        let seg_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = descriptor
-            .get_item("segments")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("segments"))?
-            .extract()?;
-
-        let num_obs: usize = descriptor
-            .get_item("num_observables")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
-            .extract()?;
-
-        // Parse stab_coords from the first segment (original orientation)
+        // Full-DEM/subgraph construction starts only after cheap descriptor validation.
+        // Use the first segment's original X/Z orientation as the full-circuit base.
         let first_seg = seg_list.first().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
         })?;
@@ -5438,79 +6077,8 @@ impl PyLogicalAlgorithmDecoder {
         })
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // Parse segment descriptors (for metadata)
-        let mut seg_descs = Vec::with_capacity(seg_list.len());
-        for seg_dict in &seg_list {
-            let n_det: usize = seg_dict
-                .get_item("num_detectors")?
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_detectors"))?
-                .extract()?;
-            seg_descs.push(SegmentDescriptor {
-                num_detectors: n_det,
-                num_observables: num_obs,
-            });
-        }
-
-        // Parse boundary gates
-        let bg_list: Vec<Vec<pyo3::Bound<'_, pyo3::types::PyDict>>> = descriptor
-            .get_item("boundary_gates")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("boundary_gates"))?
-            .extract()?;
-
-        let mut boundary_gates = Vec::with_capacity(bg_list.len());
-        for gates in &bg_list {
-            let mut bg_vec = Vec::new();
-            for gate_dict in gates {
-                let gate_type: String = gate_dict
-                    .get_item("type")?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("type"))?
-                    .extract()?;
-                match gate_type.as_str() {
-                    "Hadamard" => {
-                        bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "Cnot" => {
-                        bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
-                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
-                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
-                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
-                        });
-                    }
-                    "SGate" => {
-                        bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "TGateInjection" => {
-                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
-                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
-                        bg_vec.push(BoundaryGate::TGateInjection {
-                            z_obs_bit: z,
-                            ancilla_z_bit: a,
-                        });
-                    }
-                    _ => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Unknown gate type: {gate_type}"
-                        )));
-                    }
-                }
-            }
-            boundary_gates.push(bg_vec);
-        }
-
-        let algo_desc = AlgorithmDescriptor {
-            segments: seg_descs,
-            boundary_gates,
-            num_observables: num_obs,
-        };
-
-        let algo_dec = LogicalAlgorithmDecoder::new(Box::new(full_osd), algo_desc);
+        let algo_dec = LogicalAlgorithmDecoder::new(Box::new(full_osd), algo_desc)
+            .map_err(decoder_parse_error_to_py)?;
         let inner = pecos_decoder_core::logical_algorithm::StreamingLogicalDecoder::new(algo_dec);
         Ok(Self { inner })
     }
@@ -5532,8 +6100,8 @@ impl PyLogicalAlgorithmDecoder {
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
         batch.ensure_detector_events()?;
         let mut errors = 0usize;
-        let mut syndrome = vec![0u8; batch.num_detectors];
-        for i in 0..batch.num_shots {
+        let mut syndrome = vec![0u8; batch.samples.num_detectors()];
+        for i in 0..batch.samples.num_shots() {
             batch.extract_syndrome(i, &mut syndrome);
             self.inner.reset();
             let predicted = self
@@ -5607,7 +6175,7 @@ impl PyLogicalAlgorithmDecoder {
 ///
 /// Selects decode strategy based on available reaction time:
 /// - ``"unlimited"``: full-circuit logical-subgraph decoder (Clifford circuits, offline)
-/// - ``"windowed"``: default windowed logical-subgraph decoder (~1ms reaction time)
+/// - ``"windowed"``: request a 1ms budget; currently uses the full-subgraph fallback
 /// - ``"10ms"``, ``"1000us"``, etc.: explicit reaction time budget
 ///
 /// The reaction time is the time available at feed-forward decision
@@ -5645,29 +6213,20 @@ impl PyLogicalCircuitDecoder {
         strict: bool,
     ) -> PyResult<Self> {
         use pecos_decoder_core::decode_budget::DecodeBudget;
-        use pecos_decoder_core::logical_algorithm::{
-            AlgorithmDescriptor, BoundaryGate, FullCircuitStrategy, LogicalCircuitDecoder,
-            SegmentDescriptor,
-        };
+        use pecos_decoder_core::logical_algorithm::{FullCircuitStrategy, LogicalCircuitDecoder};
         use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM
-        let full_dem: String = descriptor
-            .get_item("full_dem")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
-            .extract()?;
+        let ParsedAlgorithmDescriptor {
+            full_dem,
+            segment_dicts: seg_list,
+            algorithm: algo_desc,
+        } = parse_algorithm_descriptor(descriptor)?;
+        algo_desc.validate().map_err(decoder_parse_error_to_py)?;
+        algo_desc
+            .reject_unsupported_decision_points()
+            .map_err(decoder_parse_error_to_py)?;
 
-        let seg_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = descriptor
-            .get_item("segments")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("segments"))?
-            .extract()?;
-
-        let num_obs: usize = descriptor
-            .get_item("num_observables")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_observables"))?
-            .extract()?;
-
-        // Parse stab_coords from first segment
+        // Full-DEM/subgraph construction starts only after cheap descriptor validation.
         let first_seg = seg_list.first().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
         })?;
@@ -5701,78 +6260,6 @@ impl PyLogicalCircuitDecoder {
                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
         })
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        // Parse segments
-        let mut seg_descs = Vec::with_capacity(seg_list.len());
-        for seg_dict in &seg_list {
-            let n_det: usize = seg_dict
-                .get_item("num_detectors")?
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("num_detectors"))?
-                .extract()?;
-            seg_descs.push(SegmentDescriptor {
-                num_detectors: n_det,
-                num_observables: num_obs,
-            });
-        }
-
-        // Parse boundary gates
-        let bg_list: Vec<Vec<pyo3::Bound<'_, pyo3::types::PyDict>>> = descriptor
-            .get_item("boundary_gates")?
-            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("boundary_gates"))?
-            .extract()?;
-
-        let mut boundary_gates = Vec::with_capacity(bg_list.len());
-        for gates in &bg_list {
-            let mut bg_vec = Vec::new();
-            for gate_dict in gates {
-                let gate_type: String = gate_dict
-                    .get_item("type")?
-                    .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("type"))?
-                    .extract()?;
-                match gate_type.as_str() {
-                    "Hadamard" => {
-                        bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "Cnot" => {
-                        bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
-                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
-                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
-                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
-                        });
-                    }
-                    "SGate" => {
-                        bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
-                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
-                        });
-                    }
-                    "TGateInjection" => {
-                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
-                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
-                        bg_vec.push(BoundaryGate::TGateInjection {
-                            z_obs_bit: z,
-                            ancilla_z_bit: a,
-                        });
-                    }
-                    _ => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Unknown gate type: {gate_type}"
-                        )));
-                    }
-                }
-            }
-            boundary_gates.push(bg_vec);
-        }
-
-        let algo_desc = AlgorithmDescriptor {
-            segments: seg_descs,
-            boundary_gates,
-            num_observables: num_obs,
-        };
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
         // bounded-latency, or a cycle time in microseconds like "1000us".
@@ -5848,7 +6335,11 @@ impl PyLogicalCircuitDecoder {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
                     .detector_coords;
                 let plan = full_osd.window_plan(&full_coords);
-                let step = decode_budget.code_distance.max(1);
+                // Use the known code distance as a throughput-oriented commit step.
+                let step =
+                    std::num::NonZeroUsize::new(decode_budget.code_distance).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("step must be at least 1")
+                    })?;
                 can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
 
                 // `strict` rejects only when genuine windowing was POSSIBLE (the
@@ -5898,7 +6389,8 @@ impl PyLogicalCircuitDecoder {
                 Box::new(wosd)
             };
 
-        let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget, num_qubits);
+        let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget)
+            .map_err(decoder_parse_error_to_py)?;
         Ok(Self {
             inner,
             effective_windowing,
@@ -5950,8 +6442,8 @@ impl PyLogicalCircuitDecoder {
         use pecos_decoder_core::ObservableDecoder;
         batch.ensure_detector_events()?;
         let mut errors = 0usize;
-        let mut syndrome = vec![0u8; batch.num_detectors];
-        for i in 0..batch.num_shots {
+        let mut syndrome = vec![0u8; batch.samples.num_detectors()];
+        for i in 0..batch.samples.num_shots() {
             batch.extract_syndrome(i, &mut syndrome);
             let predicted = self
                 .inner
@@ -5974,13 +6466,14 @@ impl PyLogicalCircuitDecoder {
         self.inner.total_detectors()
     }
 
-    /// Whether the circuit has feed-forward decision points (T gates).
-    /// If False, the reaction time budget doesn't matter — Clifford only.
+    /// Always `false` in phase 0: descriptors containing decision points are
+    /// rejected at construction (issue #596). Phase 2 restores its meaning.
     fn has_decision_points(&self) -> bool {
         self.inner.has_decision_points()
     }
 
-    /// Number of decision points.
+    /// Always `0` in phase 0: descriptors containing decision points are
+    /// rejected at construction (issue #596). Phase 2 restores its meaning.
     fn num_decision_points(&self) -> usize {
         self.inner.num_decision_points()
     }
@@ -6214,8 +6707,10 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
         | "belief_matching_mgbp"
         | "belief_matching_hybrid"
         | "ensemble" => Ok("graphlike".to_string()),
-        "tesseract" | "astar" | "astar_full" | "bp_osd" | "bp_lsd" | "belief_find"
-        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => Ok("any".to_string()),
+        "tesseract" | "tesseract_trellis" | "astar" | "astar_full" | "bp_osd" | "bp_lsd"
+        | "belief_find" | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => {
+            Ok("any".to_string())
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown decoder type: {decoder_type:?}",
         ))),
@@ -6610,7 +7105,7 @@ fn logical_slices(logicals: &[(Vec<usize>, Vec<usize>)]) -> Vec<(&[usize], &[usi
 ///
 /// The analyzer owns a clone of the supplied circuit. Rust's ``PauliPropChecker`` and
 /// ``FaultChecker`` intentionally borrow a circuit, so each method constructs a fresh checker;
-/// checker construction only extracts circuit locations and is cheap at these analysis scales.
+/// checker construction validates the circuit and extracts locations before analysis.
 #[pyclass(name = "CircuitFaultAnalyzer", module = "pecos_rslib.qec")]
 pub struct PyCircuitFaultAnalyzer {
     circuit: pecos_quantum::TickCircuit,
@@ -6629,6 +7124,9 @@ impl PyCircuitFaultAnalyzer {
     ///
     /// With no Pauli-selection keyword, X, Y, and Z faults are all included. Setting any of
     /// ``x_only``, ``y_only``, or ``z_only`` restricts enumeration to the selected union.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (data_qubits, z_ancillas, x_ancillas, logicals, min_data_weight, *, x_only=false, y_only=false, z_only=false))]
     fn hook_errors(
         &self,
@@ -6640,13 +7138,14 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> PyHookErrorReport {
+    ) -> PyResult<PyHookErrorReport> {
         // Checkers borrow TickCircuit by design. The Python owner retains a clone and checker
-        // construction (location extraction) is cheap enough to repeat for each method call.
+        // construction validates the owned circuit before each method call.
         let checker = PauliPropChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
         let logicals = logical_slices(&logicals);
-        checker
+        Ok(checker
             .diagnose_hook_errors(
                 &data_qubits,
                 &z_ancillas,
@@ -6654,10 +7153,13 @@ impl PyCircuitFaultAnalyzer {
                 &logicals,
                 min_data_weight,
             )
-            .into()
+            .into())
     }
 
     /// Verify the propagated-fault part of the Chao-Reichardt t-flag condition.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (data_qubits, flag_qubits, measured_stabilizer, t, *, x_only=false, y_only=false, z_only=false))]
     fn flag_fault_condition(
         &self,
@@ -6668,20 +7170,24 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> PyFlagFaultToleranceReport {
+    ) -> PyResult<PyFlagFaultToleranceReport> {
         let checker = PauliPropChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
-        checker
+        Ok(checker
             .verify_flag_fault_tolerance(
                 &data_qubits,
                 &flag_qubits,
                 (&measured_stabilizer.0, &measured_stabilizer.1),
                 t,
             )
-            .into()
+            .into())
     }
 
     /// Find the minimum undetectable logical fault weight through ``max_weight``.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
     fn fault_distance(
         &self,
@@ -6692,16 +7198,20 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> Option<PyCircuitDistanceResult> {
+    ) -> PyResult<Option<PyCircuitDistanceResult>> {
         let checker = FaultChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
         let logicals = logical_slices(&logicals);
-        checker
+        Ok(checker
             .circuit_fault_distance(&z_ancillas, &x_ancillas, &logicals, max_weight)
-            .map(PyCircuitDistanceResult::from)
+            .map(PyCircuitDistanceResult::from))
     }
 
     /// Find one fault distance result for each supplied logical operator.
+    ///
+    /// Raises:
+    ///     ValueError: A circuit gate cannot be Pauli-propagated.
     #[pyo3(signature = (z_ancillas, x_ancillas, logicals, max_weight, *, x_only=false, y_only=false, z_only=false))]
     fn per_logical_fault_distances(
         &self,
@@ -6712,15 +7222,16 @@ impl PyCircuitFaultAnalyzer {
         x_only: bool,
         y_only: bool,
         z_only: bool,
-    ) -> Vec<Option<PyCircuitDistanceResult>> {
+    ) -> PyResult<Vec<Option<PyCircuitDistanceResult>>> {
         let checker = FaultChecker::new(&self.circuit)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .with_config(selected_fault_config(x_only, y_only, z_only));
         let logicals = logical_slices(&logicals);
-        checker
+        Ok(checker
             .per_logical_circuit_fault_distances(&z_ancillas, &x_ancillas, &logicals, max_weight)
             .into_iter()
             .map(|result| result.map(PyCircuitDistanceResult::from))
-            .collect()
+            .collect())
     }
 
     fn __repr__(&self) -> String {
@@ -7590,9 +8101,29 @@ fn coloration_memory_circuit(
     Ok(PyTickCircuit { inner })
 }
 
+/// Transform a sign-free two-patch Pauli mask through H0, H1, or CX.
+#[pyfunction]
+fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
+    let gate = match gate {
+        "h0" => RustTwoPatchClifford::HadamardFirst,
+        "h1" => RustTwoPatchClifford::HadamardSecond,
+        "cx" => RustTwoPatchClifford::Cnot,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown two-patch Clifford gate {gate:?}"
+            )));
+        }
+    };
+    Ok(rust_transform_two_patch_pauli(pauli, gate))
+}
+
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
+    qec.add(
+        "DEM_SLICE_ROUND_ATTRIBUTE",
+        pecos_qec::fault_tolerance::dem_builder::DEM_SLICE_ROUND_ATTRIBUTE,
+    )?;
 
     qec.add_class::<PyObservableFlips>()?;
     qec.add_class::<PyFaultLocation>()?;
@@ -7604,6 +8135,9 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
+    qec.add_class::<PyStructuredDemDecoder>()?;
+    qec.add_class::<PyCachedDemSlice>()?;
+    qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;
@@ -7673,6 +8207,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(transform_two_patch_pauli, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

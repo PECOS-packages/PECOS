@@ -15,6 +15,7 @@ readme = "README.md"
 ndarray.workspace = true
 pecos-core.workspace = true
 pecos-decoder-core.workspace = true
+pecos-decoders.workspace = true
 pecos-ldpc-decoders.workspace = true
 pecos-num.workspace = true
 pecos-quantum.workspace = true
@@ -43,6 +44,10 @@ required-features = ["neo"]
 [[example]]
 name = "surface_d3_fault_catalog_lookup"
 path = "../../examples/surface/d3_fault_catalog_lookup.rs"
+
+[dev-dependencies]
+pecos-phir.workspace = true
+pecos-engines.workspace = true
 
 [lints]
 workspace = true

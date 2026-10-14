@@ -65,17 +65,18 @@
 //! dag.mz(&[2]);       // Measure ancilla
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let map = analyzer.build_influence_map();
+//! let map = analyzer.build_influence_map().unwrap();
 //!
 //! // O(1) fault classification
 //! let (has_syndrome, _flips_non_detector_output) = map.classify_fault(0, 1); // loc 0, X fault
 //! ```
 
 use super::{
-    DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli, apply_gate,
+    DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli,
+    PauliPropagationOutcome, UnsupportedGateError, apply_gate_unchecked, is_supported_prep_gate,
 };
 use pecos_core::gate_type::GateType;
-use pecos_core::{PauliString, QuarterPhase, QubitId};
+use pecos_core::{CliffordLowering, Gate, PauliString, QuarterPhase, QubitId};
 use pecos_quantum::DagCircuit;
 use pecos_simulators::PauliProp;
 use smallvec::SmallVec;
@@ -115,6 +116,10 @@ pub struct FaultLocations {
     pub before: Vec<bool>,
     /// Gate type at each location.
     pub gate_types: Vec<GateType>,
+    /// Inherited noise types; explicit scheduled-gate calibration takes precedence.
+    pub noise_gate_types: Vec<GateType>,
+    /// Resolved Clifford action at each location.
+    pub cliffords: Vec<CliffordLowering>,
     /// Idle duration at each location. 0.0 for non-idle gates.
     pub idle_durations: Vec<f64>,
     /// Reverse index: node -> list of location IDs at that node.
@@ -136,6 +141,8 @@ impl FaultLocations {
             qubits: Vec::with_capacity(num_locations),
             before: Vec::with_capacity(num_locations),
             gate_types: Vec::with_capacity(num_locations),
+            noise_gate_types: Vec::with_capacity(num_locations),
+            cliffords: Vec::with_capacity(num_locations),
             idle_durations: Vec::with_capacity(num_locations),
             node_to_locations: vec![SmallVec::new(); max_node + 1],
         }
@@ -156,20 +163,26 @@ impl FaultLocations {
     }
 
     /// Adds a fault location and returns its ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scheduled rotation cannot be lowered to a Clifford.
     pub fn push(
         &mut self,
         node: usize,
         qubits: SmallVec<[usize; 2]>,
         before: bool,
-        gate_type: GateType,
-        idle_duration: f64,
+        gate: &Gate,
     ) -> usize {
+        let clifford = resolve_clifford_action(node, gate);
         let loc_id = self.nodes.len();
         self.nodes.push(node);
         self.qubits.push(qubits);
         self.before.push(before);
-        self.gate_types.push(gate_type);
-        self.idle_durations.push(idle_duration);
+        self.gate_types.push(gate.gate_type);
+        self.noise_gate_types.push(noise_gate_type(gate));
+        self.cliffords.push(clifford);
+        self.idle_durations.push(gate.idle_duration());
 
         // Update reverse index
         if node < self.node_to_locations.len() {
@@ -204,15 +217,17 @@ impl FaultLocations {
         &self.qubits[loc_id]
     }
 
-    /// Converts to a Vec of `DagSpacetimeLocation` for backward compatibility.
+    /// Converts the stored location columns to spacetime locations.
     #[must_use]
     pub fn to_dag_spacetime_locations(&self) -> Vec<DagSpacetimeLocation> {
         (0..self.len())
             .map(|i| DagSpacetimeLocation {
                 node: self.nodes[i],
-                qubits: self.qubits[i].iter().map(|&q| QubitId::from(q)).collect(),
+                qubits: self.qubits[i].iter().copied().map(QubitId::from).collect(),
                 before: self.before[i],
                 gate_type: self.gate_types[i],
+                noise_gate_type: self.noise_gate_types[i],
+                clifford: self.cliffords[i],
                 idle_duration: self.idle_durations[i],
             })
             .collect()
@@ -237,8 +252,59 @@ pub struct DagSpacetimeLocation {
     pub before: bool,
     /// The type of gate at this location.
     pub gate_type: GateType,
+    /// Inherited noise type; explicit scheduled-gate calibration takes precedence.
+    pub noise_gate_type: GateType,
+    /// The resolved Clifford action, independent of the scheduled gate type.
+    pub clifford: CliffordLowering,
     /// Duration for idle gates. 0.0 for non-idle gates.
     pub idle_duration: f64,
+}
+
+impl DagSpacetimeLocation {
+    /// Construct a location from its scheduled gate and fault targets.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a rotation cannot be lowered to a Clifford. Circuit callers
+    /// must reject unsupported gates in preflight before constructing locations.
+    #[must_use]
+    pub fn new(node: usize, qubits: Vec<QubitId>, before: bool, gate: &Gate) -> Self {
+        Self {
+            node,
+            qubits,
+            before,
+            gate_type: gate.gate_type,
+            noise_gate_type: noise_gate_type(gate),
+            clifford: resolve_clifford_action(node, gate),
+            idle_duration: gate.idle_duration(),
+        }
+    }
+}
+
+fn noise_gate_type(gate: &Gate) -> GateType {
+    if gate.phase_angle().is_some() {
+        GateType::RZ
+    } else {
+        gate.gate_type
+    }
+}
+
+/// Resolve the Clifford action of a scheduled gate for a fault location.
+///
+/// A rotation resolves through the shared lowering policy; any other gate is
+/// its own action.
+///
+/// # Panics
+///
+/// Panics if a rotation cannot be lowered to a Clifford. Circuit callers must
+/// reject unsupported gates in preflight before constructing locations.
+fn resolve_clifford_action(node: usize, gate: &Gate) -> CliffordLowering {
+    let lowering = pecos_core::try_lower_rotation_to_clifford(gate);
+    assert!(
+        !pecos_core::is_lowerable_rotation(gate.gate_type) || lowering.is_some(),
+        "cannot construct fault location at node {node} for non-Clifford gate {gate:?}"
+    );
+    lowering.unwrap_or(CliffordLowering::Named(gate.gate_type))
 }
 
 impl PartialEq for DagSpacetimeLocation {
@@ -247,6 +313,8 @@ impl PartialEq for DagSpacetimeLocation {
             && self.qubits == other.qubits
             && self.before == other.before
             && self.gate_type == other.gate_type
+            && self.noise_gate_type == other.noise_gate_type
+            && self.clifford == other.clifford
             && self.idle_duration.to_bits() == other.idle_duration.to_bits()
     }
 }
@@ -266,6 +334,8 @@ impl Ord for DagSpacetimeLocation {
             .then_with(|| self.qubits.cmp(&other.qubits))
             .then_with(|| self.before.cmp(&other.before))
             .then_with(|| self.gate_type.cmp(&other.gate_type))
+            .then_with(|| self.noise_gate_type.cmp(&other.noise_gate_type))
+            .then_with(|| self.clifford.cmp(&other.clifford))
             .then_with(|| self.idle_duration.total_cmp(&other.idle_duration))
     }
 }
@@ -276,6 +346,8 @@ impl Hash for DagSpacetimeLocation {
         self.qubits.hash(state);
         self.before.hash(state);
         self.gate_type.hash(state);
+        self.noise_gate_type.hash(state);
+        self.clifford.hash(state);
         self.idle_duration.to_bits().hash(state);
     }
 }
@@ -619,10 +691,9 @@ pub struct DagFaultInfluenceMap {
     /// All measurements in the circuit (node, qubit, basis).
     ///
     /// The order is this map's single private ordinal, shared by `meas_ids`,
-    /// `detectors`, and the influence data. Which order that is depends on the
-    /// builder (`DagFaultAnalyzer` uses id rank; `InfluenceBuilder` uses
-    /// replay order) -- resolve through `meas_index_of`, never by assuming a
-    /// particular ordering.
+    /// `detectors`, and the influence data. Circuit-backed builders use emission
+    /// order (keyed topological node order, then qubit-list order). Hand-built
+    /// maps define their own order; resolve stable ids through `meas_index_of`.
     pub measurements: Vec<(usize, usize, u8)>,
 
     /// `MeasId` IDs for each measurement, in the same order as `measurements`.
@@ -641,6 +712,12 @@ pub struct DagFaultInfluenceMap {
     /// into public namespaces; standard observables use compact `L<n>` IDs and
     /// tracked Paulis use their own compact PECOS-only IDs.
     pub dem_output_metadata: Vec<DemOutputMetadata>,
+
+    /// First circuit gate rejected by the Pauli propagation primitive.
+    ///
+    /// The analyzer remains permissive for its non-DEM callers, but every DEM
+    /// construction path checks and returns this structured error.
+    unsupported_gate: Option<UnsupportedGateError>,
 }
 
 impl DagFaultInfluenceMap {
@@ -675,7 +752,15 @@ impl DagFaultInfluenceMap {
             meas_ids: Vec::new(),
             dem_output_labels: Vec::new(),
             dem_output_metadata: Vec::new(),
+            unsupported_gate: None,
         }
+    }
+
+    /// Returns the first gate that the influence map could not faithfully
+    /// Pauli-propagate.
+    #[must_use]
+    pub fn unsupported_gate(&self) -> Option<&UnsupportedGateError> {
+        self.unsupported_gate.as_ref()
     }
 
     /// Classifies a fault at the given location index.
@@ -834,6 +919,9 @@ impl DagFaultInfluenceMap {
     /// Replace this map's backward-propagated non-detector outputs with
     /// another map's outputs and metadata.
     pub fn merge_dem_outputs_from(&mut self, other: &Self) {
+        if self.unsupported_gate.is_none() {
+            self.unsupported_gate.clone_from(&other.unsupported_gate);
+        }
         self.influences.dem_outputs_x = other.influences.dem_outputs_x.clone();
         self.influences.dem_outputs_y = other.influences.dem_outputs_y.clone();
         self.influences.dem_outputs_z = other.influences.dem_outputs_z.clone();
@@ -1079,6 +1167,8 @@ pub struct GateFaultLocation<'a> {
     pub node: usize,
     /// Gate type.
     pub gate_type: GateType,
+    /// The resolved Clifford action, independent of the scheduled gate type.
+    pub clifford: CliffordLowering,
     /// Qubits this gate acts on.
     pub qubits: Vec<QubitId>,
     /// Before (true) or after (false) the gate.
@@ -1501,6 +1591,7 @@ impl DagFaultInfluenceMap {
                     map: self,
                     node,
                     gate_type,
+                    clifford: self.locations[qubit_locs[0].1].clifford,
                     qubits,
                     before,
                     qubit_loc_indices: qubit_locs,
@@ -1787,13 +1878,16 @@ impl InfluenceRecorder for BucketRecorder {
 ///
 /// // Build the fault influence map using sparse propagation
 /// let propagator = DagFaultAnalyzer::new(&dag);
-/// let influence_map = propagator.build_influence_map();
+/// let influence_map = propagator.build_influence_map().unwrap();
 /// ```
 pub struct DagFaultAnalyzer<'a> {
     /// Base propagator for traversal infrastructure.
     propagator: DagPropagator<'a>,
     /// All fault locations in `SoA` layout.
     locations: FaultLocations,
+    /// The first gate Pauli propagation cannot represent, found once at
+    /// construction; locations are only extracted when this is `None`.
+    unsupported_gate: Option<UnsupportedGateError>,
 }
 
 impl<'a> DagFaultAnalyzer<'a> {
@@ -1804,13 +1898,16 @@ impl<'a> DagFaultAnalyzer<'a> {
     pub fn new(dag: &'a DagCircuit) -> Self {
         let propagator = DagPropagator::new(dag);
 
-        // Extract locations using SoA layout
-        let locations = Self::extract_locations(&propagator, dag);
-
-        Self {
+        let mut analyzer = Self {
             propagator,
-            locations,
+            locations: FaultLocations::new(),
+            unsupported_gate: None,
+        };
+        analyzer.unsupported_gate = analyzer.propagator.first_unsupported_gate().cloned();
+        if analyzer.unsupported_gate.is_none() {
+            analyzer.locations = Self::extract_locations(&analyzer.propagator, dag);
         }
+        analyzer
     }
 
     /// Returns the underlying propagator.
@@ -1870,11 +1967,6 @@ impl<'a> DagFaultAnalyzer<'a> {
                 // Idle gates on non-active qubits provide the missing "before"
                 // coverage that would otherwise require before-gate locations.
                 let before = is_measurement;
-                let idle_duration = if gate.gate_type == GateType::Idle {
-                    gate.idle_duration()
-                } else {
-                    0.0
-                };
                 let location_qubits: Vec<usize> =
                     if gate.gate_type == GateType::MeasCrosstalkGlobalPayload {
                         for &q in &qubits {
@@ -1888,12 +1980,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     };
                 for q in location_qubits {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
-                    locations.push(node, single_qubit, before, gate.gate_type, idle_duration);
+                    locations.push(node, single_qubit, before, gate);
                 }
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     prepared_qubits.extend(qubits.iter().copied());
                 }
             }
@@ -1919,16 +2008,28 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// dag.mz(&[2]);
     ///
     /// let propagator = DagFaultAnalyzer::new(&dag);
-    /// let map = propagator.build_influence_map();
+    /// let map = propagator.build_influence_map().unwrap();
     ///
     /// // Check memory usage
     /// let stats = map.memory_stats();
     /// println!("Total bytes: {}", stats.total_bytes);
     /// ```
-    #[must_use]
-    pub fn build_influence_map(&self) -> DagFaultInfluenceMap {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the construction preflight.
+    pub fn build_influence_map(&self) -> Result<DagFaultInfluenceMap, UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        Ok(self.build_influence_map_diagnostic())
+    }
+
+    /// Retain the diagnostic for internal DEM builders that already check the map preflight.
+    pub(crate) fn build_influence_map_diagnostic(&self) -> DagFaultInfluenceMap {
         let num_locations = self.locations.len();
         let mut map = DagFaultInfluenceMap::with_capacity(num_locations);
+        map.unsupported_gate.clone_from(&self.unsupported_gate);
 
         // Copy locations
         map.locations = self.locations.to_dag_spacetime_locations();
@@ -1947,11 +2048,18 @@ impl<'a> DagFaultAnalyzer<'a> {
             map.detectors.push(DetectorId::single(measurement_id));
         }
 
+        // The propagation loop below uses the non-validating dispatcher. Do
+        // not enter it unless the circuit-level preflight established that
+        // every gate has a valid payload and supported Pauli action.
+        if map.unsupported_gate.is_some() {
+            return map;
+        }
+
         // Use the generic per-measurement path for correctness with physical
         // qubit reuse. The forest shortcut groups by measured qubit ID and is
         // only valid when that physical qubit represents one fixed measurement
         // stream, not a reusable ancilla slot.
-        let recorder = self.propagate_all_parallel();
+        let recorder = self.propagate_all_parallel_validated();
 
         // Convert buckets to SoA format (O(n) flattening)
         map.influences = recorder.into_soa();
@@ -1959,62 +2067,44 @@ impl<'a> DagFaultAnalyzer<'a> {
         map
     }
 
-    /// Extracts all measurements from the circuit, ordered by [`MeasId`].
+    /// Returns the first gate Pauli propagation cannot represent, if any,
+    /// as classified once at construction.
+    pub(crate) fn first_unsupported_gate(&self) -> Option<UnsupportedGateError> {
+        self.unsupported_gate.clone()
+    }
+
+    /// Extracts measurements in emission order: keyed topological node order,
+    /// then each gate's qubit-list order. Stable ids name measurements without
+    /// determining their positions.
     ///
-    /// The id is what names a measurement, so it is what orders them; qubit index
-    /// breaks ties. Measurements carrying no id fall back to topological
-    /// position, which only happens for circuits built outside `DagCircuit`'s
-    /// builders.
-    ///
-    /// Returns `(measurements, meas_ids)` where `measurements` is
-    /// `Vec<(node, qubit, basis)>` and `meas_ids` is empty for circuits whose
-    /// measurements carry no ids.
-    ///
-    /// [`MeasId`]: pecos_core::MeasId
+    /// Returns `(measurements, meas_ids)`, with parallel ids when any are present.
+    /// Missing ids use `MeasId::from_raw(usize::MAX)`; if all are missing the id
+    /// vector is empty.
     #[must_use]
     pub fn extract_measurements(&self) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
-        let mut entries = Vec::new(); // (sort_key, qubit, node, basis, Option<MeasId>)
-
-        for &node in self.propagator.topo_order() {
+        let mut measurements = Vec::new();
+        let mut meas_ids = Vec::new();
+        let mut has_meas_ids = false;
+        for node in crate::fault_tolerance::circuit_definitions::dag_circuit_emission_order(
+            self.propagator.dag,
+        ) {
             if let Some(gate) = self.propagator.gate(node) {
                 let basis = match gate.gate_type {
                     GateType::MZ | GateType::MeasureFree | GateType::MPZ => 0, // Z-basis
                     GateType::MX => 1,                                         // X-basis
                     _ => continue,
                 };
-
-                if gate.meas_ids.is_empty() {
-                    let topo_pos = self.propagator.topo_position(node);
-                    for qubit in &gate.qubits {
-                        entries.push((topo_pos, qubit.index(), node, basis, None));
-                    }
-                } else {
-                    for (i, qubit) in gate.qubits.iter().enumerate() {
-                        let mr = gate.meas_ids.get(i).copied();
-                        let sort_key = mr.map_or(usize::MAX, pecos_core::MeasId::index);
-                        entries.push((sort_key, qubit.index(), node, basis, mr));
-                    }
+                for (index, qubit) in gate.qubits.iter().enumerate() {
+                    measurements.push((node, qubit.index(), basis));
+                    let id = gate.meas_ids.get(index).copied();
+                    has_meas_ids |= id.is_some();
+                    meas_ids.push(id.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)));
                 }
             }
         }
-
-        entries.sort_by_key(|&(sort_key, qubit, _, _, _)| (sort_key, qubit));
-
-        let has_meas_ids = entries.iter().any(|(_, _, _, _, mr)| mr.is_some());
-        let meas_ids = if has_meas_ids {
-            entries
-                .iter()
-                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let measurements = entries
-            .into_iter()
-            .map(|(_, qubit, node, basis, _)| (node, qubit, basis))
-            .collect();
-
+        if !has_meas_ids {
+            meas_ids.clear();
+        }
         (measurements, meas_ids)
     }
 
@@ -2039,7 +2129,34 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// * `visited` - Work buffer for visited nodes (reusable)
     /// * `active_qubits` - Work buffer for active qubits (reusable)
     /// * `heap` - Work heap for traversal (reusable)
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
     pub fn propagate_from_measurement_generic<R: InfluenceRecorder>(
+        &self,
+        meas_node: usize,
+        meas_qubit: usize,
+        basis: u8,
+        detector_idx: usize,
+        recorder: &mut R,
+        work: &mut PropagationBuffers,
+    ) -> Result<(), UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        self.propagate_from_measurement_generic_validated(
+            meas_node,
+            meas_qubit,
+            basis,
+            detector_idx,
+            recorder,
+            work,
+        );
+        Ok(())
+    }
+
+    fn propagate_from_measurement_generic_validated<R: InfluenceRecorder>(
         &self,
         meas_node: usize,
         meas_qubit: usize,
@@ -2096,10 +2213,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 // Handle prep gates specially - they kill the Pauli and stop propagation
                 // on their qubits. Errors before a prep don't affect measurements after it.
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2119,7 +2233,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                 }
 
                 // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
 
                 // Check before=true locations
                 self.record_at_node_generic(node, &prop, detector_idx, recorder, true);
@@ -2240,10 +2356,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 self.record_at_node_generic(node, prop, request.detector_idx, recorder, false);
 
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     let pz_topo = self.propagator.topo_position(node);
                     for q in &gate.qubits {
                         let idx = q.index();
@@ -2261,7 +2374,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     return Some(pz_topo);
                 }
 
-                apply_gate(prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
                 self.record_at_node_generic(node, prop, request.detector_idx, recorder, true);
 
                 let node_topo_pos = self.propagator.topo_position(node);
@@ -2315,10 +2430,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 self.record_at_node_generic(node, prop, detector_idx, recorder, false);
                 visited_nodes.push(node);
 
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2334,7 +2446,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                apply_gate(prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
                 self.record_at_node_generic(node, prop, detector_idx, recorder, true);
 
                 let node_topo = self.propagator.topo_position(node);
@@ -2382,10 +2496,7 @@ impl<'a> DagFaultAnalyzer<'a> {
             if let Some(gate) = self.propagator.gate(node) {
                 self.record_at_node_generic(node, prop, detector_idx, recorder, false);
 
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2400,7 +2511,9 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                apply_gate(prop, gate, Direction::Backward);
+                // DagFaultAnalyzer construction preflight is checked before entering validated propagation.
+                let outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
+                debug_assert_eq!(outcome, PauliPropagationOutcome::Propagated);
                 self.record_at_node_generic(node, prop, detector_idx, recorder, true);
             }
         }
@@ -2414,8 +2527,18 @@ impl<'a> DagFaultAnalyzer<'a> {
     /// measured physical qubit represents one fixed logical measurement stream.
     /// It must not be used for circuits that reuse one physical measurement
     /// qubit for multiple logical checks.
-    #[must_use]
-    pub fn propagate_all_forest(&self) -> BucketRecorder {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
+    pub fn propagate_all_forest(&self) -> Result<BucketRecorder, UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        Ok(self.propagate_all_forest_validated())
+    }
+
+    fn propagate_all_forest_validated(&self) -> BucketRecorder {
         use rayon::prelude::*;
 
         let (measurements, _meas_ids) = self.extract_measurements();
@@ -2524,10 +2647,25 @@ impl<'a> DagFaultAnalyzer<'a> {
     ///
     /// // Use a counting recorder to count influences
     /// let mut recorder = CountingRecorder::default();
-    /// propagator.propagate_all(&mut recorder);
+    /// propagator.propagate_all(&mut recorder).unwrap();
     /// println!("Total influences: {}", recorder.count);
     /// ```
-    pub fn propagate_all<R: InfluenceRecorder>(&self, recorder: &mut R) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
+    pub fn propagate_all<R: InfluenceRecorder>(
+        &self,
+        recorder: &mut R,
+    ) -> Result<(), UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        self.propagate_all_validated(recorder);
+        Ok(())
+    }
+
+    fn propagate_all_validated<R: InfluenceRecorder>(&self, recorder: &mut R) {
         let (measurements, _) = self.extract_measurements();
 
         let mut work = PropagationBuffers {
@@ -2537,7 +2675,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         };
 
         for (detector_idx, &(node, qubit, basis)) in measurements.iter().enumerate() {
-            self.propagate_from_measurement_generic(
+            self.propagate_from_measurement_generic_validated(
                 node,
                 qubit,
                 basis,
@@ -2550,8 +2688,18 @@ impl<'a> DagFaultAnalyzer<'a> {
 
     /// Parallel version: propagates from all measurements using rayon.
     /// Each thread gets its own `BucketRecorder`, results are merged.
-    #[must_use]
-    pub fn propagate_all_parallel(&self) -> BucketRecorder {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported gate recorded by the whole-circuit construction preflight.
+    pub fn propagate_all_parallel(&self) -> Result<BucketRecorder, UnsupportedGateError> {
+        if let Some(error) = &self.unsupported_gate {
+            return Err(error.clone());
+        }
+        Ok(self.propagate_all_parallel_validated())
+    }
+
+    fn propagate_all_parallel_validated(&self) -> BucketRecorder {
         use rayon::prelude::*;
 
         let (measurements, _) = self.extract_measurements();
@@ -2572,7 +2720,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 };
 
                 for (i, &(node, qubit, basis)) in chunk.iter().enumerate() {
-                    self.propagate_from_measurement_generic(
+                    self.propagate_from_measurement_generic_validated(
                         node,
                         qubit,
                         basis,
@@ -2600,25 +2748,144 @@ impl<'a> DagFaultAnalyzer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::UnsupportedGateLocation;
     use super::*;
     use pecos_quantum::DagCircuit;
+
+    #[test]
+    fn bare_t_is_rejected_by_every_influence_map_dem_entry_point() {
+        use crate::fault_tolerance::dem_builder::{
+            DemBuilder, DemBuilderError, DemSampler, DemSamplerBuilder, DetectorValidationError,
+            MemBuilder, NoiseConfig, SamplingEngine,
+        };
+        fn assert_dem_error(
+            error: DemBuilderError,
+            gate_type: GateType,
+            location: UnsupportedGateLocation,
+        ) {
+            let DemBuilderError::UnsupportedGate(error) = error else {
+                panic!("expected structured unsupported-gate error, got {error:?}");
+            };
+            assert_eq!(error.gate_type, gate_type);
+            assert_eq!(error.location, location);
+            assert_eq!(error.qubits, [0]);
+        }
+
+        fn assert_sampler_error(
+            error: DetectorValidationError,
+            gate_type: GateType,
+            location: UnsupportedGateLocation,
+        ) {
+            let DetectorValidationError::UnsupportedGate(error) = error else {
+                panic!("expected structured unsupported-gate error, got {error:?}");
+            };
+            assert_eq!(error.gate_type, gate_type);
+            assert_eq!(error.location, location);
+            assert_eq!(error.qubits, [0]);
+        }
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.t(&[0]);
+        circuit.mz(&[0]);
+        let map = DagFaultAnalyzer::new(&circuit).build_influence_map_diagnostic();
+        let probabilities = vec![0.0; map.locations.len()];
+        let location = UnsupportedGateLocation::DagNode { node: 1 };
+
+        assert_dem_error(
+            DemBuilder::new(&map).build().unwrap_err(),
+            GateType::T,
+            location,
+        );
+        assert_dem_error(
+            DemBuilder::new(&map).try_build().unwrap_err(),
+            GateType::T,
+            location,
+        );
+
+        let mem_error = MemBuilder::new(&map).build().unwrap_err();
+        assert_dem_error(mem_error, GateType::T, location);
+
+        assert_sampler_error(
+            DemSamplerBuilder::new(&map).build().unwrap_err(),
+            GateType::T,
+            location,
+        );
+        assert_sampler_error(
+            DemSamplerBuilder::new(&map)
+                .with_detector_records(Vec::new())
+                .build()
+                .unwrap_err(),
+            GateType::T,
+            location,
+        );
+        assert_sampler_error(
+            DemSampler::from_influence_map(&map, &probabilities).unwrap_err(),
+            GateType::T,
+            location,
+        );
+
+        let engine_error =
+            SamplingEngine::from_influence_map(&map, &probabilities, &NoiseConfig::default())
+                .unwrap_err();
+        assert_dem_error(engine_error, GateType::T, location);
+    }
+
+    #[test]
+    fn internal_rxyxy2q_diagnostic_reaches_dem_and_mem() {
+        use crate::fault_tolerance::dem_builder::{DemBuilder, DemBuilderError, MemBuilder};
+        use pecos_core::Angle64;
+        fn rxyxy2q_circuit(gate: Gate) -> DagCircuit {
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&[0, 1]);
+            circuit.add_gate_auto_wire(gate.clone());
+            circuit.add_gate_auto_wire(gate);
+            circuit.mz(&[0]);
+            circuit.mz(&[1]);
+            circuit.set_attr(
+                "detectors",
+                pecos_quantum::Attribute::String(
+                    r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#.to_string(),
+                ),
+            );
+            circuit
+        }
+
+        let non_clifford = Angle64::from_radians(0.123);
+        for gate in [
+            Gate::rxyxy2q(Angle64::QUARTER_TURN, non_clifford, &[(0, 1)]),
+            Gate::rxyxy2q(non_clifford, Angle64::ZERO, &[(0, 1)]),
+            Gate::rxxryyrzz(non_clifford, Angle64::ZERO, Angle64::ZERO, &[(0, 1)]),
+            Gate::u2q(
+                [[Angle64::ZERO; 3]; 2],
+                [non_clifford, Angle64::ZERO, Angle64::ZERO],
+                [[Angle64::ZERO; 3]; 2],
+                &[(0, 1)],
+            ),
+            Gate::ch(&[(0, 1)]),
+        ] {
+            let circuit = rxyxy2q_circuit(gate.clone());
+            let map = DagFaultAnalyzer::new(&circuit).build_influence_map_diagnostic();
+            for error in [
+                DemBuilder::new(&map).build().unwrap_err(),
+                MemBuilder::new(&map).build().unwrap_err(),
+            ] {
+                let DemBuilderError::UnsupportedGate(error) = error else {
+                    panic!("expected unsupported gate: {error:?}")
+                };
+                assert_eq!(error.gate_type, gate.gate_type);
+                assert_eq!(error.qubits, [0, 1]);
+                assert_eq!(error.angles, gate.angles.as_slice());
+                assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 2 });
+            }
+        }
+    }
 
     // =========================================================================
     // Helper Functions
     // =========================================================================
 
-    /// Measurement extraction orders by `MeasId`, never by topological position.
-    ///
-    /// Id-less circuits used to fall back to topological position, so the two
-    /// orderings disagreed for circuits whose wiring does not follow the order
-    /// the measurements were written. The id is what names a measurement, so it
-    /// is what orders them.
-    ///
-    /// For minted ids that comes out as the order the program writes its
-    /// measurements, which is what this case covers. It is a *consequence* of
-    /// minting being sequential, not the rule -- see
-    /// `extraction_follows_supplied_ids_not_the_order_they_were_added` for the
-    /// case where the two differ.
+    /// Minted ids and emission positions agree on an unedited circuit.
     #[test]
     fn minted_ids_extract_in_the_order_the_measurements_were_written() {
         let mut dag = DagCircuit::new();
@@ -2647,23 +2914,14 @@ mod tests {
         );
     }
 
-    /// Supplied ids own the numbering, so extraction follows them even when they
-    /// run counter to the order the measurements were added.
-    ///
-    /// `mz_with_ids` accepts external ids -- Guppy result ids, where the number
-    /// is the result index -- and those need not arrive in ascending order. So
-    /// "id order" is the rule; matching the order of addition is not.
+    /// Supplied ids name measurements without ordering them.
     #[test]
-    fn extraction_follows_supplied_ids_not_the_order_they_were_added() {
+    fn extraction_follows_emission_not_supplied_id_order() {
         use pecos_core::MeasId;
         use pecos_quantum::Gate;
 
-        // Three measurements whose insertion order, topological depth and id
-        // order are pairwise different, so passing this test means following the
-        // ids and nothing else:
-        //   insertion   q0, q1, q2
-        //   topological q1, q2, q0  (by chain depth)
-        //   id order    q2, q0, q1  (ids 1, 5, 9)
+        // The keyed walk visits the inserted q0, q1, q2 measurements in that
+        // order. Their ids are 5, 9, 1; sorting ids would instead give q2,q0,q1.
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1, 2]);
         dag.h(&[0]);
@@ -2686,26 +2944,23 @@ mod tests {
 
         assert_eq!(
             measurements.iter().map(|&(_, q, _)| q).collect::<Vec<_>>(),
-            vec![2, 0, 1],
-            "extraction must follow the supplied ids, not insertion or topological order"
+            vec![0, 1, 2],
+            "extraction must follow emission order"
         );
         assert_eq!(
             meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
-            vec![1, 5, 9]
+            vec![5, 9, 1]
         );
     }
 
-    /// `meas_index_of` resolves an id to the map's own ordinal (id-rank
-    /// order), which the scrambled supplied ids keep distinct from both the
-    /// id values and insertion order.
+    /// `meas_index_of` resolves an id to the map's emission ordinal.
     #[test]
     fn meas_index_of_resolves_against_the_maps_own_ordering() {
         use pecos_core::MeasId;
         use pecos_quantum::Gate;
 
-        // Ids (7, 9, 4) on measurement nodes (3, 4, 5): no id equals its node,
-        // and no id equals its rank (sorted [4, 7, 9] -> ranks 0, 1, 2), so all
-        // three spaces are pairwise distinct for every entry.
+        // q0, q1, q2 emit ids 7, 9, 4 at positions 0, 1, 2 respectively.
+        // Neither id values nor id ranks determine those positions.
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1, 2]);
         for (qubit, id) in [(0usize, 7usize), (1, 9), (2, 4)] {
@@ -2714,14 +2969,14 @@ mod tests {
             dag.add_gate_auto_wire(gate);
         }
 
-        let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+        let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
         assert_eq!(
             map.meas_index_of(MeasId::from_raw(7)),
-            Some(1),
-            "id-rank order is [4, 7, 9], so MeasId(7) is index 1"
+            Some(0),
+            "emission order is [7, 9, 4], so MeasId(7) is index 0"
         );
-        assert_eq!(map.meas_index_of(MeasId::from_raw(9)), Some(2));
-        assert_eq!(map.meas_index_of(MeasId::from_raw(4)), Some(0));
+        assert_eq!(map.meas_index_of(MeasId::from_raw(9)), Some(1));
+        assert_eq!(map.meas_index_of(MeasId::from_raw(4)), Some(2));
         assert_eq!(
             map.meas_index_of(MeasId::from_raw(2)),
             None,
@@ -2777,11 +3032,17 @@ mod tests {
     }
 
     fn build_parallel_map(analyzer: &DagFaultAnalyzer<'_>) -> DagFaultInfluenceMap {
-        build_map_with_influences(analyzer, analyzer.propagate_all_parallel().into_soa())
+        build_map_with_influences(
+            analyzer,
+            analyzer.propagate_all_parallel().unwrap().into_soa(),
+        )
     }
 
     fn build_forest_map(analyzer: &DagFaultAnalyzer<'_>) -> DagFaultInfluenceMap {
-        build_map_with_influences(analyzer, analyzer.propagate_all_forest().into_soa())
+        build_map_with_influences(
+            analyzer,
+            analyzer.propagate_all_forest().unwrap().into_soa(),
+        )
     }
 
     fn build_map_with_influences(
@@ -2979,7 +3240,7 @@ mod tests {
         let dag = reused_physical_ancilla_circuit();
         let analyzer = DagFaultAnalyzer::new(&dag);
 
-        let built = analyzer.build_influence_map();
+        let built = analyzer.build_influence_map().unwrap();
         let parallel = build_parallel_map(&analyzer);
         let forest = build_forest_map(&analyzer);
 
@@ -2995,22 +3256,47 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "non-Clifford gate")]
+    fn non_clifford_rotation_cannot_be_a_location() {
+        let _ = DagSpacetimeLocation::new(
+            0,
+            vec![QubitId(0)],
+            false,
+            &Gate::rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[0]),
+        );
+    }
+
+    #[test]
+    fn location_resolves_clifford_and_preserves_scheduled_gate() {
+        let gate = Gate::rzz(pecos_core::Angle64::HALF_TURN, &[(0, 1)]);
+        let loc = DagSpacetimeLocation::new(0, vec![QubitId(0)], false, &gate);
+        assert_eq!(loc.gate_type, GateType::RZZ);
+        assert_eq!(loc.clifford, CliffordLowering::PerQubit(GateType::Z));
+        let other = DagSpacetimeLocation::new(
+            0,
+            vec![QubitId(0)],
+            false,
+            &Gate::rzz(pecos_core::Angle64::QUARTER_TURN, &[(0, 1)]),
+        );
+        assert_ne!(loc, other);
+        assert_ne!(loc.cmp(&other), Ordering::Equal);
+    }
+
+    #[test]
     fn test_dag_spacetime_location_ordering() {
         // Verify that DagSpacetimeLocation has consistent ordering
-        let loc1 = DagSpacetimeLocation {
-            node: 0,
-            qubits: vec![QubitId::from(0)],
-            before: true,
-            gate_type: GateType::H,
-            idle_duration: 0.0,
-        };
-        let loc2 = DagSpacetimeLocation {
-            node: 1,
-            qubits: vec![QubitId::from(0)],
-            before: true,
-            gate_type: GateType::H,
-            idle_duration: 0.0,
-        };
+        let loc1 = DagSpacetimeLocation::new(
+            0,
+            vec![QubitId::from(0)],
+            true,
+            &pecos_core::Gate::simple(GateType::H, vec![QubitId::from(0)]),
+        );
+        let loc2 = DagSpacetimeLocation::new(
+            1,
+            vec![QubitId::from(0)],
+            true,
+            &pecos_core::Gate::simple(GateType::H, vec![QubitId::from(0)]),
+        );
         assert!(loc1 < loc2);
     }
 
@@ -3076,6 +3362,7 @@ mod tests {
         dag.h(&[0]);
 
         let map = crate::fault_tolerance::InfluenceBuilder::new(&dag)
+            .unwrap()
             .with_z(&[0])
             .build()
             .expect("circuit is replayable");
@@ -3106,9 +3393,18 @@ mod tests {
         ) = map.export_csr();
 
         assert_eq!(num_dem_outputs, 0);
-        assert!(dem_output_data_x.is_empty());
-        assert!(dem_output_data_y.is_empty());
-        assert!(dem_output_data_z.is_empty());
+        assert!(
+            dem_output_data_x.is_empty(),
+            "expected no DEM output data for X, got {dem_output_data_x:?}"
+        );
+        assert!(
+            dem_output_data_y.is_empty(),
+            "expected no DEM output data for Y, got {dem_output_data_y:?}"
+        );
+        assert!(
+            dem_output_data_z.is_empty(),
+            "expected no DEM output data for Z, got {dem_output_data_z:?}"
+        );
         assert_eq!(dem_output_offsets_x.len(), map.locations.len() + 1);
         assert_eq!(dem_output_offsets_y.len(), map.locations.len() + 1);
         assert_eq!(dem_output_offsets_z.len(), map.locations.len() + 1);
@@ -3117,13 +3413,12 @@ mod tests {
     #[test]
     fn test_dem_output_helpers_use_separate_compact_id_spaces() {
         let mut map = DagFaultInfluenceMap::with_capacity(1);
-        map.locations.push(DagSpacetimeLocation {
-            node: 0,
-            qubits: vec![QubitId(0)],
-            before: false,
-            gate_type: GateType::H,
-            idle_duration: 0.0,
-        });
+        map.locations.push(DagSpacetimeLocation::new(
+            0,
+            vec![QubitId(0)],
+            false,
+            &pecos_core::Gate::simple(GateType::H, vec![QubitId(0)]),
+        ));
         map.dem_output_metadata = vec![
             DemOutputMetadata::tracked_pauli(pecos_core::PauliString::xs(&[0])),
             DemOutputMetadata::observable(pecos_core::PauliString::zs(&[0])),
@@ -3186,7 +3481,7 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Find the CX gate locations
         let cx_locations: Vec<_> = map
@@ -3225,7 +3520,7 @@ mod tests {
         // Test CZ gates have per-qubit fault locations
         let dag = cz_syndrome_circuit();
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Find CZ gate locations
         let cz_locations: Vec<_> = map
@@ -3253,7 +3548,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // X error on target qubit 2 after CX should flip the measurement
         let mut found_target_influence = false;
@@ -3282,7 +3577,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // Find a CX location and check all Pauli influences
         let cx_idx = map
@@ -3303,7 +3598,7 @@ mod tests {
         // Verify all locations have single qubits (per-qubit fault model)
         let dag = surface_code_circuit(3); // d=3 has multi-qubit CX gates
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // All locations should have exactly 1 qubit in per-qubit model
         for loc in &map.locations {
@@ -3340,7 +3635,7 @@ mod tests {
         for seed in 0..num_tests {
             let dag = random_dag_circuit(5, 15, seed);
             let analyzer = DagFaultAnalyzer::new(&dag);
-            let map = analyzer.build_influence_map();
+            let map = analyzer.build_influence_map().unwrap();
 
             if map.measurements.is_empty() {
                 continue; // Skip circuits without measurements
@@ -3371,7 +3666,7 @@ mod tests {
                     }
 
                     // Propagate forward from this location
-                    propagate_sparse_dag(&dag, &mut prop, Direction::Forward);
+                    propagate_sparse_dag(&dag, &mut prop, Direction::Forward).unwrap();
 
                     // Check if propagated error anticommutes with any measurement
                     let mut fwd_has_syndrome = false;
@@ -3432,7 +3727,7 @@ mod tests {
                 let analyzer = DagFaultAnalyzer::new(&dag);
 
                 // Should not panic
-                let map = analyzer.build_influence_map();
+                let map = analyzer.build_influence_map().unwrap();
 
                 // Basic sanity checks
                 assert!(
@@ -3451,18 +3746,21 @@ mod tests {
     fn test_surface_code_d3() {
         let dag = surface_code_circuit(3);
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // d=3 has 9 data qubits and 8 ancillas
         assert_eq!(map.detectors.len(), 8, "d=3 should have 8 detectors");
-        assert!(!map.locations.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
     }
 
     #[test]
     fn test_surface_code_d5() {
         let dag = surface_code_circuit(5);
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // d=5 has 25 data qubits and 24 ancillas
         assert_eq!(map.detectors.len(), 24, "d=5 should have 24 detectors");
@@ -3473,7 +3771,7 @@ mod tests {
         // Verify that surface code circuits have proper per-qubit fault coverage
         let dag = surface_code_circuit(3);
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let map = analyzer.build_influence_map();
+        let map = analyzer.build_influence_map().unwrap();
 
         // All locations should have exactly 1 qubit in per-qubit model
         for loc in &map.locations {
@@ -3544,7 +3842,7 @@ mod tests {
 
         // Use propagate_all with a custom recorder
         let mut recorder = super::super::CountingRecorder::default();
-        analyzer.propagate_all(&mut recorder);
+        analyzer.propagate_all(&mut recorder).unwrap();
 
         assert!(recorder.count > 0, "Should record some influences");
     }

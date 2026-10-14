@@ -87,7 +87,11 @@ pub enum PluginError {
 impl std::fmt::Display for PluginError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LoadFailed(path, e) => write!(f, "failed to load {path}: {e}"),
+            Self::LoadFailed(path, e) => write!(
+                f,
+                "failed to load {path}: {}",
+                std::error::Error::source(e).unwrap_or(e)
+            ),
             Self::MissingInitFn(path) => {
                 write!(f, "{path}: no pecos_plugin_init symbol")
             }
@@ -117,8 +121,24 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginError> {
 
     // SAFETY: Loading a shared library is inherently unsafe. The caller
     // is responsible for ensuring the library is trustworthy.
-    let library = unsafe { libloading::Library::new(path) }
-        .map_err(|e| PluginError::LoadFailed(path_str.clone(), e))?;
+    // RTLD_NOW: an unresolved import fails here with the loader's message
+    // instead of terminating the process on its first call.
+    let library = unsafe {
+        #[cfg(unix)]
+        {
+            libloading::os::unix::Library::open(
+                Some(path),
+                libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
+            )
+            .map(Into::into)
+        }
+        #[cfg(not(unix))]
+        {
+            libloading::Library::new(path)
+        }
+    };
+    let library: libloading::Library =
+        library.map_err(|e| PluginError::LoadFailed(path_str.clone(), e))?;
 
     // Look up the init function.
     let init_fn: libloading::Symbol<'_, PluginInitFn> = unsafe {

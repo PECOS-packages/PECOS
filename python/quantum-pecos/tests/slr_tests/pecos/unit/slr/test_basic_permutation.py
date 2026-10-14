@@ -158,7 +158,6 @@ def test_same_register_permutation_qasm(
 # into the relabelled register's `[N x i1]` buffer.
 
 
-@pytest.mark.optional_dependency
 def test_basic_permutation_qir(basic_permutation_program: tuple) -> None:
     """Element-wise CReg Permute is realized (a[0] <-> b[1])."""
     prog, _, _ = basic_permutation_program
@@ -175,7 +174,6 @@ def test_basic_permutation_qir(basic_permutation_program: tuple) -> None:
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_same_register_permutation_qir(
     same_register_permutation_program: tuple,
 ) -> None:

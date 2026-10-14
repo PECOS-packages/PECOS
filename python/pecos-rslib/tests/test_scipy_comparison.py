@@ -1,12 +1,7 @@
 """Tests comparing pecos_rslib.num with scipy.optimize."""
 
-import pytest
-
-# Skip entire module if scipy/numpy not available
-pytest.importorskip("scipy")
-pytest.importorskip("numpy")
-
 import numpy as np
+import pytest
 
 # Import both our implementation and scipy
 import pecos as pc

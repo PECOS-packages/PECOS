@@ -1,5 +1,7 @@
 # Composable Noise Models (pecos-neo)
 
+Enable the `composite-noise` Cargo feature on `pecos-neo` to use composite noise primitives and patterns.
+
 > This covers the Rust composable noise API in `pecos-neo`. For the Python noise builder API, see [Noise Model Builders](../user-guide/noise-model-builders.md).
 >
 > Source: `exp/pecos-neo/src/noise/`

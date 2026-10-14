@@ -6,7 +6,7 @@ use crate::QisHeliosInterface;
 use crate::program::QisInterfaceBuilder;
 use crate::qis_interface::{ProgramFormat, QisInterface};
 use pecos_core::errors::PecosError;
-use pecos_programs::{Hugr, Qis, QisContent};
+use pecos_programs::{Qis, QisContent};
 use pecos_qis_ffi_types::OperationCollector;
 
 /// Helios-based interface builder
@@ -63,32 +63,6 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
         })
     }
 
-    fn build_from_hugr_program(&self, program: Hugr) -> Result<OperationCollector, PecosError> {
-        #[cfg(feature = "hugr")]
-        {
-            // Compile HUGR to LLVM IR using pecos-hugr-qis
-            let llvm_ir =
-                pecos_hugr_qis::compile_hugr_bytes_to_string(&program.hugr).map_err(|e| {
-                    PecosError::Processing(format!("Failed to compile HUGR to LLVM: {e}"))
-                })?;
-
-            // Create a QIS program from the compiled LLVM IR
-            let qis_program = pecos_programs::Qis::from_string(&llvm_ir);
-
-            // Use the existing QIS program builder
-            self.build_from_qis_program(qis_program)
-        }
-        #[cfg(not(feature = "hugr"))]
-        {
-            let _ = program; // Suppress unused variable warning
-            Err(PecosError::Processing(
-                "Helios interface requires the 'hugr' feature to compile HUGR programs.\n\
-                Please enable the 'hugr' feature in pecos-qis to use HUGR compilation."
-                    .to_string(),
-            ))
-        }
-    }
-
     fn build_from_interface(
         &self,
         interface: OperationCollector,
@@ -131,35 +105,6 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
 
         // Return the interface without collecting operations - the engine will do that dynamically
         Ok(Box::new(interface))
-    }
-
-    fn create_dynamic_interface_from_hugr(
-        &self,
-        program: Hugr,
-    ) -> Result<crate::qis_interface::BoxedInterface, PecosError> {
-        #[cfg(feature = "hugr")]
-        {
-            // Compile HUGR to LLVM IR using pecos-hugr-qis
-            let llvm_ir =
-                pecos_hugr_qis::compile_hugr_bytes_to_string(&program.hugr).map_err(|e| {
-                    PecosError::Processing(format!("Failed to compile HUGR to LLVM: {e}"))
-                })?;
-
-            // Create a QIS program from the compiled LLVM IR
-            let qis_program = pecos_programs::Qis::from_string(&llvm_ir);
-
-            // Use the existing dynamic interface creation
-            self.create_dynamic_interface_from_qis(qis_program)
-        }
-        #[cfg(not(feature = "hugr"))]
-        {
-            let _ = program; // Suppress unused variable warning
-            Err(PecosError::Processing(
-                "Helios interface requires the 'hugr' feature to compile HUGR programs.\n\
-                Please enable the 'hugr' feature in pecos-qis to use HUGR compilation."
-                    .to_string(),
-            ))
-        }
     }
 }
 

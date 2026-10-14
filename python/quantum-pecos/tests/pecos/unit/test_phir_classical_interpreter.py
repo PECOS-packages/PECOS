@@ -16,6 +16,7 @@ import pytest
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
 )
+from pecos.reps.pyphir.op_types import COp
 
 # Note: This test assumes the get_bit method has been updated to include bounds checking.
 # If you're implementing the int() conversion approach instead, this test should be removed.
@@ -243,3 +244,21 @@ class TestPhirClassicalInterpreterBitwiseOps:
 
         result = interp.results()
         assert int(result["a"]) == 10
+
+
+def test_shift_rule_python_boundaries() -> None:
+    """Fix demonstration: full tagged counts saturate without modulo."""
+    interpreter = PhirClassicalInterpreter()
+    for count in (63, 64, 65, 65535, 65536, 2**63, 2**64 - 1):
+        assert interpreter.eval_expr(COp("<<", [1, count])) == (-(2**63) if count == 63 else 0)
+        assert interpreter.eval_expr(COp(">>", [2**63, count])) == (2**63 >> count)
+        assert interpreter.eval_expr(COp(">>", [-8, count])) == -1
+    for count in range(64, 65538):
+        assert interpreter.eval_expr(COp("<<", [1, count])) == 0
+
+
+def test_shift_rule_python_negative() -> None:
+    """Compatibility pin: signed negative counts raise in either direction."""
+    for op in ("<<", ">>"):
+        with pytest.raises(ValueError, match="Negative shift amount: -1"):
+            PhirClassicalInterpreter().eval_expr(COp(op, [8, -1]))

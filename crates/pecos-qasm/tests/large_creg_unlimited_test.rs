@@ -131,14 +131,14 @@ fn test_large_register_comparisons() {
 
         // Create values that differ only in high bits
         a[0] = 1;
-        a[99] = 1;  // a has sign bit set (negative in two's complement)
+        a[99] = 1;  // a = 2^99 + 1
 
         b[0] = 1;
-        b[98] = 1;  // b is positive (sign bit not set)
+        b[98] = 1;  // b = 2^98 + 1
 
-        // With signed integers: negative < positive
-        results[0] = (a > b);   // Should be false (negative > positive = false)
-        results[1] = (a < b);   // Should be true (negative < positive = true)
+        // Register values are unsigned, including their highest bit.
+        results[0] = (a > b);   // Should be true
+        results[1] = (a < b);   // Should be false
         results[2] = (a == b);  // Should be false
         results[3] = (a != b);  // Should be true
     ";
@@ -149,18 +149,19 @@ fn test_large_register_comparisons() {
         .unwrap();
     let shot = &shot_vec.shots[0];
 
-    if let Data::BitVec(results_bits) = &shot.data["results"] {
-        assert!(
-            !results_bits[0],
-            "a > b should be false (negative > positive)"
-        );
-        assert!(
-            results_bits[1],
-            "a < b should be true (negative < positive)"
-        );
-        assert!(!results_bits[2], "a == b should be false");
-        assert!(results_bits[3], "a != b should be true");
-    }
+    let Data::BitVec(results_bits) = &shot.data["results"] else {
+        panic!("Expected comparison results as a BitVec");
+    };
+    assert!(
+        results_bits[0],
+        "a > b should be true for unsigned registers"
+    );
+    assert!(
+        !results_bits[1],
+        "a < b should be false for unsigned registers"
+    );
+    assert!(!results_bits[2], "a == b should be false");
+    assert!(results_bits[3], "a != b should be true");
 }
 
 #[test]

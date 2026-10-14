@@ -31,18 +31,15 @@ pecos-results.workspace = true
 pecos-programs.workspace = true
 # Optional: for QASM support
 pecos-qasm = { workspace = true, optional = true }
-# Optional: for direct HUGR interpreter support
-pecos-hugr = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true
 num-complex.workspace = true
 pecos-qasm.workspace = true
-pecos-hugr.workspace = true
 criterion.workspace = true
 proptest = "1.4"
 # Enable our own features for doctests and integration tests
-pecos-neo = { path = ".", features = ["qasm", "hugr"] }
+pecos-neo = { path = ".", features = ["qasm", "composite-noise"] }
 
 [[bench]]
 name = "hot_path"
@@ -50,8 +47,8 @@ harness = false
 
 [features]
 default = []
+composite-noise = []
 qasm = ["dep:pecos-qasm"]
-hugr = ["dep:pecos-hugr"]
 
 [lints]
 workspace = true

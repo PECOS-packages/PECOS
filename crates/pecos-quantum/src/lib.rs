@@ -68,6 +68,7 @@ mod circuit;
 mod circuit_display;
 mod dag_circuit;
 pub mod diamond_norm;
+mod fault_sector;
 pub mod measures;
 pub mod pass;
 pub mod pauli_group;
@@ -78,14 +79,12 @@ pub mod symplectic_matrix;
 mod tick_circuit;
 pub mod unitary_matrix;
 
-#[cfg(feature = "hugr")]
-pub mod hugr_convert;
-
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagTraversalIndex, MeasRef,
-    MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
+    AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
+    DagWireError, MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
+pub use fault_sector::parse_fault_sector;
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
     Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,
@@ -129,7 +128,3 @@ pub use pauli_sequence::{F2Matrix, PauliSequence};
 pub use pauli_set::PauliSet;
 pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
 pub use symplectic_matrix::{SymplecticMatrix, SymplecticMatrixError};
-
-// Re-export HUGR types when the feature is enabled
-#[cfg(feature = "hugr")]
-pub use tket::hugr::Hugr;

@@ -393,6 +393,8 @@ fn test_registry_new_has_core_gates() {
     assert!(registry.get(gates::RZ).is_some());
     assert!(registry.get(gates::MZ).is_some());
     assert!(registry.get(gates::PZ).is_some());
+    assert_eq!(registry.lookup("RXY1Q"), Some(gates::RXY1Q));
+    assert_eq!(registry.lookup("R1XY"), Some(gates::RXY1Q));
 }
 
 #[test]
@@ -665,13 +667,13 @@ fn test_canonicalize_rz_half_turn() {
 }
 
 #[test]
-fn test_canonicalize_rz_t_gate() {
+fn test_canonicalize_rz_pi_over_four_stays_a_rotation() {
     let canon = GateCanonicalizer::standard();
 
-    // RZ(π/4) = T
+    // Conventional T differs from RZ(π/4) by exp(iπ/8).
     let t_angle = Angle64::HALF_TURN / 4;
     let result = canon.canonicalize(gates::RZ, &[t_angle]);
-    assert_eq!(result, Some(gates::T));
+    assert_eq!(result, None);
 }
 
 #[test]
@@ -966,10 +968,8 @@ fn test_canonicalizer_expand() {
     assert_eq!(gate, gates::RZ);
     assert_eq!(angle, Angle64::QUARTER_TURN);
 
-    // T should expand to RZ(π/4)
-    let (gate, angle) = canon.expand(gates::T).unwrap();
-    assert_eq!(gate, gates::RZ);
-    assert_eq!(angle, Angle64::HALF_TURN / 4);
+    // Conventional T has no exact expansion into the symmetric RZ family.
+    assert!(canon.expand(gates::T).is_none());
 }
 
 #[test]
@@ -1001,7 +1001,7 @@ fn test_canonicalizer_get_forms_for() {
     let rz_forms = canon.get_forms_for(gates::RZ);
 
     // RZ has several canonical forms
-    assert!(rz_forms.len() >= 4); // 0, π/4, π/2, π at minimum
+    assert!(rz_forms.len() >= 4); // 0, ±π/2, and π at minimum
 
     // Check one of them
     let sz_form = rz_forms.iter().find(|f| f.to_gate == gates::SZ);
@@ -1099,6 +1099,7 @@ fn test_all_core_gates_have_correct_arity() {
         gates::SWAP,
         gates::SZZ,
         gates::RZZ,
+        gates::RXYXY2Q,
     ] {
         let spec = registry.get(id).unwrap();
         assert_eq!(
@@ -1396,12 +1397,22 @@ fn test_exact_angle_validator_accepts_canonicalizable() {
     let validator = ExactAngleValidator::new();
     let registry = GateRegistry::new();
 
-    let circuit = vec![
-        make_gate(gates::RZ, &[Angle64::QUARTER_TURN]), // -> SZ
-        make_gate(gates::RZ, &[Angle64::HALF_TURN / 4]), // -> T
-    ];
+    let circuit = vec![make_gate(gates::RZ, &[Angle64::QUARTER_TURN])]; // -> SZ
 
     assert!(validator.validate(&circuit, &registry).is_ok());
+}
+
+#[test]
+fn test_exact_angle_validator_rejects_phase_inexact_t_angle() {
+    let validator = ExactAngleValidator::new();
+    let registry = GateRegistry::new();
+    let circuit = vec![make_gate(gates::RZ, &[Angle64::HALF_TURN / 4])];
+
+    let result = validator.validate(&circuit, &registry);
+    assert!(matches!(
+        result,
+        Err(ValidationError::NonCanonicalAngle { .. })
+    ));
 }
 
 #[test]
@@ -1428,6 +1439,16 @@ fn test_exact_angle_validator_accepts_non_parameterized() {
     let circuit = vec![make_gate(gates::H, &[]), make_gate(gates::CX, &[])];
 
     assert!(validator.validate(&circuit, &registry).is_ok());
+}
+
+#[test]
+fn test_exact_angle_validator_preserves_unregistered_empty_angle_semantics() {
+    let validator = ExactAngleValidator::new();
+    let registry = GateRegistry::new();
+    let unregistered = GateId(256);
+
+    assert!(validator.is_gate_allowed(unregistered, &[], &registry));
+    assert!(!validator.is_gate_allowed(unregistered, &[Angle64::ZERO], &registry));
 }
 
 #[test]
@@ -1536,7 +1557,7 @@ fn test_standard_clifford_gate_surface_is_consistent() {
         let command = command_from_builder(case.gate_type);
         assert_eq!(command.gate_type, case.gate_type, "{case:?}");
         assert_eq!(command.qubits.len(), case.arity as usize, "{case:?}");
-        assert!(command.angles.is_empty(), "{case:?}");
+        assert!(command.angles().is_empty(), "{case:?}");
     }
 }
 
@@ -1585,13 +1606,13 @@ fn test_validation_error_display() {
 fn test_standard_adaptor_can_adapt() {
     let adaptor = StandardAdaptor::stab_vec();
 
-    assert!(adaptor.can_adapt(gates::T));
-    assert!(adaptor.can_adapt(gates::Tdg));
+    assert!(!adaptor.can_adapt(gates::T));
+    assert!(!adaptor.can_adapt(gates::Tdg));
     assert!(adaptor.can_adapt(gates::RX));
     assert!(adaptor.can_adapt(gates::RY));
     assert!(adaptor.can_adapt(gates::SWAP));
     assert!(adaptor.can_adapt(gates::RZZ));
-    assert!(adaptor.can_adapt(gates::CCX));
+    assert!(!adaptor.can_adapt(gates::CCX));
 
     // These should NOT be adaptable (they're already in target set)
     assert!(!adaptor.can_adapt(gates::H));
@@ -1600,29 +1621,15 @@ fn test_standard_adaptor_can_adapt() {
 }
 
 #[test]
-fn test_standard_adaptor_t_gate() {
-    let adaptor = StandardAdaptor::stab_vec();
-
-    let result = adaptor.adapt(gates::T, &[QubitId(0)], &[]);
-
-    // T = RZ(π/4)
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].gate_id, gates::RZ);
-    assert_eq!(result[0].qubits[0], QubitId(0));
-    assert_eq!(result[0].angles[0], Angle64::HALF_TURN / 4);
+#[should_panic(expected = "cannot exactly adapt gate")]
+fn test_standard_adaptor_rejects_phase_inexact_t_lowering() {
+    StandardAdaptor::stab_vec().adapt(gates::T, &[QubitId(0)], &[]);
 }
 
 #[test]
-fn test_standard_adaptor_tdg_gate() {
-    let adaptor = StandardAdaptor::stab_vec();
-
-    let result = adaptor.adapt(gates::Tdg, &[QubitId(0)], &[]);
-
-    // Tdg = RZ(-π/4)
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].gate_id, gates::RZ);
-    let expected_angle = Angle64::ZERO - Angle64::HALF_TURN / 4;
-    assert_eq!(result[0].angles[0], expected_angle);
+#[should_panic(expected = "cannot exactly adapt gate")]
+fn test_standard_adaptor_rejects_phase_inexact_tdg_lowering() {
+    StandardAdaptor::stab_vec().adapt(gates::Tdg, &[QubitId(0)], &[]);
 }
 
 #[test]
@@ -1667,30 +1674,21 @@ fn test_standard_adaptor_rzz_gate() {
 }
 
 #[test]
-fn test_standard_adaptor_ccx_gate() {
-    let adaptor = StandardAdaptor::stab_vec();
-
-    let result = adaptor.adapt(gates::CCX, &[QubitId(0), QubitId(1), QubitId(2)], &[]);
-
-    // CCX decomposes to ~15 gates
-    assert!(result.len() > 10);
-
-    // Should contain H, CX, and RZ gates
-    assert!(result.iter().any(|g| g.gate_id == gates::H));
-    assert!(result.iter().any(|g| g.gate_id == gates::CX));
-    assert!(result.iter().any(|g| g.gate_id == gates::RZ));
+#[should_panic(expected = "cannot exactly adapt gate")]
+fn test_standard_adaptor_rejects_phase_inexact_ccx_lowering() {
+    StandardAdaptor::stab_vec().adapt(gates::CCX, &[QubitId(0), QubitId(1), QubitId(2)], &[]);
 }
 
 #[test]
 fn test_composite_adaptor() {
     let adaptor = CompositeAdaptor::new().with(StandardAdaptor::stab_vec());
 
-    assert!(adaptor.can_adapt(gates::T));
+    assert!(!adaptor.can_adapt(gates::T));
     assert!(adaptor.can_adapt(gates::SWAP));
 
-    let result = adaptor.adapt(gates::T, &[QubitId(0)], &[]);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].gate_id, gates::RZ);
+    let result = adaptor.adapt(gates::SWAP, &[QubitId(0), QubitId(1)], &[]);
+    assert_eq!(result.len(), 3);
+    assert!(result.iter().all(|gate| gate.gate_id == gates::CX));
 }
 
 #[test]
@@ -1724,7 +1722,8 @@ fn test_adaptor_adaptable_gates() {
     let adaptor = StandardAdaptor::stab_vec();
     let adaptable = adaptor.adaptable_gates();
 
-    assert!(adaptable.contains(gates::T));
+    assert!(!adaptable.contains(gates::T));
+    assert!(!adaptable.contains(gates::CCX));
     assert!(adaptable.contains(gates::SWAP));
     assert!(!adaptable.contains(gates::H));
 }
@@ -1744,4 +1743,173 @@ fn test_adapted_gate_constructors() {
     let two_qubit = AdaptedGate::two_qubit(gates::CX, QubitId(0), QubitId(1));
     assert_eq!(two_qubit.gate_id, gates::CX);
     assert_eq!(two_qubit.qubits.len(), 2);
+}
+
+#[test]
+fn rxyxy2q_registry_and_shared_policy() {
+    use super::queue_validation::is_clifford_circuit;
+    use crate::CommandBuilder;
+    let registry = GateRegistry::new();
+    let definitions = GateDefinitions::new();
+    assert_eq!(registry.lookup("RXYXY2Q"), Some(gates::RXYXY2Q));
+    assert_eq!(definitions.id_by_name("RXYXY2Q"), Some(gates::RXYXY2Q));
+    let spec = registry.get(gates::RXYXY2Q).unwrap();
+    assert_eq!(spec.quantum_arity, 2);
+    assert_eq!(spec.angle_arity, 2);
+    let canon = GateCanonicalizer::standard();
+    assert!(canon.can_canonicalize(gates::RXYXY2Q));
+    for (theta, phi, named) in [
+        (Angle64::ZERO, Angle64::from_radians(0.123), gates::I),
+        (Angle64::QUARTER_TURN, Angle64::ZERO, gates::SXX),
+        (Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, gates::SYY),
+    ] {
+        assert_eq!(
+            canon.canonicalize(gates::RXYXY2Q, &[theta, phi]),
+            Some(named)
+        );
+        let commands = CommandBuilder::new().rxyxy2q(&[(0, 1)], theta, phi).build();
+        assert!(is_clifford_circuit(&commands));
+        commands
+            .validate(&CliffordValidator::new(), &registry)
+            .unwrap();
+    }
+    let commands = CommandBuilder::new()
+        .rxyxy2q(
+            &[(0, 1)],
+            Angle64::QUARTER_TURN,
+            Angle64::from_radians(0.123),
+        )
+        .build();
+    assert!(!is_clifford_circuit(&commands));
+    assert!(
+        commands
+            .validate(&CliffordValidator::new(), &registry)
+            .is_err()
+    );
+}
+
+#[test]
+fn rxyxy2q_exact_adaptor_matches_dense_execution() {
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
+    let adaptor = StandardAdaptor::stab_vec();
+    assert!(adaptor.can_adapt(gates::RXYXY2Q));
+    let theta = Angle64::from_radians(0.73);
+    let phi = Angle64::from_radians(0.41);
+    let qubits = [QubitId(0), QubitId(1), QubitId(3), QubitId(2)];
+    let sequence = adaptor.adapt(gates::RXYXY2Q, &qubits, &[theta, phi]);
+    let mut runner = crate::CircuitRunner::<DenseStateVec>::rotations();
+    for basis in 0..16 {
+        let mut expected = DenseStateVec::with_seed(4, 42);
+        for (index, qubit) in qubits.iter().enumerate() {
+            if basis & (1 << index) != 0 {
+                expected.x(&[*qubit]);
+            }
+        }
+        let mut actual = expected.clone();
+        expected.rxyxy2q(
+            theta,
+            phi,
+            &[(qubits[0], qubits[1]), (qubits[2], qubits[3])],
+        );
+        for gate in &sequence {
+            runner
+                .apply_gate(
+                    &mut actual,
+                    gate.gate_id.try_to_gate_type().unwrap(),
+                    &gate.qubits,
+                    &gate.angles,
+                )
+                .unwrap();
+        }
+        for (actual, expected) in actual.state().iter().zip(expected.state()) {
+            assert!((actual - expected).norm() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn standard_adaptor_batches_match_dense_execution() {
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
+    let adaptor = StandardAdaptor::stab_vec();
+    let qubits = [QubitId(0), QubitId(1), QubitId(3), QubitId(2)];
+    let pairs = [(qubits[0], qubits[1]), (qubits[2], qubits[3])];
+    let theta = Angle64::from_radians(0.73);
+    for gate_id in [
+        gates::RX,
+        gates::RY,
+        gates::RXX,
+        gates::RYY,
+        gates::RZZ,
+        gates::SWAP,
+    ] {
+        let angles = if gate_id == gates::SWAP {
+            &[][..]
+        } else {
+            &[theta][..]
+        };
+        let sequence = adaptor.adapt(gate_id, &qubits, angles);
+        let mut runner = crate::CircuitRunner::<DenseStateVec>::rotations();
+        for basis in 0..16 {
+            let mut expected = DenseStateVec::with_seed(4, 42);
+            for (index, qubit) in qubits.iter().enumerate() {
+                if basis & (1 << index) != 0 {
+                    expected.x(&[*qubit]);
+                }
+            }
+            let mut actual = expected.clone();
+            if gate_id == gates::RX {
+                expected.rx(theta, &qubits);
+            } else if gate_id == gates::RY {
+                expected.ry(theta, &qubits);
+            } else if gate_id == gates::RXX {
+                expected.rxx(theta, &pairs);
+            } else if gate_id == gates::RYY {
+                expected.ryy(theta, &pairs);
+            } else if gate_id == gates::RZZ {
+                expected.rzz(theta, &pairs);
+            } else {
+                expected.swap(&pairs);
+            }
+            for gate in &sequence {
+                runner
+                    .apply_gate(
+                        &mut actual,
+                        gate.gate_id.try_to_gate_type().unwrap(),
+                        &gate.qubits,
+                        &gate.angles,
+                    )
+                    .unwrap();
+            }
+            for (actual, expected) in actual.state().iter().zip(expected.state()) {
+                assert!(
+                    (actual - expected).norm() < 1e-12,
+                    "{gate_id:?}, basis {basis}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn standard_adaptor_rejects_incomplete_batches() {
+    for gate_id in [
+        gates::RXX,
+        gates::RYY,
+        gates::RZZ,
+        gates::RXYXY2Q,
+        gates::SWAP,
+    ] {
+        let gate_type = gate_id.try_to_gate_type().unwrap();
+        let angles = vec![Angle64::from_radians(0.73); gate_type.angle_arity()];
+        for count in [0, 1, 3, 5] {
+            let qubits: Vec<_> = (0..count).map(QubitId).collect();
+            assert!(
+                std::panic::catch_unwind(|| {
+                    StandardAdaptor::stab_vec().adapt(gate_id, &qubits, &angles)
+                })
+                .is_err(),
+                "{gate_id:?} accepted {count} qubits"
+            );
+        }
+    }
 }

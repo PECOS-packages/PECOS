@@ -251,7 +251,7 @@ fn test_decode_to_matched_pairs_error_handling() {
     // Verify matched pairs structure
 
     // Should have matched the detection events
-    assert!(!pairs.is_empty());
+    assert!(!pairs.is_empty(), "decoder returned no matched pairs");
 
     // Check that our detection events (0, 1, 3, 4) are involved in matchings
     let matched_detectors: Vec<i64> = pairs
@@ -360,7 +360,7 @@ fn test_decode_to_edges_error_handling() {
     // Verify edges in solution
 
     // Should have edges in the solution
-    assert!(!edges.is_empty());
+    assert!(!edges.is_empty(), "decoder returned no edges");
 
     // The edges should connect our detection events (1 and 2)
     // Check that edges involve detectors 1 and 2

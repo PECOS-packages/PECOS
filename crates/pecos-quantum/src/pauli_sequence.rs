@@ -1268,7 +1268,7 @@ mod tests {
     #[test]
     fn group_commuting_handles_empty_single_and_all_commuting_inputs() {
         let empty = PauliSequence::new(Vec::new());
-        assert!(empty.group_commuting().is_empty());
+        assert_eq!(empty.group_commuting(), []);
 
         let single = PauliSequence::new(vec![X(3)]);
         let single_groups = single.group_commuting();
@@ -1455,7 +1455,11 @@ mod tests {
     fn test_f2_kernel() {
         // Identity matrix: kernel is empty
         let mat = F2Matrix::from_rows(vec![vec![1, 0], vec![0, 1]]);
-        assert!(mat.kernel().is_empty());
+        let kernel = mat.kernel();
+        assert!(
+            kernel.is_empty(),
+            "expected no kernel vectors, got {kernel:?}"
+        );
 
         // Zero matrix 2x3: kernel dimension = 3
         let mat = F2Matrix::zeros(2, 3);
@@ -1560,7 +1564,7 @@ mod tests {
         let mat = F2Matrix::zeros(0, 3);
         let (reduced, pivots) = mat.row_reduce();
         assert_eq!(reduced.num_rows(), 0);
-        assert!(pivots.is_empty());
+        assert!(pivots.is_empty(), "expected no pivots, got {pivots:?}");
     }
 
     #[test]
@@ -1580,7 +1584,7 @@ mod tests {
         // Identity matrix: full rank, trivial kernel
         let mat = F2Matrix::identity(3);
         let kern = mat.kernel();
-        assert!(kern.is_empty());
+        assert!(kern.is_empty(), "expected no kernel vectors, got {kern:?}");
     }
 
     #[test]

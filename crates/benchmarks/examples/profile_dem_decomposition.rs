@@ -48,7 +48,7 @@ fn build_surface_code_dem(distance: usize, rounds: usize) -> DetectorErrorModel 
     }
 
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence_map = analyzer.build_influence_map();
+    let influence_map = analyzer.build_influence_map().unwrap();
 
     let mut detectors = String::from("[");
     let mut first = true;
@@ -77,6 +77,7 @@ fn build_surface_code_dem(distance: usize, rounds: usize) -> DetectorErrorModel 
         .with_observables_json("[]")
         .expect("observables json should parse")
         .build()
+        .expect("surface-code profiling circuit must support Pauli propagation")
 }
 
 fn main() {

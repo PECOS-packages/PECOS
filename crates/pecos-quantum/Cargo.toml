@@ -15,19 +15,19 @@ readme = "README.md"
 pecos-core.workspace = true
 pecos-num.workspace = true
 pecos-random.workspace = true
+pecos-synth.workspace = true
 nalgebra.workspace = true
 num-complex.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
-tket = { workspace = true, optional = true }
 log.workspace = true
 
 [dev-dependencies]
+pecos-engines.workspace = true
 pecos-simulators.workspace = true
 
 [features]
 default = []
-hugr = ["tket"]
 
 [lints]
 workspace = true

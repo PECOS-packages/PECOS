@@ -1,7 +1,11 @@
 # Experimental decoders
 
-Decoders in `exp/` that are not yet part of the unified `pecos.decoders` surface.
-They are reached through `pecos_rslib_exp` and may change without notice.
+Experimental decoder engines live in `exp/` and may change without notice.
+Frontier and BP-Trellis are available through `pecos_rslib_exp.frontier()` and
+`pecos_rslib_exp.bp_trellis()` for unified parallel batch decoding. Install the
+optional `pecos-rslib-exp` package to use them. Standard decoder imports work
+without this package. The detailed-result APIs described here are also reached
+through `pecos_rslib_exp`.
 
 Two capabilities live here that the production decoders do not offer:
 
@@ -14,11 +18,12 @@ Two capabilities live here that the production decoders do not offer:
 
 ## Frontier and BP-Trellis
 
-Both take a Stim-format DEM string and expose the same result surface.
-`FrontierDecoder` and `BpTrellisDecoder` are each a single trellis decoder over
-the same machinery (BP-Trellis adds BP-informed pruning scores); the separate
-`FrontierCommitteeDecoder` runs a two-leg forward/backward committee over them.
-Start with whichever you like and compare.
+`FrontierDecoder.from_dem` and `BpTrellisDecoder.from_dem` take a Stim-format
+DEM string and expose the same result surface. `FrontierDecoder.from_factors`
+also accepts the factor model described below. Each is a single trellis decoder
+over the same machinery (BP-Trellis adds BP-informed pruning scores); the
+separate `FrontierCommitteeDecoder` runs a two-leg forward/backward committee
+over them. Start with whichever you like and compare.
 
 <!--test-name: experimental_decoders_gap-->
 ```python
@@ -45,6 +50,14 @@ batch = FrontierDecoder.from_dem(dem).decode_batch([[1, 1, 1], [0, 0, 0]])
 assert [list(shot.observable_flips) for shot in batch] == [[True], [False]]
 ```
 
+For `FrontierDecoder`, `FrontierCommitteeDecoder` (Rust `FrontierCommittee`), and
+`BpTrellisDecoder`, `decode_batch(shots, workers=N)` decodes on N workers sharing
+one model (both leg models for the committee), with results returned in input order.
+The default is `workers=1` (sequential). Workers are capped at one per shot,
+with one worker for an empty batch. Zero or negative `workers` raises
+`ValueError`; integers outside the signed 64-bit range raise `OverflowError`.
+If a shot fails, the raised error includes the first failing shot's zero-based index.
+
 BP-Trellis exposes the identical result surface:
 
 <!--continuation-->
@@ -55,6 +68,38 @@ assert list(trellis.observable_flips) == [True]
 assert trellis.status == "exact"
 ```
 
+### Factor models
+
+`FrontierDecoder.from_factors(factors, num_detectors, num_observables, ...)`
+accepts a list of independent factors, each containing
+`(probability, detector_indices, observable_indices)` outcome tuples. The
+outcome probabilities in each factor must sum to 1. Binary-shaped factors with
+an empty baseline delegate to the same binary engine as the equivalent DEM.
+
+<!--test-name: experimental_decoder_factors-->
+```python
+import math
+
+from pecos_rslib_exp import FrontierDecoder
+
+factors = [
+    [(0.60, [], []), (0.25, [0], [0]), (0.15, [0], [])],
+    [(0.80, [], []), (0.20, [0], [])],
+]
+result = FrontierDecoder.from_factors(
+    factors,
+    num_detectors=1,
+    num_observables=1,
+    k=10**9,
+    delta=1e6,
+).decode_syndrome([1])
+masses = dict(result.logical_masses)
+
+assert result.observable_flips.mask == 0
+assert math.isclose(masses[0], math.log(0.24), abs_tol=1e-9)
+assert math.isclose(masses[1], math.log(0.20), abs_tol=1e-9)
+```
+
 ### Reading the complementary gap
 
 `logical_masses` holds `(observable_mask, log_mass)` pairs ordered by decreasing
@@ -63,10 +108,16 @@ mass, and `runner_up_gap` is the log-mass difference between the first two --
 includes a fully exact decode with a single reachable class, so treat a
 missing gap as "no runner-up existed", not as a pruning signal, and handle it
 before comparing.
-When `status` is `"exact"` (nothing was pruned), the masses are the true
-unnormalized posteriors: a large gap means one logical class really was
-overwhelmingly more likely, and a gap near zero means the shot was nearly a
-coin flip -- a natural candidate for post-selection or a soft-output pipeline.
+With the default float metric, when `status` is `"exact"` (nothing was pruned),
+the masses are the true unnormalized posteriors: a large gap means one logical
+class really was overwhelmingly more likely, and a gap near zero means the
+shot was nearly a coin flip -- a natural candidate for post-selection or a
+soft-output pipeline. Under the integer `maxlog_int` metric (accepted by Python
+`FrontierDecoder` as `metric_mode="maxlog_int"`; `int_metric_scale` sets the
+quantization units per natural-log unit and defaults to 1024; the committee
+remains float-only), each terminal mass is instead the best-route (Viterbi)
+mass for that logical class, the gap is a route-mass margin, and `log_evidence`
+is the winning route mass rather than evidence.
 When the result was pruned, the gap and the masses describe only what the
 search retained, not a certified confidence -- treat them as search
 diagnostics, not posteriors.
@@ -81,8 +132,9 @@ if result.runner_up_gap is not None:
 ```
 
 The remaining fields describe the search itself rather than the answer:
-`log_evidence` (total retained log evidence), `status` (`"exact"` when nothing
-was pruned), `dropped_states` and `dropped_log_mass` (what pruning discarded),
+`log_evidence` (total retained log evidence under the default float metric),
+`status` (`"exact"` when nothing was pruned), `dropped_states` and
+`dropped_log_mass` (what pruning discarded),
 `peak_retained_states`, `processed_columns`, `escalation_rungs_used`, and
 `bp_seconds`. `dropped_log_mass` counts only the mass states carried when they
 were pruned -- a state dropped early would have branched through later columns,
@@ -102,6 +154,12 @@ silently ignore them. Pass a decomposed model
 to_string_source_graphlike_decomposed()), or use a decoder that accepts
 hyperedges such as bp_osd or tesseract.
 ```
+
+For graph matchers, prefer `DetectorErrorModel.to_string_source_graphlike_decomposed()`
+and check for residual hyperedges. It uses source provenance to choose components.
+The terminal projection mentioned in the diagnostic is a coordinate-based
+approximation: it invents components that need not be physical mechanisms and
+can decode less accurately even when their observable labels are consistent.
 
 There are two ways forward. The production option is a decoder that represents
 hyperedges directly — `bp_osd()` or `tesseract()` from `pecos.decoders`, or the
@@ -132,9 +190,18 @@ The second return value is graphlike and can go to any matching decoder.
 splits only mechanisms whose provenance is already recorded and raises for the
 rest — it has no circuit to re-derive provenance from.
 
+## BP-Trellis no-path outcomes
+
+The direct BP-Trellis methods support `on_no_path="report"` for explicit
+placeholders, while the spec route stays strict. See the
+[BP-Trellis user guide](../user-guide/decoders.md#rust-backed-bp-trellis-batch-decoding)
+for ladder parameters, no-path causes, and per-shot telemetry.
+
 ## What is not here yet
 
-These decoders are not reachable through `DecoderSpec` / `pecos.decoders`, so
-they cannot be passed to `SampleBatch.decode(...)` or `DemSampler.decode(...)`
-and do not participate in unified execution planning, batching, or timing. Use
-their own `decode_syndrome` / `decode_batch` methods directly.
+`frontier()` and `bp_trellis()` are not `DecoderSpec` values: `DecoderSpec.parse`
+does not know their names and the composite factories such as `windowed(...)`
+cannot wrap them. They run through `SampleBatch.decode(...)` and
+`DemSampler.decode(...)` only, and those return predictions and aggregate
+scores; per-shot confidence, pruning status and retry telemetry still come from
+the direct `decode_syndrome` / `decode_batch` methods.

@@ -36,7 +36,6 @@
 
 use crate::errors::MpsError;
 use crate::mps::{Mps, MpsConfig};
-use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_random::PecosRng;
 use pecos_simulators::{
@@ -101,13 +100,17 @@ struct DeferredMeasurement {
 /// RZ rotations; it does not project already deferred injections.
 ///
 /// The injection gadget's predetermined outcomes have exact probability 1/2
-/// for the untruncated state. If MPS truncation has occurred, that predetermined
-/// branch can deviate from the truncated representation's own distribution;
-/// it remains the branch required by the exact, untruncated gadget protocol.
+/// for the untruncated state. If truncation erases that deferred branch,
+/// `project_all` continues on the surviving complement. That continuation is a
+/// normalized approximate state whose injection-time correction does not match
+/// the projected outcome: it is not a valid gadget trajectory for either
+/// outcome. This additional bias is not represented by `truncation_error`;
+/// `deferred_branch_lost_count` is its only witness. An untruncated
+/// configuration never reaches this policy.
 ///
 /// Data-qubit measurements use an exact sample-then-force route: evaluate the
 /// physical Z expectation, sample that probability, then apply the normalized
-/// forced projector for the drawn outcome. This deliberately avoids the default
+/// forced projector for the drawn outcome. This deliberately avoids the
 /// `StabMps` pragmatic measurement path, whose uncompensated tableau
 /// pre-reduction is not composable with MAST's exact forced ancilla projections.
 /// Exact compensation can apply long-range CNOTs to the MPS and therefore cost
@@ -142,7 +145,6 @@ pub struct Mast {
     projection_records: Vec<ProjectionRecord>,
     /// Peak bond dimension observed before or after a deferred projection.
     projection_peak_bond: usize,
-    global_phase: Complex64,
     disent_flags: Vec<Option<super::SiteEigenstate>>,
     numerical_flag_redetection: bool,
     gf2_matrix: super::ofd::Gf2FlipMatrix,
@@ -150,6 +152,7 @@ pub struct Mast {
     /// Runtime counters for non-Clifford decomposition paths.
     pub stats: super::StabMpsStats,
     /// Pending non-Clifford RZ angle per qubit when `merge_rz` is on.
+    /// Merging is exact up to a global phase.
     /// Flushed when any other gate touches the qubit (except RZ-same-qubit
     /// merges, Z/S/Sdg/CZ commutes). Mirror of `StabMps`'s field.
     pending_rz: Vec<Option<Angle64>>,
@@ -185,7 +188,6 @@ impl Mast {
             projection_order: ProjectionOrder::default(),
             projection_records: Vec::new(),
             projection_peak_bond: 0,
-            global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
             numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
@@ -225,7 +227,6 @@ impl Mast {
             projection_order: ProjectionOrder::default(),
             projection_records: Vec::new(),
             projection_peak_bond: 0,
-            global_phase: Complex64::new(1.0, 0.0),
             disent_flags: vec![Some(super::SiteEigenstate::Z(false)); total],
             numerical_flag_redetection: false,
             gf2_matrix: super::ofd::Gf2FlipMatrix::new(total),
@@ -299,23 +300,57 @@ impl Mast {
         }
         let qid = QubitId(q);
         if theta == Angle64::HALF_TURN {
-            self.global_phase *= Complex64::new(0.0, -1.0);
             self.tableau.z(&[qid]);
             return;
         }
         if theta == Angle64::QUARTER_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
             self.tableau.sz(&[qid]);
             return;
         }
         if theta == Angle64::THREE_QUARTERS_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
             self.tableau.szdg(&[qid]);
             return;
         }
         self.inject_magic_state(theta, q);
+    }
+
+    /// Apply RZ through the full tableau-to-MPS Pauli decomposition, including
+    /// at Clifford angles, without allocating injection ancillas.
+    fn rz_apply_decomposed(&mut self, theta: Angle64, q: usize) {
+        if theta == Angle64::ZERO {
+            return;
+        }
+        let (sin_half, cos_half) = theta.half_angle_sin_cos();
+        super::expect_mps_operation(
+            non_clifford::apply_rz_stab_mps(
+                &mut self.tableau,
+                &mut self.mps,
+                cos_half,
+                sin_half,
+                q,
+                true,
+                &mut non_clifford::RzContext {
+                    disent_flags: &mut self.disent_flags,
+                    deferred_ops: &[],
+                    numerical_flag_redetection: self.numerical_flag_redetection,
+                    gf2_matrix: &mut self.gf2_matrix,
+                    stats: &mut self.stats,
+                    saturation_telemetry: None,
+                },
+            ),
+            "Mast::rz decomposed update",
+        );
+    }
+
+    /// Flush a merged RZ and apply a new one by direct decomposition.
+    /// U uses this path to avoid allocating injection ancillas.
+    fn rz_apply_unmerged_decomposed(&mut self, theta: Angle64, q: usize) {
+        if self.merge_rz
+            && let Some(pending) = self.pending_rz[q].take()
+        {
+            self.rz_apply_decomposed(pending, q);
+        }
+        self.rz_apply_decomposed(theta, q);
     }
 
     /// Materialize all pending merged RZ rotations. Public; useful before read
@@ -362,6 +397,30 @@ impl Mast {
     #[must_use]
     pub fn truncation_error(&self) -> f64 {
         self.mps.truncation_error()
+    }
+
+    /// True sum of all relative discarded SVD weights over this run.
+    #[must_use]
+    pub fn summed_discarded_weight(&self) -> f64 {
+        self.mps.summed_discarded_weight()
+    }
+
+    /// Largest coefficient-MPS bond dimension observed over this run.
+    #[must_use]
+    pub fn lifetime_peak_bond(&self) -> usize {
+        self.mps.lifetime_peak_bond()
+    }
+
+    /// Number of sampled data projections retried after branch vanish.
+    #[must_use]
+    pub fn branch_vanish_retry_count(&self) -> u64 {
+        self.mps.branch_vanish_retry_count()
+    }
+
+    /// Number of deferred gadget branches replaced by their complement.
+    #[must_use]
+    pub fn deferred_branch_lost_count(&self) -> u64 {
+        self.mps.deferred_branch_lost_count()
     }
 
     /// Number of SVDs where `max_bond_dim` was the binding cap.
@@ -446,9 +505,11 @@ impl Mast {
                 true,
                 &mut non_clifford::RzContext {
                     disent_flags: &mut self.disent_flags,
+                    deferred_ops: &[],
                     numerical_flag_redetection: self.numerical_flag_redetection,
                     gf2_matrix: &mut self.gf2_matrix,
                     stats: &mut self.stats,
+                    saturation_telemetry: None,
                 },
             ),
             "Mast::inject_magic_state RZ update",
@@ -481,16 +542,11 @@ impl Mast {
             // No correction needed.
         } else if correction_angle == Angle64::HALF_TURN {
             // RZ(pi) = -iZ.
-            self.global_phase *= Complex64::new(0.0, -1.0);
             self.tableau.z(&[tgt]);
         } else if correction_angle == Angle64::QUARTER_TURN {
             // RZ(pi/2) = e^{-i*pi/4} S -- the T-gate correction.
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
             self.tableau.sz(&[tgt]);
         } else if correction_angle == Angle64::THREE_QUARTERS_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
             self.tableau.szdg(&[tgt]);
         } else {
             // Non-Clifford correction: apply via the STN protocol.
@@ -505,9 +561,11 @@ impl Mast {
                     true,
                     &mut non_clifford::RzContext {
                         disent_flags: &mut self.disent_flags,
+                        deferred_ops: &[],
                         numerical_flag_redetection: self.numerical_flag_redetection,
                         gf2_matrix: &mut self.gf2_matrix,
                         stats: &mut self.stats,
+                        saturation_telemetry: None,
                     },
                 ),
                 "Mast::apply_injection_correction RZ update",
@@ -575,19 +633,63 @@ impl Mast {
         let bond_before = self.mps.max_bond_dim();
         self.projection_peak_bond = self.projection_peak_bond.max(bond_before);
 
-        // The branch correction was applied at injection time. Project only
-        // the ancilla, deterministically and with normalized output.
-        let projection = super::measure::project_forced_z_with_update(
-            &mut self.tableau,
-            &mut self.mps,
+        // The branch correction was applied at injection time. Try the
+        // predetermined branch transactionally so a vanished attempt cannot
+        // mutate the live tableau/MPS pair.
+        let properties = super::measure::ZMeasurementProperties::for_projection(
+            &self.tableau,
+            &self.mps,
+            dm.ancilla,
+        );
+        let mut candidate_tableau = self.tableau.clone();
+        let mut candidate_mps = self.mps.clone();
+        let mut projection = super::measure::project_forced_z_with_update(
+            &mut candidate_tableau,
+            &mut candidate_mps,
             dm.ancilla,
             dm.predetermined_outcome,
+            Some(properties),
         )?;
-        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
-        assert!(
-            projection.probability > 1e-20,
-            "predetermined magic-state gadget branch has zero represented weight"
+        #[cfg(all(test, not(debug_assertions)))]
+        tests::record_deferred_projection(&projection);
+        let branch_lost = projection.snapped_probability == 0.0
+            || projection.survival_ratio < super::measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
+        debug_assert!(
+            !branch_lost,
+            "Mast::project_all predetermined deferred branch was lost"
         );
+        if branch_lost {
+            candidate_tableau = self.tableau.clone();
+            candidate_mps = self.mps.clone();
+            let original_config = self.mps.config().clone();
+            candidate_mps.set_config(
+                original_config.without_truncation(candidate_mps.physical_rank_ceiling()),
+            );
+            projection = super::measure::project_forced_z_with_update(
+                &mut candidate_tableau,
+                &mut candidate_mps,
+                dm.ancilla,
+                !dm.predetermined_outcome,
+                Some(properties),
+            )?;
+            #[cfg(all(test, not(debug_assertions)))]
+            tests::record_deferred_projection(&projection);
+            let complement_lost = projection.snapped_probability == 0.0
+                || projection.survival_ratio < super::measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
+            debug_assert!(
+                !complement_lost,
+                "Mast::project_all complement deferred branch was also lost"
+            );
+            assert!(
+                !complement_lost,
+                "Mast::project_all complement deferred branch was also lost"
+            );
+            candidate_mps.set_config(original_config);
+            candidate_mps.record_deferred_branch_lost();
+        }
+        self.tableau = candidate_tableau;
+        self.mps = candidate_mps;
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
 
         let bond_after = self.mps.max_bond_dim();
         self.projection_peak_bond = self.projection_peak_bond.max(bond_after);
@@ -604,40 +706,15 @@ impl Mast {
     /// Evaluate a physical data-qubit Z probability, then apply the normalized
     /// forced projector to the live state for the sampled outcome.
     fn measure_data_qubit_exact(&mut self, q_idx: usize) -> Result<MeasurementResult, MpsError> {
-        // Sample the exact physical observable before the forced projector's
-        // compensated tableau pre-reduction changes its internal basis.
-        let norm_squared = self.mps.norm_squared();
-        assert!(norm_squared > 1e-20, "cannot measure a zero-norm MPS");
-        let expectation = (super::measure::z_expectation_value(&self.tableau, &self.mps, q_idx).re
-            / norm_squared)
-            .clamp(-1.0, 1.0);
-        let probability_zero = f64::midpoint(1.0, expectation);
-        let probability_one = 1.0 - probability_zero;
-        // Match the forced projector's numerical zero threshold; unlike the
-        // pragmatic StabMps route, do not round merely near-deterministic
-        // probabilities to 0 or 1.
-        let is_deterministic = probability_zero.min(probability_one) < 1e-20;
-        let outcome = if is_deterministic {
-            probability_zero < probability_one
-        } else {
-            self.rng.random_bool(probability_one)
-        };
-
-        let projection = super::measure::project_forced_z_with_update(
+        let live = super::measure_qubit_exact_transactional(
             &mut self.tableau,
             &mut self.mps,
+            &mut self.rng,
             q_idx,
-            outcome,
+            "Mast::mz data-qubit projection",
         )?;
-        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &projection.update);
-        assert!(
-            projection.probability > 1e-20,
-            "sampled data-measurement branch has zero represented weight"
-        );
-        Ok(MeasurementResult {
-            outcome,
-            is_deterministic,
-        })
+        super::repair_disent_flags(&self.mps, &mut self.disent_flags, &live.update);
+        Ok(live.measurement)
     }
 }
 
@@ -660,7 +737,6 @@ impl QuantumSimulator for Mast {
         self.deferred.clear();
         self.projection_records.clear();
         self.projection_peak_bond = 0;
-        self.global_phase = Complex64::new(1.0, 0.0);
         self.disent_flags = vec![Some(super::SiteEigenstate::Z(false)); self.total_qubits];
         self.gf2_matrix.reset();
         self.stats = super::StabMpsStats::default();
@@ -767,6 +843,31 @@ impl ArbitraryRotationGateable for Mast {
         self
     }
 
+    fn u(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        lambda: Angle64,
+        qubits: &[QubitId],
+    ) -> &mut Self {
+        for &q in qubits {
+            self.rz_apply_unmerged_decomposed(lambda, q.index());
+        }
+
+        self.szdg(qubits);
+        self.h(qubits);
+        for &q in qubits {
+            self.rz_apply_unmerged_decomposed(theta, q.index());
+        }
+        self.h(qubits);
+        self.sz(qubits);
+
+        for &q in qubits {
+            self.rz_apply_unmerged_decomposed(phi, q.index());
+        }
+        self
+    }
+
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         for &(q0, q1) in pairs {
             self.cx(&[(q0, q1)]);
@@ -780,10 +881,242 @@ impl ArbitraryRotationGateable for Mast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stab_mps::StabMps;
     use approx::assert_relative_eq;
+    use num_complex::Complex64;
+    use pecos_core::Clifford;
+    use pecos_simulators::DenseStateVec;
+
+    #[cfg(not(debug_assertions))]
+    #[derive(Debug, PartialEq)]
+    struct DeferredProjectionSnapshot {
+        probability_bits: u64,
+        survival_ratio_bits: u64,
+        collapsed_site: Option<usize>,
+        modified_sites: Vec<usize>,
+    }
+
+    #[cfg(not(debug_assertions))]
+    std::thread_local! {
+        static DEFERRED_PROJECTIONS: std::cell::RefCell<Option<Vec<DeferredProjectionSnapshot>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub(super) fn record_deferred_projection(
+        projection: &super::super::measure::ForcedProjectionResult,
+    ) {
+        DEFERRED_PROJECTIONS.with_borrow_mut(|trace| {
+            if let Some(trace) = trace {
+                trace.push(DeferredProjectionSnapshot {
+                    probability_bits: projection.snapped_probability.to_bits(),
+                    survival_ratio_bits: projection.survival_ratio.to_bits(),
+                    collapsed_site: projection.update.collapsed_site,
+                    modified_sites: projection.update.modified_sites.clone(),
+                });
+            }
+        });
+    }
 
     fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
         super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
+    }
+
+    fn assert_equal_up_to_phase(a: &[Complex64], b: &[Complex64], label: &str) {
+        assert_eq!(a.len(), b.len(), "{label}: state dimensions");
+        let overlap: Complex64 = a.iter().zip(b).map(|(x, y)| x * y.conj()).sum();
+        assert!(overlap.norm() > 1e-12, "{label}: orthogonal states");
+        let phase = overlap / overlap.norm();
+        for (index, (x, y)) in a.iter().zip(b).enumerate() {
+            assert!(
+                (*x - phase * y).norm() < 1e-12,
+                "{label}: amplitude {index}: {x} vs {y}, phase {phase}"
+            );
+        }
+    }
+
+    fn mast_data_state_vector(mast: &Mast) -> Vec<Complex64> {
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        let full = view.state_vector_up_to_phase();
+        let data_dimension = 1_usize << mast.num_data_qubits;
+        let mut best = Vec::new();
+        let mut best_norm = 0.0;
+        let mut total_norm = 0.0;
+        for block in full.chunks_exact(data_dimension) {
+            let norm = block
+                .iter()
+                .map(num_complex::Complex::norm_sqr)
+                .sum::<f64>();
+            total_norm += norm;
+            if norm > best_norm {
+                best_norm = norm;
+                best = block.to_vec();
+            }
+        }
+        // The dense tableau projector used only by this test becomes
+        // mildly ill-conditioned on the exact-mz continuation circuit.
+        assert!(best_norm > 0.99, "ancillas did not factor: {best_norm}");
+        assert!((total_norm - 1.0).abs() < 1e-8);
+        let scale = best_norm.sqrt().recip();
+        for amplitude in &mut best {
+            *amplitude *= scale;
+        }
+        best
+    }
+
+    fn mast_state_vector_without_ancillas(mast: &Mast) -> Vec<Complex64> {
+        assert_eq!(mast.total_qubits, mast.num_data_qubits);
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        view.state_vector_up_to_phase()
+    }
+
+    #[test]
+    fn scaled_mast_data_measurement_matches_normalized_state() {
+        use crate::stab_mps::trivial_measurement_tests::assert_pair_close;
+
+        for probability_one in [0.0_f64, 0.37, 1.0] {
+            for seed in 0..8 {
+                let mut normalized = Mast::with_seed(2, 2, seed);
+                normalized.mps.tensors_mut()[0][(0, 0)] =
+                    Complex64::new((1.0 - probability_one).sqrt(), 0.0);
+                normalized.mps.tensors_mut()[0][(0, 1)] =
+                    Complex64::new(probability_one.sqrt(), 0.0);
+                let mut scaled = Mast::with_seed(2, 2, seed);
+                scaled.mps = normalized.mps.clone();
+                scaled.mps.scale(Complex64::new(1e-7, 0.0));
+                let actual = scaled.mz(&[QubitId(0)]);
+                let expected = normalized.mz(&[QubitId(0)]);
+                assert_eq!(actual[0].outcome, expected[0].outcome);
+                assert_eq!(actual[0].is_deterministic, expected[0].is_deterministic);
+                assert_pair_close(
+                    &scaled.tableau,
+                    &scaled.mps,
+                    &normalized.tableau,
+                    &normalized.mps,
+                );
+                assert_eq!(scaled.disent_flags, normalized.disent_flags);
+            }
+        }
+    }
+
+    #[test]
+    fn trivial_exact_mast_matches_general_path_bitwise() {
+        use crate::stab_mps::trivial_measurement_tests::{assert_pair_bits, with_fast_path};
+
+        for seed in 0..32 {
+            for truncating in [false, true] {
+                let config = MpsConfig {
+                    max_bond_dim: if truncating { 1 } else { 4 },
+                    svd_cutoff: if truncating { 1e-7 } else { 0.0 },
+                    max_truncation_error: Some(0.0),
+                    parallel: false,
+                };
+                let mut fast = Mast::with_seed(2, 2, seed).with_mps_config(config.clone());
+                let mut slow = Mast::with_seed(2, 2, seed).with_mps_config(config);
+                for round in 0..4 {
+                    for simulator in [&mut fast, &mut slow] {
+                        simulator.h(&[QubitId(0)]);
+                        simulator.cx(&[(QubitId(0), QubitId(1))]);
+                        if round == 1 {
+                            simulator.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                        }
+                    }
+                    for q in [0, 1, 1] {
+                        let a = with_fast_path(true, || fast.mz(&[QubitId(q)]));
+                        let b = with_fast_path(false, || slow.mz(&[QubitId(q)]));
+                        assert_eq!(a[0].outcome, b[0].outcome);
+                        assert_eq!(a[0].is_deterministic, b[0].is_deterministic);
+                        assert_pair_bits(&fast.tableau, &fast.mps, &slow.tableau, &slow.mps);
+                        assert_eq!(fast.rng.clone().next_u64(), slow.rng.clone().next_u64());
+                        assert_eq!(fast.disent_flags, slow.disent_flags);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn u_phase_family_up_to_phase() {
+        for (lambda, expected_high, label) in [
+            (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),
+            (
+                Angle64::QUARTER_TURN / 2u64,
+                Complex64::new(
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                ),
+                "T",
+            ),
+            (Angle64::QUARTER_TURN, Complex64::new(0.0, 1.0), "SZ"),
+            (Angle64::HALF_TURN, Complex64::new(-1.0, 0.0), "Z"),
+        ] {
+            let mut sim = Mast::new(1, 0);
+            sim.h(&[QubitId(0)]);
+            sim.u(Angle64::ZERO, Angle64::ZERO, lambda, &[QubitId(0)]);
+            let actual = mast_state_vector_without_ancillas(&sim);
+            let scale = std::f64::consts::FRAC_1_SQRT_2;
+            let expected = [Complex64::new(scale, 0.0), expected_high * scale];
+            assert_equal_up_to_phase(&actual, &expected, label);
+        }
+    }
+
+    #[test]
+    fn u_matches_documented_matrix() {
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        let theta_rad = theta.to_radians_signed();
+        let phi_rad = phi.to_radians_signed();
+        let lambda_rad = lambda.to_radians_signed();
+        let c = (theta_rad / 2.0).cos();
+        let s = (theta_rad / 2.0).sin();
+        let scale = std::f64::consts::FRAC_1_SQRT_2;
+        // U acts on q0, so each q1 block is one matrix column / sqrt(2).
+        let expected = [
+            Complex64::new(c, 0.0) * scale,
+            Complex64::from_polar(s, phi_rad) * scale,
+            -Complex64::from_polar(s, lambda_rad) * scale,
+            Complex64::from_polar(c, lambda_rad + phi_rad) * scale,
+        ];
+
+        for merge_rz in [false, true] {
+            let mut sim = Mast::new(2, 0).with_merge_rz(merge_rz);
+            sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+            sim.u(theta, phi, lambda, &[QubitId(0)]);
+            sim.flush();
+            let actual = mast_state_vector_without_ancillas(&sim);
+            assert_equal_up_to_phase(&actual, &expected, &format!("U Choi, merge_rz={merge_rz}"));
+        }
+    }
+
+    #[test]
+    fn pending_rz_before_u_matches_dense_without_injection() {
+        let mut mast = Mast::with_seed(2, 2, 952).with_merge_rz(true);
+        let mut dense = DenseStateVec::new(2);
+        let pending = Angle64::from_radians(0.37);
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        let lambda = Angle64::from_radians(1.17);
+        mast.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+        dense.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+        mast.rz(pending, &[QubitId(0)]);
+        dense.rz(pending, &[QubitId(0)]);
+        assert_eq!(mast.pending_rz[0], Some(pending));
+        mast.u(theta, phi, lambda, &[QubitId(0)]);
+        dense.u(theta, phi, lambda, &[QubitId(0)]);
+        mast.flush();
+        mast.project_all();
+        assert_equal_up_to_phase(
+            &mast_data_state_vector(&mast),
+            &dense_state(&mut dense, 2),
+            "pending RZ before U",
+        );
+        // U must consume the pending angle by direct decomposition, before H
+        // could flush it through magic-state injection.
+        assert_eq!(mast.num_ancillas_used(), 0);
     }
 
     fn project_next_and_assert(mast: &mut Mast, context: &str) {
@@ -823,6 +1156,226 @@ mod tests {
         let measurements = mast.mz(&qubits);
 
         assert_eq!(measurements.len(), qubits.len());
+    }
+
+    fn apply_single_qubit_clifford<S: CliffordGateable>(
+        sim: &mut S,
+        gate: Clifford,
+        qubits: &[QubitId],
+    ) {
+        match gate {
+            Clifford::I => sim.identity(qubits),
+            Clifford::X => sim.x(qubits),
+            Clifford::Y => sim.y(qubits),
+            Clifford::Z => sim.z(qubits),
+            Clifford::H => sim.h(qubits),
+            Clifford::H2 => sim.h2(qubits),
+            Clifford::H3 => sim.h3(qubits),
+            Clifford::H4 => sim.h4(qubits),
+            Clifford::H5 => sim.h5(qubits),
+            Clifford::H6 => sim.h6(qubits),
+            Clifford::SX => sim.sx(qubits),
+            Clifford::SXdg => sim.sxdg(qubits),
+            Clifford::SY => sim.sy(qubits),
+            Clifford::SYdg => sim.sydg(qubits),
+            Clifford::SZ => sim.sz(qubits),
+            Clifford::SZdg => sim.szdg(qubits),
+            Clifford::F => sim.f(qubits),
+            Clifford::Fdg => sim.fdg(qubits),
+            Clifford::F2 => sim.f2(qubits),
+            Clifford::F2dg => sim.f2dg(qubits),
+            Clifford::F3 => sim.f3(qubits),
+            Clifford::F3dg => sim.f3dg(qubits),
+            Clifford::F4 => sim.f4(qubits),
+            Clifford::F4dg => sim.f4dg(qubits),
+            _ => panic!("expected a single-qubit Clifford, got {gate}"),
+        };
+    }
+
+    fn single_qubit_clifford_order(gate: Clifford) -> usize {
+        let mut power = Clifford::I;
+        for order in 1..=4 {
+            power = gate.compose(power);
+            if power == Clifford::I {
+                return order;
+            }
+        }
+        panic!("single-qubit Clifford {gate} has order greater than four");
+    }
+
+    fn apply_two_qubit_clifford(
+        sim: &mut impl CliffordGateable,
+        gate: Clifford,
+        pairs: &[(QubitId, QubitId)],
+    ) {
+        match gate {
+            Clifford::CX => sim.cx(pairs),
+            Clifford::CY => sim.cy(pairs),
+            Clifford::CZ => sim.cz(pairs),
+            Clifford::SXX => sim.sxx(pairs),
+            Clifford::SXXdg => sim.sxxdg(pairs),
+            Clifford::SYY => sim.syy(pairs),
+            Clifford::SYYdg => sim.syydg(pairs),
+            Clifford::SZZ => sim.szz(pairs),
+            Clifford::SZZdg => sim.szzdg(pairs),
+            Clifford::SWAP => sim.swap(pairs),
+            Clifford::ISWAP => sim.iswap(pairs),
+            Clifford::ISWAPdg => sim.iswapdg(pairs),
+            Clifford::G => sim.g(pairs),
+            Clifford::Gdg => sim.gdg(pairs),
+            _ => panic!("expected a two-qubit Clifford, got {gate}"),
+        };
+    }
+
+    fn prepare_entangled_pair(sim: &mut impl CliffordGateable) {
+        sim.h(&[QubitId(0)])
+            .sz(&[QubitId(0)])
+            .cx(&[(QubitId(0), QubitId(1))])
+            .h(&[QubitId(1)]);
+    }
+
+    fn prepare_entangled_partners(sim: &mut impl CliffordGateable) {
+        sim.h(&[QubitId(0), QubitId(1)])
+            .cx(&[(QubitId(0), QubitId(2)), (QubitId(1), QubitId(3))])
+            .sz(&[QubitId(0)])
+            .h(&[QubitId(1)])
+            .sz(&[QubitId(1)]);
+    }
+
+    fn apply_rotation(
+        sim: &mut impl ArbitraryRotationGateable,
+        gate: &str,
+        angle: Angle64,
+        q: usize,
+    ) {
+        let qubits = &[QubitId(q)];
+        match gate {
+            "rz" => sim.rz(angle, qubits),
+            "rx" => sim.rx(angle, qubits),
+            "ry" => sim.ry(angle, qubits),
+            "rzz" => sim.rzz(angle, &[(QubitId(q), QubitId(1 - q))]),
+            "u" => sim.u(angle, angle, angle, qubits),
+            _ => panic!("unknown rotation {gate}"),
+        };
+    }
+
+    fn dense_state(sim: &mut DenseStateVec, n: usize) -> Vec<Complex64> {
+        (0..1 << n).map(|index| sim.get_amplitude(index)).collect()
+    }
+
+    fn mast_state_vector(mast: &Mast) -> Vec<Complex64> {
+        let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
+        view.tableau = mast.tableau.clone();
+        view.mps = mast.mps.clone();
+        view.state_vector_up_to_phase()
+    }
+
+    #[test]
+    fn test_mast_clifford_powers_restore_observable_state_up_to_phase() {
+        for &gate in Clifford::all_1q() {
+            let mut mast = Mast::new(2, 0);
+            mast.h(&[QubitId(0)])
+                .sz(&[QubitId(0)])
+                .cx(&[(QubitId(0), QubitId(1))]);
+            let expected = mast_state_vector(&mast);
+            for _ in 0..single_qubit_clifford_order(gate) {
+                apply_single_qubit_clifford(&mut mast, gate, &[QubitId(0)]);
+            }
+            let actual = mast_state_vector(&mast);
+            assert_equal_up_to_phase(&actual, &expected, &format!("{gate:?} power"));
+        }
+    }
+
+    #[test]
+    fn single_qubit_cliffords_match_dense_and_have_group_order() {
+        for &gate in Clifford::all_1q() {
+            for q in 0..2 {
+                let mut sim = Mast::new(2, 0);
+                let mut dense = DenseStateVec::new(2);
+                prepare_entangled_pair(&mut sim);
+                prepare_entangled_pair(&mut dense);
+                let start = mast_state_vector_without_ancillas(&sim);
+                apply_single_qubit_clifford(&mut sim, gate, &[QubitId(q)]);
+                apply_single_qubit_clifford(&mut dense, gate, &[QubitId(q)]);
+                assert_equal_up_to_phase(
+                    &mast_state_vector_without_ancillas(&sim),
+                    &dense_state(&mut dense, 2),
+                    &format!("{gate:?} q={q}"),
+                );
+                for _ in 1..single_qubit_clifford_order(gate) {
+                    apply_single_qubit_clifford(&mut sim, gate, &[QubitId(q)]);
+                }
+                assert_equal_up_to_phase(
+                    &mast_state_vector_without_ancillas(&sim),
+                    &start,
+                    &format!("{gate:?} power q={q}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn two_qubit_cliffords_match_dense_in_both_orders() {
+        for &gate in Clifford::all_2q() {
+            for (a, b) in [(0, 1), (1, 0)] {
+                let mut sim = Mast::new(4, 0);
+                let mut dense = DenseStateVec::new(4);
+                prepare_entangled_partners(&mut sim);
+                prepare_entangled_partners(&mut dense);
+                let pairs = &[(QubitId(a), QubitId(b))];
+                apply_two_qubit_clifford(&mut sim, gate, pairs);
+                apply_two_qubit_clifford(&mut dense, gate, pairs);
+                assert_equal_up_to_phase(
+                    &mast_state_vector_without_ancillas(&sim),
+                    &dense_state(&mut dense, 4),
+                    &format!("{gate:?} ({a},{b})"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rotations_match_dense_with_and_without_merging() {
+        for merge in [false, true] {
+            for gate in ["rz", "rx", "ry", "rzz", "u"] {
+                for angle in [
+                    Angle64::ZERO,
+                    Angle64::QUARTER_TURN,
+                    Angle64::HALF_TURN,
+                    Angle64::THREE_QUARTERS_TURN,
+                    Angle64::from_radians(0.37),
+                ] {
+                    for q in 0..2 {
+                        for repetitions in [1, 2] {
+                            let mut sim = Mast::with_seed(4, 2, 952)
+                                .with_merge_rz(merge)
+                                .with_mps_config(MpsConfig {
+                                    svd_cutoff: 0.0,
+                                    max_truncation_error: Some(0.0),
+                                    ..MpsConfig::default()
+                                });
+                            let mut dense = DenseStateVec::new(4);
+                            prepare_entangled_partners(&mut sim);
+                            prepare_entangled_partners(&mut dense);
+                            // Repetition exercises the merge buffer, including angle wraparound.
+                            for _ in 0..repetitions {
+                                apply_rotation(&mut sim, gate, angle, q);
+                                apply_rotation(&mut dense, gate, angle, q);
+                            }
+                            sim.flush();
+                            sim.project_all();
+                            assert_equal_up_to_phase(
+                                &mast_data_state_vector(&sim),
+                                &dense_state(&mut dense, 4),
+                                &format!(
+                                    "{gate} {angle:?}, q={q}, merge={merge}, repetitions={repetitions}"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -867,7 +1420,6 @@ mod tests {
     #[test]
     #[ignore = "dense 8-site MAST reconstruction regression; run explicitly with --release"]
     fn test_mast_disent_flag_projection_continuation_matches_dense() {
-        use crate::stab_mps::StabMps;
         use pecos_simulators::DenseStateVec;
 
         #[derive(Clone, Copy, Debug)]
@@ -952,38 +1504,6 @@ mod tests {
                     }
                 })
                 .collect()
-        }
-
-        fn mast_data_state_vector(mast: &Mast) -> Vec<Complex64> {
-            let mut view = StabMps::builder(mast.total_qubits).merge_rz(false).build();
-            view.tableau = mast.tableau.clone();
-            view.mps = mast.mps.clone();
-            view.global_phase = mast.global_phase;
-            let full = view.state_vector();
-            let data_dimension = 1_usize << mast.num_data_qubits;
-            let mut best = Vec::new();
-            let mut best_norm = 0.0;
-            let mut total_norm = 0.0;
-            for block in full.chunks_exact(data_dimension) {
-                let norm = block
-                    .iter()
-                    .map(num_complex::Complex::norm_sqr)
-                    .sum::<f64>();
-                total_norm += norm;
-                if norm > best_norm {
-                    best_norm = norm;
-                    best = block.to_vec();
-                }
-            }
-            // The dense tableau projector used only by this test becomes
-            // mildly ill-conditioned on the exact-mz continuation circuit.
-            assert!(best_norm > 0.99, "ancillas did not factor: {best_norm}");
-            assert!((total_norm - 1.0).abs() < 1e-8);
-            let scale = best_norm.sqrt().recip();
-            for amplitude in &mut best {
-                *amplitude *= scale;
-            }
-            best
         }
 
         fn exact_config() -> MpsConfig {
@@ -1271,7 +1791,7 @@ mod tests {
             assert_eq!(mast.projection_peak_bond(), recorded_peak);
 
             mast.reset();
-            assert!(mast.projection_records().is_empty());
+            assert_eq!(mast.projection_records(), []);
             assert_eq!(mast.projection_peak_bond(), 0);
         }
     }
@@ -1289,7 +1809,7 @@ mod tests {
             let mut outcomes = Vec::with_capacity(200);
             for _ in 0..200 {
                 mast.reset();
-                assert!(mast.projection_records().is_empty());
+                assert_eq!(mast.projection_records(), []);
                 assert_eq!(mast.projection_peak_bond(), 0);
                 assert_eq!(mast.stats.total_nonclifford, 0);
                 outcomes.push(run(&mut mast));
@@ -1353,7 +1873,6 @@ mod tests {
     /// probabilities between MAST and STN.
     #[test]
     fn test_mast_vs_stn_multi_qubit() {
-        use crate::stab_mps::StabMps;
         let num_trials = 1000;
         let n = 4;
         // Circuit: H on all, CX(0,1), T(0), CX(1,2), T(1), CX(2,3), T(2)
@@ -1423,12 +1942,11 @@ mod tests {
     #[test]
     fn test_mast_vs_stn_single_qubit() {
         // Compare MAST and STN state vectors for H, T on single qubit
-        use crate::stab_mps::StabMps;
 
         let mut stn = StabMps::new(1);
         stn.h(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
-        let _stn_sv = stn.state_vector();
+        let _stn_sv = stn.state_vector_up_to_phase();
 
         // MAST: the state vector includes ancilla qubits, so we can't
         // directly compare. But the data qubit probabilities should match.
@@ -1464,7 +1982,6 @@ mod tests {
     #[test]
     fn test_stn_3qubit_measurement_correlation() {
         // Test that STN gives same results as plain SparseStabY for pure Clifford.
-        use crate::stab_mps::StabMps;
 
         let mut stn_corr = 0;
         let mut tab_corr = 0;
@@ -1518,7 +2035,7 @@ mod tests {
             // Magic state injection for T on q0:
             tab.h(&[QubitId(2)]); // ancilla in |+>
             tab.sz(&[QubitId(2)]); // S on ancilla (half of T = S*T^{1/2}... wait, we need T)
-            // Actually, SparseStabY can't do T. Let me use T = RZ(pi/4) via the Clifford S.
+            // SparseStabY cannot apply T; use the projectively equivalent RZ(pi/4).
             // T|+> via Clifford: not possible. T is non-Clifford.
             // In the SparseStabY world, we can test the protocol with S instead of T.
             // S|+> = (|0> + i|1>)/sqrt(2)
@@ -1547,7 +2064,6 @@ mod tests {
     fn test_manual_mast_with_stn_clifford() {
         // Manual MAST with S (Clifford) instead of T.
         // This should work because the MPS stays trivial.
-        use crate::stab_mps::StabMps;
 
         let mut correlated = 0;
         let num_trials = 100;
@@ -1579,7 +2095,6 @@ mod tests {
     #[test]
     fn test_z2_expectation_value() {
         // Verify the Z_2 expectation value matches between STN and direct computation.
-        use crate::stab_mps::StabMps;
         use nalgebra::DMatrix;
         use pecos_simulators::StabVec;
 
@@ -1659,7 +2174,6 @@ mod tests {
     #[test]
     fn test_stn_state_before_ancilla_measurement() {
         // Check that the STN state vector before ancilla measurement is correct.
-        use crate::stab_mps::StabMps;
         use pecos_simulators::StabVec;
 
         let mut stn = StabMps::new(3);
@@ -1676,7 +2190,7 @@ mod tests {
         crz.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(2)]);
         crz.cx(&[(QubitId(0), QubitId(2))]);
 
-        let stn_sv = stn.state_vector();
+        let stn_sv = stn.state_vector_up_to_phase();
         let crz_sv = crz.state_vector();
 
         // Check overlap
@@ -1703,7 +2217,6 @@ mod tests {
     fn test_manual_mast_with_stn_nonclifford() {
         // Manual MAST with T (non-Clifford).
         // This tests whether the STN measurement handles the ancilla correctly.
-        use crate::stab_mps::StabMps;
 
         let mut correlated = 0;
         let num_trials = 100;
@@ -1833,5 +2346,291 @@ mod tests {
             0,
             "CZ should not flush pending_rz, merge persists"
         );
+    }
+
+    #[test]
+    fn mast_data_measurement_skips_transaction_with_non_truncating_config() {
+        let config = MpsConfig {
+            max_bond_dim: 2,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(2, 1, 17).with_mps_config(config);
+        mast.h(&[QubitId(0), QubitId(1)]);
+        mast.cx(&[(QubitId(0), QubitId(1))]);
+        mast.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        let before = super::super::EXACT_MEASUREMENT_TRANSACTIONS.get();
+        mast.mz(&[QubitId(0)]);
+        assert_eq!(super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(), before);
+        assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
+        mast.mps.set_max_bond_dim(1);
+        mast.mz(&[QubitId(1)]);
+        assert_eq!(
+            super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn mast_deferred_projection_evaluates_properties_once() {
+        let mut mast = Mast::with_seed(1, 1, 17);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        super::super::measure::Z_EXPECTATION_EVALUATIONS.set(0);
+        super::super::measure::TRIVIAL_MPS_EVALUATIONS.set(0);
+        mast.project_all();
+        assert_eq!(
+            super::super::measure::Z_EXPECTATION_EVALUATIONS.get(),
+            1 + usize::from(cfg!(debug_assertions))
+        );
+        assert_eq!(
+            super::super::measure::TRIVIAL_MPS_EVALUATIONS.get(),
+            1 + 2 * usize::from(cfg!(debug_assertions))
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "Mast::project_all predetermined deferred branch was lost")]
+    fn mast_deferred_branch_loss_keeps_debug_assertion() {
+        let mut mast = Mast::with_seed(1, 1, 17);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        crate::stab_mps::measure::inject_projection_vanishes(1);
+        mast.project_all();
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn assert_deferred_ancilla_outcome(mast: &Mast, ancilla: usize, outcome: bool) {
+        let norm_squared = mast.mps.norm_squared();
+        let expectation =
+            crate::stab_mps::measure::z_expectation_value(&mast.tableau, &mast.mps, ancilla).re
+                / norm_squared;
+        let expected = if outcome { -1.0 } else { 1.0 };
+        assert!(
+            (expectation - expected).abs() < 1e-10,
+            "deferred ancilla {ancilla} projected outcome mismatch: expected {outcome}, Z={expectation:.16e}"
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mast_deferred_branch_loss_uses_untruncated_complement_in_release() {
+        let configured = MpsConfig {
+            max_bond_dim: 1,
+            svd_cutoff: 1e-7,
+            max_truncation_error: Some(1e-4),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(1, 1, 17).with_mps_config(configured.clone());
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        let deferred = mast.deferred[0];
+        crate::stab_mps::measure::inject_projection_vanishes(1);
+        super::super::measure::Z_EXPECTATION_EVALUATIONS.set(0);
+        super::super::measure::TRIVIAL_MPS_EVALUATIONS.set(0);
+        mast.project_all();
+        assert_eq!(super::super::measure::Z_EXPECTATION_EVALUATIONS.get(), 1);
+        assert_eq!(super::super::measure::TRIVIAL_MPS_EVALUATIONS.get(), 1);
+        assert_eq!(mast.deferred_branch_lost_count(), 1);
+        assert_deferred_ancilla_outcome(&mast, deferred.ancilla, !deferred.predetermined_outcome);
+        assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
+        assert_eq!(mast.mps.config().max_bond_dim, configured.max_bond_dim);
+        assert_eq!(
+            mast.mps.config().svd_cutoff.to_bits(),
+            configured.svd_cutoff.to_bits()
+        );
+        assert_eq!(
+            mast.mps.config().max_truncation_error,
+            configured.max_truncation_error
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mast_genuine_deferred_loss_retry_matches_recomputed_properties_in_release() {
+        use super::super::measure;
+
+        struct StopRecording;
+        impl Drop for StopRecording {
+            fn drop(&mut self) {
+                DEFERRED_PROJECTIONS.set(None);
+            }
+        }
+
+        let run = |truncate_before_projection, recompute| {
+            let _restore = super::super::tests::RestoreExactMeasurementPolicy;
+            let _recording = StopRecording;
+            let config = MpsConfig {
+                max_bond_dim: 1,
+                svd_cutoff: 0.0,
+                max_truncation_error: Some(0.0),
+                parallel: false,
+            };
+            let mut mast = Mast::with_seed(1, 1, 17).with_mps_config(config.clone());
+            mast.tableau.h(&[QubitId(0), QubitId(1)]);
+            mast.tableau.cx(&[(QubitId(0), QubitId(1))]);
+            // Z_ancilla pulls back to X_0 X_1. Rank-one compensation keeps
+            // the dominant |++> Schmidt term and erases the negative branch.
+            for (site, probability_one) in [(0, 0.1_f64), (1, 0.5)] {
+                let preparation = nalgebra::DMatrix::from_row_slice(
+                    2,
+                    2,
+                    &[
+                        Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                        Complex64::new(-probability_one.sqrt(), 0.0),
+                        Complex64::new(probability_one.sqrt(), 0.0),
+                        Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                    ],
+                );
+                mast.mps.apply_one_site_gate(site, &preparation).unwrap();
+            }
+            mast.disent_flags.fill(None);
+            mast.next_ancilla = 2;
+            mast.deferred.push(DeferredMeasurement {
+                ancilla: 1,
+                predetermined_outcome: true,
+                injection_index: 0,
+            });
+            let before =
+                measure::ZMeasurementProperties::for_projection(&mast.tableau, &mast.mps, 1);
+            assert!((before.probability(true) - 0.2).abs() < 1e-14);
+            assert!((before.probability(false) - 0.8).abs() < 1e-14);
+            if truncate_before_projection {
+                measure::pre_reduce_for_measurement_pub(&mut mast.tableau, &mut mast.mps, 1)
+                    .unwrap();
+                mast.mps.normalize();
+                assert!(mast.mps.summed_discarded_weight() > 0.1);
+            }
+            let before =
+                measure::ZMeasurementProperties::for_projection(&mast.tableau, &mast.mps, 1);
+            let predetermined_probability = before.probability(true);
+            let complement_probability = before.probability(false);
+            if truncate_before_projection {
+                assert_eq!(predetermined_probability.to_bits(), 0.0_f64.to_bits());
+                assert_eq!(complement_probability.to_bits(), 1.0_f64.to_bits());
+            }
+
+            measure::RECOMPUTE_Z_PROPERTIES.set(recompute);
+            DEFERRED_PROJECTIONS.set(Some(Vec::new()));
+            mast.project_all();
+            let trace = DEFERRED_PROJECTIONS
+                .take()
+                .expect("recorded deferred projections");
+            assert_eq!(trace.len(), 2);
+            assert_eq!(
+                trace[0].probability_bits,
+                predetermined_probability.to_bits()
+            );
+            if !truncate_before_projection {
+                assert!(
+                    f64::from_bits(trace[0].survival_ratio_bits)
+                        < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD
+                );
+            }
+            assert_eq!(trace[1].probability_bits, complement_probability.to_bits());
+            assert!(
+                f64::from_bits(trace[1].survival_ratio_bits)
+                    >= measure::BRANCH_VANISH_SURVIVAL_THRESHOLD
+            );
+            assert_eq!(mast.deferred_branch_lost_count(), 1);
+            assert_eq!(mast.branch_vanish_retry_count(), 0);
+            assert!(mast.deferred.is_empty());
+            assert_eq!(mast.projection_records.len(), 1);
+            assert_eq!(mast.mps.config(), &config);
+            (mast, trace)
+        };
+
+        for truncate_before_projection in [false, true] {
+            let (threaded, threaded_trace) = run(truncate_before_projection, false);
+            let (recomputed, recomputed_trace) = run(truncate_before_projection, true);
+            assert_eq!(threaded_trace, recomputed_trace);
+            for (left, right) in threaded.mps.tensors().iter().zip(recomputed.mps.tensors()) {
+                assert_eq!(left.shape(), right.shape());
+                for (left, right) in left.iter().zip(right.iter()) {
+                    assert_eq!(left.re.to_bits(), right.re.to_bits());
+                    assert_eq!(left.im.to_bits(), right.im.to_bits());
+                }
+            }
+            assert_eq!(threaded.mps.tensors().len(), recomputed.mps.tensors().len());
+            assert_eq!(threaded.mps.bond_dims(), recomputed.mps.bond_dims());
+            assert_eq!(
+                format!("{:?}", threaded.tableau),
+                format!("{:?}", recomputed.tableau)
+            );
+            assert_eq!(threaded.disent_flags, recomputed.disent_flags);
+            assert_eq!(threaded.projection_records, recomputed.projection_records);
+            assert_eq!(
+                threaded.projection_peak_bond,
+                recomputed.projection_peak_bond
+            );
+            assert_eq!(threaded.mps.config(), recomputed.mps.config());
+            assert_eq!(threaded.config, recomputed.config);
+            assert_eq!(
+                threaded.mps.tracked_center_for_test(),
+                recomputed.mps.tracked_center_for_test()
+            );
+            assert_eq!(
+                threaded.mps.truncation_error().to_bits(),
+                recomputed.mps.truncation_error().to_bits()
+            );
+            assert_eq!(
+                threaded.mps.summed_discarded_weight().to_bits(),
+                recomputed.mps.summed_discarded_weight().to_bits()
+            );
+            assert_eq!(threaded.mps.bond_cap_hits(), recomputed.mps.bond_cap_hits());
+            assert_eq!(
+                threaded.mps.lifetime_peak_bond(),
+                recomputed.mps.lifetime_peak_bond()
+            );
+            assert_eq!(
+                threaded.mps.full_canonical_sweep_count(),
+                recomputed.mps.full_canonical_sweep_count()
+            );
+            assert_eq!(
+                threaded.mps.center_reuse_count(),
+                recomputed.mps.center_reuse_count()
+            );
+            assert_eq!(
+                threaded.mps.clone().take_phase_svd_operations(),
+                recomputed.mps.clone().take_phase_svd_operations()
+            );
+            eprintln!(
+                "truncate_before_projection={truncate_before_projection}: threaded and recomputed deferred retry match bit-for-bit: {threaded_trace:?}"
+            );
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mast_zero_probability_deferred_loss_projects_complement_in_release() {
+        let configured = MpsConfig {
+            max_bond_dim: 1,
+            svd_cutoff: 1e-7,
+            max_truncation_error: Some(1e-4),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(1, 1, 23).with_mps_config(configured);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        let deferred = mast.deferred[0];
+        // Preserve a healthy survival ratio while emulating the probability
+        // zero returned when prior configured truncation erased this branch.
+        crate::stab_mps::measure::inject_zero_projection_probabilities(1);
+        mast.project_all();
+        assert_eq!(mast.deferred_branch_lost_count(), 1);
+        assert_deferred_ancilla_outcome(&mast, deferred.ancilla, !deferred.predetermined_outcome);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    #[should_panic(expected = "Mast::project_all complement deferred branch was also lost")]
+    fn mast_deferred_double_loss_panics_in_release() {
+        let mut mast = Mast::with_seed(1, 1, 29);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        crate::stab_mps::measure::inject_projection_vanishes(2);
+        mast.project_all();
     }
 }

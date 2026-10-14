@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import pecos as pc
+from pecos._phir_declarations import validate_declaration_names
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -202,8 +203,6 @@ class PyPHIR:
                         metadata=o.get("metadata"),
                     )
                     if "duration" in o:
-                        if instr.metadata is None:
-                            instr.metadata = {}
                         instr.metadata["duration"] = o["duration"]
 
                 elif "meta" in o:
@@ -267,6 +266,8 @@ class PyPHIR:
             name_resolver=name_resolver,
         )
 
+        validate_declaration_names(phir["ops"])
+
         next_qvar_int = 0
 
         for o in phir["ops"]:
@@ -299,19 +300,26 @@ class PyPHIR:
                     p.cvar_dtype_list.append(data.data_type)
 
                 if name == "qvar_define":
-                    if o["data_type"] != "qubits":
+                    # Validate the quantum declaration shape specified by PHIR-JSON v0.1.
+                    data_type = o.get("data_type", "qubits")
+                    if data_type != "qubits":
                         msg = f"Do not know handle qvar type: {o['data_type']}"
                         raise Exception(msg)
 
+                    size = o.get("size")
+                    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+                        msg = f"Quantum register '{o['variable']}' requires a positive integer size; got {size!r}"
+                        raise ValueError(msg)
+
                     qubit_ids = []
-                    for _i in range(o["size"]):
+                    for _i in range(size):
                         qubit_ids.append(next_qvar_int)
                         next_qvar_int += 1
 
                     data = d.QVarDefine(
-                        data_type=o["data_type"],
+                        data_type=data_type,
                         variable=o["variable"],
-                        size=o["size"],
+                        size=size,
                         qubit_ids=qubit_ids,
                         metadata=o.get("metadata"),
                     )

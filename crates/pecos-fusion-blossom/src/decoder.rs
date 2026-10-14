@@ -303,7 +303,7 @@ impl FusionBlossomDecoder {
         // DEMs as an error rather than overflow-panicking in the `1 << o` loop below.
         graph
             .ensure_observables_fit_u64()
-            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+            .map_err(FusionBlossomError::from)?;
         let config = FusionBlossomConfig {
             num_nodes: Some(graph.num_detectors),
             num_observables: graph.num_observables,
@@ -343,7 +343,7 @@ impl FusionBlossomDecoder {
     /// requested without its required partition configuration.
     pub fn from_dem_with_solver_type(dem: &str, solver_type: SolverType) -> Result<Self> {
         let graph = pecos_decoder_core::dem::DemMatchingGraph::from_dem_str(dem)
-            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+            .map_err(FusionBlossomError::from)?;
         Self::from_matching_graph_with_solver_type(&graph, solver_type)
     }
 
@@ -355,8 +355,7 @@ impl FusionBlossomDecoder {
     pub fn parse_correlated_dem(dem: &str) -> Result<ParsedCorrelatedDem> {
         use pecos_decoder_core::dem::DemCheckMatrix;
 
-        let dcm = DemCheckMatrix::from_dem_str(dem)
-            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+        let dcm = DemCheckMatrix::from_dem_str(dem).map_err(FusionBlossomError::from)?;
 
         let mut mechanisms = Vec::new();
         for m in 0..dcm.num_mechanisms {
@@ -492,7 +491,7 @@ impl FusionBlossomDecoder {
         // Matching decoders pack observable flips into a u64; reject >64-observable
         // DEMs as an error rather than overflow-panicking in build_obs_masks.
         dcm.ensure_observables_fit_u64()
-            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+            .map_err(FusionBlossomError::from)?;
         // Use Legacy solver which tolerates duplicate edges (no assertion).
         let config = FusionBlossomConfig {
             num_nodes: Some(dcm.num_detectors),
@@ -570,12 +569,11 @@ impl FusionBlossomDecoder {
         use pecos_decoder_core::dem::DemCheckMatrix;
 
         Self::validate_dem_solver_type(solver_type)?;
-        let dcm = DemCheckMatrix::from_dem_str(dem)
-            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+        let dcm = DemCheckMatrix::from_dem_str(dem).map_err(FusionBlossomError::from)?;
         // Matching decoders pack observable flips into a u64; reject >64-observable
         // DEMs as an error rather than overflow-panicking in build_obs_masks.
         dcm.ensure_observables_fit_u64()
-            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+            .map_err(FusionBlossomError::from)?;
 
         let config = FusionBlossomConfig {
             num_nodes: Some(dcm.num_detectors),

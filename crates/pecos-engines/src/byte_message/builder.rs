@@ -77,8 +77,16 @@ impl ByteMessageBuilder {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    ///
+    /// # Panics
+    ///
+    /// Panics if messages were already added in a different mode.
     #[must_use]
     pub fn for_quantum_operations(&mut self) -> &mut Self {
+        assert!(
+            self.msg_count == 0 || self.mode == BuilderMode::QuantumOperations,
+            "Cannot change builder mode after adding messages"
+        );
         self.mode = BuilderMode::QuantumOperations;
         self
     }
@@ -91,8 +99,16 @@ impl ByteMessageBuilder {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    ///
+    /// # Panics
+    ///
+    /// Panics if messages were already added in a different mode.
     #[must_use]
     pub fn for_outcomes(&mut self) -> &mut Self {
+        assert!(
+            self.msg_count == 0 || self.mode == BuilderMode::MeasurementOutcomes,
+            "Cannot change builder mode after adding messages"
+        );
         self.mode = BuilderMode::MeasurementOutcomes;
         self
     }
@@ -109,14 +125,21 @@ impl ByteMessageBuilder {
         match msg_type {
             MessageType::Gate => {
                 assert!(
-                    !(self.mode == BuilderMode::MeasurementOutcomes),
-                    "Cannot mix quantum operations and measurement outcomes in the same message"
+                    !(self.mode == BuilderMode::MeasurementOutcomes
+                        || self.mode == BuilderMode::ReturnValue),
+                    "Cannot mix quantum operations with other message types"
                 );
                 if self.mode == BuilderMode::Empty {
                     self.mode = BuilderMode::QuantumOperations;
                 }
             }
             MessageType::Outcome => {
+                assert_eq!(
+                    payload_size,
+                    size_of::<OutcomeHeader>(),
+                    "Outcome payload size must be {}",
+                    size_of::<OutcomeHeader>()
+                );
                 assert!(
                     !(self.mode == BuilderMode::QuantumOperations
                         || self.mode == BuilderMode::ReturnValue),
@@ -125,6 +148,12 @@ impl ByteMessageBuilder {
                 self.mode = BuilderMode::MeasurementOutcomes;
             }
             MessageType::ReturnValue => {
+                assert_eq!(
+                    payload_size,
+                    size_of::<ReturnValueHeader>(),
+                    "ReturnValue payload size must be {}",
+                    size_of::<ReturnValueHeader>()
+                );
                 assert!(
                     self.mode == BuilderMode::Empty || self.mode == BuilderMode::ReturnValue,
                     "Cannot mix return values with other message types"
@@ -135,10 +164,7 @@ impl ByteMessageBuilder {
 
         self.add_padding(4);
 
-        let payload_size = u32::try_from(payload_size).unwrap_or_else(|_| {
-            log::warn!("Payload size exceeds u32::MAX, using maximum value");
-            u32::MAX
-        });
+        let payload_size = u32::try_from(payload_size).expect("Payload size exceeds u32::MAX");
         let header = MessageHeader::new(msg_type, payload_size, flags);
         self.buffer.extend_from_slice(bytes_of(&header));
         self.msg_count += 1;
@@ -290,7 +316,7 @@ impl ByteMessageBuilder {
     ///
     /// # Arguments
     ///
-    /// * `msg_type` - The type of message to add (`MessageType::Gate` or `MessageType::Outcome`)
+    /// * `msg_type` - The type of message to add
     /// * `payload` - The binary payload for the message
     /// * `flags` - Optional flags to set on the message
     ///
@@ -301,7 +327,9 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// This function will panic if:
-    /// - Attempting to mix quantum operations and measurement outcomes in the same message
+    /// - Attempting to mix message types
+    /// - An `Outcome` or `ReturnValue` payload has an incorrect size
+    /// - The payload size exceeds `u32::MAX`
     pub fn add_message(
         &mut self,
         msg_type: MessageType,
@@ -526,12 +554,31 @@ impl ByteMessageBuilder {
         self.add_gate_parts(GateType::RZ, qubits, &[theta], &[])
     }
 
-    /// Add an R1XY gate
-    pub fn r1xy(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
+    /// Add an RXY1Q gate
+    pub fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[usize]) -> &mut Self {
         if qubits.len() == 1 {
-            return self.add_single_qubit_gate_parts(GateType::R1XY, qubits[0], &[theta, phi], &[]);
+            return self.add_single_qubit_gate_parts(
+                GateType::RXY1Q,
+                qubits[0],
+                &[theta, phi],
+                &[],
+            );
         }
-        self.add_gate_parts(GateType::R1XY, qubits, &[theta, phi], &[])
+        self.add_gate_parts(GateType::RXY1Q, qubits, &[theta, phi], &[])
+    }
+
+    /// Add RXYXY2Q(theta, phi) gates, with one shared XY-plane axis on both qubits.
+    pub fn rxyxy2q(&mut self, theta: Angle64, phi: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        if let [(q0, q1)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::RXYXY2Q, *q0, *q1, &[theta, phi], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::RXYXY2Q,
+            pairs.len() * 2,
+            pairs.iter().copied().flat_map(|(q0, q1)| [q0, q1]),
+            &[theta, phi],
+            &[],
+        )
     }
 
     /// Add a U gate
@@ -606,26 +653,34 @@ impl ByteMessageBuilder {
 
     /// Add an SZ (S) gate
     pub fn sz(&mut self, qubits: &[usize]) -> &mut Self {
-        // S gate is RZ(π/2)
-        self.rz(Angle64::QUARTER_TURN, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::SZ, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::SZ, qubits, &[], &[])
     }
 
     /// Add an `SZdg` (S†) gate
     pub fn szdg(&mut self, qubits: &[usize]) -> &mut Self {
-        // S† gate is RZ(-π/2)
-        self.rz(-Angle64::QUARTER_TURN, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::SZdg, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::SZdg, qubits, &[], &[])
     }
 
     /// Add a T gate
     pub fn t(&mut self, qubits: &[usize]) -> &mut Self {
-        // T gate is RZ(π/4)
-        self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::T, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::T, qubits, &[], &[])
     }
 
     /// Add a Tdg (T†) gate
     pub fn tdg(&mut self, qubits: &[usize]) -> &mut Self {
-        // T† gate is RZ(-π/4)
-        self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
+        if qubits.len() == 1 {
+            return self.add_single_qubit_gate_parts(GateType::Tdg, qubits[0], &[], &[]);
+        }
+        self.add_gate_parts(GateType::Tdg, qubits, &[], &[])
     }
 
     /// Add an RX gate
@@ -672,6 +727,25 @@ impl ByteMessageBuilder {
         }
         self.add_gate_parts_from_usizes(
             GateType::CZ,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
+            &[],
+            &[],
+        )
+    }
+
+    /// Add controlled-Hadamard gates.
+    ///
+    /// Each tuple is a (control, target) pair.
+    pub fn ch(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        if let [(control, target)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::CH, *control, *target, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::CH,
             pairs.len() * 2,
             pairs
                 .iter()
@@ -908,6 +982,10 @@ impl ByteMessageBuilder {
     /// # Returns
     ///
     /// Returns a `ByteMessage` containing the constructed binary message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the total message size exceeds `u32::MAX`.
     #[must_use]
     pub fn build_unchecked(&mut self) -> ByteMessage {
         // Calculate total size and update batch header
@@ -916,10 +994,7 @@ impl ByteMessageBuilder {
         // Create a batch header with proper message count and size
         let header = BatchHeader::new(
             self.msg_count,
-            u32::try_from(total_size).unwrap_or_else(|_| {
-                log::warn!("Message size exceeds u32::MAX, using maximum value");
-                u32::MAX
-            }),
+            u32::try_from(total_size).expect("Message size exceeds u32::MAX"),
         );
 
         // Write header to the start of the buffer
@@ -941,6 +1016,7 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// This function will panic if:
+    /// - The total message size exceeds `u32::MAX`
     /// - Messages have been added but the builder mode was not explicitly set
     ///   (call `for_quantum_operations()` or `for_outcomes()` before adding operations)
     #[must_use]
@@ -964,6 +1040,186 @@ mod tests {
     use pecos_core::QubitId;
 
     #[test]
+    fn strict_all_gates_round_trip() {
+        let mut builder = ByteMessageBuilder::new();
+        builder.x(&[0]);
+        builder.y(&[0]);
+        builder.z(&[0]);
+        builder.h(&[0]);
+        builder.cx(&[(0, 1)]);
+        builder.szz(&[(0, 1)]);
+        builder.szzdg(&[(0, 1)]);
+        builder.mz(&[0]);
+        builder.measure_leakages(&[0]);
+        builder.mpz(&[0]);
+        builder.meas_crosstalk_global_payload(&[0]);
+        builder.meas_crosstalk_local_payload(&[0]);
+        builder.pz(&[0]);
+        builder.sz(&[0]);
+        builder.szdg(&[0]);
+        builder.t(&[0]);
+        builder.tdg(&[0]);
+        builder.cy(&[(0, 1)]);
+        builder.cz(&[(0, 1)]);
+        builder.ch(&[(0, 1)]);
+        builder.sx(&[0]);
+        builder.sxdg(&[0]);
+        builder.sy(&[0]);
+        builder.sydg(&[0]);
+        builder.swap(&[(0, 1)]);
+        builder.sxx(&[(0, 1)]);
+        builder.sxxdg(&[(0, 1)]);
+        builder.syy(&[(0, 1)]);
+        builder.syydg(&[(0, 1)]);
+        assert_eq!(
+            builder.build().quantum_ops().unwrap(),
+            [
+                Gate::x(&[0]),
+                Gate::y(&[0]),
+                Gate::z(&[0]),
+                Gate::h(&[0]),
+                Gate::cx(&[(0, 1)]),
+                Gate::szz(&[(0, 1)]),
+                Gate::szzdg(&[(0, 1)]),
+                Gate::mz(&[0]),
+                Gate::measure_leaked(&[0]),
+                Gate::mpz(&[0]),
+                Gate::meas_crosstalk_global_payload(&[0]),
+                Gate::meas_crosstalk_local_payload(&[0]),
+                Gate::pz(&[0]),
+                Gate::sz(&[0]),
+                Gate::szdg(&[0]),
+                Gate::t(&[0]),
+                Gate::tdg(&[0]),
+                Gate::cy(&[(0, 1)]),
+                Gate::cz(&[(0, 1)]),
+                Gate::ch(&[(0, 1)]),
+                Gate::sx(&[0]),
+                Gate::sxdg(&[0]),
+                Gate::sy(&[0]),
+                Gate::sydg(&[0]),
+                Gate::swap(&[(0, 1)]),
+                Gate::sxx(&[(0, 1)]),
+                Gate::sxxdg(&[(0, 1)]),
+                Gate::syy(&[(0, 1)]),
+                Gate::syydg(&[(0, 1)]),
+            ]
+        );
+    }
+
+    #[test]
+    fn strict_all_parameterized_gates_round_trip() {
+        let mut builder = ByteMessageBuilder::new();
+        let theta = Angle64::from_radians(0.25);
+        let phi = Angle64::from_radians(0.5);
+        builder.idle(0.75, &[0]);
+        builder.rx(theta, &[0]);
+        builder.ry(theta, &[0]);
+        builder.rz(theta, &[0]);
+        builder.rxx(theta, &[(0, 1)]);
+        builder.ryy(theta, &[(0, 1)]);
+        builder.rzz(theta, &[(0, 1)]);
+        builder.rxy1q(theta, phi, &[0]);
+        builder.rxyxy2q(theta, phi, &[(0, 1)]);
+        builder.u(theta, phi, theta, &[0]);
+        assert_eq!(
+            builder.build().quantum_ops().unwrap(),
+            [
+                Gate::idle(0.75, vec![QubitId(0)]),
+                Gate::rx(theta, &[0]),
+                Gate::ry(theta, &[0]),
+                Gate::rz(theta, &[0]),
+                Gate::rxx(theta, &[(0, 1)]),
+                Gate::ryy(theta, &[(0, 1)]),
+                Gate::rzz(theta, &[(0, 1)]),
+                Gate::rxy1q(theta, phi, &[0]),
+                Gate::rxyxy2q(theta, phi, &[(0, 1)]),
+                Gate::u(theta, phi, theta, &[0]),
+            ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot mix quantum operations with other message types")]
+    fn strict_gate_after_return_value() {
+        ByteMessageBuilder::new().add_return_value(1).h(&[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot change builder mode")]
+    fn strict_outcomes_after_gates() {
+        let _ = ByteMessageBuilder::new().h(&[0]).for_outcomes();
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot change builder mode")]
+    fn strict_gates_after_outcomes() {
+        let _ = ByteMessageBuilder::new()
+            .add_outcomes(&[1])
+            .for_quantum_operations();
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot change builder mode")]
+    fn strict_outcomes_mode_after_return_value() {
+        let _ = ByteMessageBuilder::new().add_return_value(1).for_outcomes();
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot change builder mode")]
+    fn strict_gates_mode_after_return_value() {
+        let _ = ByteMessageBuilder::new()
+            .add_return_value(1)
+            .for_quantum_operations();
+    }
+
+    #[test]
+    #[should_panic(expected = "Outcome payload size must be 4")]
+    fn strict_outcome_payload_3() {
+        ByteMessageBuilder::new().add_message(MessageType::Outcome, &[0; 3], MessageFlags::NONE);
+    }
+
+    #[test]
+    #[should_panic(expected = "Outcome payload size must be 4")]
+    fn strict_outcome_payload_5() {
+        ByteMessageBuilder::new().add_message(MessageType::Outcome, &[0; 5], MessageFlags::NONE);
+    }
+
+    #[test]
+    #[should_panic(expected = "ReturnValue payload size must be 8")]
+    fn strict_returnvalue_payload_7() {
+        ByteMessageBuilder::new().add_message(
+            MessageType::ReturnValue,
+            &[0; 7],
+            MessageFlags::NONE,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ReturnValue payload size must be 8")]
+    fn strict_returnvalue_payload_9() {
+        ByteMessageBuilder::new().add_message(
+            MessageType::ReturnValue,
+            &[0; 9],
+            MessageFlags::NONE,
+        );
+    }
+
+    #[test]
+    fn strict_mode_reselection() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_outcomes().for_quantum_operations();
+        builder.h(&[0]);
+        let _ = builder.for_quantum_operations();
+        assert_eq!(builder.build().quantum_ops().unwrap(), [Gate::h(&[0])]);
+        builder.reset();
+        let _ = builder.for_quantum_operations().for_outcomes();
+        builder.add_outcomes(&[1]);
+        let _ = builder.for_outcomes();
+        assert_eq!(builder.build().outcomes().unwrap(), [1]);
+    }
+
+    #[test]
     fn test_gate_command_interface() {
         // Create a builder
         let mut builder = ByteMessageBuilder::new();
@@ -979,9 +1235,16 @@ mod tests {
         let gates = vec![Gate::x(&[2]), Gate::cx(&[(0, 1)])];
         builder.add_gate_commands(&gates);
 
-        // Build and verify basic structure
         let message = builder.build();
-        assert!(!message.is_empty().unwrap());
+        assert_eq!(
+            message.quantum_ops().unwrap(),
+            [
+                Gate::h(&[0]),
+                Gate::rz(Angle64::from_radians(0.5), &[1]),
+                Gate::x(&[2]),
+                Gate::cx(&[(0, 1)]),
+            ]
+        );
     }
 
     #[test]
@@ -1034,6 +1297,30 @@ mod tests {
     }
 
     #[test]
+    fn test_phase_gate_tokens_survive_byte_message_round_trip() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.sz(&[1]);
+        builder.szdg(&[0, 2]);
+        builder.t(&[0, 2]);
+        builder.tdg(&[1]);
+
+        let commands = builder.build().quantum_ops().unwrap();
+        assert_eq!(commands.len(), 4);
+        let expected = [
+            (GateType::SZ, &[QubitId(1)][..]),
+            (GateType::SZdg, &[QubitId(0), QubitId(2)][..]),
+            (GateType::T, &[QubitId(0), QubitId(2)][..]),
+            (GateType::Tdg, &[QubitId(1)][..]),
+        ];
+        for (command, (gate_type, qubits)) in commands.iter().zip(expected) {
+            assert_eq!(command.gate_type, gate_type);
+            assert_eq!(command.qubits.as_slice(), qubits);
+            assert!(command.angles.is_empty());
+        }
+    }
+
+    #[test]
     fn test_builder_measurement_message() {
         // Create a builder for measurement outcomes
         let mut builder = ByteMessageBuilder::new();
@@ -1045,8 +1332,8 @@ mod tests {
         // Build the message
         let message = builder.build();
 
-        // No need to verify a specific message type anymore, just ensure it's valid
-        assert!(message.is_empty().is_ok());
+        assert!(!message.is_empty().unwrap());
+        assert_eq!(message.outcomes().unwrap(), [0]);
     }
 
     #[test]
@@ -1061,7 +1348,7 @@ mod tests {
         builder.y(&[2]);
         builder.z(&[3]);
         builder.rz(Angle64::from_radians(0.5), &[4]);
-        builder.r1xy(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.rxy1q(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
         builder.mz(&[6]);
 
         // Build the message
@@ -1081,8 +1368,8 @@ mod tests {
         assert_eq!(commands[4].angles.len(), 1);
         assert!((commands[4].angles[0].to_radians() - 0.5).abs() < 1e-10);
         assert!(commands[4].params.is_empty());
-        assert_eq!(commands[5].gate_type, GateType::R1XY);
-        // R1XY has two angles, also stored in angles field
+        assert_eq!(commands[5].gate_type, GateType::RXY1Q);
+        // RXY1Q has two angles, also stored in angles field
         assert_eq!(commands[5].angles.len(), 2);
         assert!((commands[5].angles[0].to_radians() - 0.1).abs() < 1e-10);
         assert!((commands[5].angles[1].to_radians() - 0.2).abs() < 1e-10);
@@ -1095,8 +1382,8 @@ mod tests {
         let theta_rx = Angle64::from_radians(0.3);
         let theta_ry = Angle64::from_radians(0.4);
         let theta_rz = Angle64::from_radians(0.5);
-        let theta_r1xy = Angle64::from_radians(0.6);
-        let phi_r1xy = Angle64::from_radians(0.7);
+        let theta_rxy1q = Angle64::from_radians(0.6);
+        let phi_rxy1q = Angle64::from_radians(0.7);
         let theta_rzz = Angle64::from_radians(0.8);
 
         let mut generic_builder = ByteMessageBuilder::new();
@@ -1104,7 +1391,7 @@ mod tests {
         generic_builder.add_gate_command(&Gate::rx(theta_rx, &[1]));
         generic_builder.add_gate_command(&Gate::ry(theta_ry, &[2]));
         generic_builder.add_gate_command(&Gate::rz(theta_rz, &[3]));
-        generic_builder.add_gate_command(&Gate::r1xy(theta_r1xy, phi_r1xy, &[4]));
+        generic_builder.add_gate_command(&Gate::rxy1q(theta_rxy1q, phi_rxy1q, &[4]));
         generic_builder.add_gate_command(&Gate::rzz(theta_rzz, &[(5, 6)]));
 
         let mut fast_path_builder = ByteMessageBuilder::new();
@@ -1112,19 +1399,27 @@ mod tests {
         fast_path_builder.rx(theta_rx, &[1]);
         fast_path_builder.ry(theta_ry, &[2]);
         fast_path_builder.rz(theta_rz, &[3]);
-        fast_path_builder.r1xy(theta_r1xy, phi_r1xy, &[4]);
+        fast_path_builder.rxy1q(theta_rxy1q, phi_rxy1q, &[4]);
         fast_path_builder.rzz(theta_rzz, &[(5, 6)]);
 
         let generic_message = generic_builder.build();
         let fast_path_message = fast_path_builder.build();
 
         assert_eq!(generic_message.as_bytes(), fast_path_message.as_bytes());
+        assert_eq!(
+            fast_path_message.quantum_ops().unwrap(),
+            [
+                Gate::rx(theta_rx, &[1]),
+                Gate::ry(theta_ry, &[2]),
+                Gate::rz(theta_rz, &[3]),
+                Gate::rxy1q(theta_rxy1q, phi_rxy1q, &[4]),
+                Gate::rzz(theta_rzz, &[(5, 6)]),
+            ]
+        );
     }
 
     #[test]
-    #[should_panic(
-        expected = "Cannot mix quantum operations and measurement outcomes in the same message"
-    )]
+    #[should_panic(expected = "Cannot mix quantum operations with other message types")]
     fn test_builder_type_checking() {
         // Create a builder for measurement outcomes
         let mut builder = ByteMessageBuilder::new();

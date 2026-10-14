@@ -36,6 +36,7 @@
 
 use crate::logical_subgraph::LogicalSubgraph;
 use std::fmt::Write as _;
+use std::num::NonZeroUsize;
 
 /// Whether a windowed logical-subgraph decode actually time-windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,17 +152,17 @@ impl LogicalSubgraphWindowPlan {
     /// rounds per window.
     ///
     /// This is an ESTIMATE, not a guaranteed match of the exact window count an
-    /// `OverlappingWindowedDecoder` builds: it counts core ranges that contain a
+    /// `StreamingWindowedDecoder` builds: it counts core ranges that contain a
     /// detector and ignores the buffer overlap, and it requires an explicit
-    /// `step` (the real decoder auto-derives `step` from the graph when none is
-    /// given). It is sufficient for the load-bearing use here -- the
+    /// positive `step`, just like the real decoder. It is sufficient for the
+    /// load-bearing use here -- the
     /// [`Self::effective_windowing`] FullFallback-vs-RealWindowed *boolean*,
     /// which depends only on `total_t` vs `step`, not on buffer details. Exact
     /// counts should single-source the decoder's own loop (a Layer C item when
     /// the windowing construction is revisited; see the proper-solution design
     /// doc).
     #[must_use]
-    pub fn window_count(&self, i: usize, step: usize) -> usize {
+    pub fn window_count(&self, i: usize, step: NonZeroUsize) -> usize {
         self.entries
             .get(i)
             .map_or(0, |e| window_count_for_times(&e.detector_times, step))
@@ -169,7 +170,7 @@ impl LogicalSubgraphWindowPlan {
 
     /// Total windows across all observables at `step`.
     #[must_use]
-    pub fn total_windows(&self, step: usize) -> usize {
+    pub fn total_windows(&self, step: NonZeroUsize) -> usize {
         (0..self.entries.len())
             .map(|i| self.window_count(i, step))
             .sum()
@@ -178,7 +179,7 @@ impl LogicalSubgraphWindowPlan {
     /// Whether real time-windowing happens at `step`, or it degenerates to a
     /// single-window full decode for every observable.
     #[must_use]
-    pub fn effective_windowing(&self, step: usize) -> EffectiveWindowing {
+    pub fn effective_windowing(&self, step: NonZeroUsize) -> EffectiveWindowing {
         if (0..self.entries.len()).any(|i| self.window_count(i, step) > 1) {
             EffectiveWindowing::RealWindowed
         } else {
@@ -191,23 +192,19 @@ impl LogicalSubgraphWindowPlan {
 /// window, matching the sliding-window loop's core ranges. Only windows that
 /// contain at least one detector are counted. With no coordinates (all times
 /// `0.0`) this returns 1 -- the silent-fallback signal.
-fn window_count_for_times(times: &[f64], step: usize) -> usize {
+fn window_count_for_times(times: &[f64], step: NonZeroUsize) -> usize {
     if times.is_empty() {
         return 0;
     }
     let max_time = times.iter().copied().fold(0.0f64, f64::max);
     let total_t = max_time + 1.0;
-    let step = step.max(1) as f64;
+    let step = step.get() as f64;
 
     let mut count = 0usize;
     let mut t_start = 0.0f64;
     while t_start < total_t {
         let is_last = t_start + 2.0 * step > total_t;
-        let t_core_end = if is_last {
-            total_t + 1.0
-        } else {
-            t_start + step
-        };
+        let t_core_end = if is_last { total_t } else { t_start + step };
         if times.iter().any(|&t| t >= t_start && t < t_core_end) {
             count += 1;
         }
@@ -226,21 +223,40 @@ mod tests {
     #[test]
     fn coordless_times_are_single_window() {
         // All detectors at time 0 (the subgraph-graph / no-coords case).
-        assert_eq!(window_count_for_times(&[0.0, 0.0, 0.0], 4), 1);
-        assert_eq!(window_count_for_times(&[0.0], 1), 1);
+        assert_eq!(
+            window_count_for_times(&[0.0, 0.0, 0.0], NonZeroUsize::new(4).unwrap()),
+            1
+        );
+        assert_eq!(
+            window_count_for_times(&[0.0], NonZeroUsize::new(1).unwrap()),
+            1
+        );
     }
 
     #[test]
     fn empty_times_are_zero_windows() {
-        assert_eq!(window_count_for_times(&[], 4), 0);
+        assert_eq!(
+            window_count_for_times(&[], NonZeroUsize::new(4).unwrap()),
+            0
+        );
     }
 
     #[test]
     fn multi_round_times_window_by_step() {
         // Times 0..=23 (24 rounds), step 4 -> several windows (> 1).
         let times: Vec<f64> = (0..24).map(f64::from).collect();
-        assert!(window_count_for_times(&times, 4) > 1);
+        assert!(window_count_for_times(&times, NonZeroUsize::new(4).unwrap()) > 1);
         // A step covering the whole range -> a single window.
-        assert_eq!(window_count_for_times(&times, 1000), 1);
+        assert_eq!(
+            window_count_for_times(&times, NonZeroUsize::new(1000).unwrap()),
+            1
+        );
+    }
+    #[test]
+    fn merged_tail_is_counted_once() {
+        assert_eq!(
+            window_count_for_times(&[0.0, 1.0, 2.0, 3.0], NonZeroUsize::new(3).unwrap()),
+            1
+        );
     }
 }

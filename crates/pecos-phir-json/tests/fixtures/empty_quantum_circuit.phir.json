@@ -1,0 +1,15 @@
+{
+  "format": "PHIR/JSON",
+  "version": "0.1.0",
+  "metadata": {
+    "source_program_type": [
+      "PECOS.QuantumCircuit",
+      [
+        "PECOS",
+        "fixture"
+      ]
+    ],
+    "num_qubits": 0
+  },
+  "ops": []
+}

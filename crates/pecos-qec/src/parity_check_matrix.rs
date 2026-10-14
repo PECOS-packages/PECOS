@@ -183,6 +183,10 @@ mod tests {
         let matrix = ParityCheckMatrix::zeros(0, 9);
         assert_eq!(matrix.num_checks(), 0);
         assert_eq!(matrix.num_qubits(), 9);
-        assert!(matrix.rows().is_empty());
+        let rows = matrix.rows();
+        assert!(
+            rows.is_empty(),
+            "expected no parity check rows, got {rows:?}"
+        );
     }
 }

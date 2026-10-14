@@ -4,7 +4,6 @@ permissions:
   contents: read
 
 env:
-  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
   MACOS_WHEEL_DEPLOYMENT_TARGET: "13.0"
@@ -23,24 +22,7 @@ on:
       - dev
       - development
       - master
-    tags:
-      - 'py-*'
-    paths:
-      - 'python/pecos-rslib/**'
-      - 'python/pecos-rslib-llvm/**'
-      - 'python/quantum-pecos/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'uv.lock'
-      - 'scripts/ci/**'
-      - '.github/workflows/python-release.yml'
-  pull_request:
-    branches:
-      - main
-      - dev
-      - development
-      - master
+    tags: [ "py-*", "jl-*", "rs-*" ]
     paths:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
@@ -56,14 +38,18 @@ on:
       sha:
         description: Commit SHA
         type: string
-      dry_run:
-        description: 'Dry run (build but not publish)'
-        type: boolean
-        default: true
+  # Measured 5-9 h delays shift this stagger outside working hours;
+  # spread runner demand across the repository's five macOS slots.
+  schedule:
+    - cron: "7 20 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish a started build: cancelling it on each merge threw away 49-minute
+  # Intel and 27-minute arm macOS builds. A newer push still replaces an older
+  # pending one. Schedules and manual dispatches get their own groups so a
+  # merge cannot drop their validation while they wait.
+  group: ${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.run_id || github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -72,13 +58,9 @@ defaults:
 jobs:
   resolve_release_mode:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' && github.event.action != 'closed' ||
-      github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-') ||
-      github.event_name == 'workflow_dispatch'
+    # The push trigger limits refs; every admitted event builds and tests all artifacts.
+    if: github.event_name != 'pull_request'
     outputs:
-      pr_smoke: ${{ steps.mode.outputs.pr_smoke }}
       full_release: ${{ steps.mode.outputs.full_release }}
     steps:
       - name: Harden the runner (egress audit)
@@ -90,170 +72,13 @@ jobs:
         id: mode
         env:
           EVENT_NAME: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
-          TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+          # Branch/tag pushes, schedules and dispatches all validate the full matrix.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
-            echo "pr_smoke=false" >> $GITHUB_OUTPUT
-            echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
-            echo "pr_smoke=false" >> $GITHUB_OUTPUT
-            echo "full_release=true" >> $GITHUB_OUTPUT
-          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            echo "pr_smoke=true" >> $GITHUB_OUTPUT
-            echo "full_release=false" >> $GITHUB_OUTPUT
           else
-            echo "pr_smoke=false" >> $GITHUB_OUTPUT
             echo "full_release=false" >> $GITHUB_OUTPUT
           fi
-
-  pr_smoke_build:
-    needs: resolve_release_mode
-    if: needs.resolve_release_mode.outputs.pr_smoke == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.inputs.sha || github.sha }}
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
-        with:
-          version-file: ".github/uv.toml"
-          enable-cache: true
-          save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-
-      - name: Set up Rust
-        run: |
-          bash scripts/ci/ensure-rust.sh stable minimal
-          export PATH="$HOME/.cargo/bin:$PATH"
-          rustup show
-
-      - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
-        with:
-          cache-bin: false
-          prefix-key: v1-rust-no-bin
-          save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
-
-      - name: Cache LLVM
-        id: cache-llvm
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: ~/.pecos/deps/llvm-21.1
-          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
-
-      - name: Ensure LLVM
-        run: just ci-env
-
-      - name: Install Python build tooling
-        run: uv pip install --system build maturin
-
-      - name: Build pecos-rslib wheel
-        run: |
-          mkdir -p dist/pecos-rslib
-          maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
-
-      - name: Build pecos-rslib-llvm wheel
-        run: |
-          mkdir -p dist/pecos-rslib-llvm
-          maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
-
-      - name: Build quantum-pecos wheel
-        run: |
-          mkdir -p dist/quantum-pecos
-          cd python/quantum-pecos
-          python -m build --wheel --outdir ../../dist/quantum-pecos
-
-      - name: Upload PR smoke artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: pr-smoke-python-artifacts
-          path: |
-            dist/pecos-rslib/*.whl
-            dist/pecos-rslib-llvm/*.whl
-            dist/quantum-pecos/*.whl
-          if-no-files-found: error
-
-  pr_smoke_test:
-    needs: [resolve_release_mode, pr_smoke_build]
-    if: needs.resolve_release_mode.outputs.pr_smoke == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.14']
-    steps:
-      - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      # This job is deliberately checkout-free: it consumes the built wheels
-      # as a pure PyPI-style consumer. The uv version pin is tooling, not part
-      # of that consumer contract, so fetch ONLY the pin file for setup-uv.
-      - name: Fetch the uv version pin
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          sparse-checkout: .github/uv.toml
-          sparse-checkout-cone-mode: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
-        with:
-          version-file: ".github/uv.toml"
-
-      - name: Download PR smoke artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: pr-smoke-python-artifacts
-          path: ./pr-smoke-artifacts
-
-      - name: Install PR smoke artifacts
-        run: |
-          # Install all three local wheels in ONE resolver invocation: the local
-          # wheels satisfy quantum-pecos's exact pecos-rslib/-llvm pins (which do
-          # not exist on PyPI for unreleased versions) and every other dependency
-          # resolves from the wheel's own Requires-Dist -- no hand-maintained
-          # duplicate pin list that can drift from the package metadata.
-          uv pip install --system --force-reinstall \
-            ./pr-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl \
-            ./pr-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl \
-            ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
-          uv pip check --system
-
-      - name: Import PR smoke artifacts
-        run: |
-          python -c 'from importlib.metadata import version; import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": version("pecos-rslib-llvm")})'
 
   build_wheelspecos_rslib:
     needs: resolve_release_mode
@@ -543,7 +368,7 @@ jobs:
 
       - name: Install uv for Linux wheel verification
         if: runner.os == 'Linux'
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
           enable-cache: true
@@ -680,7 +505,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.12', '3.13', '3.14']
         platform:
           - runner: ubuntu-latest
             os: ubuntu-latest
@@ -708,11 +532,6 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.inputs.sha || github.sha }}
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Download pecos-rslib abi3 wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -725,9 +544,48 @@ jobs:
           name: wheel-pecos-rslib-llvm-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-llvm-wheel
 
-      - name: Test abi3 wheels with Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Test abi3 wheels with Python 3.12
         run: |
-          echo "Testing abi3 wheels with Python ${{ matrix.python-version }}"
+          echo "Testing abi3 wheels with Python 3.12"
+          python --version
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Set up Python 3.13
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Test abi3 wheels with Python 3.13
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Testing abi3 wheels with Python 3.13"
+          python --version
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
+          python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Set up Python 3.14
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Test abi3 wheels with Python 3.14
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Testing abi3 wheels with Python 3.14"
           python --version
           python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'

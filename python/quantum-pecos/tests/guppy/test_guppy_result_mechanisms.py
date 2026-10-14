@@ -20,12 +20,9 @@ class TestGuppyResultMechanisms:
     @pytest.fixture
     def guppy_functions(self) -> dict:
         """Fixture providing various Guppy functions with different output styles."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.builtins import result
-            from guppylang.std.quantum import cx, h, measure, qubit
-        except ImportError:
-            pytest.skip("Guppy or quantum modules not available")
+        from guppylang import guppy
+        from guppylang.std.builtins import result
+        from guppylang.std.quantum import cx, h, measure, qubit
 
         @guppy
         def bell_with_result_tags() -> None:
@@ -75,10 +72,7 @@ class TestGuppyResultMechanisms:
 
     def test_compile_to_hugr(self, guppy_functions: dict) -> None:
         """Test that all function styles compile to HUGR successfully."""
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         for name, func in guppy_functions.items():
             try:
@@ -98,10 +92,7 @@ class TestGuppyResultMechanisms:
 
     def test_hugr_contains_operations(self, guppy_functions: dict) -> None:
         """Test that HUGR contains expected quantum and result operations."""
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         for name, func in guppy_functions.items():
             hugr_bytes = compile_guppy_to_hugr(func)
@@ -125,24 +116,15 @@ class TestGuppyResultMechanisms:
 
     def test_compile_to_llvm(self, guppy_functions: dict) -> None:
         """Test that HUGR compiles to LLVM successfully."""
-        try:
-            from pecos.compilation_pipeline import (
-                compile_guppy_to_hugr,
-                compile_hugr_to_qis,
-            )
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import (
+            compile_guppy_to_hugr,
+            compile_hugr_to_qis,
+        )
 
         for name, func in guppy_functions.items():
             hugr_bytes = compile_guppy_to_hugr(func)
 
-            try:
-                llvm_ir = compile_hugr_to_qis(hugr_bytes)
-            except Exception as e:
-                # Known issues with some compilation paths
-                if "Unknown type" in str(e) or "not supported" in str(e):
-                    pytest.skip(f"Known compilation issue for {name}: {e}")
-                pytest.fail(f"Failed to compile {name} to LLVM: {e}")
+            llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
             # Verify LLVM IR was generated
             assert llvm_ir is not None, f"{name} should compile to LLVM IR"
@@ -164,13 +146,10 @@ class TestGuppyResultMechanisms:
 
     def test_simple_result_functions(self) -> None:
         """Test simpler result() usage patterns."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.builtins import result
-            from guppylang.std.quantum import h, measure, qubit
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Required modules not available")
+        from guppylang import guppy
+        from guppylang.std.builtins import result
+        from guppylang.std.quantum import h, measure, qubit
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         @guppy
         def just_result() -> None:
@@ -267,16 +246,13 @@ class TestLLVMResultPatterns:
 
     def test_llvm_result_patterns(self) -> None:
         """Test that LLVM IR contains expected patterns for result recording."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.builtins import result
-            from guppylang.std.quantum import h, measure, qubit
-            from pecos.compilation_pipeline import (
-                compile_guppy_to_hugr,
-                compile_hugr_to_qis,
-            )
-        except ImportError:
-            pytest.skip("Required modules not available")
+        from guppylang import guppy
+        from guppylang.std.builtins import result
+        from guppylang.std.quantum import h, measure, qubit
+        from pecos.compilation_pipeline import (
+            compile_guppy_to_hugr,
+            compile_hugr_to_qis,
+        )
 
         @guppy
         def simple_result() -> None:
@@ -287,13 +263,8 @@ class TestLLVMResultPatterns:
             result("test", m)
 
         # Compile to LLVM
-        try:
-            hugr_bytes = compile_guppy_to_hugr(simple_result)
-            llvm_ir = compile_hugr_to_qis(hugr_bytes)
-        except Exception as e:
-            if "Unknown type" in str(e) or "not supported" in str(e):
-                pytest.skip(f"Known compilation issue: {e}")
-            pytest.fail(f"Compilation failed: {e}")
+        hugr_bytes = compile_guppy_to_hugr(simple_result)
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
         # Check for expected LLVM patterns
         patterns_to_check = [

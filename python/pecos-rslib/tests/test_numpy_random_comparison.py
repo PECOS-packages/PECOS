@@ -6,13 +6,9 @@ produce statistically equivalent results to numpy's implementations.
 """
 
 import time
-import pytest
-
-# Skip entire module if scipy/numpy not available
-pytest.importorskip("scipy")
-pytest.importorskip("numpy")
 
 import numpy as np
+import pytest
 from scipy import stats
 
 import pecos as pc
@@ -239,6 +235,8 @@ class TestRandintComparison:
 
     def test_randint_uniformity(self) -> None:
         """Test that randint produces uniform distribution."""
+        # Use a fixed seed for deterministic test behavior
+        pc.random.seed(24)
         low, high = 0, 10
         vals = pc.random.randint(low, high, 10000)
 
@@ -318,6 +316,8 @@ class TestChoiceComparison:
 
     def test_choice_uniformity(self) -> None:
         """Test that choice samples uniformly from array."""
+        # Use a fixed seed for deterministic test behavior
+        pc.random.seed(4)
         items = [0, 1, 2, 3, 4]
         samples = pc.random.choice(items, 10000)
 

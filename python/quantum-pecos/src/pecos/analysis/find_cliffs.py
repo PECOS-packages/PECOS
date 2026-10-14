@@ -25,9 +25,11 @@ __all__ = [
     "dtype",
     "m2cliff",
     "mnormal",
-    "r1xy2cliff",
-    "r1xy_ang2str",
-    "r1xy_matrix",
+    "rxy1q2cliff",
+    "rxy1q_ang2str",
+    "rxy1q_matrix",
+    "rxyxy2q2cliff",
+    "rxyxy2q_matrix",
     "rz2cliff",
     "rz_ang2str",
     "rz_matrix",
@@ -74,7 +76,7 @@ cliff_str2matrix = {
     "F4dg": pc.array([[1.0 + 0.0j, 0.0 + 1.0j], [1.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
 }
 
-r1xy_ang2str = {
+rxy1q_ang2str = {
     (3.141592653589793, 3.141592653589793): "X",
     (3.141592653589793, 1.5707963267948966): "Y",
     (3.141592653589793, 0): "X",
@@ -109,8 +111,8 @@ rz_ang2str = {
 }
 
 
-def r1xy_matrix(theta: float, phi: float) -> Array:
-    """Creates a Array matrix for a R1XY gate."""
+def rxy1q_matrix(theta: float, phi: float) -> Array:
+    """Creates a Array matrix for a RXY1Q gate."""
     c = pc.cos(theta * 0.5)
     s = pc.sin(theta * 0.5)
 
@@ -121,6 +123,42 @@ def r1xy_matrix(theta: float, phi: float) -> Array:
         ],
         dtype=dtype,
     )
+
+
+def rxyxy2q_matrix(theta: float, phi: float) -> Array:
+    """Create the phase-exact RXYXY2Q matrix in computational basis order."""
+    c = pc.cos(theta / 2)
+    s = -1j * pc.sin(theta / 2)
+    return pc.array(
+        [
+            [c, 0, 0, s * pc.exp(-2j * phi)],
+            [0, c, s, 0],
+            [0, s, c, 0],
+            [s * pc.exp(2j * phi), 0, 0, c],
+        ],
+        dtype=dtype,
+    )
+
+
+def rxyxy2q2cliff(theta: float, phi: float, *, atol: float = 1e-12) -> str | bool:
+    """Identify RXYXY2Q Cliffords up to global phase, as for ``rxy1q2cliff``.
+
+    Product Cliffords are labelled ``A tensor A``. Like ``rxy1q2cliff``,
+    this classifies the matrix, including half-turns about diagonal axes;
+    stabilizer simulation deliberately accepts the narrower quarter-turn grid.
+    """
+    if _is_identity_angle(theta, atol=atol):
+        return "II"
+    if _is_identity_angle(theta - pc.f64.pi, atol=atol):
+        single = rxy1q2cliff(pc.f64.pi, phi, atol=atol)
+        return f"{single} tensor {single}" if single else False
+    for angle, suffix in ((pc.f64.frac_pi_2, ""), (-pc.f64.frac_pi_2, "dg")):
+        if _is_identity_angle(theta - angle, atol=atol):
+            if _is_identity_angle(2 * phi, atol=2 * atol):
+                return f"SXX{suffix}"
+            if _is_identity_angle(2 * phi - pc.f64.pi, atol=2 * atol):
+                return f"SYY{suffix}"
+    return False
 
 
 def rz_matrix(theta: float) -> Array:
@@ -165,7 +203,7 @@ def _is_identity_angle(theta: float, *, atol: float) -> bool:
     )
 
 
-def r1xy2cliff(
+def rxy1q2cliff(
     theta: float,
     phi: float,
     *,
@@ -173,11 +211,11 @@ def r1xy2cliff(
     normalization_atol: float | None = None,
     use_conv_table: bool = True,
 ) -> str | bool:
-    """Identifies (ignoring global phases) a Clifford given the angles of a R1XY gate."""
+    """Identifies (ignoring global phases) a Clifford given the angles of a RXY1Q gate."""
     if use_conv_table:
         if _is_identity_angle(theta, atol=atol):
             return "I"
-        for cangs, csym in r1xy_ang2str.items():
+        for cangs, csym in rxy1q_ang2str.items():
             a, b = cangs
             if pc.isclose(a, theta, rtol=0.0, atol=atol) and pc.isclose(
                 b,
@@ -187,7 +225,7 @@ def r1xy2cliff(
             ):
                 return csym
 
-    m = r1xy_matrix(theta, phi)
+    m = rxy1q_matrix(theta, phi)
 
     return m2cliff(
         m,

@@ -191,18 +191,29 @@ impl Engine for Box<dyn ClassicalControlEngine> {
     type Input = ();
     type Output = Shot;
 
+    /// Drives classical control to completion without a quantum backend.
+    ///
+    /// Empty batches resume execution; non-empty batches require a quantum engine
+    /// through `start()`/`continue_processing()`, or the simulation builder.
+    ///
+    /// # Errors
+    /// Returns an error if command validation fails, execution fails, or quantum
+    /// commands are generated.
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         let mut stage = self.start(input)?;
-
         loop {
             match stage {
-                EngineStage::NeedsProcessing(_engine_input) => {
-                    // In a real system, this would process through a quantum engine
-                    // For now, we'll just return an empty message
-                    let engine_output = ByteMessage::builder().build();
-                    stage = self.continue_processing(engine_output)?;
+                EngineStage::Complete(result) => return Ok(result),
+                EngineStage::NeedsProcessing(commands) => {
+                    if !commands.is_empty()? {
+                        return Err(PecosError::Processing(
+                            "Box<dyn ClassicalControlEngine>::process(()) cannot execute quantum commands; use \
+                             start()/continue_processing() with a quantum engine, or the simulation builder."
+                                .to_string(),
+                        ));
+                    }
+                    stage = self.continue_processing(ByteMessage::outcomes_builder().build())?;
                 }
-                EngineStage::Complete(output) => return Ok(output),
             }
         }
     }

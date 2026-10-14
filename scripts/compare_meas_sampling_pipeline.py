@@ -36,7 +36,7 @@ def build_circuit(distance, rounds, basis="Z"):
         basis,
         circuit_source="traced_qis",
     )
-    # Lower R1XY/RZ rotations to standard Clifford gates (H, SZ, SZdg, etc.)
+    # Lower RXY1Q/RZ rotations to standard Clifford gates (H, SZ, SZdg, etc.)
     tc.lower_clifford_rotations()
     return tc
 

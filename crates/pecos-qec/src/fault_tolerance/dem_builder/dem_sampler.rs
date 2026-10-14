@@ -47,7 +47,7 @@
 //! dag.mz(&[2]);
 //!
 //! let analyzer = DagFaultAnalyzer::new(&dag);
-//! let influence_map = analyzer.build_influence_map();
+//! let influence_map = analyzer.build_influence_map().unwrap();
 //!
 //! // Build sampler with detector definitions
 //! let sampler = DemSamplerBuilder::new(&influence_map)
@@ -74,8 +74,8 @@ use wide::u64x4;
 use super::types::{
     FaultMechanism, IdleChannelFamilies, NoiseChannelKind, NoiseChannelResidual, NoiseConfig,
     PauliProbs, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
-    combine_probabilities, fit_exclusive_signatures, validate_exclusive_probabilities,
-    validate_idle_probabilities,
+    combine_probabilities, fit_exclusive_signatures, is_two_qubit_noise_gate,
+    validate_exclusive_probabilities, validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -449,15 +449,47 @@ impl SamplingEngine {
     ///
     /// # Panics
     ///
-    /// Panics if a noise input or signature channel is invalid, or if a gate
-    /// event has no corresponding fault location.
-    #[must_use]
+    /// Panics if a gate event has no corresponding fault location.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured unsupported-gate diagnostic retained by the
+    /// influence map, or a configuration error for an invalid replacement mode
+    /// or an invalid noise or signature channel.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
         noise: &super::NoiseConfig,
-    ) -> Self {
+    ) -> Result<Self, super::DemBuilderError> {
         use pecos_core::gate_type::GateType;
+
+        if let Some(error) = influence_map.unsupported_gate() {
+            return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
+        }
+
+        noise
+            .validate_gate_rate_keys(&influence_map.locations)
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+
+        if let Some(weights) = &noise.p2_weights {
+            weights
+                .validate_replacement_locations(
+                    &influence_map.locations,
+                    noise.p2_replacement_approximation,
+                )
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+        }
+
+        if noise.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
+            && noise
+                .p2_weights
+                .as_ref()
+                .is_some_and(super::types::PauliWeights::has_replacement_entries)
+        {
+            return Err(super::DemBuilderError::ConfigurationError(
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
+            ));
+        }
 
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
         let mut idle_noise_residuals = Vec::new();
@@ -486,11 +518,9 @@ impl SamplingEngine {
                     .iter()
                     .find(|l| l.node == loc.node && l.before == loc.before)
                     .map_or(0.0, |l| l.idle_duration);
-                let families = noise
-                    .try_idle_channel_families(duration)
-                    .unwrap_or_else(|error| {
-                        panic!("invalid DEM idle-noise configuration: {error}")
-                    });
+                let families = noise.try_idle_channel_families(duration).map_err(|error| {
+                    super::DemBuilderError::ConfigurationError(error.to_string())
+                })?;
                 let mut effects: [Option<DemMechanism>; 4] = [None, None, None, None];
                 for event in &events {
                     let pauli = event
@@ -545,9 +575,9 @@ impl SamplingEngine {
                     }
                     let context = format!("location {loc_idx} exclusive family {family_index}");
                     let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
-                        .unwrap_or_else(|error| {
-                            panic!("invalid DEM idle-noise configuration: {error}")
-                        });
+                        .map_err(|error| {
+                            super::DemBuilderError::ConfigurationError(error.to_string())
+                        })?;
                     for (mechanism, probability) in fit.mechanisms {
                         aggregated
                             .entry(mechanism)
@@ -602,7 +632,7 @@ impl SamplingEngine {
                     .map(|event| {
                         let weight = if n_qubits == 2 {
                             weights.two_qubit_weight_for(
-                                loc.gate_type,
+                                loc.clifford,
                                 &event.pauli,
                                 noise.p2_replacement_approximation,
                             )
@@ -636,7 +666,7 @@ impl SamplingEngine {
                 loc.gate_type
             );
             validate_exclusive_probabilities(&event_weights, &context)
-                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             let channel_weight = event_weights.iter().sum();
             let mut exclusive = BTreeMap::new();
             for (event, &event_prob) in events.iter().zip(&event_weights) {
@@ -653,7 +683,7 @@ impl SamplingEngine {
                 }
             }
             let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
-                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             for (mechanism, probability) in fit.mechanisms {
                 aggregated
                     .entry(mechanism)
@@ -681,7 +711,7 @@ impl SamplingEngine {
 
         let mut engine = Self::from_mechanisms(mechanisms, num_detectors, num_dem_outputs);
         engine.idle_noise_residuals = idle_noise_residuals;
-        engine
+        Ok(engine)
     }
 
     /// Sample a single shot.
@@ -2031,14 +2061,13 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     idle_noise: Option<NoiseConfig>,
     detector_records: Vec<Vec<i32>>,
     observable_records: Vec<Vec<i32>>,
-    measurement_order: Option<Vec<usize>>,
-    num_tc_measurements: Option<usize>,
+    detectors_json: Option<String>,
+    observables_json: Option<String>,
 }
 
 struct FaultMechanismContext<'a> {
-    im_to_tc: Option<&'a [usize]>,
     influence_observable_ids: &'a BTreeSet<u32>,
-    num_tc_measurements: usize,
+    num_measurements: usize,
 }
 
 impl<'a> SamplingEngineBuilder<'a> {
@@ -2060,8 +2089,8 @@ impl<'a> SamplingEngineBuilder<'a> {
             per_gate: None,
             detector_records: Vec::new(),
             observable_records: Vec::new(),
-            measurement_order: None,
-            num_tc_measurements: None,
+            detectors_json: None,
+            observables_json: None,
         }
     }
 
@@ -2131,11 +2160,13 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed or missing required fields.
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using influence-map emission positions.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
-        self.detector_records =
-            super::builder::parse_detector_record_vectors(json, self.influence_map)
-                .map_err(|err| err.to_string())?;
+        super::builder::validate_sampler_json(json, self.influence_map, true)
+            .map_err(|err| err.to_string())?;
+        self.detectors_json = Some(json.to_string());
         Ok(self)
     }
 
@@ -2144,12 +2175,13 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed, fails schema validation, or
-    /// references measurements out of range for the circuit.
+    /// Returns an error for malformed JSON, non-dense or duplicate ids, or invalid
+    /// references. Agreement between records and ids is checked at build time
+    /// using influence-map emission positions.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
-        self.observable_records =
-            super::builder::parse_observable_record_vectors(json, self.influence_map)
-                .map_err(|err| err.to_string())?;
+        super::builder::validate_sampler_json(json, self.influence_map, false)
+            .map_err(|err| err.to_string())?;
+        self.observables_json = Some(json.to_string());
         Ok(self)
     }
 
@@ -2157,6 +2189,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn with_detector_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.detector_records = records;
+        self.detectors_json = None;
         self
     }
 
@@ -2164,46 +2197,84 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn with_observable_records(mut self, records: Vec<Vec<i32>>) -> Self {
         self.observable_records = records;
-        self
-    }
-
-    /// Set the measurement order mapping from `TickCircuit`.
-    ///
-    /// `measurement_order[tc_idx]` is the qubit measured at `TickCircuit` index `tc_idx`.
-    /// This is needed to map between `TickCircuit` record offsets and influence map indices.
-    #[must_use]
-    pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
-        self.num_tc_measurements = Some(order.len());
-        self.measurement_order = Some(order);
+        self.observables_json = None;
         self
     }
 
     /// Build the [`SamplingEngine`].
-    #[must_use]
-    pub fn build(self) -> SamplingEngine {
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured unsupported-gate diagnostic retained by the
+    /// influence map, or a configuration error for an invalid replacement mode
+    /// or an invalid noise or signature channel. Invalid record ranges
+    /// are rejected for non-empty maps. On an
+    /// empty map, records remain opaque coordinates and bounds are not checked.
+    pub fn build(mut self) -> Result<SamplingEngine, super::DemBuilderError> {
+        super::builder::validate_sampler_measurements(self.influence_map)?;
+        if let Some(json) = &self.detectors_json {
+            self.detector_records =
+                super::builder::parse_detector_record_vectors(json, self.influence_map)?;
+        }
+        if let Some(json) = &self.observables_json {
+            self.observable_records =
+                super::builder::parse_observable_record_vectors(json, self.influence_map)?;
+        }
+        let num_measurements = self.influence_map.measurements.len();
+        super::builder::validate_sampler_records(
+            "Detector",
+            &self.detector_records,
+            num_measurements,
+        )?;
+        super::builder::validate_sampler_records(
+            "Observable",
+            &self.observable_records,
+            num_measurements,
+        )?;
+
+        if let Some(error) = self.influence_map.unsupported_gate() {
+            return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
+        }
+        // Validate exactly what this path consumes: per-gate noise or scalar tables.
+        self.per_gate
+            .as_ref()
+            .map_or_else(
+                || {
+                    super::types::validate_scalar_gate_rate_tables(
+                        &self.p1_gate_rates,
+                        &self.p2_gate_rates,
+                        &self.influence_map.locations,
+                    )
+                },
+                |noise| noise.validate_gate_rate_keys(&self.influence_map.locations),
+            )
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+        if let Some(weights) = &self.p2_weights {
+            weights
+                .validate_replacement_locations(
+                    &self.influence_map.locations,
+                    self.p2_replacement_approximation,
+                )
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+        }
         if self.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
             && self
                 .p2_weights
                 .as_ref()
                 .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
-            panic!(
-                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
-            );
+            return Err(super::DemBuilderError::ConfigurationError(
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
+            ));
         }
         let num_detectors = self.detector_records.len();
         let influence_observable_ids = self.influence_map.observable_ids();
         let num_influence_observables = self.influence_map.num_observables();
         let num_dem_outputs = num_influence_observables.max(self.observable_records.len());
-        let num_im_measurements = self.influence_map.measurements.len();
-        let num_tc_measurements = self.num_tc_measurements.unwrap_or(num_im_measurements);
 
-        // Build IM -> TC index mapping
-        let im_to_tc = self.build_im_to_tc_mapping();
         let mechanism_context = FaultMechanismContext {
-            im_to_tc: im_to_tc.as_deref(),
             influence_observable_ids: &influence_observable_ids,
-            num_tc_measurements,
+            num_measurements,
         };
 
         // Aggregation map: mechanism -> probability
@@ -2270,21 +2341,9 @@ impl<'a> SamplingEngineBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
+                gate_type
                     // Two-qubit gate errors: only "after" locations, process as pairs
-                    if !loc.before => {
+                    if is_two_qubit_noise_gate(gate_type) && !loc.before => {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
                 GateType::H
@@ -2305,11 +2364,11 @@ impl<'a> SamplingEngineBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if !loc.before =>
                 {
-                    let rates = self.rates_1q(loc.gate_type, &loc.qubits);
+                    let rates = self.rates_1q(loc);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_depolarizing_fault_rates(
                             loc_idx,
@@ -2317,7 +2376,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             &mechanism_context,
                             &mut aggregated,
                             &mut idle_noise_residuals,
-                        );
+                        )?;
                     }
                 }
                 GateType::Idle
@@ -2326,7 +2385,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // explicitly configured.
                     if !loc.before =>
                 {
-                    let families = self.idle_families(loc);
+                    let families = self.idle_families(loc)?;
                     if !families.exclusive.is_empty() || !families.independent.is_empty() {
                         self.process_idle_fault_families(
                             loc_idx,
@@ -2334,7 +2393,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             &mechanism_context,
                             &mut aggregated,
                             &mut idle_noise_residuals,
-                        );
+                        )?;
                     }
                 }
                 _ => {}
@@ -2363,7 +2422,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         .chain(loc1.qubits.iter())
                         .copied()
                         .collect();
-                    let rates = self.rates_2q(gate_type, &pair_qubits);
+                    let rates = self.rates_2q(gate_type, loc0.clifford, &pair_qubits);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_two_qubit_fault_rates(
                             pair[0],
@@ -2372,7 +2431,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             &mechanism_context,
                             &mut aggregated,
                             &mut idle_noise_residuals,
-                        );
+                        )?;
                     }
                 }
             }
@@ -2421,7 +2480,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             dem_output_offsets.push(dem_output_data.len() as u32);
         }
 
-        SamplingEngine {
+        Ok(SamplingEngine {
             thresholds,
             inv_log_1_minus_p,
             detector_offsets,
@@ -2431,40 +2490,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             num_detectors,
             num_dem_outputs,
             idle_noise_residuals,
-        }
-    }
-
-    /// Build mapping from influence map measurement indices to `TickCircuit` indices.
-    fn build_im_to_tc_mapping(&self) -> Option<Vec<usize>> {
-        let tc_order = self.measurement_order.as_ref()?;
-
-        // Build (qubit, occurrence) -> TC index mapping
-        // Use BTreeMap for deterministic iteration order
-        let mut qubit_occurrences: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for (tc_idx, &qubit) in tc_order.iter().enumerate() {
-            qubit_occurrences.entry(qubit).or_default().push(tc_idx);
-        }
-
-        // Track how many times we've seen each qubit in the IM
-        let mut qubit_seen_count: BTreeMap<usize, usize> = BTreeMap::new();
-
-        // For each IM measurement, find corresponding TC index
-        let mapping: Vec<usize> = self
-            .influence_map
-            .measurements
-            .iter()
-            .map(|&(_node, qubit, _basis)| {
-                let occurrence = *qubit_seen_count.entry(qubit).or_insert(0);
-                qubit_seen_count.insert(qubit, occurrence + 1);
-
-                qubit_occurrences
-                    .get(&qubit)
-                    .and_then(|indices| indices.get(occurrence).copied())
-                    .unwrap_or(usize::MAX)
-            })
-            .collect();
-
-        Some(mapping)
+        })
     }
 
     /// Process a single Pauli fault (prep X error, measurement X error).
@@ -2479,9 +2505,8 @@ impl<'a> SamplingEngineBuilder<'a> {
         let mechanism = self.compute_mechanism(
             loc_idx,
             pauli,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         if !mechanism.is_empty() {
             let entry = aggregated.entry(mechanism).or_insert(0.0);
@@ -2521,40 +2546,31 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Resolve per-Pauli rates for a 1Q gate on a specific qubit. Uses
     /// `per_gate`'s per-qubit map if set, falling back to per-gate-type,
     /// then uniform `p1 / 3`.
-    fn rates_1q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 3] {
+    fn rates_1q(
+        &self,
+        loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
+    ) -> [f64; 3] {
         if let Some(pg) = &self.per_gate {
-            if let Some(q) = qubits.first() {
-                [
-                    pg.rate_1q_on(gate, *q, 0),
-                    pg.rate_1q_on(gate, *q, 1),
-                    pg.rate_1q_on(gate, *q, 2),
-                ]
-            } else {
-                [
-                    pg.rate_1q(gate, 0),
-                    pg.rate_1q(gate, 1),
-                    pg.rate_1q(gate, 2),
-                ]
-            }
-        } else {
-            let p1_total = self.p1_gate_rates.get(&gate).copied().unwrap_or(self.p1);
-            if let Some(weights) = &self.p1_weights {
-                use pecos_core::pauli::{X, Y, Z};
-                return [
-                    p1_total * weights.weight_for(&X(0)),
-                    p1_total * weights.weight_for(&Y(0)),
-                    p1_total * weights.weight_for(&Z(0)),
-                ];
-            }
-            [p1_total / 3.0; 3]
+            return pg.rates_1q_for_operation(
+                loc.gate_type,
+                loc.noise_gate_type,
+                loc.qubits.first().copied(),
+            );
         }
+        super::types::resolve_1q_rates(
+            loc.gate_type,
+            loc.noise_gate_type,
+            self.p1,
+            &self.p1_gate_rates,
+            self.p1_weights.as_ref(),
+        )
     }
 
     /// Resolve categorical and independent families for an explicit idle location.
     fn idle_families(
         &self,
         loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
-    ) -> IdleChannelFamilies {
+    ) -> Result<IdleChannelFamilies, super::DemBuilderError> {
         if let Some(pg) = &self.per_gate {
             let explicit_rates = loc
                 .qubits
@@ -2567,23 +2583,23 @@ impl<'a> SamplingEngineBuilder<'a> {
                     py: rates[1],
                     pz: rates[2],
                 };
-                validate_idle_probabilities(probabilities, "per-gate").unwrap_or_else(|error| {
-                    panic!("invalid DEM idle-noise configuration: {error}")
-                });
-                return IdleChannelFamilies {
+                validate_idle_probabilities(probabilities, "per-gate").map_err(|error| {
+                    super::DemBuilderError::ConfigurationError(error.to_string())
+                })?;
+                return Ok(IdleChannelFamilies {
                     exclusive: smallvec::smallvec![probabilities],
                     independent: SmallVec::new(),
-                };
+                });
             }
             if pg.base.uses_dedicated_idle_noise() {
                 return pg
                     .base
                     .try_idle_channel_families(loc.idle_duration)
-                    .unwrap_or_else(|error| {
-                        panic!("invalid DEM idle-noise configuration: {error}")
+                    .map_err(|error| {
+                        super::DemBuilderError::ConfigurationError(error.to_string())
                     });
             }
-            return IdleChannelFamilies::default();
+            return Ok(IdleChannelFamilies::default());
         }
 
         if let Some(noise) = &self.idle_noise
@@ -2591,14 +2607,19 @@ impl<'a> SamplingEngineBuilder<'a> {
         {
             return noise
                 .try_idle_channel_families(loc.idle_duration)
-                .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()));
         }
-        IdleChannelFamilies::default()
+        Ok(IdleChannelFamilies::default())
     }
 
     /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a
     /// specific ordered qubit pair.
-    fn rates_2q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 15] {
+    fn rates_2q(
+        &self,
+        gate: GateType,
+        clifford: pecos_core::CliffordLowering,
+        qubits: &[pecos_core::QubitId],
+    ) -> [f64; 15] {
         if let Some(pg) = &self.per_gate {
             if qubits.len() >= 2 {
                 let (qc, qt) = (qubits[0], qubits[1]);
@@ -2615,7 +2636,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     let p2 = flat % 4;
                     p2_total
                         * weights.two_qubit_weight_for(
-                            gate,
+                            clifford,
                             &pauli_pair_for_weight(p1, p2),
                             self.p2_replacement_approximation,
                         )
@@ -2633,20 +2654,19 @@ impl<'a> SamplingEngineBuilder<'a> {
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
         residuals: &mut Vec<NoiseChannelResidual>,
-    ) {
+    ) -> Result<(), super::DemBuilderError> {
         let gate_type = self.influence_map.locations[loc_idx].gate_type;
         let fit_context = format!("one-qubit {gate_type} gate at location {loc_idx}");
         validate_exclusive_probabilities(&rates, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         let channel_weight = rates.iter().sum();
         let mut exclusive = BTreeMap::new();
         for (pauli, &per_pauli_prob) in [Pauli::X, Pauli::Y, Pauli::Z].iter().zip(rates.iter()) {
             let mechanism = self.compute_mechanism(
                 loc_idx,
                 *pauli,
-                context.im_to_tc,
                 context.influence_observable_ids,
-                context.num_tc_measurements,
+                context.num_measurements,
             );
             if mechanism.is_empty() || per_pauli_prob == 0.0 {
                 continue;
@@ -2654,7 +2674,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             *exclusive.entry(mechanism).or_insert(0.0) += per_pauli_prob;
         }
         let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
             aggregated
                 .entry(mechanism)
@@ -2671,6 +2691,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 channel_weight,
             });
         }
+        Ok(())
     }
 
     fn process_idle_fault_families(
@@ -2680,27 +2701,24 @@ impl<'a> SamplingEngineBuilder<'a> {
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
         residuals: &mut Vec<NoiseChannelResidual>,
-    ) {
+    ) -> Result<(), super::DemBuilderError> {
         let x_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::X,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         let y_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::Y,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         let z_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::Z,
-            context.im_to_tc,
             context.influence_observable_ids,
-            context.num_tc_measurements,
+            context.num_measurements,
         );
         debug_assert_eq!(y_mechanism, x_mechanism.xor(&z_mechanism));
 
@@ -2731,7 +2749,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             }
             let fit_context = format!("location {loc_idx} exclusive family {family_index}");
             let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
-                .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             for (mechanism, probability) in fit.mechanisms {
                 add(mechanism, probability, aggregated);
             }
@@ -2755,6 +2773,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 add(mechanism, probability, aggregated);
             }
         }
+        Ok(())
     }
 
     /// Process a two-qubit gate fault with explicit per-Pauli-pair rates.
@@ -2767,11 +2786,11 @@ impl<'a> SamplingEngineBuilder<'a> {
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
         residuals: &mut Vec<NoiseChannelResidual>,
-    ) {
+    ) -> Result<(), super::DemBuilderError> {
         let gate_type = self.influence_map.locations[loc1].gate_type;
         let fit_context = format!("two-qubit {gate_type} gate at locations {loc1} and {loc2}");
         validate_exclusive_probabilities(&rates, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         let channel_weight = rates.iter().sum();
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
@@ -2782,16 +2801,14 @@ impl<'a> SamplingEngineBuilder<'a> {
             effects1[p as usize] = Some(self.compute_mechanism(
                 loc1,
                 p,
-                context.im_to_tc,
                 context.influence_observable_ids,
-                context.num_tc_measurements,
+                context.num_measurements,
             ));
             effects2[p as usize] = Some(self.compute_mechanism(
                 loc2,
                 p,
-                context.im_to_tc,
                 context.influence_observable_ids,
-                context.num_tc_measurements,
+                context.num_measurements,
             ));
         }
 
@@ -2826,7 +2843,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             }
         }
         let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
             aggregated
                 .entry(mechanism)
@@ -2843,6 +2860,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 channel_weight,
             });
         }
+        Ok(())
     }
 
     /// Compute the mechanism (detector/standard observable effects) for a fault.
@@ -2850,9 +2868,8 @@ impl<'a> SamplingEngineBuilder<'a> {
         &self,
         loc_idx: usize,
         pauli: Pauli,
-        im_to_tc: Option<&[usize]>,
         influence_observable_ids: &BTreeSet<u32>,
-        num_tc_measurements: usize,
+        num_measurements: usize,
     ) -> DemMechanism {
         // Get measurement indices that flip (in IM order)
         let im_meas_flips = self
@@ -2867,21 +2884,13 @@ impl<'a> SamplingEngineBuilder<'a> {
             xor_toggle_u32(&mut dem_outputs, dem_output_idx);
         }
 
-        // Convert to TC order measurement outcomes
-        let mut tc_outcomes = vec![false; num_tc_measurements];
+        // Measurement outcomes use influence-map emission positions
+        let mut outcomes = vec![false; num_measurements];
         for &im_idx in im_meas_flips {
-            let tc_idx = if let Some(mapping) = im_to_tc {
-                if (im_idx as usize) < mapping.len() {
-                    mapping[im_idx as usize]
-                } else {
-                    continue;
-                }
-            } else {
-                im_idx as usize
-            };
+            let measurement_idx = im_idx as usize;
 
-            if tc_idx < num_tc_measurements {
-                tc_outcomes[tc_idx] ^= true;
+            if measurement_idx < num_measurements {
+                outcomes[measurement_idx] ^= true;
             }
         }
 
@@ -2897,11 +2906,11 @@ impl<'a> SamplingEngineBuilder<'a> {
                     #[allow(clippy::cast_sign_loss)]
                     // negative offset + total count, or non-negative offset
                     let abs_idx = if offset < 0 {
-                        (num_tc_measurements as i32 + offset) as usize
+                        (num_measurements as i32 + offset) as usize
                     } else {
                         offset as usize
                     };
-                    if abs_idx < num_tc_measurements && tc_outcomes[abs_idx] {
+                    if abs_idx < num_measurements && outcomes[abs_idx] {
                         xor_result = !xor_result;
                     }
                 }
@@ -2927,11 +2936,11 @@ impl<'a> SamplingEngineBuilder<'a> {
                 #[allow(clippy::cast_sign_loss)]
                 // negative offset + total count, or non-negative offset
                 let abs_idx = if offset < 0 {
-                    (num_tc_measurements as i32 + offset) as usize
+                    (num_measurements as i32 + offset) as usize
                 } else {
                     offset as usize
                 };
-                if abs_idx < num_tc_measurements && tc_outcomes[abs_idx] {
+                if abs_idx < num_measurements && outcomes[abs_idx] {
                     xor_result = !xor_result;
                 }
             }
@@ -3031,6 +3040,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gate_rate_sampling_engine_builder_scalar_tables() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        let mut circuit = pecos_quantum::DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::rzz(
+            pecos_core::Angle64::QUARTER_TURN,
+            &[(0, 1)],
+        ));
+        circuit.mz(&[0, 1]);
+        let map = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
+        let mut noise = NoiseConfig::uniform(0.001);
+        noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+        let error = SamplingEngineBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .build()
+            .unwrap_err();
+        assert!(
+            matches!(error, super::super::DemBuilderError::ConfigurationError(message)
+            if message.contains("p2_gate_rates key SZZ") && message.contains("RZZ"))
+        );
+        SamplingEngineBuilder::new(&map)
+            .with_noise_config(noise)
+            .with_per_gate_noise(PerGateTypeNoise::default())
+            .build()
+            .unwrap();
+    }
+
+    #[test]
     fn test_dem_mechanism_ordering() {
         let m1 = DemMechanism::new(smallvec::smallvec![1, 2], smallvec::smallvec![0]);
         let m2 = DemMechanism::new(smallvec::smallvec![2, 1], smallvec::smallvec![0]);
@@ -3115,15 +3154,23 @@ mod tests {
             dag.pz(&[q]);
             dag.mz(&[q]);
         }
-        DagFaultAnalyzer::new(&dag).build_influence_map()
+        DagFaultAnalyzer::new(&dag).build_influence_map().unwrap()
     }
 
     #[test]
     fn test_record_vectors_empty() {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
-        assert!(parse_detector_record_vectors("[]", &im).unwrap().is_empty());
-        assert!(parse_detector_record_vectors("", &im).unwrap().is_empty());
+        let records = parse_detector_record_vectors("[]", &im).unwrap();
+        assert!(
+            records.is_empty(),
+            "expected no detector record vectors, got {records:?}"
+        );
+        let records = parse_detector_record_vectors("", &im).unwrap();
+        assert!(
+            records.is_empty(),
+            "expected no detector record vectors, got {records:?}"
+        );
     }
 
     #[test]
@@ -3195,12 +3242,13 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Zero noise should produce no errors
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.0, 0.0, 0.0, 0.0)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(sampler.num_mechanisms(), 0);
         assert_eq!(sampler.num_dem_outputs(), 0);
@@ -3224,7 +3272,7 @@ mod tests {
         dag.mz(&[2]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Define detector on the measurement
         let detectors_json = r#"[{"id": 0, "records": [-1]}]"#;
@@ -3236,7 +3284,8 @@ mod tests {
             .unwrap()
             .with_observables_json(observables_json)
             .unwrap()
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(sampler.num_detectors(), 1);
         assert_eq!(sampler.num_observables(), 0);
@@ -3258,21 +3307,23 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let json_sampler = SamplingEngineBuilder::new(&influence_map)
             .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
             .unwrap()
             .with_observables_json(r#"[{"id": 0, "records": [-1]}]"#)
             .unwrap()
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(json_sampler.num_detectors(), 1);
         assert_eq!(json_sampler.num_dem_outputs(), 1);
 
         let record_sampler = SamplingEngineBuilder::new(&influence_map)
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![vec![-1]])
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(record_sampler.num_detectors(), 1);
         assert_eq!(record_sampler.num_dem_outputs(), 1);
     }
@@ -3294,13 +3345,14 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.01, 0.01, 0.01, 0.01)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Sample with row-major method
         let mut rng1 = SmallRng::seed_from_u64(12345);
@@ -3338,13 +3390,14 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.5, 0.0, 0.0, 0.0) // High noise rate for testing
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         let num_shots = 100;
         let mut rng = SmallRng::seed_from_u64(42);
@@ -3374,13 +3427,14 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.01, 0.01, 0.01, 0.01)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Compare SIMD to baseline
         let mut rng1 = SmallRng::seed_from_u64(42);
@@ -3414,14 +3468,15 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Use low noise to exercise geometric sampling effectively
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.001, 0.001, 0.001, 0.001)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Compare geometric to baseline with many shots for statistical significance
         let mut rng1 = SmallRng::seed_from_u64(42);
@@ -3458,14 +3513,15 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // Low error rate - should use geometric
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.001, 0.001, 0.001, 0.001)
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         assert!(sampler.average_error_probability() < 0.01);
 
@@ -3488,14 +3544,15 @@ mod tests {
         dag.mz(&[0]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         // High error rate - should use SIMD
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.1, 0.1, 0.1, 0.1)
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         assert!(sampler.average_error_probability() >= 0.01);
 
@@ -3521,13 +3578,14 @@ mod tests {
         dag.mz(&[1]);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
-        let influence_map = analyzer.build_influence_map();
+        let influence_map = analyzer.build_influence_map().unwrap();
 
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.001, 0.001, 0.001, 0.001)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Compare parallel to sequential
         let mut rng = SmallRng::seed_from_u64(42);

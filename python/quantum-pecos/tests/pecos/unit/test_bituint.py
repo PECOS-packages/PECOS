@@ -391,11 +391,10 @@ class TestProperties:
         u = BitUInt(8, 0)
         assert bool(u) is False
 
-    def test_hash(self) -> None:
-        """Verify equal BitUInt values produce equal hashes."""
-        a = BitUInt(8, 42)
-        b = BitUInt(8, 42)
-        assert hash(a) == hash(b)
+    def test_unhashable(self) -> None:
+        """Verify BitUInt is unhashable because it is mutable in place."""
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(BitUInt(8, 42))
 
     def test_count_ones(self) -> None:
         """Verify count_ones() returns the number of set bits."""

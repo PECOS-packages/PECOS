@@ -58,6 +58,10 @@ pub struct DemOutput {
 /// simulator backends via the meas_sampling path.
 pub trait DemGenerator: Send + Sync {
     /// Generate a DEM from the given context and noise.
+    ///
+    /// # Panics
+    /// Panics if received noise includes a C or A injection, even at zero rate.
+    /// Panics if the index provenance flags do not match the gate count.
     fn generate(&self, ctx: &DemContext<'_>, noise: &dyn NoiseSpec) -> DemOutput;
 
     /// Human-readable name for this generator method.
@@ -67,11 +71,16 @@ pub trait DemGenerator: Send + Sync {
 /// Coherent DEM generator (backward Heisenberg mechanism extraction, approximate probabilities).
 ///
 /// Fast. Handles coherent noise (idle_rz). Approximate probabilities
-/// (sin^2 for H-type, (1-exp(2s))/2 for S-type).
+/// (sin^2 for H-type, exact independent-flip composition for S-type).
 pub struct CoherentApprox;
 
 impl DemGenerator for CoherentApprox {
     fn generate(&self, ctx: &DemContext<'_>, noise: &dyn NoiseSpec) -> DemOutput {
+        crate::expand::assert_one_per_gate(
+            "expansion_gates",
+            ctx.gate_index.expansion_gates.len(),
+            ctx.gates.len(),
+        );
         let entries = crate::coherent_dem::build_coherent_dem(
             ctx.gates,
             noise,
@@ -100,7 +109,7 @@ impl DemGenerator for CoherentApprox {
 /// Coherent DEM generator with Heisenberg-exact probability fitting.
 ///
 /// Slower (runs Heisenberg walks for marginals + pairwise). Handles coherent
-/// noise. Exact marginals via L-BFGS fit.
+/// noise. L-BFGS fits an approximate independent DEM to exact marginal targets.
 pub struct CoherentExact {
     pub prune_threshold: f64,
 }
@@ -117,6 +126,12 @@ impl DemGenerator for CoherentExact {
     fn generate(&self, ctx: &DemContext<'_>, noise: &dyn NoiseSpec) -> DemOutput {
         use crate::heisenberg::{build_noise_map, heisenberg_sparse};
         use crate::stabilizer::StabilizerGroup;
+
+        crate::expand::assert_one_per_gate(
+            "expansion_gates",
+            ctx.gate_index.expansion_gates.len(),
+            ctx.gates.len(),
+        );
 
         // Build initial stabilizer group
         let init_gates: Vec<Gate> = (0..ctx.expanded.num_original_qubits)
@@ -148,6 +163,7 @@ impl DemGenerator for CoherentExact {
         let mut pairwise: Vec<((usize, usize), f64)> = Vec::new();
         for i in 0..ctx.detectors.len() {
             for j in (i + 1)..ctx.detectors.len() {
+                // Measurement-parity detectors are Z-only, so their product has no phase.
                 let product = ctx.detectors[i]
                     .stabilizer
                     .multiply(&ctx.detectors[j].stabilizer);
@@ -215,6 +231,12 @@ impl DemGenerator for Perturbative {
         use crate::dem_mapping::{EegConfig, build_dem_configured, build_dem_decomposable};
         #[allow(unused_imports)]
         use crate::noise::UniformNoise;
+
+        crate::expand::assert_one_per_gate(
+            "expansion_gates",
+            ctx.gate_index.expansion_gates.len(),
+            ctx.gates.len(),
+        );
 
         // We need to extract params from the NoiseSpec — use a test gate to probe
         let _ = noise.noise_after_gate(0, pecos_core::gate_type::GateType::H, &[0]);

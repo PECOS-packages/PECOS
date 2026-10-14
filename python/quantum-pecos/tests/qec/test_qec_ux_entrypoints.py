@@ -9,7 +9,7 @@ import pytest
 
 
 def test_sim_neo_stack_runs_from_exp() -> None:
-    pecos_rslib_exp = pytest.importorskip("pecos_rslib_exp")
+    import pecos_rslib_exp
     from pecos.quantum import TickCircuit
 
     tc = TickCircuit()

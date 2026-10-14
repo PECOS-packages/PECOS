@@ -1,9 +1,9 @@
 """Test suite for V and Vdg gates."""
 
 import pecos_rslib
-import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit, v, vdg
+from pecos import compilation_pipeline
 
 
 class TestVGates:
@@ -20,7 +20,7 @@ class TestVGates:
             return measure(q).read()
 
         hugr = test_v.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # V gate should be decomposed to RXY(0, π/2)
         assert "___rxy" in output
@@ -38,7 +38,7 @@ class TestVGates:
             return measure(q).read()
 
         hugr = test_vdg.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Vdg gate should be decomposed to RXY(0, -π/2)
         assert "___rxy" in output
@@ -57,7 +57,7 @@ class TestVGates:
             return measure(q).read()
 
         hugr = test_v_vdg.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have two RXY calls (V and Vdg)
         assert output.count("___rxy") >= 2
@@ -73,7 +73,7 @@ class TestVGates:
             return measure(q).read()
 
         hugr = test_double_v.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have two RXY calls for the two V gates (plus one declaration)
         rxy_calls = output.count("tail call void @___rxy")
@@ -90,7 +90,7 @@ class TestVGates:
             return measure(q).read()
 
         hugr = simple_v.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # V gate should be decomposed into RXY
         assert "declare" in output

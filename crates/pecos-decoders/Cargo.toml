@@ -12,6 +12,7 @@ categories.workspace = true
 description = "Unified decoder meta-crate for PECOS"
 
 [dependencies]
+pecos-bp.workspace = true
 pecos-decoder-core.workspace = true
 pecos-random.workspace = true
 pecos-ldpc-decoders = { workspace = true, optional = true }
@@ -22,6 +23,7 @@ pecos-tesseract = { workspace = true, optional = true }
 pecos-chromobius = { workspace = true, optional = true }
 pecos-relay-bp = { workspace = true, optional = true }
 pecos-uf-decoder = { workspace = true, optional = true }
+rayon.workspace = true
 
 [features]
 default = []

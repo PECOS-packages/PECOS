@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 barrier ;
 // verification step
 cx q_test[5], a_test[0];

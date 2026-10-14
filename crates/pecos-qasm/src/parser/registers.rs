@@ -37,6 +37,11 @@ pub fn parse_register(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pec
                 QASMParser::error("Missing indexed identifier in creg declaration")
             })?;
             let (name, size) = parse_indexed_id(&indexed_id)?;
+            if !(1..=usize::from(u16::MAX)).contains(&size) {
+                return Err(PecosError::CompileInvalidRegisterSize(format!(
+                    "Classical register '{name}' width must be in 1..=65535, got {size}"
+                )));
+            }
             program.classical_registers.insert(name, size);
         }
         _ => {

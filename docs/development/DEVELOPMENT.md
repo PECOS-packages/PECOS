@@ -72,7 +72,12 @@ For developers who want to contribute or modify PECOS:
 
 6. **LLVM 21.1 Setup (Required for LLVM IR/QIS Support)**
 
-   PECOS requires LLVM version 21.1 for LLVM IR execution features.
+   PECOS Rust builds require LLVM version 21.1 for LLVM IR features.
+   Python HUGR-to-QIS lowering uses the `selene-hugr-qis-compiler` package through
+   `pecos_rslib.hugr_lowering.compile_hugr_to_qis` (re-exported by
+   `pecos.compilation_pipeline`), followed by PECOS helper-symbol
+   normalization. It does not require a local LLVM installation. The
+   `pecos-rslib-llvm` wheel remains available for QIR generation. Rust accepts the lowered QIS program.
 
    **Quick setup:**
    ```sh
@@ -288,7 +293,12 @@ PECOS uses `~/.pecos/` to store external dependencies and build artifacts that c
 |----------|---------|---------|
 | `PECOS_HOME` | Override entire home directory | `~/.pecos/` |
 | `PECOS_DEPS_DIR` | Override deps location | `$PECOS_HOME/deps/` |
-| `PECOS_CACHE_DIR` | Override cache location | `$PECOS_HOME/cache/` |
+| `PECOS_CACHE_DIR` | Override archive and compiled-program cache root | Archives: `$PECOS_HOME/cache/`; programs: `<temp_dir>/pecos_compiled_cache/` |
+
+Compiled QIS programs live in `qis-programs-v2/` under their cache root. Downloaded archives
+remain directly under the archive root. Old compiled programs at the root from earlier
+versions are neither reused nor removed.
+Development builds from before this layout used `qis-programs`; that directory can be deleted once no such build is running.
 
 These can be set via shell environment or in `.cargo/config.toml`:
 

@@ -76,7 +76,6 @@ def test_measurement_unrolling_qasm() -> None:
     assert qasm == qasm2, "QASM generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_measurement_unrolling_qir() -> None:
     """Element-wise then whole-register Permute compose through measures.
 

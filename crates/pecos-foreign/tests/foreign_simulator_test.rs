@@ -164,6 +164,20 @@ fn test_foreign_simulator_derived_gates() {
 }
 
 #[test]
+fn test_phase_corrected_defaults_dispatch_on_foreign_simulator() {
+    // These defaults apply a global-phase residue through the hook. The foreign
+    // protocol cannot observe a scalar, so the hook must be a no-op and the
+    // inherited decompositions must dispatch normally.
+    let mut sim = make_toy_sim(2);
+    sim.y(&[QubitId(0)])
+        .sxx(&[(QubitId(0), QubitId(1))])
+        .h3(&[QubitId(1)]);
+
+    let results = sim.mz(&[QubitId(0), QubitId(1)]);
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
 fn test_foreign_simulator_no_rotations() {
     let sim = make_toy_sim(1);
     assert!(
@@ -178,6 +192,20 @@ fn test_foreign_simulator_rotation_panic() {
     let mut sim = make_toy_sim(1);
     // Should panic because rx is None
     sim.rx(std::f64::consts::FRAC_PI_2.into(), &[QubitId(0)]);
+}
+
+#[test]
+#[should_panic(expected = "cannot apply exact T:")]
+fn test_foreign_simulator_rejects_phase_inexact_t() {
+    let mut sim = make_toy_sim(1);
+    sim.t(&[QubitId(0)]);
+}
+
+#[test]
+#[should_panic(expected = "cannot apply exact Tdg:")]
+fn test_foreign_simulator_rejects_phase_inexact_tdg() {
+    let mut sim = make_toy_sim(1);
+    sim.tdg(&[QubitId(0)]);
 }
 
 #[test]

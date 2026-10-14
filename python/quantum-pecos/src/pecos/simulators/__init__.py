@@ -28,7 +28,27 @@ from pecos_rslib import (
     stabilizer,
     state_vector,
 )
-from pecos_rslib.simulators import SparseStab, Stabilizer, StabVec
+from pecos_rslib.simulators import (
+    DensityMatrixDiagnostics,
+    InstrumentSample,
+    KrausSample,
+    MeasurementSample,
+    QuditDensityMatrix,
+    QuditError,
+    QuditIndexError,
+    QuditMemoryError,
+    QuditStateVec,
+    QuditValueError,
+    QutritDensityMatrix,
+    QutritStateVec,
+    SparseStab,
+    Stabilizer,
+    StabVec,
+    basis_swap,
+    embedded_qubit_unitary,
+    qutrit_leakage_channel,
+    qutrit_seepage_channel,
+)
 
 from pecos.simulators import sim_class_types
 from pecos.simulators.cointoss import CoinToss
@@ -64,19 +84,16 @@ except ImportError:
 def _load_cuda_simulators() -> None:
     """Populate the public Rust CUDA simulator classes on first access."""
     try:
-        cuda_stabilizer = import_module("pecos.simulators.cuda_stabilizer")
         cuda_statevec = import_module("pecos.simulators.cuda_statevec")
-        cuda_stabilizer_class = cuda_stabilizer.CudaStabilizer
         cuda_statevec_class = cuda_statevec.CudaStateVec
     except ImportError:
         cuda_statevec_class = None
-        cuda_stabilizer_class = None
 
-    globals().update(CudaStabilizer=cuda_stabilizer_class, CudaStateVec=cuda_statevec_class)
+    globals().update(CudaStateVec=cuda_statevec_class)
 
 
 def __getattr__(name: str) -> object:
-    if name in {"CudaStabilizer", "CudaStateVec"}:
+    if name == "CudaStateVec":
         _load_cuda_simulators()
         return globals()[name]
     msg = f"module {__name__!r} has no attribute {name!r}"
@@ -84,25 +101,40 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted({*globals(), "CudaStabilizer", "CudaStateVec"})
+    return sorted({*globals(), "CudaStateVec"})
 
 
 __all__ = [
     "MPS",
     "CoinToss",
     "CuStateVec",
-    "CudaStabilizer",
     "CudaStateVec",
     "DefaultSimulator",
+    "DensityMatrixDiagnostics",
+    "InstrumentSample",
+    "KrausSample",
+    "MeasurementSample",
     "PauliFaultProp",
     "PauliProp",
+    "QuditDensityMatrix",
+    "QuditError",
+    "QuditIndexError",
+    "QuditMemoryError",
+    "QuditStateVec",
+    "QuditValueError",
+    "QutritDensityMatrix",
+    "QutritStateVec",
     "SparseStab",
     "SparseStabPy",
     "StabVec",
     "Stabilizer",
     "StateVec",
+    "basis_swap",
     "coin_toss",
     "density_matrix",
+    "embedded_qubit_unitary",
+    "qutrit_leakage_channel",
+    "qutrit_seepage_channel",
     "sim_class_types",
     "sparse_stab",
     "stab_vec",

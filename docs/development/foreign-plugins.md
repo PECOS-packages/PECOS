@@ -16,7 +16,7 @@ If your language can call C functions, you need two files:
 No Rust knowledge required. The header is self-contained with all type definitions and
 function declarations.
 
-For Python, Go, and Julia there are also language-specific wrappers that provide
+For Python and Julia there are also language-specific wrappers that provide
 idiomatic interfaces (see below), but the C ABI works for any language.
 
 ## API Versioning
@@ -57,7 +57,6 @@ calling wrong function pointers.
    │          Language-specific wrappers         │
    │                                            │
    │  Python: PyO3 (Py<PyAny>)                  │
-   │  Go:     cgo + C ABI vtable                │
    │  Julia:  ccall + C ABI vtable              │
    │  C/C++:  C header (pecos_foreign.h)        │
    └────────────────────────────────────────────┘
@@ -106,38 +105,6 @@ The `decode` method receives syndrome bytes and returns a dict with:
 - `"observable"`: bytes or list of ints -- the decoded correction
 - `"weight"`: float -- cost of the solution
 - `"converged"` (optional): bool -- whether the decoder converged
-
-### Go
-
-```go
-package main
-
-import "github.com/PECOS-packages/PECOS/go/pecos"
-
-type MyDecoder struct {
-    checks int
-    bits   int
-}
-
-func (d *MyDecoder) Decode(syndrome []byte) (*pecos.DecodingResult, error) {
-    observable := make([]byte, d.bits)
-    // ... your decoding logic ...
-    converged := true
-    return &pecos.DecodingResult{
-        Observable: observable,
-        Weight:     1.0,
-        Converged:  &converged,
-    }, nil
-}
-
-func (d *MyDecoder) CheckCount() int { return d.checks }
-func (d *MyDecoder) BitCount() int   { return d.bits }
-
-func main() {
-    handle := pecos.RegisterDecoder(&MyDecoder{checks: 100, bits: 50})
-    defer handle.Destroy()
-}
-```
 
 ### C/C++ (or any language via C ABI)
 
@@ -240,22 +207,6 @@ class MyStabilizerSim:
 sim = pecos_rslib.PyForeignSimulator(MyStabilizerSim(10))
 ```
 
-### Go
-
-```go
-type MyStabSim struct {
-    numQubits int
-}
-
-func (s *MyStabSim) SZ(qubits []int)                     { /* ... */ }
-func (s *MyStabSim) H(qubits []int)                      { /* ... */ }
-func (s *MyStabSim) CX(pairs [][2]int)                   { /* ... */ }
-func (s *MyStabSim) MZ(qubits []int) []pecos.MeasurementResult { /* ... */ }
-func (s *MyStabSim) Reset()                               { /* ... */ }
-
-handle := pecos.RegisterSimulator(&MyStabSim{numQubits: 10})
-```
-
 ## Using PECOS Engines from Foreign Languages
 
 Foreign code can create and run PECOS quantum engines via the C ABI:
@@ -335,6 +286,15 @@ pecos_engine_reset(engine);
 pecos_engine_free(engine);
 ```
 
+The v1 `ByteMessage` readers reject malformed framing and batches containing the
+wrong message type. Gate processing accepts only Gate messages; outcome parsing
+accepts only Outcome messages with exactly four payload bytes. The length passed
+with a batch must equal the batch header's `total_size`, so pass the exact message
+length, not the capacity of a larger buffer. On a reader error,
+`pecos_engine_process` and `pecos_parse_outcomes` return `-1` and set their output
+pointer to null and output length to zero. Callers should check the return codes
+before using output buffers. Zero-message batches are valid and return empty results.
+
 ## Compatibility with pecos-neo
 
 Foreign simulators work with both the current `pecos-engines` stack and the experimental
@@ -347,14 +307,17 @@ Since `ForeignSimulator` and `PyForeignSimulator` implement `CliffordGateable`, 
 into either stack without modification:
 
 ```rust
+use pecos_foreign::ForeignSimulator;
+use pecos_neo::CircuitRunner;
+
 // Works with pecos-neo's generic runner
 let runner = CircuitRunner::<ForeignSimulator>::new();
 ```
 
 The same applies to decoders -- the `Decoder` trait is shared between both stacks.
 
-pecos-neo also has plugin systems for gate decompositions, noise channels, and orchestration
-(Bevy-style `Tool` plugins). Foreign noise channels and classical control sources are
+pecos-neo supports gate decompositions and composable noise channels, with owned simulation
+state and seeded shot loops for orchestration. Foreign noise channels and classical control sources are
 possible future extensions but require exposing additional Rust-specific types over FFI.
 
 ## Crate Structure
@@ -365,12 +328,10 @@ possible future extensions but require exposing additional Rust-specific types o
 | `pecos-ffi` | cdylib | Universal shared library (`libpecos_ffi.so`) -- link from any language |
 | `pecos-foreign/include/pecos_foreign.h` | header | Self-contained C header with all types and function declarations |
 | `pecos-rslib` | cdylib | Python: `PyForeignDecoder`, `PyForeignSimulator` via PyO3 |
-| `pecos-go-ffi` | cdylib | Go: convenience wrapper (links `pecos-foreign` + Go-specific scaffolding) |
-| `go/pecos/` | Go | `Decoder`/`CliffordSimulator` interfaces + cgo glue |
 | `pecos-julia-ffi` | cdylib | Julia: convenience wrapper (links `pecos-foreign` + Julia scaffolding) |
 | `julia/PECOS.jl/` | Julia | `AbstractDecoder`/`AbstractCliffordSimulator` types |
 
-For new languages, only `pecos-ffi` + the C header are needed. The Go/Julia crates are
+For new languages, only `pecos-ffi` + the C header are needed. The Julia crates are
 optional ergonomic wrappers -- they are not required for FFI access.
 
 ## Conformance Testing

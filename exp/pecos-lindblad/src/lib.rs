@@ -74,7 +74,7 @@
 //! | 2Q coherent IZ/ZI/ZZ phase | 981, 986-990 | any `Gate` + `coherent_phase_2q` |
 //! | 3Q `CX ⊗ I` + IZZ crosstalk | 1009-1011 | [`Gate::cx_theta_with_izz_crosstalk`] |
 //!
-//! See `design/lindblad_magnus_algorithm.md` for the math spec.
+//! The math follows Malekakhlagh et al., arXiv:2502.03462.
 
 pub mod basis;
 pub mod gate;

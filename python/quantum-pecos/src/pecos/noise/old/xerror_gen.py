@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.noise.class_errors_circuit import ErrorCircuits
 from pecos.noise.parent_class_error_gen import ParentErrorModel
+from pecos.quantum import Pauli
 
 if TYPE_CHECKING:
     from pecos.typing import ErrorParams, GateParams
@@ -46,10 +47,10 @@ class XModel(ParentErrorModel):
     inits_x: ClassVar[set[str]] = {"init |+>", "init |->"}
     inits_y: ClassVar[set[str]] = {"init |+i>", "init |-i>"}
 
-    error_two_paulis_collection: ClassVar[list[tuple[str, str]]] = [
-        ("I", "X"),
-        ("X", "I"),
-        ("X", "X"),
+    error_two_paulis_collection: ClassVar[list[tuple[Pauli, Pauli]]] = [
+        (Pauli.I, Pauli.X),
+        (Pauli.X, Pauli.I),
+        (Pauli.X, Pauli.X),
     ]
 
     def __init__(
@@ -74,8 +75,8 @@ class XModel(ParentErrorModel):
         self.gen.set_gate_group("preps", self.inits)
         self.gen.set_gate_group("two_qubits", self.two_qubits)
 
-        xerror = self.gen.ErrorStaticSymbol("X")
-        xerror_before = self.gen.ErrorStaticSymbol("X", after=False)
+        xerror = self.gen.ErrorStaticSymbol(Pauli.X)
+        xerror_before = self.gen.ErrorStaticSymbol(Pauli.X, after=False)
         two_pauli_errors = self.gen.ErrorSetTwoQuditTensorProduct(
             self.error_two_paulis_collection,
         )
@@ -98,7 +99,7 @@ class XModel(ParentErrorModel):
             self.has_idle_errors = False
 
             # Generate data errors
-            self.gen.set_default_error("data", xerror.error_func)
+            self.gen.set_gate_error("data", xerror.error_func)
 
             # Generate measurement errors
             self.gen.set_group_error("measurements", xerror_before.error_func)

@@ -18,7 +18,6 @@
 //! - `Qasm` - `OpenQASM` program representation
 //! - `Qis` - QIS (Quantum Instruction Set) program representation
 //! - `PhirJson` - PHIR JSON program representation
-//! - `Hugr` - HUGR (Hierarchical Unified Graph Representation) program
 //! - `Wasm` - WebAssembly bytecode program
 //! - `Wat` - WebAssembly text format program
 
@@ -44,9 +43,8 @@ pub fn register_programs_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     programs.add("Qasm", parent.getattr("Qasm")?)?;
     programs.add("Qis", parent.getattr("Qis")?)?;
 
-    // PHIR/HUGR programs
+    // PHIR programs
     programs.add("PhirJson", parent.getattr("PhirJson")?)?;
-    programs.add("Hugr", parent.getattr("Hugr")?)?;
 
     // WebAssembly programs
     programs.add("Wasm", parent.getattr("Wasm")?)?;

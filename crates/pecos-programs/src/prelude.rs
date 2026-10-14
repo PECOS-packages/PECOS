@@ -15,4 +15,4 @@
 //! This prelude re-exports all program types used across PECOS.
 
 // Re-export all program types
-pub use crate::{Hugr, PhirJson, Program, Qasm, Qis, SeleneInterface, Wasm, Wat};
+pub use crate::{PhirJson, Program, Qasm, Qis, SeleneInterface, Wasm, Wat};

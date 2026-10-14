@@ -23,10 +23,12 @@ use thiserror::Error;
 
 use std::io::Cursor;
 
+use std::cell::RefCell;
+
 use tket::TketOp;
 use tket::extension::measurement::MeasurementOp;
 use tket::hugr::builder::{
-    BuildError, DFGBuilder, Dataflow, DataflowHugr, DataflowSubContainer, SubContainer,
+    BuildError, Dataflow, DataflowHugr, DataflowSubContainer, FunctionBuilder, SubContainer,
 };
 use tket::hugr::envelope::EnvelopeConfig;
 use tket::hugr::extension::prelude::{bool_t, qb_t};
@@ -34,8 +36,12 @@ use tket::hugr::types::Signature;
 use tket::hugr::{Hugr, Wire, type_row};
 
 use crate::ast::{
-    BinaryOp, Binding, Block, CallExpr, ElseBranch, Expr, FnDecl, IndexExpr, Program, Stmt,
-    TopLevelDecl,
+    Binding, Block, CallExpr, ElseBranch, Expr, FnDecl, ForRange, ForStmt, IfStmt, IndexExpr,
+    Program, Stmt, TopLevelDecl,
+};
+use crate::comptime::{
+    ComptimeEvaluator, ComptimeValue, angle_evaluator, angle_expression_name,
+    define_comptime_binding, resolve_angle_turns,
 };
 
 // =============================================================================
@@ -47,6 +53,9 @@ use crate::ast::{
 pub enum HugrError {
     #[error("unknown gate '{name}'")]
     UnknownGate { name: String },
+
+    #[error("HUGR codegen supports only gate calls; call to '{name}' is unsupported")]
+    UnsupportedCall { name: String },
 
     #[error("undefined qubit '{name}'")]
     UndefinedQubit { name: String },
@@ -64,14 +73,45 @@ pub enum HugrError {
     #[error("allocator '{name}' not found")]
     AllocatorNotFound { name: String },
 
+    #[error("collection for loops are unsupported in HUGR codegen")]
+    CollectionLoop,
+
+    #[error("for loop bounds must be compile-time integers")]
+    NonConstantLoopBound,
+
+    #[error("range for loops require exactly one capture, got {count}")]
+    InvalidLoopCaptures { count: usize },
+
+    #[error("{statement} cannot be represented in an unrolled loop")]
+    UnsupportedLoopControl { statement: &'static str },
+
+    #[error("if condition must be a measured classical variable or a compile-time boolean")]
+    UnsupportedCondition,
+
+    #[error("nested runtime conditionals are unsupported by the HUGR builder")]
+    NestedConditional,
+
     #[error("HUGR builder error: {0}")]
     BuilderError(String),
 
     #[error("unsupported expression in codegen")]
     UnsupportedExpression,
 
-    #[error("rotation angle must be a numeric literal")]
-    InvalidRotationAngle,
+    #[error(
+        "rotation angle expression {expression} is not a numeric compile-time constant: {reason}"
+    )]
+    InvalidRotationAngle { expression: String, reason: String },
+
+    #[error(
+        "cannot broadcast {arity}-qubit gate '{gate}' over an allocator; allocator broadcasts require a single-qubit gate"
+    )]
+    InvalidAllocatorBroadcast { gate: String, arity: usize },
+
+    #[error("cannot broadcast gate '{gate}' over zero-capacity allocator '{allocator}'")]
+    EmptyAllocatorBroadcast { gate: String, allocator: String },
+
+    #[error("gate '{gate}' batch must contain at least one target")]
+    EmptyGateBatch { gate: String },
 
     #[error("HUGR serialization error: {0}")]
     SerializationError(String),
@@ -153,8 +193,33 @@ enum GateMapping {
     F4,
     /// F4 dagger
     F4dg,
-    /// Mid-circuit measurement (returns classical bit, keeps qubit)
-    MidMeasure,
+}
+
+impl GateMapping {
+    fn arity(&self) -> usize {
+        match self {
+            Self::Direct(op) => gate_qubit_count(op),
+            Self::SY | Self::SYdg | Self::F | Self::Fdg | Self::F4 | Self::F4dg => 1,
+            Self::Swap
+            | Self::ISwap
+            | Self::CH
+            | Self::SXX
+            | Self::SYY
+            | Self::SZZ
+            | Self::SXXdg
+            | Self::SYYdg
+            | Self::SZZdg
+            | Self::RZZ => 2,
+        }
+    }
+
+    fn needs_angle(&self) -> bool {
+        match self {
+            Self::Direct(op) => gate_needs_angle(op),
+            Self::RZZ => true,
+            _ => false,
+        }
+    }
 }
 
 /// Maps Zluppy gate names to gate operations.
@@ -167,11 +232,10 @@ enum GateMapping {
 /// - Square root: sx, sxdg, sy, sydg, sz, szdg (sqrt of X, Y, and Z)
 /// - T gates: t, tdg (fourth root of Z)
 /// - F gates: f, fdg, f4, f4dg (Clifford face rotations)
-/// - Rotation: rx, ry, rz (single-qubit), crz, rzz (two-qubit)
+/// - Rotation: rx, ry, rz (single-qubit), rzz (two-qubit)
 /// - Two-qubit: cx, cy, cz, ch, swap, iswap
 /// - Two-qubit Ising: sxx, syy, szz, sxxdg, syydg, szzdg
 /// - Three-qubit: ccx
-/// - Measurement: mz (Z-basis measurement)
 /// - State preparation: pz (prepare +Z eigenstate)
 ///
 /// Composite gates (decomposed):
@@ -239,9 +303,6 @@ fn gate_name_to_mapping(name: &str) -> Option<GateMapping> {
         "fdg" => Some(GateMapping::Fdg),
         "f4" => Some(GateMapping::F4),
         "f4dg" => Some(GateMapping::F4dg),
-
-        // Mid-circuit measurement in Z basis (keeps qubit alive)
-        "mz" => Some(GateMapping::MidMeasure),
 
         // Prepare +Z eigenstate (reset)
         "pz" => Some(GateMapping::Direct(TketOp::Reset)),
@@ -330,12 +391,19 @@ pub struct HugrCodegen {
     mode: CodegenMode,
     /// Allocators by name.
     allocators: BTreeMap<String, Allocator>,
+    /// Number of active statically unrolled loop bodies.
+    unrolled_loop_depth: usize,
     /// Total number of qubits across all allocators.
     total_qubits: usize,
     /// Collected gate operations.
     operations: Vec<GateOp>,
     /// Names of classical variables (from measurement results).
-    classical_vars: std::collections::BTreeSet<String>,
+    classical_vars: BTreeMap<String, String>,
+    /// Every allocation, including distinct instances of scoped declarations.
+    all_allocators: BTreeMap<String, Allocator>,
+    measurement_names: std::collections::BTreeSet<String>,
+    /// Compile-time values available to gate angle expressions.
+    comptime: RefCell<ComptimeEvaluator>,
 }
 
 /// A gate operation to be compiled.
@@ -383,9 +451,13 @@ impl HugrCodegen {
         Self {
             mode: CodegenMode::default(),
             allocators: BTreeMap::new(),
+            unrolled_loop_depth: 0,
             total_qubits: 0,
             operations: Vec::new(),
-            classical_vars: std::collections::BTreeSet::new(),
+            classical_vars: BTreeMap::new(),
+            all_allocators: BTreeMap::new(),
+            measurement_names: std::collections::BTreeSet::new(),
+            comptime: RefCell::new(angle_evaluator()),
         }
     }
 
@@ -399,9 +471,13 @@ impl HugrCodegen {
         Self {
             mode,
             allocators: BTreeMap::new(),
+            unrolled_loop_depth: 0,
             total_qubits: 0,
             operations: Vec::new(),
-            classical_vars: std::collections::BTreeSet::new(),
+            classical_vars: BTreeMap::new(),
+            all_allocators: BTreeMap::new(),
+            measurement_names: std::collections::BTreeSet::new(),
+            comptime: RefCell::new(angle_evaluator()),
         }
     }
 
@@ -415,6 +491,11 @@ impl HugrCodegen {
         self.mode = mode;
     }
 
+    /// Number of qubits allocated by the compiled program.
+    pub fn num_qubits(&self) -> usize {
+        self.total_qubits
+    }
+
     /// Compile a Zluppy program to HUGR.
     pub fn compile(&mut self, program: &Program) -> HugrResult<Hugr> {
         // Phase 1: Collect allocators and operations
@@ -426,8 +507,12 @@ impl HugrCodegen {
 
     /// Compile a function to HUGR.
     pub fn compile_function(&mut self, fn_decl: &FnDecl) -> HugrResult<Hugr> {
+        *self = Self::with_mode(self.mode);
         // Collect from function body
-        self.collect_block(&fn_decl.body)?;
+        self.collect_block_with_bindings(
+            &fn_decl.body,
+            fn_decl.params.iter().map(|param| param.name.clone()),
+        )?;
 
         // Build HUGR
         self.build_hugr()
@@ -438,10 +523,32 @@ impl HugrCodegen {
     // =========================================================================
 
     fn collect_program(&mut self, program: &Program) -> HugrResult<()> {
+        self.comptime = RefCell::new(angle_evaluator());
+        self.allocators.clear();
+        self.unrolled_loop_depth = 0;
+        self.all_allocators.clear();
+        self.classical_vars.clear();
+        self.operations.clear();
+        self.total_qubits = 0;
+        self.measurement_names.clear();
+        for decl in &program.declarations {
+            if let TopLevelDecl::Binding(binding) = decl {
+                self.collect_comptime_binding(binding);
+            }
+        }
         for decl in &program.declarations {
             self.collect_top_level(decl)?;
         }
         Ok(())
+    }
+
+    fn collect_comptime_binding(&mut self, binding: &Binding) {
+        if !define_comptime_binding(&mut self.comptime.borrow_mut(), binding) {
+            self.comptime
+                .borrow_mut()
+                .context
+                .define(&binding.name, ComptimeValue::Undefined);
+        }
     }
 
     fn collect_top_level(&mut self, decl: &TopLevelDecl) -> HugrResult<()> {
@@ -449,7 +556,10 @@ impl HugrCodegen {
             TopLevelDecl::Fn(fn_decl)
                 // Only collect from main function for now
                 if fn_decl.name == "main" => {
-                    self.collect_block(&fn_decl.body)?;
+                    self.collect_block_with_bindings(
+                        &fn_decl.body,
+                        fn_decl.params.iter().map(|param| param.name.clone()),
+                    )?;
                 }
             TopLevelDecl::Binding(binding) => {
                 self.collect_binding(binding)?;
@@ -460,45 +570,37 @@ impl HugrCodegen {
     }
 
     fn collect_binding(&mut self, binding: &Binding) -> HugrResult<()> {
-        // Check if this is an allocator declaration
-        if let Some(ref value) = binding.value {
-            if let Some(capacity) = self.try_extract_allocator(value) {
-                let start_index = self.total_qubits;
+        if let Some(value) = &binding.value {
+            let capacity = self.try_extract_allocator(value).or_else(|| {
+                self.try_extract_child_allocator(value)
+                    .map(|(_, size)| size)
+            });
+            if let Some(capacity) = capacity {
+                let name = if self.all_allocators.contains_key(&binding.name) {
+                    format!("{}#{}", binding.name, self.all_allocators.len())
+                } else {
+                    binding.name.clone()
+                };
+                let allocator = Allocator {
+                    name: name.clone(),
+                    capacity,
+                    start_index: self.total_qubits,
+                };
                 self.total_qubits += capacity;
-                self.allocators.insert(
-                    binding.name.clone(),
-                    Allocator {
-                        name: binding.name.clone(),
-                        capacity,
-                        start_index,
-                    },
-                );
+                self.all_allocators.insert(name, allocator.clone());
+                self.allocators.insert(binding.name.clone(), allocator);
+                self.classical_vars.remove(&binding.name);
+                return Ok(());
             }
-            // Check for child allocator: mut q := base.child(2)
-            else if let Some((parent, size)) = self.try_extract_child_allocator(value) {
-                // Child allocators share qubits with parent
-                // For now, treat them as new allocations (simplification)
-                let start_index = self.total_qubits;
-                self.total_qubits += size;
-                self.allocators.insert(
-                    binding.name.clone(),
-                    Allocator {
-                        name: binding.name.clone(),
-                        capacity: size,
-                        start_index,
-                    },
-                );
-                // Suppress unused variable warning
-                let _ = parent;
-            }
-            // Check for measurement assignment: mut result := M(q[0])
-            else if self.is_measurement_call(value) {
-                // Track this as a classical variable
-                self.classical_vars.insert(binding.name.clone());
-                // Collect the measurement with the variable name
-                self.collect_measurement_assignment(value, &binding.name)?;
+            if self.is_measurement_call(value) || matches!(value, Expr::Measure(_)) {
+                let name = self.collect_measurement_assignment(value, &binding.name)?;
+                self.classical_vars.insert(binding.name.clone(), name);
+                self.allocators.remove(&binding.name);
+                return Ok(());
             }
         }
+        self.allocators.remove(&binding.name);
+        self.classical_vars.remove(&binding.name);
         Ok(())
     }
 
@@ -513,45 +615,54 @@ impl HugrCodegen {
     }
 
     /// Collect a measurement assignment: mut result := mz(u1) q[0] or mz(u1) [q[0], q[1]]
-    fn collect_measurement_assignment(&mut self, expr: &Expr, result_var: &str) -> HugrResult<()> {
-        if let Expr::Call(call) = expr {
-            // New typed measurement syntax: mz(type, target)
-            if call.args.len() == 2 {
-                // First arg is type (ignored for HUGR), second is target(s)
-                let target_arg = &call.args[1];
-                let qubits = self.extract_measurement_targets(target_arg)?;
-
-                for (i, qubit) in qubits.into_iter().enumerate() {
-                    let var_name = if i == 0 {
-                        result_var.to_string()
-                    } else {
-                        format!("{}_{}", result_var, i)
-                    };
-                    self.operations.push(GateOp::MidMeasure {
-                        qubit,
-                        result_var: var_name,
+    fn collect_measurement_assignment(
+        &mut self,
+        expr: &Expr,
+        result_var: &str,
+    ) -> HugrResult<String> {
+        let qubits = match expr {
+            Expr::Measure(measure) => self.extract_measurement_targets(&measure.targets)?,
+            Expr::Call(call) => match call.args.as_slice() {
+                [_, target] => self.extract_measurement_targets(target)?,
+                [target] => vec![self.extract_qubit_ref(target)?],
+                _ => {
+                    return Err(HugrError::WrongArgumentCount {
+                        gate: "mz".to_string(),
+                        expected: 2,
+                        got: call.args.len(),
                     });
                 }
-                return Ok(());
+            },
+            _ => return Err(HugrError::UnsupportedExpression),
+        };
+        let mut first_result = None;
+        for (index, qubit) in qubits.into_iter().enumerate() {
+            let preferred = if index == 0 {
+                result_var.to_string()
+            } else {
+                format!("{result_var}_{index}")
+            };
+            let identity = self.fresh_measurement_name(&preferred);
+            if index == 0 {
+                first_result = Some(identity.clone());
             }
-
-            // Legacy single-arg syntax: mz(q[0])
-            if call.args.len() == 1 {
-                let qubit = self.extract_qubit_ref(&call.args[0])?;
-                self.operations.push(GateOp::MidMeasure {
-                    qubit,
-                    result_var: result_var.to_string(),
-                });
-                return Ok(());
-            }
-
-            return Err(HugrError::WrongArgumentCount {
-                gate: "mz".to_string(),
-                expected: 2,
-                got: call.args.len(),
+            self.operations.push(GateOp::MidMeasure {
+                qubit,
+                result_var: identity,
             });
         }
-        Ok(())
+        first_result.ok_or(HugrError::UnsupportedExpression)
+    }
+
+    /// Reserve every element's identity, including array elements and repeated declarations.
+    fn fresh_measurement_name(&mut self, preferred: &str) -> String {
+        let mut name = preferred.to_string();
+        let mut suffix = 0;
+        while !self.measurement_names.insert(name.clone()) {
+            name = format!("{preferred}#{suffix}");
+            suffix += 1;
+        }
+        name
     }
 
     /// Extract measurement targets from an expression.
@@ -563,6 +674,11 @@ impl HugrCodegen {
                 let qubit = self.extract_qubit_from_index(index_expr)?;
                 Ok(vec![qubit])
             }
+            Expr::BracketArray(array) => array
+                .elements
+                .iter()
+                .map(|expr| self.extract_qubit_ref(expr))
+                .collect(),
             // Array of qubits: &[q[0], q[1]]
             Expr::Unary(unary) => {
                 if let crate::ast::UnaryOp::AddrOf = unary.op
@@ -581,150 +697,117 @@ impl HugrCodegen {
         }
     }
 
-    /// Check if an expression is a batch literal (set or address-of array).
+    /// Return the elements of a supported batch literal.
+    fn batch_elements<'a>(&self, expr: &'a Expr) -> Option<&'a [Expr]> {
+        match expr {
+            Expr::Set(set) => Some(&set.elements),
+            Expr::BracketArray(array) => Some(&array.elements),
+            Expr::Unary(unary) if matches!(unary.op, crate::ast::UnaryOp::AddrOf) => {
+                if let Expr::BracketArray(array) = &unary.operand {
+                    Some(&array.elements)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if an expression is a batch literal.
     fn is_batch_literal(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Set(_) => true,
-            Expr::Unary(unary) => {
-                matches!(unary.op, crate::ast::UnaryOp::AddrOf)
-                    && matches!(unary.operand, Expr::BracketArray(_))
-            }
-            _ => false,
-        }
-    }
-
-    /// Extract single-qubit batch targets from set literal or address-of array.
-    /// Supports: [q[0], q[1], q[2] or &[q[0], q[1], q[2]]
-    fn extract_batch_single_targets(&self, expr: &Expr) -> HugrResult<Vec<QubitRef>> {
-        match expr {
-            Expr::Set(set) => {
-                let mut qubits = Vec::new();
-                for elem in &set.elements {
-                    let qubit = self.extract_qubit_ref(elem)?;
-                    qubits.push(qubit);
-                }
-                Ok(qubits)
-            }
-            // Address-of array: &[q[0], q[1], q[2]]
-            Expr::Unary(unary) => {
-                if let crate::ast::UnaryOp::AddrOf = unary.op
-                    && let Expr::BracketArray(arr) = &unary.operand
-                {
-                    let mut qubits = Vec::new();
-                    for elem in &arr.elements {
-                        let qubit = self.extract_qubit_ref(elem)?;
-                        qubits.push(qubit);
-                    }
-                    return Ok(qubits);
-                }
-                // Single qubit (not batch)
-                let qubit = self.extract_qubit_ref(expr)?;
-                Ok(vec![qubit])
-            }
-            // Single qubit (not batch)
-            _ => {
-                let qubit = self.extract_qubit_ref(expr)?;
-                Ok(vec![qubit])
-            }
-        }
-    }
-
-    /// Extract two-qubit batch targets from set or address-of array of tuples.
-    /// Supports: {(q[0], q[1]), (q[2], q[3])} or &[(q[0], q[1]), (q[2], q[3])]
-    fn extract_batch_pair_targets(&self, expr: &Expr) -> HugrResult<Vec<(QubitRef, QubitRef)>> {
-        match expr {
-            Expr::Set(set) => {
-                let mut pairs = Vec::new();
-                for elem in &set.elements {
-                    let pair = self.extract_qubit_pair(elem)?;
-                    pairs.push(pair);
-                }
-                Ok(pairs)
-            }
-            // Address-of array: &[(q[0], q[1]), (q[2], q[3])]
-            Expr::Unary(unary) => {
-                if let crate::ast::UnaryOp::AddrOf = unary.op
-                    && let Expr::BracketArray(arr) = &unary.operand
-                {
-                    let mut pairs = Vec::new();
-                    for elem in &arr.elements {
-                        let pair = self.extract_qubit_pair(elem)?;
-                        pairs.push(pair);
-                    }
-                    return Ok(pairs);
-                }
-                Err(HugrError::UnsupportedExpression)
-            }
-            // Single pair (not batch) - could be tuple or two separate args
-            Expr::Tuple(tuple) if tuple.elements.len() == 2 => {
-                let pair = self.extract_qubit_pair(expr)?;
-                Ok(vec![pair])
-            }
-            // Not a batch - will be handled by regular two-qubit gate logic
-            _ => Err(HugrError::UnsupportedExpression),
-        }
-    }
-
-    /// Extract a qubit pair from a tuple expression: (q[0], q[1])
-    fn extract_qubit_pair(&self, expr: &Expr) -> HugrResult<(QubitRef, QubitRef)> {
-        match expr {
-            Expr::Tuple(tuple) => {
-                if tuple.elements.len() != 2 {
-                    return Err(HugrError::UnsupportedExpression);
-                }
-                let qubit_a = self.extract_qubit_ref(&tuple.elements[0])?;
-                let qubit_b = self.extract_qubit_ref(&tuple.elements[1])?;
-                Ok((qubit_a, qubit_b))
-            }
-            _ => Err(HugrError::UnsupportedExpression),
-        }
+        self.batch_elements(expr).is_some()
     }
 
     fn collect_block(&mut self, block: &Block) -> HugrResult<()> {
-        for stmt in &block.statements {
-            self.collect_stmt(stmt)?;
+        self.collect_block_with_bindings(block, std::iter::empty())
+    }
+
+    fn collect_block_with_bindings(
+        &mut self,
+        block: &Block,
+        bindings: impl IntoIterator<Item = String>,
+    ) -> HugrResult<()> {
+        self.comptime.borrow_mut().context.push_scope();
+        let allocators = self.allocators.clone();
+        let classical_vars = self.classical_vars.clone();
+        for name in bindings {
+            self.comptime
+                .borrow_mut()
+                .context
+                .define(&name, ComptimeValue::Undefined);
+            self.allocators.remove(&name);
+            self.classical_vars.remove(&name);
         }
-        Ok(())
+        let result = (|| {
+            block
+                .statements
+                .iter()
+                .try_for_each(|stmt| self.collect_stmt(stmt))?;
+
+            Ok(())
+        })();
+        self.allocators = allocators;
+        self.classical_vars = classical_vars;
+        self.comptime.borrow_mut().context.pop_scope();
+        result
     }
 
     fn collect_stmt(&mut self, stmt: &Stmt) -> HugrResult<()> {
+        if self.unrolled_loop_depth > 0 {
+            let statement = match stmt {
+                Stmt::Switch(_) => Some("switch"),
+                Stmt::TryBlock(_) => Some("try block"),
+                Stmt::Defer(_) => Some("defer"),
+                Stmt::Errdefer(_) => Some("errdefer"),
+                Stmt::Binding(binding) if matches!(&binding.value, Some(Expr::Unary(unary)) if matches!(unary.op, crate::ast::UnaryOp::Try)) => {
+                    Some("try propagation")
+                }
+                _ => None,
+            };
+            if let Some(statement) = statement {
+                return Err(HugrError::UnsupportedLoopControl { statement });
+            }
+        }
         match stmt {
-            Stmt::Binding(binding) => self.collect_binding(binding)?,
+            Stmt::Binding(binding) => {
+                self.collect_binding(binding)?;
+                if !define_comptime_binding(&mut self.comptime.borrow_mut(), binding) {
+                    self.comptime
+                        .borrow_mut()
+                        .context
+                        .define(&binding.name, ComptimeValue::Undefined);
+                }
+            }
             Stmt::Expr(expr_stmt) => self.collect_expr(&expr_stmt.expr)?,
+            Stmt::Gate(gate) => self.collect_gate_op(gate)?,
+            Stmt::Prepare(prepare) => self.collect_prepare_op(prepare)?,
             // Tick blocks - flatten operations (HUGR doesn't have native parallel blocks)
             Stmt::Tick(tick_stmt) => {
-                for inner_stmt in &tick_stmt.body {
-                    self.collect_stmt(inner_stmt)?;
+                // Preserve tick visibility: allocator and measurement bindings remain
+                // available afterward, while comptime locals retain their original scope.
+                self.comptime.borrow_mut().context.push_scope();
+                let result = tick_stmt
+                    .body
+                    .iter()
+                    .try_for_each(|stmt| self.collect_stmt(stmt));
+                self.comptime.borrow_mut().context.pop_scope();
+                result?;
+                // The surviving runtime bindings must also shadow outer
+                // comptime names after the tick's local evaluation scope ends.
+                for name in self.allocators.keys().chain(self.classical_vars.keys()) {
+                    self.comptime
+                        .borrow_mut()
+                        .context
+                        .define(name, ComptimeValue::Undefined);
                 }
             }
-            Stmt::If(if_stmt) => {
-                // Check if the condition is a classical variable (from measurement)
-                if let Some(condition_var) =
-                    self.try_extract_classical_condition(&if_stmt.condition)
-                {
-                    // Collect operations for both branches separately
-                    let then_ops = self.collect_block_ops(&if_stmt.then_body)?;
-                    let else_ops = if let Some(else_branch) = &if_stmt.else_body {
-                        self.collect_else_ops(else_branch)?
-                    } else {
-                        Vec::new()
-                    };
-
-                    self.operations.push(GateOp::Conditional {
-                        condition_var,
-                        then_ops,
-                        else_ops,
-                    });
-                } else {
-                    // Non-classical conditional - just collect operations from both branches
-                    self.collect_block(&if_stmt.then_body)?;
-                    if let Some(else_branch) = &if_stmt.else_body {
-                        self.collect_else_branch(else_branch)?;
-                    }
-                }
-            }
-            Stmt::For(for_stmt) => {
-                self.collect_block(&for_stmt.body)?;
+            Stmt::If(if_stmt) => self.collect_if(if_stmt)?,
+            Stmt::For(for_stmt) => self.collect_for(for_stmt)?,
+            Stmt::Break(_) => return Err(HugrError::UnsupportedLoopControl { statement: "break" }),
+            Stmt::Continue(_) => {
+                return Err(HugrError::UnsupportedLoopControl {
+                    statement: "continue",
+                });
             }
             Stmt::Block(block) => self.collect_block(block)?,
             _ => {}
@@ -732,63 +815,120 @@ impl HugrCodegen {
         Ok(())
     }
 
-    /// Try to extract a classical variable name from a condition expression.
-    /// Returns Some(var_name) if the condition is a simple reference to a classical variable.
-    fn try_extract_classical_condition(&self, expr: &Expr) -> Option<String> {
-        if let Expr::Ident(ident) = expr
-            && self.classical_vars.contains(&ident.name)
+    fn collect_if(&mut self, if_stmt: &IfStmt) -> HugrResult<()> {
+        let condition = self
+            .comptime
+            .borrow_mut()
+            .eval_expr(&if_stmt.condition)
+            .ok()
+            .and_then(|value| value.as_bool());
+        if let Some(condition) = condition {
+            if condition {
+                self.collect_block(&if_stmt.then_body)?;
+            } else if let Some(branch) = &if_stmt.else_body {
+                self.collect_else_branch(branch)?;
+            }
+        } else if let Some(condition_var) = self.try_extract_classical_condition(&if_stmt.condition)
         {
-            return Some(ident.name.clone());
-        }
-        None
-    }
-
-    /// Collect operations from a block into a separate Vec (for conditional branches).
-    fn collect_block_ops(&mut self, block: &Block) -> HugrResult<Vec<GateOp>> {
-        // Save current operations
-        let saved_ops = std::mem::take(&mut self.operations);
-
-        // Collect into fresh operations list
-        self.collect_block(block)?;
-
-        // Swap back and return the collected ops
-        let collected = std::mem::replace(&mut self.operations, saved_ops);
-        Ok(collected)
-    }
-
-    /// Collect operations from an else branch.
-    fn collect_else_ops(&mut self, branch: &ElseBranch) -> HugrResult<Vec<GateOp>> {
-        match branch {
-            ElseBranch::Else(block) => self.collect_block_ops(block),
-            ElseBranch::ElseIf(if_stmt) => {
-                // For else-if, treat as nested conditional (simplified for now)
-                let saved_ops = std::mem::take(&mut self.operations);
-                self.collect_block(&if_stmt.then_body)?;
-                if let Some(else_branch) = &if_stmt.else_body {
-                    self.collect_else_branch(else_branch)?;
-                }
-                let collected = std::mem::replace(&mut self.operations, saved_ops);
-                Ok(collected)
-            }
-        }
-    }
-
-    fn collect_else_branch(&mut self, branch: &ElseBranch) -> HugrResult<()> {
-        match branch {
-            ElseBranch::Else(block) => self.collect_block(block)?,
-            ElseBranch::ElseIf(if_stmt) => {
-                self.collect_block(&if_stmt.then_body)?;
-                if let Some(else_branch) = &if_stmt.else_body {
-                    self.collect_else_branch(else_branch)?;
-                }
-            }
+            let then_ops = self.collect_block_ops(&if_stmt.then_body)?;
+            let else_ops = if let Some(branch) = &if_stmt.else_body {
+                self.collect_else_ops(branch)?
+            } else {
+                Vec::new()
+            };
+            self.operations.push(GateOp::Conditional {
+                condition_var,
+                then_ops,
+                else_ops,
+            });
+        } else {
+            return Err(HugrError::UnsupportedCondition);
         }
         Ok(())
     }
 
+    fn collect_for(&mut self, for_stmt: &ForStmt) -> HugrResult<()> {
+        if let Some(statement) = super::block_control(&for_stmt.body) {
+            return Err(HugrError::UnsupportedLoopControl { statement });
+        }
+        let ForRange::Range { start, end } = &for_stmt.range else {
+            return Err(HugrError::CollectionLoop);
+        };
+        let [capture] = for_stmt.captures.as_slice() else {
+            return Err(HugrError::InvalidLoopCaptures {
+                count: for_stmt.captures.len(),
+            });
+        };
+        let start = self.eval_loop_bound(start)?;
+        let end = self.eval_loop_bound(end)?;
+        for value in start..end {
+            self.comptime.borrow_mut().context.push_scope();
+            self.comptime
+                .borrow_mut()
+                .context
+                .define(capture, ComptimeValue::Int(value));
+            let allocators = self.allocators.clone();
+            let classical_vars = self.classical_vars.clone();
+            self.allocators.remove(capture);
+            self.classical_vars.remove(capture);
+            self.unrolled_loop_depth += 1;
+            let result = self.collect_block(&for_stmt.body);
+            self.unrolled_loop_depth -= 1;
+            self.allocators = allocators;
+            self.classical_vars = classical_vars;
+            self.comptime.borrow_mut().context.pop_scope();
+            result?;
+        }
+        Ok(())
+    }
+
+    fn eval_loop_bound(&self, expr: &Expr) -> HugrResult<i64> {
+        match self.comptime.borrow_mut().eval_expr(expr) {
+            Ok(ComptimeValue::Int(value)) => Ok(value),
+            Ok(ComptimeValue::Uint(value)) => {
+                i64::try_from(value).map_err(|_| HugrError::NonConstantLoopBound)
+            }
+            _ => Err(HugrError::NonConstantLoopBound),
+        }
+    }
+
+    /// Try to extract a classical variable name from a condition expression.
+    /// Returns Some(var_name) if the condition is a simple reference to a classical variable.
+    fn try_extract_classical_condition(&self, expr: &Expr) -> Option<String> {
+        if let Expr::Ident(ident) = expr {
+            return self.classical_vars.get(&ident.name).cloned();
+        }
+        None
+    }
+
+    /// Collect a branch without disturbing the surrounding operation list on error.
+    fn collect_block_ops(&mut self, block: &Block) -> HugrResult<Vec<GateOp>> {
+        let saved_ops = std::mem::take(&mut self.operations);
+        let result = self.collect_block(block);
+        let collected = std::mem::replace(&mut self.operations, saved_ops);
+        result.map(|()| collected)
+    }
+
+    fn collect_else_ops(&mut self, branch: &ElseBranch) -> HugrResult<Vec<GateOp>> {
+        let saved_ops = std::mem::take(&mut self.operations);
+        let result = self.collect_else_branch(branch);
+        let collected = std::mem::replace(&mut self.operations, saved_ops);
+        result.map(|()| collected)
+    }
+
+    fn collect_else_branch(&mut self, branch: &ElseBranch) -> HugrResult<()> {
+        match branch {
+            ElseBranch::Else(block) => self.collect_block(block),
+            ElseBranch::ElseIf(if_stmt) => self.collect_if(if_stmt),
+        }
+    }
+
     fn collect_expr(&mut self, expr: &Expr) -> HugrResult<()> {
         match expr {
-            Expr::Call(call) => self.collect_call(call)?,
+            // HUGR lowering does not yet represent ordinary function calls.
+            // Reject them so user code cannot silently disappear from the circuit.
+            Expr::Call(call) => self.reject_unsupported_call(call)?,
+            Expr::Gate(gate) => self.collect_gate_expr(gate)?,
             Expr::Binary(binary) => {
                 self.collect_expr(&binary.left)?;
                 self.collect_expr(&binary.right)?;
@@ -798,63 +938,185 @@ impl HugrCodegen {
         Ok(())
     }
 
+    fn collect_gate_expr(&mut self, gate: &crate::ast::GateExpr) -> HugrResult<()> {
+        if let Expr::Ident(ident) = &gate.target {
+            let capacity = self
+                .allocators
+                .get(&ident.name)
+                .ok_or_else(|| HugrError::AllocatorNotFound {
+                    name: ident.name.clone(),
+                })?
+                .capacity;
+            let arity = gate.kind.arity();
+            if arity != 1 {
+                return Err(HugrError::InvalidAllocatorBroadcast {
+                    gate: gate.kind.keyword().to_string(),
+                    arity,
+                });
+            }
+            if capacity == 0 {
+                return Err(HugrError::EmptyAllocatorBroadcast {
+                    gate: gate.kind.keyword().to_string(),
+                    allocator: ident.name.clone(),
+                });
+            }
+            for index in 0..capacity {
+                self.collect_named_gate(
+                    gate.kind.keyword(),
+                    &gate.params,
+                    vec![Expr::SlotRef(Box::new(crate::ast::SlotRef {
+                        allocator: ident.name.clone(),
+                        index: Box::new(Expr::IntLit(crate::ast::IntLit {
+                            value: index as i128,
+                            suffix: None,
+                            location: None,
+                        })),
+                        location: gate.location.clone(),
+                    }))],
+                )?;
+            }
+            return Ok(());
+        }
+
+        let targets = match &gate.target {
+            Expr::Tuple(tuple) => tuple.elements.clone(),
+            target => vec![target.clone()],
+        };
+        self.collect_named_gate(gate.kind.keyword(), &gate.params, targets)
+    }
+
+    fn collect_gate_op(&mut self, gate: &crate::ast::GateOp) -> HugrResult<()> {
+        let targets = gate
+            .targets
+            .iter()
+            .cloned()
+            .map(|target| Expr::SlotRef(Box::new(target)))
+            .collect();
+        self.collect_named_gate(gate.kind.keyword(), &gate.params, targets)
+    }
+
+    fn collect_named_gate(
+        &mut self,
+        name: &str,
+        params: &[Expr],
+        targets: Vec<Expr>,
+    ) -> HugrResult<()> {
+        let mut args = params.to_vec();
+        args.extend(targets);
+        self.collect_call(&CallExpr {
+            callee: Expr::Ident(crate::ast::Ident {
+                name: name.to_string(),
+                location: None,
+            }),
+            args,
+            location: None,
+        })
+    }
+
+    fn reject_unsupported_call(&self, call: &CallExpr) -> HugrResult<()> {
+        let name = self.extract_call_name(&call.callee)?;
+        Err(HugrError::UnsupportedCall { name })
+    }
+
+    fn collect_prepare_op(&mut self, prepare: &crate::ast::PrepareOp) -> HugrResult<()> {
+        let allocator = self.allocators.get(&prepare.allocator).ok_or_else(|| {
+            HugrError::AllocatorNotFound {
+                name: prepare.allocator.clone(),
+            }
+        })?;
+        let slots = prepare
+            .slots
+            .clone()
+            .unwrap_or_else(|| (0..allocator.capacity as u32).collect());
+        for index in slots {
+            let index = index as usize;
+            if index >= allocator.capacity {
+                return Err(HugrError::QubitIndexOutOfBounds {
+                    index,
+                    capacity: allocator.capacity,
+                });
+            }
+            self.operations.push(GateOp::Direct {
+                op: TketOp::Reset,
+                qubits: vec![QubitRef::new(&allocator.name, index)],
+                angle: None,
+            });
+        }
+        Ok(())
+    }
+
     fn collect_call(&mut self, call: &CallExpr) -> HugrResult<()> {
+        self.collect_call_inner(call, true)
+    }
+
+    fn collect_call_inner(&mut self, call: &CallExpr, allow_batch: bool) -> HugrResult<()> {
         // Check if this is a gate call
         let name = self.extract_call_name(&call.callee)?;
 
-        // Skip non-gate calls
+        // Named-gate lowering must resolve through the canonical HUGR mapping.
         let Some(mapping) = gate_name_to_mapping(&name) else {
-            // Could be a method call like child()
-            return Ok(());
+            return Err(HugrError::UnknownGate { name });
         };
+
+        let qubit_count = mapping.arity();
+        let needs_angle = mapping.needs_angle();
+        let qubit_start = usize::from(needs_angle);
+        if call.args.len() < qubit_start {
+            return Err(HugrError::WrongArgumentCount {
+                gate: name,
+                expected: qubit_count + qubit_start,
+                got: call.args.len(),
+            });
+        }
+        let qubit_args = &call.args[qubit_start..];
+        if allow_batch && qubit_args.len() == 1 && self.is_batch_literal(&qubit_args[0]) {
+            let Some(elements) = self.batch_elements(&qubit_args[0]).map(<[Expr]>::to_vec) else {
+                return Err(HugrError::UnsupportedExpression);
+            };
+            if elements.is_empty() {
+                return Err(HugrError::EmptyGateBatch { gate: name });
+            }
+            for element in elements {
+                let targets = if qubit_count == 1 {
+                    vec![element]
+                } else if let Expr::Tuple(tuple) = element {
+                    if tuple.elements.len() != qubit_count {
+                        return Err(HugrError::WrongArgumentCount {
+                            gate: name,
+                            expected: qubit_count,
+                            got: tuple.elements.len(),
+                        });
+                    }
+                    tuple.elements
+                } else {
+                    return Err(HugrError::WrongArgumentCount {
+                        gate: name,
+                        expected: qubit_count,
+                        got: 1,
+                    });
+                };
+                let mut args = call.args[..qubit_start].to_vec();
+                args.extend(targets);
+                self.collect_call_inner(
+                    &CallExpr {
+                        callee: call.callee.clone(),
+                        args,
+                        location: call.location.clone(),
+                    },
+                    false,
+                )?;
+            }
+            return Ok(());
+        }
 
         match mapping {
             GateMapping::Direct(op) => {
-                // Extract qubit operands
-                let qubit_count = gate_qubit_count(&op);
-                let needs_angle = gate_needs_angle(&op);
-
                 // For rotation gates, angle comes first (angle-first syntax)
                 let (angle, qubit_start) = if needs_angle {
                     (Some(self.extract_angle(&call.args[0])?), 1)
                 } else {
                     (None, 0)
                 };
-
-                // Check for batch operations with set or array literals
-                let qubit_args = &call.args[qubit_start..];
-
-                // Single-qubit gate with batch: h([q[0], q[1]) or h(&[q[0], q[1]])
-                if qubit_count == 1
-                    && qubit_args.len() == 1
-                    && self.is_batch_literal(&qubit_args[0])
-                {
-                    let targets = self.extract_batch_single_targets(&qubit_args[0])?;
-                    for qubit in targets {
-                        self.operations.push(GateOp::Direct {
-                            op,
-                            qubits: vec![qubit],
-                            angle,
-                        });
-                    }
-                    return Ok(());
-                }
-
-                // Two-qubit gate with batch: cx({(q[0], q[1])}) or cx(&[(q[0], q[1])])
-                if qubit_count == 2
-                    && qubit_args.len() == 1
-                    && self.is_batch_literal(&qubit_args[0])
-                {
-                    let pairs = self.extract_batch_pair_targets(&qubit_args[0])?;
-                    for (qubit_a, qubit_b) in pairs {
-                        self.operations.push(GateOp::Direct {
-                            op,
-                            qubits: vec![qubit_a, qubit_b],
-                            angle,
-                        });
-                    }
-                    return Ok(());
-                }
 
                 // Standard non-batch case
                 let expected_args = if needs_angle {
@@ -1374,33 +1636,6 @@ impl HugrCodegen {
                     angle: Some(-std::f64::consts::FRAC_PI_4),
                 });
             }
-
-            GateMapping::MidMeasure => {
-                // Typed measurement: mz(type, target) or mz(type, &[targets])
-                // Also supports legacy mz(qubit)
-                if call.args.len() == 2 {
-                    // New typed syntax: mz(type, target)
-                    let target_arg = &call.args[1];
-                    let qubits = self.extract_measurement_targets(target_arg)?;
-                    for qubit in qubits {
-                        let result_var = format!("__measure_{}", self.operations.len());
-                        self.operations
-                            .push(GateOp::MidMeasure { qubit, result_var });
-                    }
-                } else if call.args.len() == 1 {
-                    // Legacy syntax: mz(qubit)
-                    let qubit = self.extract_qubit_ref(&call.args[0])?;
-                    let result_var = format!("__measure_{}", self.operations.len());
-                    self.operations
-                        .push(GateOp::MidMeasure { qubit, result_var });
-                } else {
-                    return Err(HugrError::WrongArgumentCount {
-                        gate: name,
-                        expected: 2,
-                        got: call.args.len(),
-                    });
-                }
-            }
         }
 
         Ok(())
@@ -1459,6 +1694,21 @@ impl HugrCodegen {
     fn extract_qubit_ref(&self, expr: &Expr) -> HugrResult<QubitRef> {
         match expr {
             Expr::Index(index_expr) => self.extract_qubit_from_index(index_expr),
+            Expr::SlotRef(slot_ref) => {
+                let index = self.extract_integer(&slot_ref.index)?;
+                let allocator = self.allocators.get(&slot_ref.allocator).ok_or_else(|| {
+                    HugrError::AllocatorNotFound {
+                        name: slot_ref.allocator.clone(),
+                    }
+                })?;
+                if index >= allocator.capacity {
+                    return Err(HugrError::QubitIndexOutOfBounds {
+                        index,
+                        capacity: allocator.capacity,
+                    });
+                }
+                Ok(QubitRef::new(&allocator.name, index))
+            }
             _ => Err(HugrError::UnsupportedExpression),
         }
     }
@@ -1483,43 +1733,29 @@ impl HugrCodegen {
             });
         }
 
-        Ok(QubitRef::new(allocator, idx))
+        Ok(QubitRef::new(&alloc.name, idx))
     }
 
     /// Extract an integer from an expression.
     fn extract_integer(&self, expr: &Expr) -> HugrResult<usize> {
-        match expr {
-            Expr::IntLit(lit) => Ok(lit.value as usize),
-            _ => Err(HugrError::UnsupportedExpression),
-        }
+        self.comptime
+            .borrow_mut()
+            .eval_expr(expr)
+            .ok()
+            .and_then(|value| value.to_usize())
+            .ok_or(HugrError::UnsupportedExpression)
     }
 
     /// Extract a rotation angle in radians from an expression.
-    fn extract_angle(&self, expr: &Expr) -> HugrResult<f64> {
-        match expr {
-            Expr::IntLit(lit) => Ok(lit.value as f64),
-            Expr::FloatLit(lit) => Ok(lit.value),
-            // Handle expressions like PI / 4
-            Expr::Binary(binary) => {
-                let left = self.extract_angle(&binary.left)?;
-                let right = self.extract_angle(&binary.right)?;
-                match binary.op {
-                    BinaryOp::Div => Ok(left / right),
-                    BinaryOp::Mul => Ok(left * right),
-                    BinaryOp::Add => Ok(left + right),
-                    BinaryOp::Sub => Ok(left - right),
-                    _ => Err(HugrError::InvalidRotationAngle),
+    fn extract_angle(&mut self, expr: &Expr) -> HugrResult<f64> {
+        let value =
+            resolve_angle_turns(&mut self.comptime.borrow_mut(), expr).map_err(|error| {
+                HugrError::InvalidRotationAngle {
+                    expression: angle_expression_name(expr),
+                    reason: error.to_string(),
                 }
-            }
-            // Handle PI constant
-            Expr::Ident(ident) if ident.name == "PI" || ident.name == "pi" => {
-                Ok(std::f64::consts::PI)
-            }
-            Expr::Ident(ident) if ident.name == "TAU" || ident.name == "tau" => {
-                Ok(std::f64::consts::TAU)
-            }
-            _ => Err(HugrError::InvalidRotationAngle),
-        }
+            })?;
+        Ok(value * std::f64::consts::TAU)
     }
 
     // =========================================================================
@@ -1536,13 +1772,13 @@ impl HugrCodegen {
         let bool_row: Vec<_> = (0..self.total_qubits).map(|_| bool_t()).collect();
         let signature = Signature::new(vec![], bool_row);
 
-        // Create builder
-        let mut builder =
-            DFGBuilder::new(signature).map_err(|e| HugrError::BuilderError(e.to_string()))?;
+        // Build the body of main, the module's function-definition entry point.
+        let mut builder = FunctionBuilder::new("main", signature)
+            .map_err(|e| HugrError::BuilderError(e.to_string()))?;
 
         // Allocate qubits using QAlloc
         let mut qubit_wires: BTreeMap<QubitRef, Wire> = BTreeMap::new();
-        for (name, alloc) in &self.allocators {
+        for (name, alloc) in &self.all_allocators {
             for i in 0..alloc.capacity {
                 let qubit_ref = QubitRef::new(name.clone(), i);
                 // Add QAlloc operation to allocate a qubit
@@ -1575,7 +1811,7 @@ impl HugrCodegen {
         let output_wires: Vec<Wire> = (0..self.total_qubits)
             .map(|global_idx| {
                 // Find which allocator this belongs to
-                for (name, alloc) in &self.allocators {
+                for (name, alloc) in &self.all_allocators {
                     if global_idx >= alloc.start_index
                         && global_idx < alloc.start_index + alloc.capacity
                     {
@@ -1612,8 +1848,8 @@ impl HugrCodegen {
 
     fn build_empty_hugr(&self) -> HugrResult<Hugr> {
         let signature = Signature::new(vec![], vec![]);
-        let builder =
-            DFGBuilder::new(signature).map_err(|e| HugrError::BuilderError(e.to_string()))?;
+        let builder = FunctionBuilder::new("main", signature)
+            .map_err(|e| HugrError::BuilderError(e.to_string()))?;
         builder
             .finish_hugr_with_outputs(vec![])
             .map_err(|e| HugrError::BuilderError(e.to_string()))
@@ -1621,7 +1857,7 @@ impl HugrCodegen {
 
     fn apply_gate(
         &self,
-        builder: &mut DFGBuilder<Hugr>,
+        builder: &mut FunctionBuilder<Hugr>,
         qubit_wires: &mut BTreeMap<QubitRef, Wire>,
         classical_wires: &mut BTreeMap<String, Wire>,
         gate_op: &GateOp,
@@ -2024,9 +2260,7 @@ impl HugrCodegen {
 
             GateOp::Conditional { .. } => {
                 // Nested conditionals not yet supported in cases
-                return Err(HugrError::BuilderError(
-                    "Nested conditionals not yet supported".to_string(),
-                ));
+                return Err(HugrError::NestedConditional);
             }
         }
         Ok(())
@@ -2035,7 +2269,7 @@ impl HugrCodegen {
     /// Apply a direct TketOp gate.
     fn apply_direct_gate(
         &self,
-        builder: &mut DFGBuilder<Hugr>,
+        builder: &mut FunctionBuilder<Hugr>,
         qubit_wires: &mut BTreeMap<QubitRef, Wire>,
         op: TketOp,
         qubits: &[QubitRef],
@@ -2091,7 +2325,7 @@ impl HugrCodegen {
 
     /// Serialize a HUGR to bytes (text envelope format).
     ///
-    /// This format can be consumed by PECOS's hugr_engine() and sim().
+    /// This format can be loaded by PECOS and lowered to QIS at the Python boundary.
     pub fn to_bytes(&self, hugr: &Hugr) -> HugrResult<Vec<u8>> {
         let mut buffer = Cursor::new(Vec::new());
         hugr.store(&mut buffer, EnvelopeConfig::text())
@@ -2101,7 +2335,7 @@ impl HugrCodegen {
 
     /// Serialize a HUGR to a string (text envelope format).
     ///
-    /// This format can be consumed by PECOS's hugr_engine() and sim().
+    /// This format can be loaded by PECOS and lowered to QIS at the Python boundary.
     pub fn to_string(&self, hugr: &Hugr) -> HugrResult<String> {
         let bytes = self.to_bytes(hugr)?;
         String::from_utf8(bytes).map_err(|e| HugrError::SerializationError(e.to_string()))
@@ -2121,8 +2355,284 @@ impl Default for HugrCodegen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Compatibility: transfer-free bodies retain their emitted operations.
+    #[test]
+    fn test_round4_compat_selected_allocations() {
+        let source = "pub fn main() -> unit { for i in 0..3 { if i == 1 { mut q := qalloc(i + 1); x q[i]; } else if i == 8 { mut r := qalloc(1); h r[0]; } } }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 1);
+        assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 1)], None);
+        compile_to_hugr(source).unwrap();
+    }
+    // Compatibility: transfer-free bodies retain their emitted operations.
+    #[test]
+    fn test_round4_compat_empty_range() {
+        let source = "pub fn main() -> unit { for i in 3..1 { mut q := qalloc(1); h q[0]; } }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 0);
+        compile_to_hugr(source).unwrap();
+    }
+    #[test]
+    fn test_round4_transfer_containers() {
+        for body in [
+            "if true { h q[0]; } else if (blk: { return unit; false }) { h q[0]; }",
+            "switch (i) { 0 => (blk: { return unit; 0 }), else => 0, }",
+            "switch ((blk: { return unit; 0 })) { 0 => 0, else => 0, }",
+            "try! { if false { return unit; } }",
+            "defer { if false { return unit; } }",
+            "errdefer { if false { return unit; } }",
+            "a := try! { return unit; };",
+            "a := try! { 0 } catch |e| (blk: { return unit; 0 });",
+            "for j in (blk: { return unit; [0] }) { h q[0]; }",
+            "tick { if false { return unit; } }",
+            "a := [(blk: { return unit; 0 })];",
+            "a := 1 + (blk: { return unit; 0 });",
+            "a: [1:(blk: { return unit; 0 })]u1 = undefined;",
+        ] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); for i in 0..1 {{ {body} }} return unit; }}"
+            );
+            let error = compile_to_hugr(&source).expect_err("nested transfer must be rejected");
+            assert!(error.to_string().contains("return"), "{body}: {error}");
+        }
+    }
+
+    // Compatibility: only the loop's return boundary is forbidden.
+    #[test]
+    fn test_round4_compat_terminal_return() {
+        let source =
+            "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { h q[0]; } return unit; }";
+        compile_to_hugr(source).unwrap();
+    }
+
+    #[test]
+    fn test_round4_elseif_condition() {
+        let source = "pub fn main() -> unit { mut q := qalloc(2); pz q; for i in 0..3 { if false { h q[0]; } else if (blk: { return unit; true }) { x q[0]; } } return unit; }";
+        let error = compile_to_hugr(source).expect_err("transfer in loop syntax must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round4_nested_trailing() {
+        let source = "pub fn main() -> unit { mut q := qalloc(2); pz q; for i in 0..3 { a := blk: { mut n := false; v := blk: { for j in 0..1 { (blk: { n = true; unit }) } unit }; if n { return unit; } 0.125 }; rx(a turns) q[0]; } return unit; }";
+        let error = compile_to_hugr(source).expect_err("transfer in loop syntax must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round4_zero_iterations() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..0 { return unit; } return unit; }";
+        let error = compile_to_hugr(source).expect_err("transfer in loop syntax must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round4_dead_break() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { if false { break; } } return unit; }";
+        let error = compile_to_hugr(source).expect_err("transfer in loop syntax must be rejected");
+        assert!(error.to_string().contains("break"), "{error}");
+    }
+    #[test]
+    fn test_round4_dead_continue() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { if false { continue; } } return unit; }";
+        let error = compile_to_hugr(source).expect_err("transfer in loop syntax must be rejected");
+        assert!(error.to_string().contains("continue"), "{error}");
+    }
+    #[test]
+    fn test_round4_numeric_eq() {
+        for condition in ["1/2 == 0.5", "1 == 1.0", "1 == 1u64"] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); if {condition} {{ x q[0]; }} else {{ h q[0]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            assert_eq!(ops.len(), 1, "{condition}: {ops:?}");
+            assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        }
+    }
+    #[test]
+    fn test_round4_numeric_ne() {
+        for condition in ["1/2 != 0.5", "1 != 1.0", "1 != 1u64"] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); if {condition} {{ h q[0]; }} else {{ x q[0]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            assert_eq!(ops.len(), 1, "{condition}: {ops:?}");
+            assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        }
+    }
+    #[test]
+    fn test_round4_numeric_lt() {
+        for condition in ["1/2 < 0.75", "1 < 1.5", "1 < 2u64"] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); if {condition} {{ x q[0]; }} else {{ h q[0]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            assert_eq!(ops.len(), 1, "{condition}: {ops:?}");
+            assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        }
+    }
+    #[test]
+    fn test_round4_numeric_le() {
+        for condition in ["1/2 <= 0.5", "1 <= 1.0", "1 <= 1u64"] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); if {condition} {{ x q[0]; }} else {{ h q[0]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            assert_eq!(ops.len(), 1, "{condition}: {ops:?}");
+            assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        }
+    }
+    #[test]
+    fn test_round4_numeric_gt() {
+        for condition in ["1/2 > 0.25", "1 > 0.5", "1 > 0u64"] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); if {condition} {{ x q[0]; }} else {{ h q[0]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            assert_eq!(ops.len(), 1, "{condition}: {ops:?}");
+            assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        }
+    }
+    #[test]
+    fn test_round4_numeric_ge() {
+        for condition in ["1/2 >= 0.5", "1 >= 1.0", "1 >= 1u64"] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(1); if {condition} {{ x q[0]; }} else {{ h q[0]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            assert_eq!(ops.len(), 1, "{condition}: {ops:?}");
+            assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        }
+    }
+
+    #[test]
+    fn test_round3_tick_measurement_shadowing() {
+        let source = "pub fn main() -> unit { mut q := qalloc(2); pz q; c := true; tick { mut c := mz(pack bool) q[0]; } if c { x q[1]; } return unit; }";
+        let ops = collect_operations(source);
+        let measured_name = ops
+            .iter()
+            .find_map(|op| match op {
+                GateOp::MidMeasure { qubit, result_var } if *qubit == QubitRef::new("q", 0) => {
+                    Some(result_var)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(ops.iter().any(|op| matches!(op, GateOp::Conditional { condition_var, .. } if condition_var == measured_name)), "the condition must use the measurement declared in tick: {ops:?}");
+        compile_to_hugr(source).unwrap();
+    }
+
+    #[test]
+    fn test_round3_angle_dead_branch() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { rx((blk: { if false { return unit; } 0.125 }) turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_if_expression_dead_branch() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { theta := if (false) { return unit; 0.25 } else { 0.125 }; rx(theta turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_nested_capture_dead_branch() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { theta := blk: { for j in i..i + 2 { if j > 8 { return unit; } } 0.125 }; rx(theta turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    // Compatibility: a possibly reached transfer must still be rejected.
+    #[test]
+    fn test_round3_compat_unknown_path() {
+        let source = "pub fn main(c: bool) -> unit { mut q := qalloc(1); for i in 0..1 { a := blk: { if c { return unit; } 0.125 }; h q[0]; } return unit; }";
+        let error = compile_to_hugr(source).expect_err("reachable return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    // Compatibility: a possibly reached transfer must still be rejected.
+    #[test]
+    fn test_round3_compat_later_iteration() {
+        let source = "pub fn main(c: bool) -> unit { mut q := qalloc(1); for i in 0..1 { a := blk: { mut n := 0; for j in 0..2 { if n == 1 { return unit; } n = n + 1; } 0.125 }; h q[0]; } return unit; }";
+        let error = compile_to_hugr(source).expect_err("reachable return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    // Compatibility: a possibly reached transfer must still be rejected.
+    #[test]
+    fn test_round3_compat_unknown_assignment() {
+        let source = "pub fn main(c: bool) -> unit { mut q := qalloc(1); for i in 0..1 { a := blk: { mut n := 0; if c { n = 1; } if n == 1 { return unit; } 0.125 }; h q[0]; } return unit; }";
+        let error = compile_to_hugr(source).expect_err("reachable return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    // Compatibility: a nested function has its own return boundary.
+    #[test]
+    fn test_round3_compat_function_boundary() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { get_n := fn() -> i64 { return 1; }; n := get_n(); h q[0]; } return unit; }";
+        compile_to_hugr(source).unwrap();
+    }
+
+    #[test]
+    fn test_round3_trailing_return() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; (blk: { return unit; }) } return unit; }";
+        let error = compile_to_hugr(source).expect_err("trailing return must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_trailing_break() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; (blk: { break; }) } return unit; }";
+        let error = compile_to_hugr(source).expect_err("trailing break must fail loudly");
+        assert!(error.to_string().contains("break"), "{error}");
+    }
+    #[test]
+    fn test_round3_trailing_continue() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; (blk: { continue; }) } return unit; }";
+        let error = compile_to_hugr(source).expect_err("trailing continue must fail loudly");
+        assert!(error.to_string().contains("continue"), "{error}");
+    }
+    #[test]
+    fn test_round3_dead_branch() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { theta := blk: { if false { return unit; } 0.125 }; rx(theta turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_empty_range() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { theta := blk: { for j in 0..0 { return unit; } 0.125 }; rx(theta turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_capture_branch() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { theta := blk: { n := i + 1; if n == 9 { return unit; } 0.125 }; rx(theta turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_capture_range() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..1 { theta := blk: { for j in i..i { return unit; } 0.125 }; rx(theta turns) q[0]; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+    #[test]
+    fn test_round3_tick_allocator_visibility() {
+        let source =
+            "pub fn main() -> unit { tick { mut q := qalloc(1); pz q; } h q[0]; return unit; }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 2);
+        assert_direct_operation(&ops[1], TketOp::H, &[QubitRef::new("q", 0)], None);
+        compile_to_hugr(source).unwrap();
+    }
+
+    use crate::codegen::QasmCodegen;
+    use crate::codegen::phir::{PhirJsonCodegen, PhirJsonOp};
+    use crate::codegen::slr::{SlrCodegen, SlrExpression, SlrLiteralValue, SlrStatement};
     use crate::parse;
+    use crate::semantic::SemanticAnalyzer;
+    use tket::extension::rotation::ConstRotation;
     use tket::hugr::HugrView;
+    use tket::hugr::ops::OpType;
 
     fn compile_to_hugr(source: &str) -> HugrResult<Hugr> {
         let program = parse(source).expect("parse failed");
@@ -2130,22 +2640,556 @@ mod tests {
         codegen.compile(&program)
     }
 
+    fn collect_operations(source: &str) -> Vec<GateOp> {
+        let program = parse(source).expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        codegen.operations
+    }
+
+    fn assert_direct_operation(
+        operation: &GateOp,
+        expected_op: TketOp,
+        expected_qubits: &[QubitRef],
+        expected_angle: Option<f64>,
+    ) {
+        let GateOp::Direct { op, qubits, angle } = operation else {
+            panic!("expected direct operation, got {operation:?}");
+        };
+        assert_eq!(*op, expected_op);
+        assert_eq!(qubits, expected_qubits);
+        match (angle, expected_angle) {
+            (Some(actual), Some(expected)) => {
+                assert!((actual - expected).abs() < f64::EPSILON);
+            }
+            (None, None) => {}
+            _ => panic!("expected angle {expected_angle:?}, got {angle:?}"),
+        }
+    }
+
+    fn emitted_angle_values(source: &str) -> (f64, f64, f64, f64) {
+        let program = parse(source).expect("parse failed");
+        SemanticAnalyzer::new_permissive()
+            .analyze(&program)
+            .expect("semantic analysis failed");
+
+        let slr = SlrCodegen::new()
+            .compile(&program)
+            .expect("SLR lowering failed");
+        let slr_turns = slr
+            .body
+            .iter()
+            .find_map(|stmt| match stmt {
+                SlrStatement::Gate(gate) => match gate.params.first() {
+                    Some(SlrExpression::Literal(literal)) => match literal.value {
+                        SlrLiteralValue::Angle(turns) => Some(turns),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("missing SLR angle");
+
+        let hugr = HugrCodegen::new()
+            .compile(&program)
+            .expect("HUGR lowering failed");
+        let hugr_half_turns = hugr
+            .nodes()
+            .find_map(|node| match hugr.get_optype(node) {
+                OpType::Const(constant) => constant
+                    .value()
+                    .get_custom_value::<ConstRotation>()
+                    .map(ConstRotation::half_turns),
+                _ => None,
+            })
+            .expect("missing HUGR rotation constant");
+
+        let phir = PhirJsonCodegen::new()
+            .compile(&program)
+            .expect("PHIR lowering failed");
+        let phir_radians = phir
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                PhirJsonOp::Qop(qop) if qop.qop == "RZ" => {
+                    qop.angles.as_ref().map(|(angles, unit)| {
+                        assert_eq!(unit, "rad");
+                        angles[0]
+                    })
+                }
+                _ => None,
+            })
+            .expect("missing PHIR angle");
+
+        let qasm = QasmCodegen::new()
+            .compile(&program)
+            .expect("QASM lowering failed");
+        let qasm_radians = qasm
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("rz(")
+                    .and_then(|rest| rest.split_once(')'))
+                    .and_then(|(value, _)| value.parse::<f64>().ok())
+            })
+            .expect("missing QASM angle");
+
+        (slr_turns, hugr_half_turns, phir_radians, qasm_radians)
+    }
+
+    fn slot_ref(allocator: &str, index: i128) -> crate::ast::SlotRef {
+        crate::ast::SlotRef {
+            allocator: allocator.to_string(),
+            index: Box::new(Expr::IntLit(crate::ast::IntLit {
+                value: index,
+                suffix: None,
+                location: None,
+            })),
+            location: None,
+        }
+    }
+
+    fn insert_builder_statements(program: &mut Program, statements: Vec<Stmt>) {
+        let main = program
+            .declarations
+            .iter_mut()
+            .find_map(|decl| match decl {
+                TopLevelDecl::Fn(function) if function.name == "main" => Some(function),
+                _ => None,
+            })
+            .expect("main function");
+        let insertion_index = main.body.statements.len() - 1;
+        main.body
+            .statements
+            .splice(insertion_index..insertion_index, statements);
+    }
+
+    // The conservative rule rejects unreachable transfers inside loop bodies.
+    #[test]
+    fn test_review_unreachable_and_terminal_returns() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..3 { if i == 9 { return unit; } h q[0]; } for j in 1..1 { return unit; } return unit; }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present return must be rejected");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_control_expression() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..3 { a := blk: { return unit; }; } return unit; }".to_string();
+        let error =
+            compile_to_hugr(&source).expect_err("control transfer in loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_control_switch() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..3 { switch (i) { 0 => 0, else => 1, } } return unit; }".to_string();
+        let error =
+            compile_to_hugr(&source).expect_err("control transfer in loop must fail loudly");
+        assert!(error.to_string().contains("switch"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_control_try_block() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..3 { try! { return unit; } } return unit; }".to_string();
+        let error =
+            compile_to_hugr(&source).expect_err("control transfer in loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_control_defer() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..3 { defer { return unit; } } return unit; }".to_string();
+        let error =
+            compile_to_hugr(&source).expect_err("control transfer in loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_control_propagation() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..3 { a := try missing; } return unit; }".to_string();
+        let error =
+            compile_to_hugr(&source).expect_err("control transfer in loop must fail loudly");
+        assert!(error.to_string().contains("try"), "{error}");
+    }
+    #[test]
+    fn test_review_failed_comptime_scope() {
+        let source = "pub fn main(c: bool) -> unit { mut q := qalloc(1); pz q; n := 0.125; a := blk: { n := 0.25; c }; rz(n turns) q[0]; return unit; }";
+        let ops = collect_operations(source);
+        assert_direct_operation(
+            &ops[1],
+            TketOp::Rz,
+            &[QubitRef::new("q", 0)],
+            Some(std::f64::consts::FRAC_PI_4),
+        );
+    }
+
+    #[test]
+    fn test_review_loop_return_direct() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; return unit; } return unit; }".to_string();
+        let error = compile_to_hugr(&source).expect_err("return in unrolled loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_return_block() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; { return unit; } } return unit; }".to_string();
+        let error = compile_to_hugr(&source).expect_err("return in unrolled loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_return_if() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; if i == 0 { return unit; } } return unit; }".to_string();
+        let error = compile_to_hugr(&source).expect_err("return in unrolled loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_return_tick() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; tick { return unit; } } return unit; }".to_string();
+        let error = compile_to_hugr(&source).expect_err("return in unrolled loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_loop_return_nested_loop() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); pz q; for i in 0..3 { rx(0.125 turns) q[0]; for j in 0..1 { return unit; } } return unit; }".to_string();
+        let error = compile_to_hugr(&source).expect_err("return in unrolled loop must fail loudly");
+        assert!(error.to_string().contains("return"), "{error}");
+    }
+
+    #[test]
+    fn test_review_measurement_identity_collision() {
+        for bindings in [
+            "mut c_1 := mz(pack bool) q[0]; mut c := mz([2]u1) [q[1], q[2]];",
+            "mut c := mz([2]u1) [q[1], q[2]]; mut c_1 := mz(pack bool) q[0];",
+        ] {
+            let source = format!(
+                "pub fn main() -> unit {{ mut q := qalloc(4); pz q; x q[0]; {bindings} if c_1 {{ x q[3]; }} return unit; }}"
+            );
+            let ops = collect_operations(&source);
+            let condition = ops
+                .iter()
+                .find_map(|op| match op {
+                    GateOp::Conditional { condition_var, .. } => Some(condition_var),
+                    _ => None,
+                })
+                .unwrap();
+            let measured_qubits: Vec<_> = ops
+                .iter()
+                .filter_map(|op| match op {
+                    GateOp::MidMeasure { qubit, result_var } if result_var == condition => {
+                        Some(qubit.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                measured_qubits,
+                vec![QubitRef::new("q", 0)],
+                "conditional must read only the original c_1 measurement"
+            );
+            let names: Vec<_> = ops
+                .iter()
+                .filter_map(|op| {
+                    if let GateOp::MidMeasure { result_var, .. } = op {
+                        Some(result_var)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(names.len(), 3);
+            assert_eq!(
+                names
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                3
+            );
+            compile_to_hugr(&source).unwrap();
+        }
+    }
+    #[test]
+    fn test_control_flow_bounds_and_capture_shadow() {
+        let source = "n := 3; pub fn main() -> unit { mut q := qalloc(n); for n in 0..n { k := n; for j in n..k + 1 { h q[j]; } } h q[n - 1]; }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 4);
+        assert_direct_operation(&ops[0], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(&ops[1], TketOp::H, &[QubitRef::new("q", 1)], None);
+        assert_direct_operation(&ops[2], TketOp::H, &[QubitRef::new("q", 2)], None);
+        assert_direct_operation(&ops[3], TketOp::H, &[QubitRef::new("q", 2)], None);
+        compile_to_hugr(source).unwrap();
+    }
+
+    #[test]
+    fn test_control_flow_local_allocations() {
+        let source = "pub fn main() -> unit { mut q := qalloc(1); for i in 0..2 { mut q := qalloc(i + 1); h q[i]; } h q[0]; }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 3);
+        assert_direct_operation(&ops[0], TketOp::H, &[QubitRef::new("q#1", 0)], None);
+        assert_direct_operation(&ops[1], TketOp::H, &[QubitRef::new("q#2", 1)], None);
+        assert_direct_operation(&ops[2], TketOp::H, &[QubitRef::new("q", 0)], None);
+        compile_to_hugr(source).unwrap();
+    }
+
+    #[test]
+    fn test_control_flow_selected_allocations() {
+        let source = "pub fn main() -> unit { for i in 0..3 { if i == 1 { mut q := qalloc(i + 1); x q[i]; } else if i == 8 { break; } } }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present break must be rejected");
+        assert!(error.to_string().contains("break"), "{error}");
+    }
+
+    #[test]
+    fn test_control_flow_empty_range() {
+        let source = "pub fn main() -> unit { for i in 3..1 { break; } }";
+        let error =
+            compile_to_hugr(source).expect_err("syntactically present break must be rejected");
+        assert!(error.to_string().contains("break"), "{error}");
+    }
+
+    #[test]
+    fn test_control_flow_else_if_build_fails_loudly() {
+        let error = compile_to_hugr(
+            "pub fn main() -> unit {
+            mut q := qalloc(3);
+            mut c := mz(u1) q[0]; mut d := mz(u1) q[1];
+            if c { x q[2]; } else if d { h q[2]; } else { z q[2]; }
+        }",
+        )
+        .unwrap_err();
+        assert!(matches!(error, HugrError::NestedConditional), "{error}");
+    }
+
+    #[test]
+    fn test_control_flow_measurement_scope() {
+        let ops = collect_operations(
+            "pub fn main() -> unit {
+            mut q := qalloc(2); mut c := mz(u1) q[0];
+            for c in 0..2 { if c == 1 { x q[c]; } }
+            if c { h q[0]; }
+        }",
+        );
+        assert_eq!(ops.len(), 3);
+        assert_direct_operation(&ops[1], TketOp::X, &[QubitRef::new("q", 1)], None);
+        assert!(
+            matches!(&ops[2], GateOp::Conditional { condition_var, .. } if condition_var == "c")
+        );
+    }
+
+    #[test]
+    fn test_control_flow_runtime_comparison_is_not_false() {
+        let source = "pub fn main(n: int) -> unit { mut q := qalloc(1); if n == 1 { h q[0]; } }";
+        assert!(compile_to_hugr(source).is_err());
+    }
+
+    #[test]
+    fn test_control_flow_fixed_target() {
+        let source = "pub fn main() -> unit { mut q := qalloc(4); for i in 0..3 { h q[0]; } }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 3);
+        assert_direct_operation(&ops[0], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(&ops[1], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(&ops[2], TketOp::H, &[QubitRef::new("q", 0)], None);
+    }
+
+    #[test]
+    fn test_control_flow_indexed_target() {
+        let source = "pub fn main() -> unit { mut q := qalloc(4); for i in 0..3 { h q[i]; } }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 3);
+        assert_direct_operation(&ops[0], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(&ops[1], TketOp::H, &[QubitRef::new("q", 1)], None);
+        assert_direct_operation(&ops[2], TketOp::H, &[QubitRef::new("q", 2)], None);
+    }
+
+    #[test]
+    fn test_control_flow_nested_loops() {
+        let source = "pub fn main() -> unit { mut q := qalloc(4); for i in 0..2 { for j in 0..2 { cx (q[i], q[j + 2]); } } }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 4);
+        assert_direct_operation(
+            &ops[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 2)],
+            None,
+        );
+        assert_direct_operation(
+            &ops[1],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 3)],
+            None,
+        );
+        assert_direct_operation(
+            &ops[2],
+            TketOp::CX,
+            &[QubitRef::new("q", 1), QubitRef::new("q", 2)],
+            None,
+        );
+        assert_direct_operation(
+            &ops[3],
+            TketOp::CX,
+            &[QubitRef::new("q", 1), QubitRef::new("q", 3)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_control_flow_comptime_if() {
+        let source =
+            "pub fn main() -> unit { mut q := qalloc(4); for i in 0..3 { if i == 1 { x q[i]; } } }";
+        let ops = collect_operations(source);
+        assert_eq!(ops.len(), 1);
+        assert_direct_operation(&ops[0], TketOp::X, &[QubitRef::new("q", 1)], None);
+    }
+
+    #[test]
+    fn test_control_flow_reject_collection() {
+        let source =
+            "pub fn main(n: int) -> unit { mut q := qalloc(4); for i in [0, 1] { h q[0]; } }";
+        assert!(
+            compile_to_hugr(source).is_err(),
+            "unsupported collection must fail loudly"
+        );
+    }
+
+    #[test]
+    fn test_control_flow_reject_runtime_bound() {
+        let source =
+            "pub fn main(n: int) -> unit { mut q := qalloc(4); for i in 0..n { h q[0]; } }";
+        assert!(
+            compile_to_hugr(source).is_err(),
+            "unsupported runtime_bound must fail loudly"
+        );
+    }
+
+    #[test]
+    fn test_control_flow_reject_multi_capture() {
+        let source =
+            "pub fn main(n: int) -> unit { mut q := qalloc(4); for i, j in 0..3 { h q[0]; } }";
+        assert!(
+            compile_to_hugr(source).is_err(),
+            "unsupported multi_capture must fail loudly"
+        );
+    }
+
+    #[test]
+    fn test_control_flow_reject_break() {
+        let source = "pub fn main(n: int) -> unit { mut q := qalloc(4); for i in 0..3 { break; } }";
+        assert!(
+            compile_to_hugr(source).is_err(),
+            "unsupported break must fail loudly"
+        );
+    }
+
+    #[test]
+    fn test_control_flow_reject_continue() {
+        let source =
+            "pub fn main(n: int) -> unit { mut q := qalloc(4); for i in 0..3 { continue; } }";
+        assert!(
+            compile_to_hugr(source).is_err(),
+            "unsupported continue must fail loudly"
+        );
+    }
+
+    #[test]
+    fn test_control_flow_reject_runtime_if() {
+        let source = "pub fn main(n: int) -> unit { mut q := qalloc(4); if n == 1 { x q[0]; } }";
+        assert!(
+            compile_to_hugr(source).is_err(),
+            "unsupported runtime_if must fail loudly"
+        );
+    }
+
+    #[test]
+    fn test_control_flow_else_if() {
+        let ops = collect_operations(
+            "pub fn main() -> unit {
+            mut q := qalloc(3);
+            mut c := mz(u1) q[0];
+            mut d := mz(u1) q[1];
+            if c { x q[2]; } else if d { h q[2]; } else { z q[2]; }
+        }",
+        );
+        let GateOp::Conditional {
+            condition_var,
+            then_ops,
+            else_ops,
+        } = &ops[2]
+        else {
+            panic!("expected outer conditional");
+        };
+        assert_eq!(condition_var, "c");
+        assert_eq!(then_ops.len(), 1);
+        assert_eq!(
+            else_ops.len(),
+            1,
+            "else-if must remain a nested conditional"
+        );
+        let GateOp::Conditional {
+            condition_var,
+            then_ops,
+            else_ops,
+        } = &else_ops[0]
+        else {
+            panic!("expected nested conditional");
+        };
+        assert_eq!(condition_var, "d");
+        assert_direct_operation(&then_ops[0], TketOp::H, &[QubitRef::new("q", 2)], None);
+        assert_direct_operation(&else_ops[0], TketOp::Z, &[QubitRef::new("q", 2)], None);
+    }
+
     #[test]
     fn test_empty_program() {
         let hugr = compile_to_hugr("").unwrap();
-        assert!(hugr.num_nodes() > 0); // At least root node
+        assert!(hugr.num_nodes() > 0);
+        assert!(matches!(
+            hugr.get_optype(hugr.module_root()),
+            OpType::Module(_)
+        ));
+        let OpType::FuncDefn(main) = hugr.get_optype(hugr.entrypoint()) else {
+            panic!("expected a function-definition entry point");
+        };
+        assert_eq!(main.func_name(), "main");
     }
 
     #[test]
     fn test_single_qubit_gate() {
-        let source = r#"
+        let mut program = parse(
+            r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                h q[0];
+                return unit;
             }
-        "#;
+        "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![Stmt::Gate(crate::ast::GateOp {
+                kind: crate::ast::GateKind::H,
+                targets: vec![slot_ref("q", 0)],
+                params: Vec::new(),
+                attrs: Vec::new(),
+                location: None,
+            })],
+        );
+        let mut codegen = HugrCodegen::new();
+        codegen.collect_program(&program).unwrap();
+        assert_eq!(codegen.operations.len(), 1);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::H,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
 
-        let hugr = compile_to_hugr(source).unwrap();
+        let hugr = codegen.build_hugr().unwrap();
         // Should have input, h gate, output nodes
         assert!(hugr.num_nodes() >= 3);
     }
@@ -2160,9 +3204,27 @@ mod tests {
             }
         "#;
 
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 2);
+        assert_direct_operation(&operations[0], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(
+            &operations[1],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+
         let hugr = compile_to_hugr(source).unwrap();
-        // Should have input, h, cx, output nodes
+        // The same Bell body is inside the module's main function.
         assert!(hugr.num_nodes() >= 4);
+        assert!(matches!(
+            hugr.get_optype(hugr.module_root()),
+            OpType::Module(_)
+        ));
+        let OpType::FuncDefn(main) = hugr.get_optype(hugr.entrypoint()) else {
+            panic!("expected a function-definition entry point");
+        };
+        assert_eq!(main.func_name(), "main");
     }
 
     #[test]
@@ -2170,7 +3232,7 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                rz(1.57, q[0]);
+                rz(1.57 rad) q[0];
             }
         "#;
 
@@ -2201,6 +3263,19 @@ mod tests {
                 ccx (q[0], q[1], q[2]);
             }
         "#;
+
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 1);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Toffoli,
+            &[
+                QubitRef::new("q", 0),
+                QubitRef::new("q", 1),
+                QubitRef::new("q", 2),
+            ],
+            None,
+        );
 
         let hugr = compile_to_hugr(source).unwrap();
         assert!(hugr.num_nodes() >= 3);
@@ -2332,16 +3407,341 @@ mod tests {
     }
 
     #[test]
-    fn test_controlled_rotation() {
+    fn test_crz_lowers_to_tket_crz() {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(2);
-                crz(1.57, q[0], q[1]);
+                crz(1.57 rad) (q[0], q[1]);
             }
         "#;
 
-        let hugr = compile_to_hugr(source).unwrap();
-        assert!(hugr.num_nodes() >= 3);
+        // `crz` is its own GateKind (PR #638); the HUGR backend emits tket's own
+        // CRz spelling rather than a decomposition, since Guppy/tket own that name.
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 1);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CRz,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            Some(1.57),
+        );
+    }
+
+    #[test]
+    fn test_rotation_angles_use_module_comptime_constants() {
+        let operations = collect_operations(
+            r#"
+                pi_2: a64 = 0.25 turns;
+                quarter_turn: a64 = 0.125 turns;
+
+                pub fn main() -> unit {
+                    q := qalloc(2);
+                    crz(pi_2) (q[1], q[0]);
+                    crz(quarter_turn) (q[0], q[1]);
+                    crz(pi_2 / 2) (q[1], q[0]);
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 3);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CRz,
+            &[QubitRef::new("q", 1), QubitRef::new("q", 0)],
+            Some(std::f64::consts::FRAC_PI_2),
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::CRz,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            Some(std::f64::consts::FRAC_PI_4),
+        );
+        assert_direct_operation(
+            &operations[2],
+            TketOp::CRz,
+            &[QubitRef::new("q", 1), QubitRef::new("q", 0)],
+            Some(std::f64::consts::FRAC_PI_4),
+        );
+    }
+
+    #[test]
+    fn test_builtin_angle_constant_spellings() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    q := qalloc(2);
+                    crz(PI rad) (q[0], q[1]);
+                    crz(pi rad) (q[0], q[1]);
+                    crz(TAU rad) (q[0], q[1]);
+                    crz(tau rad) (q[0], q[1]);
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 4);
+        for (index, operation) in operations.iter().enumerate() {
+            let angle = if index < 2 {
+                std::f64::consts::PI
+            } else {
+                std::f64::consts::TAU
+            };
+            assert_direct_operation(
+                operation,
+                TketOp::CRz,
+                &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+                Some(angle),
+            );
+        }
+    }
+
+    #[test]
+    fn test_builtin_named_and_literal_angle_units_agree() {
+        let operations = collect_operations(
+            r#"
+                half: a64 = 0.5 turns;
+                hp: a64 = pi rad;
+                one_rad: a64 = 1.0 rad;
+
+                pub fn main() -> unit {
+                    q := qalloc(2);
+                    crz(pi rad) (q[0], q[1]);
+                    crz(0.5 turns) (q[0], q[1]);
+                    crz(half) (q[0], q[1]);
+                    crz(hp) (q[0], q[1]);
+                    crz(one_rad) (q[0], q[1]);
+                    crz(1.0 rad) (q[0], q[1]);
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 6);
+        for operation in &operations[..4] {
+            assert_direct_operation(
+                operation,
+                TketOp::CRz,
+                &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+                Some(std::f64::consts::PI),
+            );
+        }
+        for operation in &operations[4..] {
+            assert_direct_operation(
+                operation,
+                TketOp::CRz,
+                &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+                Some(1.0),
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_backends_emit_equivalent_angle_values() {
+        let std_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("std/std.zlp")
+            .canonicalize()
+            .expect("canonical stdlib path");
+        let cases = [
+            ("pi rad", 0.5),
+            ("tau rad", 1.0),
+            ("1/4 turns", 0.25),
+            ("0.25 turns", 0.25),
+            ("module_angle", 0.25),
+            ("std.a64.t_angle", 0.125),
+            ("module_angle / 2", 0.125),
+            ("-module_angle", -0.25),
+        ];
+
+        for (spelling, expected_turns) in cases {
+            let source = format!(
+                r#"
+                std := @import("{}");
+                module_angle: a64 = 0.25 turns;
+                pub fn main() -> unit {{
+                    q := qalloc(1);
+                    pz q;
+                    rz({spelling}) q[0];
+                    return unit;
+                }}
+                "#,
+                crate::tests::escape_source_string(&std_path.to_string_lossy()),
+            );
+            let (slr_turns, hugr_half_turns, phir_radians, qasm_radians) =
+                emitted_angle_values(&source);
+
+            let expected_half_turns = expected_turns * 2.0;
+            let expected_radians = expected_turns * std::f64::consts::TAU;
+            assert!(
+                (slr_turns - expected_turns).abs() < 1e-12,
+                "SLR mismatch for {spelling}: {slr_turns}"
+            );
+            assert!(
+                (hugr_half_turns - expected_half_turns).abs() < 1e-12,
+                "HUGR mismatch for {spelling}: {hugr_half_turns}"
+            );
+            assert!(
+                (phir_radians - expected_radians).abs() < 1e-12,
+                "PHIR mismatch for {spelling}: {phir_radians}"
+            );
+            assert!(
+                (qasm_radians - expected_radians).abs() < 1e-12,
+                "QASM mismatch for {spelling}: {qasm_radians}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_angle_module_constants_remain_plain_numbers() {
+        let program = parse(
+            r#"
+                plain_pi: f64 = pi;
+                plain_tau: f64 = tau;
+                half_from_number: a64 = plain_pi rad;
+                full_from_number: a64 = plain_tau rad;
+
+                pub fn main() -> unit {
+                    q := qalloc(2);
+                    crz(half_from_number) (q[0], q[1]);
+                    crz(full_from_number) (q[0], q[1]);
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+
+        assert_eq!(
+            codegen
+                .comptime
+                .borrow()
+                .context
+                .lookup("plain_pi")
+                .and_then(ComptimeValue::as_float),
+            Some(std::f64::consts::PI)
+        );
+        assert_eq!(
+            codegen
+                .comptime
+                .borrow()
+                .context
+                .lookup("plain_tau")
+                .and_then(ComptimeValue::as_float),
+            Some(std::f64::consts::TAU)
+        );
+        assert_eq!(codegen.operations.len(), 2);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::CRz,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            Some(std::f64::consts::PI),
+        );
+        assert_direct_operation(
+            &codegen.operations[1],
+            TketOp::CRz,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            Some(std::f64::consts::TAU),
+        );
+    }
+
+    #[test]
+    fn test_rotation_angle_rejects_unresolvable_names() {
+        for (source, offending_name) in [
+            (
+                r#"
+                    pub fn main() -> unit {
+                        q := qalloc(2);
+                        crz(undefined_angle) (q[0], q[1]);
+                    }
+                "#,
+                "undefined_angle",
+            ),
+            (
+                r#"
+                    mut runtime_angle: a64 = 0.5 turns;
+
+                    pub fn main() -> unit {
+                        q := qalloc(2);
+                        crz(runtime_angle) (q[0], q[1]);
+                    }
+                "#,
+                "runtime_angle",
+            ),
+        ] {
+            let program = parse(source).expect("parse failed");
+            let error = HugrCodegen::new()
+                .collect_program(&program)
+                .expect_err("angle should not resolve");
+            let message = error.to_string();
+            assert!(
+                message.contains(offending_name),
+                "error did not name {offending_name}: {message}"
+            );
+            assert!(
+                message.contains("at line "),
+                "missing source location: {message}"
+            );
+            assert!(
+                !message.contains("SourceLocation")
+                    && !message.contains(env!("CARGO_MANIFEST_DIR")),
+                "error leaked an AST dump or source path: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_local_binding_shadows_module_angle_constant() {
+        let program = parse(
+            r#"
+                theta: a64 = 1.0 turns;
+
+                pub fn main() -> unit {
+                    q := qalloc(2);
+                    theta := 3.0 turns;
+                    crz(theta) (q[0], q[1]);
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("local comptime shadow should resolve");
+
+        assert_eq!(codegen.operations.len(), 1);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::CRz,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            Some(3.0 * std::f64::consts::TAU),
+        );
+    }
+
+    #[test]
+    fn test_loop_binding_shadows_module_angle_constant() {
+        let program = parse(
+            r#"
+                i: a64 = 1.0 turns;
+
+                pub fn main() -> unit {
+                    q := qalloc(2);
+                    for i in 0..3 {
+                        crz(i) (q[0], q[1]);
+                    }
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+        codegen.collect_program(&program).unwrap();
+        assert_eq!(codegen.operations.len(), 3);
+        for (i, op) in codegen.operations.iter().enumerate() {
+            assert_direct_operation(
+                op,
+                TketOp::CRz,
+                &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+                Some(i as f64 * std::f64::consts::TAU),
+            );
+        }
     }
 
     #[test]
@@ -2349,10 +3749,20 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                x(q[0]);
-                reset(q[0]);
+                x q[0];
+                pz q[0];
             }
         "#;
+
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 2);
+        assert_direct_operation(&operations[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
 
         let hugr = compile_to_hugr(source).unwrap();
         assert!(hugr.num_nodes() >= 3);
@@ -2458,13 +3868,377 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(2);
-                rzz(1.57, q[0], q[1]);
+                rzz(0.25 turns) (q[0], q[1]);
             }
         "#;
 
-        // RZZ decomposes to CX Rz CX
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 3);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Rz,
+            &[QubitRef::new("q", 1)],
+            Some(std::f64::consts::FRAC_PI_2),
+        );
+        assert_direct_operation(
+            &operations[2],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+
         let hugr = compile_to_hugr(source).unwrap();
         assert!(hugr.num_nodes() >= 4);
+    }
+
+    #[test]
+    fn test_rzz_gate_with_radian_literal() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    rzz(1.25 rad) (q[0], q[1]);
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 3);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Rz,
+            &[QubitRef::new("q", 1)],
+            Some(1.25),
+        );
+        assert_direct_operation(
+            &operations[2],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_prepare_whole_allocator() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    pz q;
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 2);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Reset,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_single_qubit_gate_broadcasts_over_allocator() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    q := qalloc(3);
+                    h q;
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 3);
+        for (index, operation) in operations.iter().enumerate() {
+            assert_direct_operation(operation, TketOp::H, &[QubitRef::new("q", index)], None);
+        }
+    }
+
+    #[test]
+    fn test_multi_qubit_gate_allocator_broadcast_is_an_error() {
+        let program = parse(
+            r#"
+                pub fn main() -> unit {
+                    q := qalloc(3);
+                    cx q;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let error = HugrCodegen::new()
+            .collect_program(&program)
+            .expect_err("multi-qubit broadcast should fail");
+
+        assert!(matches!(
+            error,
+            HugrError::InvalidAllocatorBroadcast { gate, arity: 2 } if gate == "cx"
+        ));
+    }
+
+    #[test]
+    fn test_zero_capacity_allocator_broadcast_is_an_error() {
+        let program = parse(
+            r#"
+                pub fn main() -> unit {
+                    q := qalloc(0);
+                    h q;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let error = HugrCodegen::new()
+            .collect_program(&program)
+            .expect_err("empty allocator broadcast should fail");
+
+        assert!(matches!(
+            error,
+            HugrError::EmptyAllocatorBroadcast { gate, allocator }
+                if gate == "h" && allocator == "q"
+        ));
+    }
+
+    #[test]
+    fn test_prepare_explicit_slot() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    pz q[1];
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 1);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_builder_shaped_gate_and_prepare_statements() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![
+                Stmt::Gate(crate::ast::GateOp {
+                    kind: crate::ast::GateKind::X,
+                    targets: vec![slot_ref("q", 0)],
+                    params: Vec::new(),
+                    attrs: Vec::new(),
+                    location: None,
+                }),
+                Stmt::Prepare(crate::ast::PrepareOp {
+                    allocator: "q".to_string(),
+                    slots: Some(vec![1]),
+                    location: None,
+                }),
+            ],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        assert_eq!(codegen.operations.len(), 2);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::X,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
+        assert_direct_operation(
+            &codegen.operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_builder_shaped_multi_qubit_gate_target_order() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(3);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![
+                Stmt::Gate(crate::ast::GateOp {
+                    kind: crate::ast::GateKind::CX,
+                    targets: vec![slot_ref("q", 0), slot_ref("q", 1)],
+                    params: Vec::new(),
+                    attrs: Vec::new(),
+                    location: None,
+                }),
+                Stmt::Gate(crate::ast::GateOp {
+                    kind: crate::ast::GateKind::CCX,
+                    targets: vec![slot_ref("q", 0), slot_ref("q", 1), slot_ref("q", 2)],
+                    params: Vec::new(),
+                    attrs: Vec::new(),
+                    location: None,
+                }),
+            ],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        assert_eq!(codegen.operations.len(), 2);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &codegen.operations[1],
+            TketOp::Toffoli,
+            &[
+                QubitRef::new("q", 0),
+                QubitRef::new("q", 1),
+                QubitRef::new("q", 2),
+            ],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_builder_prepare_whole_allocator() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(3);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![Stmt::Prepare(crate::ast::PrepareOp {
+                allocator: "q".to_string(),
+                slots: None,
+                location: None,
+            })],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        assert_eq!(codegen.operations.len(), 3);
+        for (index, operation) in codegen.operations.iter().enumerate() {
+            assert_direct_operation(operation, TketOp::Reset, &[QubitRef::new("q", index)], None);
+        }
+    }
+
+    #[test]
+    fn test_builder_prepare_rejects_out_of_bounds_slot() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![Stmt::Prepare(crate::ast::PrepareOp {
+                allocator: "q".to_string(),
+                slots: Some(vec![2]),
+                location: None,
+            })],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        assert!(matches!(
+            codegen.collect_program(&program),
+            Err(HugrError::QubitIndexOutOfBounds {
+                index: 2,
+                capacity: 2
+            })
+        ));
+        assert!(codegen.operations.is_empty());
+    }
+
+    #[test]
+    fn test_all_gate_kinds_have_hugr_mappings() {
+        for kind in crate::ast::GateKind::ALL {
+            assert!(
+                gate_name_to_mapping(kind.keyword()).is_some(),
+                "missing HUGR mapping for {}",
+                kind.keyword()
+            );
+        }
+    }
+
+    #[test]
+    fn test_ordinary_function_call_is_an_error() {
+        let program = parse(
+            r#"
+                fn helper() -> unit {
+                    return unit;
+                }
+
+                pub fn main() -> unit {
+                    helper();
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+
+        assert!(matches!(
+            codegen.collect_program(&program),
+            Err(HugrError::UnsupportedCall { name }) if name == "helper"
+        ));
+    }
+
+    #[test]
+    fn test_missing_named_gate_mapping_is_an_error() {
+        let mut codegen = HugrCodegen::new();
+
+        assert!(matches!(
+            codegen.collect_named_gate("unmapped_gate", &[], Vec::new()),
+            Err(HugrError::UnknownGate { name }) if name == "unmapped_gate"
+        ));
     }
 
     #[test]
@@ -2540,6 +4314,66 @@ mod tests {
         let hugr = compile_to_hugr(source).unwrap();
         // Should expand to 3 H gates
         assert!(hugr.num_nodes() >= 4);
+    }
+
+    #[test]
+    fn test_hugr_single_qubit_batch_literal_spellings() {
+        for statement in ["h [q[0], q[1]];", "h {q[0], q[1]};", "h(&[q[0], q[1]]);"] {
+            let source = format!(
+                r#"
+                    pub fn main() -> unit {{
+                        q := qalloc(2);
+                        {statement}
+                    }}
+                "#
+            );
+            let operations = collect_operations(&source);
+
+            assert_eq!(operations.len(), 2, "statement: {statement}");
+            assert_direct_operation(&operations[0], TketOp::H, &[QubitRef::new("q", 0)], None);
+            assert_direct_operation(&operations[1], TketOp::H, &[QubitRef::new("q", 1)], None);
+        }
+    }
+
+    #[test]
+    fn test_nested_batch_is_an_error() {
+        let program = parse(
+            r#"
+                pub fn main() -> unit {
+                    q := qalloc(1);
+                    h [[q[0]]];
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+
+        assert!(matches!(
+            codegen.collect_program(&program),
+            Err(HugrError::UnsupportedExpression)
+        ));
+        assert!(codegen.operations.is_empty());
+    }
+
+    #[test]
+    fn test_empty_batch_is_an_error() {
+        let program = parse(
+            r#"
+                pub fn main() -> unit {
+                    q := qalloc(1);
+                    h [];
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let error = HugrCodegen::new()
+            .collect_program(&program)
+            .expect_err("empty batch should fail");
+
+        assert!(matches!(
+            error,
+            HugrError::EmptyGateBatch { gate } if gate == "h"
+        ));
     }
 
     #[test]
@@ -2670,8 +4504,106 @@ mod tests {
             }
         "#;
 
-        let hugr = compile_to_hugr(source).unwrap();
-        // Should have 3 H gates + 3 measurements
-        assert!(hugr.num_nodes() >= 7);
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 6);
+        for index in 0..3 {
+            assert_direct_operation(
+                &operations[index],
+                TketOp::H,
+                &[QubitRef::new("q", index)],
+                None,
+            );
+            let GateOp::MidMeasure { qubit, result_var } = &operations[index + 3] else {
+                panic!("expected collected measurement");
+            };
+            assert_eq!(qubit, &QubitRef::new("q", index));
+            let expected = if index == 0 {
+                "results".to_string()
+            } else {
+                format!("results_{index}")
+            };
+            assert_eq!(result_var, &expected);
+        }
+        compile_to_hugr(source).unwrap();
+    }
+
+    #[test]
+    fn test_qft_example_preserves_intended_operations() {
+        let operations = collect_operations(include_str!("../../examples/qft_3qubit.zlp"));
+
+        assert_eq!(operations.len(), 15);
+        for (index, op) in operations[12..].iter().enumerate() {
+            assert!(
+                matches!(op, GateOp::MidMeasure { qubit, .. } if qubit == &QubitRef::new("q", index))
+            );
+        }
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Reset,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[2],
+            TketOp::Reset,
+            &[QubitRef::new("q", 2)],
+            None,
+        );
+        assert_direct_operation(&operations[3], TketOp::X, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(&operations[4], TketOp::X, &[QubitRef::new("q", 2)], None);
+        assert_direct_operation(&operations[5], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(
+            &operations[6],
+            TketOp::CRz,
+            &[QubitRef::new("q", 1), QubitRef::new("q", 0)],
+            Some(std::f64::consts::FRAC_PI_2),
+        );
+        assert_direct_operation(
+            &operations[7],
+            TketOp::CRz,
+            &[QubitRef::new("q", 2), QubitRef::new("q", 0)],
+            Some(std::f64::consts::FRAC_PI_4),
+        );
+        assert_direct_operation(&operations[8], TketOp::H, &[QubitRef::new("q", 1)], None);
+        assert_direct_operation(
+            &operations[9],
+            TketOp::CRz,
+            &[QubitRef::new("q", 2), QubitRef::new("q", 1)],
+            Some(std::f64::consts::FRAC_PI_2),
+        );
+        assert_direct_operation(&operations[10], TketOp::H, &[QubitRef::new("q", 2)], None);
+        assert!(matches!(
+            &operations[11],
+            GateOp::Swap { qubit_a, qubit_b }
+                if qubit_a == &QubitRef::new("q", 0) && qubit_b == &QubitRef::new("q", 2)
+        ));
+    }
+
+    #[test]
+    fn test_all_examples_compile_to_hugr() {
+        let examples_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let mut examples = std::fs::read_dir(&examples_dir)
+            .expect("failed to read examples directory")
+            .map(|entry| entry.expect("failed to read example entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "zlp"))
+            .collect::<Vec<_>>();
+        examples.sort();
+        assert!(!examples.is_empty(), "no .zlp examples found");
+
+        for path in examples {
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let program = parse(&source)
+                .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+            HugrCodegen::new()
+                .compile(&program)
+                .unwrap_or_else(|error| panic!("failed to compile {}: {error}", path.display()));
+        }
     }
 }

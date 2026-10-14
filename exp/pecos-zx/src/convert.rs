@@ -55,7 +55,7 @@ fn phase_to_angle(phase: Phase) -> Angle64 {
 /// Emit the best-matching PECOS gate for a `ZPhase` with the given phase.
 ///
 /// Recognizes common rational multiples of pi and emits the specific gate
-/// (S, Sdg, T, Tdg, Z) instead of a generic RZ.
+/// (S, Sdg, T, Tdg, Z) instead of a generic phase-shaped U.
 fn zphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
     if phase == Phase::new((1, 2)) {
         dag.sz(&[q]);
@@ -68,7 +68,7 @@ fn zphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
     } else if phase == Phase::one() {
         dag.z(&[q]);
     } else {
-        dag.rz(phase_to_angle(phase), &[q]);
+        dag.u(Angle64::ZERO, Angle64::ZERO, phase_to_angle(phase), &[q]);
     }
 }
 
@@ -120,6 +120,14 @@ pub fn dag_to_zx_circuit(dag: &DagCircuit) -> Result<ZxCircuit, ConvertError> {
         for chunk in qubits.chunks(arity) {
             let qs: Vec<usize> = chunk.iter().map(|q| usize::from(*q)).collect();
 
+            if let Some(lambda) = gate.phase_angle() {
+                zx_circ.push(ZxGate::new_with_phase(
+                    GType::ZPhase,
+                    qs,
+                    angle_to_phase(lambda),
+                ));
+                continue;
+            }
             match gate.gate_type {
                 // Single-qubit Clifford gates
                 GateType::H => {
@@ -322,6 +330,7 @@ pub fn zx_circuit_to_dag(zx_circ: &ZxCircuit) -> Result<DagCircuit, ConvertError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::Gate;
     use quizx::graph::GraphLike;
 
     #[test]
@@ -361,6 +370,23 @@ mod tests {
         let zx_circ = dag_to_zx_circuit(&dag).expect("conversion should succeed");
         assert_eq!(zx_circ.num_qubits(), 2);
         assert_eq!(zx_circ.num_gates(), 4);
+    }
+
+    #[test]
+    fn rejected_dag_update_leaves_zx_conversion_safe() {
+        let mut dag = DagCircuit::new();
+        let rotation = dag.add_gate_auto_wire(Gate::rz(Angle64::QUARTER_TURN, &[0]));
+        let before = dag.gate(rotation).cloned().expect("rotation exists");
+
+        let error = dag
+            .update_gate(rotation, |gate| gate.angles.clear())
+            .expect_err("a stored RZ cannot lose its required angle");
+        assert_eq!(
+            error.to_string(),
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
+        );
+        assert_eq!(dag.gate(rotation), Some(&before));
+        dag_to_zx_circuit(&dag).expect("the refused update must leave valid ZX input");
     }
 
     #[test]
@@ -437,8 +463,8 @@ mod tests {
     }
 
     #[test]
-    fn test_zphase_fallback_to_rz() {
-        // Non-special ZPhase values should fall through to RZ
+    fn test_zphase_generic_preserves_phase() {
+        // Generic ZPhase values retain the exact diagonal phase convention.
         let mut zx_circ = ZxCircuit::new(1);
         zx_circ.push(ZxGate::new_with_phase(
             GType::ZPhase,
@@ -449,7 +475,10 @@ mod tests {
         let dag = zx_circuit_to_dag(&zx_circ).expect("conversion");
         let gates: Vec<_> = dag.iter_gates_topo().collect();
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].1.gate_type, GateType::RZ);
+        assert_eq!(
+            gates[0].1.phase_angle(),
+            Some(phase_to_angle(Phase::new((1, 3))))
+        );
     }
 
     #[test]

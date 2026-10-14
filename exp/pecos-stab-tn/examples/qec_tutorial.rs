@@ -40,14 +40,15 @@ fn main() {
     // 1. Builder + preset
     // ------------------------------------------------------------------
     //
-    // `StabMps::builder(n).build()` and the source-compatible `for_qec()` set:
+    // `for_qec()` keeps the general numerical defaults and selects exact
+    // measurement. The frozen Stage-B repetition-code benchmark measured a
+    // 1.497x geometric-mean slowdown (1.548x maximum) versus pragmatic.
     //   - max_bond_dim = 128 (enough for syndrome rounds without truncation)
     //   - max_truncation_error = 1e-8 (very tight)
     //   - merge_rz = true (batch same-qubit RZ noise)
     //
-    // For ion-trap-memory-noise or T-heavy workloads these are the general
-    // defaults. You can layer `pauli_frame_tracking(true)` on top for
-    // fast Pauli-noise injection.
+    // The general builder instead defaults to exact measurement. You can layer
+    // `pauli_frame_tracking(true)` on top for fast Pauli-noise injection.
     //
     // 3 data + 2 ancillas = 5 qubits total.
 
@@ -199,13 +200,12 @@ fn main() {
     println!();
 
     // ------------------------------------------------------------------
-    // 7. Flush the frame before reading exact state
+    // 7. Flush the frame before reading the physical state
     // ------------------------------------------------------------------
     //
-    // If you want exact state_vector/amplitude readouts (including
-    // complex phase from Y injections), call `flush_pauli_frame_to_state`
-    // first. The decomposition-based flush gives EXACT amplitudes even
-    // on Clifford-evolved states — no ±1 residual.
+    // Call `flush_pauli_frame_to_state` before projective amplitude reads
+    // that must include the frame. Relative phases from Y injections are
+    // preserved; the overall phase follows the stabilizer-reference gauge.
 
     let mut stn = StabMps::builder(2)
         .seed(1)
@@ -215,8 +215,8 @@ fn main() {
     stn.cx(&[(QubitId(0), QubitId(1))]);
     stn.inject_y_in_frame(QubitId(0));
     stn.flush_pauli_frame_to_state();
-    let sv = stn.state_vector();
-    println!("Step 7: Y_0 on a Bell state, exact amplitudes after flush");
+    let sv = stn.state_vector_up_to_phase();
+    println!("Step 7: Y_0 on a Bell state, amplitudes up to phase after flush");
     for (i, a) in sv.iter().enumerate() {
         println!("  sv[{i}] = {a:.4}");
     }
@@ -227,5 +227,5 @@ fn main() {
     println!("  - reset_qubit(q), pz(q), px(q)");
     println!("  - inject_{{x,y,z}}_in_frame(q), inject_paulis_in_frame(&[...])");
     println!("  - apply_depolarizing(q, p), apply_depolarizing_all(&qs, p)");
-    println!("  - flush_pauli_frame_to_state(): exact state_vector after Y frames");
+    println!("  - flush_pauli_frame_to_state(): state_vector_up_to_phase after Y frames");
 }

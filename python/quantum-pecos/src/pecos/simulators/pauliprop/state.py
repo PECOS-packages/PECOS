@@ -1,4 +1,4 @@
-# Copyright 2018 The PECOS Developers
+# Copyright 2026 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING
 from pecos_rslib.simulators import PauliProp as PauliPropRs
 
 from pecos.simulators.gate_syms import alt_symbols
-from pecos.simulators.pauliprop import bindings
 from pecos.simulators.pauliprop.logical_sign import find_logical_signs
 from pecos.simulators.sim_class_types import PauliPropagation
 
@@ -65,59 +64,33 @@ class PauliProp(PauliPropagation):
         # Use Rust backend
         self._backend = PauliPropRs(num_qubits, track_sign=track_sign)
 
-        # Set up optimized bindings for gates available in Rust backend
-        self._setup_optimized_bindings()
-
-        # Fall back to Python implementations for gates not in Rust
-        for gate, func in bindings.gate_dict.items():
-            if gate not in self.bindings:
-                self.bindings[gate] = func
-
-        # Add alternative symbols
+        self.bindings = self._backend.bindings
         for k, v in alt_symbols.items():
             if v in self.bindings:
                 self.bindings[k] = self.bindings[v]
 
-    def _setup_optimized_bindings(self) -> None:
-        """Set up direct bindings to Rust backend for supported gates."""
-        self.bindings = {}
-        backend = self._backend  # Local reference to avoid attribute lookup
+    def __getstate__(self) -> tuple[PauliPropRs]:
+        """Serialize only the backend; bindings are reconstructed after unpickling."""
+        return (self._backend,)
 
-        # Single-qubit gates - location is always an int
-        self.bindings["H"] = lambda _s, q, **_p: backend.h(q)
-        self.bindings["SX"] = lambda _s, q, **_p: backend.sx(q)
-        self.bindings["SY"] = lambda _s, q, **_p: backend.sy(q)
-        self.bindings["SZ"] = lambda _s, q, **_p: backend.sz(q)
-
-        # Two-qubit gates - location is always a tuple
-        self.bindings["CX"] = lambda _s, qs, **_p: backend.cx(
-            qs[0],
-            qs[1],
-        )
-        self.bindings["CY"] = lambda _s, qs, **_p: backend.cy(
-            qs[0],
-            qs[1],
-        )
-        self.bindings["CZ"] = lambda _s, qs, **_p: backend.cz(
-            qs[0],
-            qs[1],
-        )
-        self.bindings["SWAP"] = lambda _s, qs, **_p: backend.swap(
-            qs[0],
-            qs[1],
-        )
-
-        # Note: X, Y, Z are Pauli operators, not gates to apply to the state,
-        # so they should still use the Python implementations
+    def __setstate__(self, state: tuple[PauliPropRs]) -> None:
+        """Restore the backend and reconstruct the dynamic binding surface."""
+        (self._backend,) = state
+        self.num_qubits = self._backend.num_qubits
+        self.track_sign = self._backend.track_sign
+        self.bindings = self._backend.bindings
+        for k, v in alt_symbols.items():
+            if v in self.bindings:
+                self.bindings[k] = self.bindings[v]
 
     @property
     def faults(self) -> dict:
-        """Get the current faults dictionary."""
+        """Return a snapshot of the frame; mutate through the setter or ``add_faults``."""
         return self._backend.faults
 
     @faults.setter
     def faults(self, value: dict) -> None:
-        """Set the faults dictionary."""
+        """Replace the frame and reset its sign and imaginary phase."""
         self._backend.set_faults(value)
 
     @property

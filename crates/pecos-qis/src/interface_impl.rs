@@ -14,6 +14,7 @@ pub fn interface_error_to_pecos(err: InterfaceError) -> PecosError {
             PecosError::Generic(format!("Execution error: {msg}"))
         }
         InterfaceError::InvalidFormat(msg) => PecosError::Generic(format!("Invalid format: {msg}")),
+        InterfaceError::ProgramError(error) => PecosError::Generic(error.to_string()),
         InterfaceError::Other(msg) => PecosError::Generic(msg),
     }
 }

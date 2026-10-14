@@ -7,10 +7,11 @@
 //!
 //! # Compile to SLR-AST (returns dict)
 //! ast = zluppy.compile_to_slr("""
-//!     fn main() -> void {
-//!         var q = qalloc(2);
-//!         H(q[0]);
-//!         CX(q[0], q[1]);
+//!     pub fn main() -> unit {
+//!         q := qalloc(2);
+//!         h q[0];
+//!         cx (q[0], q[1]);
+//!         return;
 //!     }
 //! """)
 //!
@@ -30,8 +31,47 @@ use std::path::Path;
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
-use ::zlup::codegen::{HugrCodegen, SlrCodegen};
+use ::zlup::codegen::{HugrCodegen, PhirJsonCodegen, SlrCodegen};
 use ::zlup::semantic::SemanticAnalyzer;
+
+fn explicit_angle_unit(
+    gate: &str,
+    is_parameterized: bool,
+    has_params: bool,
+    unit: Option<&str>,
+) -> PyResult<Option<::zlup::ast::AngleUnit>> {
+    if !is_parameterized {
+        return match unit {
+            Some(unit) => Err(PyValueError::new_err(format!(
+                "non-parameterized gate '{gate}' takes no angle unit, but received '{unit}'"
+            ))),
+            None => Ok(None),
+        };
+    }
+
+    let unit = match unit {
+        Some("turns") => ::zlup::ast::AngleUnit::Turns,
+        Some("rad") => ::zlup::ast::AngleUnit::Rad,
+        Some(unit) => {
+            return Err(PyValueError::new_err(format!(
+                "rotation gate '{gate}' has unrecognized angle unit '{unit}'; accepted units are 'turns' or 'rad'"
+            )));
+        }
+        None => {
+            return Err(PyValueError::new_err(format!(
+                "rotation gate '{gate}' parameter requires an explicit angle unit; accepted units are 'turns' or 'rad'"
+            )));
+        }
+    };
+
+    if !has_params {
+        return Err(PyValueError::new_err(format!(
+            "rotation gate '{gate}' requires an angle parameter with an explicit unit; accepted units are 'turns' or 'rad'"
+        )));
+    }
+
+    Ok(Some(unit))
+}
 
 // =============================================================================
 // Error Types
@@ -154,6 +194,26 @@ fn compile_to_slr_json(source: &str, strict: bool, compact: bool) -> PyResult<St
     } else {
         codegen.to_json(&slr_program).map_err(codegen_error_to_py)
     }
+}
+
+/// Compile Zluppy source to PHIR/JSON.
+#[pyfunction]
+#[pyo3(signature = (source, strict = false))]
+fn compile_to_phir_json(source: &str, strict: bool) -> PyResult<String> {
+    let program = ::zlup::parse(source).map_err(parse_error_to_py)?;
+    let mut analyzer = if strict {
+        SemanticAnalyzer::new()
+    } else {
+        SemanticAnalyzer::new_permissive()
+    };
+    analyzer.analyze(&program).map_err(semantic_error_to_py)?;
+    let mut codegen = PhirJsonCodegen::new();
+    let phir = codegen
+        .compile(&program)
+        .map_err(|error| ZluppyError::new_err(format!("PHIR codegen error: {error}")))?;
+    codegen
+        .to_json(&phir)
+        .map_err(|error| ZluppyError::new_err(format!("PHIR serialization error: {error}")))
 }
 
 /// Check Zluppy source for errors without compiling.
@@ -345,7 +405,7 @@ fn check_file(path: &str, strict: bool) -> PyResult<()> {
 
 /// Compile Zluppy source to HUGR bytes.
 ///
-/// The returned bytes can be passed directly to `hugr_engine()` or `sim()`.
+/// Wrap the returned bytes in `pecos.Hugr` and pass them to `pecos.sim()`.
 ///
 /// Args:
 ///     source: Zluppy source code as a string
@@ -381,7 +441,7 @@ fn compile_to_hugr(
 
 /// Compile a Zluppy source file to HUGR bytes.
 ///
-/// The returned bytes can be passed directly to `hugr_engine()` or `sim()`.
+/// Wrap the returned bytes in `pecos.Hugr` and pass them to `pecos.sim()`.
 ///
 /// Args:
 ///     path: Path to a .zlp file
@@ -431,6 +491,7 @@ fn compile_file_hugr(
 ///     prog.add_allocator("q", 2)
 ///     prog.add_gate("H", [("q", 0)])
 ///     prog.add_gate("CX", [("q", 0), ("q", 1)])
+///     prog.add_gate("RZ", [("q", 0)], params=[0.25], unit="turns")
 ///     json_str = prog.to_json()
 ///     ```
 #[pyclass(skip_from_py_object)]
@@ -466,12 +527,18 @@ impl SlrProgram {
     ///     gate: Gate name (e.g., "H", "CX", "RZ")
     ///     targets: List of (`allocator_name`, index) tuples
     ///     params: Optional list of parameter values (for parameterized gates)
-    #[pyo3(signature = (gate, targets, params = None))]
+    ///     unit: Required for rotation parameters; must be "turns" or "rad"
+    ///
+    /// Raises:
+    ///     `ValueError`: If a rotation parameter lacks a valid unit, or a
+    ///         non-parameterized gate is given a unit
+    #[pyo3(signature = (gate, targets, params = None, unit = None))]
     fn add_gate(
         &mut self,
         gate: &str,
         targets: Vec<(String, usize)>,
         params: Option<Vec<f64>>,
+        unit: Option<&str>,
     ) -> PyResult<()> {
         let gate_name = match gate {
             // Single-qubit Pauli gates
@@ -523,6 +590,10 @@ impl SlrProgram {
             }
         };
 
+        let is_parameterized = matches!(gate_name, "RX" | "RY" | "RZ" | "CRZ" | "RZZ");
+        let has_params = params.as_ref().is_some_and(|values| !values.is_empty());
+        let angle_unit = explicit_angle_unit(gate, is_parameterized, has_params, unit)?;
+
         let slot_refs: Vec<_> = targets
             .into_iter()
             .map(|(alloc, idx)| ::zlup::codegen::slr::SlrSlotRef::new(alloc, idx))
@@ -532,9 +603,11 @@ impl SlrProgram {
             .unwrap_or_default()
             .into_iter()
             .map(|v| {
-                ::zlup::codegen::slr::SlrExpression::Literal(
-                    ::zlup::codegen::slr::SlrLiteralExpr::float(v),
-                )
+                let literal = angle_unit.map_or_else(
+                    || ::zlup::codegen::slr::SlrLiteralExpr::float(v),
+                    |unit| ::zlup::codegen::slr::SlrLiteralExpr::angle(unit.to_turns(v)),
+                );
+                ::zlup::codegen::slr::SlrExpression::Literal(literal)
             })
             .collect();
 
@@ -603,6 +676,7 @@ impl SlrProgram {
 /// prog.add_allocator("q", 2)
 /// prog.add_gate("h", [("q", 0)])
 /// prog.add_gate("cx", [("q", 0), ("q", 1)])
+/// prog.add_gate("rz", [("q", 0)], params=[0.25], unit="turns")
 ///
 /// # Compile to SLR
 /// slr_json = prog.compile_to_slr()
@@ -647,7 +721,7 @@ impl ZlupProgram {
     /// Returns:
     ///     self: For method chaining
     fn add_allocator(&mut self, name: &str, capacity: usize) -> Self {
-        // Build: var {name} = qalloc({capacity});
+        // Build: mut {name} := qalloc({capacity});
         let alloc_call = ::zlup::ast::Expr::Call(Box::new(::zlup::ast::CallExpr {
             callee: ::zlup::ast::Expr::Ident(::zlup::ast::Ident {
                 name: "qalloc".to_string(),
@@ -681,15 +755,21 @@ impl ZlupProgram {
     ///     gate: Gate name (e.g., "h", "cx", "rz")
     ///     targets: List of (`allocator_name`, index) tuples
     ///     params: Optional list of parameter values (for rotation gates)
+    ///     unit: Required for rotation parameters; must be "turns" or "rad"
     ///
     /// Returns:
     ///     self: For method chaining
-    #[pyo3(signature = (gate, targets, params = None))]
+    ///
+    /// Raises:
+    ///     `ValueError`: If a rotation parameter lacks a valid unit, or a
+    ///         non-parameterized gate is given a unit
+    #[pyo3(signature = (gate, targets, params = None, unit = None))]
     fn add_gate(
         &mut self,
         gate: &str,
         targets: Vec<(String, usize)>,
         params: Option<Vec<f64>>,
+        unit: Option<&str>,
     ) -> PyResult<Self> {
         let gate_kind = match gate.to_lowercase().as_str() {
             // Single-qubit Paulis
@@ -732,6 +812,9 @@ impl ZlupProgram {
             _ => return Err(PyValueError::new_err(format!("Unknown gate: {gate}"))),
         };
 
+        let has_params = params.as_ref().is_some_and(|values| !values.is_empty());
+        let angle_unit = explicit_angle_unit(gate, gate_kind.is_parameterized(), has_params, unit)?;
+
         // Build slot references
         let slot_refs: Vec<_> = targets
             .into_iter()
@@ -751,11 +834,19 @@ impl ZlupProgram {
             .unwrap_or_default()
             .into_iter()
             .map(|v| {
-                ::zlup::ast::Expr::FloatLit(::zlup::ast::FloatLit {
+                let value = ::zlup::ast::Expr::FloatLit(::zlup::ast::FloatLit {
                     value: v,
                     suffix: None,
                     location: None,
-                })
+                });
+                match angle_unit {
+                    Some(unit) => ::zlup::ast::Expr::AngleLit(Box::new(::zlup::ast::AngleLit {
+                        value,
+                        unit,
+                        location: None,
+                    })),
+                    None => value,
+                }
             })
             .collect();
 
@@ -988,7 +1079,14 @@ impl ZlupProgram {
 impl ZlupProgram {
     /// Build the Zlup AST Program.
     fn build_ast(&self) -> ::zlup::ast::Program {
-        // Create main function with all statements
+        let mut statements = self.statements.clone();
+        statements.push(::zlup::ast::Stmt::Return(::zlup::ast::ReturnStmt {
+            value: Some(::zlup::ast::Expr::Unit(::zlup::ast::UnitLit {
+                location: None,
+            })),
+            location: None,
+        }));
+
         let main_fn = ::zlup::ast::FnDecl {
             name: self.name.clone(),
             params: Vec::new(),
@@ -996,7 +1094,7 @@ impl ZlupProgram {
             body: ::zlup::ast::Block {
                 label: None,
                 attrs: Vec::new(),
-                statements: self.statements.clone(),
+                statements,
                 trailing_expr: None,
                 location: None,
             },
@@ -1027,10 +1125,11 @@ impl ZlupProgram {
 /// Example:
 ///     ```python
 ///     result = zluppy.ZluppyEngine().source('''
-///         fn main() -> void {
-///             var q = qalloc(2);
-///             H(q[0]);
-///             CX(q[0], q[1]);
+///         pub fn main() -> unit {
+///             q := qalloc(2);
+///             h q[0];
+///             cx (q[0], q[1]);
+///             return;
 ///         }
 ///     ''').run(shots=100)
 ///     print(result.to_dict())
@@ -1040,6 +1139,7 @@ impl ZlupProgram {
 struct ZluppyEngine {
     strict: bool,
     hugr_bytes: Option<Vec<u8>>,
+    num_qubits: Option<usize>,
 }
 
 #[pymethods]
@@ -1054,6 +1154,7 @@ impl ZluppyEngine {
         Self {
             strict,
             hugr_bytes: None,
+            num_qubits: None,
         }
     }
 
@@ -1077,6 +1178,7 @@ impl ZluppyEngine {
         let mut codegen = HugrCodegen::new();
         let hugr = codegen.compile(&program).map_err(hugr_error_to_py)?;
         self.hugr_bytes = Some(codegen.to_bytes(&hugr).map_err(hugr_error_to_py)?);
+        self.num_qubits = Some(codegen.num_qubits());
 
         Ok(self.clone())
     }
@@ -1104,8 +1206,17 @@ impl ZluppyEngine {
         let mut codegen = HugrCodegen::new();
         let hugr = codegen.compile(&program).map_err(hugr_error_to_py)?;
         self.hugr_bytes = Some(codegen.to_bytes(&hugr).map_err(hugr_error_to_py)?);
+        self.num_qubits = Some(codegen.num_qubits());
 
         Ok(self.clone())
+    }
+
+    /// Number of qubits allocated by the compiled program.
+    #[getter]
+    fn num_qubits(&self) -> PyResult<usize> {
+        self.num_qubits.ok_or_else(|| {
+            PyValueError::new_err("No source compiled. Call .source() or .file() first.")
+        })
     }
 
     /// Return the compiled HUGR bytes.
@@ -1141,6 +1252,7 @@ fn _zluppy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add functions
     m.add_function(wrap_pyfunction!(compile_to_slr, m)?)?;
     m.add_function(wrap_pyfunction!(compile_to_slr_json, m)?)?;
+    m.add_function(wrap_pyfunction!(compile_to_phir_json, m)?)?;
     m.add_function(wrap_pyfunction!(check, m)?)?;
     m.add_function(wrap_pyfunction!(parse_debug, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;

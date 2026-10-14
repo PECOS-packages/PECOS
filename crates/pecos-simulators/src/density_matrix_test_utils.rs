@@ -29,6 +29,84 @@
 #![allow(clippy::missing_panics_doc)]
 
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use num_complex::Complex64;
+use pecos_core::{Angle64, QubitId};
+use pecos_random::{PecosRng, RngExt};
+
+/// Assert that two complex values differ by less than `tolerance`.
+pub fn assert_complex_close(actual: Complex64, expected: Complex64, tolerance: f64, label: &str) {
+    let error = (actual - expected).norm();
+    assert!(
+        error < tolerance,
+        "{label}: actual={actual}, expected={expected}, error={error}"
+    );
+}
+
+/// A gate in the deterministic density-matrix/state-vector oracle circuit.
+#[derive(Clone, Copy)]
+pub enum OracleGate {
+    /// Hadamard gate.
+    H(QubitId),
+    /// S gate.
+    Sz(QubitId),
+    /// Z-axis rotation.
+    Rz(Angle64, QubitId),
+    /// X-axis rotation.
+    Rx(Angle64, QubitId),
+    /// Y-axis rotation.
+    Ry(Angle64, QubitId),
+    /// Controlled-X gate.
+    Cx(QubitId, QubitId),
+    /// Controlled-Z gate.
+    Cz(QubitId, QubitId),
+}
+
+/// Build the seeded three-qubit circuit used by density-matrix outer-product oracles.
+#[must_use]
+pub fn seeded_oracle_circuit() -> Vec<OracleGate> {
+    let mut rng = PecosRng::seed_from_u64(0x607);
+    // Include every gate family, then use the seed to randomize order,
+    // operands, and the non-T rotation angles.
+    let mut kinds = [0_u8, 1, 2, 3, 4, 5, 6, 7, 0, 3, 5, 4];
+    for i in (1..kinds.len()).rev() {
+        let j = rng.random_range(0..=i);
+        kinds.swap(i, j);
+    }
+
+    kinds
+        .into_iter()
+        .map(|kind| {
+            let q = QubitId(rng.random_range(0..3));
+            let other = QubitId((q.index() + rng.random_range(1..3)) % 3);
+            let angle = Angle64::from_radians(rng.random_range(-2.5..2.5));
+            match kind {
+                0 => OracleGate::H(q),
+                1 => OracleGate::Sz(q),
+                // A T-equivalent symmetric RZ, as distinct from the named T gate.
+                2 => OracleGate::Rz(Angle64::QUARTER_TURN / 2_u64, q),
+                3 => OracleGate::Rx(angle, q),
+                4 => OracleGate::Ry(angle, q),
+                5 => OracleGate::Rz(angle, q),
+                6 => OracleGate::Cx(q, other),
+                7 => OracleGate::Cz(q, other),
+                _ => unreachable!(),
+            }
+        })
+        .collect()
+}
+
+/// Apply one shared oracle-circuit gate to a simulator.
+pub fn apply_oracle_gate<S: ArbitraryRotationGateable>(sim: &mut S, gate: OracleGate) {
+    match gate {
+        OracleGate::H(q) => sim.h(&[q]),
+        OracleGate::Sz(q) => sim.sz(&[q]),
+        OracleGate::Rz(theta, q) => sim.rz(theta, &[q]),
+        OracleGate::Rx(theta, q) => sim.rx(theta, &[q]),
+        OracleGate::Ry(theta, q) => sim.ry(theta, &[q]),
+        OracleGate::Cx(control, target) => sim.cx(&[(control, target)]),
+        OracleGate::Cz(control, target) => sim.cz(&[(control, target)]),
+    };
+}
 
 // --- Density Matrix Simulator Marker Trait ---
 

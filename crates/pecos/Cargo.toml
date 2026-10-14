@@ -26,10 +26,8 @@ pecos-qasm = { workspace = true, optional = true }
 pecos-phir-json = { workspace = true, optional = true }
 pecos-qis = { workspace = true, optional = true }
 pecos-llvm = { workspace = true, optional = true }
-pecos-hugr-qis = { workspace = true, optional = true }
-pecos-hugr = { workspace = true, optional = true }
 pecos-neo = { workspace = true, optional = true }
-pecos-phir = { workspace = true, optional = true, features = ["hugr"] }
+pecos-phir = { workspace = true, optional = true }
 pecos-random = { workspace = true, optional = true }
 pecos-num = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
@@ -72,7 +70,7 @@ sim = [
 runtime = ["sim", "qasm", "phir"]
 
 # Experimental: route sim() to the pecos-neo stack via .stack(SimStack::Neo)
-neo = ["runtime", "dep:pecos-neo", "pecos-neo/qasm", "pecos-neo/hugr"]
+neo = ["runtime", "dep:pecos-neo", "pecos-neo/qasm"]
 
 # Program formats (require sim)
 qasm = ["sim", "dep:pecos-qasm"]
@@ -85,13 +83,6 @@ llvm = ["sim", "dep:pecos-llvm"]
 # qis: QIS/LLVM IR execution support (Selene runtime)
 qis = ["llvm", "dep:pecos-qis", "pecos-qis/llvm"]
 
-# hugr: the direct Guppy HUGR interpreter + HUGR<->DAG conversion. NO LLVM:
-# this is what the base Python wheel enables, and it must not force an LLVM
-# link (LLVM 21's Windows build drags zlib.dll into any linking artifact).
-hugr = ["sim", "pecos-quantum/hugr", "dep:pecos-hugr"]
-
-# hugr-qis: HUGR -> QIS (LLVM IR) compilation on top of the interpreter.
-hugr-qis = ["hugr", "qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr"]
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
@@ -111,7 +102,7 @@ all-decoders = ["ldpc", "pymatching", "fusion-blossom", "tesseract", "chromobius
 qec = ["quantum", "dep:pecos-qec"]
 
 # Everything
-full = ["runtime", "all-simulators", "all-decoders", "hugr-qis", "wasm", "qec"]
+full = ["runtime", "all-simulators", "all-decoders", "qis", "wasm", "qec"]
 
 [dev-dependencies]
 criterion.workspace = true
@@ -122,7 +113,7 @@ pecos-core.workspace = true
 pecos-simulators.workspace = true
 pecos-engines.workspace = true
 pecos-qasm = { workspace = true, features = ["phir"] }
-pecos-phir = { workspace = true, features = ["hugr"] }
+pecos-phir = { workspace = true }
 pecos-phir-json.workspace = true
 pecos-random.workspace = true
 log.workspace = true

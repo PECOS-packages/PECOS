@@ -44,7 +44,7 @@ pub trait StreamingDecoder {
     /// # Errors
     ///
     /// Returns `DecoderError` if window decoding fails.
-    fn flush(&mut self) -> Result<u64, DecoderError>;
+    fn finish(&mut self) -> Result<u64, DecoderError>;
 
     /// Total observable mask accumulated so far (XOR of all committed corrections).
     fn accumulated_obs(&self) -> u64;

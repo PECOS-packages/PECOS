@@ -80,7 +80,8 @@ fn profile_cpu_sampler(
     num_shots: usize,
 ) -> CpuProfile {
     let probs = vec![p_error; influence_map.locations.len()];
-    let sampler = DemSampler::from_influence_map(influence_map, &probs);
+    let sampler = DemSampler::from_influence_map(influence_map, &probs)
+        .expect("profiling influence map must support Pauli propagation");
 
     let start = Instant::now();
     let _stats = sampler.sample_statistics(num_shots, seed);
@@ -513,7 +514,9 @@ fn main() {
 
         // Build influence map
         let tracked_pauli_qubits: Vec<usize> = (0..num_data).collect();
-        let builder = InfluenceBuilder::new(&circuit).with_z(&tracked_pauli_qubits);
+        let builder = InfluenceBuilder::new(&circuit)
+            .unwrap()
+            .with_z(&tracked_pauli_qubits);
         let influence_map = builder.build().expect("circuit is replayable");
         let num_locations = influence_map.locations.len();
 

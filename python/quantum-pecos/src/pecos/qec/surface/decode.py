@@ -160,6 +160,10 @@ class NoiseParameters:
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
 
+    Per-gate two-qubit overrides emit ``SZZ`` and ``SZZdg`` keys. The surface
+    path lowers Clifford rotations before building, so these keys name the
+    lowered scheduled gates.
+
     Attributes:
         p1: Single-qubit gate error rate.
         p1_weights: Optional relative probabilities over single-qubit Pauli
@@ -175,9 +179,9 @@ class NoiseParameters:
             labels such as ``"~XX"`` or ``":replace:XX"`` are replacement
             branches that omit the ideal two-qubit gate before applying the
             Pauli. ``"~II"`` (or ``":replace:II"``) omits the gate without a
-            Pauli. The former ``"*XX"`` syntax is not accepted because ``"*"``
-            is reserved for state wildcards in stochastic channels. Values
-            must sum to 1.0; ``p2`` remains the total two-qubit error rate.
+            Pauli. The two replacement spellings are equivalent and cannot both
+            name the same entry. Values must sum to 1.0; ``p2`` remains the
+            total two-qubit error rate.
         p2_replacement_approximation: Approximation used for
             replacement labels. ``"pauli_twirl_omitted_gate"`` convolves with
             the omitted two-qubit gate's Pauli twirl; ``"branch_impact"``
@@ -584,7 +588,6 @@ class _CachedNativeSurfaceTopology:
     pauli_frame_lookup: Any | None
     detectors_json: str
     observables_json: str
-    measurement_order: tuple[int, ...]
     num_measurements: int
     num_detectors: int
     num_observables: int
@@ -893,9 +896,6 @@ def _copy_surface_tick_circuit_metadata(
     measurement_index_remap: dict[int, int] | None = None,
 ) -> None:
     """Copy the surface-level metadata needed by the native DEM/sampler builders."""
-    num_measurements_text = source_tc.get_meta("num_measurements")
-    num_measurements = int(num_measurements_text) if num_measurements_text is not None else None
-
     for key in (
         "basis",
         "detectors",
@@ -914,13 +914,11 @@ def _copy_surface_tick_circuit_metadata(
                 "detector_descriptors",
                 "observable_descriptors",
             ):
-                if num_measurements is None:
-                    msg = "Cannot remap surface metadata without num_measurements"
-                    raise ValueError(msg)
                 value = _remap_surface_record_metadata_json(
                     value,
                     measurement_index_remap=measurement_index_remap,
-                    num_measurements=num_measurements,
+                    source_tc=source_tc,
+                    definition_kind="detectors" if key in ("detectors", "detector_descriptors") else "observables",
                 )
             target_tc.set_meta(key, value)
 
@@ -968,40 +966,34 @@ def _measurement_index_remap_for_orders(
 def _remap_surface_record_metadata_json(
     metadata_json: str,
     *,
+    source_tc: Any,
+    definition_kind: Literal["detectors", "observables"],
     measurement_index_remap: dict[int, int],
-    num_measurements: int,
 ) -> str:
-    """Bind abstract measurement refs to runtime-stable ``meas_ids``.
+    """Bind source definitions to runtime-stable ``meas_ids``.
 
-    ``measurement_index_remap`` maps abstract measurement indices to the
-    stable result ids emitted by the runtime trace. Those ids are not
-    positional record offsets, so remapped runtime metadata must use
-    ``meas_ids`` and must drop stale ``records``.
+    ``measurement_index_remap`` maps abstract emission positions to runtime
+    result ids. Metadata and cached descriptors use the resolved definition
+    of the same kind and id; their other fields are preserved.
     """
     import json
 
-    entries = json.loads(metadata_json)
+    definitions = {entry["id"]: entry for entry in source_tc.circuit_definitions()[definition_kind]}
+    id_key, prefix = ("detector_id", "D") if definition_kind == "detectors" else ("observable_id", "L")
+    entries = json.loads(metadata_json) if metadata_json.strip() else []
     for entry in entries:
-        records = entry.pop("records", None)
-        if records is not None:
-            abstract_indices = []
-            for record in records:
-                abstract_index = num_measurements + int(record)
-                if abstract_index not in measurement_index_remap:
-                    msg = f"Surface metadata record {record!r} is out of range for remapping"
-                    raise ValueError(msg)
-                abstract_indices.append(abstract_index)
-        elif "meas_ids" in entry:
-            abstract_indices = [int(meas_id) for meas_id in entry["meas_ids"]]
-        else:
-            continue
-
+        raw_id = entry["id"] if "id" in entry else entry[id_key]
+        definition_id = int(raw_id.removeprefix(prefix)) if isinstance(raw_id, str) else int(raw_id)
+        if definition_id not in definitions:
+            msg = f"Surface {definition_kind} entry id {definition_id} has no source definition"
+            raise ValueError(msg)
         remapped_meas_ids = []
-        for abstract_index in abstract_indices:
-            if abstract_index not in measurement_index_remap:
-                msg = f"Surface metadata meas_id {abstract_index!r} is out of range for remapping"
+        for position in definitions[definition_id]["measurements"]:
+            if position not in measurement_index_remap:
+                msg = f"Surface metadata emission position {position} is missing from the measurement remap"
                 raise ValueError(msg)
-            remapped_meas_ids.append(int(measurement_index_remap[abstract_index]))
+            remapped_meas_ids.append(measurement_index_remap[position])
+        entry.pop("records", None)
         entry["meas_ids"] = remapped_meas_ids
     return json.dumps(entries)
 
@@ -1153,10 +1145,15 @@ def _is_surface_sideband_result_tag(name: str) -> bool:
 
 
 def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
-    """Return the result-tag reference for each abstract surface measurement."""
+    """Return one result-tag reference per record, in shared-reader emission order.
+
+    Each label (``sx..``/``sz..`` or ``final[i]``) names exactly one measurement,
+    so a labelled measurement gate must measure a single qubit.
+    """
     refs: list[tuple[str, str] | tuple[str, str, int]] = []
+    measured_qubits: list[int] = []
     syndrome_measure_index_by_round: dict[int, int] = {}
-    measurement_gate_types = {"MZ", "MeasureFree"}
+    measurement_gate_types = {"MZ", "MX", "MPZ", "MeasureFree"}
     for tick_index in range(abstract_tc.num_ticks()):
         tick = abstract_tc.get_tick(tick_index)
         if tick is None:
@@ -1165,7 +1162,15 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
             gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
             if gate_type not in measurement_gate_types:
                 continue
+            qubits = list(gate.qubits)
+            measured_qubits.extend(qubits)
             label = str(abstract_tc.get_gate_meta(tick_index, gate_index, "label") or "")
+            if len(qubits) != 1:
+                msg = (
+                    f"surface measurement label {label!r} names one measurement but its gate "
+                    f"measures {len(qubits)} qubits"
+                )
+                raise ValueError(msg)
             if label.startswith(("sx", "sz")):
                 round_value = abstract_tc.get_gate_meta(tick_index, gate_index, "syndrome_round")
                 if round_value is None:
@@ -1182,6 +1187,10 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
                 continue
             msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
             raise ValueError(msg)
+    emission_qubits = [qubit for qubit, _ in abstract_tc.measurement_emission()]
+    if len(refs) != len(emission_qubits) or measured_qubits != emission_qubits:
+        msg = "surface measurement result refs disagree with the shared reader's measurement emission"
+        raise ValueError(msg)
     return refs
 
 
@@ -1728,12 +1737,7 @@ def _surface_native_topology(
     """Build topology-only native analysis shared across noise parameters."""
     import json
 
-    from pecos.qec.surface.circuit_builder import (
-        _build_canonical_dem_influence_map,
-        _extract_measurement_order,
-        _metadata_record_offsets,
-        _metadata_uses_record_offsets,
-    )
+    from pecos.qec.surface.circuit_builder import _build_canonical_dem_influence_map
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
     require_current_surface_check_plan_renderer(
@@ -1772,21 +1776,39 @@ def _surface_native_topology(
     dag = tc.to_dag_circuit()
     influence_map = _build_canonical_dem_influence_map(dag)
 
-    detectors_json = tc.get_meta("detectors") or "[]"
-    observables_json = tc.get_meta("observables") or "[]"
-    measurement_order = (
-        tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
+    definitions = tc.circuit_definitions()
+    num_measurements = definitions["num_measurements"]
+    det_records = [
+        [position - num_measurements for position in detector["measurements"]] for detector in definitions["detectors"]
+    ]
+    obs_records = [
+        [position - num_measurements for position in observable["measurements"]]
+        for observable in definitions["observables"]
+    ]
+    # The map has no circuit annotations: all consumers must receive the same
+    # resolved definitions, expressed as end-relative records for the builders.
+    detectors_json = json.dumps(
+        [
+            {
+                "id": detector["id"],
+                "records": records,
+                "label": detector["label"],
+                "fault_sector": detector["fault_sector"],
+                **({"coords": detector["coords"]} if detector["coords"] is not None else {}),
+            }
+            for detector, records in zip(definitions["detectors"], det_records, strict=True)
+        ],
     )
-    num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
-    det_records = (
-        [_metadata_record_offsets(detector, num_measurements) for detector in json.loads(detectors_json)]
-        if detectors_json
-        else []
-    )
-    obs_records = (
-        [_metadata_record_offsets(observable, num_measurements) for observable in json.loads(observables_json)]
-        if observables_json
-        else []
+    observables_json = json.dumps(
+        [
+            {
+                "id": observable["id"],
+                "records": records,
+                "label": observable["label"],
+                **({"reference": observable["reference"]} if observable["reference"] is not None else {}),
+            }
+            for observable, records in zip(definitions["observables"], obs_records, strict=True)
+        ],
     )
 
     pauli_frame_lookup = None
@@ -1808,7 +1830,6 @@ def _surface_native_topology(
         pauli_frame_lookup=pauli_frame_lookup,
         detectors_json=detectors_json,
         observables_json=observables_json,
-        measurement_order=measurement_order,
         num_measurements=num_measurements,
         num_detectors=len(det_records),
         num_observables=len(obs_records),
@@ -1878,8 +1899,6 @@ def _dem_string_from_cached_surface_topology(
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
 
     builder = builder.with_num_measurements(topology.num_measurements)
-    if topology.measurement_order:
-        builder = builder.with_measurement_order(list(topology.measurement_order))
     dem = (
         builder.with_detectors_json(topology.detectors_json)
         .with_observables_json(
@@ -2059,8 +2078,6 @@ def _build_native_sampler_from_cached_surface_topology(
             .with_detectors_json(topology.detectors_json)
             .with_observables_json(topology.observables_json)
         )
-        if topology.measurement_order:
-            sampler_builder = sampler_builder.with_measurement_order(list(topology.measurement_order))
         sampler = sampler_builder.build()
         # Remap sampling_model for NativeSampler dispatch
         sampling_model = "influence_dem"
@@ -2126,10 +2143,14 @@ def generate_circuit_level_dem_from_builder(
             but it is not an exact raw DEM serialization.
         dem_decomposition: Which native graphlike projection to use when
             ``decompose_errors=True``. ``"source_graphlike"`` preserves the
-            existing source-informed decomposition. ``"terminal_graphlike"``
-            groups raw mechanisms first, then pairs only detector terminals
-            present in each raw effect by coordinate distance. Both modes are
-            decoder-facing approximations of raw hyperedge mechanisms.
+            source-informed decomposition. ``"terminal_graphlike"`` groups raw
+            mechanisms first, then pairs detector terminals by coordinate
+            distance; it can invent nonphysical components. Which one decodes
+            better depends on how a DEM was built: in the memory experiments of
+            issue #1187 on this function (uniform noise, ``num_rounds`` equal to
+            the distance, default circuit options), terminal decoded as well as
+            or better than source with correlated PyMatching, so
+            ``surface_code_memory`` uses it for PyMatching-family decoders.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -2311,7 +2332,7 @@ def generate_circuit_level_dem(
     )
 
     # Generate DEM from circuit
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=True).flattened()
 
     return str(dem)
 
@@ -2595,7 +2616,7 @@ def generate_dem_from_patch(
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors).flattened()
     return str(dem)
 
 
@@ -3711,7 +3732,7 @@ def surface_code_memory(
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> SimulationResult:
-    """Run the recommended native surface-code memory workflow.
+    """Run native surface-code memory sampling and decoding.
 
     This helper keeps the quick-start path short while using PECOS's Rust-backed
     circuit-level DEM sampler and decoder machinery internally.
@@ -3728,8 +3749,15 @@ def surface_code_memory(
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Typed decoder specification or legacy decoder string
             passed to ``SampleBatch.decode``. PyMatching-family decoders use
-            PECOS's terminal graphlike DEM projection for this recommended
-            workflow.
+            the terminal graphlike decomposition: in the memory experiments of
+            issue #1187 (uniform noise, ``rounds`` equal to ``distance``,
+            default circuit options) it decoded as well as or better than the
+            source-informed one with correlated PyMatching. Which decomposition
+            decodes better depends on how a DEM was built, so compare both on
+            DEMs from other paths. For the source-informed decomposition here,
+            call ``generate_circuit_level_dem_from_builder`` with
+            ``decompose_errors=True`` and
+            ``dem_decomposition="source_graphlike"``.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
@@ -4006,8 +4034,8 @@ class NativeSampler:
 
     This provides a pure-PECOS alternative to Stim's DEM sampler.
 
-    The sampler uses explicit detector and observable definitions from
-    TickCircuit metadata, matching Stim's output format closely.
+    The sampler uses resolved detector and observable definitions from
+    the shared TickCircuit reader, matching Stim's output format closely.
 
     Two sampling backends are available:
     - `dem` (default): sample the generated decomposed DEM via `ParsedDem`

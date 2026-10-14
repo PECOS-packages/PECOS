@@ -1,0 +1,431 @@
+# Just-in-time DEM slices
+
+PECOS represents reusable detector-error-model fragments as `DemSlice` values.
+A slice owns the independent fault contributions introduced by one bounded
+physical circuit block. Its detector targets use `(local detector, relative
+round)` addresses instead of final `D<n>` indices.
+
+This representation supports two separate phases:
+
+1. An offline compiler analyzes constant-depth physical fixtures such as
+   initialization, idle syndrome extraction, measurement, and transversal
+   Clifford operations.
+2. `DemSliceRoundSchedule` instantiates the cached slices for one decoding
+   window, resolves their temporal dependencies through the internal composer,
+   and returns a structured `DetectorErrorModel`.
+
+The split is the recipe construction of
+[Fowler et al., Topological code Autotune](https://arxiv.org/abs/1202.6111):
+analyze each structurally unique block once during a boot-up phase, then
+generate any part of the decoding lattice from the stored blocks. The window
+boundary follows the overlapping recovery of
+[Dennis et al.](https://arxiv.org/abs/quant-ph/0110143) and the buffering
+condition of [Bombin et al.](https://arxiv.org/abs/2303.04846), and the
+port interface is the gadget-level composition formalized by
+[Kliuchnikov, Lietz, and Pastawski](https://arxiv.org/abs/2609.13087).
+Contemporaneous work builds window models the same way for transversal-gate
+schedules ([Ikari et al.](https://arxiv.org/abs/2608.11719)). PECOS keeps the
+static-Tanner-graph special case separate: a decoder may update only its prior
+vector when a window has identical incidence and logical-action matrices, but
+physical logical gates can also change those matrices and require general
+slice assembly.
+
+## Ownership and ports
+
+Every physical fault contribution must be owned by exactly one slice. Detector
+support outside the owning round is represented by a signed round offset. A
+positive offset is a forward port; a negative offset is a dependency
+on a preceding slice.
+
+`DemTemporalHorizon` turns the assumption of bounded temporal correlation into
+a checked integer contract. Slice construction fails when any target exceeds
+the declared past or future reach.
+
+`DemSliceDetector::new(id)` declares a detector emitted at every instance's
+owning round. `DemSliceDetector::port(id)` registers an identity that the slice
+may target without emitting it. The latter is needed at initialization and
+other asymmetric boundaries where the adjacent slice owns the detector
+declaration.
+
+## Relabeling
+
+A cached slice contains only local detector and output identities.
+`DemSliceInstance` supplies the algorithm-wide mappings when the slice is
+scheduled. Logical labels, absolute round numbers, patch placement, and
+zero-time automorphisms therefore do not multiply the cache entries for the
+same physical operation.
+
+Output mappings are GF(2) transformations rather than only permutations. One
+local `L<n>` or `TP<n>` column may route to several algorithm-wide columns;
+repeated destinations cancel by parity, including cancellation between routing
+rows. Empty target sets explicitly project a local column away, while missing
+mappings remain errors. This is needed to reuse a physical slice before later
+logical Clifford gates: H swaps logical X/Z columns and CX fans some Pauli
+effects into two output columns.
+
+The frontend cache deliberately uses caller-defined ordered keys. A physical
+cached slice provider should include circuit identity, code geometry, detector
+schema, temporal horizon, and noise-support topology in its key. It should not
+include instance-only relabeling state. The surface providers use bounded LRU
+caches; there is no second cache implementation in the Rust slicing layer.
+
+## Existing DEM integration
+
+The schedule compiler adapts PECOS's structured `DetectorErrorModel` directly.
+Its internal model map explicitly maps every source detector declaration to a
+local detector identity and signed round offset, and maps standard `L<n>` and
+PECOS `TP<n>` outputs into their local identity spaces. Missing declarations or
+output mappings fail instead of being dropped.
+
+The adapter retains contributions individually. Y-specific decomposition and
+arbitrary source-frame component lists are both preserved, including
+multi-component sources used by native two-qubit Clifford and replacement
+branches. Component XOR is checked against the source contribution's complete
+effect.
+
+Slice effects reuse the ordinary generic `FaultMechanism` container with a
+`RelativeDetectorTarget` detector address. The slice adapter and full-model
+contribution now also share one direct/Y/source-component shape, leaving a
+single checked conversion boundary for absolute-to-relative detector mapping.
+`DemSliceDetector` remains distinct from `DetectorDef` intentionally: the
+former declares a two-dimensional reusable stream and whether it is emitted or
+only a port, while the latter is an assembled three-dimensional
+detector tied to concrete measurement records. Combining those declarations
+would make either the reusable cached slice or final-model invariants optional.
+
+For a physical fixture containing halo operations, the internal adapter accepts
+the owned `DagFaultInfluenceMap` location IDs. A contribution is included only
+if all of its source locations are owned by the slice and omitted if none are.
+Partial or unattributed ownership fails loudly so one correlated source cannot
+be split or counted twice.
+
+## Bounded physical fixture compiler
+
+The internal cached slice compiler extracts selected owner rounds from a bounded,
+source-tracked physical model. It validates the annotated circuit's source
+ownership and detector-stream layout once, then emits absolute-round-independent
+`DemSlice` values suitable for a frontend cache. The bounded model needs only
+enough neighboring rounds to expose the operation's complete temporal horizon;
+it is not an algorithm-length model.
+
+For a surface-code memory experiment, a three-SEC-round fixture is enough to
+compile four relevant families: initialization, stationary bulk SEC, the SEC
+round immediately before destructive readout, and the terminal measurement.
+The pre-terminal SEC family is intentionally distinct from bulk because its
+faults terminate on data-readout detectors rather than the next full syndrome
+round. Tests instantiate one cached bulk slice at multiple absolute rounds and
+reconstruct a separately compiled five-round physical DEM exactly.
+
+At the Rust layer, callers compose cached `DemSliceInstance` values with
+`DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
+opaque `CachedDemSlice` values returned by `schedule.cached_slice(...)` and
+`DemSliceRoundSchedule.from_cached_slices(...)`. The Python constructor requires an
+independent declaration of the assembled circuit's standard-output and
+tracked-Pauli schema. It rejects a cached model with different declarations and
+requires every cached slice output to be routed into that schema or explicitly
+projected. The surface frontend derives that declaration by calling the same
+logical-readout determinism walk as the physical emitter, including its full
+logical gate history, rather than restating reliability rules in each cached
+slice provider. It uses identity detector/output mappings by default, accepts
+checked per-round GF(2) output routing tables, checked per-round detector-order
+permutations, and checked global or per-stream spatial translations. Detector
+ordering is deliberately separate from detector-stream identity: a logical H
+can change the frontend's dense X-before-Z syndrome order without changing the
+spatial stream followed by a relative slice target. Cached slices expose their
+referenced local output IDs so callers do not need to guess the routing domain.
+Per-stream translation lets independently placed code blocks reuse one physical
+fixture; general detector-stream identity routing remains in the Rust instance
+API.
+
+The production `LogicalCircuitBuilder` uses a bounded three-round compile for
+eligible single-patch memory operations of two or more rounds. A separate
+one-round fixture supplies fused initialization/SEC and terminal families for
+the shallowest experiment, where ordinary initialization and pre-terminal
+roles cannot be overlaid as independent slices. Each cache key
+contains the circuit family, complete patch geometry, measurement basis, and
+noise parameters, but deliberately excludes the requested memory length, patch
+label, qubit offset, and spatial placement. Detector coordinates are translated
+on `DemSliceInstance` construction. Consequently, a later memory experiment of
+any supported length or placement reuses the corresponding physical family.
+`build_dem`, `build_sampler_and_decoder`, and `build_algorithm_descriptor` all
+share this provider. Simultaneous memory on multiple independent patches uses
+a combined canonical fixture, with a detector-stream partition translating
+each patch independently at instantiation. The physical cache key contains the
+ordered geometry and basis tuple but excludes every requested depth, label,
+qubit offset, and placement. Circuits with unsupported logical gates
+conservatively retain the full structured fallback until their bounded families
+and instance mappings are implemented.
+
+A second bounded provider covers one or more transversal H gates separated by
+memory segments of at least two rounds each. A six-round canonical fixture yields
+initialization, ordinary pre-H bulk, the pre-H boundary round, H plus the first
+post-H SEC round, ordinary post-H bulk, pre-terminal, and terminal cached slices.
+The rounds adjacent to H are distinct physical families: faults immediately
+before the gate can propagate through it, while H itself shares ownership with
+the first post-gate detector round. The cache key adds the initial and final
+measurement bases but still excludes both requested segment lengths, patch
+label, qubit offset, and spatial placement. Exact tests cover different depths,
+orientations, bases, labels, offsets, and noise keys. Shallow boundary cases,
+and other Clifford operations retain the full-model fallback.
+
+Repeated H composition selects from four possible boundary states: the physical
+X/Z swap parity before the boundary and the logical H parity still to come. An
+optional earlier H in the bounded fixture establishes the former; an optional
+later H establishes the latter for backward observable propagation. Three SEC
+rounds isolate the selected center boundary from both auxiliaries. Thus the
+physical cache has constant cardinality independent of the number of gates.
+PECOS's current surface frontend declares one final measured observable, so its
+instance routing row remains the checked identity; the effective final basis of
+each family carries the later-H swap parity. Two-, three-, and four-H tests
+cover all four states and repeated reuse of the same cached family.
+
+A third bounded provider covers a transversal CX between two matching patch
+shapes. Its seven families use the same temporal positions as H but contain two
+patches and the correlated boundary sources introduced by the physical CX.
+Canonical stream IDs are partitioned by patch, then independently translated
+to the control and target placements at instantiation. The cache key includes
+both geometries, orientations, four boundary bases, and noise parameters, while
+excluding both memory depths, labels, qubit offsets, and patch coordinates.
+Repeated CX gates with the same control/target ordering reuse that single
+physical family when both patches are finally measured in X or both in Z. The
+parity of later CX gates is applied through the instance GF(2) routing map: the
+target output fans into control-plus-target for X measurement, while the control
+output fans into control-plus-target for Z measurement. Exact tests cover two
+and three CX boundaries and prove that depth, labels, offsets, and placement do
+not cause another physical compile.
+
+Mixed two-patch H/CX schedules use a bounded boundary family selected by the
+physical X/Z assignment before the gate and the complete future logical action.
+The latter is normalized to a finite two-qubit real-Clifford state, then
+synthesized as a canonical H/CX word subject to the frontend's equal-orientation
+CX constraint. The canonical word may contain several logical gates, but its
+length is bounded by the finite state space rather than the algorithm depth;
+three SEC rounds between its gates isolate the selected physical slice. This
+also handles mixed final measurement bases that cannot be represented by the
+two-column fan-out shortcut used for repeated CX alone. Exact tests cover both
+H-before-CX and CX-before-H schedules, descriptor segmentation, independent
+placement, and warm-cache reuse. Patches whose shapes differ, reversed CX
+ordering, invalid physical orientation transitions, or a memory side shorter
+than two rounds retain the full-model fallback.
+
+H, CX, and mixed H/CX assembly is registered through one typed boundary-provider
+description. A provider first checks its logical operation shape and every
+condition that requires the exact compiler, then selects its depth-independent
+cached slices. The description contains only values consumed by assembly:
+cached slices, memory depths, detector placement, and a GF(2) routing policy. The
+common assembler owns boundary placement, logical output-schema validation, and
+hard-boundary composition. The schema calls the same logical-readout determinism
+walk as the physical emitter and a deterministic 1,370-schedule fuzz pins it
+against emitted metadata across memory, H, CX, physical S/S-dagger, mixed bases,
+and partial memories. The warm assembly therefore remains independent of
+physical depth without maintaining a second reliability rule. To add another
+logical Clifford boundary family, the minimum work is
+therefore (1) an explicit eligibility/fallback check, (2) a bounded physical
+fixture compiler plus canonical cache key, and (3) a provider description. It
+does not require another schedule-construction or compose path. In the three
+migrated providers this removes roughly 30 lines of orchestration from the
+marginal cost of each provider, while leaving their physical compilation and
+observable-reliability decisions visible in family-specific code.
+
+The current standalone SZ/SZdg emitter is deliberately not cached. Its full DEM
+contains mechanisms whose detector span grows with the entire preceding memory
+segment (observed spans 3, 5, and 9 for corresponding pre-gate depths), violating
+the bounded-correlation requirement for JIT cached slices. A sound provider requires
+the documented mid-cycle fold-transversal S-SE construction, rather than
+caching the current between-round physical phase layer with a depth-dependent
+key.
+
+Stable detector-stream IDs are seeded from the earliest round with the maximum
+number of declarations. This uses stationary SEC record order instead of a
+partial initialization boundary. Frontends whose dense family order changes
+later can supply an absolute-round ordering permutation while retaining those
+stable identities for temporal targets. Surface-memory tests therefore compare the
+entire rendered Python model byte for byte, not only up to detector relabeling.
+Lower-level Rust tests additionally pin structured mechanism and
+source-component equivalence without relying on serialization order.
+
+## Native round schedule
+
+`DemSliceRoundSchedule::from_annotated_circuit` derives the repetitive layout
+from metadata PECOS already carries. Detector coordinates are interpreted as
+`[x, y, round]`: equal spatial pairs form a stable detector stream, while the
+time coordinate supplies the emitted round. Physical DAG gates carry the
+integer `dem_slice_round` attribute, and every `DagFaultInfluenceMap` location
+inherits its owner from its gate node.
+
+Spatial coordinates are therefore part of the current automatic stream identity
+contract. Two detectors at the same `(x, y)` in one round are rejected with both
+detector IDs and the colliding coordinate. Surface patches placed without an
+explicit offset are laid out cumulatively by their actual widths, including
+heterogeneous geometries; callers that place patches manually must keep their
+detector coordinates distinct.
+
+The surface `LogicalCircuitBuilder` writes this attribute on every generated
+gate. Initialization is owned by round zero, syndrome-extraction operations by
+their current round, transversal gates by the following round, and terminal
+data measurements by the terminal boundary round. Missing or non-integral
+metadata fails instead of guessing. A multi-location correlated source whose
+locations disagree on the owner round is also rejected.
+
+The schedule derives relative detector maps, temporal horizons, standard output
+mappings, and tracked-Pauli mappings, then passes the resulting slice instances
+to its internal composer. This removes the hand-authored ownership and mapping
+tables from the equivalence path. Full-circuit source-tracked DEMs remain the
+independent equivalence oracle for bounded cached slice composition.
+
+Cached slice extraction retains each contribution's physical source-location IDs.
+Composition remaps those IDs per cached slice instance, so repeated use of one cached
+slice preserves source provenance without aliasing different rounds. This keeps
+source-graphlike analysis available on the composed structured model. The IDs
+identify sources within the assembled model; they are not indices into the
+bounded physical fixture's original influence map. The model records this identity-space
+change explicitly and rejects attempts to re-slice a composed model against a
+physical influence map.
+
+Python callers can exercise the same structured path through
+`DetectorErrorModel.composed_round_window(...)`. It accepts the originating
+influence map and annotated DAG and returns another structured model; rendered
+DEM text appears only at an explicit final serialization boundary.
+`required_buffer_rounds(...)` computes the exact minimum look-ahead for a
+commit region from source ownership and detector targets. Omitting
+`buffer_rounds` from `composed_round_window(...)` applies that safe value;
+supplying an undersized value still fails loudly.
+
+For multiple windows, `DetectorErrorModel.round_schedule(...)` returns a
+reusable `DemSliceRoundSchedule`. Its `compose(...)` and
+`required_buffer_rounds(...)` methods reuse the already-derived ownership,
+stream layout, relative mappings, and slice contributions instead of compiling
+the schedule again for every window. The one-shot model methods remain
+convenience wrappers over the same provider.
+
+`LogicalCircuitBuilder.build_algorithm_descriptor(...)` uses this path for its
+per-segment models. Segment DEMs may contain look-ahead detectors needed to
+preserve a cross-boundary source, while segment metadata counts only the
+non-overlapping detector partition consumed by the streaming decoder.
+`num_detectors` and its explicit alias `num_commit_detectors` report that
+partition; `num_window_detectors` reports the detector count actually present in
+the segment DEM, including halo. Every detector must carry `[x, y, round]`
+coordinates or descriptor construction fails. An
+omitted `buffer` derives the safe forward overlap. An explicit `buffer` also
+adds that many look-behind rounds and is rejected if it is smaller than the
+derived forward requirement.
+
+## Window boundaries
+
+`DemWindowSpec` describes a half-open commit region followed by a half-open
+buffer region. The backward boundary is hard. Callers may supply instances
+before the window as a bounded source halo; their outside detectors are
+projected away while effects reaching into the window are retained.
+
+The forward boundary is explicit:
+
+- `Soft` permits unresolved forward ports to project to the decoder boundary.
+- `Hard` requires all forward ports to resolve inside the window, as expected
+  after terminal destructive measurement.
+
+A soft boundary is not permission to truncate a correlation that touches the
+commit region. If a contribution reaches from a commit detector through the
+entire buffer, composition reports `BufferTooSmall`. Increasing the buffer or
+rejecting the physical model is required.
+
+Buffer sizing, relevance, and boundary checks inspect every source-decomposition
+component before XOR cancellation. A target that cancels out of the complete
+effect can therefore neither disappear at a window boundary nor evade the
+required look-ahead calculation.
+
+Projection never graphifies a mechanism. Hyperedges remain hyperedges, and
+independent contributions that become identical after projection are combined
+by the existing XOR probability rule when the structured model is rendered or
+converted to mechanism columns.
+
+## Decoder window handoff
+
+The decoder-core crate owns the flattened `StructuredDem` input boundary used
+by streaming and windowed decoders. The type can retain independent-error
+grouping, decomposition components, hyperedges, standard observable columns,
+and detector coordinates. `DetectorErrorModel::to_structured_decoder_dem()`
+uses the same equal-effect grouping and XOR probability combination as
+`to_mechanisms()` and the default rendered model; this avoids introducing a
+second factorization policy at the decoder boundary. PECOS tracked-Pauli outputs
+are rejected explicitly because they are not standard DEM observables.
+
+`StreamingWindowedDecoder::from_structured_dem` accepts the model directly;
+`from_dem` parses the flattened text once. Decoder specifications also accept
+`DecodeModel::StructuredDem`, and Python `DetectorErrorModel.build_decoder()`
+uses that path. Beam search retains its existing independent-window and residual
+pass behavior in this phase.
+
+`StructuredDem::commit_window(rows, commit)` owns window construction. Time is
+coordinate element 2 and must be a non-negative integer on every detector.
+Columns are individual error components with one or two detectors. Ownership is
+the minimum detector time. Windows drop columns owned before the look-behind and
+project future endpoints while retaining each column's full global identity.
+Surviving components stay grouped by parent error for correlated matching.
+Construction rejects incomplete commit regions, rows without a path to a boundary,
+and parallel non-projected columns that disagree on observables.
+
+Each selected correction must reproduce the local input incidence before the
+window advances. Selected edges join only through local detector endpoints;
+neither the boundary nor projected far detectors join components. Components
+commit whole when old enough, when needed to clear look-behind defects, or in the
+last window. Carry toggles the full global incidence of the resolved columns,
+including projected endpoints. Logical-subgraph decoding keeps a separate
+residual in each subgraph's local detector space.
+
+The spec requires explicit `inner`, `buffer`, and `step`, for example
+`windowed:step=5,buffer=5,inner=pymatching` (correlated) or
+`windowed:step=5,buffer=5,inner=pymatching_uncorrelated`. Python uses
+`decoders.windowed(inner=decoders.pymatching(correlated=True), step=5, buffer=5)`.
+Plain `pecos_uf` is also supported. Its other spec presets select BP or two-pass
+wrappers and are outside this phase's inner-decoder contract.
+`min_buffer_rounds(&dem)` reports the largest forward column span and sets the
+construction minimum for `buffer`. A zero `step` is a construction error.
+A final short core is merged into the preceding window and constructed once.
+
+The buffer is what relates to code distance: a buffer of at least `d` is a
+sufficient worst-case condition for preserving fault distance
+([Bombin et al., arXiv:2303.04846](https://arxiv.org/abs/2303.04846)); smaller
+buffers are often enough in practice. The step is a latency and throughput
+choice: `step = d` with `buffer = d` favors throughput, while `step = 1` with a
+small window favors latency. To keep up in real time, decoding one window must
+take less than `step` rounds of syndrome extraction
+([Skoric et al., arXiv:2209.08552](https://arxiv.org/abs/2209.08552)).
+
+Finite windows need not agree exactly with monolithic decoding. Correlation
+evidence does not cross windows, and deterministic edge representatives are
+valid global lifts rather than most-probable parent-fault explanations. The
+strict round-by-round streaming protocol and bounded raw-storage retirement
+remain phase 2 work. Slice composition still uses `window_by_time` and
+`DemBoundaryKind`; its boundary semantics are unchanged.
+
+## Current scope
+
+This layer provides the stable slice, cache, structured-DEM adapter, automatic
+round layout, ownership, bounded cached slice extraction, mapping, and composition
+API, including instance-time GF(2) routing for logical and tracked-Pauli output
+columns. Initialization, stationary bulk SEC, pre-terminal SEC, terminal, and
+fused one-round surface-memory families have exact composition coverage and a
+production single- and multi-patch memory provider. Transversal-H boundaries
+and their adjacent memory families, including repeated H sequences, have exact composition coverage
+and a production provider, as do repeated transversal CX gates and mixed H/CX
+schedules between matching patch shapes. It does not
+yet implement the bounded mid-cycle SZ/SZdg circuit, multi-patch logical-gate
+or lattice-surgery families, decoder prior mutation, the anti-snake
+logical-subgraph window decoder, or adaptive syndrome-extraction cached slices.
+Full-circuit DEM construction remains the equivalence oracle and the
+conservative fallback outside supported families.
+
+## Follow-up consolidation
+
+The cross-cutting follow-up issues found during review are implemented by this
+PR as separate commits:
+
+- [#748](https://github.com/PECOS-packages/PECOS/issues/748) migrates windowed
+  decoders from rendered-text filtering to the checked structured DEM boundary.
+- [#749](https://github.com/PECOS-packages/PECOS/issues/749) consolidates H/CX
+  Pauli propagation behind decoder-core transforms shared with Python.
+- [#750](https://github.com/PECOS-packages/PECOS/issues/750) unifies the relative
+  slice mechanism/contribution/detector representations with the existing DEM
+  types.
+- [#751](https://github.com/PECOS-packages/PECOS/issues/751) makes logical-gate
+  boundary providers data-driven through one typed assembly description.

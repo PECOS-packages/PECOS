@@ -7,22 +7,19 @@ Supports two calling conventions:
 - Selene style: `___rxy`, `___rz`, `___rzz`, `___qalloc`, etc.
 - QIR style: `__quantum__qis__h__body`, `__quantum__qis__cnot__body`, etc.
 
-QIR-style gates that are not hardware-native are decomposed into QIS
-hardware-native ops (rxy, rz, rzz) using the same decomposition helpers
-from `hugr_to_qis`.
+Named QIR gates remain named QIS operations so amplitude-exposing execution
+paths retain their exact matrices. Explicit rotations remain QIS rotations.
 
 Supports multi-block control flow: branches, conditional branches, switch
 statements, and phi nodes (converted to MLIR-style block arguments).
 */
 
 use crate::error::{PhirError, Result};
-use crate::hugr_to_qis::{
-    decompose_cx, decompose_h, emit_const_float, emit_qis_rxy, emit_qis_rz, emit_qis_rzz,
-};
 use crate::ops::{ClassicalOp, CustomOp, Operation};
 use crate::phir::{
     Block, BlockArgument, BlockRef, Instruction, Module, Region, SSAValue, Terminator,
 };
+use crate::qis_emit::{emit_const_float, emit_qis_rxy, emit_qis_rz, emit_qis_rzz};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -305,10 +302,9 @@ impl QisIrParser {
         }
 
         // ret <type> <value>
-        if line.starts_with("ret ") {
-            let parts: Vec<&str> = line.splitn(3, ' ').collect();
-            if parts.len() >= 3 {
-                return Some(RawTerminator::RetVal(parts[2].to_string()));
+        if let Some(operand) = line.strip_prefix("ret ") {
+            if let Ok((_, value)) = read_llvm_type(operand) {
+                return Some(RawTerminator::RetVal(value.to_string()));
             }
             return Some(RawTerminator::RetVoid);
         }
@@ -553,7 +549,20 @@ impl QisIrParser {
                 .end();
             let args_str = extract_balanced_parens(line, args_start);
 
-            let args = self.parse_call_args(&args_str);
+            // Elided runtime calls still reject aggregate argument types, but
+            // retain their existing treatment of unused scalar/pointer values.
+            for part in split_args(&args_str)
+                .into_iter()
+                .filter(|part| !part.trim().is_empty())
+            {
+                let (ty, _) = read_llvm_type(part)?;
+                reject_aggregate_call_type(ty)?;
+            }
+            if normalize_qis_name(&func_name) == "rt_elide" {
+                return Ok(Some(vec![]));
+            }
+
+            let args = self.parse_call_args(&args_str)?;
             let result = result_name.map(|n| self.resolve_value(&n));
 
             return Ok(Some(self.lower_qis_call(&func_name, &args, result)?));
@@ -561,58 +570,70 @@ impl QisIrParser {
 
         // ---- Binary arithmetic: add, sub, mul, and, or, xor, shl, lshr, ashr ----
         let binop_re = Regex::new(
-            r"^(%\S+)\s*=\s*(add|sub|mul|udiv|sdiv|urem|srem|and|or|xor|shl|lshr|ashr)\s+(?:nuw\s+)?(?:nsw\s+)?(?:exact\s+)?\S+\s+(%?\S+),\s*(%?\S+)$",
+            r"^(%\S+)\s*=\s*(add|sub|mul|udiv|sdiv|urem|srem|and|or|xor|shl|lshr|ashr)\s+(?:nuw\s+)?(?:nsw\s+)?(?:exact\s+)?(\S+|\{[^}]*\}|\[[^\]]*\]|<[^>]*>)\s+(%?\S+),\s*(%?\S+)$",
         )
         .expect("valid regex");
         if let Some(caps) = binop_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let op_name = &caps[2];
-            let lhs = self.resolve_or_const(&caps[3]);
-            let rhs = self.resolve_or_const(&caps[4]);
+            let mut out = Vec::new();
+            let ty = &caps[3];
+            let lhs = self.resolve_or_const(&caps[4], ty, &mut out)?;
+            let rhs = self.resolve_or_const(&caps[5], ty, &mut out)?;
             let op = match op_name {
                 "add" => ClassicalOp::Add,
                 "sub" => ClassicalOp::Sub,
                 "mul" => ClassicalOp::Mul,
-                "udiv" | "sdiv" => ClassicalOp::Div,
-                "urem" | "srem" => ClassicalOp::Mod,
+                "udiv" => ClassicalOp::UDiv,
+                "sdiv" => ClassicalOp::Div,
+                "urem" => ClassicalOp::UMod,
+                "srem" => ClassicalOp::Mod,
                 "and" => ClassicalOp::And,
                 "or" => ClassicalOp::Or,
                 "xor" => ClassicalOp::Xor,
                 "shl" => ClassicalOp::Shl(0),
-                "lshr" | "ashr" => ClassicalOp::Shr(0),
+                "lshr" => ClassicalOp::LShr(0),
+                "ashr" => ClassicalOp::Shr(0),
                 _ => unreachable!(),
             };
-            return Ok(Some(vec![Instruction {
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(op),
                 operands: vec![lhs, rhs],
-                result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                result_types: vec![parse_llvm_type(ty)],
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         // ---- Integer comparison: icmp ----
         let icmp_re = Regex::new(
-            r"^(%\S+)\s*=\s*icmp\s+(eq|ne|slt|sle|sgt|sge|ult|ule|ugt|uge)\s+\S+\s+(%?\S+),\s*(%?\S+)$",
+            r"^(%\S+)\s*=\s*icmp\s+(eq|ne|slt|sle|sgt|sge|ult|ule|ugt|uge)\s+(\S+|\{[^}]*\}|\[[^\]]*\]|<[^>]*>)\s+(%?\S+),\s*(%?\S+)$",
         )
         .expect("valid regex");
         if let Some(caps) = icmp_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
             let pred = &caps[2];
-            let lhs = self.resolve_or_const(&caps[3]);
-            let rhs = self.resolve_or_const(&caps[4]);
+            let mut out = Vec::new();
+            let ty = &caps[3];
+            let lhs = self.resolve_or_const(&caps[4], ty, &mut out)?;
+            let rhs = self.resolve_or_const(&caps[5], ty, &mut out)?;
             let op = match pred {
                 "eq" => ClassicalOp::Eq,
                 "ne" => ClassicalOp::Ne,
-                "slt" | "ult" => ClassicalOp::Lt,
-                "sle" | "ule" => ClassicalOp::Le,
-                "sgt" | "ugt" => ClassicalOp::Gt,
-                "sge" | "uge" => ClassicalOp::Ge,
+                "slt" => ClassicalOp::Lt,
+                "ult" => ClassicalOp::ULt,
+                "sle" => ClassicalOp::Le,
+                "ule" => ClassicalOp::ULe,
+                "sgt" => ClassicalOp::Gt,
+                "ugt" => ClassicalOp::UGt,
+                "sge" => ClassicalOp::Ge,
+                "uge" => ClassicalOp::UGe,
                 _ => unreachable!(),
             };
-            return Ok(Some(vec![Instruction {
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(op),
                 operands: vec![lhs, rhs],
@@ -620,146 +641,148 @@ impl QisIrParser {
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
-        // ---- Select: %r = select i1 %cond, <ty> %a, <ty> %b ----
-        let select_re =
-            Regex::new(r"^(%\S+)\s*=\s*select\s+i1\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\S+\s+(%?\S+)$")
-                .expect("valid regex");
-        if let Some(caps) = select_re.captures(line) {
-            let result = self.resolve_value(&caps[1]);
-            let cond = self.resolve_or_const(&caps[2]);
-            let true_val = self.resolve_or_const(&caps[3]);
-            let false_val = self.resolve_or_const(&caps[4]);
-            return Ok(Some(vec![Instruction {
-                results: vec![result],
-                operation: Operation::Classical(ClassicalOp::Select),
-                operands: vec![cond, true_val, false_val],
-                result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            }]));
-        }
-
-        // ---- Alloca: %r = alloca <type>, align <n> ----
-        let alloca_re =
-            Regex::new(r"^(%\S+)\s*=\s*alloca\s+(.+?)(?:,\s*align\s+\d+)?$").expect("valid regex");
-        if let Some(caps) = alloca_re.captures(line) {
-            let result = self.resolve_value(&caps[1]);
-            let ty = parse_llvm_type(&caps[2]);
-            return Ok(Some(vec![Instruction {
-                results: vec![result],
-                operation: Operation::Memory(crate::ops::MemoryOp::Alloc(
-                    crate::ops::AllocType::Scalar(ty.clone()),
-                )),
-                operands: vec![],
-                result_types: vec![ty],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            }]));
-        }
-
-        // ---- Load: %r = load <type>, <type>* %ptr, align <n> ----
-        let load_re =
-            Regex::new(r"^(%\S+)\s*=\s*load\s+(.+?),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$")
-                .expect("valid regex");
-        if let Some(caps) = load_re.captures(line) {
-            let result = self.resolve_value(&caps[1]);
-            let ty = parse_llvm_type(&caps[2]);
-            let ptr = self.resolve_value(&caps[3]);
-            return Ok(Some(vec![Instruction {
-                results: vec![result],
-                operation: Operation::Memory(crate::ops::MemoryOp::Load),
-                operands: vec![ptr],
-                result_types: vec![ty],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            }]));
-        }
-
-        // ---- Store: store <type> <val>, <type>* %ptr, align <n> ----
-        let store_re = Regex::new(r"^store\s+\S+\s+(%?\S+),\s*\S+\s+(%\S+)(?:,\s*align\s+\d+)?$")
-            .expect("valid regex");
-        if let Some(caps) = store_re.captures(line) {
-            let val = self.resolve_or_const(&caps[1]);
-            let ptr = self.resolve_value(&caps[2]);
-            return Ok(Some(vec![Instruction {
-                results: vec![],
-                operation: Operation::Memory(crate::ops::MemoryOp::Store),
-                operands: vec![val, ptr],
-                result_types: vec![],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            }]));
+        if let Some(instructions) = self.parse_typed_instruction(line)? {
+            return Ok(Some(instructions));
         }
 
         // ---- Type casts: trunc, zext, sext, bitcast ----
         let cast_re =
-            Regex::new(r"^(%\S+)\s*=\s*(?:trunc|zext|sext|bitcast)\s+\S+\s+(%\S+)\s+to\s+\S+$")
+            Regex::new(r"^(%\S+)\s*=\s*(?:trunc|zext|sext|bitcast)\s+(\S+)\s+(\S+)\s+to\s+(\S+)$")
                 .expect("valid regex");
         if let Some(caps) = cast_re.captures(line) {
             let result = self.resolve_value(&caps[1]);
-            let src = self.resolve_value(&caps[2]);
-            return Ok(Some(vec![Instruction {
+            let mut out = Vec::new();
+            let src = self.resolve_or_const(&caps[3], &caps[2], &mut out)?;
+            out.push(Instruction {
                 results: vec![result],
                 operation: Operation::Classical(ClassicalOp::Bitcast),
                 operands: vec![src],
-                result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                result_types: vec![parse_llvm_type(&caps[4])],
                 regions: vec![],
                 attributes: BTreeMap::new(),
                 location: None,
-            }]));
-        }
-
-        // ---- Aggregate ops: insertvalue, extractvalue ----
-        // These are tracked for SSA value resolution but don't produce
-        // meaningful PHIR ops for the quantum pipeline.
-        let extract_re =
-            Regex::new(r"^(%\S+)\s*=\s*extractvalue\s+.+\s+(%\S+),\s*(\d+)$").expect("valid regex");
-        if let Some(caps) = extract_re.captures(line) {
-            let result = self.resolve_value(&caps[1]);
-            let agg = self.resolve_value(&caps[2]);
-            return Ok(Some(vec![Instruction {
-                results: vec![result],
-                operation: Operation::Classical(ClassicalOp::Assign),
-                operands: vec![agg],
-                result_types: vec![crate::types::Type::Unknown],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            }]));
-        }
-
-        let insertvalue_re =
-            Regex::new(r"^(%\S+)\s*=\s*insertvalue\s+.+\s+(%?\S+),\s*\S+\s+(%?\S+),\s*\d+$")
-                .expect("valid regex");
-        if let Some(caps) = insertvalue_re.captures(line) {
-            let result = self.resolve_value(&caps[1]);
-            let _agg = self.resolve_or_const(&caps[2]);
-            let _val = self.resolve_or_const(&caps[3]);
-            return Ok(Some(vec![Instruction {
-                results: vec![result],
-                operation: Operation::Classical(ClassicalOp::Assign),
-                operands: vec![],
-                result_types: vec![crate::types::Type::Unknown],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            }]));
+            });
+            return Ok(Some(out));
         }
 
         Ok(None)
     }
 
+    /// Parse operations whose operands may have nested LLVM types.
+    fn parse_typed_instruction(&mut self, line: &str) -> Result<Option<Vec<Instruction>>> {
+        use crate::ops::{AllocType, MemoryOp};
+        use crate::types::{ArraySize, Type};
+        let (result, expression) = if let Some((name, expression)) = line.split_once('=') {
+            (Some(self.resolve_value(name.trim())), expression.trim())
+        } else {
+            (None, line)
+        };
+        let Some((name, rest)) = expression.split_once(char::is_whitespace) else {
+            return Ok(None);
+        };
+        if !matches!(
+            name,
+            "alloca" | "load" | "store" | "select" | "insertvalue" | "extractvalue"
+        ) {
+            return Ok(None);
+        }
+        let parts = split_args(rest);
+        let part = |index| {
+            parts
+                .get(index)
+                .copied()
+                .ok_or_else(|| PhirError::internal(format!("{name}: missing operand {index}")))
+        };
+        let mut out = Vec::new();
+        let (ty, value) = read_llvm_type(part(0)?)?;
+        let mut result_type = parse_llvm_type(ty);
+        let mut operands = Vec::new();
+        let operation = match name {
+            "alloca" => {
+                crate::execution::environment::TypedValue::zero(&result_type).map_err(|error| {
+                    PhirError::internal(format!("No zero for LLVM type {ty}: {error}"))
+                })?;
+                Operation::Memory(MemoryOp::Alloc(AllocType::Scalar(result_type.clone())))
+            }
+            "load" => {
+                let (_, pointer) = read_llvm_type(part(1)?)?;
+                operands.push(self.resolve_value(pointer));
+                Operation::Memory(MemoryOp::Load)
+            }
+            "store" => {
+                operands.push(self.resolve_or_const(value, ty, &mut out)?);
+                let (_, pointer) = read_llvm_type(part(1)?)?;
+                operands.push(self.resolve_value(pointer));
+                Operation::Memory(MemoryOp::Store)
+            }
+            "select" => {
+                operands.push(self.resolve_or_const(value, ty, &mut out)?);
+                for index in 1..=2 {
+                    let (ty, value) = read_llvm_type(part(index)?)?;
+                    operands.push(self.resolve_or_const(value, ty, &mut out)?);
+                    if index == 1 {
+                        result_type = parse_llvm_type(ty);
+                    }
+                }
+                Operation::Classical(ClassicalOp::Select)
+            }
+            _ => {
+                operands.push(self.resolve_or_const(value, ty, &mut out)?);
+                let insert = name == "insertvalue";
+                let first_index = if insert {
+                    let (ty, value) = read_llvm_type(part(1)?)?;
+                    operands.push(self.resolve_or_const(value, ty, &mut out)?);
+                    2
+                } else {
+                    1
+                };
+                part(first_index)?;
+                let path = parts[first_index..]
+                    .iter()
+                    .map(|index| {
+                        let index = index.trim();
+                        index.parse::<usize>().map_err(|_| {
+                            PhirError::internal(format!("{name}: invalid index {index}"))
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if insert {
+                    Operation::Classical(ClassicalOp::InsertValue(path))
+                } else {
+                    for &index in &path {
+                        result_type = match result_type {
+                            Type::Tuple(fields) => {
+                                fields.get(index).cloned().unwrap_or(Type::Unknown)
+                            }
+                            Type::Array(element, ArraySize::Fixed(n)) if index < n => *element,
+                            _ => Type::Unknown,
+                        };
+                    }
+                    Operation::Classical(ClassicalOp::ExtractValue(path))
+                }
+            }
+        };
+        out.push(Instruction::new(
+            operation,
+            operands,
+            result.into_iter().collect(),
+            if result.is_some() {
+                vec![result_type]
+            } else {
+                vec![]
+            },
+        ));
+        Ok(Some(out))
+    }
+
     /// Parse the comma-separated argument list of a call instruction.
-    fn parse_call_args(&mut self, args_str: &str) -> Vec<Arg> {
+    fn parse_call_args(&mut self, args_str: &str) -> Result<Vec<Arg>> {
         if args_str.trim().is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
 
         let mut args = Vec::new();
@@ -771,41 +794,40 @@ impl QisIrParser {
                 continue;
             }
 
+            let (ty, rest) = read_llvm_type(part)?;
+            reject_aggregate_call_type(ty)?;
+
             // Handle `inttoptr (i64 N to %Qubit*)` -> treat as qubit index N
             if let Some(caps) = inttoptr_re.captures(part)
                 && let Ok(idx) = caps[1].parse::<i64>()
             {
-                args.push(Arg::Int(idx));
+                args.push(Arg::Int(
+                    idx,
+                    crate::types::Type::Int(crate::types::IntWidth::I64),
+                ));
                 continue;
             }
 
-            if let Some((ty, val)) = part.rsplit_once(' ') {
-                let ty = ty.trim();
-                let val = val.trim();
-                args.push(self.parse_arg(ty, val));
-            }
+            // Parameter attributes precede the value; preserve scalar/pointer handling.
+            let val = rest.split_whitespace().last().ok_or_else(|| {
+                PhirError::internal(format!("Call argument {part:?} has no value"))
+            })?;
+            args.push(self.parse_arg(ty, val)?);
         }
-        args
+        Ok(args)
     }
 
-    fn parse_arg(&mut self, ty: &str, val: &str) -> Arg {
+    fn parse_arg(&mut self, ty: &str, val: &str) -> Result<Arg> {
         if val.starts_with('%') {
-            Arg::Ssa(self.resolve_value(val))
-        } else if val == "null" || val == "zeroinitializer" {
-            // QIR uses `null` for qubit 0
-            Arg::Int(0)
-        } else if ty.contains("double") || ty.contains("float") {
-            let f = parse_float_literal(val);
-            Arg::Float(f)
-        } else if ty.contains("i1") || ty.contains("i32") || ty.contains("i64") {
-            if let Ok(i) = val.parse::<i64>() {
-                Arg::Int(i)
-            } else {
-                Arg::Ssa(self.resolve_value(val))
-            }
-        } else {
-            Arg::Ssa(self.resolve_value(val))
+            return Ok(Arg::Ssa(self.resolve_value(val)));
         }
+        let (op, ty) = literal_operation(ty, val)?;
+        Ok(match op {
+            ClassicalOp::ConstInt(v) => Arg::Int(v, ty),
+            ClassicalOp::ConstBool(v) => Arg::Bool(v),
+            ClassicalOp::ConstFloat(v) => Arg::Float(v),
+            _ => unreachable!(),
+        })
     }
 
     /// Lower a QIS function call to PHIR instructions.
@@ -822,6 +844,15 @@ impl QisIrParser {
         match qis_name.as_str() {
             // ---- Selene-native ops (direct mapping) ----
             "qalloc" => {
+                if args.len() > 1 {
+                    return Err(PhirError::internal(
+                        "qis.qalloc requires zero or one argument",
+                    ));
+                }
+                let operands = args
+                    .iter()
+                    .map(|arg| self.arg_to_ssa(arg, &mut out))
+                    .collect();
                 let r = result.unwrap_or_else(|| self.fresh_value());
                 out.push(Instruction {
                     results: vec![r],
@@ -831,7 +862,7 @@ impl QisIrParser {
                         vec![],
                         BTreeMap::new(),
                     )),
-                    operands: vec![],
+                    operands,
                     result_types: vec![crate::types::Type::Qubit],
                     regions: vec![],
                     attributes: BTreeMap::new(),
@@ -895,6 +926,19 @@ impl QisIrParser {
                 out.push(emit_qis_rzz(q1, q2, angle));
             }
 
+            "rpp" => {
+                if args.len() != 4 {
+                    return Err(crate::PhirError::internal(
+                        "rpp requires exactly 4 operands: qubit1, qubit2, theta, phi",
+                    ));
+                }
+                let operands = args
+                    .iter()
+                    .map(|arg| self.arg_to_ssa(arg, &mut out))
+                    .collect();
+                out.push(make_custom_op("qis", "rpp", operands, vec![]));
+            }
+
             "measure" | "mz" | "m" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
                 let r = result.unwrap_or_else(|| self.fresh_value());
@@ -952,63 +996,30 @@ impl QisIrParser {
                 });
             }
 
-            // ---- QIR gates: decompose to hardware-native QIS ----
-            "h" => {
+            // ---- Named QIR gates: preserve exact named matrices ----
+            "h" | "x" | "y" | "z" | "s" | "t" | "sx" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                decompose_h(qubit, &mut out, &mut || self.fresh_value());
-            }
-
-            "x" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let pi_val = self.fresh_value();
-                out.push(emit_const_float(pi_val, std::f64::consts::PI));
-                let zero = self.fresh_value();
-                out.push(emit_const_float(zero, 0.0));
-                out.push(emit_qis_rxy(qubit, pi_val, zero));
-            }
-
-            "y" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let pi_val = self.fresh_value();
-                out.push(emit_const_float(pi_val, std::f64::consts::PI));
-                let half_pi = self.fresh_value();
-                out.push(emit_const_float(half_pi, std::f64::consts::FRAC_PI_2));
-                out.push(emit_qis_rxy(qubit, pi_val, half_pi));
-            }
-
-            "z" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let pi_val = self.fresh_value();
-                out.push(emit_const_float(pi_val, std::f64::consts::PI));
-                out.push(emit_qis_rz(qubit, pi_val));
-            }
-
-            "s" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, std::f64::consts::FRAC_PI_2));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op(
+                    "qis",
+                    qis_name.as_str(),
+                    vec![qubit],
+                    vec![],
+                ));
             }
 
             "sdg" | "s_adj" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, -std::f64::consts::FRAC_PI_2));
-                out.push(emit_qis_rz(qubit, v));
-            }
-
-            "t" => {
-                let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, std::f64::consts::FRAC_PI_4));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op("qis", "sdg", vec![qubit], vec![]));
             }
 
             "tdg" | "t_adj" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
-                let v = self.fresh_value();
-                out.push(emit_const_float(v, -std::f64::consts::FRAC_PI_4));
-                out.push(emit_qis_rz(qubit, v));
+                out.push(make_custom_op("qis", "tdg", vec![qubit], vec![]));
+            }
+
+            "sxdg" | "sx_adj" => {
+                let qubit = self.arg_to_ssa(&args[0], &mut out);
+                out.push(make_custom_op("qis", "sxdg", vec![qubit], vec![]));
             }
 
             "rx" => {
@@ -1030,7 +1041,7 @@ impl QisIrParser {
             "cx" | "cnot" => {
                 let control = self.arg_to_ssa(&args[0], &mut out);
                 let target = self.arg_to_ssa(&args[1], &mut out);
-                decompose_cx(control, target, &mut out, &mut || self.fresh_value());
+                out.push(make_custom_op("qis", "cx", vec![control, target], vec![]));
             }
 
             "cz" => {
@@ -1099,47 +1110,56 @@ impl QisIrParser {
         Ok(out)
     }
 
-    /// Resolve a value string to an `SSAValue`. If it looks like a `%name`,
-    /// resolve it in the value map. If it looks like an integer literal, emit
-    /// a `ConstInt` and return the SSA value.
-    fn resolve_or_const(&mut self, val: &str) -> SSAValue {
+    /// Resolve an SSA reference or emit a constant of the operand's LLVM type
+    /// before its consumer. Reject unsupported or out-of-range literal text.
+    fn resolve_or_const(
+        &mut self,
+        val: &str,
+        ty: &str,
+        out: &mut Vec<Instruction>,
+    ) -> Result<SSAValue> {
         let val = val.trim();
         if val.starts_with('%') {
-            return self.resolve_value(val);
+            return Ok(self.resolve_value(val));
         }
-        if val == "true"
-            || val == "false"
-            || val == "null"
-            || val == "undef"
-            || val == "poison"
-            || val == "zeroinitializer"
-        {
-            return self.fresh_value();
-        }
-        if val.parse::<i64>().is_ok() || val.parse::<f64>().is_ok() {
-            return self.fresh_value();
-        }
-        // Unknown -- create a fresh value
-        self.fresh_value()
+        let (op, ty) = literal_operation(ty, val)?;
+        let value = self.fresh_value();
+        out.push(Instruction::new(
+            Operation::Classical(op),
+            vec![],
+            vec![value],
+            vec![ty],
+        ));
+        Ok(value)
     }
 
-    /// Convert an `Arg` to an `SSAValue`, emitting a `ConstFloat`/`ConstInt` if
-    /// the arg is a literal.
+    /// Convert an `Arg` to an `SSAValue`, emitting a float, integer or boolean
+    /// constant if the argument is a literal.
     fn arg_to_ssa(&mut self, arg: &Arg, out: &mut Vec<Instruction>) -> SSAValue {
         match arg {
             Arg::Ssa(v) => *v,
+            Arg::Bool(b) => {
+                let v = self.fresh_value();
+                out.push(Instruction::new(
+                    Operation::Classical(ClassicalOp::ConstBool(*b)),
+                    vec![],
+                    vec![v],
+                    vec![crate::types::Type::Bool],
+                ));
+                v
+            }
             Arg::Float(f) => {
                 let v = self.fresh_value();
                 out.push(emit_const_float(v, *f));
                 v
             }
-            Arg::Int(i) => {
+            Arg::Int(i, ty) => {
                 let v = self.fresh_value();
                 out.push(Instruction {
                     results: vec![v],
                     operation: Operation::Classical(ClassicalOp::ConstInt(*i)),
                     operands: vec![],
-                    result_types: vec![crate::types::Type::Int(crate::types::IntWidth::I64)],
+                    result_types: vec![ty.clone()],
                     regions: vec![],
                     attributes: BTreeMap::new(),
                     location: None,
@@ -1158,7 +1178,8 @@ impl QisIrParser {
 enum Arg {
     Ssa(SSAValue),
     Float(f64),
-    Int(i64),
+    Int(i64, crate::types::Type),
+    Bool(bool),
 }
 
 /// Create a simple `CustomOp` instruction with given operands and results.
@@ -1266,6 +1287,70 @@ fn extract_balanced_parens(line: &str, start: usize) -> String {
     line[start..].to_string()
 }
 
+/// Take one complete LLVM type, including function/pointer suffixes.
+fn read_llvm_type(input: &str) -> Result<(&str, &str)> {
+    let input = input.trim();
+    let mut stack = Vec::new();
+    let mut end = input.len();
+    for (index, ch) in input.char_indices() {
+        match ch {
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '<' => stack.push('>'),
+            '(' => stack.push(')'),
+            '}' | ']' | '>' | ')' => {
+                if stack.pop() != Some(ch) {
+                    return Err(PhirError::internal(format!(
+                        "Unbalanced LLVM type: {input}"
+                    )));
+                }
+            }
+            ',' if stack.is_empty() => {
+                end = index;
+                break;
+            }
+            ch if ch.is_whitespace() && stack.is_empty() => {
+                let suffix = input[index..].trim_start();
+                if !(suffix.starts_with('*')
+                    || suffix.starts_with('(')
+                    || suffix
+                        .strip_prefix("addrspace")
+                        .is_some_and(|rest| rest.trim_start().starts_with('(')))
+                {
+                    end = index;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if !stack.is_empty() || end == 0 {
+        return Err(PhirError::internal(format!("Invalid LLVM type: {input}")));
+    }
+    Ok((input[..end].trim_end(), input[end..].trim_start()))
+}
+
+fn is_packed_struct(ty: &str) -> bool {
+    ty.ends_with('>')
+        && ty
+            .strip_prefix('<')
+            .is_some_and(|body| body.trim_start().starts_with('{'))
+}
+
+fn reject_aggregate_call_type(ty: &str) -> Result<()> {
+    if matches!(
+        parse_llvm_type(ty),
+        crate::types::Type::Tuple(_) | crate::types::Type::Array(_, _)
+    ) || is_packed_struct(ty)
+        || (ty.starts_with('%') && !ty.ends_with('*'))
+    {
+        return Err(PhirError::internal(format!(
+            "QIS call: aggregate argument type {ty} is unsupported"
+        )));
+    }
+    Ok(())
+}
+
 /// Split a comma-separated arg list, respecting nested parens/brackets.
 fn split_args(s: &str) -> Vec<&str> {
     let mut parts = Vec::new();
@@ -1273,8 +1358,8 @@ fn split_args(s: &str) -> Vec<&str> {
     let mut start = 0;
     for (i, ch) in s.char_indices() {
         match ch {
-            '(' | '[' | '<' => depth += 1,
-            ')' | ']' | '>' => depth = depth.saturating_sub(1),
+            '(' | '[' | '<' | '{' => depth += 1,
+            ')' | ']' | '>' | '}' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;
@@ -1309,27 +1394,30 @@ fn normalize_qis_name(name: &str) -> String {
         return rest.to_string();
     }
 
+    // Runtime calls match by suffix: longer names such as the `_array` forms
+    // take different arguments and must not be lowered as these.
+
     // Runtime qubit management
-    if name.contains("__rt__qubit_allocate") {
+    if name.ends_with("__rt__qubit_allocate") {
         return "qalloc".to_string();
     }
-    if name.contains("__rt__qubit_release") {
+    if name.ends_with("__rt__qubit_release") {
         return "qfree".to_string();
     }
 
     // Runtime result/output operations -- elide
-    if name.contains("__rt__result_get_one") || name.contains("__rt__result_get_zero") {
+    if name.ends_with("__rt__result_get_one") || name.ends_with("__rt__result_get_zero") {
         return "rt_elide".to_string();
     }
-    if name.contains("__rt__result_allocate") {
+    if name.ends_with("__rt__result_allocate") {
         return "rt_result_allocate".to_string();
     }
-    if name.contains("__rt__result_record_output")
-        || name.contains("__rt__int_record_output")
-        || name.contains("__rt__tuple_start_record_output")
-        || name.contains("__rt__tuple_end_record_output")
-        || name.contains("__rt__result_update_reference_count")
-        || name.contains("__rt__result_equal")
+    if name.ends_with("__rt__result_record_output")
+        || name.ends_with("__rt__int_record_output")
+        || name.ends_with("__rt__tuple_start_record_output")
+        || name.ends_with("__rt__tuple_end_record_output")
+        || name.ends_with("__rt__result_update_reference_count")
+        || name.ends_with("__rt__result_equal")
     {
         return "rt_elide".to_string();
     }
@@ -1347,16 +1435,101 @@ fn normalize_qis_name(name: &str) -> String {
     name.to_string()
 }
 
+/// Materialise literals using the LLVM operand type; widths remain 64-bit.
+fn literal_operation(ty: &str, text: &str) -> Result<(ClassicalOp, crate::types::Type)> {
+    use crate::types::{IntWidth, Type};
+    let ty = ty.trim();
+    let result_type = parse_llvm_type(ty);
+    let invalid = || PhirError::internal(format!("Invalid LLVM literal {text:?} for type {ty}"));
+    if matches!(result_type, Type::Tuple(_) | Type::Array(_, _)) {
+        if !matches!(text, "undef" | "poison" | "zeroinitializer") {
+            return Err(invalid());
+        }
+        // Validate now so diagnostics retain the original LLVM type spelling.
+        crate::execution::environment::TypedValue::zero(&result_type)
+            .map_err(|error| PhirError::internal(format!("No zero for LLVM type {ty}: {error}")))?;
+        return Ok((ClassicalOp::AggregateZero, result_type));
+    }
+    let pointer = is_llvm_pointer_type(ty);
+    let placeholder = pointer || (ty.starts_with('<') && !is_packed_struct(ty));
+    let zero = matches!(text, "undef" | "poison")
+        || (placeholder && matches!(text, "null" | "zeroinitializer"));
+    if placeholder && zero {
+        return Ok((ClassicalOp::ConstInt(0), Type::Int(IntWidth::I64)));
+    }
+    if pointer {
+        return Err(invalid());
+    }
+    let op = match &result_type {
+        Type::Bool if zero || matches!(text, "true" | "false") => {
+            ClassicalOp::ConstBool(match text {
+                _ if zero => false,
+                "true" => true,
+                "false" => false,
+                _ => return Err(invalid()),
+            })
+        }
+        Type::Bool | Type::Int(_) => ClassicalOp::ConstInt(if zero {
+            0
+        } else {
+            text.parse::<i64>().map_err(|_| invalid())?
+        }),
+        Type::Float(_) => {
+            if !zero {
+                if let Some(hex) = text.strip_prefix("0x") {
+                    u64::from_str_radix(hex, 16).map_err(|_| invalid())?;
+                } else {
+                    text.parse::<f64>().map_err(|_| invalid())?;
+                }
+            }
+            ClassicalOp::ConstFloat(if zero { 0.0 } else { parse_float_literal(text) })
+        }
+        _ => return Err(invalid()),
+    };
+    Ok((op, result_type))
+}
+
+/// Recognize opaque and typed pointer spellings accepted by the type reader.
+fn is_llvm_pointer_type(s: &str) -> bool {
+    s.ends_with('*') || s.split_whitespace().next() == Some("ptr")
+}
+
 /// Map an LLVM type string to a PHIR `Type`.
 fn parse_llvm_type(s: &str) -> crate::types::Type {
     let s = s.trim();
     match s {
+        _ if is_llvm_pointer_type(s) => crate::types::Type::Int(crate::types::IntWidth::I64),
         "i1" => crate::types::Type::Bool,
-        "i8" | "i16" | "i32" | "i64" | "i128" => {
+        _ if s
+            .strip_prefix('i')
+            .is_some_and(|width| width.parse::<u32>().is_ok()) =>
+        {
             crate::types::Type::Int(crate::types::IntWidth::I64)
         }
         "double" | "float" => crate::types::Type::Float(crate::types::FloatPrecision::F64),
-        _ if s.starts_with('{') => crate::types::Type::Unknown,
+        _ if s.starts_with('{') && s.ends_with('}') => {
+            let fields = &s[1..s.len() - 1];
+            crate::types::Type::Tuple(if fields.trim().is_empty() {
+                vec![]
+            } else {
+                split_args(fields)
+                    .into_iter()
+                    .map(parse_llvm_type)
+                    .collect()
+            })
+        }
+        _ if s.starts_with('[') && s.ends_with(']') => {
+            let Some((length, element)) = s[1..s.len() - 1].split_once('x') else {
+                return crate::types::Type::Unknown;
+            };
+            let Ok(length) = length.trim().parse() else {
+                return crate::types::Type::Unknown;
+            };
+            crate::types::Type::Array(
+                Box::new(parse_llvm_type(element)),
+                crate::types::ArraySize::Fixed(length),
+            )
+        }
         _ => crate::types::Type::Unknown,
     }
 }
@@ -1398,6 +1571,14 @@ mod tests {
             "qalloc"
         );
         assert_eq!(normalize_qis_name("__quantum__rt__qubit_release"), "qfree");
+        for array_call in [
+            "__quantum__rt__qubit_allocate_array",
+            "__quantum__rt__qubit_release_array",
+            "__quantum__rt__result_allocate_array",
+            "__quantum__rt__result_record_output_array",
+        ] {
+            assert_eq!(normalize_qis_name(array_call), array_call);
+        }
     }
 
     #[test]
@@ -1463,13 +1644,19 @@ entry:
     }
 
     #[test]
-    fn test_parse_qir_style_h_gate() {
+    fn test_parse_qir_style_fixed_gates_preserve_named_ops() {
         let ir = r"
 declare void @__quantum__qis__h__body(%Qubit*)
+declare void @__quantum__qis__x__body(%Qubit*)
+declare void @__quantum__qis__y__body(%Qubit*)
+declare void @__quantum__qis__z__body(%Qubit*)
 
 define void @main() {
 entry:
   call void @__quantum__qis__h__body(%Qubit* null)
+  call void @__quantum__qis__x__body(%Qubit* null)
+  call void @__quantum__qis__y__body(%Qubit* null)
+  call void @__quantum__qis__z__body(%Qubit* null)
   ret void
 }
 ";
@@ -1485,7 +1672,44 @@ entry:
                 }
             })
             .collect();
-        assert_eq!(qis_ops, vec!["qis.rz", "qis.rxy", "qis.rz"]);
+        assert_eq!(qis_ops, vec!["qis.h", "qis.x", "qis.y", "qis.z"]);
+    }
+
+    #[test]
+    fn test_parse_qir_style_phase_gates_preserves_named_ops() {
+        let ir = r"
+declare void @__quantum__qis__s__body(%Qubit*)
+declare void @__quantum__qis__sdg__body(%Qubit*)
+declare void @__quantum__qis__t__body(%Qubit*)
+declare void @__quantum__qis__tdg__body(%Qubit*)
+declare void @__quantum__qis__sx__body(%Qubit*)
+declare void @__quantum__qis__sx__adj(%Qubit*)
+
+define void @main() {
+entry:
+  call void @__quantum__qis__s__body(%Qubit* null)
+  call void @__quantum__qis__sdg__body(%Qubit* null)
+  call void @__quantum__qis__t__body(%Qubit* null)
+  call void @__quantum__qis__tdg__body(%Qubit* null)
+  call void @__quantum__qis__sx__body(%Qubit* null)
+  call void @__quantum__qis__sx__adj(%Qubit* null)
+  ret void
+}
+";
+        let module = parse_qis_llvm_ir(ir).unwrap();
+        let qis_ops: Vec<String> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Custom(op) => Some(format!("{}.{}", op.dialect(), op.name())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            qis_ops,
+            vec!["qis.s", "qis.sdg", "qis.t", "qis.tdg", "qis.sx", "qis.sxdg",]
+        );
     }
 
     #[test]
@@ -1511,7 +1735,7 @@ entry:
                 }
             })
             .collect();
-        assert_eq!(qis_ops, vec!["rxy", "rzz", "rz", "rxy"]);
+        assert_eq!(qis_ops, vec!["cx"]);
     }
 
     // ---- Control flow tests ----
@@ -1825,8 +2049,7 @@ entry:
             .iter()
             .map(|i| i.operation.name())
             .collect();
-        // x is decomposed to RXY
-        assert!(ops.contains(&"qis.rxy".to_string()));
+        assert!(ops.contains(&"qis.x".to_string()));
         // mz maps to measure
         assert!(ops.contains(&"qis.measure".to_string()));
         // reset
@@ -1881,7 +2104,7 @@ entry:
 ";
         let module = parse_qis_llvm_ir(ir).unwrap();
         // All runtime calls should be elided -- no operations
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]
@@ -1913,12 +2136,10 @@ entry:
             .iter()
             .map(|i| i.operation.name())
             .collect();
-        // Should have: 2x qalloc, H decomposed (rz+rxy+rz), CX decomposed, result_allocate, measure
-        // result_record_output should be elided
+        // Named H/CX remain named; result_record_output is elided.
         assert!(ops.contains(&"qis.qalloc".to_string()));
-        assert!(ops.contains(&"qis.rz".to_string()));
-        assert!(ops.contains(&"qis.rxy".to_string()));
-        assert!(ops.contains(&"qis.rzz".to_string()));
+        assert!(ops.contains(&"qis.h".to_string()));
+        assert!(ops.contains(&"qis.cx".to_string()));
         assert!(ops.contains(&"qis.measure".to_string()));
         // No runtime record ops
         assert!(!ops.contains(&"rt_elide".to_string()));

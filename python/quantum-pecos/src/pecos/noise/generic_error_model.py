@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pecos as pc
+from pecos.noise.noise_impl.gate_groups import initializations, measurementsx, one_qubits, timing_ops, two_qubits
 from pecos.noise.noise_impl.noise_initz_bitflip_leakage import (
     noise_initz_bitflip_leakage,
 )
@@ -32,8 +33,8 @@ from pecos.noise.noise_impl.noise_sq_depolarizing_leakage import (
 )
 from pecos.noise.noise_impl.noise_tq_depolarizing_leakage import (
     noise_tq_depolarizing_leakage,
+    surviving_two_qubit_op,
 )
-from pecos.noise.noise_impl_old.gate_groups import one_qubits, two_qubits
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -156,13 +157,16 @@ class GenericErrorModel:
         noisy_ops = []
 
         for op in qops:
+            if op.name in timing_ops:
+                # Scheduling only: no noise; duration ignored (docs/user-guide/pecos-concepts.md).
+                continue
+
             qops_after = None
-            qops_before = None
             erroneous_ops = None
 
             # ########################################
             # INITS WITH X NOISE
-            if op.name in {"init |0>", "Init", "Init +Z"}:
+            if op.name in initializations:
                 qops_after = noise_initz_bitflip_leakage(
                     op,
                     p=self._eparams["p_prep"],
@@ -172,6 +176,7 @@ class GenericErrorModel:
             # ########################################
             # ONE QUBIT GATES
             elif op.name in one_qubits:
+                # Single-qubit noise includes the gate; two-qubit suppression belongs to this caller.
                 erroneous_ops = noise_sq_depolarizing_leakage(
                     op,
                     p=self._eparams["p1"],
@@ -182,27 +187,40 @@ class GenericErrorModel:
             # ########################################
             # TWO QUBIT GATES
             elif op.name in two_qubits:
+                surviving = surviving_two_qubit_op(op, self.machine)
+                if surviving is None:
+                    continue
+                # Emitting through erroneous_ops replaces the original gate with the
+                # survivor. The gate is not erroneous; this is simply the "replaced"
+                # slot. Its noise still follows the gate via qops_after.
+                erroneous_ops = [surviving]
                 qops_after = noise_tq_depolarizing_leakage(
-                    op,
+                    surviving,
                     p=self._eparams["p2"],
                     noise_dict=self._eparams["p2_error_model"],
                     machine=self.machine,
                 )
 
-                if self._eparams.get("p2_mem"):
+                # Re-filter against the machine: this gate's own noise may have just
+                # leaked a qubit, and memory noise must not touch a pair it leaked.
+                memory_op = surviving_two_qubit_op(op, self.machine) if self._eparams.get("p2_mem") else None
+                if memory_op is not None:
                     qops_mem = noise_tq_depolarizing_leakage(
-                        op,
+                        memory_op,
                         p=self._eparams["p2_mem"],
                         noise_dict=self._eparams["p2_mem_error_model"],
                         machine=self.machine,
                     )
 
-                    if qops_after:
-                        qops_after = qops_after.extend(qops_mem)
+                    if qops_mem:
+                        if qops_after:
+                            qops_after.extend(qops_mem)
+                        else:
+                            qops_after = qops_mem
 
             # ########################################
             # MEASURE X NOISE
-            elif op.name in {"measure Z", "Measure", "Measure +Z"}:
+            elif op.name in measurementsx:
                 erroneous_ops = noise_meas_bitflip_leakage(
                     op,
                     p=self._eparams["p_meas"],
@@ -212,9 +230,6 @@ class GenericErrorModel:
             else:
                 msg = f"This error model doesn't handle gate: {op.name}!"
                 raise Exception(msg)
-
-            if qops_before:
-                noisy_ops.extend(qops_before)
 
             if erroneous_ops is None:
                 noisy_ops.append(op)

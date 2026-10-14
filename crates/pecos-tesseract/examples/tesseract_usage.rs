@@ -111,7 +111,7 @@ error(0.0005) D1 D3 L0
     println!("----------------------------------");
 
     for i in 0..fast_decoder.num_errors() {
-        if let Some(error_info) = fast_decoder.get_error_info(i) {
+        if let Ok(error_info) = fast_decoder.get_error_info(i) {
             println!(
                 "Error {}: prob={:.4}, cost={:.3}, detectors={:?}, obs=0x{:x}",
                 i,
@@ -132,6 +132,7 @@ error(0.0005) D1 D3 L0
         beam_climbing: true,
         no_revisit_dets: false,
         verbose: false,
+        merge_errors: true,
         pqlimit: 10000,
         det_penalty: 0.05,
     };

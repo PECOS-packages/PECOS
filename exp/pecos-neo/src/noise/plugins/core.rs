@@ -67,6 +67,10 @@ impl NoisePlugin for CorePlugin {
 struct PreparationStateHandler;
 
 impl EventHandler for PreparationStateHandler {
+    fn event_kinds(&self) -> crate::noise::EventKinds {
+        crate::noise::EventKinds::of(crate::noise::NoiseEventKind::AfterPreparation)
+    }
+
     fn handles(&self, event: &NoiseEvent<'_>) -> bool {
         matches!(event, NoiseEvent::AfterPreparation { .. })
     }
@@ -98,6 +102,10 @@ impl EventHandler for PreparationStateHandler {
 struct MeasurementStateHandler;
 
 impl EventHandler for MeasurementStateHandler {
+    fn event_kinds(&self) -> crate::noise::EventKinds {
+        crate::noise::EventKinds::of(crate::noise::NoiseEventKind::AfterMeasurement)
+    }
+
     fn handles(&self, event: &NoiseEvent<'_>) -> bool {
         matches!(event, NoiseEvent::AfterMeasurement { .. })
     }

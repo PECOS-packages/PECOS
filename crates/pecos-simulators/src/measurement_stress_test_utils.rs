@@ -171,7 +171,7 @@ pub fn verify_rz_clifford_angles_after_nonclifford<S: ArbitraryRotationGateable>
 // Negative-angle rotations
 // ============================================================================
 
-/// Tdg = RZ(-pi/4). Verify T * Tdg = I and Tdg alone works.
+/// `Tdg = exp(-i*pi/8) RZ(-pi/4)`. Verify T * Tdg = I and Tdg alone works.
 pub fn verify_tdg_basic<S: ArbitraryRotationGateable>(sim: &mut S) {
     let t = Angle64::QUARTER_TURN / 2u64;
     let tdg = -t;

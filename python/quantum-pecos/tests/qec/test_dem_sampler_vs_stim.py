@@ -12,18 +12,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from pecos.qec.surface import get_measurement_order_from_tick_circuit
+import stim
 
 if TYPE_CHECKING:
-    from pecos.quantum import DagCircuit, TickCircuit
-
-# Skip all tests if stim is not installed
-stim = pytest.importorskip("stim")
-
-
-def extract_measurement_order(tc: "TickCircuit") -> list[int]:
-    """Extract measurement order from TickCircuit."""
-    return get_measurement_order_from_tick_circuit(tc)
+    from pecos.quantum import DagCircuit
 
 
 def parse_dem_string(dem_str: str) -> dict[tuple, float]:
@@ -131,12 +123,12 @@ class TestDemSamplerVsStim:
         """Standard noise parameters for testing."""
         return {"p1": 0.01, "p2": 0.01, "p_meas": 0.01, "p_prep": 0.01}
 
-    def test_dem_mechanism_counts_match(
+    def test_dem_mechanism_counts_are_comparable(
         self,
         surface_code_d3: tuple,
         noise_params: dict[str, float],
     ) -> None:
-        """DemSampler should produce same number of mechanisms as Stim."""
+        """The native and Stim mechanism counts stay within the expected 20% band."""
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
             generate_dem_from_tick_circuit_via_stim,
@@ -161,27 +153,22 @@ class TestDemSamplerVsStim:
         assert comparison["pecos_count"] > 0, "PECOS DEM should have mechanisms"
         assert comparison["stim_count"] > 0, "Stim DEM should have mechanisms"
 
-        # Allow up to 10% difference in mechanism count due to decomposition
+        # Allow up to 20% difference in mechanism count.
         count_ratio = comparison["pecos_count"] / comparison["stim_count"]
         assert 0.8 < count_ratio < 1.2, (
             f"Mechanism count ratio {count_ratio:.2f} outside expected range. "
             f"PECOS: {comparison['pecos_count']}, Stim: {comparison['stim_count']}"
         )
 
-    def test_dem_probabilities_close(
+    def test_dem_targets_overlap(
         self,
         surface_code_d3: tuple,
         noise_params: dict[str, float],
     ) -> None:
-        """DemSampler probabilities should be reasonably close to Stim's.
+        """Most undecomposed error targets overlap despite representation differences.
 
-        Note: PECOS and Stim have known differences in DEM generation due to:
-        - Different treatment of Y errors (PECOS: single error, Stim: X^Z decomposition)
-        - Different probability combination strategies
-        - Edge effects at circuit boundaries
-
-        The key metric is that sampling produces similar statistical results,
-        not that the DEM representations are identical.
+        This structural check does not establish probability equivalence;
+        the sampling comparisons below exercise the distributions.
         """
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
@@ -203,17 +190,6 @@ class TestDemSamplerVsStim:
         match_ratio = comparison["matched_count"] / max(comparison["stim_count"], 1)
         assert match_ratio > 0.5, f"Only {match_ratio:.0%} of mechanisms matched by target"
 
-        # Log mismatches for debugging but don't fail on probability differences
-        # The sampling tests are the ground truth for equivalence
-        if comparison["prob_mismatches"]:
-            print(
-                f"\nDEM probability mismatches ({len(comparison['prob_mismatches'])} total):",
-            )
-            for m in comparison["prob_mismatches"][:5]:
-                print(
-                    f"  {m['target']}: PECOS={m['pecos']:.6f} Stim={m['stim']:.6f} diff={m['rel_diff']:.1%}",
-                )
-
     def test_sampling_statistics_match_stim(
         self,
         surface_code_d3: tuple,
@@ -232,13 +208,11 @@ class TestDemSamplerVsStim:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         pecos_sampler = builder.build()
 
         # Build Stim DEM sampler
@@ -309,13 +283,11 @@ class TestDemSamplerVsStim:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         pecos_sampler = builder.build()
 
         # Build Stim sampler
@@ -374,13 +346,11 @@ class TestDemSamplerMultiRound:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         pecos_sampler = builder.build()
 
         # Build Stim sampler
@@ -429,13 +399,11 @@ class TestDemSamplerHigherDistance:
 
         detectors_json = tc.get_meta("detectors") or "[]"
         observables_json = tc.get_meta("observables") or "[]"
-        measurement_order = extract_measurement_order(tc)
 
         builder = DemSamplerBuilder(influence_map)
         builder.with_noise(**noise_params)
         builder.with_detectors_json(detectors_json)
         builder.with_observables_json(observables_json)
-        builder.with_measurement_order(measurement_order)
         sampler = builder.build()
 
         stats = sampler.sample_statistics(100_000, seed=789)
@@ -523,7 +491,6 @@ class TestXBasisMemory:
         builder.with_observables_json(
             tc.get_meta("observables") or "[]",
         )
-        builder.with_measurement_order(extract_measurement_order(tc))
         pecos_sampler = builder.build()
 
         # Build Stim sampler

@@ -62,8 +62,9 @@ must not be treated as generic measurement identity until the compiler exposes
 an explicit element-level provenance ABI.
 
 Generic Guppy branching and looping control flow is rejected. One sampled
-runtime branch cannot certify a static DEM; built-in surface generators cross
-that boundary only through their program-bound static-layout certificate.
+runtime branch cannot certify a static DEM; built-in surface generators
+`make_surface_code` and `make_surface_memory` cross that boundary only through
+their program-bound static-layout certificate.
 
 The certificate is an integrity mechanism, not an authentication mechanism.
 Its digest binds a layout to the exact compiled HUGR, so a stale, permuted,

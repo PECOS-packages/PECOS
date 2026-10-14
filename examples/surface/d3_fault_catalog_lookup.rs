@@ -306,13 +306,14 @@ fn ref_meas_ids(refs: &[TickMeasRef]) -> Vec<usize> {
 fn meas_ids_json(annotations: &[Vec<usize>]) -> String {
     let entries: Vec<String> = annotations
         .iter()
-        .map(|ids| {
+        .enumerate()
+        .map(|(id, ids)| {
             let values = ids
                 .iter()
                 .map(usize::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            format!(r#"{{"meas_ids":[{values}]}}"#)
+            format!(r#"{{"id":{id},"meas_ids":[{values}]}}"#)
         })
         .collect();
     format!("[{}]", entries.join(","))
@@ -359,11 +360,11 @@ mod tests {
         circuit.set_meta("num_measurements", Attribute::String("1".to_string()));
         circuit.set_meta(
             "detectors",
-            Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         circuit.set_meta(
             "observables",
-            Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
 
         let noise = StochasticNoiseParams {
@@ -399,11 +400,11 @@ mod tests {
         circuit.set_meta("num_measurements", Attribute::String("1".to_string()));
         circuit.set_meta(
             "detectors",
-            Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
         circuit.set_meta(
             "observables",
-            Attribute::String(r#"[{"records":[-1]}]"#.to_string()),
+            Attribute::String(r#"[{"records":[-1],"id":0}]"#.to_string()),
         );
 
         let noise = StochasticNoiseParams {

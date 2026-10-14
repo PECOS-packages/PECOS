@@ -40,9 +40,8 @@ a member drifts off it:
 | Python | `[project].version` in the root `pyproject.toml` | `just python-workspace-check` -- every tracked `pyproject.toml` with a `[build-system]` must match, wherever it lives |
 | Rust | `[workspace.package].version` in the root `Cargo.toml` | `just rust-workspace-check` -- every workspace member must use `version.workspace = true` |
 | Julia | `version` in `julia/PECOS.jl/Project.toml` | `just julia-version-check` -- manifest, FFI crate, and `build_tarballs.jl` must agree, as must the Julia compat bound; `just rust-workspace-check` separately holds the FFI crate to it |
-| Go | `version` in `go/pecos-go-ffi/Cargo.toml` | single declaration: `pecos_version()` derives the string from `CARGO_PKG_VERSION`, and Go modules are versioned by git tag |
 
-A Python release moves only the Python train. The Rust, Julia, and Go trains are
+A Python release moves only the Python train. The Rust and Julia trains are
 bumped on their own schedules, and the guards keep them from being dragged along
 by accident. Julia has its own bump command, matching the Python one:
 
@@ -51,14 +50,13 @@ just bump-julia-version <new-version>
 ```
 
 It rewrites all three Julia files, refreshes `Cargo.lock` for the FFI crate, and runs both
-guards. Rust and Go are a single literal each (`[workspace.package].version` and
-`go/pecos-go-ffi/Cargo.toml`), so they need no tool.
+guards. Rust is a single literal (`[workspace.package].version`), so it needs no tool.
 
 ## 2. Merge and wait for post-merge green
 
 Merge the bump PR to `dev`, then wait for **all** post-merge workflows on the
 merge commit to pass -- including the long ones (`python-core` is the full
-suite and only runs post-merge; `Python Artifacts` is the full wheel matrix,
+suite; `Python Artifacts` is the full wheel matrix,
 i.e. the release rehearsal). Optionally run `just check-all` locally on the
 merge commit as a belt-and-braces gate.
 
@@ -69,12 +67,19 @@ git tag py-<version> <merge-sha>
 git push origin py-<version>
 ```
 
-The `py-*` tag triggers `python-release.yml` in full-release mode: all
+The `py-*` tag triggers full validation, including `python-release.yml` in full-release mode: all
 platform wheels (pecos-rslib, pecos-rslib-llvm), quantum-pecos wheel + sdist,
 abi3 wheel tests across Python versions, and a `collect_artifacts` bundle
-pinned to the tagged commit. Wait for it to go green. Publish from the **tag
-run's** bundle, not a branch run -- provenance stays tied to the immutable
-ref.
+pinned to the tagged commit. Wait for it to go green. Then run:
+
+```
+uv run --frozen python scripts/ci/release_tag_status.py py-<version>
+```
+
+Require exit 0 before proceeding to steps 4 and 5; missing or unfinished
+validation counts as red. Push release tags one at a time, and keep the tag
+available locally for the check. Publish from the **tag run's** bundle, not a
+branch run -- provenance stays tied to the immutable ref.
 
 ## 4. Download the bundle and dry-run
 

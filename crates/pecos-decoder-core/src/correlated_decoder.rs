@@ -71,8 +71,9 @@ pub trait MatchingDecoder {
 
 /// Extension of `MatchingDecoder` that exposes per-edge metadata.
 ///
-/// Used by overlapping/sandwich windowed decoders to classify matched edges
-/// as core or buffer based on endpoint locations and weight thresholds.
+/// Used by beam search to classify edges by endpoints and weights.
+/// Whole-component window commits use [`crate::EdgeDecoder`], which requires
+/// complete correction reporting, including preprocessing.
 pub trait EdgeTrackingDecoder: MatchingDecoder {
     /// First endpoint node index of the given edge.
     fn edge_node1(&self, edge_idx: usize) -> u32;

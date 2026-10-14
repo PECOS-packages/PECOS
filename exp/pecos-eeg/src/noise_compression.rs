@@ -15,8 +15,11 @@
 //! Propagates mid-round fault locations to round boundaries, producing
 //! effective noise sources with accumulated probabilities/amplitudes.
 //!
-//! For stochastic Pauli noise: exact (Paulis compose deterministically).
-//! For coherent noise: accumulates within-round angles exactly.
+//! Compression is exact for independent S flips and first order for H
+//! amplitudes. S sources compose through product(1 - 2p), with p = -rate.
+//! `UniformNoise` independent flips exactly represent categorical depolarizing
+//! for `p1 <= 3/4` and `p2 <= 15/16`; larger positive values panic.
+//! Keep the original noise model for exact targets when H noise is present.
 //!
 //! This dramatically reduces the number of noise sources:
 //! ~60 mid-round faults per round → ~17 boundary faults (9 data + 8 meas).
@@ -36,7 +39,7 @@ pub struct BoundaryNoise {
     pub label: Bm,
     /// EEG type (H or S).
     pub eeg_type: EegType,
-    /// Accumulated rate (S-type) or amplitude (H-type).
+    /// Negative composed flip probability (S-type) or summed amplitude (H-type).
     pub value: f64,
     /// Gate index of the boundary (for position tracking).
     pub boundary_gate: usize,
@@ -64,11 +67,19 @@ pub struct CompressedNoise {
 ///
 /// Gate noise (p1, p2) is compressed. Measurement (p_meas) and
 /// preparation (p_prep) noise is kept at its original position.
+/// Independent S flips compose exactly; H amplitudes use a first-order sum.
+///
+/// # Panics
+/// Panics if received noise includes a C or A injection, even at zero rate.
+/// Panics if the provenance flags do not match the gate count, or a noise
+/// label encounters an unsupported gate during propagation.
 pub fn compress_noise_to_boundaries(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
     expansion_gates: &[bool],
 ) -> CompressedNoise {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     let n_gates = gates.len();
     let max_qubit = gates
         .iter()
@@ -80,12 +91,13 @@ pub fn compress_noise_to_boundaries(
     // Step 1: Collect all noise sources
     let mut all_noise: Vec<(usize, NoiseInjection)> = Vec::new();
     for (gate_idx, gate) in gates.iter().enumerate() {
-        if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
+        if expansion_gates[gate_idx] {
             continue;
         }
         let qubits: SmallVec<[usize; 4]> =
             gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let injections = noise.noise_after_gate(gate_idx, gate.gate_type, &qubits);
+        crate::noise::assert_hs_injections(&injections);
         for inj in injections {
             all_noise.push((gate_idx, inj));
         }
@@ -152,7 +164,7 @@ pub fn compress_noise_to_boundaries(
                     // Only update inject_at for non-expansion gates.
                     // Expansion gates are invisible to the noise map —
                     // injecting there would be silently dropped.
-                    if !(g < expansion_gates.len() && expansion_gates[g]) {
+                    if !expansion_gates[g] {
                         inject_at = g;
                     }
                 }
@@ -160,19 +172,28 @@ pub fn compress_noise_to_boundaries(
         }
 
         let key = (inject_at, label.clone(), inj.eeg_type);
-        *boundary_groups.entry(key).or_insert(0.0) += inj.rate;
+        if inj.eeg_type == EegType::S {
+            let p = -inj.rate;
+            *boundary_groups.entry(key).or_insert(1.0) *= 1.0 - 2.0 * p;
+        } else {
+            *boundary_groups.entry(key).or_insert(0.0) += inj.rate;
+        }
     }
 
     // Step 4: Convert groups to boundary noise sources
     let boundary_sources: Vec<BoundaryNoise> = boundary_groups
         .into_iter()
-        .filter(|(_, value)| value.abs() > 1e-20)
         .map(|((boundary_gate, label, eeg_type), value)| BoundaryNoise {
             label,
             eeg_type,
-            value,
+            value: if eeg_type == EegType::S {
+                -(1.0 - value) / 2.0
+            } else {
+                value
+            },
             boundary_gate,
         })
+        .filter(|source| source.value.abs() > 1e-20)
         .collect();
 
     let compressed_count =
@@ -238,6 +259,10 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
     // For non-self-adjoint: pass the adjoint gate type.
 
     let adjoint_type = match gate.gate_type {
+        GateType::CS | GateType::CSdg | GateType::CCZ => panic!(
+            "EEG noise compression does not support {:?}",
+            gate.gate_type
+        ),
         GateType::SZ => GateType::SZdg,
         GateType::SZdg => GateType::SZ,
         GateType::SX => GateType::SXdg,
@@ -254,14 +279,13 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
     };
 
     // Build a temporary gate with the adjoint type
-    let adj_gate = Gate {
-        gate_type: adjoint_type,
-        qubits: gate.qubits.clone(),
-        angles: gate.angles.clone(),
-        params: gate.params.clone(),
-        meas_ids: gate.meas_ids.clone(),
-        channel: None,
-    };
+    let mut adj_gate = Gate::new(
+        adjoint_type,
+        gate.angles.clone(),
+        gate.params.clone(),
+        gate.qubits.clone(),
+    );
+    adj_gate.meas_ids.clone_from(&gate.meas_ids);
 
     let mut sp = SparsePauli::from_bm(label);
     let _sign = sparse_conjugate(&mut sp, &adj_gate);
@@ -272,6 +296,10 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
 ///
 /// Call `noise_after_gate()` on each gate just like the original noise model,
 /// but mid-round gate noise is empty — all accumulated at boundaries.
+/// Its default physical view preserves independent S flips exactly, while H
+/// compression is first order. `UniformNoise` categorical depolarizing is exact
+/// for `p1 <= 3/4` and `p2 <= 15/16`. When H noise is present, keep the original
+/// model for exact targets and use this for DEM structure.
 pub struct CompressedNoiseSpec {
     /// Gate index → noise injections at that gate.
     gate_noise: BTreeMap<usize, Vec<NoiseInjection>>,
@@ -326,6 +354,41 @@ impl NoiseSpec for CompressedNoiseSpec {
 mod tests {
     use super::*;
     use crate::noise::UniformNoise;
+
+    #[test]
+    fn diagonal_gates_are_rejected_by_compression() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let gate = Gate::simple(
+                gt,
+                (0..gt.quantum_arity())
+                    .map(pecos_core::QubitId)
+                    .collect::<Vec<_>>(),
+            );
+            assert!(
+                std::panic::catch_unwind(|| forward_conjugate_label(&mut Bm::x(0), &gate)).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn forward_conjugation_acts_on_every_batched_pair() {
+        // X2 is untouched by the first pair and spreads to X2X3 through the
+        // second.
+        let mut label = Bm::x(2);
+        forward_conjugate_label(&mut label, &Gate::cx(&[(0, 1), (2, 3)]));
+        assert_eq!(label, Bm::x(2).multiply(&Bm::x(3)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Gate H expected 0 angle parameters, got 1")]
+    fn adjoint_materialization_checks_constructor_arity() {
+        let gate = Gate {
+            angles: vec![pecos_core::Angle64::ZERO].into(),
+            ..Gate::h(&[0])
+        };
+        let mut label = Bm::default();
+        forward_conjugate_label(&mut label, &gate);
+    }
 
     #[test]
     fn test_compression_reduces_count() {

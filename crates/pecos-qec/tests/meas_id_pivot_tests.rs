@@ -68,11 +68,13 @@ fn scrambled_ids_build_the_same_influence_relations_as_positional_ids() {
     let scrambled = parity_check_with_ids([9, 4, 7]);
 
     let map_pos = InfluenceBuilder::new(&positional)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
         .expect("circuit is replayable");
     let map_scr = InfluenceBuilder::new(&scrambled)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -148,6 +150,7 @@ fn scrambled_ids_influence_the_same_named_measurements() {
 
     let build = |dag: &DagCircuit| {
         InfluenceBuilder::new(dag)
+            .unwrap()
             .with_circuit_annotations()
             .expect("annotations resolve")
             .build()
@@ -223,6 +226,7 @@ fn scrambled_ids_dual_output_xors_the_named_raw_channels() {
     dag.detector(&[target]).expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -262,55 +266,27 @@ fn scrambled_ids_dual_output_xors_the_named_raw_channels() {
     );
 }
 
-/// A `gate_mut` edit can leave two measurements holding one id. The sampler's
-/// annotation resolution refuses the whole map instead of silently binding to
-/// the first holder.
+/// DAG mutation refuses to leave two measurements holding one id, so sampler
+/// annotation resolution continues to use the original distinct identities.
 #[test]
-fn sampler_annotations_refuse_a_map_with_duplicate_ids() {
+fn dag_update_refuses_duplicate_measurement_ids() {
     use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 
     let mut dag = DagCircuit::new();
     dag.pz(&[0, 1]);
     let a = dag.mz(&[0]);
     let b = dag.mz(&[1]);
-    dag.gate_mut(b[0].node).expect("gate exists").meas_ids[0] = a[0].meas_id;
+    let error = dag
+        .update_gate(b[0].node, |gate| gate.meas_ids[0] = a[0].meas_id)
+        .expect_err("measurement IDs are DAG-owned identity data");
+    assert!(error.to_string().contains("cannot change measurement IDs"));
 
-    let map = DagFaultAnalyzer::new(&dag).build_influence_map();
-    let err = DemSamplerBuilder::new(&map)
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
+    DemSamplerBuilder::new(&map)
         .with_uniform_noise(0.01)
         .raw_measurements()
         .with_circuit_annotations(&dag)
-        .map(|_| ())
-        .expect_err("two measurements hold one id");
-    assert!(matches!(
-        err,
-        pecos_qec::fault_tolerance::dem_builder::DetectorValidationError::InvalidMetadata { .. }
-    ));
-}
-
-/// `measurement_order` is a legacy escape hatch for id-less circuits; on a
-/// stamped-id circuit its qubit-occurrence heuristic silently mis-binds, so
-/// the combination is refused outright.
-#[test]
-fn measurement_order_is_refused_on_a_stamped_id_circuit() {
-    let dag = parity_check_with_ids([9, 4, 7]);
-    let map = InfluenceBuilder::new(&dag)
-        .with_circuit_annotations()
-        .expect("annotations resolve")
-        .build()
-        .expect("circuit is replayable");
-
-    let err = DemSamplerBuilder::new(&map)
-        .with_uniform_noise(0.01)
-        .raw_measurements()
-        .with_measurement_order(vec![0, 1, 2])
-        .build()
-        .map(|_| ())
-        .expect_err("stamped ids already define the mapping");
-    assert!(matches!(
-        err,
-        pecos_qec::fault_tolerance::dem_builder::DetectorValidationError::InvalidMetadata { .. }
-    ));
+        .expect("the rejected edit must leave distinct measurement IDs");
 }
 
 /// A detector can reference exactly one measurement of a batched gate --
@@ -362,6 +338,7 @@ fn a_reference_to_a_removed_measurement_is_a_removed_error() {
     });
 
     let err = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .map(|_| ())
         .expect_err("the measurement was removed");
@@ -433,6 +410,7 @@ fn a_huge_sparse_id_causes_no_id_sized_allocation() {
     dag.detector(&[mref]).expect("refs are from this circuit");
 
     let map = InfluenceBuilder::new(&dag)
+        .unwrap()
         .with_circuit_annotations()
         .expect("annotations resolve")
         .build()
@@ -442,4 +420,25 @@ fn a_huge_sparse_id_causes_no_id_sized_allocation() {
         Some(0),
         "one measurement exists and the huge id ranks first"
     );
+}
+
+/// A public influence-map payload can contain duplicate stamped identities even
+/// though DAG admission refuses duplicate Gate measurement IDs.
+#[test]
+fn sampler_defends_against_duplicate_ids_in_literal_map() {
+    use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
+    let gates = [0, 1].map(|q| Gate {
+        meas_ids: vec![MeasId::from_raw(5)].into(),
+        ..Gate::mz(&[q])
+    });
+    let mut map = DagFaultInfluenceMap::with_capacity(0);
+    map.meas_ids = gates
+        .iter()
+        .flat_map(|gate| gate.meas_ids.iter().copied())
+        .collect();
+    let result = DemSamplerBuilder::new(&map).with_circuit_annotations(&DagCircuit::new());
+    let Err(error) = result else {
+        panic!("duplicate IDs must not bind to the first record");
+    };
+    assert!(error.to_string().contains("duplicate stable MeasId 5"));
 }

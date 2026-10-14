@@ -81,7 +81,7 @@ When using PECOS's `sim()` API, you wrap your program in one of these types:
     from pecos import sim, Hugr
 
     # HUGR - from compiled output (fails if file doesn't exist)
-    results = sim(Hugr.from_file("program.hugr")).run(100)
+    results = sim(Hugr.from_file("program.hugr")).qubits(2).run(100)
     ```
 
 ## Circuit Data Structures

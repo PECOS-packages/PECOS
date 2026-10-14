@@ -8,6 +8,7 @@ use pecos_core::ChannelExpr;
 use pecos_core::QubitId;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
+use pecos_core::gates::Gate;
 use pecos_random::{PecosRng, SeedableRng};
 use pecos_simulators::clifford_rotation::CliffordRotation;
 use pecos_simulators::{
@@ -20,6 +21,19 @@ use std::fmt::Debug;
 /// Helper function to create quantum engine errors
 fn quantum_error<S: Into<String>>(msg: S) -> PecosError {
     PecosError::Processing(msg.into())
+}
+
+fn validate_dispatch_gate(gate: &Gate) -> Result<(), PecosError> {
+    let expected = gate.gate_type.angle_arity();
+    if gate.angles.len() != expected {
+        return Err(PecosError::Processing(format!(
+            "Gate {:?} expected {} angle parameters, got {}",
+            gate.gate_type,
+            expected,
+            gate.angles.len()
+        )));
+    }
+    Ok(())
 }
 
 /// Apply a closure to a flat qubit slice `[c0, t0, c1, t1, ...]` and return its result.
@@ -127,6 +141,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
+        validate_dispatch_gate(cmd)?;
         check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
             // Single-qubit Clifford gates
@@ -231,6 +246,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 {
                     cmd_idx += 1;
                     // Lookahead-consumed commands need the guard too.
+                    validate_dispatch_gate(&batch[cmd_idx])?;
                     check_qubit_capacity(
                         batch[cmd_idx].gate_type,
                         &batch[cmd_idx].qubits,
@@ -260,71 +276,60 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             | GateType::RZZ
             | GateType::RXX
             | GateType::RYY => {
-                if !cmd.angles.is_empty() {
-                    let angle = cmd.angles[0];
-                    let result: Result<(), String> = match cmd.gate_type {
-                        GateType::RZ => sim.try_rz(angle, &cmd.qubits).map(|_| ()),
-                        GateType::RX => sim.try_rx(angle, &cmd.qubits).map(|_| ()),
-                        GateType::RY => sim.try_ry(angle, &cmd.qubits).map(|_| ()),
-                        GateType::RZZ => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                            sim.try_rzz(angle, pairs).map(|_| ())
-                        }),
-                        GateType::RXX => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                            sim.try_rxx(angle, pairs).map(|_| ())
-                        }),
-                        GateType::RYY => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                            sim.try_ryy(angle, pairs).map(|_| ())
-                        }),
-                        _ => unreachable!(),
-                    };
-                    result.map_err(PecosError::Processing)?;
-                }
+                let angle = cmd.angles[0];
+                let result: Result<(), String> = match cmd.gate_type {
+                    GateType::RZ => sim.try_rz(angle, &cmd.qubits).map(|_| ()),
+                    GateType::RX => sim.try_rx(angle, &cmd.qubits).map(|_| ()),
+                    GateType::RY => sim.try_ry(angle, &cmd.qubits).map(|_| ()),
+                    GateType::RZZ => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.try_rzz(angle, pairs).map(|_| ())
+                    }),
+                    GateType::RXX => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.try_rxx(angle, pairs).map(|_| ())
+                    }),
+                    GateType::RYY => with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                        sim.try_ryy(angle, pairs).map(|_| ())
+                    }),
+                    _ => unreachable!(),
+                };
+                result.map_err(PecosError::Processing)?;
             }
-            GateType::R1XY => {
-                if cmd.angles.len() >= 2 {
-                    sim.try_r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits)
-                        .map_err(PecosError::Processing)?;
-                }
+            GateType::RXYXY2Q => {
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.try_rxyxy2q(cmd.angles[0], cmd.angles[1], pairs)
+                        .map(|_| ())
+                })
+                .map_err(PecosError::Processing)?;
             }
-            GateType::CRZ => {
-                if !cmd.angles.is_empty() {
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.try_crz(cmd.angles[0], pairs).map(|_| ())
-                    })
+            GateType::RXY1Q => {
+                sim.try_rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits)
                     .map_err(PecosError::Processing)?;
-                }
             }
             GateType::U => {
-                if cmd.angles.len() >= 3 {
-                    sim.try_u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
-                        .map_err(PecosError::Processing)?;
-                }
+                sim.try_u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits)
+                    .map_err(PecosError::Processing)?;
             }
             GateType::RXXRYYRZZ => {
-                if cmd.angles.len() >= 3 {
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs)
-                            .map(|_| ())
-                    })
-                    .map_err(PecosError::Processing)?;
-                }
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.try_rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs)
+                        .map(|_| ())
+                })
+                .map_err(PecosError::Processing)?;
             }
             GateType::U2q => {
-                if cmd.angles.len() >= 15 {
-                    let before = [
-                        [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
-                        [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
-                    ];
-                    let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
-                    let after = [
-                        [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
-                        [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
-                    ];
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.try_u2q(before, interaction, after, pairs).map(|_| ())
-                    })
-                    .map_err(PecosError::Processing)?;
-                }
+                let before = [
+                    [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                    [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                ];
+                let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                let after = [
+                    [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                    [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                ];
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.try_u2q(before, interaction, after, pairs).map(|_| ())
+                })
+                .map_err(PecosError::Processing)?;
             }
 
             GateType::MPZ => {
@@ -349,10 +354,31 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     Ok(builder.build())
 }
 
+/// Apply diag(1, 1, 1, +/-i) exactly, including the control phase.
+fn apply_controlled_s<S: CliffordGateable + ArbitraryRotationGateable>(
+    sim: &mut S,
+    a: QubitId,
+    b: QubitId,
+    dagger: bool,
+) {
+    if dagger {
+        sim.tdg(&[a, b]);
+    } else {
+        sim.t(&[a, b]);
+    }
+    sim.cx(&[(a, b)]);
+    if dagger {
+        sim.t(&[b]);
+    } else {
+        sim.tdg(&[b]);
+    }
+    sim.cx(&[(a, b)]);
+}
+
 /// Process a `ByteMessage` against any simulator supporting full gate set.
 ///
 /// Shared gate dispatch for `StabVecEngine`, `DensityMatrixEngine`, etc.
-/// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX, CRZ),
+/// Supports all Clifford gates, arbitrary rotations, composite gates (CH, CCX),
 /// preparations, and measurements with MZ batching.
 fn process_general_message<
     S: CliffordGateable + ArbitraryRotationGateable + QuantumSimulator + ChannelDispatch,
@@ -368,6 +394,7 @@ fn process_general_message<
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
+        validate_dispatch_gate(cmd)?;
         check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
             // Single-qubit Clifford gates
@@ -483,11 +510,19 @@ fn process_general_message<
                     );
                 }
             }
-            GateType::CCX => {
+            GateType::CS | GateType::CSdg => {
+                for &[a, b] in cmd.qubits.as_chunks::<2>().0 {
+                    apply_controlled_s(sim, a, b, cmd.gate_type == GateType::CSdg);
+                }
+            }
+            GateType::CCX | GateType::CCZ => {
                 for qubits in cmd.qubits.as_chunks::<3>().0 {
                     let c0 = qubits[0];
                     let c1 = qubits[1];
                     let target = qubits[2];
+                    if cmd.gate_type == GateType::CCZ {
+                        sim.h(&[target]);
+                    }
                     sim.h(&[target]);
                     sim.cx(&[(c1, target)]);
                     sim.tdg(&[target]);
@@ -503,90 +538,66 @@ fn process_general_message<
                     sim.t(&[c0]);
                     sim.tdg(&[c1]);
                     sim.cx(&[(c0, c1)]);
+                    if cmd.gate_type == GateType::CCZ {
+                        sim.h(&[target]);
+                    }
                 }
             }
 
             // Rotation gates
             GateType::RZ => {
-                if !cmd.angles.is_empty() {
-                    sim.rz(cmd.angles[0], &cmd.qubits);
-                }
+                sim.rz(cmd.angles[0], &cmd.qubits);
             }
             GateType::RX => {
-                if !cmd.angles.is_empty() {
-                    sim.rx(cmd.angles[0], &cmd.qubits);
-                }
+                sim.rx(cmd.angles[0], &cmd.qubits);
             }
             GateType::RY => {
-                if !cmd.angles.is_empty() {
-                    sim.ry(cmd.angles[0], &cmd.qubits);
-                }
+                sim.ry(cmd.angles[0], &cmd.qubits);
             }
             GateType::RZZ => {
-                if !cmd.angles.is_empty() {
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.rzz(cmd.angles[0], pairs);
-                    });
-                }
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.rzz(cmd.angles[0], pairs);
+                });
             }
             GateType::RXX => {
-                if !cmd.angles.is_empty() {
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.rxx(cmd.angles[0], pairs);
-                    });
-                }
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.rxx(cmd.angles[0], pairs);
+                });
             }
             GateType::RYY => {
-                if !cmd.angles.is_empty() {
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.ryy(cmd.angles[0], pairs);
-                    });
-                }
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.ryy(cmd.angles[0], pairs);
+                });
             }
-            GateType::CRZ => {
-                if !cmd.angles.is_empty() {
-                    let angle = cmd.angles[0];
-                    let half_angle = angle / 2u64;
-                    for qubits in cmd.qubits.as_chunks::<2>().0 {
-                        sim.rz(half_angle, &[qubits[1]]);
-                        sim.cx(&[(qubits[0], qubits[1])]);
-                        sim.rz(-half_angle, &[qubits[1]]);
-                        sim.cx(&[(qubits[0], qubits[1])]);
-                    }
-                }
+            GateType::RXYXY2Q => {
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.rxyxy2q(cmd.angles[0], cmd.angles[1], pairs);
+                });
             }
-            GateType::R1XY => {
-                if cmd.angles.len() >= 2 {
-                    sim.r1xy(cmd.angles[0], cmd.angles[1], &cmd.qubits);
-                }
+            GateType::RXY1Q => {
+                sim.rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits);
             }
             GateType::U => {
-                if cmd.angles.len() >= 3 {
-                    sim.u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
-                }
+                sim.u(cmd.angles[0], cmd.angles[1], cmd.angles[2], &cmd.qubits);
             }
             GateType::RXXRYYRZZ => {
-                if cmd.angles.len() >= 3 {
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs);
-                    });
-                }
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.rxxryyrzz(cmd.angles[0], cmd.angles[1], cmd.angles[2], pairs);
+                });
             }
             GateType::U2q => {
-                if cmd.angles.len() >= 15 {
-                    let before = [
-                        [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
-                        [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
-                    ];
-                    let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
-                    let after = [
-                        [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
-                        [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
-                    ];
-                    with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
-                        sim.u2q(before, interaction, after, pairs);
-                    });
-                }
+                let before = [
+                    [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
+                    [cmd.angles[3], cmd.angles[4], cmd.angles[5]],
+                ];
+                let interaction = [cmd.angles[6], cmd.angles[7], cmd.angles[8]];
+                let after = [
+                    [cmd.angles[9], cmd.angles[10], cmd.angles[11]],
+                    [cmd.angles[12], cmd.angles[13], cmd.angles[14]],
+                ];
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.u2q(before, interaction, after, pairs);
+                });
             }
 
             GateType::MX => {
@@ -607,6 +618,7 @@ fn process_general_message<
                 {
                     cmd_idx += 1;
                     // Lookahead-consumed commands need the guard too.
+                    validate_dispatch_gate(&batch[cmd_idx])?;
                     check_qubit_capacity(
                         batch[cmd_idx].gate_type,
                         &batch[cmd_idx].qubits,
@@ -808,6 +820,17 @@ where
             self.simulator = S::create_with_rng(required_qubits, rng);
         }
     }
+
+    /// Return the state-vector simulator owned by this engine.
+    #[must_use]
+    pub fn simulator(&self) -> &S {
+        &self.simulator
+    }
+
+    /// Return the mutable state-vector simulator owned by this engine.
+    pub fn simulator_mut(&mut self) -> &mut S {
+        &mut self.simulator
+    }
 }
 
 /// Type alias for state vector engine using the default `StateVec` simulator
@@ -870,6 +893,7 @@ where
         let mut cmd_idx = 0;
         while cmd_idx < batch.len() {
             let cmd = &batch[cmd_idx];
+            validate_dispatch_gate(cmd)?;
             match cmd.gate_type {
                 GateType::X => {
                     debug!("Processing X gate on qubits {:?}", cmd.qubits);
@@ -976,9 +1000,6 @@ where
                             cmd.qubits.len()
                         )));
                     }
-                    if cmd.angles.is_empty() {
-                        return Err(quantum_error("RZZ gate requires at least one angle"));
-                    }
                     let angle = cmd.angles[0];
                     debug!("Processing RZZ gate on qubits {:?}", cmd.qubits);
                     let pairs = flat_to_pairs(&cmd.qubits);
@@ -1077,31 +1098,17 @@ where
                     let pairs = flat_to_pairs(&cmd.qubits);
                     self.simulator.swap(&pairs);
                 }
-                GateType::CRZ => {
-                    if cmd.qubits.len() % 2 != 0 {
-                        return Err(quantum_error(format!(
-                            "CRZ gate requires even number of qubits, got {}",
-                            cmd.qubits.len()
-                        )));
-                    }
-                    if cmd.angles.is_empty() {
-                        return Err(quantum_error("CRZ gate requires at least one angle"));
-                    }
-                    let angle = cmd.angles[0];
-                    let half_angle = angle / 2u64;
-                    // CRZ(θ) = Rz(θ/2) on target, CX, Rz(-θ/2) on target, CX
-                    for qubits in cmd.qubits.as_chunks::<2>().0 {
-                        debug!(
-                            "Processing CRZ gate on qubits {:?} and {:?} with angle {:?}",
-                            qubits[0], qubits[1], angle
+                GateType::CS | GateType::CSdg => {
+                    for &[a, b] in cmd.qubits.as_chunks::<2>().0 {
+                        apply_controlled_s(
+                            &mut self.simulator,
+                            a,
+                            b,
+                            cmd.gate_type == GateType::CSdg,
                         );
-                        self.simulator.rz(half_angle, &[qubits[1]]);
-                        self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        self.simulator.rz(-half_angle, &[qubits[1]]);
-                        self.simulator.cx(&[(qubits[0], qubits[1])]);
                     }
                 }
-                GateType::CCX => {
+                GateType::CCX | GateType::CCZ => {
                     if cmd.qubits.len() % 3 != 0 {
                         return Err(quantum_error(format!(
                             "CCX gate requires a multiple of 3 qubits, got {}",
@@ -1118,6 +1125,9 @@ where
                         let c1 = qubits[1];
                         let target = qubits[2];
                         // Standard decomposition (15 gates)
+                        if cmd.gate_type == GateType::CCZ {
+                            self.simulator.h(&[target]);
+                        }
                         self.simulator.h(&[target]);
                         self.simulator.cx(&[(c1, target)]);
                         self.simulator.tdg(&[target]);
@@ -1133,48 +1143,53 @@ where
                         self.simulator.t(&[c0]);
                         self.simulator.tdg(&[c1]);
                         self.simulator.cx(&[(c0, c1)]);
+                        if cmd.gate_type == GateType::CCZ {
+                            self.simulator.h(&[target]);
+                        }
                     }
                 }
                 GateType::RX => {
-                    if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0];
-                        debug!(
-                            "Processing RX gate with angle {angle:?} on qubits {:?}",
-                            cmd.qubits
-                        );
-                        self.simulator.rx(angle, &cmd.qubits);
-                    }
+                    let angle = cmd.angles[0];
+                    debug!(
+                        "Processing RX gate with angle {angle:?} on qubits {:?}",
+                        cmd.qubits
+                    );
+                    self.simulator.rx(angle, &cmd.qubits);
                 }
                 GateType::RY => {
-                    if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0];
-                        debug!(
-                            "Processing RY gate with angle {angle:?} on qubits {:?}",
-                            cmd.qubits
-                        );
-                        self.simulator.ry(angle, &cmd.qubits);
-                    }
+                    let angle = cmd.angles[0];
+                    debug!(
+                        "Processing RY gate with angle {angle:?} on qubits {:?}",
+                        cmd.qubits
+                    );
+                    self.simulator.ry(angle, &cmd.qubits);
                 }
                 GateType::RZ => {
-                    if !cmd.angles.is_empty() {
-                        let angle = cmd.angles[0];
-                        debug!(
-                            "Processing RZ gate with angle {angle:?} on qubits {:?}",
-                            cmd.qubits
-                        );
-                        self.simulator.rz(angle, &cmd.qubits);
-                    }
+                    let angle = cmd.angles[0];
+                    debug!(
+                        "Processing RZ gate with angle {angle:?} on qubits {:?}",
+                        cmd.qubits
+                    );
+                    self.simulator.rz(angle, &cmd.qubits);
                 }
-                GateType::R1XY => {
-                    if cmd.angles.len() >= 2 {
-                        let theta = cmd.angles[0];
-                        let phi = cmd.angles[1];
-                        debug!(
-                            "Processing R1XY gate with angles theta={theta:?}, phi={phi:?} on qubits {:?}",
-                            cmd.qubits
-                        );
-                        self.simulator.r1xy(theta, phi, &cmd.qubits);
+                GateType::RXYXY2Q => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXYXY2Q gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
                     }
+                    let pairs = flat_to_pairs(&cmd.qubits);
+                    self.simulator.rxyxy2q(cmd.angles[0], cmd.angles[1], &pairs);
+                }
+                GateType::RXY1Q => {
+                    let theta = cmd.angles[0];
+                    let phi = cmd.angles[1];
+                    debug!(
+                        "Processing RXY1Q gate with angles theta={theta:?}, phi={phi:?} on qubits {:?}",
+                        cmd.qubits
+                    );
+                    self.simulator.rxy1q(theta, phi, &cmd.qubits);
                 }
 
                 // Batch consecutive MZ commands into one simulator call.
@@ -1196,6 +1211,7 @@ where
                         )
                     {
                         cmd_idx += 1;
+                        validate_dispatch_gate(&batch[cmd_idx])?;
                         mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                     }
 
@@ -1240,9 +1256,6 @@ where
                             cmd.qubits.len()
                         )));
                     }
-                    if cmd.angles.is_empty() {
-                        return Err(quantum_error("RXX gate requires at least one angle"));
-                    }
                     let angle = cmd.angles[0];
                     debug!("Processing RXX gate on qubits {:?}", cmd.qubits);
                     let pairs = flat_to_pairs(&cmd.qubits);
@@ -1254,9 +1267,6 @@ where
                             "RYY gate requires even number of qubits, got {}",
                             cmd.qubits.len()
                         )));
-                    }
-                    if cmd.angles.is_empty() {
-                        return Err(quantum_error("RYY gate requires at least one angle"));
                     }
                     let angle = cmd.angles[0];
                     debug!("Processing RYY gate on qubits {:?}", cmd.qubits);
@@ -1284,16 +1294,14 @@ where
                     }
                 }
                 GateType::U => {
-                    if cmd.angles.len() >= 3 {
-                        let theta = cmd.angles[0];
-                        let phi = cmd.angles[1];
-                        let lambda = cmd.angles[2];
-                        debug!(
-                            "Processing U gate with angles theta={theta:?}, phi={phi:?}, lambda={lambda:?} on qubits {:?}",
-                            cmd.qubits
-                        );
-                        self.simulator.u(theta, phi, lambda, &cmd.qubits);
-                    }
+                    let theta = cmd.angles[0];
+                    let phi = cmd.angles[1];
+                    let lambda = cmd.angles[2];
+                    debug!(
+                        "Processing U gate with angles theta={theta:?}, phi={phi:?}, lambda={lambda:?} on qubits {:?}",
+                        cmd.qubits
+                    );
+                    self.simulator.u(theta, phi, lambda, &cmd.qubits);
                 }
                 GateType::RXXRYYRZZ => {
                     if cmd.qubits.len() % 2 != 0 {
@@ -1301,11 +1309,6 @@ where
                             "RXXRYYRZZ gate requires even number of qubits, got {}",
                             cmd.qubits.len()
                         )));
-                    }
-                    if cmd.angles.len() < 3 {
-                        return Err(quantum_error(
-                            "RXXRYYRZZ gate requires 3 angles (alpha, beta, gamma)",
-                        ));
                     }
                     let alpha = cmd.angles[0];
                     let beta = cmd.angles[1];
@@ -1320,9 +1323,6 @@ where
                             "U2q gate requires even number of qubits, got {}",
                             cmd.qubits.len()
                         )));
-                    }
-                    if cmd.angles.len() < 15 {
-                        return Err(quantum_error("U2q gate requires 15 angles"));
                     }
                     let before = [
                         [cmd.angles[0], cmd.angles[1], cmd.angles[2]],
@@ -1881,4 +1881,149 @@ pub fn new_stabilizer_engine(num_qubits: usize) -> Box<dyn QuantumEngine> {
 #[must_use]
 pub fn new_stabilizer_engine_with_seed(num_qubits: usize, seed: u64) -> Box<dyn QuantumEngine> {
     Box::new(SparseStabEngine::with_seed(num_qubits, seed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::byte_message::ByteMessageBuilder;
+    use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn diagonal_gates_are_exact_in_both_engine_dispatchers() {
+        for gt in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let n = gt.quantum_arity();
+            let qubits: Vec<_> = (0..n).map(QubitId).collect();
+            for input in 0..=(1 << n) {
+                let mut prep = ByteMessage::quantum_operations_builder();
+                if input == 1 << n {
+                    prep.h(&(0..n).collect::<Vec<_>>());
+                } else {
+                    for &q in &qubits {
+                        if input & (1 << q.index()) != 0 {
+                            prep.x(&[q.index()]);
+                        }
+                    }
+                }
+                let prep = prep.build();
+                let mut engine = DenseStateVecEngine::new(n);
+                engine.process(prep.clone()).unwrap();
+                let mut expected = engine.simulator.state().clone();
+                let last = &mut expected[(1 << n) - 1];
+                let (re, im) = (last.re, last.im);
+                (last.re, last.im) = match gt {
+                    GateType::CS => (-im, re),
+                    GateType::CSdg => (im, -re),
+                    _ => (-re, -im),
+                };
+                let mut message = ByteMessage::quantum_operations_builder();
+                message.add_gate_command(&Gate::simple(gt, qubits.clone()));
+                let message = message.build();
+                engine.process(message.clone()).unwrap();
+                let mut general = StabVec::new(n);
+                process_general_message(&mut general, &prep).unwrap();
+                process_general_message(&mut general, &message).unwrap();
+                for state in [engine.simulator.state().clone(), general.state_vector()] {
+                    for (a, b) in state.iter().zip(&expected) {
+                        assert!((*a - *b).norm() < 1e-13, "{gt}, input {input}: {a} != {b}");
+                    }
+                }
+                assert!(SparseStabEngine::new(n).process(message).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_validation_uses_exact_core_angle_arity() {
+        let mut missing = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        missing.angles.clear();
+        let err = validate_dispatch_gate(&missing).expect_err("missing angle must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 0")
+        );
+
+        let mut surplus = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        surplus.angles.push(Angle64::ZERO);
+        let err = validate_dispatch_gate(&surplus).expect_err("surplus angle must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 2")
+        );
+    }
+
+    #[test]
+    fn byte_message_engine_executes_conventional_t_amplitudes() {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.h(&[0]).t(&[0]);
+
+        let mut engine = DenseStateVecEngine::new(1);
+        engine.process(builder.build()).unwrap();
+        let state = engine.simulator.state();
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.5, 0.5)];
+
+        for (actual, (expected_re, expected_im)) in state.iter().zip(expected) {
+            assert!(
+                (actual.re - expected_re).abs() < 1e-14 && (actual.im - expected_im).abs() < 1e-14,
+                "actual {actual:?}, expected ({expected_re}, {expected_im})"
+            );
+        }
+    }
+
+    fn state_after_phase_gates(gates: impl FnOnce(&mut ByteMessageBuilder)) -> Vec<(f64, f64)> {
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.h(&[0]);
+        gates(&mut builder);
+
+        let mut engine = DenseStateVecEngine::new(1);
+        engine.process(builder.build()).unwrap();
+        engine
+            .simulator
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    fn assert_amplitudes_equal(actual: &[(f64, f64)], expected: &[(f64, f64)], context: &str) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert!(
+                (actual.0 - expected.0).abs() < 1e-14 && (actual.1 - expected.1).abs() < 1e-14,
+                "{context}, basis {index}: actual={actual:?}, expected={expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_message_engine_executes_t_squared_as_exact_s() {
+        let t_squared = state_after_phase_gates(|builder| {
+            builder.t(&[0]).t(&[0]);
+        });
+        let s = state_after_phase_gates(|builder| {
+            builder.sz(&[0]);
+        });
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.0, FRAC_1_SQRT_2)];
+
+        assert_amplitudes_equal(&t_squared, &expected, "T^2 literal amplitudes");
+        assert_amplitudes_equal(&s, &expected, "S literal amplitudes");
+        assert_amplitudes_equal(&t_squared, &s, "T^2 == S");
+    }
+
+    #[test]
+    fn byte_message_engine_executes_tdg_squared_as_exact_sdg() {
+        let tdg_squared = state_after_phase_gates(|builder| {
+            builder.tdg(&[0]).tdg(&[0]);
+        });
+        let sdg = state_after_phase_gates(|builder| {
+            builder.szdg(&[0]);
+        });
+        let expected = [(FRAC_1_SQRT_2, 0.0), (0.0, -FRAC_1_SQRT_2)];
+
+        assert_amplitudes_equal(&tdg_squared, &expected, "Tdg^2 literal amplitudes");
+        assert_amplitudes_equal(&sdg, &expected, "Sdg literal amplitudes");
+        assert_amplitudes_equal(&tdg_squared, &sdg, "Tdg^2 == Sdg");
+    }
 }

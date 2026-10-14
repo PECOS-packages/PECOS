@@ -1,0 +1,1750 @@
+# Surface Code Gadgets
+
+Each surface-code gadget has one physical definition and two renderings:
+`TickCircuit` for circuit analysis and Guppy source for compiled execution.
+Preparation, syndrome extraction, readout, and gates share the same step lists.
+
+## The patch
+
+Start with geometry, then allocate registers. The default allocation places data
+first, followed by dedicated X-check and Z-check ancillas in stabilizer-index
+order. A rotated distance-3 patch has 9 data qubits and 4 ancillas per family.
+
+```python
+from pecos.qec.surface import SurfacePatch, gadgets
+
+patch = SurfacePatch.create(distance=3)
+allocation = gadgets.default_allocation(patch)
+assert (patch.dx, patch.dz, patch.rotated) == (3, 3, True)
+assert allocation.data_qubits == list(range(9))
+assert allocation.x_ancilla_qubits == list(range(9, 13))
+assert allocation.z_ancilla_qubits == list(range(13, 17))
+rectangle = SurfacePatch.create(dx=3, dz=5, rotated=True)
+assert (rectangle.dx, rectangle.dz) == (3, 5)
+```
+
+Rotated square and rectangular patches are supported throughout the
+single-patch routes. Fold-transversal SZ requires a square rotated patch
+with distance at least 2.
+The non-rotated layout renders standalone with a
+serialised CX layer and is rejected by the builder. All tick counts on this
+page are for the rotated layout.
+Transversal H requires a square patch. CX requires identical static geometry,
+disjoint allocations, and the same current X/Z orientation on both patches;
+the builder checks orientation, while the standalone gadget does not.
+The logical builder requires even-weight checks. The protocol module accepts
+only odd square rotated patches with distance at least 3.
+
+Y product preparation renders at any distance, but the teleportation helper
+requires both ancilla dimensions to be odd; the [Y preparation example](#preparation-in-y)
+explains the projected state and shows both odd- and even-distance preparation.
+
+Run the setup below before the gadget examples. Default `TickCircuitRenderer`
+detector annotations are a memory-experiment template, valid only for a full
+memory circuit; use the builder's annotations for builder programs. Disable
+the template when rendering a lone gadget.
+
+<!--setup-->
+```python
+from pecos.qec.surface import SurfacePatch, LogicalCircuitBuilder, gadgets
+from pecos.qec.surface.circuit_builder import TickCircuitRenderer, QubitAllocation
+from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
+
+patch = SurfacePatch.create(distance=3)
+allocation = gadgets.default_allocation(patch)
+
+
+def render_tick(gadget):
+    return TickCircuitRenderer(add_detectors=False).render(
+        list(gadget.steps), allocation, patch, 0, gadget.basis or "Z"
+    )
+```
+
+The builder rejects the non-rotated layout during circuit generation:
+
+```python
+non_rotated = SurfacePatch.create(distance=3, rotated=False)
+builder = LogicalCircuitBuilder()
+builder.add_patch(non_rotated, "D")
+builder.add_memory("D", 1, "Z")
+try:
+    builder.to_tick_circuit()
+except ValueError as error:
+    assert "repeated CX on qubit 3 in a parallel layer" in str(error)
+else:
+    raise AssertionError("Non-rotated builder circuit was accepted")
+```
+
+## The gadget library
+
+`Gadget` is a frozen dataclass with `kind`, `name`, `steps`, `allocations`,
+`dimensions`, `basis`, `x_z_swapped`, and `fold` (`"SZ"`, `"SZdg"`, or `None`). Its steps are `SurfaceCircuitStep`
+operations.
+All single-patch functions below take `patch, allocation` first unless shown
+otherwise. `round_order=None` uses the default schedule.
+
+| Function and remaining parameters | `GadgetKind` | Effect | Guppy sideband tags |
+|---|---|---|---|
+| `prep_gadget(..., basis=)` | `PREP` | Product preparation in Z, X, or Y; projection follows separately | None |
+| `init_syndrome_gadget(..., basis=, round_order=None, x_z_swapped=False, ancilla_budget=None, ancilla_schedule=None)` | `INIT_SYNDROME` | Project the complementary family after Z or X preparation | `<label>:init:meas:<ordinal>` |
+| `syndrome_round_gadget(..., round_index=, round_order=None, x_z_swapped=False, ancilla_budget=None, ancilla_schedule=None)` | `SYNDROME_ROUND` | Measure both check families | `<label>:meas:<ordinal>` |
+| `fold_sz_round_gadget(..., round_index=, x_z_swapped=False, dagger=False)` | `SYNDROME_ROUND` | Logical SZ or SZdg within the default round | `<label>:meas:<ordinal>` |
+| `measure_out_gadget(..., basis=)` | `MEASURE_OUT` | Destructive Z or X data measurement | None; returns an array |
+| `logical_pauli_gadget(..., pauli=)` | `LOGICAL_PAULI` | Apply the geometry's logical X or Z string | None |
+| `transversal_layer_gadget(..., gate=)` | `TRANSVERSAL` | H exchanges X/Z orientation; SZ and SZDG are physical SZ layers | None |
+| `transversal_cx_gadget(ctrl_patch, ctrl_allocation, tgt_patch, tgt_allocation)` | `TWO_PATCH` | CX between corresponding data indices | None |
+| `memory_gadgets(patch, num_rounds, basis, allocation=None, round_order=None, ancilla_budget=None, ancilla_schedule=None)` | List of gadget kinds | Z/X prep, initial projection, full rounds, readout | Constituent gadget tags |
+
+During generation the builder toggles its tracked orientation after a
+transversal H; standalone callers track orientation themselves and pass it to
+later rounds. The orientation belongs to the builder's patch state, not to
+`SurfacePatch` itself.
+`tag_scope="a"` prefixes tags with `a:`; a swapped gadget adds `swapped:` after
+that scope. Labels identify physical register slots, while returned syndrome
+arrays follow the current X/Z families. Ordinals start at zero within each
+function invocation.
+On square patches where the two families have unequal sizes, swapped rounds return
+`Syndrome_<dx>x<dz>_swapped`; the memory module supplies both orientation types.
+
+### Memory composition
+
+For background on the memory cycle in the unrotated planar code, see Fowler,
+Mariantoni, Martinis, and Cleland, [arXiv:1208.0928](https://arxiv.org/abs/1208.0928).
+For background on rotated patches and four-layer CX schedules, see Tomita and
+Svore, *Low-distance surface codes under realistic quantum noise*,
+[arXiv:1404.3747](https://arxiv.org/abs/1404.3747), and Horsman, Fowler, Devitt
+and Van Meter, *Surface code quantum computing by lattice surgery*,
+[arXiv:1111.4022](https://arxiv.org/abs/1111.4022).
+`memory_gadgets` returns gadgets and emits nothing. The memory factories
+`make_memory_z` and `make_memory_x` in `render_surface_gadget_module` emit
+scalar `final:meas:<index>` tags and aggregate `init_synx`/`init_synz`,
+`synx`/`synz`, and `final` outputs in addition to the constituent gadget tags.
+A distance-3 Z memory with three rounds takes 34 ticks and makes 37 measurements.
+
+```python
+parts = gadgets.memory_gadgets(patch, 3, "Z")
+assert len(parts) == 6
+steps = [step for gadget in parts for step in gadget.steps]
+tc = TickCircuitRenderer().render(steps, allocation, patch, 3, "Z")
+assert tc.num_measurements() == 37
+assert tc.num_ticks() == 34
+```
+
+`ancilla_budget` caps live ancillas without changing data-qubit lifetimes.
+`None` keeps dedicated ancillas. With a smaller budget, each batch allocates
+pool slots, rotates its X ancillas, runs the four CX layers filtered to its
+stabilizers, rotates back, measures, and ticks before the next allocation.
+`ancilla_schedule` selects `"default"` or `"balanced-data-v1"` using the shared
+batching contract. An explicit `QubitAllocation` must map stabilizers to pool
+slots for the same budget and schedule; `default_allocation` accepts both.
+The Guppy module derives its batching schedule from the CX `check_plan`;
+the gadget API takes `ancilla_budget` and `ancilla_schedule` separately.
+Returned syndrome arrays retain stabilizer-index order, while
+scalar tag ordinals follow the physical measurement order.
+
+```python
+from pecos.guppy_gen import get_num_qubits
+
+budgeted = gadgets.memory_gadgets(patch, 2, "Z", ancilla_budget=2)
+budget_allocation = budgeted[0].allocations[0]
+assert budget_allocation.data_qubits == allocation.data_qubits
+budget_tc = TickCircuitRenderer().render(
+    [step for part in budgeted for step in part.steps], budget_allocation, patch, 2, "Z"
+)
+assert budget_tc.num_ticks() == 94
+assert budget_tc.num_measurements() == 29
+live = set()
+peak = 0
+for tick_index in range(budget_tc.num_ticks()):
+    for gate in budget_tc.get_tick(tick_index).gate_batches():
+        if gate.gate_type.name == "QAlloc":
+            assert not live.intersection(gate.qubits)
+            live.update(gate.qubits)
+            peak = max(peak, len(live))
+        elif gate.gate_type.name == "MeasureFree":
+            live.difference_update(gate.qubits)
+assert peak == get_num_qubits(3, ancilla_budget=2) == 11
+```
+
+```python
+source = render_surface_gadget_module(patch)
+assert "def make_memory_z" in source
+assert "def make_memory_x" in source
+```
+
+### Certified Guppy memory
+
+`make_surface_memory` accepts a `SurfacePatch` and returns a compiled
+gadget memory definition with a program-bound measurement-layout certificate.
+Memory modules require nonempty X and Z stabilizer families because Guppy
+cannot infer the type of the empty syndrome arrays emitted otherwise.
+Its layout comes from the gadget steps, including batch order when ancillas are
+reused. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
+`DetectorErrorModel.from_guppy` need this certificate for programs whose compiled
+form contains loops or conditionals. The abstract-circuit route and the builder
+route (`LogicalCircuitBuilder.to_tick_circuit()` then
+`DetectorErrorModel.from_circuit`) do not need a certificate.
+
+```python
+from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+
+memory_patch = SurfacePatch.create(distance=3)
+memory_circuit = generate_tick_circuit_from_patch(memory_patch, 2, "Z", ancilla_budget=2)
+dem_options = dict(
+    num_qubits=get_num_qubits(patch=memory_patch, ancilla_budget=2),
+    detectors_json=memory_circuit.get_meta("detectors"),
+    observables_json=memory_circuit.get_meta("observables"),
+    p1=0.001,
+    p2=0.001,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+gadget_memory = make_surface_memory(memory_patch, 2, "Z", ancilla_budget=2)
+legacy_memory = make_surface_code(3, 2, "Z", ancilla_budget=2)
+gadget_dem = DetectorErrorModel.from_guppy(gadget_memory, **dem_options)
+legacy_dem = DetectorErrorModel.from_guppy(legacy_memory, **dem_options)
+assert gadget_dem.to_string() == legacy_dem.to_string()
+```
+
+### Preparation in Z
+
+`basis="Z"` prepares each data qubit in |0>. Z checks are initially fixed;
+X projection establishes the complementary signs. At distance 3, preparation
+in Z is one tick of nine preparations, with no measurements.
+
+```python
+gadget = gadgets.prep_gadget(patch, allocation, basis="Z")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 1
+assert tc.num_measurements() == 0
+assert tc.get_meta("detectors") is None
+```
+
+```python
+gadget = gadgets.prep_gadget(patch, allocation, basis="Z")
+lines = render_gadget_function(gadget)
+assert "    data = array(qubit() for _ in range(9))" in lines
+```
+
+```text
+@guppy
+def prep_z_basis() -> SurfaceCode_3x3:
+    """Prepare logical |0_L> state."""
+    data = array(qubit() for _ in range(9))
+    return SurfaceCode_3x3(data)
+```
+
+### Preparation in X
+
+`basis="X"` applies H to every newly allocated data qubit, preparing |+>.
+X checks are initially fixed; Z projection follows. At distance 3, preparation
+in X takes two ticks and makes no measurements.
+
+```python
+gadget = gadgets.prep_gadget(patch, allocation, basis="X")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 2
+assert tc.num_measurements() == 0
+```
+
+```python
+gadget = gadgets.prep_gadget(patch, allocation, basis="X")
+lines = render_gadget_function(gadget)
+assert "        h(data[i])" in lines
+```
+
+```text
+@guppy
+def prep_x_basis() -> SurfaceCode_3x3:
+    """Prepare logical |+_L> state."""
+    data = array(qubit() for _ in range(9))
+    for i in range(9):
+        h(data[i])
+    return SurfaceCode_3x3(data)
+```
+
+### Preparation in Y
+
+`basis="Y"` applies H then physical SZ on every data qubit. Neither check
+family is initially deterministic. The projected state carries logical Y only
+for odd `dx` and `dz`; its sign depends on syndrome outcomes. On an even square
+patch, the all-X product is a stabilizer and the projected state has no logical-Y
+content, although the preparation gadget still renders.
+`add_sz_via_teleportation` requires both ancilla dimensions to be odd. Preparation in Y takes
+three ticks and makes no measurements at distances 3 and 4. The builder
+rejects the distance-4 ancilla for S teleportation.
+
+```python
+gadget = gadgets.prep_gadget(patch, allocation, basis="Y")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 3
+assert tc.num_measurements() == 0
+
+p4 = SurfacePatch.create(distance=4)
+a4 = gadgets.default_allocation(p4)
+y4 = gadgets.prep_gadget(p4, a4, basis="Y")
+tc4 = TickCircuitRenderer(add_detectors=False).render(list(y4.steps), a4, p4, 0, "Y")
+assert tc4.num_ticks() == 3
+assert tc4.num_measurements() == 0
+assert "        s(data[i])" in render_gadget_function(y4)
+builder = LogicalCircuitBuilder()
+builder.add_patch(p4, "D")
+builder.add_patch(p4, "A", qubit_offset=p4.geometry.num_qubits)
+try:
+    builder.add_sz_via_teleportation("D", "A", 2, 2)
+except ValueError as error:
+    assert str(error) == "Teleportation ancilla 'A' requires odd dx and dz for encoded logical-Y content"
+else:
+    raise AssertionError("Even-distance teleportation ancilla was accepted")
+```
+
+```python
+gadget = gadgets.prep_gadget(patch, allocation, basis="Y")
+lines = render_gadget_function(gadget)
+assert "        h(data[i])" in lines
+assert "        s(data[i])" in lines
+```
+
+```text
+@guppy
+def prep_y_basis() -> SurfaceCode_3x3:
+    """Prepare logical |+i_L> state."""
+    data = array(qubit() for _ in range(9))
+    for i in range(9):
+        h(data[i])
+    for i in range(9):
+        s(data[i])
+    return SurfaceCode_3x3(data)
+```
+
+### Initial syndrome projection
+
+`basis="Z"` measures X checks; `basis="X"` measures Z checks. `round_order`
+selects the CX schedule and `x_z_swapped` selects the orientation. This separate
+projection belongs to the memory module, not the protocol factories. At
+distance 3, Z-basis initialization takes eight ticks and measures four ancillas;
+X-basis initialization takes six ticks and also measures four ancillas. These
+counts hold in either orientation.
+The Guppy excerpt shows the first CX layer and the complete readout tail;
+ancilla allocation, Hadamards, and the other CX layers are omitted.
+
+```python
+gadget = gadgets.init_syndrome_gadget(patch, allocation, basis="Z")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 8
+assert tc.num_measurements() == 4
+
+for basis in ("Z", "X"):
+    for swapped in (False, True):
+        gadget = gadgets.init_syndrome_gadget(patch, allocation, basis=basis, x_z_swapped=swapped)
+        tc = render_tick(gadget)
+        assert tc.num_ticks() == (8 if basis == "Z" else 6)
+        assert tc.num_measurements() == 4
+        lines = render_gadget_function(gadget, tag_scope="a")
+        assert sum('output("a:' in line for line in lines) == 4
+```
+
+```python
+gadget = gadgets.init_syndrome_gadget(patch, allocation, basis="Z")
+lines = render_gadget_function(gadget)
+assert '    output("sx0:init:meas:0", sx0)' in lines
+```
+
+```text
+...
+@guppy
+def init_z_basis(surf: SurfaceCode_3x3) -> array[bool, 4]:
+    ...
+    cx(ax1, surf.data[2])
+    cx(ax2, surf.data[4])
+    cx(ax3, surf.data[8])
+    ...
+    sx0 = measure(ax0).read()
+    output("sx0:init:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("sx1:init:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("sx2:init:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("sx3:init:meas:3", sx3)
+
+    return array(sx0, sx1, sx2, sx3)
+```
+
+### Syndrome round
+
+`round_index` is zero-based. It labels the step list and `TickCircuit` round metadata only.
+Guppy output tags carry no round index and repeat across invocations.
+`round_order` selects the schedule. Set `x_z_swapped=True` after one transversal
+H to reverse CX directions and exchange which ancillas receive H. At distance 3, a syndrome
+round takes eight ticks and makes eight measurements in either orientation.
+The Guppy excerpt shows the first CX layer, the last ancilla readout, and
+the returned syndrome arrays; allocation and intermediate operations are omitted.
+
+```python
+gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
+tc = render_tick(gadget)
+assert tc.num_ticks() == 8
+assert tc.num_measurements() == 8
+
+for swapped in (False, True):
+    gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=1, x_z_swapped=swapped)
+    tc = render_tick(gadget)
+    assert tc.num_ticks() == 8
+    assert tc.num_measurements() == 8
+    assert sum('output("' in line for line in render_gadget_function(gadget)) == 8
+```
+
+```python
+gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
+lines = render_gadget_function(gadget)
+assert '    output("swapped:sz0:meas:0", sz0)' in lines
+assert "    synx = array(sz0, sz1, sz2, sz3)" in lines
+```
+
+```text
+...
+@guppy
+def syndrome_extraction_swapped(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    ...
+    cx(az0, surf.data[3])
+    cx(surf.data[2], ax1)
+    cx(az1, surf.data[1])
+    cx(surf.data[4], ax2)
+    cx(az2, surf.data[5])
+    cx(surf.data[8], ax3)
+    ...
+    sx3 = measure(ax3).read()
+    output("swapped:sx3:meas:7", sx3)
+
+    synx = array(sz0, sz1, sz2, sz3)
+    synz = array(sx0, sx1, sx2, sx3)
+
+    return Syndrome_3x3(synx, synz)
+```
+
+### Fold-transversal SZ
+
+`fold_sz_round_gadget` inserts one disjoint gate layer after CX layer 2 of the
+default syndrome round. Cartesian transpose `(x, y) -> (y, x)` pairs data and
+bulk ancillas for CZ. Along the diagonal, data coordinates are odd and bulk
+ancilla coordinates are even, so SZ on data and SZdg on ancillas alternate.
+Exterior ancillas are untouched. Square rotated patches with distance at least 2
+are supported, including even distances. Set `dagger=True` to reverse every fixed-point phase, or
+`x_z_swapped=True` for the current orientation after transversal H.
+
+The exact round flow is `X_L -> +Y_L * product(current Z checks)` and
+`Z_L -> Z_L`, where `+Y_L = i X_L Z_L`. This uses SparseStab's `Y = iXZ`
+convention and PECOS `SZ = diag(1, i)`. For an X-prepared patch, the output
+logical Y sign is the parity of this round's Z outcomes: even gives +Y and odd
+gives -Y. The dagger variant reverses that sign.
+
+X records also carry Z-check information. On input, a bottom-row bulk X
+ancilla measures its X check times the left-boundary Z check at `(0, x_j)`; other
+X records measure bare checks. On output, X record j together with the Z
+record at `(y_j + 2, x_j)` certifies X check j (coordinates are `(x, y)`). Without that partner, the X
+record alone certifies the check. These coordinates use the current frame,
+transposed after transversal H.
+
+Under circuit noise the X-sector fault distance is reduced because a Y fault
+before the fold becomes a Z pair on a mirror pair. In their benchmark with
+separated S rounds, Chen, Chen, Lu and Pan observe two to three times the
+memory's logical error rate; see [arXiv:2412.01391](https://arxiv.org/abs/2412.01391).
+For the half-cycle description see McEwen, Bacon and Gidney,
+[arXiv:2302.02192](https://arxiv.org/abs/2302.02192).
+
+The fold has `d(d-1)/2` data CZ pairs and `(d-1)(d-2)/2` bulk-ancilla CZ
+pairs, totaling `(d-1)^2`, plus d data and d-1 ancilla fixed points. At
+distance 3 the complete round takes nine ticks and makes eight measurements,
+one tick more than the default round. The Tick and Stim renderers refuse
+detector annotation for this standalone gadget. Use `LogicalCircuitBuilder.add_logical_sz`
+for circuits with fold-aware detectors and observables.
+
+```python
+gadget = gadgets.fold_sz_round_gadget(patch, allocation, round_index=0)
+tc = render_tick(gadget)
+assert tc.num_ticks() == 9
+assert tc.num_measurements() == 8
+assert {gate.gate_type.name for gate in tc.get_tick(4).gate_batches()} == {"CZ", "SZ", "SZdg"}
+assert tc.get_meta("detectors") is None
+
+from pecos.qec.surface.circuit_builder import OpType
+
+d = patch.dx
+fold_ops = [step for step in gadget.steps if step.op_type in {OpType.CZ, OpType.SZ, OpType.SZDG}]
+data = set(allocation.data_qubits)
+cz_pairs = [step.qubits for step in fold_ops if step.op_type == OpType.CZ]
+fixed_points = [step.qubits[0] for step in fold_ops if step.op_type != OpType.CZ]
+assert sum(a in data for a, b in cz_pairs) == d * (d - 1) // 2
+assert sum(a not in data for a, b in cz_pairs) == (d - 1) * (d - 2) // 2
+assert len(cz_pairs) == (d - 1) ** 2
+assert sum(q in data for q in fixed_points) == d
+assert sum(q not in data for q in fixed_points) == d - 1
+```
+
+The builder models the fold as one syndrome segment. Preparation and final
+readout are explicit memories; either can request zero plain rounds. X-check
+detectors use the fold round's input and output Z partners. A logical Z readout
+passes through unchanged. An X readout crossing one fold is random; an
+SZ then SZdg restores a deterministic X observable whose parity includes
+both fold rounds' Z records. This observable is a frame parity; the descriptor's
+`SZGate` boundary gate carries the logical frame update. The adjacent X-prepared
+pair has fault distance 2 at d=3, while Z memory retains distance 3.
+
+A zero-round final memory reads data immediately after the previous segment.
+Its final checks therefore compare with that segment's last syndrome round,
+including across H. This also fills a detector gap in programs without folds:
+`M(2,Z); M(0,Z)` and `M(2,Z); H; M(0,X)` each have 16 detectors at d=3.
+
+```python
+import json
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+
+for with_h in (False, True):
+    memory = LogicalCircuitBuilder()
+    memory.add_patch(SurfacePatch.create(distance=3), "A")
+    memory.add_memory("A", 2, "Z")
+    if with_h:
+        memory.add_transversal_h("A")
+    memory.add_memory("A", 0, "X" if with_h else "Z")
+    assert len(json.loads(memory.to_tick_circuit().get_meta("detectors"))) == 16
+```
+
+Fold rounds create hyperedges that `build_decoder`'s matching route
+(`LogicalSubgraphDecoder`) skips. Use a hypergraph decoder such as the
+[Tesseract route](decoders.md) for fold circuits.
+
+```python
+import json
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+from pecos.testing import simulate_tick_circuit
+
+fold_builder = LogicalCircuitBuilder()
+fold_builder.add_patch(SurfacePatch.create(distance=3), "D")
+fold_builder.add_memory("D", 1, "Z")
+fold_builder.add_logical_sz("D")
+fold_builder.add_memory("D", 1, "Z")
+fold_tc = fold_builder.to_tick_circuit()
+assert len(json.loads(fold_tc.get_meta("detectors"))) == 24
+assert len(json.loads(fold_tc.get_meta("observables"))) == 1
+for seed in range(8):
+    _, fired, observables = simulate_tick_circuit(fold_tc, seed=seed)
+    assert fired == 0
+    assert observables == {0: 0}
+fold_dem = DetectorErrorModel.from_circuit(fold_tc, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+assert fold_dem.per_observable_fault_distances(3)[0].distance == 3
+```
+
+Use `add_logical_sz("D", dagger=True)` or `add_logical_szdg("D")` for
+SZdg. Both variants emit `SZGate` in the algorithm descriptor because it
+tracks sign-free Pauli frames: both propagate an X frame bit into X and Z.
+
+Observables are defined relative to the noiseless reference, as in Stim.
+Raw parity encodes the sign with which the program's net logical Clifford maps
+the readout Pauli back onto the prepared eigenstate: positive gives 0, negative
+gives 1. With folds it can be 1 noiselessly: SZ,SZ before an X readout, SZ,SZ,H
+before a Z readout, or SZdg pairs through a CX. Stim's reference-relative
+sampling reports zero observable flips for these noiseless programs.
+Observable metadata carries this bit as `reference`.
+`pecos.testing.simulate_tick_circuit` retains raw signed parity for gate-correctness
+checks; its callers must account for the reference.
+`pecos.qec.surface.extract_detection_events_and_observables` applies it and returns
+flipped observable ids, so clean shots have no flips. SZ then SZdg before X
+readout has raw parity 0. A readout with no supported logical image, as under a
+physical SZ layer, produces no observable at all.
+
+```python
+import stim
+from pecos.qec import DetectorErrorModel
+from pecos.testing import simulate_tick_circuit
+from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
+
+for dagger, expected_raw in ((False, 1), (True, 0)):
+    pair = LogicalCircuitBuilder()
+    pair.add_patch(SurfacePatch.create(distance=3), "D")
+    pair.add_memory("D", 1, "X")
+    pair.add_logical_sz("D")
+    pair.add_logical_sz("D", dagger=dagger)
+    pair.add_memory("D", 1, "X")
+    tc_pair = pair.to_tick_circuit()
+    for seed in range(8):
+        _, fired, raw = simulate_tick_circuit(tc_pair, seed=seed)
+        assert fired == 0
+        assert raw == {0: expected_raw}
+    circuit = stim.Circuit(tick_circuit_to_stim(tc_pair))
+    detectors, flips = circuit.compile_detector_sampler(seed=0).sample(256, separate_observables=True)
+    assert not detectors.any()
+    assert not flips.any()
+    dem_pair = DetectorErrorModel.from_circuit(tc_pair, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+    assert dem_pair.per_observable_fault_distances(3)[0].distance == 2
+```
+
+Render the Guppy function independently; the memory module does not include
+it. When assembling a Guppy module, also import `cz`, `s`, and `sdg` from
+`guppylang.std.quantum`. The protocol module provides
+`make_logical_sz_experiment(rounds_before, rounds_after, dagger=False)`.
+
+```python
+gadget = gadgets.fold_sz_round_gadget(patch, allocation, round_index=0)
+lines = render_gadget_function(gadget)
+assert "    cz(az1, az2)" in lines
+assert "    sdg(ax1)" in lines
+assert "    s(surf.data[2])" in lines
+assert "    # fold-transversal SZ layer" in lines
+assert "syndrome_extraction_fold_sz" not in render_surface_gadget_module(patch)
+```
+
+```text
+@guppy
+def syndrome_extraction_fold_sz(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome with the fold-transversal logical SZ between CX layers 2 and 3."""
+    ...
+    # fold-transversal SZ layer
+    s(surf.data[6])
+    cz(surf.data[3], surf.data[7])
+    cz(surf.data[0], surf.data[8])
+    sdg(ax2)
+    cz(az1, az2)
+    s(surf.data[4])
+    cz(surf.data[1], surf.data[5])
+    sdg(ax1)
+    s(surf.data[2])
+    ...
+    return Syndrome_3x3(synx, synz)
+```
+
+#### Y readout
+
+A terminal `add_memory(label, rounds, "Y")` compiles as
+`add_logical_szdg(label)` followed by `add_memory(label, rounds, "X")`:
+the fold precedes the requested rounds. If this is also the patch's first
+segment, a zero-round Y preparation precedes the fold. Surface-code logical Y
+cannot be read out fault-tolerantly by transversal Y measurements: no X or Z check is a
+product of single-qubit Y operators, so per-qubit Y outcomes reveal no check
+value and errors cannot be corrected; see
+[Gidney, arXiv:2302.07395](https://arxiv.org/abs/2302.07395).
+PECOS's SZdg fold followed by X readout measures logical Y with the fold's
+Z-check records included in the parity. Terminal Y is measured in the patch's
+current logical frame, like terminal X and Z; after a transversal H, the
+reported value refers to the swapped frame.
+
+Product-Y preparation followed by Y readout emits no observable. Its encoded
+Y sign is the parity of a solved subset of first-round check records XOR a
+reference bit derived from the logical representatives. SZ teleportation exposes
+that selected subset as `resource_sign_records` and the reference as
+`resource_sign_reference` in its teleportation metadata. It remains a distance-1 quantity:
+a single first-round measurement error flips it.
+At distance 3, zero, one, and two requested rounds give 4, 12, and 20
+deterministic detectors. For one and two rounds, the emitted masks have ranks
+12 and 20, while the full deterministic parity spaces have ranks 13 and 21.
+`surface_memory_dem_spec` has no Y form because product-Y memory has no emitted
+observable.
+
+`to_tick_circuit()` and `build_dem()` succeed for these programs;
+`build_algorithm_descriptor()` raises
+`ValueError: segment 0 (patch 'A') has an empty commit region: a zero-round Y preparation before the Y-readout fold; descriptor commit regions need at least one round`
+when the patch is named A. The pre-check rejects a commit region with zero
+rounds after including the requested look-behind buffer. This also diagnoses
+explicit zero-round memories when their region remains empty; a later
+zero-round memory can be accepted with look-behind, and a non-empty commit
+region may contain zero detectors. Supporting empty commit regions is a follow-up.
+
+No single-patch memory program with only product-basis preparation (X, Y, or Z)
+yields a deterministic Y observable; prepare X and apply a logical SZ fold to
+reach a supported deterministic Y readout. Y-readout folds create hyperedges
+that `build_decoder`'s matching route (`LogicalSubgraphDecoder`) skips; see the
+[fold section's decoder warning](#fold-transversal-sz) and use a hypergraph decoder.
+
+X preparation followed by a logical SZ fold and terminal Y memory emits one
+observable: the final X string plus the Z records of **both** folds. Its
+noiseless parity is zero, reporting the prepared +X logical eigenvalue. After
+the first fold, the logical Y sign depends on that fold's Z-record parity.
+
+<!--test-name: logical_y_readout-->
+```python
+import json
+from pecos.testing import simulate_tick_circuit
+
+builder = LogicalCircuitBuilder()
+builder.add_patch(patch, "A")
+builder.add_memory("A", 1, "X")
+builder.add_logical_sz("A")
+builder.add_memory("A", 1, "Y")
+tc = builder.to_tick_circuit()
+assert len(json.loads(tc.get_meta("observables"))) == 1
+for seed in range(8):
+    _, fired, observables = simulate_tick_circuit(tc, seed)
+    assert fired == 0
+    assert observables == {0: 0}
+```
+
+For this program with one initial memory round and circuit noise
+`p1=p2=p_meas=p_prep=0.001`, measured observable fault distances are:
+
+| Patch distance | Zero rounds after the readout fold | One round after the readout fold |
+| --- | --- | --- |
+| 3 | 2 | 2 |
+| 5 | 3 | 4 |
+
+No fold restrictions surfaced for square rotated patches in the tested round
+grid. The usual fold geometry guards apply; even distances also compile in
+the builder. For shared memory operations, only terminal-Y patches receive
+folds, and all patches retain their shared readout segment. Observable IDs
+advance in the operation's `patches` order, even when a patch emits no
+observable: a first `add_memory(["A", "B"], r, {"A": "Y", "B": "Z"})`
+emits only B's observable, at ID 1. With an initial shared X/Z memory, SZ on A,
+and CX from B to A before that final shared memory, both observables appear
+at IDs 0 (A) and 1 (B), each with noiseless parity zero.
+
+With N terminal-Y patches in a shared memory operation, lowering inserts N
+serialized single-patch fold rounds, so each patch idles through the other
+patches' folds. First-segment patches also receive their individual zero-round
+Y preparations before their folds. A multi-patch fold is a follow-up.
+
+The Guppy protocol module's `make_logical_y_readout_experiment(num_rounds)` renders the
+same X preparation, rounds, SZ fold, SZdg fold, rounds, and X readout.
+
+### Measure-out
+
+`basis="Z"` directly measures data; `basis="X"` applies H first. Both
+consume the patch and return data bits. Y readout is unsupported by this gadget;
+use the builder's [Y readout composition](#y-readout). At distance 3,
+X readout takes two ticks and Z readout takes one; each makes nine measurements.
+
+```python
+gadget = gadgets.measure_out_gadget(patch, allocation, basis="X")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 2
+assert tc.num_measurements() == 9
+
+for basis in ("Z", "X"):
+    gadget = gadgets.measure_out_gadget(patch, allocation, basis=basis)
+    tc = render_tick(gadget)
+    assert tc.num_ticks() == (1 if basis == "Z" else 2)
+    assert tc.num_measurements() == 9
+    assert "    return collect_measurements(measure_array(surf.data))" in render_gadget_function(gadget)
+```
+
+```python
+gadget = gadgets.measure_out_gadget(patch, allocation, basis="X")
+lines = render_gadget_function(gadget)
+assert "    return collect_measurements(measure_array(surf.data))" in lines
+```
+
+```text
+@guppy
+def measure_x_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
+    """Destructively measure in X basis."""
+    for i in range(9):
+        h(surf.data[i])
+    return collect_measurements(measure_array(surf.data))
+```
+
+### Logical Pauli
+
+`pauli="X"` or `pauli="Z"` applies the geometry's string regardless of
+orientation, without measurements or allocation. Apply it in the unswapped
+orientation: after a transversal H, that string is not a logical operator of
+the swapped patch. The protocol factories apply it directly after preparation.
+At distance 3, either string applies three Pauli gates in one tick, with no measurements.
+
+```python
+gadget = gadgets.logical_pauli_gadget(patch, allocation, pauli="X")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 1
+assert tc.num_measurements() == 0
+
+for pauli in ("X", "Z"):
+    gadget = gadgets.logical_pauli_gadget(patch, allocation, pauli=pauli)
+    assert len(gadget.steps) == 3
+    tc = render_tick(gadget)
+    assert tc.num_ticks() == 1
+    assert tc.num_measurements() == 0
+    assert sum(line.strip().startswith(pauli.lower() + "(") for line in render_gadget_function(gadget)) == 3
+```
+
+```python
+gadget = gadgets.logical_pauli_gadget(patch, allocation, pauli="X")
+lines = render_gadget_function(gadget)
+assert "    x(surf.data[0])" in lines
+```
+
+```text
+@guppy
+def apply_logical_x(surf: SurfaceCode_3x3) -> None:
+    """Apply logical X (string along left edge)."""
+    x(surf.data[0])
+    x(surf.data[3])
+    x(surf.data[6])
+```
+
+### Transversal H
+
+`gate="H"` applies H to every data qubit of a square patch and exchanges
+the X/Z orientation. Later standalone extraction needs the updated
+`x_z_swapped` flag. At distance 3, transversal H applies nine gates in one tick,
+with no measurements.
+
+```python
+gadget = gadgets.transversal_layer_gadget(patch, allocation, gate="H")
+tc = render_tick(gadget)
+assert tc.num_ticks() == 1
+assert tc.num_measurements() == 0
+```
+
+```python
+gadget = gadgets.transversal_layer_gadget(patch, allocation, gate="H")
+lines = render_gadget_function(gadget)
+assert "        h(surf.data[i])" in lines
+```
+
+```text
+@guppy
+def transversal_h(surf: SurfaceCode_3x3) -> None:
+    """Apply physical transversal H."""
+    for i in range(9):
+        h(surf.data[i])
+```
+
+### Physical SZ and SZdg layers
+
+`gate="SZ"` and `gate="SZDG"` apply physical SZ and SZdg to every data
+qubit. These are not logical SZ gates on surface-code patches of distance at
+least 3; a distance-1 patch is the trivial case. The builder's
+`add_transversal_sz` and `add_transversal_szdg` require a square patch, while
+the standalone `transversal_layer_gadget` accepts rectangles. At distance 3, each
+layer takes one tick and makes no measurements.
+
+```python
+for gate in ("SZ", "SZDG"):
+    gadget = gadgets.transversal_layer_gadget(patch, allocation, gate=gate)
+    tc = render_tick(gadget)
+    assert tc.num_ticks() == 1
+    assert tc.num_measurements() == 0
+```
+
+```python
+for gate in ("SZ", "SZDG"):
+    gadget = gadgets.transversal_layer_gadget(patch, allocation, gate=gate)
+    rendered = render_gadget_function(gadget)
+    expected = "s" if gate == "SZ" else "sdg"
+    assert f"        {expected}(surf.data[i])" in rendered
+```
+
+```text
+@guppy
+def physical_sz_layer(surf: SurfaceCode_3x3) -> None:
+    """Apply physical transversal SZ."""
+    for i in range(9):
+        s(surf.data[i])
+```
+
+```text
+@guppy
+def physical_szdg_layer(surf: SurfaceCode_3x3) -> None:
+    """Apply physical transversal SZDG."""
+    for i in range(9):
+        sdg(surf.data[i])
+```
+
+### Transversal CX
+
+Pass two patches with identical static geometry, disjoint allocations, and
+the same current X/Z orientation. The builder rejects an orientation mismatch;
+the standalone `transversal_cx_gadget` does not check orientation.
+Corresponding data qubits undergo control-to-target CX. Transversal CNOT is logical CNOT between two blocks of the same CSS code; see Gottesman, section 4.3 of
+[arXiv:0904.2557](https://arxiv.org/abs/0904.2557).
+Use the builder to render the two-patch program with detector annotations.
+The distance-3 program below runs two rounds on each side of CX, taking
+36 ticks and making 82 measurements across the two patches.
+
+```python
+builder = LogicalCircuitBuilder()
+builder.add_patch(patch, "D")
+builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+builder.add_memory(["D", "A"], 2, "Z")
+builder.add_transversal_cx("D", "A")
+builder.add_memory(["D", "A"], 2, "Z")
+tc = builder.to_tick_circuit()
+assert tc.num_measurements() == 82
+assert tc.num_ticks() == 36
+```
+
+```python
+offset = patch.geometry.num_qubits
+target = QubitAllocation(
+    [q + offset for q in allocation.data_qubits],
+    [q + offset for q in allocation.x_ancilla_qubits],
+    [q + offset for q in allocation.z_ancilla_qubits],
+)
+gadget = gadgets.transversal_cx_gadget(patch, allocation, patch, target)
+lines = render_gadget_function(gadget)
+assert "        cx(ctrl.data[i], tgt.data[i])" in lines
+assert len(gadget.steps) == 9
+```
+
+```text
+@guppy
+def transversal_cx(ctrl: SurfaceCode_3x3, tgt: SurfaceCode_3x3) -> None:
+    """Apply physical transversal CX."""
+    for i in range(9):
+        cx(ctrl.data[i], tgt.data[i])
+```
+
+## Protocols in Guppy
+
+`render_surface_protocol_module(patch)` returns source;
+`load_surface_protocol_module(patch)` returns the loaded module's namespace and
+caches per patch geometry. Scoped tags support measurement-provenance checks.
+The Clifford factories (H, CX, logical SZ/SZdg, SZ teleportation, and the T
+teleportation placeholder) use full syndrome rounds without a separate initial
+projection. Each example places the factory next to the corresponding builder
+program. The two forms share operation order and measurement partition, not
+physical scheduling or allocation: the builder schedules patches together with
+dedicated ancillas, while the Guppy functions run patch by patch.
+The optional `logical_x` (H) and `control_x` (CX) factory arguments insert a
+logical X after preparation; the factory calls below use the default `False`.
+
+<!--setup-->
+```python
+from pecos.qec.surface import SurfacePatch, LogicalCircuitBuilder, gadgets
+from pecos.guppy_gen import load_surface_protocol_module, render_surface_protocol_module
+
+patch = SurfacePatch.create(distance=3)
+allocation = gadgets.default_allocation(patch)
+module = load_surface_protocol_module(patch)
+
+
+def new_builder(two_patches=False):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    if two_patches:
+        builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+    return builder
+```
+
+### Logical SZ experiment
+
+The factory prepares Z, runs the requested plain rounds around one fold
+round, and reads Z. Both variants use scoped syndrome tags on `a`.
+The fold round is included in `synx_a`, but its X records are not bare X
+syndromes: bottom-row records carry input-side Z-check information. Consumers
+must combine X records with the partner Z records specified by
+`fold_sz_round_gadget` to recover the corresponding check parity.
+
+```python
+from pecos.testing import (
+    assert_same_measurement_partition,
+    measurement_partition_from_builder,
+    measurement_partition_from_trace,
+)
+
+for dagger in (False, True):
+    program = module["make_logical_sz_experiment"](1, 1, dagger=dagger)
+    builder = new_builder()
+    builder.add_memory("D", 1, "Z")
+    builder.add_logical_sz("D", dagger=dagger)
+    builder.add_memory("D", 1, "Z")
+    assert program.compile() is not None
+    assert builder.to_tick_circuit().num_measurements() == 33
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
+        measurement_partition_from_builder(builder),
+    )
+```
+
+The single-patch peak is `patch.geometry.num_qubits`. The two-patch Guppy
+peak is `patch.geometry.num_data + patch.geometry.num_qubits`, not twice the
+single-patch count: the factories run patches one at a time and reuse ancilla
+registers while retaining both data arrays.
+
+<!--mark.slow-->
+```python
+from pecos import selene_engine, sim, stabilizer
+from pecos.guppy_gen import get_transversal_num_qubits
+
+num_qubits = patch.geometry.num_data + patch.geometry.num_qubits
+assert num_qubits == get_transversal_num_qubits("surface", 3)
+program = module["make_transversal_cx"](num_rounds=2)
+results = sim(program).classical(selene_engine()).quantum(stabilizer()).qubits(num_qubits).seed(42).run(10)
+columns = results.to_dict()
+assert len(columns["final_ctrl"]) == len(columns["final_tgt"]) == 10
+```
+
+### H experiment
+
+```python
+program = module["make_h_experiment"](num_rounds=2)
+builder = new_builder()
+builder.add_memory("D", 2, "Z")
+builder.add_transversal_h("D")
+builder.add_memory("D", 2, "X")
+assert builder.to_tick_circuit().num_measurements() == 41
+assert callable(program.compile)
+```
+
+```python
+source = render_surface_protocol_module(patch)
+assert "            syn = syndrome_extraction_swapped_a(a)" in source.splitlines()
+```
+
+```text
+def make_h_experiment(num_rounds: int, *, logical_x: bool = False):
+    """Prepare Z, extract full rounds, apply H, extract swapped rounds, read X."""
+    def h_experiment() -> None:
+        """Logical H experiment."""
+        a = prep_z_basis()
+        if comptime(logical_x):
+            apply_logical_x(a)
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        transversal_h(a)
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_swapped_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        final = measure_x_basis(a)
+        output("final_a", final)
+    return guppy(variant_scoped(h_experiment, num_rounds, logical_x))
+```
+
+### CX experiment
+
+```python
+program = module["make_transversal_cx"](num_rounds=2)
+builder = new_builder(two_patches=True)
+builder.add_memory(["D", "A"], 2, "Z")
+builder.add_transversal_cx("D", "A")
+builder.add_memory(["D", "A"], 2, "Z")
+assert builder.to_tick_circuit().num_measurements() == 82
+assert callable(program.compile)
+```
+
+### S teleportation
+
+For background on gate teleportation in general, see Gottesman, section 4.5
+of [arXiv:0904.2557](https://arxiv.org/abs/0904.2557).
+Here the resource is a projected logical-Y state whose sign depends on the
+syndrome projection outcomes. It is prepared by H followed by a physical SZ
+layer on every ancilla data qubit, then syndrome projection. Both forms prepare
+the data in |0_L>, an S eigenstate, so *this* experiment cannot distinguish S
+from identity. That is a property of the Z-prepared example, not of the gadget:
+an X-prepared, Y-read program does distinguish them, and emits a deterministic
+observable for the corrected quantity. See below. The projected resource is (-1)^r times logical Y, where r is
+the parity of selected round-0 checks in the ancilla's first projection segment
+XOR `resource_sign_reference`.
+`rounds_before` must be at least one so these checks precede the CX.
+The builder records both the ancilla's final logical-Z readout (`meas_ids`,
+`records`) and the resource sign (`resource_sign_meas_ids`,
+`resource_sign_records`, and the 0/1 bit `resource_sign_reference`) in
+`teleportation_readouts`, in the circuit metadata and in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
+records are offsets relative to the end of the measurement stream.
+The reference is the sign of the Pauli identity relating the selected checks,
+signed logical Y (`i X_L Z_L`), and all-Y. If logical X has weight w, the logical
+X and Z supports overlap on k qubits, and there are n data qubits, the phase
+for the positive positional Y string is `i^(2w-n-k)`.
+For supported patches, w and k have the same parity: odd dimensions give odd
+logical X weight, preserved by even-weight checks, and logical X/Z
+anticommutation makes k odd. Therefore that phase reduces to `i^(k-n)`.
+Signed logical Y differs from the positive positional string by
+`(-1)^((k-1)/2)`, contributing another `k-1` powers of i modulo four.
+Both exponents must be even; `resource_sign_reference` is `(2k-n-1) % 4 // 2`.
+The solver derives both terms from the same logical representatives. Their
+contributions compensate when a positive check changes the representative's
+overlap from one to three; omitting the logical-Y phase would invert the sign.
+A logical Z correction on the data is required when the logical readout parity
+and resource sign parity disagree: XOR the two parities to decide.
+
+For a program whose data readout is deterministic in X or Y, that correction is
+now folded into the observable's own parity mask, so the gadget's action is a
+decodable statement rather than something only a noiseless replay can show. The
+mask gains the consumed ancilla's logical readout records and the resource-sign
+records, alongside the data readout and any fold the readout lowers to. This
+mask is the DEM in all cases.
+
+The rendered factory `make_sz_teleportation(..., correction="physical")` executes
+logical Z after ancilla readout when `m XOR c XOR resource_sign_reference` is 1,
+and outputs the decision as `sz_correction`. Here m is the ancilla logical Z
+parity and c is the selected first-round check parity. Executing the correction
+is the default and matches the Guppy/Helios authoring idiom.
+With `correction="record"`, the factory outputs the same frame bit and applies
+no Z. Recording matches frame-tracking hardware, where a controller or a
+post-processor applies the frame bit. Mask extraction on recorded rows is exactly
+that post-processing: the mask's correction records apply the frame bit, with no
+extra step. The mode must be exactly `"physical"` or `"record"`; other values,
+including booleans, raise `ValueError`.
+
+The builder circuit never executes the correction. Its deterministic X/Y
+observable masks absorb the correction records. Observables export the crossed
+ancilla labels as `crossed_teleportations`; a future executed-run transcription
+will use them to remove each crossed teleportation's readout and resource-sign
+records and XOR its resource-sign reference into the observable reference.
+That transcription does not exist yet. Applying mask extraction to rows from
+a program that executed the correction counts it twice. In physical mode, noise on
+the conditional Z gates is a small omission from the static builder circuit and
+its DEM.
+
+That observable inherits the injection's distance-1 character. Its error model
+contains one mechanism that flips it with no detector firing, and that
+mechanism's probability *grows* with distance. With `p1`, `p2`, `p_meas` and
+`p_prep` all at 1e-3 it is about 2.4 percent at distance 3 and 6.4 percent at
+distance 5. The exact figure depends on which noise parameters are set, so treat
+the direction as the point rather than the number. A logical
+error rate swept over distance on this observable therefore gets worse, which is
+the resource injection's cost and not a code failure. The equivalent
+fold-transversal program has no such mechanism.
+
+```python
+program = module["make_sz_teleportation"](2, 2, 2)
+recording_program = module["make_sz_teleportation"](2, 2, 2, correction="record")
+assert callable(recording_program.compile)
+builder = new_builder(two_patches=True)
+builder.add_sz_via_teleportation("D", "A", 2, 2)
+builder.add_memory("D", 2, "Z")
+assert builder.to_tick_circuit().num_measurements() == 98
+assert callable(program.compile)
+
+import json
+
+tc = builder.to_tick_circuit()
+readout = json.loads(tc.get_meta("teleportation_readouts"))[0]
+assert (readout["ancilla_patch"], readout["data_patch"], readout["basis"]) == ("A", "D", "Z")
+assert len(readout["meas_ids"]) == len(patch.geometry.logical_z.data_qubits)
+# Measurement IDs index the readout stream; map them to the ancilla's data register.
+measurement_keys = json.loads(tc.get_meta("measurement_keys"))
+ancilla_data_ids = {
+    meas_id
+    for label, qubit, meas_id in measurement_keys["data"]
+    if label == readout["ancilla_patch"] and qubit in allocation.data_qubits
+}
+assert set(readout["meas_ids"]) <= ancilla_data_ids
+descriptor = builder.build_algorithm_descriptor()
+assert len(readout["resource_sign_meas_ids"]) == 4
+assert readout["resource_sign_reference"] == 0
+assert readout["resource_sign_records"] == [
+    meas_id - tc.num_measurements() for meas_id in readout["resource_sign_meas_ids"]
+]
+assert descriptor["teleportation_readouts"][0]["resource_sign_records"] == readout["resource_sign_records"]
+assert descriptor["teleportation_readouts"][0]["resource_sign_reference"] == readout["resource_sign_reference"]
+assert descriptor["teleportation_readouts"][0]["meas_ids"] == readout["meas_ids"]
+```
+
+### Executable T-gate teleportation
+
+This guide distinguishes two operations:
+
+- **T-state injection** prepares an encoded resource, `|T_L> = T_L|+_L>`.
+  The raw `state_injection` and postselected `hook_injection` gadgets do this.
+- **T-gate teleportation** consumes that resource to apply `T_L` to an existing
+  logical target state, with measurement-dependent Clifford correction.
+
+The latter is the gate-teleportation construction of
+[Zhou, Leung and Chuang](https://arxiv.org/abs/quant-ph/0002039).
+PECOS reserves "injection" for resource preparation even where other literature
+uses that word for both stages.
+
+`make_surface_t_teleportation` implements a logical T (or T-dagger) with a raw
+encoded magic resource and a measurement-dependent **physical** S correction.
+The same factory is available as `make_t_teleportation` in the protocol module.
+It defaults to an X input and X readout so that its effect is observable;
+a Z-eigenstate-only test cannot distinguish a T gate from identity.
+
+```python
+from pecos.guppy_gen import make_surface_t_teleportation
+
+program = make_surface_t_teleportation(
+    patch,
+    rounds_before=1,
+    rounds_after=1,
+    input_state="X",
+    readout_basis="Y",
+    dagger=False,
+)
+assert program.compile() is not None
+```
+
+The input can be `"Z"`, `"-Z"`, `"X"`, `"-X"`, `"Y"`, or `"-Y"`;
+readout can be X, Y, or Z. Round counts must be nonnegative integers.
+The factory projects and fixes both initial code states, records the requested
+pre-CX rounds, consumes the resource, executes the correction, records the
+requested data-only rounds, and reads the data. Y readout uses fold SZdg
+followed by X readout. `t_correction` records the correction decision and
+`final_data` contains physical readout bits. Take parity on `logical_z` for Z
+readout or `logical_x` for X/Y readout. For T applied to logical +, the ideal
+X and Y expectations are both `1/sqrt(2)`; T-dagger reverses the Y sign.
+
+Use a non-Clifford simulator such as `pecos.stab_vec()`. For example:
+
+<!--mark.slow continuation-->
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+
+engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+results = (
+    sim(program)
+    .classical(engine)
+    .quantum(stab_vec())
+    .qubits(patch.geometry.num_data + patch.geometry.num_qubits)
+    .seed(42)
+    .run(32)
+    .to_dict()
+)
+assert len(results["final_data"]) == 32
+assert set(results["t_correction"]) == {0, 1}
+```
+
+#### Construction and choice of protocol
+
+The raw encoder adapts the GHZ-seed construction in
+[Horsman et al., section 4.2 and figure 8](https://arxiv.org/html/1111.4022#S4.SS2):
+prepare one physical qubit in the desired state, spread it along the patch's
+logical-X string using CX gates, then project the stabilizers. The implementation
+derives its string and stabilizers from `SurfacePatch`, including rectangular
+rotated patches. It removes random X-check signs with Z corrections solving
+`H_X c = syndrome` and `X_L c = 0`. The second constraint is essential: it
+prevents an unwanted logical Z from changing the injected amplitudes.
+
+The consumer uses the standard one-bit gate-teleportation construction of
+[Zhou, Leung and Chuang](https://arxiv.org/abs/quant-ph/0002039): CX from data
+to the encoded T resource, resource Z readout, then logical S if the decoded
+parity is one. A T-dagger resource instead requires S-dagger. The correction
+uses PECOS's mid-cycle fold-SZ gadget from
+[Chen et al.](https://arxiv.org/abs/2412.01391); the zero branch executes an
+ordinary syndrome round so both branches have the same result layout.
+This correction currently restricts the full protocol to odd square rotated
+patches of distance at least three, and requires the fold's nonlocal connectivity.
+
+This is a suitable executable reference for PECOS's existing transversal-CX
+architecture, **not a claim of optimal noisy resource preparation**.
+[Li's postselected injection](https://arxiv.org/abs/1410.7808) and
+[Gidney's hook injection](https://arxiv.org/abs/2302.12292) target lower resource
+error rates. Their schedules, postselection, growth and noise-dependent tradeoffs
+are not implemented by this encoder. Increasing the distance does not suppress
+an error already on its single-qubit seed. No cultivation or distillation is
+performed.
+
+#### Reusable functions and noisy execution
+
+`load_surface_t_teleportation_module(patch)` returns a namespace with:
+
+- `prepare_injected_t()` and `prepare_injected_tdg()`: raw magic-state encoding,
+  projection, and ideal preparation-sign correction. Signed X/Y/Z preparations
+  are also available.
+- `consume_t_resource(data, resource)`: transversal CX and destructive resource
+  readout, returning its **raw** logical-Z parity. The resource may come from an
+  external factory; both patches must have canonical unswapped orientation, +1 stabilizers,
+  and no pending logical Pauli frame. It leaves the data register alive.
+- `correct_t_teleportation(data, decoded_outcome, dagger)`: perform the conditional
+  logical S/S-dagger correction after the caller supplies the decoded parity.
+- `apply_t_teleportation(data, resource, dagger)`: compose consumption and correction
+  using raw parity. This convenience function assumes noiseless measurements
+  and canonical input code states.
+
+Raw injection, hook injection, and T teleportation are rendered by
+`pecos.guppy_gen.surface_teleportation`; all public factories remain available
+from `pecos.guppy_gen`. In standalone and protocol modules, signed X/Y/Z input
+preparations and data rounds emit `data:` measurement sidebands; T/TDG resource
+preparations and resource rounds emit `anc:` sidebands. Fold corrections and
+Y readout use the data scope. State and readout-basis strings accept either case.
+
+The experiment records syndrome results but supplies no noisy decoder. The
+preparation corrections resolve ideal random projection signs; they are not
+minimum-weight error recovery. A noisy fault-tolerant implementation also needs
+resource verification/distillation, decoding of the resource readout, and frame
+tracking through the fold correction. Merely adding syndrome rounds does not
+provide those features. No logical-error-rate or fault-distance guarantee is
+claimed for the complete raw-resource experiment.
+
+#### First-decision window model
+
+`t_teleportation_decision_model(patch, rounds_before)` builds the pre-decision
+window: both injection rounds, the requested rounds on both patches, and the
+resource's destructive Z readout. Its one observable is the flip of the resource
+logical-Z parity. `detection_events(results)` returns fired detector ids and the
+raw decision per shot; an external decoder predicts the flip, giving
+`decoded_decision = raw XOR predicted_flip`. This does not change the branch
+executed by the program. In a program with several T/TDG decisions, only the
+first decision is covered. Later windows include executed correction rounds and
+are out of scope.
+
+The model assumes raw resources and canonical inputs with no pending frame. Its
+DEM source is a native trace (the default Selene runtime's Helios-native lowering)
+of a straight-line Z-seed stand-in, matching the program's noise per native gate.
+It omits the sign-fix Z Paulis, which change no fault propagation but leave their
+single-qubit noise uncounted: a one-sided omission of about 2.4% of single-qubit
+locations at d = 3. The seed's T and the input seed's single-qubit gates are
+logical, not detectable; their X parts flip the observable undetectably, so
+DEM-sampled observable rates miss about `2 * p1` of floor without affecting
+decoding. There is no idle noise. The native trace is built once per model, on
+the first `build_dem`; constructing a model or extracting detection events does
+not trace a program.
+
+This self-contained noiseless example checks the transcription, including the
+raw parity used by the program:
+
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+from pecos.guppy_gen import make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
+
+decision_patch = SurfacePatch.create(distance=3)
+decision_model = t_teleportation_decision_model(decision_patch, rounds_before=1)
+decision_dem = decision_model.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+decision_program = make_surface_t_teleportation(decision_patch, rounds_before=1)
+decision_engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+decision_results = (
+    sim(decision_program)
+    .classical(decision_engine)
+    .quantum(stab_vec())
+    .qubits(decision_patch.geometry.num_data + decision_patch.geometry.num_qubits)
+    .seed(712)
+    .run(4)
+    .to_dict()
+)
+events, raw = decision_model.detection_events(decision_results)
+assert all(not fired for fired in events)
+assert raw == [bool(bit) for bit in decision_results["t_correction"]]
+```
+
+#### Decoded first correction
+
+`make_surface_t_teleportation(..., forced_decision=False)` and the `True`
+variant preserve the resource readout and force the first physical correction.
+The default `None` uses raw parity. `model.decode_decisions(results, decoder,
+dem=dem)` returns `(raw, decoded)`, applying the decoder's predicted flip to
+that parity.
+
+`model.run_decoded(run, decoder, dem=dem)` calls `run(False)` then `run(True)`.
+Bind the same program parameters, noise, seed and shot count in `run`. It checks
+that both variants have matching tags and shot counts, forced corrections, and
+identical decision windows, then decodes once. The returned `DecodedDecisionRun`
+has `raw` and `decoded` decisions, `results` selected per shot by the decoded bit,
+and `raw_results` selected by the raw bit. These are exact seeded records:
+the programs share their pre-branch source, each shot is seeded from the run seed
+and shot index, and QIS operations execute in program order.
+
+This costs two full runs (2x the shots). Only the first decision is decoded;
+later decisions retain their program behavior. Hook resources are unsupported.
+
+This self-contained example runs eight noiseless shots, so the decoder agrees
+with raw parity on every shot. The DEM's rates are the decoder's prior:
+
+```python
+import pecos_rslib as prs
+from pecos import sim, stab_vec
+from pecos.decoders import tesseract
+from pecos.guppy_gen import make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch, t_teleportation_decision_model
+
+patch = SurfacePatch.create(distance=3)
+model = t_teleportation_decision_model(patch, rounds_before=1)
+p = 0.001
+dem = model.build_dem(p1=p, p2=p, p_meas=p, p_prep=p)
+
+
+def run(forced):
+    program = make_surface_t_teleportation(patch, rounds_before=1, forced_decision=forced)
+    engine = prs.qis_engine().selene_runtime().interface(prs.qis_helios_interface())
+    return (
+        sim(program)
+        .classical(engine)
+        .quantum(stab_vec())
+        .qubits(patch.geometry.num_data + patch.geometry.num_qubits)
+        .seed(712)
+        .run(8)
+        .to_dict()
+    )
+
+
+result = model.run_decoded(run, tesseract(), dem=dem)
+assert len(result.decoded) == 8
+assert result.decoded == result.raw
+assert result.results == result.raw_results
+```
+
+#### Postselected hook resources
+
+PECOS also implements the CNOT schedule from
+[Gidney, *Cleaner magic states with hook injection*, section 2](https://arxiv.org/html/2302.12292#S2),
+checked against the author's [reference circuits](https://doi.org/10.5281/zenodo.7575030).
+The abstract `hook_injection(patch, state="T")` generates a diagonal product
+preparation and four-layer injection round from the patch geometry. A midpoint
+ancilla T rotation creates the logical magic state while the distance-two seed
+grows to the requested square patch. The first layer omits inactive CXs, and
+verification uses the reversed **ordinary** extraction schedule. These details
+are necessary for the intended fault-detection behavior.
+
+The returned `HookInjection` contains `seed`, `injection`, and `verification`
+gadgets. Execute the first two once, then verification at least once. Its
+`accepts(records)` method takes `(x_outcomes, z_outcomes)` boolean sequences
+per round; lists and tuples with the same values are equivalent. Only predictable
+first-round checks must be zero; random
+first-round signs establish the baseline. Any later change rejects the attempt.
+On acceptance, `correction_gadget(records[0])` removes both X- and Z-check signs
+while preserving the logical X and Z observables. These are ideal encoding
+byproducts, not corrections inferred by a noisy decoder. The physical steps
+can be rendered to TickCircuit with detector annotations disabled; a host
+controller must perform the acceptance decision and feed-forward.
+
+For an executable Guppy experiment, select hook preparation:
+
+<!--mark.slow-->
+```python
+from pecos.guppy_gen import make_surface_hook_injection, make_surface_t_teleportation
+from pecos.qec.surface import SurfacePatch
+
+patch = SurfacePatch.create(distance=3)
+resource = make_surface_hook_injection(
+    patch,
+    verification_rounds=2,
+    state="T",
+    readout_basis="X",
+)
+teleport = make_surface_t_teleportation(
+    patch,
+    resource_preparation="hook",
+    verification_rounds=2,
+    input_state="X",
+    readout_basis="Y",
+)
+assert resource.compile() is not None
+assert teleport.compile() is not None
+```
+
+`verification_rounds` counts rounds **after** injection and must be positive.
+For `make_surface_t_teleportation`, `verification_rounds=None` uses the hook
+renderer's default when `resource_preparation="hook"`; an explicit value with
+`resource_preparation="raw"` raises `ValueError`.
+The abstract construction supports square rotated distances >= 2. The Guppy
+module includes the fold-SZ consumer and Y readout, so it requires odd square
+distances >= 3. Supported resource states are T, TDG, X, -X, Y, and -Y.
+There is no subsequent expansion to a separate, larger output patch.
+
+Every shot records `hook_synx`, `hook_synz`, and `hook_accepted`. The syndrome
+arrays concatenate the injection and verification rounds in execution order.
+Rejected resources are discarded; the teleportation experiment does not
+allocate a data patch or apply T in that branch. To keep the simulator's shot
+schema consistent, `final_data` and downstream records contain **invalid zero
+placeholders on rejected shots**. Always filter with `hook_accepted` before
+computing readout statistics. `teleportation_performed` records whether the
+consumer ran. There is no automatic retry loop.
+Hook injection and verification retain their `hook:` measurement sidebands on
+every shot. Shared teleportation helpers omit scalar sidebands in this module
+because rejected attempts skip those helpers; aggregate records remain present.
+
+`load_surface_hook_injection_module(patch, verification_rounds=2)` exposes
+`attempt_hook_t()` and `attempt_hook_tdg()`, returning `(resource, accepted)`
+for use inside a larger Guppy program. Callers must discard a rejected resource.
+Accepted resources can be passed to `consume_t_resource` and
+`correct_t_teleportation`. The low-level `hook_initial_is_valid`,
+`hook_syndromes_match`, and `fix_hook_signs` helpers are also available.
+
+Exact amplitude tests cover every ideal branch at distances two and three,
+including T and T-dagger, and tests compile distances three, five, and seven.
+For a depolarizing channel of probability `p` placed **only after the hook
+rotation**, exact tests reject X/Y faults but accept the orthogonal state
+created by a Z fault. Acceptance is `1 - 2*p/3` and conditional fidelity is
+`(1-p)/(1-2*p/3)` in this deliberately restricted noise model. Full-circuit
+depolarizing tests check the acceptance decisions against all recorded checks
+and exercise both execution branches. They do not establish a logical error
+rate for a decoded computation, and the paper's CZ/SI1000 numerical benchmarks
+are not attributed to PECOS's CNOT implementation.
+
+Postselection improves resource screening, but undetectable injection errors
+remain. Physical sign corrections and readout can introduce additional faults.
+This is not cultivation or distillation; noisy resource-readout decoding,
+frame tracking, and further resource improvement remain separate tasks.
+For a runnable noisy experiment with correctly conditioned statistics, see
+`examples/surface/hook_injection.py`.
+
+#### Abstract steps and static exports
+
+`pecos.qec.surface.state_injection(patch, state="T")` returns a `StateInjection`
+with a `seed` gadget, a `projection` gadget and `correction_supports`.
+`correction_gadget(x_outcomes)` materializes the correction for an explicitly
+supplied measurement branch. Seed/projection/correction steps use the existing
+Guppy gadget, TickCircuit and DAG renderers. Disable the memory detector template
+when rendering these pieces. The seed contains a real T or T-dagger operation;
+Stim export rejects it instead of silently omitting that gate.
+
+A static TickCircuit cannot implement the classical branch. Do not concatenate
+a chosen correction and interpret it as unconditional injection. The executable
+Guppy program is adaptive and non-Clifford, and carries no static Clifford DEM
+certificate. `LogicalCircuitBuilder.add_t_via_injection` now raises an explicit
+error before modifying the builder. This legacy spelling is retained only to
+reject the former misleading API; use `make_surface_t_teleportation` for real
+T-gate execution.
+
+### T-gate teleportation stand-in
+
+The former Clifford-only behavior is retained explicitly as
+`make_t_teleportation_placeholder` and `add_t_teleportation_placeholder`. It remains
+useful for static circuit/decoder experiments, but does not measure T fidelity.
+
+To migrate existing code, replace the generated `make_t_injection` factory
+with `make_t_teleportation_placeholder` when the old Clifford experiment is
+intended. Replace `add_t_via_injection` with `add_t_teleportation_placeholder`
+for that same explicit stand-in. For an actual logical T gate, use the new
+`make_surface_t_teleportation` API or the reusable `apply_t_teleportation`
+helper in `pecos.guppy_gen.surface_teleportation`.
+
+The builder's resource-consumption metadata is now `teleportation_readouts`
+and `teleportation_type` (formerly `injection_readouts` and `injection_type`).
+The brickwork example's CLI flags are now `--include-t-teleportation` and
+`--t-teleportation-only`. State-preparation outcomes use `injection_synx` and
+`injection_synz`; these describe injection, not resource consumption.
+
+```python
+program = module["make_t_teleportation_placeholder"](2, 2)
+builder = new_builder(two_patches=True)
+builder.add_t_teleportation_placeholder("D", "A", 2, 2)
+assert builder.to_tick_circuit().num_measurements() == 82
+assert callable(program.compile)
+```
+
+!!! note "Resource and correction limits"
+    The S factory uses a projected Y resource and executes its conditional Z
+    correction by default, or records the frame bit with `correction="record"`.
+    The T **placeholder** remains entirely Clifford (no T gate, no magic resource,
+    no conditional S correction).
+    The executable T factory above is a separate adaptive implementation.
+    The builder records teleportation readouts in the circuit metadata and in
+    `build_algorithm_descriptor()`; those records do not apply a correction.
+    Chen, Chen, Lu and Pan ([arXiv:2412.01391](https://arxiv.org/abs/2412.01391))
+    describe a mid-cycle fold-transversal logical SZ, available separately as
+    the [fold round gadget](#fold-transversal-sz), outside these protocol factories.
+
+### Cross-form measurement check
+
+This checks actual measurement membership by patch, family, and round, including
+swapped orientation and the S protocol's trailing syndrome rounds on the data
+patch alone. The helpers compare measurement-ordinal groups from a Guppy trace
+and from the builder's circuit.
+
+<!--mark.slow-->
+```python
+from pecos.testing import (
+    measurement_partition_from_builder,
+    measurement_partition_from_trace,
+    assert_same_measurement_partition,
+)
+
+for recipe in ("h", "cx", "sz", "t"):
+    builder = new_builder(two_patches=recipe != "h")
+    if recipe == "h":
+        program = module["make_h_experiment"](2)
+        builder.add_memory("D", 2, "Z")
+        builder.add_transversal_h("D")
+        builder.add_memory("D", 2, "X")
+        scopes = {"a": "D"}
+    elif recipe == "cx":
+        program = module["make_transversal_cx"](2)
+        builder.add_memory(["D", "A"], 2, "Z")
+        builder.add_transversal_cx("D", "A")
+        builder.add_memory(["D", "A"], 2, "Z")
+        scopes = {"ctrl": "D", "tgt": "A"}
+    elif recipe == "sz":
+        program = module["make_sz_teleportation"](2, 2, 2)
+        builder.add_sz_via_teleportation("D", "A", 2, 2)
+        builder.add_memory("D", 2, "Z")
+        scopes = {"data": "D", "anc": "A"}
+    else:
+        program = module["make_t_teleportation_placeholder"](2, 2)
+        builder.add_t_teleportation_placeholder("D", "A", 2, 2)
+        scopes = {"data": "D", "anc": "A"}
+    expected = measurement_partition_from_builder(builder)
+    num_qubits = patch.geometry.num_qubits
+    if recipe != "h":
+        num_qubits += patch.geometry.num_data
+    actual = measurement_partition_from_trace(program, num_qubits, scopes)
+    assert_same_measurement_partition(actual, expected)
+```
+
+The Clifford Guppy protocol factories below cannot be traced into a DEM:
+they contain `comptime` loops and carry no trusted measurement-layout
+certificate. Their scoped tags serve `measurement_partition_from_trace` only,
+not DEM construction. `make_surface_code` and `make_surface_memory` programs
+have a generator certificate; these protocol factories do not. Use
+`LogicalCircuitBuilder.to_tick_circuit()` with `DetectorErrorModel.from_circuit`,
+or the builder's `build_dem`, for protocol DEMs.
+
+```python
+from pecos.qec import DetectorErrorModel, build_dem_from_guppy
+
+for factory, arguments in (
+    ("make_h_experiment", (2,)),
+    ("make_transversal_cx", (2,)),
+    ("make_sz_teleportation", (2, 2, 2)),
+    ("make_t_teleportation_placeholder", (2, 2)),
+):
+    program = module[factory](*arguments)
+    num_qubits = patch.geometry.num_qubits
+    if factory != "make_h_experiment":
+        num_qubits += patch.geometry.num_data
+    for build, specs in (
+        (build_dem_from_guppy, {"detectors": [], "observables": []}),
+        (DetectorErrorModel.from_guppy, {"detectors_json": "[]", "observables_json": "[]"}),
+    ):
+        try:
+            build(program, num_qubits=num_qubits, **specs)
+        except ValueError as error:
+            assert str(error).startswith(
+                "GuppyDemBuilder requires a statically straight-line Guppy program "
+                "unless it carries a trusted generator-owned measurement layout"
+            )
+        else:
+            raise AssertionError(f"{factory} unexpectedly accepted for a traced DEM")
+```
+
+## Validating a gadget
+
+Four complementary checks validate a gadget: a literature citation for the
+physical construction, a stabilizer oracle for its state action, measurement-partition
+agreement, and a DEM fault-distance test. The following counts the operations
+of the default distance-3 extraction round; it does not validate the schedule.
+
+```python
+from pecos.qec.surface.circuit_builder import OpType
+
+round_gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0)
+assert sum(step.op_type == OpType.CX for step in round_gadget.steps) == 24
+assert sum(step.op_type == OpType.MEASURE for step in round_gadget.steps) == 8
+```
+
+A terminal Y memory segment uses the fold composition described in
+[Y readout](#y-readout). The oracle example below follows Y preparation with
+a Z segment and stops after the first full syndrome round to inspect the
+projected state before readout.
+Construct signed logical Y as `i X_L Z_L` using Pauli multiplication. Check both
+signs because projection outcomes determine the encoded sign.
+
+```python
+from pecos.testing import stabilizer_generators_after, group_contains
+from pecos.quantum import PauliString
+
+builder = new_builder()
+builder.add_memory("D", 1, "Y")
+builder.add_memory("D", 1, "Z")
+tc = builder.to_tick_circuit()
+ancillas = set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits)
+first_readout = next(
+    i
+    for i in range(tc.num_ticks())
+    for gate in tc.get_tick(i).gate_batches()
+    if gate.gate_type.name == "MZ" and ancillas.intersection(gate.qubits)
+)
+generators = stabilizer_generators_after(tc, first_readout + 1)
+lx = set(patch.geometry.logical_x.data_qubits)
+lz = set(patch.geometry.logical_z.data_qubits)
+width = patch.geometry.num_qubits
+ix = PauliString.from_dense_str("i" + "".join("X" if q in lx else "I" for q in range(width)))
+z = PauliString.from_dense_str("".join("Z" if q in lz else "I" for q in range(width)))
+logical_y = ix * z
+assert group_contains(generators, logical_y.to_dense_str(num_qubits=width)) or group_contains(
+    generators, (-logical_y).to_dense_str(num_qubits=width)
+)
+```
+
+The executed [cross-form measurement check](#cross-form-measurement-check)
+above checks measurement-partition agreement; equal counts alone would not
+establish equal partitions. Measurement-partition agreement does not establish
+circuit or state-action equivalence.
+
+Finally, the distance-3 Z memory has observable fault distance 3 under the
+following circuit noise model:
+
+```python
+from pecos.qec import DetectorErrorModel
+
+builder = new_builder()
+builder.add_memory("D", 3, "Z")
+dem = DetectorErrorModel.from_circuit(builder.to_tick_circuit(), p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+distances = dem.per_observable_fault_distances(3)
+assert len(distances) == 1
+assert distances[0] is not None and distances[0].distance == 3
+```
+
+## What the detector layer guarantees
+
+For valid `LogicalCircuitBuilder` programs, every emitted detector is
+deterministic: a stabilizer term that cannot be resolved to an earlier
+same-type measurement or a preparation yields no detector, so the model's
+known limitations lose detectors rather than emit non-deterministic ones.
+Boundary detectors come from backward
+propagation of stabilizer terms through gates, earlier measurements, and
+preparation. Standalone `TickCircuitRenderer` annotations follow the memory
+template and inherit no such guarantee.
+
+Propagation resolves each check against earlier measurements of the same type
+on the same physical register, never against products of other checks or
+jointly against a partner's same-round measurement. Some deterministic
+parities are therefore not emitted. The propagation walk in
+`pecos.qec.surface.logical_circuit` documents the concrete shapes.
+
+Generation rejects a gate before a patch's first preparation or after its
+final readout. Registration rejects odd-weight checks because the propagation
+model drops check-level signs only for even weights.
+
+```python
+from pecos.testing import simulate_tick_circuit
+
+builder = new_builder()
+builder.add_memory("D", 3, "Z")
+_, fired, _ = simulate_tick_circuit(builder.to_tick_circuit(), seed=0)
+assert fired == 0
+for before_preparation in (True, False):
+    invalid = new_builder()
+    if before_preparation:
+        invalid.add_transversal_h("D")
+        invalid.add_memory("D", 1, "X")
+    else:
+        invalid.add_memory("D", 1, "Z")
+        invalid.add_transversal_h("D")
+    try:
+        invalid.to_tick_circuit()
+    except ValueError as error:
+        assert "precedes" in str(error) if before_preparation else "after final" in str(error)
+    else:
+        raise AssertionError("Invalid gate placement was accepted")
+```
+
+## API reference
+
+| Name | Module | Purpose |
+|---|---|---|
+| `SurfacePatch.create` | `pecos.qec.surface` | Construct square or rectangular geometry |
+| `Gadget`, `GadgetKind` | `pecos.qec.surface.gadgets` | Physical definition and role |
+| `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated or budgeted ancilla registers |
+| `prep_gadget`, `init_syndrome_gadget` | `pecos.qec.surface.gadgets` | Product preparation and complementary projection |
+| `syndrome_round_gadget`, `measure_out_gadget` | `pecos.qec.surface.gadgets` | Check extraction and destructive data readout |
+| `LogicalCircuitBuilder.add_logical_sz`, `add_logical_szdg` | `pecos.qec.surface` | Fold syndrome segments with detectors and logical parity records |
+| `make_logical_sz_experiment` | Loaded surface protocol namespace | Z memory with one fold SZ or SZdg round |
+| `deterministic_parity_basis` | `pecos.testing` | Basis of parities constant across noiseless measurement shots |
+| `fold_sz_round_gadget` | `pecos.qec.surface.gadgets` | Fold-transversal logical SZ or SZdg inside a default round |
+| `logical_pauli_gadget`, `transversal_layer_gadget` | `pecos.qec.surface.gadgets` | Logical strings and physical layers |
+| `transversal_cx_gadget`, `memory_gadgets` | `pecos.qec.surface.gadgets` | Two-patch CX and memory composition |
+| `TickCircuitRenderer`, `QubitAllocation`, `SurfaceCircuitStep` | `pecos.qec.surface.circuit_builder` | Render physical operations with register mapping |
+| `LogicalCircuitBuilder` | `pecos.qec.surface` | Compose protocols and export circuits, DEMs, and descriptors |
+| `render_gadget_function`, `render_surface_gadget_module` | `pecos.guppy_gen.gadget_render` | Render one function or the memory module |
+| `make_surface_memory` | `pecos.guppy_gen` | Compile certified single-patch gadget memory for Guppy DEM construction |
+| `state_injection`, `StateInjection` | `pecos.qec.surface` | Raw encoding seed, stabilizer projection and branch corrections |
+| `make_surface_t_teleportation` | `pecos.guppy_gen` | Executable T/TDG teleportation with physical feed-forward |
+| `render_surface_t_teleportation_module`, `load_surface_t_teleportation_module` | `pecos.guppy_gen` | Reusable preparation, resource consumption and correction functions |
+| `render_surface_protocol_module`, `load_surface_protocol_module` | `pecos.guppy_gen` | Render or load surface protocol factories |
+| `simulate_tick_circuit`, `stabilizer_generators_after`, `group_contains` | `pecos.testing` | Noiseless simulation and signed stabilizer oracles |
+| `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | Measurement-partition agreement, not circuit or state-action equivalence |
+| `DetectorErrorModel.from_circuit` | `pecos.qec` | Circuit fault analysis and observable distances |
+
+## Next steps
+
+- [QEC with Guppy](qec-guppy.md) covers memory generation and simulation.
+- [QEC Geometry](qec-geometry.md) explains patch construction.
+- [Detector Error Models from Guppy](dem-from-guppy.md) covers the traced DEM workflow.

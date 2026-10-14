@@ -837,7 +837,7 @@ fn test_observable_count_in_path_finding() {
 
     // Find shortest path
     let path = decoder.get_shortest_path(0, 5).unwrap();
-    assert!(!path.is_empty());
+    assert!(!path.is_empty(), "shortest path must contain its endpoints");
 
     // Observable count should not have changed
     assert_eq!(decoder.num_observables(), initial_count);

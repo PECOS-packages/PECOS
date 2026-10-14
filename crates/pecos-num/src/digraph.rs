@@ -670,7 +670,11 @@ mod tests {
         graph.add_edge(n1, n2);
 
         // n0 has no predecessors, two successors
-        assert!(graph.predecessors(n0).is_empty());
+        let predecessors = graph.predecessors(n0);
+        assert!(
+            predecessors.is_empty(),
+            "expected no predecessors, got {predecessors:?}"
+        );
         assert_eq!(graph.successors(n0).len(), 2);
 
         // n1 has one predecessor (n0), one successor (n2)
@@ -679,7 +683,11 @@ mod tests {
 
         // n2 has two predecessors, no successors
         assert_eq!(graph.predecessors(n2).len(), 2);
-        assert!(graph.successors(n2).is_empty());
+        let successors = graph.successors(n2);
+        assert!(
+            successors.is_empty(),
+            "expected no successors, got {successors:?}"
+        );
     }
 
     #[test]

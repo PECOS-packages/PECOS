@@ -113,13 +113,12 @@ fn synthetic_idle_influence(
     z_signature: &[u32],
 ) -> DagFaultInfluenceMap {
     let mut influence = DagFaultInfluenceMap::with_capacity(1);
-    influence.locations.push(DagSpacetimeLocation {
-        node: 0,
-        qubits: vec![QubitId::from(0usize)],
-        before: false,
-        gate_type: GateType::Idle,
-        idle_duration: 1.0,
-    });
+    influence.locations.push(DagSpacetimeLocation::new(
+        0,
+        vec![QubitId::from(0usize)],
+        false,
+        &pecos_core::Gate::idle(1.0, vec![QubitId::from(0usize)]),
+    ));
     influence
         .influences
         .detectors_x
@@ -229,7 +228,7 @@ fn independent_signature_distribution(
 fn idle_locations_contribute_mechanisms_when_rates_set() {
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     // No noise elsewhere; idle rates set only on qubit 0.
     let q0 = QubitId::from(0usize);
@@ -258,7 +257,7 @@ fn idle_rates_absent_means_no_idle_contribution() {
     // zero mechanisms: prep/measure are 0 and idle is a no-op by default.
     let dag = build_idle_then_measure(3);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.0, 0.0, 0.0, 0.0));
     let sim = DemSamplerBuilder::new(&influence)
@@ -273,7 +272,7 @@ fn idle_rates_absent_means_no_idle_contribution() {
 fn per_gate_base_p1_does_not_attach_to_idle() {
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.01, 0.0, 0.0, 0.0));
     let sim = DemSamplerBuilder::new(&influence)
@@ -290,7 +289,7 @@ fn per_gate_base_p1_does_not_attach_to_idle() {
 fn per_gate_base_idle_noise_attaches_to_idle() {
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002));
     let sim = DemSamplerBuilder::new(&influence)
@@ -312,7 +311,7 @@ fn idle_noise_respects_per_qubit_override() {
     // mechanism from q0's idle.
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let q0 = QubitId::from(0usize);
     let cfg = PerGateTypeNoise::from_base_noise(NoiseConfig::new(0.0, 0.0, 0.0, 0.0))
@@ -336,7 +335,7 @@ fn idle_with_scalar_p1_is_noop() {
     // idle noise is explicitly configured.
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let sim = DemSamplerBuilder::new(&influence)
         .with_noise(0.01, 0.0, 0.0, 0.0)
@@ -352,7 +351,7 @@ fn idle_with_scalar_p1_is_noop() {
 fn explicit_uniform_idle_noise_is_noisy() {
     let dag = build_idle_then_measure(2);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let sim = DemSamplerBuilder::new(&influence)
         .with_noise_config(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002))
@@ -370,7 +369,7 @@ fn explicit_uniform_idle_noise_is_noisy() {
 #[test]
 fn nanosecond_timeunit_idle_duration_is_preserved_in_fault_locations() {
     let dag = build_nanosecond_idle_x_basis_measure();
-    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
 
     let idle = influence
         .locations
@@ -385,7 +384,7 @@ fn nanosecond_timeunit_idle_duration_is_preserved_in_fault_locations() {
 fn linear_memory_z_noise_uses_idle_duration_in_dem() {
     let dag = build_nanosecond_idle_x_basis_measure();
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let dem = DemBuilder::new(&influence)
         .with_noise_config(
@@ -393,7 +392,8 @@ fn linear_memory_z_noise_uses_idle_duration_in_dem() {
         )
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert!(
         dem.num_contributions() > 0,
@@ -613,13 +613,14 @@ fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
         combine_probabilities(0.25, 0.75).to_bits(),
         "exclusive aliases must sum, not use the independent XOR rule",
     );
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 
     let measurement_model = MemBuilder::new(&influence)
         .with_noise_config(
             NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75)),
         )
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(measurement_model.mechanisms.len(), 1);
     let measurement_probability = *measurement_model
         .mechanisms
@@ -644,13 +645,14 @@ fn empty_idle_signature_is_dropped_before_conversion() {
 
     assert_eq!(contributions.len(), 1);
     assert_eq!(contributions[0].1.to_bits(), 0.75_f64.to_bits());
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 
     let measurement_model = MemBuilder::new(&influence)
         .with_noise_config(
             NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75)),
         )
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(measurement_model.mechanisms.len(), 1);
     assert_eq!(
         measurement_model
@@ -661,7 +663,7 @@ fn empty_idle_signature_is_dropped_before_conversion() {
             .to_bits(),
         0.75_f64.to_bits()
     );
-    assert!(measurement_model.idle_noise_residuals.is_empty());
+    assert_eq!(measurement_model.idle_noise_residuals, []);
 }
 
 #[test]
@@ -670,7 +672,8 @@ fn biased_xz_idle_channel_builds_with_quantified_boundary_residual() {
     let loc_idx = idle_location(&influence);
     let noise =
         NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.0075, 0.0, 0.0225));
-    let legacy_sampling_engine = SamplingEngine::from_influence_map(&influence, &[1.0], &noise);
+    let legacy_sampling_engine =
+        SamplingEngine::from_influence_map(&influence, &[1.0], &noise).unwrap();
     let mut sampler_influence = influence.clone();
     sampler_influence
         .detectors
@@ -758,7 +761,7 @@ fn three_distinct_idle_signatures_match_engines_pauli_channel() {
         assert!((distribution[&x_effect] - px).abs() < 1e-12);
         assert!((distribution[&y_effect] - py).abs() < 1e-12);
         assert!((distribution[&z_effect] - pz).abs() < 1e-12);
-        assert!(dem.idle_noise_residuals().is_empty());
+        assert_eq!(dem.idle_noise_residuals(), []);
     }
 }
 
@@ -782,7 +785,7 @@ fn idle_y_signature_is_xor_of_x_and_z_at_every_tested_location() {
         build_unit_idle_tracking_y(),
         build_idle_then_measure(3),
     ] {
-        let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+        let influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
         for (loc_idx, location) in influence.locations.iter().enumerate() {
             if location.gate_type != GateType::Idle || location.before {
                 continue;
@@ -865,7 +868,7 @@ fn negative_idle_rate_is_rejected_instead_of_clamped() {
 #[test]
 fn negative_idle_duration_is_rejected_instead_of_clamped() {
     let dag = build_unit_idle_tracking_x();
-    let mut influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let mut influence = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
     let loc_idx = idle_location(&influence);
     influence.locations[loc_idx].idle_duration = -1.0;
     let error = DemBuilder::new(&influence)
@@ -923,13 +926,14 @@ fn identical_idle_configuration_produces_byte_identical_dem_text() {
 fn dem_builder_scalar_p1_does_not_attach_to_idle() {
     let dag = build_idle_then_measure(1);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let dem = DemBuilder::new(&influence)
         .with_noise(0.01, 0.0, 0.0, 0.0)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(dem.num_contributions(), 0);
 }
@@ -938,13 +942,14 @@ fn dem_builder_scalar_p1_does_not_attach_to_idle() {
 fn dem_builder_explicit_idle_noise_is_noisy() {
     let dag = build_idle_then_measure(1);
     let analyzer = DagFaultAnalyzer::new(&dag);
-    let influence = analyzer.build_influence_map();
+    let influence = analyzer.build_influence_map().unwrap();
 
     let dem = DemBuilder::new(&influence)
         .with_noise_config(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002))
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert!(
         dem.num_contributions() > 0,

@@ -45,7 +45,7 @@ pub fn parse_statement(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pe
             }
         }
         Rule::classical_op => {
-            let op = parse_classical_statement(inner, program)?;
+            let op = parse_classical_statement(inner)?;
             if let Some(operation) = op {
                 program.operations.push(operation);
             }
@@ -97,11 +97,8 @@ fn parse_quantum_operation(
     parse_quantum_op(pair, program)
 }
 
-fn parse_classical_statement(
-    pair: Pair<Rule>,
-    program: &Program,
-) -> Result<Option<Operation>, PecosError> {
-    parse_classical_operation(pair, program)
+fn parse_classical_statement(pair: Pair<Rule>) -> Result<Option<Operation>, PecosError> {
+    parse_classical_operation(pair)
 }
 
 fn parse_conditional(pair: Pair<Rule>, program: &Program) -> Result<Option<Operation>, PecosError> {

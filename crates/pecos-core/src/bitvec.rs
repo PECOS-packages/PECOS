@@ -21,14 +21,17 @@ pub mod bitwise;
 pub mod comparison;
 pub mod conversion;
 pub mod display;
+mod expression;
 pub mod utils;
 
 // Re-export all public functions for convenience
 pub use arithmetic::{add, divide, multiply, negate, subtract};
 pub use bitwise::{shift_left, shift_left_extend, shift_right};
 pub use comparison::{compare, compare_unsigned};
-pub use conversion::{from_u32, parse_decimal_string, to_i32, to_i64, to_i128, to_u32};
+pub use conversion::{from_u32, parse_decimal_string, to_i32, to_i64, to_i128, to_u32, to_u64};
 pub use display::{
     from_bitstring, to_binary_string, to_bitstring, to_bool_array, to_decimal_string, to_hex_string,
 };
 pub use utils::resize_to_same_width;
+
+pub use expression::{from_expr_value, to_bituint};

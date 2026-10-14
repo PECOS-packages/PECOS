@@ -2,8 +2,9 @@
 
 use bitvec::prelude::*;
 use log::debug;
-use pecos_core::Angle64;
 use pecos_core::errors::PecosError;
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, BitUInt, ExprValue};
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
 use pecos_random::rng_pcg::RNGModel;
@@ -12,11 +13,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
-use crate::bitvec_expression::{
-    BitVecExpressionContext, ExpressionValue, evaluate_expression_bitvec,
-};
+use crate::bitvec_expression::{BitVecExpressionContext, evaluate_expression_bitvec};
 use crate::program::QASMProgram;
 
 /// Gate handler function type
@@ -25,15 +25,17 @@ type GateHandler = fn(&mut QASMEngine, &[usize], &[f64]) -> Result<(), PecosErro
 /// Gate information for table-driven processing
 struct GateInfo {
     name: &'static str,
+    gate_type: GateType,
     required_qubits: usize,
-    required_params: usize,
     handler: GateHandler,
 }
 
 /// A QASM Engine that can generate native commands from a QASM program
 pub struct QASMEngine {
-    /// The QASM Program being executed
-    program: Option<QASMProgram>,
+    /// The QASM Program being executed. Immutable once loaded and shared
+    /// through an `Arc` so the batch loop can hold a handle without copying
+    /// the AST.
+    program: Option<Arc<QASMProgram>>,
 
     /// Mapping from measurement order to register names and bit indices
     /// Each entry is (`register_name`, `bit_index`) mapped by the order of measurements
@@ -64,6 +66,29 @@ pub struct QASMEngine {
     foreign_object: Option<Box<dyn crate::foreign_objects::ForeignObject>>,
 
     rng_model: RNGModel,
+}
+
+/// Whether an expression is a constant the evaluator can fold or evaluate without
+/// reading a register.
+///
+/// The standard conditional form is a register or bit compared against a
+/// constant. Asking whether the right operand is constant, rather than whether
+/// it is an already-folded literal, keeps that gate independent of what the
+/// constant folder chooses to fold. Folding is an optimisation and must not
+/// decide whether a program is accepted.
+fn is_integer_constant(expr: &Expression) -> bool {
+    match expr {
+        Expression::Integer(_) => true,
+        Expression::UnaryOp { expr, .. } => is_integer_constant(expr),
+        Expression::BinaryOp { left, right, .. } => {
+            is_integer_constant(left) && is_integer_constant(right)
+        }
+        Expression::Float(_)
+        | Expression::Pi
+        | Expression::Variable(_)
+        | Expression::BitId(_, _)
+        | Expression::FunctionCall { .. } => false,
+    }
 }
 
 impl QASMEngine {
@@ -127,7 +152,7 @@ impl QASMEngine {
         self.raw_measurements.clear();
         self.register_result_mappings.clear();
 
-        self.program = Some(program);
+        self.program = Some(Arc::new(program));
         self.reset_state();
     }
 
@@ -224,8 +249,27 @@ impl QASMEngine {
         bit_index: usize,
         value: u8,
     ) -> Result<(), PecosError> {
+        Self::set_register_bit(
+            self.program.as_deref(),
+            &mut self.classical_registers,
+            register_name,
+            bit_index,
+            value,
+        )
+    }
+
+    /// Set one bit of a classical register. Takes the fields it needs rather
+    /// than `&mut self` so callers can hold a borrow of another field (the
+    /// measurement mappings) across the call.
+    fn set_register_bit(
+        loaded_program: Option<&QASMProgram>,
+        classical_registers: &mut BTreeMap<String, BitVec<u8, Lsb0>>,
+        register_name: &str,
+        bit_index: usize,
+        value: u8,
+    ) -> Result<(), PecosError> {
         // Validate bounds if we have a program loaded
-        if let Some(qasm_program) = &self.program {
+        if let Some(qasm_program) = loaded_program {
             let program = qasm_program.program();
             if let Some(size) = program.classical_registers.get(register_name) {
                 if bit_index >= *size {
@@ -241,12 +285,9 @@ impl QASMEngine {
         }
 
         // Get the register
-        let register = self
-            .classical_registers
-            .get_mut(register_name)
-            .ok_or_else(|| {
-                PecosError::Input(format!("Classical register '{register_name}' not found"))
-            })?;
+        let register = classical_registers.get_mut(register_name).ok_or_else(|| {
+            PecosError::Input(format!("Classical register '{register_name}' not found"))
+        })?;
 
         // Set the bit value
         register.set(bit_index, value != 0);
@@ -300,10 +341,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(std::f64::consts::PI / 2.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.sz(&[qubits[0]]);
         Ok(())
     }
 
@@ -313,10 +351,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(-std::f64::consts::PI / 2.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.szdg(&[qubits[0]]);
         Ok(())
     }
 
@@ -326,10 +361,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(std::f64::consts::PI / 4.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.t(&[qubits[0]]);
         Ok(())
     }
 
@@ -339,10 +371,7 @@ impl QASMEngine {
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.rz(
-            Angle64::from_radians(-std::f64::consts::PI / 4.0),
-            &[qubits[0]],
-        );
+        engine.message_builder.tdg(&[qubits[0]]);
         Ok(())
     }
 
@@ -387,12 +416,12 @@ impl QASMEngine {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn handle_r1xy(
+    fn handle_rxy1q(
         engine: &mut QASMEngine,
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.r1xy(
+        engine.message_builder.rxy1q(
             Angle64::from_radians(params[0]),
             Angle64::from_radians(params[1]),
             &[qubits[0]],
@@ -454,14 +483,52 @@ impl QASMEngine {
         Ok(())
     }
 
-    #[allow(clippy::unnecessary_wraps)]
     fn handle_szz(
         engine: &mut QASMEngine,
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.szz(&[(qubits[0], qubits[1])]);
-        Ok(())
+        engine.process_two_qubit_gate(GateType::SZZ, qubits)
+    }
+
+    fn handle_sxx(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SXX, qubits)
+    }
+
+    fn handle_sxxdg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SXXdg, qubits)
+    }
+
+    fn handle_syy(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SYY, qubits)
+    }
+
+    fn handle_syydg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SYYdg, qubits)
+    }
+
+    fn handle_szzdg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SZZdg, qubits)
     }
 
     #[allow(clippy::unnecessary_wraps)]
@@ -483,14 +550,20 @@ impl QASMEngine {
         gate_type: pecos_core::prelude::GateType,
         qubits: &[usize],
     ) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
-
         for &qubit in qubits {
             match gate_type {
                 GateType::X => self.message_builder.x(&[qubit]),
                 GateType::Y => self.message_builder.y(&[qubit]),
                 GateType::Z => self.message_builder.z(&[qubit]),
                 GateType::H => self.message_builder.h(&[qubit]),
+                GateType::SZ => self.message_builder.sz(&[qubit]),
+                GateType::SZdg => self.message_builder.szdg(&[qubit]),
+                GateType::T => self.message_builder.t(&[qubit]),
+                GateType::Tdg => self.message_builder.tdg(&[qubit]),
+                GateType::SX => self.message_builder.sx(&[qubit]),
+                GateType::SXdg => self.message_builder.sxdg(&[qubit]),
+                GateType::SY => self.message_builder.sy(&[qubit]),
+                GateType::SYdg => self.message_builder.sydg(&[qubit]),
                 GateType::PZ => self.message_builder.pz(&[qubit]),
                 _ => {
                     return Err(PecosError::Processing(format!(
@@ -508,14 +581,21 @@ impl QASMEngine {
         gate_type: pecos_core::prelude::GateType,
         qubits: &[usize],
     ) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
-
         for chunk in qubits.chunks(2) {
             if chunk.len() == 2 {
+                if gate_type == GateType::SWAP {
+                    Self::handle_swap(self, chunk, &[])?;
+                    continue;
+                }
                 match gate_type {
                     GateType::CX => self.message_builder.cx(&[(chunk[0], chunk[1])]),
                     GateType::CY => self.message_builder.cy(&[(chunk[0], chunk[1])]),
                     GateType::CZ => self.message_builder.cz(&[(chunk[0], chunk[1])]),
+                    GateType::CH => self.message_builder.ch(&[(chunk[0], chunk[1])]),
+                    GateType::SXX => self.message_builder.sxx(&[(chunk[0], chunk[1])]),
+                    GateType::SXXdg => self.message_builder.sxxdg(&[(chunk[0], chunk[1])]),
+                    GateType::SYY => self.message_builder.syy(&[(chunk[0], chunk[1])]),
+                    GateType::SYYdg => self.message_builder.syydg(&[(chunk[0], chunk[1])]),
                     GateType::SZZ => self.message_builder.szz(&[(chunk[0], chunk[1])]),
                     GateType::SZZdg => self.message_builder.szzdg(&[(chunk[0], chunk[1])]),
                     _ => {
@@ -536,69 +616,85 @@ impl QASMEngine {
         qubits: &[usize],
         params: &[f64],
     ) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
+        let expected = gate_type.angle_arity();
+        if params.len() != expected {
+            return Err(PecosError::Processing(format!(
+                "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+                params.len()
+            )));
+        }
 
         match gate_type {
             GateType::RX => {
-                if let Some(&angle) = params.first() {
-                    for &qubit in qubits {
-                        self.message_builder
-                            .rx(Angle64::from_radians(angle), &[qubit]);
-                    }
+                let angle = params[0];
+                for &qubit in qubits {
+                    self.message_builder
+                        .rx(Angle64::from_radians(angle), &[qubit]);
                 }
             }
             GateType::RY => {
-                if let Some(&angle) = params.first() {
-                    for &qubit in qubits {
-                        self.message_builder
-                            .ry(Angle64::from_radians(angle), &[qubit]);
-                    }
+                let angle = params[0];
+                for &qubit in qubits {
+                    self.message_builder
+                        .ry(Angle64::from_radians(angle), &[qubit]);
                 }
             }
             GateType::RZ => {
-                if let Some(&angle) = params.first() {
-                    for &qubit in qubits {
-                        self.message_builder
-                            .rz(Angle64::from_radians(angle), &[qubit]);
-                    }
+                let angle = params[0];
+                for &qubit in qubits {
+                    self.message_builder
+                        .rz(Angle64::from_radians(angle), &[qubit]);
                 }
             }
             GateType::RZZ => {
-                if let Some(&angle) = params.first() {
-                    for chunk in qubits.chunks(2) {
-                        if chunk.len() == 2 {
-                            self.message_builder
-                                .rzz(Angle64::from_radians(angle), &[(chunk[0], chunk[1])]);
-                        }
+                let angle = params[0];
+                for chunk in qubits.chunks(2) {
+                    if chunk.len() == 2 {
+                        self.message_builder
+                            .rzz(Angle64::from_radians(angle), &[(chunk[0], chunk[1])]);
                     }
                 }
             }
-            GateType::R1XY => {
-                if params.len() >= 2 {
-                    let theta = params[0];
-                    let phi = params[1];
-                    for &qubit in qubits {
-                        self.message_builder.r1xy(
+            GateType::RXY1Q => {
+                let theta = params[0];
+                let phi = params[1];
+                for &qubit in qubits {
+                    self.message_builder.rxy1q(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        &[qubit],
+                    );
+                }
+            }
+            GateType::RXYXY2Q => {
+                if qubits.is_empty() || !qubits.len().is_multiple_of(gate_type.quantum_arity()) {
+                    return Err(PecosError::Processing(
+                        "RXYXY2Q requires complete qubit pairs".to_string(),
+                    ));
+                }
+                let theta = params[0];
+                let phi = params[1];
+                for chunk in qubits.chunks(2) {
+                    if chunk.len() == 2 {
+                        self.message_builder.rxyxy2q(
                             Angle64::from_radians(theta),
                             Angle64::from_radians(phi),
-                            &[qubit],
+                            &[(chunk[0], chunk[1])],
                         );
                     }
                 }
             }
             GateType::U => {
-                if params.len() >= 3 {
-                    let theta = params[0];
-                    let phi = params[1];
-                    let lambda = params[2];
-                    for &qubit in qubits {
-                        self.message_builder.u(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
-                            Angle64::from_radians(lambda),
-                            &[qubit],
-                        );
-                    }
+                let theta = params[0];
+                let phi = params[1];
+                let lambda = params[2];
+                for &qubit in qubits {
+                    self.message_builder.u(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        Angle64::from_radians(lambda),
+                        &[qubit],
+                    );
                 }
             }
             _ => {
@@ -612,8 +708,6 @@ impl QASMEngine {
 
     /// Process a native gate directly
     fn process_native_gate(&mut self, gate: &pecos_core::prelude::Gate) -> Result<(), PecosError> {
-        use pecos_core::prelude::GateType;
-
         // Convert QubitIds to usize array
         let qubits: Vec<usize> = gate.qubits.iter().map(|q| q.0).collect();
 
@@ -649,23 +743,29 @@ impl QASMEngine {
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
-            | GateType::SYYdg => self.process_two_qubit_gate(gate.gate_type, &qubits),
+            | GateType::SYYdg
+            | GateType::CH
+            | GateType::SWAP => self.process_two_qubit_gate(gate.gate_type, &qubits),
             // Gates not yet supported in QASM engine
-            GateType::SWAP | GateType::CCX | GateType::CRZ | GateType::CH | GateType::Channel => {
-                Err(PecosError::Processing(format!(
-                    "Gate type {:?} is not yet supported in the QASM engine",
-                    gate.gate_type
-                )))
-            }
+            GateType::CCX
+            | GateType::CCZ
+            | GateType::CS
+            | GateType::CSdg
+            | GateType::PX
+            | GateType::Channel => Err(PecosError::Processing(format!(
+                "Gate type {:?} is not yet supported in the QASM engine",
+                gate.gate_type
+            ))),
             GateType::RX
             | GateType::RY
             | GateType::RZ
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RXYXY2Q
             | GateType::RXXRYYRZZ
             | GateType::U2q
-            | GateType::R1XY
+            | GateType::RXY1Q
             | GateType::U => {
                 // Convert angles to radians for process_parameterized_gate
                 let angles_as_radians: Vec<f64> = gate
@@ -682,130 +782,155 @@ impl QASMEngine {
             | GateType::MPZ => Err(PecosError::Processing(
                 "measurement gates should be handled by MeasureWithMapping operation".to_string(),
             )),
-            GateType::PX => Err(PecosError::Processing(format!(
-                "Gate type {:?} is not yet supported in the QASM engine",
-                gate.gate_type
-            ))),
         }
     }
 
-    /// Get the gate table for table-driven processing
-    #[allow(clippy::too_many_lines)]
-    fn get_gate_table() -> Vec<GateInfo> {
+    /// Gate table for table-driven processing, searched in order.
+    const GATE_TABLE: &[GateInfo] = {
         use GateInfo as G;
-        vec![
+        &[
             // Single-qubit gates
             G {
                 name: "h",
+                gate_type: GateType::H,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_h,
             },
             G {
                 name: "x",
+                gate_type: GateType::X,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_x,
             },
             G {
                 name: "y",
+                gate_type: GateType::Y,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_y,
             },
             G {
                 name: "z",
+                gate_type: GateType::Z,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_z,
             },
             G {
                 name: "s",
+                gate_type: GateType::SZ,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_s,
             },
             G {
                 name: "sdg",
+                gate_type: GateType::SZdg,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_sdg,
             },
             G {
                 name: "t",
+                gate_type: GateType::T,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_t,
             },
             G {
                 name: "tdg",
+                gate_type: GateType::Tdg,
                 required_qubits: 1,
-                required_params: 0,
                 handler: Self::handle_tdg,
             },
             G {
                 name: "rz",
+                gate_type: GateType::RZ,
                 required_qubits: 1,
-                required_params: 1,
                 handler: Self::handle_rz,
             },
             G {
                 name: "rx",
+                gate_type: GateType::RX,
                 required_qubits: 1,
-                required_params: 1,
                 handler: Self::handle_rx,
             },
             G {
                 name: "ry",
+                gate_type: GateType::RY,
                 required_qubits: 1,
-                required_params: 1,
                 handler: Self::handle_ry,
             },
             G {
-                name: "r1xy",
+                name: "rxy1q",
+                gate_type: GateType::RXY1Q,
                 required_qubits: 1,
-                required_params: 2,
-                handler: Self::handle_r1xy,
+                handler: Self::handle_rxy1q,
             },
             // Two-qubit gates
             G {
                 name: "cx",
+                gate_type: GateType::CX,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_cx,
             },
             G {
                 name: "cy",
+                gate_type: GateType::CY,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_cy,
             },
             G {
                 name: "cz",
+                gate_type: GateType::CZ,
                 required_qubits: 2,
-                required_params: 0,
                 handler: Self::handle_cz,
             },
             G {
                 name: "rzz",
+                gate_type: GateType::RZZ,
                 required_qubits: 2,
-                required_params: 1,
                 handler: Self::handle_rzz,
             },
             G {
-                name: "szz",
+                name: "sxx",
+                gate_type: GateType::SXX,
                 required_qubits: 2,
-                required_params: 0,
+                handler: Self::handle_sxx,
+            },
+            G {
+                name: "sxxdg",
+                gate_type: GateType::SXXdg,
+                required_qubits: 2,
+                handler: Self::handle_sxxdg,
+            },
+            G {
+                name: "syy",
+                gate_type: GateType::SYY,
+                required_qubits: 2,
+                handler: Self::handle_syy,
+            },
+            G {
+                name: "syydg",
+                gate_type: GateType::SYYdg,
+                required_qubits: 2,
+                handler: Self::handle_syydg,
+            },
+            G {
+                name: "szz",
+                gate_type: GateType::SZZ,
+                required_qubits: 2,
                 handler: Self::handle_szz,
             },
             G {
-                name: "swap",
+                name: "szzdg",
+                gate_type: GateType::SZZdg,
                 required_qubits: 2,
-                required_params: 0,
+                handler: Self::handle_szzdg,
+            },
+            G {
+                name: "swap",
+                gate_type: GateType::SWAP,
+                required_qubits: 2,
                 handler: Self::handle_swap,
             },
         ]
-    }
+    };
 
     /// Process a single gate operation using table-driven approach
     fn process_gate_operation(
@@ -814,12 +939,9 @@ impl QASMEngine {
         qubits: &[usize],
         parameters: &[f64],
     ) -> Result<bool, PecosError> {
-        let gate_table = Self::get_gate_table();
-        let name_lower = name.to_lowercase();
-
-        // Find the gate in the table
-        for gate_info in &gate_table {
-            if gate_info.name == name_lower {
+        // Find the gate in the table; QASM gate names are ASCII identifiers
+        for gate_info in Self::GATE_TABLE {
+            if gate_info.name.eq_ignore_ascii_case(name) {
                 // Validate qubit count
                 if qubits.len() != gate_info.required_qubits {
                     return Err(PecosError::Input(format!(
@@ -835,17 +957,11 @@ impl QASMEngine {
                     )));
                 }
 
-                // Validate parameter count
-                if parameters.len() < gate_info.required_params {
+                let gate_type = gate_info.gate_type;
+                let expected = gate_type.angle_arity();
+                if parameters.len() != expected {
                     return Err(PecosError::Input(format!(
-                        "{} gate requires {} parameter{}, got {}",
-                        gate_info.name,
-                        gate_info.required_params,
-                        if gate_info.required_params == 1 {
-                            ""
-                        } else {
-                            "s"
-                        },
+                        "Gate {gate_type:?} expected {expected} angle parameters, got {}",
                         parameters.len()
                     )));
                 }
@@ -903,13 +1019,19 @@ impl QASMEngine {
         Ok(())
     }
 
-    /// Process a register measurement operation
+    /// Queue the measurement of every qubit of `q_reg` into `c_reg`.
+    ///
+    /// With `batch_cap = Some(current_operation_count)` the batch is not grown
+    /// past `MAX_BATCH_SIZE`: the qubits that fit are queued and `Ok(None)`
+    /// says the rest must follow in a later batch. With `batch_cap = None` the
+    /// whole register is queued as one statement and, on success, the result
+    /// is always `Some(count)`.
     fn process_register_measurement(
         &mut self,
         q_reg: &str,
         c_reg: &str,
         qasm_program: &QASMProgram,
-        current_operation_count: usize,
+        batch_cap: Option<usize>,
     ) -> Result<Option<usize>, PecosError> {
         let program = qasm_program.program();
         let Some(qubit_ids) = program.quantum_registers.get(q_reg) else {
@@ -924,13 +1046,23 @@ impl QASMEngine {
             )));
         };
 
-        let measure_count = std::cmp::min(qubit_ids.len(), c_size);
+        // The parser checks this for top-level register measurements; inside an
+        // `if` the statement reaches the engine unexpanded, so check it here too
+        // rather than silently measuring only the shorter register's worth.
+        if qubit_ids.len() != c_size {
+            return Err(PecosError::Input(format!(
+                "Register size mismatch in measure {q_reg} -> {c_reg}: quantum register {q_reg} \
+                 has {} qubits, classical register {c_reg} has {c_size} bits",
+                qubit_ids.len()
+            )));
+        }
+        let measure_count = qubit_ids.len();
 
         debug!("Will measure {measure_count} qubits from {q_reg} to {c_reg}");
 
         let mut measurements_added = 0;
         for (i, &qubit_id) in qubit_ids.iter().enumerate().take(measure_count) {
-            if current_operation_count + measurements_added >= Self::MAX_BATCH_SIZE {
+            if batch_cap.is_some_and(|count| count + measurements_added >= Self::MAX_BATCH_SIZE) {
                 debug!(
                     "Reached maximum batch size during register measurement, will continue in next batch"
                 );
@@ -957,12 +1089,14 @@ impl QASMEngine {
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
 
-        // Clone to avoid borrow checking issues
+        // The loop below needs `&mut self` while it reads the program, so hold
+        // the program through its own handle. Cloning the `QASMProgram` itself
+        // here copied the whole AST and gate table once per batch, which
+        // dominated the per-shot time of circuit simulations.
         let qasm_program = self
             .program
-            .as_ref()
-            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?
-            .clone();
+            .clone()
+            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?;
 
         let program = qasm_program.program();
 
@@ -1019,7 +1153,7 @@ impl QASMEngine {
                         q_reg,
                         c_reg,
                         &qasm_program,
-                        operation_count,
+                        Some(operation_count),
                     )?;
 
                     if let Some(count) = added_count {
@@ -1035,12 +1169,9 @@ impl QASMEngine {
                     if !self.allow_complex_conditionals {
                         if let Expression::BinaryOp { op: _, left, right } = condition {
                             let is_valid = matches!(
-                                (left.as_ref(), right.as_ref()),
-                                (
-                                    Expression::Variable(_) | Expression::BitId(_, _),
-                                    Expression::Integer(_)
-                                )
-                            );
+                                left.as_ref(),
+                                Expression::Variable(_) | Expression::BitId(_, _)
+                            ) && is_integer_constant(right);
 
                             if !is_valid {
                                 return Err(PecosError::Processing(
@@ -1060,10 +1191,10 @@ impl QASMEngine {
                     // For conditions, we don't need a specific width - just evaluate as boolean
                     let condition_value = self
                         .evaluate_expression_bitvec_with_width(condition, 1)?
-                        .as_i64();
+                        .as_bool();
                     debug!("Condition value: {condition_value}");
 
-                    if condition_value != 0 {
+                    if condition_value {
                         debug!(
                             "If condition evaluated to true, executing operation: {operation:?}"
                         );
@@ -1093,7 +1224,7 @@ impl QASMEngine {
                                 index,
                                 expression,
                             } => {
-                                // Get target register size for width hint
+                                // Get the destination width for function results and missing registers
                                 let target_width = if *is_indexed {
                                     1 // Single bit assignment
                                 } else {
@@ -1111,23 +1242,16 @@ impl QASMEngine {
 
                                 if *is_indexed {
                                     if let Some(idx) = *index {
-                                        let bit_value = value_expr.into_bool();
+                                        let bit_value = value_expr.as_bool();
                                         self.update_register_bit(target, idx, u8::from(bit_value))?;
                                     }
                                 } else if let Some(register_size) =
                                     program.classical_registers.get(target.as_str())
                                 {
-                                    let mut result_bitvec = value_expr.into_bitvec();
-
-                                    // Sign extend when resizing (use the MSB as the sign bit)
-                                    let sign_bit = if result_bitvec.is_empty() {
-                                        false
-                                    } else {
-                                        result_bitvec[result_bitvec.len() - 1]
-                                    };
-
-                                    // Resize to the exact register size with sign extension
-                                    result_bitvec.resize(*register_size, sign_bit);
+                                    let result_bitvec = pecos_core::bitvec::from_expr_value(
+                                        &value_expr,
+                                        *register_size,
+                                    )?;
 
                                     debug!(
                                         "Setting register {} with BitVec of length {}",
@@ -1140,8 +1264,44 @@ impl QASMEngine {
                                 }
                                 operation_count += 1;
                             }
-                            _ => {
-                                debug!("Unsupported operation in if statement");
+                            Operation::MeasureWithMapping {
+                                gate,
+                                c_reg,
+                                c_index,
+                            } => {
+                                if let Some(qubit_id) = gate.qubits.first() {
+                                    self.process_measurement(qubit_id.0, c_reg, *c_index)?;
+                                    self.current_op += 1;
+                                    debug!(
+                                        "Breaking batch after conditional measurement to wait for results"
+                                    );
+                                    return Ok(Some(self.message_builder.build()));
+                                }
+                            }
+                            Operation::RegMeasure { q_reg, c_reg } => {
+                                // The condition was evaluated once for the whole
+                                // statement, so queue the whole register uncapped and
+                                // end the batch, as a single conditional measurement
+                                // does.
+                                self.process_register_measurement(
+                                    q_reg,
+                                    c_reg,
+                                    &qasm_program,
+                                    None,
+                                )?;
+                                self.current_op += 1;
+                                debug!(
+                                    "Breaking batch after conditional register measurement to wait for results"
+                                );
+                                return Ok(Some(self.message_builder.build()));
+                            }
+                            Operation::Barrier { .. } => {
+                                debug!("Skipping conditional barrier");
+                            }
+                            other => {
+                                return Err(PecosError::Processing(format!(
+                                    "Unsupported operation in if statement: {other}"
+                                )));
                             }
                         }
                     } else {
@@ -1156,7 +1316,7 @@ impl QASMEngine {
                 } => {
                     debug!("Processing classical assignment: {target} = {expression:?}");
 
-                    // Get target register size for width hint
+                    // Get the destination width for function results and missing registers
                     let target_width = if *is_indexed {
                         1 // Single bit assignment
                     } else {
@@ -1172,23 +1332,14 @@ impl QASMEngine {
 
                     if *is_indexed {
                         if let Some(idx) = *index {
-                            let bit_value = value_expr.into_bool();
+                            let bit_value = value_expr.as_bool();
                             self.update_register_bit(target, idx, u8::from(bit_value))?;
                         }
                     } else if let Some(register_size) =
                         program.classical_registers.get(target.as_str())
                     {
-                        let mut result_bitvec = value_expr.into_bitvec();
-
-                        // Sign extend when resizing (use the MSB as the sign bit)
-                        let sign_bit = if result_bitvec.is_empty() {
-                            false
-                        } else {
-                            result_bitvec[result_bitvec.len() - 1]
-                        };
-
-                        // Resize to the exact register size with sign extension
-                        result_bitvec.resize(*register_size, sign_bit);
+                        let result_bitvec =
+                            pecos_core::bitvec::from_expr_value(&value_expr, *register_size)?;
 
                         debug!(
                             "Setting register {} with BitVec of length {}",
@@ -1220,19 +1371,65 @@ impl QASMEngine {
 
         let msg = self.message_builder.build();
 
-        // Debug: Print the actual ByteMessage content
-        debug!("QASMEngine: Generated ByteMessage:");
-        if let Ok(quantum_ops) = msg.quantum_ops() {
-            debug!("  Quantum ops: {} total", quantum_ops.len());
-            for (i, gate) in quantum_ops.iter().enumerate() {
-                debug!("    Gate {i}: {gate:?}");
+        // Decoding the message back into gates is batch-sized work, so only
+        // do it when the debug output it feeds is actually enabled.
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("QASMEngine: Generated ByteMessage:");
+            if let Ok(quantum_ops) = msg.quantum_ops() {
+                debug!("  Quantum ops: {} total", quantum_ops.len());
+                for (i, gate) in quantum_ops.iter().enumerate() {
+                    debug!("    Gate {i}: {gate:?}");
+                }
             }
-        }
-        if let Ok(empty) = msg.is_empty() {
-            debug!("  Is empty: {empty}");
+            if let Ok(empty) = msg.is_empty() {
+                debug!("  Is empty: {empty}");
+            }
         }
 
         Ok(Some(msg))
+    }
+
+    /// Function results carry unsigned scalar patterns, including negative WASM returns.
+    fn function_result(value: u64, width: usize) -> Result<ExprValue, PecosError> {
+        let size = u16::try_from(width)
+            .ok()
+            .filter(|&size| size != 0)
+            .ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Expression width must be in 1..=65535, got {width}"
+                ))
+            })?;
+        Ok(ExprValue::Unsigned(BitUInt::new(size, value)))
+    }
+
+    fn rng_argument(
+        &self,
+        name: &str,
+        arg: &Expression,
+        scalar_width: u16,
+    ) -> Result<u64, PecosError> {
+        let value = evaluate_expression_bitvec(arg, self, 64)?;
+        match &value {
+            ExprValue::Boolean(value) => Ok(u64::from(*value)),
+            ExprValue::Signed(bits) if bits.get_bit(bits.size() - 1) => {
+                Err(PecosError::Input(format!(
+                    "{name} requires a non-negative argument, got {}",
+                    pecos_core::expression::format_integer(bits, true)?
+                )))
+            }
+            ExprValue::Signed(bits) | ExprValue::Unsigned(bits) => {
+                if (scalar_width..bits.size()).any(|bit| bits.get_bit(bit)) {
+                    return Err(PecosError::Input(format!(
+                        "{name} argument does not fit in {scalar_width} bits"
+                    )));
+                }
+                bits.to_u64().ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "{name} argument does not fit in {scalar_width} bits"
+                    ))
+                })
+            }
+        }
     }
 
     fn evaluate_rng_models(
@@ -1240,7 +1437,7 @@ impl QASMEngine {
         name: &str,
         args: &[Expression],
         target_width: usize,
-    ) -> Result<ExpressionValue, PecosError> {
+    ) -> Result<ExprValue, PecosError> {
         match name {
             "RNGseed" => {
                 if args.len() != 1 {
@@ -1249,17 +1446,10 @@ impl QASMEngine {
                         args.len()
                     )));
                 }
-                let seed: u64 = match &args[0] {
-                    Expression::Integer(bit_vec) => bit_vec.load(),
-                    _ => {
-                        return Err(PecosError::ParseInvalidExpression(
-                            "RNGseed expects a u64 as its argument".to_string(),
-                        ));
-                    }
-                };
+                let seed = self.rng_argument(name, &args[0], 64)?;
                 self.rng_model.set_seed(seed);
                 // Void function - return 0
-                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+                Self::function_result(0, target_width)
             }
             "RNGindex" => {
                 if args.len() != 1 {
@@ -1268,16 +1458,9 @@ impl QASMEngine {
                         args.len()
                     )));
                 }
-                let idx: u64 = match &args[0] {
-                    Expression::Integer(bit_vec) => bit_vec.load(),
-                    _ => {
-                        return Err(PecosError::ParseInvalidExpression(
-                            "RNGindex expects a u64 as its argument".to_string(),
-                        ));
-                    }
-                };
+                let idx = self.rng_argument(name, &args[0], 64)?;
                 self.rng_model.set_index(idx);
-                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+                Self::function_result(0, target_width)
             }
             "RNGbound" => {
                 if args.len() != 1 {
@@ -1286,16 +1469,10 @@ impl QASMEngine {
                         args.len()
                     )));
                 }
-                let ubound: u32 = match &args[0] {
-                    Expression::Integer(bit_vec) => bit_vec.load(),
-                    _ => {
-                        return Err(PecosError::ParseInvalidExpression(
-                            "RNGbound expects a u32 as its argument".to_string(),
-                        ));
-                    }
-                };
+                let ubound = u32::try_from(self.rng_argument(name, &args[0], 32)?)
+                    .map_err(|error| PecosError::Input(error.to_string()))?;
                 self.rng_model.set_bound(ubound);
-                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+                Self::function_result(0, target_width)
             }
             "RNGnum" => {
                 if !args.is_empty() {
@@ -1307,12 +1484,7 @@ impl QASMEngine {
 
                 let rng_num = self.rng_model.rng_num();
 
-                // convert random number to bitvec
-                let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
-                for i in 0..target_width {
-                    bitvec.push((rng_num >> i) & 1 != 0);
-                }
-                Ok(ExpressionValue::BitVec(bitvec))
+                Self::function_result(u64::from(rng_num), target_width)
             }
             _ => Err(PecosError::ParseInvalidExpression(format!(
                 "Unknown RNG function '{name}'"
@@ -1326,10 +1498,19 @@ impl QASMEngine {
         name: &str,
         args: &[Expression],
         target_width: usize,
-    ) -> Result<ExpressionValue, PecosError> {
+    ) -> Result<ExprValue, PecosError> {
         let mut arg_values = Vec::new();
-        for arg in args {
+        for (position, arg) in args.iter().enumerate() {
             let val = evaluate_expression_bitvec(arg, self, target_width)?;
+            if let ExprValue::Signed(bits) | ExprValue::Unsigned(bits) = &val
+                && bits.size() > 64
+            {
+                return Err(PecosError::Input(format!(
+                    "WASM function '{name}' argument {} has width {}; maximum is 64",
+                    position + 1,
+                    bits.size()
+                )));
+            }
             arg_values.push(val.as_i64());
         }
         if let Some(ref mut foreign_obj) = self.foreign_object {
@@ -1337,15 +1518,9 @@ impl QASMEngine {
             // Convert result back to BitVec
             if results.is_empty() {
                 // Void function - return 0
-                return Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)));
+                return Self::function_result(0, target_width);
             } else if results.len() == 1 {
-                // Single return value - convert to BitVec
-                let value = results[0];
-                let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
-                for i in 0..target_width {
-                    bitvec.push((value >> i) & 1 != 0);
-                }
-                return Ok(ExpressionValue::BitVec(bitvec));
+                return Self::function_result(results[0].cast_unsigned(), target_width);
             }
             return Err(PecosError::ParseInvalidExpression(format!(
                 "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
@@ -1361,7 +1536,7 @@ impl QASMEngine {
         &mut self,
         expr: &Expression,
         target_width: usize,
-    ) -> Result<ExpressionValue, PecosError> {
+    ) -> Result<ExprValue, PecosError> {
         log::debug!("evaluate_expression_bitvec_with_width called with expr: {expr:?}");
 
         // Check if this is a platform fn call (RNG functions) or WASM function call
@@ -1380,7 +1555,7 @@ impl QASMEngine {
                 return self.evaluate_wasm_expr(name, args, target_width);
             }
         }
-        // Use target width as hint for expression evaluation
+        // The target width only sizes function results and undeclared missing registers
         debug!("Falling back to regular evaluate_expression_bitvec for expr: {expr:?}");
 
         // If this is a function call and we reached here, it means:
@@ -1462,8 +1637,6 @@ impl ClassicalEngine for QASMEngine {
 
         match message.outcomes() {
             Ok(outcomes) => {
-                let mappings = self.register_result_mappings.clone();
-
                 debug!("Processing {} measurement results", outcomes.len());
                 debug!(
                     "Starting from global measurement index {}",
@@ -1471,6 +1644,19 @@ impl ClassicalEngine for QASMEngine {
                 );
 
                 let num_results = outcomes.len();
+                // Every outcome must correspond to a measurement this engine has
+                // already queued; a longer message is a protocol violation and would
+                // misalign every later measurement if it were accepted.
+                let pending = self
+                    .register_result_mappings
+                    .len()
+                    .saturating_sub(self.measurements_processed);
+                if num_results > pending {
+                    return Err(PecosError::Input(format!(
+                        "Received {num_results} measurement outcomes but only {pending} \
+                         measurements are pending"
+                    )));
+                }
                 for (local_index, value) in outcomes.into_iter().enumerate() {
                     // Calculate the global index for this measurement
                     let global_index = self.measurements_processed + local_index;
@@ -1478,11 +1664,17 @@ impl ClassicalEngine for QASMEngine {
                         "Found measurement local_index={local_index} global_index={global_index} value={value}"
                     );
 
-                    if let Some((register, bit)) = mappings.get(global_index) {
+                    if let Some((register, bit)) = self.register_result_mappings.get(global_index) {
                         debug!("Updating register {register}[{bit}] with value {value}");
 
                         let safe_value = u8::try_from(value).unwrap_or(1);
-                        self.update_register_bit(register, *bit, safe_value)?;
+                        Self::set_register_bit(
+                            self.program.as_deref(),
+                            &mut self.classical_registers,
+                            register,
+                            *bit,
+                            safe_value,
+                        )?;
                     } else {
                         debug!(
                             "No register mapping found for measurement global_index={global_index}"
@@ -1600,8 +1792,10 @@ impl ControlEngine for QASMEngine {
     ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
         debug!("QASMEngine::continue_processing() called");
 
-        let measurement_count = measurements.outcomes().map_or(0, |outcomes| outcomes.len());
-        debug!("Received {measurement_count} measurements");
+        if log::log_enabled!(log::Level::Debug) {
+            let measurement_count = measurements.outcomes().map_or(0, |outcomes| outcomes.len());
+            debug!("Received {measurement_count} measurements");
+        }
 
         debug!("Processing measurement results");
         self.handle_measurements(measurements)?;
@@ -1720,3 +1914,97 @@ impl fmt::Debug for QASMEngine {
         s.finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn parameterized_gate_rejects_missing_angle() {
+        let err = QASMEngine::default()
+            .process_parameterized_gate(GateType::RZ, &[0], &[])
+            .expect_err("missing angles must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 0")
+        );
+    }
+
+    #[test]
+    fn parameterized_gate_rejects_surplus_angle() {
+        let err = QASMEngine::default()
+            .process_parameterized_gate(GateType::RZ, &[0], &[0.5, 0.25])
+            .expect_err("surplus angles must fail");
+        assert!(
+            err.to_string()
+                .contains("Gate RZ expected 1 angle parameters, got 2")
+        );
+    }
+
+    #[test]
+    fn gate_table_dispatches_rz_and_cz_with_stored_gate_types() {
+        let mut engine = QASMEngine::default();
+        assert!(
+            engine
+                .process_gate_operation("rz", &[0], &[std::f64::consts::FRAC_PI_2])
+                .expect("RZ table dispatch should succeed")
+        );
+        assert!(
+            engine
+                .process_gate_operation("cz", &[0, 1], &[])
+                .expect("CZ table dispatch should succeed")
+        );
+    }
+
+    #[test]
+    fn qasm_engine_executes_all_named_two_qubit_roots() {
+        let qasm = r"
+            OPENQASM 2.0;
+            qreg q[2];
+            SXX q[0],q[1];
+            SXXDG q[0],q[1];
+            SYY q[0],q[1];
+            SYYDG q[0],q[1];
+            SZZ q[0],q[1];
+            SZZDG q[0],q[1];
+        ";
+        let mut engine = QASMEngine::from_str(qasm).expect("all roots should parse");
+        let stage = <QASMEngine as ControlEngine>::start(&mut engine, ())
+            .expect("all roots should execute");
+        let EngineStage::NeedsProcessing(message) = stage else {
+            panic!("root program should produce quantum commands");
+        };
+        let ops = message.quantum_ops().expect("commands should decode");
+        assert_eq!(
+            ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+            [
+                GateType::SXX,
+                GateType::SXXdg,
+                GateType::SYY,
+                GateType::SYYdg,
+                GateType::SZZ,
+                GateType::SZZdg,
+            ]
+        );
+    }
+
+    #[test]
+    fn gate_table_dispatches_all_named_two_qubit_roots() {
+        let mut engine = QASMEngine::default();
+        for name in ["sxx", "sxxdg", "syy", "syydg", "szz", "szzdg"] {
+            assert!(
+                engine
+                    .process_gate_operation(name, &[0, 1], &[])
+                    .expect("root table dispatch should succeed"),
+                "{name} did not dispatch"
+            );
+        }
+        let ops = engine.message_builder.build().quantum_ops().unwrap();
+        assert_eq!(ops.len(), 6);
+    }
+}
+
+#[cfg(test)]
+#[path = "engine/expression_tests.rs"]
+mod expression_tests;

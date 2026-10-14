@@ -460,7 +460,7 @@ where
     pub fn pz_forced(&mut self, q: usize, forced_outcome: bool) -> &mut Self {
         let result = self.mz_forced(q, forced_outcome);
         if result.outcome {
-            self.stabs.signs_minus.xor_assign(&self.stabs.col_z[q]);
+            self.x(&[QubitId(q)]);
         }
         self
     }
@@ -761,6 +761,14 @@ where
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 for i in g.col_x[qu].iter() {
                     if !g.col_z[qu].contains(i) {
@@ -789,6 +797,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
                 for i in g.col_x[qu].iter() {
@@ -809,6 +822,14 @@ where
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
                 for i in g.col_x[qu].iter() {
@@ -828,6 +849,11 @@ where
             self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
                 for i in g.col_z[qu].iter() {
@@ -848,6 +874,14 @@ where
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
             self.stabs.col_x[qu]
                 .xor_intersection_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+                self.destabs.col_x[qu]
+                    .xor_intersection_into(&self.destabs.col_z[qu], &mut self.destabs.signs_minus);
+            }
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
                 for i in g.col_z[qu].iter() {
@@ -927,6 +961,9 @@ where
         for &q in qubits {
             let qu = q.index();
             self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+            }
             // Data: col_x ^= col_z, then swap.
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
@@ -959,6 +996,12 @@ where
             let qu = q.index();
             self.stabs.col_x[qu]
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+            }
             // Data: col_z ^= col_x, then swap.
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
@@ -990,6 +1033,9 @@ where
         for &q in qubits {
             let qu = q.index();
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+            }
             // Data: col_z ^= col_x, then swap.
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
@@ -1022,6 +1068,12 @@ where
             let qu = q.index();
             self.stabs.col_x[qu]
                 .xor_symmetric_difference_into(&self.stabs.col_z[qu], &mut self.stabs.signs_minus);
+            if self.track_destab_signs {
+                self.destabs.col_x[qu].xor_symmetric_difference_into(
+                    &self.destabs.col_z[qu],
+                    &mut self.destabs.signs_minus,
+                );
+            }
             // Data: col_x ^= col_z, then swap.
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
@@ -1053,6 +1105,9 @@ where
         for &q in qubits {
             let qu = q.index();
             self.stabs.signs_minus.xor_assign(&self.stabs.col_z[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_z[qu]);
+            }
             // Data: col_x ^= col_z, then swap.
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_x[qu].xor_assign(&g.col_z[qu]);
@@ -1084,6 +1139,9 @@ where
         for &q in qubits {
             let qu = q.index();
             self.stabs.signs_minus.xor_assign(&self.stabs.col_x[qu]);
+            if self.track_destab_signs {
+                self.destabs.signs_minus.xor_assign(&self.destabs.col_x[qu]);
+            }
             // Data: col_z ^= col_x, then swap.
             for g in [&mut self.stabs, &mut self.destabs] {
                 g.col_z[qu].xor_assign(&g.col_x[qu]);
@@ -1279,7 +1337,7 @@ where
             let q2 = qb.index();
             debug_assert_ne!(q1, q2, "SZZ requires distinct qubits");
 
-            // Sign update (stabs only): Q -> i*Q*ZZ. Per-qubit phase from
+            // Sign update: Q -> i*Q*ZZ. Per-qubit phase from
             // right-multiplying by Z: X*Z=-iY (c=-i), Y*Z=iX (c=+i).
             // For odd-X generators (x=1 at one qubit), total = i*c_q:
             //   x=1 qubit is X (z=0): i*(-i) = +1 -> no toggle
@@ -1292,6 +1350,19 @@ where
             for g in self.stabs.col_x[q2].iter() {
                 if !self.stabs.col_x[q1].contains(g) && self.stabs.col_z[q2].contains(g) {
                     self.stabs.signs_minus.toggle(g);
+                }
+            }
+
+            if self.track_destab_signs {
+                for g in self.destabs.col_x[q1].iter() {
+                    if !self.destabs.col_x[q2].contains(g) && self.destabs.col_z[q1].contains(g) {
+                        self.destabs.signs_minus.toggle(g);
+                    }
+                }
+                for g in self.destabs.col_x[q2].iter() {
+                    if !self.destabs.col_x[q1].contains(g) && self.destabs.col_z[q2].contains(g) {
+                        self.destabs.signs_minus.toggle(g);
+                    }
                 }
             }
 
@@ -1355,7 +1426,7 @@ where
             let q2 = qb.index();
             debug_assert_ne!(q1, q2, "SYY requires distinct qubits");
 
-            // Sign update (stabs only): Q -> i*Q*YY. Per-qubit phase from
+            // Sign update: Q -> i*Q*YY. Per-qubit phase from
             // right-multiplying by Y: X*Y=iZ (c=+i), Z*Y=-iX (c=-i).
             // For the anticommuting qubit (x!=z), total = i*c:
             //   X (x=1,z=0): i*(+i) = -1 -> toggle signs_minus

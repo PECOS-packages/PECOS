@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._permutation import reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -67,12 +68,13 @@ if TYPE_CHECKING:
         RepeatStmt,
         ReturnOp,
         SlotRef,
+        Statement,
         WhileStmt,
     )
 
 
 # Mapping from AST GateKind to QASM gate names
-GATE_TO_QASM: dict[GateKind, str] = {
+GATE_TO_QASM: dict[GateKind, str | None] = {
     # Single-qubit Paulis
     GateKind.X: "x",
     GateKind.Y: "y",
@@ -80,8 +82,8 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "h",
     # Phase gates
-    GateKind.T: "rz(pi/4)",  # T gate as rotation
-    GateKind.Tdg: "rz(-pi/4)",
+    GateKind.T: "t",
+    GateKind.Tdg: "tdg",
     # Square root gates
     GateKind.SX: "rx(pi/2)",
     GateKind.SY: "ry(pi/2)",
@@ -101,12 +103,12 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Two-qubit entangling gates
     GateKind.SXX: "SXX",
     GateKind.SYY: "SYY",
-    GateKind.SZZ: "ZZ",
+    GateKind.SZZ: "SZZ",
     GateKind.SXXdg: "SXXdg",
     GateKind.SYYdg: "SYYdg",
     GateKind.SZZdg: "SZZdg",
     GateKind.RZZ: "rzz",
-    # Controlled rotation gates
+    # qelib1.inc owns these source-precision controlled-rotation spellings.
     GateKind.CRX: "crx",
     GateKind.CRY: "cry",
     GateKind.CRZ: "crz",
@@ -116,6 +118,7 @@ GATE_TO_QASM: dict[GateKind, str] = {
     GateKind.F4: None,
     GateKind.F4dg: None,
 }
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 # Mapping from AST BinaryOp to QASM operators
 BINARY_OP_TO_QASM: dict[BinaryOp, str] = {
@@ -136,6 +139,16 @@ BINARY_OP_TO_QASM: dict[BinaryOp, str] = {
     BinaryOp.RSHIFT: ">>",
 }
 
+# OpenQASM 2.0 has no else: an else-branch runs under the negated comparison.
+NEGATED_COMPARISON: dict[BinaryOp, BinaryOp] = {
+    BinaryOp.EQ: BinaryOp.NE,
+    BinaryOp.NE: BinaryOp.EQ,
+    BinaryOp.LT: BinaryOp.GE,
+    BinaryOp.GE: BinaryOp.LT,
+    BinaryOp.LE: BinaryOp.GT,
+    BinaryOp.GT: BinaryOp.LE,
+}
+
 
 @dataclass
 class QasmContext:
@@ -150,6 +163,9 @@ class QasmContext:
     )  # name -> offset in parent
     registers: dict[str, int] = field(default_factory=dict)  # name -> size
     condition: str | None = None  # Current if condition
+    # Bits the current if condition reads, as (register, index); index None is the whole register
+    condition_reads: frozenset[tuple[str, int | None]] = frozenset()
+    condition_written: bool = False  # Whether the current if has written a bit its condition reads
     # Permutation map: (allocator, index) -> (new_allocator, new_index)
     permutation_map: dict[tuple[str, int], tuple[str, int]] = field(
         default_factory=dict,
@@ -204,10 +220,10 @@ class AstToQasm(BaseVisitor[list[str]]):
 
         Args:
             include_header: Whether to include OPENQASM header.
-            includes: List of include files. Defaults to ["hqslib1.inc"].
+            includes: List of include files. Defaults to ["qelib1.inc"].
         """
         self.include_header = include_header
-        self.includes = includes or ["hqslib1.inc"]
+        self.includes = includes or ["qelib1.inc"]
         self.context = QasmContext()
 
     def generate(self, program: Program) -> list[str]:
@@ -334,18 +350,27 @@ class AstToQasm(BaseVisitor[list[str]]):
             )
             raise NotImplementedError(msg)
 
-        # Typed-angle guard: a user/direct-AST parameterized gate's params
-        # must be typed `Angle` literals (matches Guppy + the typed-AST
-        # contract); reject bare floats so backends do not diverge.
+        # Stored rotations carry typed `Angle` literals. Controlled-rotation
+        # boundary spellings carry unreduced real radians literals.
         if node.gate.is_parameterized:
             from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
             for p in node.params:
-                if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
-                    msg = (
-                        f"QASM codegen: parameterized gate {node.gate.name!r} requires typed `Angle` "
-                        f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                if node.gate in CONTROLLED_ROTATION_GATES:
+                    valid = (
+                        isinstance(p, LiteralExpr)
+                        and isinstance(p.value, int | float)
+                        and not isinstance(p.value, bool)
                     )
+                else:
+                    valid = isinstance(p, LiteralExpr) and isinstance(p.value, Angle)
+                if not valid:
+                    expected = (
+                        "an unreduced real radians literal"
+                        if node.gate in CONTROLLED_ROTATION_GATES
+                        else "typed `Angle` params (use `rad(...)` / `turns(...)` in SLR)"
+                    )
+                    msg = f"QASM codegen: parameterized gate {node.gate.name!r} requires {expected}; got {p!r}."
                     raise NotImplementedError(msg)
 
         # Handle special face rotation gates
@@ -378,7 +403,10 @@ class AstToQasm(BaseVisitor[list[str]]):
             return lines
 
         # Standard gates
-        gate_name = GATE_TO_QASM.get(node.gate, node.gate.name.lower())
+        gate_name = GATE_TO_QASM[node.gate]
+        if gate_name is None:
+            msg = f"QASM codegen: gate {node.gate.name!r} has no standard or special lowering."
+            raise NotImplementedError(msg)
 
         # Handle parameterized gates
         if node.params and node.gate.is_parameterized:
@@ -435,7 +463,10 @@ class AstToQasm(BaseVisitor[list[str]]):
                 result = node.results[i]
                 result_ref = f"{result.register}[{result.index}]"
                 lines.append(
-                    self._maybe_conditional(f"measure {target_ref} -> {result_ref};"),
+                    self._maybe_conditional(
+                        f"measure {target_ref} -> {result_ref};",
+                        writes=(result.register, result.index),
+                    ),
                 )
             else:
                 # Measurement without result storage
@@ -447,10 +478,15 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_assign(self, node: AssignOp) -> list[str]:
         """Generate assignment operation."""
-        target = f"{node.target.register}[{node.target.index}]" if isinstance(node.target, BitRef) else str(node.target)
+        if isinstance(node.target, BitRef):
+            target = f"{node.target.register}[{node.target.index}]"
+            writes = (node.target.register, node.target.index)
+        else:
+            target = str(node.target)
+            writes = (target, None)
 
         value = self._render_expression(node.value)
-        return [self._maybe_conditional(f"{target} = {value};")]
+        return [self._maybe_conditional(f"{target} = {value};", writes=writes)]
 
     def visit_barrier(self, node: BarrierOp) -> list[str]:
         """Generate barrier operation."""
@@ -686,39 +722,72 @@ class AstToQasm(BaseVisitor[list[str]]):
     # === Control Flow ===
 
     def visit_if(self, node: IfStmt) -> list[str]:
-        """Generate conditional statements."""
-        lines = []
+        """Generate conditional statements.
 
-        # Render condition
-        cond = self._render_expression(node.condition)
+        An OpenQASM 2.0 condition guards a single operation, so every operation in
+        a branch carries the condition and re-reads it when it runs. The else-branch
+        runs under the negated comparison. Nested ifs, and branches that write a bit
+        the condition reads before a later operation re-reads it, are rejected; the
+        branches are exclusive, so a then-branch that writes the condition last is
+        emitted after the else-branch.
+        """
+        reject_permute_in_region(node, "QASM")
+        if self.context.condition is not None:
+            msg = (
+                "QASM codegen: nested If is not supported; an OpenQASM 2.0 condition "
+                "cannot be combined with the enclosing one"
+            )
+            raise NotImplementedError(msg)
+
+        self.context.condition_reads = frozenset(_condition_reads(node.condition))
+        self.context.condition_written = False
+        lines = self._conditional_branch(node.condition, node.then_body)
+        if node.else_body:
+            condition = node.condition
+            if not (isinstance(condition, BinaryExpr) and condition.op in NEGATED_COMPARISON):
+                msg = (
+                    "QASM codegen: an If with an else-branch needs a comparison condition "
+                    "(==, !=, <, <=, >, >=) so the else-branch can run under its negation"
+                )
+                raise NotImplementedError(msg)
+            negated = BinaryExpr(op=NEGATED_COMPARISON[condition.op], left=condition.left, right=condition.right)
+            if self.context.condition_written:
+                self.context.condition_written = False
+                else_lines = self._conditional_branch(negated, node.else_body)
+                if self.context.condition_written:
+                    msg = (
+                        "QASM codegen: both branches of an If write a bit its condition reads, so "
+                        "whichever is emitted second would check the changed value"
+                    )
+                    raise NotImplementedError(msg)
+                lines = else_lines + lines
+            else:
+                lines.extend(self._conditional_branch(negated, node.else_body))
+        self.context.condition_reads = frozenset()
+        return lines
+
+    def _conditional_branch(self, condition: Expression, body: tuple[Statement, ...]) -> list[str]:
+        """Emit each statement of a branch guarded by `condition`."""
+        cond = self._render_expression(condition)
         # Remove outer parentheses if present
         if cond.startswith("(") and cond.endswith(")"):
             cond = cond[1:-1]
 
-        # Save previous condition
-        prev_cond = self.context.condition
         self.context.condition = cond
-
-        # Generate then body
-        for stmt in node.then_body:
+        lines = []
+        for stmt in body:
             lines.extend(self.visit(stmt))
-
-        # Restore condition
-        self.context.condition = prev_cond
-
-        # Note: QASM 2.0 doesn't support else blocks in the standard way
-        # We just add a comment if there's an else block
-        if node.else_body:
-            lines.append("// Note: else block not directly supported in QASM 2.0")
-
+        self.context.condition = None
         return lines
 
-    def visit_while(self, _node: WhileStmt) -> list[str]:
+    def visit_while(self, node: WhileStmt) -> list[str]:
         """While loops are not supported in QASM 2.0."""
+        reject_permute_in_region(node, "QASM")
         return ["// ERROR: While loops not supported in QASM 2.0"]
 
-    def visit_for(self, _node: ForStmt) -> list[str]:
+    def visit_for(self, node: ForStmt) -> list[str]:
         """For loops are not supported in QASM 2.0."""
+        reject_permute_in_region(node, "QASM")
         return ["// ERROR: For loops not supported in QASM 2.0"]
 
     def visit_repeat(self, node: RepeatStmt) -> list[str]:
@@ -827,7 +896,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
         if isinstance(node.value, Angle):
-            # OpenQASM rotations are in radians; signed principal value.
+            # OpenQASM stored rotations are emitted in radians.
             return str(node.value.value.to_radians_signed())
         return str(node.value)
 
@@ -847,14 +916,51 @@ class AstToQasm(BaseVisitor[list[str]]):
             return f"(-{operand})"
         return f"({node.op} {operand})"
 
-    def _maybe_conditional(self, stmt: str) -> str:
-        """Wrap statement with condition if one is active."""
-        if self.context.condition:
-            return f"if({self.context.condition}) {stmt}"
-        return stmt
+    def _maybe_conditional(self, stmt: str, *, writes: tuple[str, int | None] | None = None) -> str:
+        """Wrap statement with condition if one is active.
+
+        `writes` is the (register, index) the statement assigns; index None is the
+        whole register.
+        """
+        if not self.context.condition:
+            return stmt
+        guarded = f"if({self.context.condition}) {stmt}"
+        if self.context.condition_written:
+            msg = (
+                "QASM codegen: an If writes a bit its condition reads and then runs "
+                f"`{guarded}`, which would check the changed value (OpenQASM 2.0 re-reads the "
+                "condition for every operation). Make the write the last operation of the If, "
+                "or write a different register."
+            )
+            raise NotImplementedError(msg)
+        if writes is not None:
+            register, index = writes
+            self.context.condition_written = any(
+                read_register == register and (read_index is None or index is None or read_index == index)
+                for read_register, read_index in self.context.condition_reads
+            )
+        return guarded
 
 
-def ast_to_qasm(program: Program, *, include_header: bool = True) -> str:
+def _condition_reads(expr: Expression) -> set[tuple[str, int | None]]:
+    """Return the (register, index) bits an if condition reads; index None is the whole register."""
+    if isinstance(expr, BitExpr):
+        return {(expr.ref.register, expr.ref.index)}
+    if isinstance(expr, VarExpr):
+        return {(expr.name, None)}
+    if isinstance(expr, BinaryExpr):
+        return _condition_reads(expr.left) | _condition_reads(expr.right)
+    if isinstance(expr, UnaryExpr):
+        return _condition_reads(expr.operand)
+    return set()
+
+
+def ast_to_qasm(
+    program: Program,
+    *,
+    include_header: bool = True,
+    includes: list[str] | None = None,
+) -> str:
     """Convert an AST Program to QASM code.
 
     Convenience function for simple code generation.
@@ -862,10 +968,11 @@ def ast_to_qasm(program: Program, *, include_header: bool = True) -> str:
     Args:
         program: The AST Program to convert.
         include_header: Whether to include OPENQASM header.
+        includes: List of include files. Defaults to ["qelib1.inc"].
 
     Returns:
         Generated QASM code as a string.
     """
-    generator = AstToQasm(include_header=include_header)
+    generator = AstToQasm(include_header=include_header, includes=includes)
     lines = generator.generate(program)
     return "\n".join(lines)

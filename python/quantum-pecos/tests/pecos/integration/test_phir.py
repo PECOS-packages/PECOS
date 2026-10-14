@@ -34,11 +34,6 @@ example1_no_wasm_phir = json.load(
 spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.phir.json"))
 
 
-# Select which marked tests to run by using the mark flag. See: https://docs.pytest.org/en/7.1.x/example/markers.html
-# run only optional_dependency tests: pytest -v -m optional_dependency
-# run all without optional_dependency tests: pytest -v -m "not optional_dependency"
-
-
 def test_spec_example_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
     wasm = WasmForeignObject(math_wat)

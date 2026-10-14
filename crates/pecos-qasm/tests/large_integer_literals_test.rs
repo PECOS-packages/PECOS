@@ -265,23 +265,32 @@ fn test_mixed_size_literals_in_expressions() {
     let shot = &shot_vec.shots[0];
 
     // Check result
-    if let Data::BitVec(result_bits) = &shot.data["result"] {
-        // Should be 2^64 + 50
-        // Bits 1, 4, 5 should be set (50 = 110010 in binary)
-        assert!(result_bits[1], "Bit 1 should be 1");
-        assert!(result_bits[4], "Bit 4 should be 1");
-        assert!(result_bits[5], "Bit 5 should be 1");
-        assert!(result_bits[64], "Bit 64 should be 1");
+    let Data::BitVec(result_bits) = &shot.data["result"] else {
+        panic!("Expected result register as a BitVec");
+    };
+    // Should be 2^64 + 50
+    // Bits 1, 4, 5 should be set (50 = 110010 in binary)
+    assert!(result_bits[1], "Bit 1 should be 1");
+    assert!(result_bits[4], "Bit 4 should be 1");
+    assert!(result_bits[5], "Bit 5 should be 1");
+    assert!(result_bits[64], "Bit 64 should be 1");
+    // 2^64 + 50 has exactly these four bits set; the constant fold used to
+    // sign-extend the 65-bit literal and fill bits 65..255 as well.
+    assert_eq!(
+        result_bits.count_ones(),
+        4,
+        "result must be exactly 2^64 + 50"
+    );
 
-        println!("Mixed literal arithmetic working!");
-    }
+    println!("Mixed literal arithmetic working!");
 
     // Check comparisons
-    if let Data::BitVec(test_bits) = &shot.data["test"] {
-        assert!(test_bits[0], "result > 2^64 should be true");
-        assert!(test_bits[1], "result == 2^64 + 50 should be true");
-        assert!(test_bits[2], "2^64 > 1000 should be true");
+    let Data::BitVec(test_bits) = &shot.data["test"] else {
+        panic!("Expected test register as a BitVec");
+    };
+    assert!(test_bits[0], "result > 2^64 should be true");
+    assert!(test_bits[1], "result == 2^64 + 50 should be true");
+    assert!(test_bits[2], "2^64 > 1000 should be true");
 
-        println!("Large literal comparisons working correctly!");
-    }
+    println!("Large literal comparisons working correctly!");
 }

@@ -133,6 +133,7 @@ _MWPM_DECODERS = {
 
 # All supported decoders
 _ALL_DECODERS = [
+    "windowed:step=5,buffer=5,inner=pymatching",
     "pymatching",
     "pymatching_uncorrelated",
     "fusion_blossom",

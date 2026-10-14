@@ -7,20 +7,21 @@ crates/pecos-cuquantum
 crates/pecos-cuquantum-sys
 crates/pecos-foreign
 crates/pecos-gpu-sims
-crates/pecos-hugr-qis
 crates/pecos-ldpc-decoders
 crates/pecos-llvm
 crates/pecos-pymatching
 crates/pecos-qis
 crates/pecos-qis-ffi
+# Test-only descriptor accessor moved from test-time compilation into a Cargo fixture.
+crates/pecos-qis/tests/fixtures/runtime-descriptor
 crates/pecos-simulators
 crates/pecos-tesseract
 exp/pecos-experimental
+exp/pecos-frontier-wasm
 # zlup revival (experimental): zlup contains one reviewed `unsafe fn new_unchecked`
 # invariant constructor; zlup-ffi is a C-ABI boundary crate (Box::from_raw / slices).
 exp/zlup
 exp/zlup/ffi/zlup-ffi
-go/pecos-go-ffi
 julia/pecos-julia-ffi
 python/pecos-rslib
 python/pecos-rslib-llvm

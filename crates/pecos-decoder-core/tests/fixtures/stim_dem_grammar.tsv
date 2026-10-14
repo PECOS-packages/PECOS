@@ -1,0 +1,69 @@
+input	verdict	canonical
+error(0.1) D0 D1 L0	accept	error(0.1000000000000000056) D0 D1 L0
+error(0.1) D0 D3 ^ D1 D2	accept	error(0.1000000000000000056) D0 D3 ^ D1 D2
+error(0.1) D0 D3^D1 D2	reject
+error(0.1) D0 D3^ D1 D2	reject
+error(0.1) D0 D3 ^D1 D2	reject
+error(0.1)D3 D0	reject
+error(0.1) D3 D0 ^	reject
+error(0.1) ^ D3 D0	reject
+error(0.1) D0 ^ ^ D1	reject
+error(0.1) D0 ^ D0	accept	error(0.1000000000000000056) D0 ^ D0
+error(0.1) D0 L0 ^ L1 D1	accept	error(0.1000000000000000056) D0 L0 ^ L1 D1
+error(0.1) D0 ^ L0	accept	error(0.1000000000000000056) D0 ^ L0
+error( 0.1 ) D0	accept	error(0.1000000000000000056) D0
+error (0.1) D0	reject
+error(0.1)  D0\tD1	accept	error(0.1000000000000000056) D0 D1
+  error(0.1) D0	accept	error(0.1000000000000000056) D0
+error(0.1) D0 # comment	accept	error(0.1000000000000000056) D0
+error(0.1) D0\t# c	accept	error(0.1000000000000000056) D0
+error(0.1) D0 #c ^ D1	accept	error(0.1000000000000000056) D0
+error(0.1)  # only comment	accept	error(0.1000000000000000056)
+#c\nerror(0.1) D0	accept	error(0.1000000000000000056) D0
+error(0.1) D0 D0	accept	error(0.1000000000000000056) D0 D0
+error(0.1) L0	accept	error(0.1000000000000000056) L0
+error(0.1)	accept	error(0.1000000000000000056)
+error() D0	accept	error(0) D0
+error D0	reject
+error(0) D0	accept	error(0) D0
+error(1) D0	accept	error(1) D0
+error(1.5) D0	reject
+error(1e-3) D0	accept	error(0.001000000000000000021) D0
+error(.5) D0	accept	error(0.5) D0
+error(5e-1) D0	accept	error(0.5) D0
+error(0.1,0.2) D0	reject
+error[tag](0.1) D0	accept	error[tag](0.1000000000000000056) D0
+ERROR(0.1) D0	accept	error(0.1000000000000000056) D0
+Error(0.1) D0	accept	error(0.1000000000000000056) D0
+error(0.1) d0	accept	error(0.1000000000000000056) D0
+error(0.1) D00	accept	error(0.1000000000000000056) D0
+error(0.1) D0 L00	accept	error(0.1000000000000000056) D0 L0
+error(0.1) D4294967296	accept	error(0.1000000000000000056) D4294967296
+error(0.1) D-1	reject
+error(0.1) D 0	reject
+error(0.1) D0x	reject
+error(0.1) D0 \\\n D1	reject
+detector D0	accept	detector D0
+detector(1,2) D0	accept	detector(1, 2) D0
+detector(1.5, 2) D0	accept	detector(1.5, 2) D0
+detector(1,2)  D0 # c	accept	detector(1, 2) D0
+detector(1,2)D0	reject
+detector D0 D1	reject
+detector	reject
+detector D0\ndetector D0	accept	detector D0\ndetector D0
+logical_observable L0	accept	logical_observable L0
+logical_observable L0 L1	reject
+logical_observable L0 ^ L1	reject
+logical_observable	reject
+shift_detectors 1	accept	shift_detectors 1
+repeat 2 {\n error(0.1) D0\n}	accept	repeat 2 {\n    error(0.1000000000000000056) D0\n}
+error(0.1) D0\nerror(0.1) D0	accept	error(0.1000000000000000056) D0\nerror(0.1000000000000000056) D0
+	accept
+   	accept
+\u{c}error(0.1) D0	accept	error(0.1000000000000000056) D0
+\u{b}error(0.1) D0	accept	error(0.1000000000000000056) D0
+\u{a0}error(0.1) D0	reject
+error(0.1)\u{a0}D0	reject
+error(0.1) D4294967295	accept	error(0.1000000000000000056) D4294967295
+error(0.1) D1152921504606846975	accept	error(0.1000000000000000056) D1152921504606846975
+error(0.1) D1152921504606846976	reject

@@ -15,7 +15,7 @@
 //! Mirrors the Rust-side API:
 //! ```python
 //! results = (sim_neo(tc)
-//!     .quantum(stab_mps().lazy_measure().max_bond_dim(128))
+//!     .quantum(stab_mps().measurement("lazy").max_bond_dim(128))
 //!     .noise(depolarizing().p1(0.003).p2(0.003).p_meas(0.003).p_prep(0.003).idle_rz(0.05))
 //!     .sampling(monte_carlo(5000))
 //!     .seed(42)
@@ -31,28 +31,6 @@ use pecos_neo::noise::{
 use pecos_neo::tool::sim_neo;
 use pecos_simulators::measurement_sampler::SampleResult;
 use pyo3::prelude::*;
-
-#[derive(serde::Deserialize)]
-struct RecDef {
-    /// DEM-style negative record offsets. Alternative to `meas_ids`.
-    #[serde(default)]
-    records: Vec<i32>,
-    /// Stable measurement ids. Alternative to `records`; the traced-QIS
-    /// pipeline emits only this field.
-    #[serde(default)]
-    meas_ids: Vec<usize>,
-}
-
-fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usize> {
-    let idx = if record < 0 {
-        i32::try_from(num_measurements).ok()?.checked_add(record)?
-    } else {
-        record
-    };
-    usize::try_from(idx)
-        .ok()
-        .filter(|&idx| idx < num_measurements)
-}
 
 // ============================================================================
 // Columnar raw measurement result (stays in Rust memory)
@@ -419,7 +397,7 @@ pub fn stabilizer() -> PyStabilizerBuilder {
 /// Builder for StabMps backend configuration.
 ///
 /// Example:
-///     stab_mps().lazy_measure().max_bond_dim(128)
+///     stab_mps().measurement("lazy").max_bond_dim(128)
 #[pyclass(
     name = "StabMpsBuilder",
     skip_from_py_object,
@@ -439,14 +417,14 @@ impl PyStabMpsBuilder {
         }
     }
 
-    /// Set whether measurements are deferred for non-Clifford states.
+    /// Select "exact", "pragmatic", or "lazy" single-qubit measurement.
     ///
-    /// Calling without an argument enables lazy measurement; an explicit bool
-    /// sets the option exactly.
-    #[pyo3(signature = (enabled=true))]
-    fn lazy_measure(mut slf: PyRefMut<'_, Self>, enabled: bool) -> PyRefMut<'_, Self> {
-        slf.inner.lazy_measure = enabled;
-        slf
+    /// Lazy preserves exact conditional states after issues #555 and #572,
+    /// subject to configured MPS truncation. It consumes a distinct RNG stream
+    /// from exact, so equal seeds are not shot-for-shot comparable across modes.
+    fn measurement<'py>(mut slf: PyRefMut<'py, Self>, mode: &str) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner.measurement = crate::parse_measurement_mode(mode)?;
+        Ok(slf)
     }
 
     fn max_bond_dim(mut slf: PyRefMut<'_, Self>, bd: usize) -> PyRefMut<'_, Self> {
@@ -806,7 +784,7 @@ impl PySimNeoBuilder {
     /// Example:
     ///     sim_neo(tc).quantum(state_vec()).noise(...).run()
     ///     sim_neo(tc).quantum(stabilizer()).noise(...).run()
-    ///     sim_neo(tc).quantum(stab_mps().lazy_measure()).noise(...).run()
+    ///     sim_neo(tc).quantum(stab_mps().measurement("lazy")).noise(...).run()
     fn quantum(&self, builder: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut c = self.clone();
         if builder.is_instance_of::<PyMeasSamplingBuilder>() {
@@ -970,7 +948,9 @@ impl PySimNeoBuilder {
         }
 
         let mut sim = builder.build();
-        let results = sim.run();
+        let results = sim
+            .run()
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let mut all_shots = Vec::with_capacity(shots);
         for shot_outcomes in &results.outcomes {
@@ -1015,7 +995,8 @@ impl PySimNeoBuilder {
             .quantum(pecos_neo::tool::sparse_stab())
             .sampling(pecos_neo::tool::path_enumeration(max_measurements))
             .build()
-            .run();
+            .run()
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let rows: Vec<Vec<u8>> = results
             .outcomes
@@ -1330,7 +1311,7 @@ impl PySimNeoBuilder {
 
         let method = self.meas_sampling_method.as_deref().unwrap_or("auto");
 
-        let has_coherent = noise_config.idle_rz_angle.abs() > 1e-15;
+        let has_coherent = pecos_eeg::dem_simulator::uses_eeg_path(noise_config.idle_rz_angle);
 
         match method {
             "stochastic" => {
@@ -1380,7 +1361,7 @@ impl PySimNeoBuilder {
             p_prep: noise_config.p_prep,
         };
         let mechanisms = fault_sampler::build_fault_table(&self.tick_circuit, &noise)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let plan = RawMeasurementPlan::new(&history, mechanisms);
         let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
@@ -1390,6 +1371,7 @@ impl PySimNeoBuilder {
     }
 
     /// Coherent path: EEG DemGenerator with measurement synthesis.
+    /// The reader infers the measurement count and validates metadata when present.
     fn run_coherent_meas_sampling(
         &self,
         noise_config: &PyNoiseModelBuilder,
@@ -1398,56 +1380,28 @@ impl PySimNeoBuilder {
         use pecos_eeg::dem_generator::select_generator;
         use pecos_eeg::dem_simulator::{CircuitMeasurementMeta, run_dem_simulation};
 
-        // Extract metadata from stored TickCircuit
-        let num_meas_attr = self
-            .tick_circuit
-            .get_meta("num_measurements")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    s.parse::<usize>().ok()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "TickCircuit missing num_measurements metadata",
-                )
-            })?;
-        let det_json = self
-            .tick_circuit
-            .get_meta("detectors")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "[]".to_string());
-        let obs_json = self
-            .tick_circuit
-            .get_meta("observables")
-            .and_then(|a| {
-                if let pecos_quantum::Attribute::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "[]".to_string());
+        use pecos_qec::fault_tolerance::circuit_definitions::definitions_from_tick_circuit;
 
-        let det_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&det_json)
-            .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
-            .unwrap_or_default();
-        let obs_records: Vec<Vec<i32>> = serde_json::from_str::<Vec<RecDef>>(&obs_json)
-            .map(|defs| defs.iter().map(|d| d.records.clone()).collect())
-            .unwrap_or_default();
+        // run_dem_simulation reaches EEG generators only with coherent noise;
+        // its purely stochastic path retains the full categorical domain.
+        if pecos_eeg::dem_simulator::uses_eeg_path(noise_config.idle_rz_angle) {
+            crate::eeg_bindings::validate_generator_depolarizing(noise_config.p1, noise_config.p2)?;
+        }
 
+        let definitions = definitions_from_tick_circuit(&self.tick_circuit)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let meta = CircuitMeasurementMeta {
-            num_measurements: num_meas_attr,
-            detector_records: det_records,
-            observable_records: obs_records,
+            num_measurements: definitions.num_measurements,
+            detector_measurements: definitions
+                .detectors
+                .into_iter()
+                .map(|d| d.measurements)
+                .collect(),
+            observable_measurements: definitions
+                .observables
+                .into_iter()
+                .map(|o| o.measurements)
+                .collect(),
         };
 
         let noise = pecos_eeg::noise::UniformNoise {
@@ -1458,7 +1412,7 @@ impl PySimNeoBuilder {
             p_prep: noise_config.p_prep,
         };
 
-        let gates = commands_to_gates(&self.commands);
+        let gates = commands_to_gates(&self.commands)?;
         let generator = select_generator(method, noise_config.idle_rz_angle);
 
         let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
@@ -1476,29 +1430,11 @@ impl PySimNeoBuilder {
 }
 
 /// Convert CommandQueue to Vec<Gate> for EEG analysis.
-fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_core::Gate> {
-    use pecos_core::{GateAngles, GateMeasIds, GateParams};
-
-    commands
-        .iter()
-        .map(|cmd| {
-            let qubits = cmd.qubits.iter().copied().collect();
-            let mut angles = GateAngles::new();
-            for &a in &cmd.angles {
-                angles.push(a);
-            }
-            // Convert pecos_neo::GateType to pecos_core::GateType
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            Gate {
-                gate_type,
-                qubits,
-                angles,
-                params: GateParams::new(),
-                meas_ids: GateMeasIds::new(),
-                channel: None,
-            }
-        })
-        .collect()
+fn commands_to_gates(
+    commands: &pecos_neo::command::CommandQueue,
+) -> PyResult<Vec<pecos_core::Gate>> {
+    pecos_neo::adapter::command_queue_to_gates(commands)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================
@@ -1514,7 +1450,7 @@ fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_c
 ///
 /// Example:
 ///     results = (sim_neo(tc)
-///         .quantum(stab_mps().lazy_measure().max_bond_dim(128))
+///         .quantum(stab_mps().measurement("lazy").max_bond_dim(128))
 ///         .noise(depolarizing().p1(0.003).p2(0.003).p_meas(0.003).idle_rz(0.05))
 ///         .sampling(monte_carlo(5000))
 ///         .seed(42)
@@ -1569,20 +1505,42 @@ fn build_rust_tick_circuit(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_quantum::
     build_rust_tick_circuit_from_gates(py_tc)
 }
 
+type LoweredGateRecord = (usize, String, Vec<usize>, Vec<f64>);
+
+/// Rebuild a legacy Python circuit through neo's fallback and expose its native gates.
+#[pyfunction]
+#[pyo3(name = "neo_fallback_native_gates")]
+pub fn neo_fallback_native_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<LoweredGateRecord>> {
+    let circuit = build_rust_tick_circuit_from_gates(py_tc)?;
+    Ok(circuit
+        .iter_gate_batches_with_tick()
+        .map(|(tick, batch)| {
+            let gate = batch.as_gate();
+            (
+                tick,
+                gate.gate_type.to_string(),
+                gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
+                gate.angles
+                    .iter()
+                    .map(pecos_core::Angle64::to_radians_signed)
+                    .collect(),
+            )
+        })
+        .collect())
+}
+
 /// Reconstruct TickCircuit from Python gate iteration, preserving tick structure.
 ///
-/// Respects the original tick boundaries: all gates from the same Python tick
-/// go into the same Rust tick. Uses typed .mz() for measurements and .pz() for
-/// prep within each tick (these consume the TickHandle, so we process them after
-/// other gates in the tick).
+/// Within each source tick, emits prep, other gates, then measurements. Source
+/// measurement batches retain their order and stamped ids; unstamped batches
+/// allocate ids from the rebuilt circuit's measurement counter.
 fn build_rust_tick_circuit_from_gates(
     py_tc: &Bound<'_, PyAny>,
 ) -> PyResult<pecos_quantum::TickCircuit> {
-    use pecos_quantum::{Attribute, TickMeasRef};
+    use pecos_quantum::Attribute;
 
     let num_ticks: usize = py_tc.call_method0("num_ticks")?.extract()?;
     let mut tc = pecos_quantum::TickCircuit::default();
-    let mut all_meas_refs: Vec<TickMeasRef> = Vec::new();
 
     for tick_idx in 0..num_ticks {
         let py_tick = py_tc.call_method1("get_tick", (tick_idx,))?;
@@ -1590,9 +1548,9 @@ fn build_rust_tick_circuit_from_gates(
         let gates: Vec<Bound<'_, PyAny>> = py_gates.extract()?;
 
         // Separate gates by type: MZ, PZ, and other
-        let mut mz_qubits: Vec<pecos_core::QubitId> = Vec::new();
+        let mut mz_batches = Vec::new();
         let mut pz_qubits: Vec<pecos_core::QubitId> = Vec::new();
-        let mut other_gates: Vec<pecos_core::Gate> = Vec::new();
+        let mut other_gate_stages: Vec<Vec<pecos_core::Gate>> = vec![Vec::new()];
 
         for gate in &gates {
             let gate_type_obj = gate.getattr("gate_type")?;
@@ -1611,16 +1569,61 @@ fn build_rust_tick_circuit_from_gates(
                 // MeasureFree lowers to MZ here: record-bearing, and the free
                 // has no stabilizer effect. The expansion accepts it either way.
                 "MZ" | "Measure" | "MeasureFree" => {
-                    mz_qubits.extend(qubit_ids);
+                    let mut measurement = Gate::mz(&qubit_ids);
+                    // sim_neo also accepts minimal duck-typed circuits (gate
+                    // objects exposing only `gate_type`, `qubits` and
+                    // `angles`); their measurements carry no stamped ids. An
+                    // absent attribute or an empty list both request the usual
+                    // sequential allocation.
+                    if gate.hasattr("meas_ids")? {
+                        measurement.meas_ids = gate
+                            .getattr("meas_ids")?
+                            .extract::<Vec<usize>>()?
+                            .into_iter()
+                            .map(pecos_core::MeasId::from_raw)
+                            .collect();
+                    }
+                    mz_batches.push(measurement);
                 }
 
                 "QAlloc" | "PZ" | "Prep" => {
                     pz_qubits.extend(qubit_ids);
                 }
                 "TrackedPauli" | "TrackedPauliMeta" => {}
+                "CRX" | "CRY" | "CRZ" => {
+                    let angle = extract_boundary_rotation_angle(gate, &gate_name)?;
+                    let (pairs, remainder) = qubit_ids.as_slice().as_chunks::<2>();
+                    if !remainder.is_empty() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "{gate_name} requires control-target qubit pairs"
+                        )));
+                    }
+                    for pair in pairs {
+                        let lowered = match gate_name.as_str() {
+                            "CRX" => {
+                                pecos_core::controlled_rotations::lower_crx(angle, pair[0], pair[1])
+                            }
+                            "CRY" => {
+                                pecos_core::controlled_rotations::lower_cry(angle, pair[0], pair[1])
+                            }
+                            "CRZ" => {
+                                pecos_core::controlled_rotations::lower_crz(angle, pair[0], pair[1])
+                                    .into_iter()
+                                    .collect()
+                            }
+                            _ => unreachable!(),
+                        };
+                        if other_gate_stages.len() < lowered.len() {
+                            other_gate_stages.resize_with(lowered.len(), Vec::new);
+                        }
+                        for (stage, lowered_gate) in lowered.into_iter().enumerate() {
+                            other_gate_stages[stage].push(lowered_gate);
+                        }
+                    }
+                }
                 _ => {
                     let core_gate = build_gate_from_python(gate, &gate_name, &qubit_ids)?;
-                    other_gates.push(core_gate);
+                    other_gate_stages[0].push(core_gate);
                 }
             }
         }
@@ -1631,44 +1634,38 @@ fn build_rust_tick_circuit_from_gates(
         }
 
         // Add other gates in one tick (error on qubit conflicts)
-        if !other_gates.is_empty() {
-            let mut tick_handle = tc.tick();
-            for g in &other_gates {
-                if let Err(e) = tick_handle.try_add_gate(g.clone()) {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "Gate conflict in tick {tick_idx}: {e}"
-                    )));
+        for gates_at_stage in other_gate_stages {
+            if !gates_at_stage.is_empty() {
+                let mut tick_handle = tc.tick();
+                for gate in gates_at_stage {
+                    if let Err(e) = tick_handle.try_add_gate(gate) {
+                        return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Gate conflict while lowering Python tick {tick_idx}: {e}"
+                        )));
+                    }
                 }
             }
         }
 
         // Add MZ last (measure after other gates)
-        if !mz_qubits.is_empty() {
-            let refs = tc.tick().mz(&mz_qubits);
-            all_meas_refs.extend(refs);
-        }
+        append_measurement_batches(&mut tc, mz_batches)?;
     }
 
-    // Copy metadata from Python TickCircuit
-    if let Ok(num_meas) = py_tc.call_method1("get_meta", ("num_measurements",))
-        && let Ok(s) = num_meas.extract::<String>()
-    {
-        tc.set_meta("num_measurements", Attribute::String(s));
+    // Minimal duck-typed circuits need not expose metadata.
+    if py_tc.hasattr("get_meta")? {
+        for attribute in ["num_measurements", "detectors", "observables"] {
+            let value = py_tc.call_method1("get_meta", (attribute,))?;
+            if !value.is_none() {
+                let value = value.extract::<String>().map_err(|_| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "attribute {attribute:?} must be a string, got {value:?}"
+                    ))
+                })?;
+                tc.set_meta(attribute, Attribute::String(value));
+            }
+        }
     }
-    if let Ok(det_json) = py_tc.call_method1("get_meta", ("detectors",))
-        && let Ok(s) = det_json.extract::<String>()
-    {
-        // Create structured annotations from JSON
-        create_annotations_from_json(&mut tc, &s, &all_meas_refs, true)?;
-        tc.set_meta("detectors", Attribute::String(s));
-    }
-    if let Ok(obs_json) = py_tc.call_method1("get_meta", ("observables",))
-        && let Ok(s) = obs_json.extract::<String>()
-    {
-        create_annotations_from_json(&mut tc, &s, &all_meas_refs, false)?;
-        tc.set_meta("observables", Attribute::String(s));
-    }
-    copy_tracked_pauli_annotations_from_python(py_tc, &mut tc)?;
+    copy_annotations_from_python(py_tc, &mut tc)?;
 
     // Compact for performance
     tc.compact_ticks();
@@ -1676,17 +1673,101 @@ fn build_rust_tick_circuit_from_gates(
     Ok(tc)
 }
 
-fn copy_tracked_pauli_annotations_from_python(
+/// Preserve source stamps and reserve subsequent ids before inserting the
+/// measurement batches together, in their original emission order.
+fn append_measurement_batches(
+    tc: &mut pecos_quantum::TickCircuit,
+    mut batches: Vec<Gate>,
+) -> PyResult<()> {
+    for gate in &mut batches {
+        gate.validate()
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        if let Some(highest) = gate.meas_ids.iter().map(|id| id.index()).max() {
+            let past_highest = highest.checked_add(1).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "meas_ids contains the largest representable id, leaving no room for a later id",
+                )
+            })?;
+            let current = tc.num_measurements();
+            if past_highest > current {
+                tc.try_advance_meas_counter(past_highest - current)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            }
+        } else {
+            let base = tc
+                .try_advance_meas_counter(gate.qubits.len())
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            gate.meas_ids.extend(
+                (0..gate.qubits.len()).map(|offset| pecos_core::MeasId::from_raw(base + offset)),
+            );
+        }
+    }
+    if !batches.is_empty() {
+        let mut tick = tc.tick();
+        for gate in batches {
+            tick.try_add_gate(gate)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_annotations_from_python(
     py_tc: &pyo3::Bound<'_, pyo3::PyAny>,
     tc: &mut pecos_quantum::TickCircuit,
 ) -> PyResult<()> {
-    let Ok(annotations) = py_tc.call_method0("annotations") else {
-        return Ok(());
-    };
+    let annotations = py_tc.call_method0("annotations")?;
+
+    let mut refs_by_id = std::collections::BTreeMap::new();
+    for (tick, batch) in tc.iter_gate_batches_with_tick() {
+        if batch.gate_type.consumes_measurement_record() {
+            for &qubit in &batch.qubits {
+                let reference = tc
+                    .meas_ref(tick, batch.batch_index(), qubit)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("rebuilt measurement has no id")
+                    })?;
+                if refs_by_id
+                    .insert(reference.meas_id.index(), reference)
+                    .is_some()
+                {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "measurement id {} occurs more than once in the rebuilt circuit",
+                        reference.meas_id.index()
+                    )));
+                }
+            }
+        }
+    }
 
     for ann in annotations.try_iter()? {
         let ann = ann?;
         let kind: String = ann.get_item("kind")?.extract()?;
+        if kind == "detector" || kind == "observable" {
+            let ids: Vec<usize> = ann.get_item("measurement_ids")?.extract()?;
+            let refs = ids
+                .into_iter()
+                .map(|id| {
+                    refs_by_id.get(&id).copied().ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "{kind} annotation references measurement id {id}, which is not in the rebuilt circuit"
+                        ))
+                    })
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            let label: Option<String> = ann.get_item("label")?.extract()?;
+            // Python annotations() does not expose detector coordinates.
+            // The Rust annotation API leaves them empty; agreement concerns
+            // measurement sets and labels, not coordinates.
+            let result = match (kind.as_str(), label.as_deref()) {
+                ("detector", Some(label)) => tc.detector_labeled(label, &refs),
+                ("detector", None) => tc.detector(&refs),
+                (_, Some(label)) => tc.observable_labeled(label, &refs),
+                (_, None) => tc.observable(&refs),
+            };
+            result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            continue;
+        }
         if kind != "tracked_pauli" {
             continue;
         }
@@ -1767,66 +1848,6 @@ fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExp
     Ok(ChannelExpr::MixedUnitary(ops))
 }
 
-/// Create detector or observable annotations from JSON metadata.
-/// Malformed JSON and unresolvable record offsets are errors: a dropped or
-/// thinned annotation silently weakens the DEM.
-fn create_annotations_from_json(
-    tc: &mut pecos_quantum::TickCircuit,
-    json_str: &str,
-    all_meas_refs: &[pecos_quantum::TickMeasRef],
-    is_detector: bool,
-) -> PyResult<()> {
-    let kind = if is_detector {
-        "detector"
-    } else {
-        "observable"
-    };
-    let num_meas = all_meas_refs.len();
-    let defs: Vec<RecDef> = serde_json::from_str(json_str).map_err(|err| {
-        pyo3::exceptions::PyValueError::new_err(format!("malformed {kind} JSON metadata: {err}"))
-    })?;
-    let ref_by_id: std::collections::BTreeMap<usize, pecos_quantum::TickMeasRef> = all_meas_refs
-        .iter()
-        .map(|r| (r.meas_id.index(), *r))
-        .collect();
-    for (def_idx, def) in defs.iter().enumerate() {
-        if def.records.is_empty() && def.meas_ids.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "{kind} {def_idx} carries neither records nor meas_ids"
-            )));
-        }
-        let mut refs: Vec<pecos_quantum::TickMeasRef> =
-            Vec::with_capacity(def.records.len() + def.meas_ids.len());
-        for &rec in &def.records {
-            let mref = measurement_record_index(rec, num_meas)
-                .and_then(|abs_idx| all_meas_refs.get(abs_idx).copied())
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "{kind} {def_idx} references record offset {rec}, which does \
-                         not resolve among the circuit's {num_meas} measurement(s)"
-                    ))
-                })?;
-            refs.push(mref);
-        }
-        for &meas_id in &def.meas_ids {
-            let mref = ref_by_id.get(&meas_id).copied().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "{kind} {def_idx} references MeasId({meas_id}), which no \
-                     measurement in the circuit holds"
-                ))
-            })?;
-            refs.push(mref);
-        }
-        let result = if is_detector {
-            tc.detector(&refs)
-        } else {
-            tc.observable(&refs)
-        };
-        result.map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    }
-    Ok(())
-}
-
 /// Build a pecos_core::Gate from a Python gate object.
 fn build_gate_from_python(
     gate: &Bound<'_, PyAny>,
@@ -1834,7 +1855,7 @@ fn build_gate_from_python(
     qubit_ids: &[pecos_core::QubitId],
 ) -> PyResult<pecos_core::Gate> {
     use pecos_core::gate_type::GateType;
-    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
+    use pecos_core::{Gate, GateAngles, GateParams};
 
     if gate_name == "Channel" {
         return Ok(Gate::channel(channel_expr_from_python_gate(gate)?));
@@ -1871,7 +1892,7 @@ fn build_gate_from_python(
         "SXXdg" => GateType::SXXdg,
         "SYY" => GateType::SYY,
         "SYYdg" => GateType::SYYdg,
-        "R1XY" => GateType::R1XY,
+        "RXY1Q" => GateType::RXY1Q,
         "I" | "Idle" => GateType::I,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -1894,19 +1915,62 @@ fn build_gate_from_python(
         }
     }
 
-    Ok(Gate {
-        gate_type,
-        qubits: qubit_ids.iter().copied().collect(),
-        angles,
-        params: GateParams::new(),
-        meas_ids: GateMeasIds::new(),
-        channel: None,
-    })
+    Gate::try_new(gate_type, angles, GateParams::new(), qubit_ids.to_vec())
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================
 // Circuit extraction
 // ============================================================================
+
+fn extract_exact_gate_angles(
+    gate: &Bound<'_, PyAny>,
+    gate_type: pecos_core::gate_type::GateType,
+) -> PyResult<Vec<Angle64>> {
+    let angles: Vec<f64> = gate.getattr("angles")?.extract()?;
+    let expected = gate_type.angle_arity();
+    if angles.len() != expected {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Gate {gate_type:?} expected {expected} angle parameters, got {}",
+            angles.len()
+        )));
+    }
+    Ok(angles.into_iter().map(Angle64::from_radians).collect())
+}
+
+fn extract_boundary_rotation_angle(gate: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+    let angles: Vec<f64> = gate.getattr("angles")?.extract()?;
+    let [angle] = angles.as_slice() else {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{name} expected one radians parameter, got {}",
+            angles.len()
+        )));
+    };
+    Ok(*angle)
+}
+
+fn append_lowered_command(mut builder: CommandBuilder, gate: &Gate) -> PyResult<CommandBuilder> {
+    use pecos_core::gate_type::GateType;
+
+    let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+    builder = match gate.gate_type {
+        GateType::Z => builder.z(&qubits),
+        GateType::H => builder.h(&qubits),
+        GateType::SX => builder.sx(&qubits),
+        GateType::SXdg => builder.sxdg(&qubits),
+        GateType::RZ => builder.rz(&qubits, gate.angles[0]),
+        GateType::RZZ => {
+            let pairs = [(qubits[0], qubits[1])];
+            builder.rzz(&pairs, gate.angles[0])
+        }
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "controlled-rotation lowering produced unsupported neo gate {other}"
+            )));
+        }
+    };
+    Ok(builder)
+}
 
 /// Extract a CommandQueue from a Python TickCircuit by iterating its stored gate batches.
 fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::CommandQueue> {
@@ -2027,55 +2091,78 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                     cb = cb.mz(&qubits);
                 }
                 "RX" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.rx(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RX)?;
+                    cb = cb.rx(&qubits, angles[0]);
                 }
                 "RY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.ry(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RY)?;
+                    cb = cb.ry(&qubits, angles[0]);
                 }
                 "RZ" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        cb = cb.rz(&qubits, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RZ)?;
+                    cb = cb.rz(&qubits, angles[0]);
                 }
-                "R1XY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if angles.len() >= 2 {
-                        cb = cb.r1xy(
-                            &qubits,
-                            Angle64::from_radians(angles[0]),
-                            Angle64::from_radians(angles[1]),
-                        );
-                    }
+                "RXY1Q" => {
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RXY1Q)?;
+                    cb = cb.rxy1q(&qubits, angles[0], angles[1]);
                 }
                 "RZZ" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.rzz(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RZZ)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.rzz(&pairs, angles[0]);
                 }
                 "RXX" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.rxx(&pairs, Angle64::from_radians(angle));
-                    }
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RXX)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.rxx(&pairs, angles[0]);
                 }
                 "RYY" => {
-                    let angles: Vec<f64> = gate.getattr("angles")?.extract().unwrap_or_default();
-                    if let Some(&angle) = angles.first() {
-                        let pairs: Vec<(usize, usize)> =
-                            qubits.chunks(2).map(|c| (c[0], c[1])).collect();
-                        cb = cb.ryy(&pairs, Angle64::from_radians(angle));
+                    let angles =
+                        extract_exact_gate_angles(gate, pecos_core::gate_type::GateType::RYY)?;
+                    let pairs: Vec<(usize, usize)> =
+                        qubits.chunks(2).map(|c| (c[0], c[1])).collect();
+                    cb = cb.ryy(&pairs, angles[0]);
+                }
+                "CRX" | "CRY" | "CRZ" => {
+                    let angle = extract_boundary_rotation_angle(gate, &name)?;
+                    let (pairs, remainder) = qubits.as_slice().as_chunks::<2>();
+                    if !remainder.is_empty() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "{name} requires control-target qubit pairs"
+                        )));
+                    }
+                    for pair in pairs {
+                        let lowered = match name.as_str() {
+                            "CRX" => pecos_core::controlled_rotations::lower_crx(
+                                angle,
+                                QubitId(pair[0]),
+                                QubitId(pair[1]),
+                            ),
+                            "CRY" => pecos_core::controlled_rotations::lower_cry(
+                                angle,
+                                QubitId(pair[0]),
+                                QubitId(pair[1]),
+                            ),
+                            "CRZ" => pecos_core::controlled_rotations::lower_crz(
+                                angle,
+                                QubitId(pair[0]),
+                                QubitId(pair[1]),
+                            )
+                            .into_iter()
+                            .collect(),
+                            _ => unreachable!(),
+                        };
+                        for lowered_gate in &lowered {
+                            cb = append_lowered_command(cb, lowered_gate)?;
+                        }
                     }
                 }
                 "I" | "Idle" | "TrackedPauli" | "TrackedPauliMeta" => {
@@ -2221,34 +2308,148 @@ impl PyFaultConfigurationIter {
     fn __next__(&mut self, py: Python<'_>) -> Option<PyFaultConfiguration> {
         let config = self.inner.next()?;
 
-        // Build .locations and .faults references
-        let locations: Vec<Py<PyFaultLocation>> = config
-            .location_indices
-            .iter()
-            .map(|&i| self.py_locations[i].clone_ref(py))
-            .collect();
-        let faults: Vec<Py<PyFaultAlternative>> = config
-            .location_indices
-            .iter()
-            .zip(config.alternative_indices.iter())
-            .map(|(&loc_i, &alt_i)| {
-                let loc = self.py_locations[loc_i].borrow(py);
-                loc.faults[alt_i].clone_ref(py)
+        Some(py_fault_configuration(py, config, &self.py_locations))
+    }
+}
+
+fn py_fault_configuration(
+    py: Python<'_>,
+    config: pecos_qec::fault_tolerance::fault_sampler::FaultConfiguration,
+    py_locations: &[Py<PyFaultLocation>],
+) -> PyFaultConfiguration {
+    // Build .locations and .faults references
+    let locations: Vec<Py<PyFaultLocation>> = config
+        .location_indices
+        .iter()
+        .map(|&i| py_locations[i].clone_ref(py))
+        .collect();
+    let faults: Vec<Py<PyFaultAlternative>> = config
+        .location_indices
+        .iter()
+        .zip(config.alternative_indices.iter())
+        .map(|(&loc_i, &alt_i)| {
+            let loc = py_locations[loc_i].borrow(py);
+            loc.faults[alt_i].clone_ref(py)
+        })
+        .collect();
+
+    PyFaultConfiguration {
+        location_indices: config.location_indices,
+        alternative_indices: config.alternative_indices,
+        locations,
+        faults,
+        measurements: config.affected_measurements,
+        detectors: config.affected_detectors,
+        observables: config.affected_observables,
+        tracked_paulis: config.affected_tracked_paulis,
+        selected_probability: config.selected_probability,
+        configuration_probability: config.configuration_probability,
+    }
+}
+
+/// Fault-count masses, their natural logarithms, and omitted-tail bound.
+#[pyclass(name = "FaultCountPmf", module = "pecos_rslib_exp")]
+pub struct PyFaultCountPmf {
+    inner: pecos_qec::fault_tolerance::fault_sampler::FaultCountPmf,
+}
+
+#[pymethods]
+impl PyFaultCountPmf {
+    /// P(K=k), indexed from zero; very small masses may underflow.
+    #[getter]
+    fn masses(&self) -> Vec<f64> {
+        self.inner.masses().to_vec()
+    }
+
+    /// Natural log masses, retained even when masses underflow.
+    #[getter]
+    fn log_masses(&self) -> Vec<f64> {
+        self.inner.log_masses().to_vec()
+    }
+
+    /// Chernoff bound on mass beyond the final represented stratum.
+    #[getter]
+    fn tail_bound(&self) -> f64 {
+        self.inner.tail_bound()
+    }
+
+    /// Combine (k, attempted, survived, failed) tuples with this PMF.
+    ///
+    /// Raises ValueError for zero attempts, failed > survived, survived >
+    /// attempted, duplicate strata, or strata outside this PMF.
+    fn stratified_estimate(
+        &self,
+        counts: Vec<(usize, usize, usize, usize)>,
+    ) -> PyResult<PyStratifiedEstimate> {
+        use pecos_qec::fault_tolerance::fault_sampler::{FaultStratumCounts, StratifiedEstimate};
+        let counts: Vec<_> = counts
+            .into_iter()
+            .map(|(k, attempted, survived, failed)| FaultStratumCounts {
+                k,
+                attempted,
+                survived,
+                failed,
             })
             .collect();
+        StratifiedEstimate::from_counts(&self.inner, &counts)
+            .map(|inner| PyStratifiedEstimate { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+}
 
-        Some(PyFaultConfiguration {
-            location_indices: config.location_indices,
-            alternative_indices: config.alternative_indices,
-            locations,
-            faults,
-            measurements: config.affected_measurements,
-            detectors: config.affected_detectors,
-            observables: config.affected_observables,
-            tracked_paulis: config.affected_tracked_paulis,
-            selected_probability: config.selected_probability,
-            configuration_probability: config.configuration_probability,
-        })
+/// Weighted failure, survival, and conditional failure estimates and standard errors.
+///
+/// Ratio and its standard error are None only if no sampled shot survives.
+/// They are computed in log space even when returned probabilities underflow to zero.
+/// Omitted masses are separate from standard errors. Zero observed failures
+/// contribute no estimated variance to A, so undersampling can understate SE(A).
+/// Their ratio variance term is R^2 b_k (1-b_k), which need not be zero.
+#[pyclass(name = "StratifiedEstimate", module = "pecos_rslib_exp")]
+pub struct PyStratifiedEstimate {
+    inner: pecos_qec::fault_tolerance::fault_sampler::StratifiedEstimate,
+}
+
+#[pymethods]
+impl PyStratifiedEstimate {
+    /// A = sum P_k F_k/N_k.
+    #[getter]
+    fn failure_probability(&self) -> f64 {
+        self.inner.failure_probability
+    }
+    /// B = sum P_k S_k/N_k.
+    #[getter]
+    fn survival_probability(&self) -> f64 {
+        self.inner.survival_probability
+    }
+    /// R = A/B from log probabilities, or None if no sampled shot survives.
+    #[getter]
+    fn failure_given_survival(&self) -> Option<f64> {
+        self.inner.failure_given_survival
+    }
+    /// Plug-in standard error of A.
+    #[getter]
+    fn failure_standard_error(&self) -> f64 {
+        self.inner.failure_standard_error
+    }
+    /// Plug-in standard error of B.
+    #[getter]
+    fn survival_standard_error(&self) -> f64 {
+        self.inner.survival_standard_error
+    }
+    /// Delta-method standard error of R, or None if no sampled shot survives.
+    #[getter]
+    fn ratio_standard_error(&self) -> Option<f64> {
+        self.inner.ratio_standard_error
+    }
+    /// Sum of represented but unsampled stratum masses.
+    #[getter]
+    fn unsampled_mass(&self) -> f64 {
+        self.inner.unsampled_mass
+    }
+    /// Chernoff bound beyond represented strata.
+    #[getter]
+    fn tail_bound(&self) -> f64 {
+        self.inner.tail_bound
     }
 }
 
@@ -2484,6 +2685,38 @@ impl PyFaultCatalog {
         py_fault_catalog_from_rust(py, self.rust_catalog.parameterized(&params))
     }
 
+    /// Return masses, log masses, and a Chernoff bound beyond max_k.
+    ///
+    /// Raises ValueError for inconsistent probabilities, active p >= 1, or
+    /// max_k exceeding the active location count.
+    fn fault_count_pmf(&self, max_k: usize) -> PyResult<PyFaultCountPmf> {
+        self.rust_catalog
+            .fault_count_pmf(max_k)
+            .map(|inner| PyFaultCountPmf { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Draw exactly k firing locations per configuration, reproducibly by seed.
+    ///
+    /// Raises ValueError for inconsistent probabilities, active p >= 1, or
+    /// k exceeding the active location count, or an unallocatable batch.
+    fn sample_fault_configurations(
+        &self,
+        py: Python<'_>,
+        k: usize,
+        num_shots: usize,
+        seed: u64,
+    ) -> PyResult<Vec<PyFaultConfiguration>> {
+        let configs = self
+            .rust_catalog
+            .sample_fault_configurations(k, num_shots, seed)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(configs
+            .into_iter()
+            .map(|config| py_fault_configuration(py, config, &self.locations))
+            .collect())
+    }
+
     /// Lazily iterate all k-fault configurations.
     ///
     /// Returns an iterator yielding `FaultConfiguration` objects one at a time.
@@ -2536,7 +2769,7 @@ pub fn fault_catalog(
 
     let tc = build_rust_tick_circuit(tick_circuit)?;
     let mut catalog = FaultCatalog::from_circuit(&tc)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     if noise.is_some() || p1.is_some() || p2.is_some() || p_meas.is_some() || p_prep.is_some() {
         let noise_params = stochastic_params_from_inputs(noise, p1, p2, p_meas, p_prep);
         catalog.with_noise(&noise_params);

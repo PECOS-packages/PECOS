@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import stim
 
 # Bridge to the v1 compile harness; see test_guppy_generation.py for rationale.
 _SLR_TESTS_ROOT = Path(__file__).resolve().parents[3]
@@ -21,17 +22,7 @@ if str(_SLR_TESTS_ROOT) not in sys.path:
 from ast_guppy._harness import assert_ast_guppy_compiles  # noqa: E402
 from pecos.slr.slr_converter import SlrConverter  # noqa: E402
 
-# Check if stim is available
-try:
-    import stim
 
-    STIM_AVAILABLE = True
-except ImportError:
-    STIM_AVAILABLE = False
-    stim = None
-
-
-@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 class TestRepeatToGuppyPipeline:
     """Test that Stim REPEAT blocks become Guppy for loops."""
 

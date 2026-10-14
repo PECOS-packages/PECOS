@@ -93,7 +93,7 @@ fn test_converter_single_qubit_circuit() -> Result<(), PecosError> {
     let module = phir_json_to_module(single_qubit_json)?;
 
     // Verify basic structure
-    assert!(!module.body.blocks.is_empty());
+    assert!(!module.body.blocks.is_empty(), "module must contain blocks");
     let operations = &module.body.blocks[0].operations;
 
     // Should have at least the original operations

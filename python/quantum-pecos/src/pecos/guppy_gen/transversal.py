@@ -11,13 +11,10 @@ data qubits i. This preserves the CSS structure: X errors on control propagate
 to X errors on target, Z errors on target propagate to Z errors on control.
 """
 
-import importlib.util
-import sys
-import tempfile
-from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import ClassVar
+
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 
 
 class CSSCodeType(Enum):
@@ -27,80 +24,14 @@ class CSSCodeType(Enum):
     COLOR = "color"
 
 
-@runtime_checkable
-class CSSCodeSpec(Protocol):
-    """Protocol for CSS code specifications."""
-
-    @property
-    def num_data(self) -> int:
-        """Number of data qubits."""
-        ...
-
-    @property
-    def num_x_stabilizers(self) -> int:
-        """Number of X stabilizers."""
-        ...
-
-    @property
-    def num_z_stabilizers(self) -> int:
-        """Number of Z stabilizers."""
-        ...
-
-    def get_logical_x(self) -> tuple[int, ...]:
-        """Qubits for logical X operator."""
-        ...
-
-    def get_logical_z(self) -> tuple[int, ...]:
-        """Qubits for logical Z operator."""
-        ...
-
-
-@dataclass
-class TransversalConfig:
-    """Configuration for transversal CNOT generation."""
-
-    code_type: CSSCodeType
-    distance: int
-    num_rounds: int = 1
-    ctrl_logical_x: bool = False  # Apply logical X to control before CNOT
-
-
 # Module state container (avoids global statement)
 class _ModuleState:
     """Container for module-level mutable state."""
 
-    temp_dir: ClassVar[Path | None] = None
     css_transversal_cache: ClassVar[dict[str, dict]] = {}
 
 
 _state = _ModuleState()
-
-
-def _get_temp_dir() -> Path:
-    """Get or create temporary directory for generated code."""
-    if _state.temp_dir is None:
-        _state.temp_dir = Path(tempfile.mkdtemp(prefix="pecos_guppy_css_trans_"))
-    return _state.temp_dir
-
-
-def _get_surface_code_info(d: int) -> dict:
-    """Get surface code parameters."""
-    from pecos.qec.surface import SurfacePatch
-
-    patch = SurfacePatch.create(distance=d)
-    geom = patch.geometry
-
-    return {
-        "num_data": d * d,
-        "num_x_stab": len(geom.x_stabilizers),
-        "num_z_stab": len(geom.z_stabilizers),
-        "x_stabilizers": geom.x_stabilizers,
-        "z_stabilizers": geom.z_stabilizers,
-        "logical_x": [i * d for i in range(d)],  # Left column
-        "logical_z": list(range(d)),  # Top row
-        "struct_name": f"SurfaceCode_d{d}",
-        "syndrome_name": f"SurfaceSyndrome_d{d}",
-    }
 
 
 def _get_color_code_info(d: int) -> dict:
@@ -119,203 +50,6 @@ def _get_color_code_info(d: int) -> dict:
         "struct_name": f"ColorCode_d{d}",
         "syndrome_name": f"ColorSyndrome_d{d}",
     }
-
-
-def generate_surface_transversal_source(d: int) -> str:
-    """Generate transversal CNOT source for surface codes."""
-    info = _get_surface_code_info(d)
-    num_data = info["num_data"]
-    num_x_stab = info["num_x_stab"]
-    num_z_stab = info["num_z_stab"]
-
-    lines = [
-        f'"""Transversal CNOT for distance-{d} surface codes.',
-        "",
-        "Auto-generated for logical CNOT between two patches.",
-        '"""',
-        "",
-        "from guppylang import guppy",
-        "from guppylang.std.builtins import array, owned, output, comptime",
-        "from guppylang.std.quantum import cx, discard, h, measure, collect_measurements, measure_array, qubit, x",
-        "from guppylang.std.qsystem import measure_and_reset",
-        "",
-        "",
-    ]
-
-    # Struct definitions
-    lines.extend(
-        [
-            "@guppy.struct",
-            f"class {info['struct_name']}:",
-            f'    """Surface code patch d={d}."""',
-            "",
-            f"    data: array[qubit, {num_data}]",
-            "",
-            "",
-            "@guppy.struct",
-            f"class {info['syndrome_name']}:",
-            f'    """Syndrome for d={d} surface code."""',
-            "",
-            f"    synx: array[bool, {num_x_stab}]",
-            f"    synz: array[bool, {num_z_stab}]",
-            "",
-            "",
-        ],
-    )
-
-    # X stabilizer measurements
-    lines.append("# === X Stabilizer Measurements ===")
-    lines.append("")
-
-    for stab in info["x_stabilizers"]:
-        lines.extend(
-            [
-                "@guppy",
-                f"def measure_x_stab_{stab.index}(ax: qubit, data: array[qubit, {num_data}]) -> bool:",
-                f'    """Measure X stabilizer {stab.index}."""',
-                "    h(ax)",
-            ],
-        )
-        lines.extend(f"    cx(ax, data[{q}])" for q in stab.data_qubits)
-        lines.extend(
-            [
-                "    h(ax)",
-                "    return measure_and_reset(ax).read()",
-                "",
-                "",
-            ],
-        )
-
-    # Z stabilizer measurements
-    lines.append("# === Z Stabilizer Measurements ===")
-    lines.append("")
-
-    for stab in info["z_stabilizers"]:
-        lines.extend(
-            [
-                "@guppy",
-                f"def measure_z_stab_{stab.index}(az: qubit, data: array[qubit, {num_data}]) -> bool:",
-                f'    """Measure Z stabilizer {stab.index}."""',
-            ],
-        )
-        lines.extend(f"    cx(data[{q}], az)" for q in stab.data_qubits)
-        lines.extend(
-            [
-                "    return measure_and_reset(az).read()",
-                "",
-                "",
-            ],
-        )
-
-    # Syndrome extraction
-    x_calls = ", ".join(f"sx{s.index}" for s in info["x_stabilizers"])
-    z_calls = ", ".join(f"sz{s.index}" for s in info["z_stabilizers"])
-
-    lines.extend(
-        [
-            "# === Syndrome Extraction ===",
-            "",
-            "@guppy",
-            "def syndrome_extraction(",
-            f"    surf: {info['struct_name']},",
-            "    ax: qubit,",
-            "    az: qubit,",
-            f") -> {info['syndrome_name']}:",
-            '    """Extract full syndrome."""',
-            "    # Z stabilizers",
-        ],
-    )
-
-    lines.extend(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)" for stab in info["z_stabilizers"])
-
-    lines.append("")
-    lines.append("    # X stabilizers")
-
-    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in info["x_stabilizers"])
-
-    lines.extend(
-        [
-            "",
-            f"    synx = array({x_calls})",
-            f"    synz = array({z_calls})",
-            "",
-            f"    return {info['syndrome_name']}(synx, synz)",
-            "",
-            "",
-        ],
-    )
-
-    # Initialization
-    lines.extend(
-        [
-            "# === Initialization ===",
-            "",
-            "@guppy",
-            f"def init_z_basis(surf: {info['struct_name']}, ax: qubit) -> array[bool, {num_x_stab}]:",
-            '    """Initialize logical |0_L> and extract initial X syndrome."""',
-        ],
-    )
-
-    lines.extend(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)" for stab in info["x_stabilizers"])
-
-    lines.extend(
-        [
-            "",
-            f"    return array({x_calls})",
-            "",
-            "",
-        ],
-    )
-
-    # Apply logical X
-    lines.extend(
-        [
-            "@guppy",
-            f"def apply_logical_x(surf: {info['struct_name']}) -> None:",
-            '    """Apply logical X operator."""',
-        ],
-    )
-    lines.extend(f"    x(surf.data[{q}])" for q in info["logical_x"])
-    lines.extend(
-        [
-            "",
-            "",
-        ],
-    )
-
-    # Transversal CNOT
-    lines.extend(
-        [
-            "# === Transversal Operations ===",
-            "",
-            "@guppy",
-            f"def transversal_cnot(ctrl: {info['struct_name']}, tgt: {info['struct_name']}) -> None:",
-            '    """Apply transversal CNOT: ctrl[i] controls tgt[i]."""',
-            f"    for i in range({num_data}):",
-            "        cx(ctrl.data[i], tgt.data[i])",
-            "",
-            "",
-        ],
-    )
-
-    # Measurement
-    lines.extend(
-        [
-            "# === Measurement ===",
-            "",
-            "@guppy",
-            f"def measure_z_basis(surf: {info['struct_name']} @ owned) -> array[bool, {num_data}]:",
-            '    """Destructively measure in Z basis."""',
-            "    return collect_measurements(measure_array(surf.data))",
-            "",
-            "",
-        ],
-    )
-
-    # Factory functions
-    _add_transversal_factory_functions(lines, info, num_data, num_x_stab)
-
-    return "\n".join(lines)
 
 
 def generate_color_transversal_source(d: int) -> str:
@@ -514,121 +248,6 @@ def generate_color_transversal_source(d: int) -> str:
     return "\n".join(lines)
 
 
-def _add_transversal_factory_functions(
-    lines: list[str],
-    info: dict,
-    num_data: int,
-    _num_stab: int,
-) -> None:
-    """Add factory functions for surface code transversal experiments."""
-    struct_name = info["struct_name"]
-
-    lines.extend(
-        [
-            "# === Transversal Experiments ===",
-            "",
-            "def make_transversal_cnot(num_rounds: int):",
-            '    """Create transversal CNOT experiment: |0_L>|0_L> -> |0_L>|0_L>."""',
-            "",
-            "    @guppy",
-            "    def transversal_cnot_exp() -> None:",
-            '        """Transversal CNOT experiment."""',
-            f"        ctrl_data = array(qubit() for _ in range({num_data}))",
-            f"        tgt_data = array(qubit() for _ in range({num_data}))",
-            "        ax_ctrl = qubit()",
-            "        az_ctrl = qubit()",
-            "        ax_tgt = qubit()",
-            "        az_tgt = qubit()",
-            "",
-            f"        ctrl = {struct_name}(ctrl_data)",
-            f"        tgt = {struct_name}(tgt_data)",
-            "",
-            "        # Initialize both patches in |0_L>",
-            "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
-            "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
-            '        output("init_synx_ctrl", init_syn_ctrl)',
-            '        output("init_synx_tgt", init_syn_tgt)',
-            "",
-            "        # Apply transversal CNOT",
-            "        transversal_cnot(ctrl, tgt)",
-            "",
-            "        # Syndrome extraction rounds",
-            "        for _t in range(comptime(num_rounds)):",
-            "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
-            "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
-            '            output("synx_ctrl", syn_ctrl.synx)',
-            '            output("synz_ctrl", syn_ctrl.synz)',
-            '            output("synx_tgt", syn_tgt.synx)',
-            '            output("synz_tgt", syn_tgt.synz)',
-            "",
-            "        # Final measurement",
-            "        final_ctrl = measure_z_basis(ctrl)",
-            "        final_tgt = measure_z_basis(tgt)",
-            '        output("final_ctrl", final_ctrl)',
-            '        output("final_tgt", final_tgt)',
-            "",
-            "        discard(ax_ctrl)",
-            "        discard(az_ctrl)",
-            "        discard(ax_tgt)",
-            "        discard(az_tgt)",
-            "",
-            "    return transversal_cnot_exp",
-            "",
-            "",
-            "def make_transversal_cnot_with_x(num_rounds: int):",
-            '    """Create transversal CNOT experiment: |1_L>|0_L> -> |1_L>|1_L>."""',
-            "",
-            "    @guppy",
-            "    def transversal_cnot_with_x_exp() -> None:",
-            '        """Transversal CNOT with X experiment."""',
-            f"        ctrl_data = array(qubit() for _ in range({num_data}))",
-            f"        tgt_data = array(qubit() for _ in range({num_data}))",
-            "        ax_ctrl = qubit()",
-            "        az_ctrl = qubit()",
-            "        ax_tgt = qubit()",
-            "        az_tgt = qubit()",
-            "",
-            f"        ctrl = {struct_name}(ctrl_data)",
-            f"        tgt = {struct_name}(tgt_data)",
-            "",
-            "        # Initialize both patches in |0_L>",
-            "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
-            "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
-            '        output("init_synx_ctrl", init_syn_ctrl)',
-            '        output("init_synx_tgt", init_syn_tgt)',
-            "",
-            "        # Apply logical X to control to get |1_L>",
-            "        apply_logical_x(ctrl)",
-            "",
-            "        # Apply transversal CNOT",
-            "        transversal_cnot(ctrl, tgt)",
-            "",
-            "        # Syndrome extraction rounds",
-            "        for _t in range(comptime(num_rounds)):",
-            "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
-            "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
-            '            output("synx_ctrl", syn_ctrl.synx)',
-            '            output("synz_ctrl", syn_ctrl.synz)',
-            '            output("synx_tgt", syn_tgt.synx)',
-            '            output("synz_tgt", syn_tgt.synz)',
-            "",
-            "        # Final measurement",
-            "        final_ctrl = measure_z_basis(ctrl)",
-            "        final_tgt = measure_z_basis(tgt)",
-            '        output("final_ctrl", final_ctrl)',
-            '        output("final_tgt", final_tgt)',
-            "",
-            "        discard(ax_ctrl)",
-            "        discard(az_ctrl)",
-            "        discard(ax_tgt)",
-            "        discard(az_tgt)",
-            "",
-            "    return transversal_cnot_with_x_exp",
-            "",
-        ],
-    )
-
-
 def _add_color_transversal_factory_functions(
     lines: list[str],
     info: dict,
@@ -762,31 +381,17 @@ def _load_css_transversal_module(code_type: CSSCodeType, d: int, *, num_rounds: 
         return _state.css_transversal_cache[cache_key]
 
     # Generate source based on code type
-    if code_type == CSSCodeType.SURFACE:
-        source = generate_surface_transversal_source(d)
-    elif code_type == CSSCodeType.COLOR:
+    if code_type == CSSCodeType.COLOR:
         source = generate_color_transversal_source(d)
     else:
         msg = f"Unsupported code type: {code_type}"
         raise ValueError(msg)
 
-    # Write to temp file
-    temp_dir = _get_temp_dir()
-    temp_file = temp_dir / f"css_trans_{cache_key}.py"
-    temp_file.write_text(source)
-
-    # Load module
-    module_name = f"pecos._generated.css_trans_{cache_key}"
-    spec = importlib.util.spec_from_file_location(module_name, temp_file)
-    if spec is None or spec.loader is None:
-        msg = f"Failed to create module spec for {temp_file}"
-        raise RuntimeError(msg)
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-
-    _state.css_transversal_cache[cache_key] = vars(module)
+    _state.css_transversal_cache[cache_key] = load_guppy_source(
+        source,
+        _get_temp_dir() / f"css_trans_{cache_key}.py",
+        f"pecos._generated.css_trans_{cache_key}",
+    )
     return _state.css_transversal_cache[cache_key]
 
 
@@ -799,6 +404,9 @@ def make_css_transversal_cnot(
     num_rounds: int = 1,
 ) -> object:
     """Create a transversal CNOT experiment for any CSS code.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
 
     Args:
         code_type: Type of CSS code ("surface" or "color")
@@ -819,6 +427,13 @@ def make_css_transversal_cnot(
         msg = f"Distance must be odd >= 3, got {distance}"
         raise ValueError(msg)
 
+    if code_type == CSSCodeType.SURFACE:
+        from pecos.guppy_gen.protocol_render import load_surface_protocol_module
+        from pecos.qec.surface import SurfacePatch
+
+        module = load_surface_protocol_module(SurfacePatch.create(distance=distance))
+        return module["make_transversal_cx"](num_rounds, control_x=False)
+
     module = _load_css_transversal_module(code_type, distance, num_rounds=num_rounds)
     return module["make_transversal_cnot"](num_rounds)
 
@@ -831,6 +446,9 @@ def make_css_transversal_cnot_with_x(
     """Create a transversal CNOT experiment with logical X on control.
 
     This tests |1_L>|0_L> -> |1_L>|1_L>.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
 
     Args:
         code_type: Type of CSS code ("surface" or "color")
@@ -847,26 +465,37 @@ def make_css_transversal_cnot_with_x(
         msg = f"Distance must be odd >= 3, got {distance}"
         raise ValueError(msg)
 
+    if code_type == CSSCodeType.SURFACE:
+        from pecos.guppy_gen.protocol_render import load_surface_protocol_module
+        from pecos.qec.surface import SurfacePatch
+
+        module = load_surface_protocol_module(SurfacePatch.create(distance=distance))
+        return module["make_transversal_cx"](num_rounds, control_x=True)
+
     module = _load_css_transversal_module(code_type, distance, num_rounds=num_rounds)
     return module["make_transversal_cnot_with_x"](num_rounds)
 
 
 def get_transversal_num_qubits(code_type: CSSCodeType | str, distance: int) -> int:
-    """Get total qubit count for transversal CNOT between two patches.
+    """Get peak live qubit count for transversal CNOT between two patches.
 
     Args:
         code_type: Type of CSS code
         distance: Code distance
 
     Returns:
-        Total qubits needed (2 * num_data + 4 ancillas)
+        Surface: two data arrays plus one round of ancillas (3 d^2 - 1).
+        Color: 2 * num_data + 4 ancillas.
     """
     if isinstance(code_type, str):
         code_type = CSSCodeType(code_type)
 
     if code_type == CSSCodeType.SURFACE:
-        num_data = distance * distance
-    elif code_type == CSSCodeType.COLOR:
+        from pecos.qec.surface import SurfacePatch
+
+        geom = SurfacePatch.create(distance=distance).geometry
+        return 2 * geom.num_data + len(geom.x_stabilizers) + len(geom.z_stabilizers)
+    if code_type == CSSCodeType.COLOR:
         from pecos.qec.color import ColorCode488
 
         code = ColorCode488.create(distance=distance)
@@ -903,10 +532,18 @@ def make_color_transversal_cnot_with_x_d3(num_rounds: int = 1) -> object:
 
 
 def make_surface_transversal_cnot(distance: int, num_rounds: int = 1) -> object:
-    """Create transversal CNOT for surface codes."""
+    """Create transversal CNOT for surface codes.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
+    """
     return make_css_transversal_cnot(CSSCodeType.SURFACE, distance, num_rounds)
 
 
 def make_surface_transversal_cnot_with_x(distance: int, num_rounds: int = 1) -> object:
-    """Create transversal CNOT with X for surface codes."""
+    """Create transversal CNOT with X for surface codes.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
+    """
     return make_css_transversal_cnot_with_x(CSSCodeType.SURFACE, distance, num_rounds)

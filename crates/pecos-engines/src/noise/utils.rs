@@ -180,18 +180,6 @@ impl NoiseUtils {
         builder.add_gate_command(gate);
     }
 
-    /// Check if a message contains measurement results
-    ///
-    /// # Arguments
-    /// * `message` - The `ByteMessage` to check
-    ///
-    /// # Returns
-    /// true if the message contains measurement results, false otherwise
-    #[must_use]
-    pub fn has_measurements(message: &ByteMessage) -> bool {
-        message.outcomes().is_ok_and(|m| !m.is_empty())
-    }
-
     /// Creates a new `ByteMessageBuilder` for quantum operations
     ///
     /// # Returns

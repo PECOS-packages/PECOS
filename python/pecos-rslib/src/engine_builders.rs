@@ -13,7 +13,6 @@ use crate::prelude::*;
 type RustQasmEngineBuilder = pecos_qasm::QasmEngineBuilder;
 type RustQisEngineBuilder = pecos_qis::QisEngineBuilder;
 type RustPhirJsonEngineBuilder = pecos_phir_json::PhirJsonEngineBuilder;
-type RustHugrEngineBuilder = pecos_hugr::HugrEngineBuilder;
 type RustPhirEngineBuilder = pecos_phir::PhirEngineBuilder;
 type RustCoinTossEngineBuilder = CoinTossEngineBuilder;
 type RustStabVecEngineBuilder = StabVecEngineBuilder;
@@ -39,6 +38,23 @@ use crate::shot_results_bindings::PyShotVec;
 
 // Import the unified SimBuilder from sim.rs
 use crate::sim::{PySimBuilder, SimBuilderInner};
+
+fn runtime_native_gate_set(names: Vec<String>) -> PyResult<pecos_qis::RuntimeNativeGateSet> {
+    use pecos_qis::{RuntimeNativeGate, RuntimeNativeGateSet};
+    let gates = names
+        .into_iter()
+        .map(|name| match name.as_str() {
+            "rxy" => Ok(RuntimeNativeGate::Rxy),
+            "rz" => Ok(RuntimeNativeGate::Rz),
+            "rzz" => Ok(RuntimeNativeGate::Rzz),
+            "rpp" => Ok(RuntimeNativeGate::Rpp),
+            _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown Selene native gate {name:?}; expected rxy, rz, rzz or rpp"
+            ))),
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(RuntimeNativeGateSet::new(gates))
+}
 
 /// Python wrapper for QASM engine builder
 #[pyclass(name = "QasmEngineBuilder", from_py_object)]
@@ -99,7 +115,17 @@ impl PyQasmEngineBuilder {
     }
 }
 
-/// Python wrapper for QIS Engine builder (unified QIS/HUGR engine)
+fn runtime_custom_event_policy(value: &str) -> PyResult<pecos_qis::RuntimeCustomEventPolicy> {
+    match value {
+        "capture" => Ok(pecos_qis::RuntimeCustomEventPolicy::Capture),
+        "reject_unhandled" => Ok(pecos_qis::RuntimeCustomEventPolicy::RejectUnhandled),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "custom_event_policy must be 'capture' or 'reject_unhandled'",
+        )),
+    }
+}
+
+/// Python wrapper for QIS Engine builder (accepts QIS lowered from Guppy/HUGR at the Python boundary)
 #[pyclass(name = "QisEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyQisEngineBuilder {
@@ -132,30 +158,39 @@ impl PyQisEngineBuilder {
                         "Failed to load QIS program: {e}"
                     ))
                 })?;
-        }
-        // Check if it's a Hugr
-        else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
-            self.inner = self
-                .inner
-                .clone()
-                .try_program(hugr_prog.inner)
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to load HUGR program: {e}"
-                    ))
-                })?;
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "program must be either a Qis or Hugr instance",
+                "program must be a Qis instance",
             ));
         }
         Ok(self.clone())
     }
 
+    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
+    /// scheduled_idle_noise(), or scheduled_local_noise().
+    #[pyo3(signature = (enabled = true))]
+    fn scheduled_batches(&mut self, enabled: bool) -> Self {
+        self.inner = self.inner.clone().scheduled_batches(enabled);
+        self.clone()
+    }
+
+    /// Opt into v4 event batches; pair with a scheduled event noise factory.
+    #[pyo3(signature = (enabled = true))]
+    fn scheduled_event_batches(&mut self, enabled: bool) -> Self {
+        self.inner = self.inner.clone().scheduled_event_batches(enabled);
+        self.clone()
+    }
+
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None))]
-    fn selene_runtime(&mut self, runtime_name: Option<&str>) -> PyResult<Self> {
-        let runtime = match runtime_name {
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
+    fn selene_runtime(
+        &mut self,
+        runtime_name: Option<&str>,
+        custom_event_policy: &str,
+        native_gates: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        let policy = runtime_custom_event_policy(custom_event_policy)?;
+        let mut runtime = match runtime_name {
             None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
             Some(name) => pecos_qis::selene_runtime_auto(name),
         }
@@ -164,20 +199,27 @@ impl PyQisEngineBuilder {
                 "Failed to load Selene runtime: {e}"
             ))
         })?;
+        if let Some(names) = native_gates {
+            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+        }
+        runtime.set_custom_event_policy(policy);
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
         init_args: Option<Vec<String>>,
         library_search_dirs: Option<Vec<String>>,
+        custom_event_policy: &str,
+        native_gates: Option<Vec<String>>,
     ) -> PyResult<Self> {
-        let runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+        let policy = runtime_custom_event_policy(custom_event_policy)?;
+        let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
             library_file,
             init_args.unwrap_or_default(),
             library_search_dirs
@@ -186,6 +228,10 @@ impl PyQisEngineBuilder {
                 .map(PathBuf::from)
                 .collect(),
         );
+        if let Some(names) = native_gates {
+            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+        }
+        runtime.set_custom_event_policy(policy);
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
@@ -240,8 +286,7 @@ impl PyQisEngineBuilder {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
-                hugr_bytes: None,
-                qis_source: None,
+                qis_program: None,
                 operation_trace_dir: None,
             }),
         })
@@ -406,11 +451,70 @@ pub struct PyQisControlSimBuilder {
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
-    pub(crate) hugr_bytes: Option<Vec<u8>>,
-    /// The QIS IR source, kept so classical() can re-attach the program
-    /// when a fresh engine builder replaces the program-loaded one.
-    pub(crate) qis_source: Option<String>,
+    /// The QIS program, retained for lazy default construction and re-attachment.
+    pub(crate) qis_program: Option<Qis>,
     pub(crate) operation_trace_dir: Option<String>,
+}
+
+/// Construct the default QIS engine.
+fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
+    // Get Selene simple runtime
+    log::debug!("Getting Selene simple runtime...");
+    let selene_runtime = selene_simple_runtime().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Selene simple runtime not available: {e}\n\
+                    \n\
+                    The default runtime for QIS programs is Selene simple.\n\
+                    Please ensure Selene is built:\n\
+                    cd ../selene && cargo build --release"
+        ))
+    })?;
+
+    log::debug!("Creating QIS engine with Helios interface...");
+    let helios_builder = helios_interface_builder();
+    let builder = pecos_qis::qis_engine();
+    let builder = builder.runtime(selene_runtime);
+    let builder = builder.interface(helios_builder);
+
+    Ok(builder)
+}
+
+impl PyQisControlSimBuilder {
+    /// Clone the supplied engine, or initialize and cache the default first.
+    /// Execution uses a clone so repeated runs do not consume the builder.
+    pub(crate) fn engine_builder(&self) -> PyResult<RustQisEngineBuilder> {
+        if let Some(builder) = self.engine_builder.lock().expect("lock poisoned").as_ref() {
+            return Ok(builder.clone());
+        }
+
+        // Build outside the lock so a failure while loading cannot poison it.
+        let program = self
+            .qis_program
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("No QIS program or engine is configured"))?;
+        let builder = default_qis_engine()?
+            .try_program(program.clone())
+            .map_err(|e| {
+                log::error!("Failed to load QIS program: {e}");
+                PyRuntimeError::new_err(format!(
+                    "Failed to load QIS program with Selene runtime and Helios interface: {e}"
+                ))
+            })?;
+        log::info!("QIS program loaded successfully");
+        Ok(self
+            .engine_builder
+            .lock()
+            .expect("lock poisoned")
+            .get_or_insert(builder)
+            .clone())
+    }
+
+    pub(crate) fn qis_source(&self) -> Option<&str> {
+        match &self.qis_program.as_ref()?.content {
+            pecos_programs::QisContent::Ir(ir) => Some(ir),
+            pecos_programs::QisContent::Bitcode(_) => None,
+        }
+    }
 }
 
 /// Python wrapper for built QIS control simulation
@@ -425,22 +529,39 @@ pub struct PyQisControlSimulation {
 
 #[pymethods]
 impl PyQisControlSimulation {
-    /// Run the simulation
-    pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        match engine.run(shots) {
-            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
-        }
+    /// Serialize external callers without holding the GIL while workers run.
+    pub fn run(&self, shots: usize, py: Python<'_>) -> PyResult<PyShotVec> {
+        crate::scheduled_adapter::reject_callback_reentry()?;
+        py.detach(|| {
+            let mut engine = self
+                .inner
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
+            engine
+                .run(shots)
+                .map(PyShotVec::new)
+                .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
+        })
     }
 
-    /// Run the simulation with specified number of workers
-    fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        match engine.run_with_workers(shots, workers) {
-            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
-        }
+    /// Run with an explicit worker count.
+    fn run_with_workers(
+        &self,
+        shots: usize,
+        workers: usize,
+        py: Python<'_>,
+    ) -> PyResult<PyShotVec> {
+        crate::scheduled_adapter::reject_callback_reentry()?;
+        py.detach(|| {
+            let mut engine = self
+                .inner
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
+            engine
+                .run_with_workers(shots, workers)
+                .map(PyShotVec::new)
+                .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
+        })
     }
 
     /// Get the temp directory path (if `keep_intermediate_files` was enabled)
@@ -458,13 +579,18 @@ impl PyQisControlSimulation {
     /// Reset the simulation to its initial state (quantum state back to |0⟩).
     ///
     /// Returns the simulation object for method chaining.
-    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        {
-            let mut engine = slf.inner.lock().expect("lock poisoned");
+    fn reset<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<PyRef<'py, Self>> {
+        crate::scheduled_adapter::reject_callback_reentry()?;
+        let shared = Arc::clone(&slf.inner);
+        py.detach(move || {
+            let mut engine = shared
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
             engine
                 .reset()
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
-        }
+                .map(|_| ())
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))
+        })?;
         Ok(slf)
     }
 }
@@ -573,137 +699,6 @@ impl PyPhirSimulation {
     }
 }
 
-/// Python wrapper for HUGR engine builder (direct HUGR interpreter)
-///
-/// This engine directly interprets HUGR programs without LLVM compilation,
-/// making it faster for simple circuits and useful for testing.
-#[pyclass(name = "HugrEngineBuilder", from_py_object)]
-#[derive(Clone)]
-pub struct PyHugrEngineBuilder {
-    pub(crate) inner: RustHugrEngineBuilder,
-}
-
-#[pymethods]
-impl PyHugrEngineBuilder {
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: pecos_hugr::hugr_engine(),
-        }
-    }
-
-    /// Set the HUGR source from a file path
-    #[pyo3(signature = (path))]
-    fn hugr_file(&self, path: &str) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().hugr_file(path),
-        })
-    }
-
-    /// Set the HUGR source from bytes
-    #[pyo3(signature = (bytes))]
-    fn hugr_bytes(&self, bytes: Vec<u8>) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().hugr_bytes(bytes),
-        })
-    }
-
-    /// Set the HUGR program
-    #[pyo3(signature = (program))]
-    fn program(&self, program: &PyHugr) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().hugr_bytes(program.inner.hugr.clone()),
-        })
-    }
-
-    /// Check if this builder has a HUGR source configured
-    pub fn has_source(&self) -> bool {
-        self.inner.has_source()
-    }
-
-    /// Convert to simulation builder
-    fn to_sim(&self) -> PyResult<PySimBuilder> {
-        Ok(PySimBuilder {
-            inner: SimBuilderInner::Hugr(PyHugrSimBuilder {
-                engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
-                seed: None,
-                workers: None,
-                shots: None,
-                quantum_engine_builder: None,
-                noise_builder: None,
-                explicit_num_qubits: None,
-                foreign_object: None,
-                keep_intermediate_files: false,
-                hugr_bytes: None,
-                stack: None,
-            }),
-        })
-    }
-}
-
-/// Internal HUGR simulation builder state
-pub struct PyHugrSimBuilder {
-    pub(crate) engine_builder: Arc<Mutex<Option<RustHugrEngineBuilder>>>,
-    pub(crate) seed: Option<u64>,
-    pub(crate) workers: Option<usize>,
-    pub(crate) shots: Option<usize>,
-    pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
-    pub(crate) noise_builder: Option<Py<PyAny>>,
-    pub(crate) explicit_num_qubits: Option<usize>,
-    pub(crate) foreign_object: Option<Py<PyAny>>,
-    pub(crate) keep_intermediate_files: bool,
-    pub(crate) hugr_bytes: Option<Vec<u8>>,
-    pub(crate) stack: Option<crate::sim::PySimStack>,
-}
-
-/// Python wrapper for built HUGR simulation
-#[pyclass(name = "HugrSimulation")]
-pub struct PyHugrSimulation {
-    pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
-    /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
-    pub(crate) temp_dir: Option<String>,
-}
-
-#[pymethods]
-impl PyHugrSimulation {
-    /// Run the simulation
-    pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        match engine.run(shots) {
-            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
-        }
-    }
-
-    /// Run the simulation with specified number of workers
-    fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        let mut engine = self.inner.lock().expect("lock poisoned");
-        match engine.run_with_workers(shots, workers) {
-            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
-        }
-    }
-
-    /// Get the temp directory path (if `keep_intermediate_files` was enabled)
-    #[getter]
-    fn temp_dir(&self) -> Option<String> {
-        self.temp_dir.clone()
-    }
-
-    /// Reset the simulation to its initial state (quantum state back to |0⟩).
-    ///
-    /// Returns the simulation object for method chaining.
-    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        {
-            let mut engine = slf.inner.lock().expect("lock poisoned");
-            engine
-                .reset()
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
-        }
-        Ok(slf)
-    }
-}
-
 /// Python wrapper for program types
 #[pyclass(name = "Qasm", from_py_object)]
 #[derive(Clone)]
@@ -753,27 +748,6 @@ impl PyQis {
     }
 }
 
-#[pyclass(name = "Hugr", from_py_object)]
-#[derive(Clone)]
-pub struct PyHugr {
-    pub(crate) inner: Hugr,
-}
-
-#[pymethods]
-impl PyHugr {
-    #[staticmethod]
-    fn from_bytes(bytes: Vec<u8>) -> Self {
-        PyHugr {
-            inner: Hugr::from_bytes(bytes),
-        }
-    }
-
-    /// Get the HUGR bytes
-    fn to_bytes(&self) -> Vec<u8> {
-        self.inner.hugr.clone()
-    }
-}
-
 #[pyclass(name = "PhirJson", from_py_object)]
 #[derive(Clone)]
 pub struct PyPhirJson {
@@ -805,7 +779,7 @@ pub fn qasm_engine() -> PyQasmEngineBuilder {
     }
 }
 
-/// Create a QIS Engine builder (unified QIS/HUGR engine)
+/// Create a QIS Engine builder (accepts QIS lowered from Guppy/HUGR at the Python boundary)
 #[pyfunction]
 pub fn qis_engine() -> PyQisEngineBuilder {
     PyQisEngineBuilder {
@@ -847,16 +821,6 @@ pub fn phir_engine() -> PyPhirEngineBuilder {
     PyPhirEngineBuilder {
         inner: pecos_phir::phir_engine(),
     }
-}
-
-/// Create a HUGR engine builder (direct HUGR interpreter)
-///
-/// This creates a builder for the direct HUGR interpreter engine,
-/// which executes HUGR programs without LLVM compilation.
-/// This is useful for testing and for simple circuits.
-#[pyfunction]
-pub fn hugr_engine() -> PyHugrEngineBuilder {
-    PyHugrEngineBuilder::new()
 }
 
 /// Create a general noise model builder with no-effect defaults.
@@ -1350,6 +1314,107 @@ fn extract_p2_transition_channel(channel: &Bound<'_, PyAny>) -> PyResult<P2Trans
     ))
 }
 
+/// Checked narrow scheduled idle profile.
+#[pyclass(name = "ScheduledIdleZ", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledIdleZ {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledIdleZ,
+}
+/// Construct the scheduled idle-Z capability; rates use seconds and radians.
+#[pyfunction]
+#[pyo3(signature = (qubits, *, linear = 0.0, sine = 0.0, coherent = 0.0))]
+pub fn scheduled_idle_z(
+    qubits: usize,
+    linear: f64,
+    sine: f64,
+    coherent: f64,
+) -> PyResult<PyScheduledIdleZ> {
+    Ok(PyScheduledIdleZ {
+        inner: pecos_engines::scheduled_frame::ScheduledIdleZ::new(qubits, linear, sine, coherent)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
+}
+
+/// Checked scheduled local idle-noise profile.
+#[pyclass(name = "ScheduledIdleNoise", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledIdleNoise {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledNoise,
+}
+/// Construct checked idle channels; rates use seconds and radians, without conversion.
+#[pyfunction]
+#[pyo3(signature = (qubits, *, linear = 0.0, linear_model = None, sine = 0.0, sine_model = None, coherent = 0.0, coherent_model = None))]
+pub fn scheduled_idle_noise(
+    qubits: usize,
+    linear: f64,
+    linear_model: Option<std::collections::BTreeMap<String, f64>>,
+    sine: f64,
+    sine_model: Option<std::collections::BTreeMap<String, f64>>,
+    coherent: f64,
+    coherent_model: Option<std::collections::BTreeMap<String, f64>>,
+) -> PyResult<PyScheduledIdleNoise> {
+    use pecos_engines::scheduled_frame::ScheduledNoise;
+    let result = ScheduledNoise::new(qubits)
+        .and_then(|p| p.with_linear(linear, linear_model))
+        .and_then(|p| p.with_sine(sine, sine_model))
+        .and_then(|p| p.with_coherent(coherent, coherent_model));
+    Ok(PyScheduledIdleNoise {
+        inner: result.map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
+}
+/// Checked local gate, preparation and readout faults with scheduled idle channels.
+#[pyclass(name = "ScheduledLocalNoise", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledLocalNoise {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledLocalNoise,
+}
+/// Add Pauli gate faults, preparation faults and asymmetric readout.
+/// p2_pauli_model optionally selects ordered nonidentity I/X/Y/Z pair weights.
+/// prep_leak_ratio is the conditional leakage probability given a preparation fault.
+/// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
+/// For Z-only channels, scheduled_idle_noise() uses Z models by default.
+/// Probabilities are event probabilities in [0, 1], not average gate infidelities.
+#[pyfunction]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0, prep_leak_ratio = 0.0, p2_pauli_model = None))]
+pub fn scheduled_local_noise(
+    idle: PyScheduledIdleNoise,
+    p1: f64,
+    p2: f64,
+    prep: f64,
+    meas0: f64,
+    meas1: f64,
+    prep_leak_ratio: f64,
+    p2_pauli_model: Option<std::collections::BTreeMap<String, f64>>,
+) -> PyResult<PyScheduledLocalNoise> {
+    Ok(PyScheduledLocalNoise {
+        inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
+            idle.inner, p1, p2, prep, meas0, meas1,
+        )
+        .and_then(|profile| profile.with_prep_leak_ratio(prep_leak_ratio))
+        .and_then(|profile| match p2_pauli_model {
+            Some(model) => profile.with_p2_pauli_model(model),
+            None => Ok(profile),
+        })
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
+}
+/// Extract a checked scheduled v3 profile without widening other noise capabilities.
+pub(crate) fn extract_scheduled_idle(
+    noise: &Py<PyAny>,
+    py: Python<'_>,
+) -> Option<pecos_engines::scheduled_frame::ScheduledNoise> {
+    if let Ok(profile) = noise.extract::<PyScheduledLocalNoise>(py) {
+        Some(profile.inner.into())
+    } else if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
+        Some(profile.inner)
+    } else {
+        noise
+            .extract::<PyScheduledIdleZ>(py)
+            .ok()
+            .map(|p| p.inner.into())
+    }
+}
+
 /// Python wrapper for `GeneralNoiseModelBuilder`
 #[pyclass(name = "GeneralNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
@@ -1773,35 +1838,10 @@ impl PyGeneralNoiseModelBuilder {
 
     /// Add a noiseless gate
     fn with_noiseless_gate(&self, gate_name: &str) -> PyResult<Self> {
-        // Make it case-insensitive
-        let gate_type = match gate_name.to_uppercase().as_str() {
-            "I" => GateType::I,
-            "X" => GateType::X,
-            "Y" => GateType::Y,
-            "Z" => GateType::Z,
-            "S" | "SZ" => GateType::SZ,       // S gate is SZ in GateType
-            "SDG" | "SZDG" => GateType::SZdg, // S dagger
-            "H" => GateType::H,
-            "RX" => GateType::RX,
-            "RY" => GateType::RY,
-            "RZ" => GateType::RZ,
-            "T" => GateType::T,
-            "TDG" => GateType::Tdg,
-            "U" => GateType::U,
-            "R1XY" => GateType::R1XY,
-            "CX" => GateType::CX,
-            "SZZ" => GateType::SZZ,
-            "SZZDG" => GateType::SZZdg,
-            "RZZ" => GateType::RZZ,
-            "MEASURE" => GateType::MZ,
-            "PREP" => GateType::PZ,
-            "IDLE" => GateType::Idle,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Invalid gate type: {gate_name}"
-                )));
-            }
-        };
+        // Share canonical names and aliases with the Selene general-noise adapter.
+        let gate_type = gate_name.parse::<GateType>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid gate type: {gate_name}"))
+        })?;
         Ok(Self {
             inner: self.inner.clone().with_noiseless_gate(gate_type),
         })
@@ -2485,7 +2525,6 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQisEngineBuilder>()?;
     m.add_class::<PyPhirJsonEngineBuilder>()?;
     m.add_class::<PyPhirEngineBuilder>()?;
-    m.add_class::<PyHugrEngineBuilder>()?;
 
     // Simulation builders are now handled by the unified PySimBuilder in sim.rs
 
@@ -2494,11 +2533,9 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPhirJsonSimulation>()?;
     m.add_class::<PyPhirSimulation>()?;
     m.add_class::<PyQisControlSimulation>()?;
-    m.add_class::<PyHugrSimulation>()?;
 
     // Program types
     m.add_class::<PyQasm>()?;
-    m.add_class::<PyHugr>()?;
     m.add_class::<PyPhirJson>()?;
 
     // Noise builders
@@ -2530,7 +2567,6 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::qis_engine, m)?)?;
     m.add_function(wrap_pyfunction!(self::selene_engine, m)?)?;
     m.add_function(wrap_pyfunction!(self::phir_json_engine, m)?)?;
-    m.add_function(wrap_pyfunction!(self::hugr_engine, m)?)?;
 
     // Interface builder functions
     m.add_function(wrap_pyfunction!(self::qis_helios_interface, m)?)?;

@@ -65,19 +65,19 @@ fn main() {
         // Reuse mode: create propagator once, build map multiple times
         let propagator = DagFaultAnalyzer::new(&dag);
         for _ in 0..iterations {
-            let _map = propagator.build_influence_map();
+            let _map = propagator.build_influence_map().unwrap();
         }
     } else {
         // Default: create new propagator each iteration
         for _ in 0..iterations {
             let propagator = DagFaultAnalyzer::new(&dag);
-            let _map = propagator.build_influence_map();
+            let _map = propagator.build_influence_map().unwrap();
         }
     }
 
     // Print some stats at the end
     let propagator = DagFaultAnalyzer::new(&dag);
-    let map = propagator.build_influence_map();
+    let map = propagator.build_influence_map().unwrap();
     let stats = map.memory_stats();
 
     println!("\n=== Statistics ===");

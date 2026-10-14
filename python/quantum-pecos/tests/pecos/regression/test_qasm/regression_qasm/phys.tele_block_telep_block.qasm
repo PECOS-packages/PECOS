@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 qreg q[2];
 creg m[2];
 creg m2[2];

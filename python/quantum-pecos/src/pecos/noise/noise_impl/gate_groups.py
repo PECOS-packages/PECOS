@@ -32,6 +32,7 @@ two_qubits = {
     "RXX",
     "RYY",
     "RZZ",
+    "RXYXY2Q",
     "CX",
     "SXX",
     "SXXdg",
@@ -81,6 +82,7 @@ one_qubits = {
     "SqrtZd",
     "RZ",
     "U1q",
+    "R1XY",
     "RXY1Q",
     "SX",
     "SXdg",
@@ -90,10 +92,12 @@ one_qubits = {
     "SZdg",
     "F",
     "Fdg",
-    "R1XY",
 }
 
 zbasis_rotations = {"Z", "S", "Sd", "SqrtZ", "SqrtZd", "RZ", "SZ", "SZdg"}
+
+timing_ops = {"Idle", "Transport"}
+initializations = {"init |0>", "Init", "Init +Z"}
 
 measurementsx = {"measure Z", "Measure", "Measure +Z"}
 measurementsz = {"measure X", "measure Y", "Measure +X", "Measure +Y"}

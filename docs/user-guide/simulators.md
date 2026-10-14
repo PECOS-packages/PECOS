@@ -80,11 +80,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | **SparseStab** | Stabilizer | QEC simulations, Clifford circuits | None (default) |
 | **Stabilizer** | Stabilizer | Dense Clifford circuits | None |
 | **StateVec** | State vector | Arbitrary circuits, small systems | None |
+| **QutritStateVec** | Qutrit state vector | Physical leakage trajectories, small systems | Rust / Python API |
+| **QutritDensityMatrix** | Qutrit density matrix | Exact leakage/noise references, very small systems | Rust / Python API |
 | **StabVec** | Clifford + Rz | Clifford circuits with Z rotations | None |
 | **PauliProp** | Fault tracking | Error propagation analysis | None |
 | **CuStateVec** | State vector (GPU, Python) | Large circuits with GPU | CUDA, cuQuantum |
 | **CudaStateVec** | State vector (GPU, Rust) | Large circuits, reproducible seeded runs | CUDA, cuQuantum, cuda-rust build |
-| **CudaStabilizer** | Stabilizer (GPU, Rust) | Very large Clifford circuits (1000s of qubits) | CUDA, cuQuantum, cuda-rust build |
 | **MPS** | Tensor network | Low-entanglement circuits | CUDA, cuQuantum |
 | **density_matrix** | Density matrix | Noisy/mixed state simulation | None |
 
@@ -235,6 +236,92 @@ results = sim(Qasm(circuit)).quantum(stab_vec()).run(100)
 - Efficient for Clifford-heavy workloads that need `RZ` support
 - Uses the native Rust backend that ships with PECOS
 
+### Qutrit and Qudit Simulators
+
+The Rust `QuditStateVec` and `QuditDensityMatrix` APIs simulate a uniform local
+dimension rather than assuming qubits. Their qutrit wrappers fix the local
+dimension to three, use the basis `|0>, |1>, |L>`, and support arbitrary local
+unitaries, embedded qubit gates,
+full and computational-subspace measurements, preparation and reset, and Kraus
+channels. The state-vector backend samples channel trajectories, while the
+density-matrix backend evolves mixed states exactly.
+
+State-vector `reset_site` samples a trajectory branch and therefore consumes
+randomness. Density-matrix `reset_site` applies the exact reset channel without
+sampling.
+
+Both backends support joint basis measurements, coarse-grained projective
+partitions, and generalized measurement instruments expressed as outcome-grouped
+Kraus operators. Trajectory samples expose branch probabilities, while exact
+density-matrix measurements retain mixed conditional states. Imported density
+operators are checked for normalization, Hermiticity, and positive
+semidefiniteness.
+
+These are reference backends for physical leakage and noise-model verification,
+not replacements for PECOS's scalable stabilizer simulators or the classical
+leakage bookkeeping used in large QEC studies. Storage scales as `3^N` for a
+qutrit state vector and `9^N` for a qutrit density matrix.
+
+The thin `pecos-rslib` bindings expose the same operations without a NumPy
+runtime dependency. Python sequences of complex values are accepted directly:
+
+```python
+from pecos_rslib.simulators import QutritStateVec, qutrit_leakage_channel
+
+state = QutritStateVec(1, seed=42)
+sample = state.apply_kraus([0], qutrit_leakage_channel(0.01))
+print(sample.operator_index, state.outcome_probabilities(0))
+```
+
+Supplying `seed` makes stochastic trajectories and measurements reproducible;
+omitting it uses entropy-derived randomness.
+
+### Errors
+
+Every failure raises a subclass of `QuditError`, which also derives from the
+builtin exception it would otherwise have been, so existing `except ValueError`,
+`except IndexError`, and `except MemoryError` handlers keep working:
+
+| Exception | Also derives from | Raised for |
+| --- | --- | --- |
+| `QuditValueError` | `ValueError` | invalid operators, channels, states, partitions, probabilities |
+| `QuditIndexError` | `IndexError` | out-of-range target sites and basis states |
+| `QuditMemoryError` | `MemoryError` | dense allocations that cannot be reserved |
+
+Each carries a `kind` attribute holding a stable machine-readable tag, so a
+caller can branch on a specific physical condition without matching on message
+text:
+
+```python
+from pecos_rslib.simulators import QuditError, QutritStateVec
+
+state = QutritStateVec(1, seed=42)
+try:
+    state.measure_computational(0)
+except QuditError as error:
+    if error.kind == "LeakagePopulation":
+        ...  # the site carries population above |1>
+    else:
+        raise
+```
+
+### Index conventions
+
+Both backends use one radix convention throughout, and getting it wrong produces
+plausible but incorrect results rather than an error:
+
+- **Site 0 is the least-significant radix digit** of a global basis index. For
+  two qutrits, global index `g = digit(site 0) + 3 * digit(site 1)`.
+- **`targets[0]` is the least-significant digit** of a local operator's row and
+  column indices, and of a joint measurement outcome. `[0, 1]` and `[1, 0]` are
+  therefore different operations, not the same one written two ways.
+- **Operators, Kraus operators, and reduced density matrices are flat and
+  row-major** — a `k`-site operator is a sequence of `d ** (2 * k)` complex
+  values, not a nested list of rows.
+
+The same statements are on the class docstrings, so `help(QutritStateVec)`
+reaches them from a REPL.
+
 ## GPU-Accelerated Simulators
 
 For large circuits, GPU acceleration can provide significant speedups.
@@ -247,7 +334,13 @@ NVIDIA cuQuantum-powered state vector simulator.
 ```python
 from pecos.simulators import CuStateVec
 
-results = sim(Qasm(circuit)).quantum(CuStateVec).run(100)
+state = CuStateVec(2)
+state.run_gate("H", {0})
+state.run_gate("CNOT", {(0, 1)})
+measurement = state.run_gate("Measure", {0, 1})
+# Only outcomes of 1 are included: a Bell state gives {} or {0: 1, 1: 1}.
+assert measurement in ({}, {0: 1, 1: 1})
+print(measurement)
 ```
 
 **Requirements:**
@@ -261,6 +354,8 @@ results = sim(Qasm(circuit)).quantum(CuStateVec).run(100)
 pip install "quantum-pecos[cuda13]"
 ```
 
+No GPU stabilizer simulator is currently provided; the Rust crate `pecos-cuquantum` exposes raw Pauli-frame simulation as `CuFrameSimulator` (not available from Python); see [issue #1068](https://github.com/PECOS-packages/PECOS/issues/1068).
+
 See [CUDA Setup Guide](cuda-setup.md) for detailed installation instructions.
 
 ### MPS (Matrix Product State, Python only)
@@ -271,7 +366,13 @@ Tensor network simulator for circuits with limited entanglement.
 ```python
 from pecos.simulators import MPS
 
-results = sim(Qasm(circuit)).quantum(MPS).run(100)
+state = MPS(2)
+state.run_gate("H", {0})
+state.run_gate("CNOT", {(0, 1)})
+measurement = state.run_gate("Measure", {0, 1})
+# Only outcomes of 1 are included: a Bell state gives {} or {0: 1, 1: 1}.
+assert measurement in ({}, {0: 1, 1: 1})
+print(measurement)
 ```
 
 **Strengths:**
@@ -386,7 +487,6 @@ Approximate performance characteristics (relative, not absolute):
 | StabVec | ★★★★ | Limited to Clifford + Rz | Low | 1000+ |
 | CuStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
 | CudaStateVec | ★★★★ | ★★★★★ | 2^n (GPU) | ~30-35 |
-| CudaStabilizer | ★★★★★ | N/A | Low | 1000+ (GPU) |
 | MPS | ★★★ | ★★★ | ~n × chi² | Varies |
 | density_matrix | ★★ | ★★ | 4^n | ~15 |
 

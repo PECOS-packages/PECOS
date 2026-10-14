@@ -39,7 +39,7 @@ rustworkx-core.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 
-# Deterministic libm (musl-derived) for special functions; see design/jeffreys-pecos-num.md
+# Deterministic libm (musl-derived) for special functions
 libm.workspace = true
 
 [dev-dependencies]

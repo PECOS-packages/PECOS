@@ -8,7 +8,7 @@ compatible with numpy.random.seed().
 import numpy as np
 import pytest
 
-from pecos_rslib import array_equal, random as pecos_random
+from pecos_rslib import array, array_equal, random as pecos_random
 
 
 class TestSeedReproducibility:
@@ -176,6 +176,70 @@ class TestSeedNumericRange:
         seq2 = pecos_random.random(10)
 
         assert not array_equal(seq1, seq2)
+
+
+@pytest.mark.parametrize("check_tail", [False, True], ids=["samples", "rng-tail"])
+@pytest.mark.parametrize(("size", "replace"), [(None, True), (5, True), (3, False)])
+def test_integer_choice_matches_sequence(size, replace, check_tail) -> None:
+    """Integer conversion preserves the sequence sampler and subsequent draws."""
+    pecos_random.seed(456)
+    expected = pecos_random.choice(list(range(5)), size, replace)
+    expected_tail = list(pecos_random.random(4))
+    pecos_random.seed(456)
+    actual = pecos_random.choice(5, size, replace)
+    actual_tail = list(pecos_random.random(4))
+    assert (actual_tail if check_tail else actual) == (expected_tail if check_tail else expected)
+
+
+@pytest.mark.parametrize("check_tail", [False, True], ids=["samples", "rng-tail"])
+@pytest.mark.parametrize(
+    "population",
+    [list, tuple, array, np.array, pytest.param(lambda values: range(len(values)), id="range")],
+)
+@pytest.mark.parametrize(
+    ("size", "replace", "expected", "tail"),
+    [
+        (
+            None,
+            True,
+            4,
+            [
+                0.8470659213445381,
+                0.7730265041716617,
+                0.7927490733030289,
+                0.393961575389271,
+            ],
+        ),
+        (
+            5,
+            True,
+            [4, 3, 1, 3, 0],
+            [
+                0.1082339801369997,
+                0.9999203524714277,
+                0.4433146452746973,
+                0.4012271442823965,
+            ],
+        ),
+        (
+            3,
+            False,
+            [1, 0, 2],
+            [
+                0.7730265041716617,
+                0.7927490733030289,
+                0.393961575389271,
+                0.1082339801369997,
+            ],
+        ),
+    ],
+)
+def test_choice_dev_reference(population, size, replace, expected, tail, check_tail) -> None:
+    """Fixed references captured from the unmodified dev build for issue #889."""
+    pecos_random.seed(456)
+    actual = pecos_random.choice(population([0, 1, 2, 3, 4]), size, replace)
+    actual_tail = list(pecos_random.random(4))
+    assert (actual_tail if check_tail else actual) == (tail if check_tail else expected)
 
 
 if __name__ == "__main__":

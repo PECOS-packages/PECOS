@@ -515,13 +515,14 @@ class TestNestedControlFlowEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True, _internal=True)
-        gen.generate_block(prog)
-        direct_qasm = "\n".join(gen.output)
+        # The else-branch runs under the negated comparison
+        assert "if(c[0] == 1) x q[0];" in ast_qasm
+        assert "if(c[0] != 1) z q[0];" in ast_qasm
 
-        # Both should have X and Z gates
-        assert "x" in direct_qasm.lower() or "z" in direct_qasm.lower()
-        assert "x" in ast_qasm.lower() or "z" in ast_qasm.lower()
+        # The deprecated generator rejects else blocks instead of dropping them
+        gen = QASMGenerator(skip_headers=True, _internal=True)
+        with pytest.raises(NotImplementedError, match="else block"):
+            gen.generate_block(prog)
 
 
 class TestTGateEquivalence:

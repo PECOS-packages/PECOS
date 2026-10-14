@@ -8,7 +8,7 @@ For example, when measurements write to [["m", 0]] and [["m", 1]], this
 generates explicit shift and OR operations to combine the bits.
 */
 
-use pecos_core::errors::PecosError;
+use pecos_core::{Angle64, errors::PecosError};
 use pecos_phir::{
     Module,
     builtin_ops::{BuiltinOp, VarDefineOp},
@@ -18,7 +18,10 @@ use pecos_phir::{
     types::{IntWidth, Type},
 };
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::declarations::{DeclarationKind, Declarations};
+use super::environment::Environment;
 
 /// Information about a bit-indexed write
 #[derive(Debug, Clone)]
@@ -80,6 +83,20 @@ pub fn phir_json_to_module(json_str: &str) -> Result<Module, PecosError> {
 
     let mut converter = ImprovedConverter::new();
     let instructions = converter.convert_operations(ops)?;
+    // Emit definitions once at the program boundary, after all uses have been resolved.
+    let instructions = converter
+        .resolved_qubits
+        .iter()
+        .map(|&id| {
+            Instruction::new(
+                Operation::Classical(ClassicalOp::ConstInt(i64::from(id))),
+                vec![],
+                vec![SSAValue::new(id)],
+                vec![Type::Int(IntWidth::I64)],
+            )
+        })
+        .chain(instructions)
+        .collect();
 
     // Create main block
     let main_block = Block {
@@ -108,7 +125,10 @@ pub fn phir_json_to_module(json_str: &str) -> Result<Module, PecosError> {
 }
 
 struct ImprovedConverter {
+    environment: Environment,
+    declarations: Declarations,
     next_ssa_id: u32,
+    resolved_qubits: BTreeSet<u32>,
     variable_map: BTreeMap<String, u32>,
     variable_types: BTreeMap<String, Type>,
     bit_indexed_writes: BTreeMap<String, Vec<BitIndexedWrite>>,
@@ -117,31 +137,64 @@ struct ImprovedConverter {
 impl ImprovedConverter {
     fn new() -> Self {
         Self {
+            environment: Environment::new(),
+            declarations: Declarations::default(),
             next_ssa_id: 0,
+            resolved_qubits: BTreeSet::new(),
             variable_map: BTreeMap::new(),
             variable_types: BTreeMap::new(),
             bit_indexed_writes: BTreeMap::new(),
         }
     }
 
-    fn get_ssa_id(&mut self, var: &str) -> u32 {
+    fn get_ssa_id(&mut self, var: &str) -> Result<u32, PecosError> {
         if let Some(&id) = self.variable_map.get(var) {
-            id
+            Ok(id)
         } else {
-            let id = self.next_ssa_id;
-            self.next_ssa_id += 1;
+            let id = self.new_ssa_id()?;
             self.variable_map.insert(var.to_string(), id);
-            id
+            Ok(id)
         }
     }
 
-    fn new_ssa_id(&mut self) -> u32 {
+    fn new_ssa_id(&mut self) -> Result<u32, PecosError> {
         let id = self.next_ssa_id;
-        self.next_ssa_id += 1;
-        id
+        self.next_ssa_id = id
+            .checked_add(1)
+            .ok_or_else(|| PecosError::Input("PHIR SSA ID space exhausted".to_string()))?;
+        Ok(id)
     }
 
     fn convert_operations(&mut self, ops: &[Value]) -> Result<Vec<Instruction>, PecosError> {
+        super::declarations::validate_json_operations(ops)?;
+        // Register definitions own the global qubit numbering, as in PyPHIR.
+        // Reserve those IDs before allocating SSA IDs for registers and values.
+        for op in ops {
+            if op.get("data").and_then(Value::as_str) == Some("qvar_define") {
+                let name = op.get("variable").and_then(Value::as_str).ok_or_else(|| {
+                    PecosError::Input("Quantum register requires a variable name".to_string())
+                })?;
+                let data_type = op
+                    .get("data_type")
+                    .map(|value| {
+                        value.as_str().ok_or_else(|| {
+                            PecosError::Input(format!(
+                                "Register '{name}' has invalid data_type {value}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                let (name, size) = super::ast::validate_quantum_declaration(
+                    name,
+                    data_type,
+                    op.get("size").and_then(Value::as_u64),
+                )?;
+                self.environment.add_quantum_register(name, size)?;
+            }
+        }
+        self.next_ssa_id = u32::try_from(self.environment.count_qubits())
+            .map_err(|_| PecosError::Input("Too many qubits for PHIR SSA IDs".to_string()))?;
+
         let mut instructions = Vec::new();
         let mut result_operations = Vec::new();
 
@@ -159,45 +212,35 @@ impl ImprovedConverter {
             }
 
             if let Some(instruction) = self.convert_operation(op)? {
-                instructions.push(instruction);
+                if matches!(
+                    instruction.operation,
+                    Operation::Quantum(QuantumOp::RXYXY2Q(..))
+                ) {
+                    for pair in instruction.operands.as_chunks::<2>().0 {
+                        let mut paired = instruction.clone();
+                        paired.operands = pair.to_vec();
+                        // Each pair defines its own SSA results, not the batch's results.
+                        paired.results = instruction
+                            .results
+                            .iter()
+                            .map(|_| self.new_ssa_id().map(SSAValue::new))
+                            .collect::<Result<Vec<_>, PecosError>>()?;
+                        instructions.push(paired);
+                    }
+                } else {
+                    instructions.push(instruction);
+                }
             }
         }
 
         // Second pass: generate bit-combining operations for variables with bit-indexed writes
         let bit_indexed_writes = self.bit_indexed_writes.clone();
         for (var_name, writes) in &bit_indexed_writes {
-            if writes.len() > 1 {
-                // Multiple bit writes to the same variable - generate combining operations
-                let mut combining_instructions = Vec::new();
-                let combined_ssa = self.generate_bit_combining_operations(
-                    var_name,
-                    writes,
-                    &mut combining_instructions,
-                );
+            let combined_ssa =
+                self.generate_bit_combining_operations(var_name, writes, &mut instructions)?;
 
-                // Add the combining instructions
-                instructions.extend(combining_instructions);
-
-                // Update the variable's SSA mapping to point to the combined value
-                self.variable_map.insert(var_name.clone(), combined_ssa.id);
-            } else if writes.len() == 1 {
-                // Single bit write - cast the measurement Bool to int and update mapping
-                let bit_as_int = SSAValue {
-                    id: self.new_ssa_id(),
-                    version: 0,
-                };
-                let cast_instruction = Instruction {
-                    operation: Operation::Classical(ClassicalOp::Bitcast),
-                    operands: vec![writes[0].ssa_value],
-                    results: vec![bit_as_int],
-                    result_types: vec![Type::UInt(IntWidth::I32)],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                };
-                instructions.push(cast_instruction);
-                self.variable_map.insert(var_name.clone(), bit_as_int.id);
-            }
+            // Update the variable's SSA mapping to point to the combined value
+            self.variable_map.insert(var_name.clone(), combined_ssa.id);
         }
 
         // Third pass: now process Result operations with updated variable mappings
@@ -215,14 +258,14 @@ impl ImprovedConverter {
         _var_name: &str,
         writes: &[BitIndexedWrite],
         instructions: &mut Vec<Instruction>,
-    ) -> SSAValue {
+    ) -> Result<SSAValue, PecosError> {
         // Sort writes by bit index
         let mut sorted_writes = writes.to_vec();
         sorted_writes.sort_by_key(|w| w.bit_index);
 
         // Start with zero
         let zero_ssa = SSAValue {
-            id: self.new_ssa_id(),
+            id: self.new_ssa_id()?,
             version: 0,
         };
         let zero_instruction = Instruction {
@@ -242,7 +285,7 @@ impl ImprovedConverter {
         for write in &sorted_writes {
             // Convert bool to int if needed
             let bit_as_int = SSAValue {
-                id: self.new_ssa_id(),
+                id: self.new_ssa_id()?,
                 version: 0,
             };
             let cast_instruction = Instruction {
@@ -259,7 +302,7 @@ impl ImprovedConverter {
             if write.bit_index > 0 {
                 // Shift the bit to its position
                 let shifted_ssa = SSAValue {
-                    id: self.new_ssa_id(),
+                    id: self.new_ssa_id()?,
                     version: 0,
                 };
                 let shift_instruction = Instruction {
@@ -275,7 +318,7 @@ impl ImprovedConverter {
 
                 // OR with current value
                 let or_ssa = SSAValue {
-                    id: self.new_ssa_id(),
+                    id: self.new_ssa_id()?,
                     version: 0,
                 };
                 let or_instruction = Instruction {
@@ -292,7 +335,7 @@ impl ImprovedConverter {
             } else {
                 // Bit 0 - just OR with current value
                 let or_ssa = SSAValue {
-                    id: self.new_ssa_id(),
+                    id: self.new_ssa_id()?,
                     version: 0,
                 };
                 let or_instruction = Instruction {
@@ -309,7 +352,7 @@ impl ImprovedConverter {
             }
         }
 
-        current_value
+        Ok(current_value)
     }
 
     fn convert_operation(&mut self, op: &Value) -> Result<Option<Instruction>, PecosError> {
@@ -319,7 +362,7 @@ impl ImprovedConverter {
 
         // Variable definition
         if let Some(data) = obj.get("data").and_then(|v| v.as_str()) {
-            return Ok(self.convert_variable_definition(obj, data));
+            return self.convert_variable_definition(obj, data);
         }
 
         // Quantum operation
@@ -329,7 +372,7 @@ impl ImprovedConverter {
 
         // Classical operation
         if let Some(cop) = obj.get("cop").and_then(|v| v.as_str()) {
-            return Ok(self.convert_classical_operation(obj, cop));
+            return self.convert_classical_operation(obj, cop);
         }
 
         // Skip unknown operations
@@ -340,21 +383,48 @@ impl ImprovedConverter {
         &mut self,
         obj: &serde_json::Map<String, Value>,
         data: &str,
-    ) -> Option<Instruction> {
-        let data_type = obj.get("data_type").and_then(|v| v.as_str()).unwrap_or("");
-        let variable = obj.get("variable").and_then(|v| v.as_str()).unwrap_or("");
-        let size = obj
-            .get("size")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|v| usize::try_from(v).ok())
-            .unwrap_or(0);
+    ) -> Result<Option<Instruction>, PecosError> {
+        if data != "qvar_define" && data != "cvar_define" {
+            return Ok(None);
+        }
+        let variable = obj.get("variable").and_then(Value::as_str).unwrap_or("");
+        let data_type = obj
+            .get("data_type")
+            .map(|value| {
+                value.as_str().ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "Register '{variable}' has invalid data_type {value}"
+                    ))
+                })
+            })
+            .transpose()?;
+        let raw_size = obj.get("size").and_then(Value::as_u64);
+        let (data_type, size) = if data == "qvar_define" {
+            let (_, size) =
+                super::ast::validate_quantum_declaration(variable, data_type, raw_size)?;
+            ("qubits", size)
+        } else {
+            let data_type = data_type.ok_or_else(|| {
+                PecosError::Input(format!("Register '{variable}' requires data_type"))
+            })?;
+            (
+                data_type,
+                raw_size.and_then(|n| usize::try_from(n).ok()).unwrap_or(0),
+            )
+        };
 
         match data {
             "qvar_define" | "cvar_define" => {
                 let var_define_op =
                     VarDefineOp::new(variable.to_string(), data_type.to_string(), size);
 
-                let var_id = self.get_ssa_id(variable);
+                let kind = if data == "qvar_define" {
+                    DeclarationKind::Quantum
+                } else {
+                    DeclarationKind::Classical
+                };
+                self.declarations.register(variable, kind)?;
+                let var_id = self.get_ssa_id(variable)?;
 
                 let result_type = match data {
                     "qvar_define" => Type::QuantumReg(size),
@@ -389,9 +459,9 @@ impl ImprovedConverter {
                     location: None,
                 };
 
-                Some(instruction)
+                Ok(Some(instruction))
             }
-            _ => None, // Skip unknown variable definitions
+            _ => Ok(None), // Skip unknown variable definitions
         }
     }
 
@@ -409,6 +479,54 @@ impl ImprovedConverter {
             "T" => QuantumOp::T,
             "CX" | "CNOT" => QuantumOp::CX,
             "CZ" => QuantumOp::CZ,
+            "SXX" => QuantumOp::SXX,
+            "SXXdg" => QuantumOp::SXXdg,
+            "SYY" => QuantumOp::SYY,
+            "SYYdg" => QuantumOp::SYYdg,
+            "SZZ" | "ZZ" => QuantumOp::SZZ,
+            "SZZdg" => QuantumOp::SZZdg,
+            "RXYXY2Q" => {
+                let ast: crate::v0_1::ast::Operation =
+                    serde_json::from_value(Value::Object(obj.clone()))
+                        .map_err(|error| PecosError::Input(error.to_string()))?;
+                let crate::v0_1::ast::Operation::QuantumOp {
+                    angles: Some(angles),
+                    ..
+                } = ast
+                else {
+                    return Err(PecosError::Input("RXYXY2Q requires two angles".to_string()));
+                };
+                QuantumOp::RXYXY2Q(
+                    Angle64::from_radians(angles[0]),
+                    Angle64::from_radians(angles[1]),
+                )
+            }
+            "CPhase" => {
+                let angles = obj.get("angles").and_then(Value::as_array).ok_or_else(|| {
+                    PecosError::Input("CPhase requires an angles field".to_string())
+                })?;
+                let values = angles.first().and_then(Value::as_array).ok_or_else(|| {
+                    PecosError::Input("CPhase angles must contain a value list".to_string())
+                })?;
+                let value = values.first().and_then(Value::as_f64).ok_or_else(|| {
+                    PecosError::Input("CPhase requires one numeric angle".to_string())
+                })?;
+                let unit = angles
+                    .get(1)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| PecosError::Input("CPhase angles require a unit".to_string()))?;
+                let radians = match unit {
+                    "rad" => value,
+                    "pi" => value * std::f64::consts::PI,
+                    "deg" => value.to_radians(),
+                    _ => {
+                        return Err(PecosError::Input(format!(
+                            "Unsupported CPhase angle unit: {unit}"
+                        )));
+                    }
+                };
+                QuantumOp::CPhase(Angle64::from_radians(radians))
+            }
             "Measure" => QuantumOp::Measure,
             _ => {
                 return Err(PecosError::Input(format!(
@@ -421,15 +539,28 @@ impl ImprovedConverter {
         let mut operands = Vec::new();
         if let Some(args) = obj.get("args").and_then(|v| v.as_array()) {
             for arg in args {
-                if let Some(arr) = arg.as_array()
-                    && arr.len() == 2
-                    && let (Some(_var), Some(idx)) = (arr[0].as_str(), arr[1].as_u64())
+                let Some(arr) = arg.as_array() else {
+                    continue;
+                };
+                if let [Value::String(var), Value::Number(idx)] = arr.as_slice()
+                    && let Some(idx) = idx.as_u64()
                 {
-                    // For quantum operations, the operand is the qubit index directly
                     operands.push(SSAValue {
-                        id: u32::try_from(idx).unwrap_or(0),
+                        id: self.resolve_qubit(var, idx)?,
                         version: 0,
                     });
+                    continue;
+                }
+                for nested in arr {
+                    if let Some([Value::String(var), Value::Number(idx)]) =
+                        nested.as_array().map(Vec::as_slice)
+                        && let Some(idx) = idx.as_u64()
+                    {
+                        operands.push(SSAValue {
+                            id: self.resolve_qubit(var, idx)?,
+                            version: 0,
+                        });
+                    }
                 }
             }
         }
@@ -447,7 +578,7 @@ impl ImprovedConverter {
                         // For measurements with bit-indexed returns, allocate a new SSA ID
                         if qop == "Measure" {
                             let result_ssa = SSAValue {
-                                id: self.new_ssa_id(),
+                                id: self.new_ssa_id()?,
                                 version: 0,
                             };
                             results.push(result_ssa);
@@ -464,9 +595,8 @@ impl ImprovedConverter {
                                 .push(write);
                         } else {
                             // Non-measurement operations
-                            let ssa_id = self.get_ssa_id(var);
                             results.push(SSAValue {
-                                id: ssa_id + u32::try_from(idx).unwrap_or(0),
+                                id: self.resolve_qubit(var, idx)?,
                                 version: 0,
                             });
                             result_types.push(Type::Qubit);
@@ -475,7 +605,7 @@ impl ImprovedConverter {
                 } else if let Some(_var) = ret.as_str() {
                     // Simple variable return
                     let result_ssa = SSAValue {
-                        id: self.new_ssa_id(),
+                        id: self.new_ssa_id()?,
                         version: 0,
                     };
                     results.push(result_ssa);
@@ -488,7 +618,7 @@ impl ImprovedConverter {
             }
         } else if qop != "Measure" {
             // Generate result for non-measurement operations
-            let result_id = self.new_ssa_id();
+            let result_id = self.new_ssa_id()?;
             results.push(SSAValue {
                 id: result_id,
                 version: 0,
@@ -509,11 +639,24 @@ impl ImprovedConverter {
         Ok(Some(instruction))
     }
 
+    fn resolve_qubit(&mut self, var: &str, index: u64) -> Result<u32, PecosError> {
+        let index = usize::try_from(index).map_err(|_| {
+            PecosError::Input(format!(
+                "Qubit index {index} too large for register '{var}'"
+            ))
+        })?;
+        let id = self.environment.resolve_qubit(var, index)?;
+        let id = u32::try_from(id)
+            .map_err(|_| PecosError::Input(format!("Qubit ID {id} too large for PHIR SSA")))?;
+        self.resolved_qubits.insert(id);
+        Ok(id)
+    }
+
     fn convert_classical_operation(
         &mut self,
         obj: &serde_json::Map<String, Value>,
         cop: &str,
-    ) -> Option<Instruction> {
+    ) -> Result<Option<Instruction>, PecosError> {
         match cop {
             "Result" => {
                 let classical_op = ClassicalOp::Result;
@@ -525,7 +668,7 @@ impl ImprovedConverter {
                         if let Some(var_name) = arg.as_str() {
                             // Use the current SSA ID for this variable
                             // It may have been updated by bit-combining operations
-                            let ssa_id = self.get_ssa_id(var_name);
+                            let ssa_id = self.get_ssa_id(var_name)?;
                             operands.push(SSAValue {
                                 id: ssa_id,
                                 version: 0,
@@ -539,7 +682,7 @@ impl ImprovedConverter {
                 if let Some(returns) = obj.get("returns").and_then(|v| v.as_array()) {
                     for ret in returns {
                         if let Some(var_name) = ret.as_str() {
-                            let ssa_id = self.get_ssa_id(var_name);
+                            let ssa_id = self.get_ssa_id(var_name)?;
                             results.push(SSAValue {
                                 id: ssa_id,
                                 version: 0,
@@ -569,16 +712,164 @@ impl ImprovedConverter {
                     location: None,
                 };
 
-                Some(instruction)
+                Ok(Some(instruction))
             }
-            _ => None, // Skip unknown classical operations
+            _ => Ok(None), // Skip unknown classical operations
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn declaration_ssa_aliasing_regression() {
+        use serde_json::json;
+        for (first, second) in [
+            ("qvar_define", "qvar_define"),
+            ("cvar_define", "cvar_define"),
+            ("qvar_define", "cvar_define"),
+            ("cvar_define", "qvar_define"),
+        ] {
+            let declaration = |data: &str, name: &str| {
+                json!({
+                    "data":data, "variable":name, "size":1,
+                    "data_type":if data == "qvar_define" {"qubits"} else {"u32"},
+                })
+            };
+            let mut converter = ImprovedConverter::new();
+            let a = converter
+                .convert_operation(&declaration(first, "a"))
+                .unwrap()
+                .unwrap();
+            let b = converter
+                .convert_operation(&declaration(second, "b"))
+                .unwrap()
+                .unwrap();
+            assert_ne!(
+                a.results[0], b.results[0],
+                "distinct declared names must have distinct SSA identities"
+            );
+            let before = (
+                converter.next_ssa_id,
+                converter.variable_map.clone(),
+                converter.variable_types.clone(),
+            );
+            let error = converter
+                .convert_operation(&declaration(second, "a"))
+                .unwrap_err();
+            let first_kind = if first == "qvar_define" {
+                "quantum"
+            } else {
+                "classical"
+            };
+            let second_kind = if second == "qvar_define" {
+                "quantum"
+            } else {
+                "classical"
+            };
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Input error: Variable 'a' is already declared as {first_kind}; cannot redeclare as {second_kind}"
+                )
+            );
+            assert_eq!(
+                (
+                    converter.next_ssa_id,
+                    converter.variable_map.clone(),
+                    converter.variable_types.clone()
+                ),
+                before,
+                "rejection must preserve SSA allocation and type state"
+            );
+            // References still resolve to the first declaration's identity.
+            assert_eq!(converter.get_ssa_id("a").unwrap(), a.results[0].id);
+        }
+    }
+
+    #[test]
+    fn redeclaration_precedes_ssa_lookup() {
+        use serde_json::json;
+        let mut converter = ImprovedConverter::new();
+        converter
+            .convert_operation(&json!({"data":"qvar_define", "variable":"a", "size":1}))
+            .unwrap();
+        // A reference mapping can change independently of the declaration registry.
+        // Force the lookup to allocate, making its ordering observable even though
+        // a normal duplicate lookup would return an existing id without side effects.
+        converter.variable_map.remove("a");
+        converter.next_ssa_id = u32::MAX;
+        let error = converter
+            .convert_operation(
+                &json!({"data":"cvar_define", "data_type":"u32", "variable":"a", "size":1}),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Input error: Variable 'a' is already declared as quantum; cannot redeclare as classical"
+        );
+    }
+
+    #[test]
+    fn program_redeclaration_precedes_qubit_and_ssa_reservation() {
+        use serde_json::json;
+        let mut converter = ImprovedConverter::new();
+        let error = converter
+            .convert_operations(&[
+                json!({"data":"qvar_define", "variable":"a", "size":1}),
+                json!({"data":"cvar_define", "data_type":"u32", "variable":"a", "size":1}),
+            ])
+            .unwrap_err();
+        assert!(error.to_string().contains("cannot redeclare as classical"));
+        assert_eq!(
+            (
+                converter.environment.count_qubits(),
+                converter.next_ssa_id,
+                converter.variable_map.len()
+            ),
+            (0, 0, 0)
+        );
+    }
     use super::*;
+
+    #[test]
+    fn all_named_two_qubit_roots_convert_to_typed_phir_with_tuple_args() {
+        let json = r#"{
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+                {"qop": "SXX", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SXXdg", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SYY", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SYYdg", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SZZ", "args": [[["q", 0], ["q", 1]]]},
+                {"qop": "SZZdg", "args": [[["q", 0], ["q", 1]]]}
+            ]
+        }"#;
+        let module = phir_json_to_module(json).expect("all roots should convert");
+        let quantum: Vec<_> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter_map(|instruction| match &instruction.operation {
+                Operation::Quantum(op) => Some((op.clone(), instruction.operands.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            quantum.iter().map(|(op, _)| op).collect::<Vec<_>>(),
+            [
+                &QuantumOp::SXX,
+                &QuantumOp::SXXdg,
+                &QuantumOp::SYY,
+                &QuantumOp::SYYdg,
+                &QuantumOp::SZZ,
+                &QuantumOp::SZZdg,
+            ]
+        );
+        assert!(quantum.iter().all(|(_, operands)| operands.len() == 2));
+    }
 
     #[test]
     fn test_missing_format_field() {
@@ -664,7 +955,7 @@ mod tests {
     fn test_empty_ops() {
         let json = r#"{"format": "PHIR/JSON", "version": "0.1.0", "ops": []}"#;
         let module = phir_json_to_module(json).unwrap();
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]
@@ -694,7 +985,7 @@ mod tests {
         }"#;
         // Unknown data definitions should be skipped
         let module = phir_json_to_module(json).unwrap();
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]

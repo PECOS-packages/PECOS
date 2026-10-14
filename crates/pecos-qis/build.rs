@@ -19,9 +19,13 @@ fn main() {
     #[cfg(feature = "llvm")]
     validate_llvm();
 
-    // Embed LLVM bin path at compile time for runtime use
-    if let Ok(llvm_prefix) = env::var(pecos_build::llvm::LLVM_SYS_PREFIX_ENV) {
-        let llvm_bin = PathBuf::from(&llvm_prefix).join("bin");
+    // Embed the LLVM bin path at compile time for runtime use. Isolated build
+    // frontends (for example, maturin invoked by `uv run --with`) do not always
+    // discover the workspace's `.cargo/config.toml`, so do not rely solely on
+    // Cargo exporting LLVM_SYS_211_PREFIX. Fall back to PECOS's normal LLVM
+    // discovery to keep QIS execution on the required toolchain.
+    if let Some(llvm_prefix) = configured_or_detected_llvm() {
+        let llvm_bin = llvm_prefix.join("bin");
         println!("cargo:rustc-env=PECOS_LLVM_BIN_PATH={}", llvm_bin.display());
     }
 
@@ -37,9 +41,20 @@ fn main() {
     build_selene::build_selene_components();
 }
 
+fn configured_or_detected_llvm() -> Option<PathBuf> {
+    env::var(pecos_build::llvm::LLVM_SYS_PREFIX_ENV)
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| pecos_build::llvm::is_valid_llvm(path))
+        .or_else(|| {
+            let repo_root = pecos_build::llvm::get_repo_root_from_manifest();
+            pecos_build::llvm::find_configured_or_detected_llvm(repo_root)
+        })
+}
+
 #[cfg(feature = "llvm")]
 fn validate_llvm() {
-    use pecos_build::llvm::{LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION, is_valid_llvm};
+    use pecos_build::llvm::{is_valid_llvm, LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION};
 
     // Check if LLVM_SYS_PREFIX_ENV is already set and valid
     if let Ok(sys_prefix) = env::var(LLVM_SYS_PREFIX_ENV) {

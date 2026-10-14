@@ -268,11 +268,15 @@ prototype matrix composition (`@`, `compose`, `then`) with ordered hooks. No com
 are provided for these draft APIs.
 
 This increment does not provide mixture/product channel objects, conditional follow-up channels,
-arbitrary Kraus composition, or coherent superpositions involving leakage. The Selene wrapper
-exposes these ordered hook lists through plain-data hook specs and matching fluent setters. Runtime-frame profiles reject hook lists until internal
-channel measurement barriers can preserve their source-operation boundaries. Ordinary `sim()`
-gate execution supports these hooks. Existing gate-noise configuration is not migrated into this
-channel executor; such a migration would require separate seeded and statistical parity checks.
+arbitrary Kraus composition, or coherent superpositions involving leakage. Hooks trigger on the
+single- and two-qubit gates the model processes, so every gate execution path that uses
+`GeneralNoiseModel` runs them: ordinary `sim()` execution, the Selene general-noise wrapper
+(which exposes these ordered hook lists through plain-data hook specs and matching fluent
+setters), and runtime frames. In a runtime frame, a hook that needs an internal measurement
+holds later frame records until the paused gate completes, as a measurement-crosstalk payload
+does. Scheduled profiles do not accept hooks: they allow one simulator call per batch. Existing
+gate-noise configuration is not migrated into this channel executor; such a migration would
+require separate seeded and statistical parity checks.
 
 ### Leakage readout within a batch
 

@@ -18,10 +18,11 @@ use selene_core::runtime::{BatchOperation, Operation};
 use selene_core::simulator::SimulatorInterface;
 use selene_core::utils::MetricValue;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::simulator::SeleneSimulator;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum TransitionConfig {
     Flat(BTreeMap<String, f64>),
@@ -57,7 +58,7 @@ impl TransitionConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum HookConfig {
     Transition {
@@ -74,7 +75,87 @@ enum HookConfig {
     },
 }
 
+// Read JSON values directly: serde's buffered enum deserializers cannot read
+// serde_json numbers when workspace feature unification enables arbitrary_precision.
+impl<'de> Deserialize<'de> for HookConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_value(&Value::deserialize(deserializer)?)
+    }
+}
+
+fn hook_number<E: serde::de::Error>(value: &Value) -> Result<f64, E> {
+    value
+        .as_f64()
+        .ok_or_else(|| E::custom("invalid type: expected f64"))
+}
+
+fn hook_distribution<E: serde::de::Error>(value: &Value) -> Result<BTreeMap<String, f64>, E> {
+    value
+        .as_object()
+        .ok_or_else(|| E::custom("invalid type: expected a map of probabilities"))?
+        .iter()
+        .map(|(label, value)| Ok((label.clone(), hook_number(value)?)))
+        .collect()
+}
+
 impl HookConfig {
+    fn from_value<E: serde::de::Error>(value: &Value) -> Result<Self, E> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| E::custom("invalid type: expected a hook object"))?;
+        let field = |name| object.get(name).ok_or_else(|| E::missing_field(name));
+        let kind = field("kind")?
+            .as_str()
+            .ok_or_else(|| E::custom("invalid type: expected a string for `kind`"))?;
+        let fields: &[&str] = match kind {
+            "transition" => &["probability", "transitions"],
+            "pauli_leakage" => &["probability", "events"],
+            "independent" => &["first", "second"],
+            _ => {
+                return Err(E::unknown_variant(
+                    kind,
+                    &["transition", "pauli_leakage", "independent"],
+                ));
+            }
+        };
+        for name in object.keys() {
+            if name != "kind" && !fields.contains(&name.as_str()) {
+                return Err(E::unknown_field(name, fields));
+            }
+        }
+        match kind {
+            "transition" => {
+                let probability = hook_number(field("probability")?)?;
+                let transitions = field("transitions")?;
+                let rows = transitions
+                    .as_object()
+                    .ok_or_else(|| E::custom("invalid type: expected a transitions map"))?;
+                let transitions = if rows.values().all(Value::is_number) {
+                    TransitionConfig::Flat(hook_distribution(transitions)?)
+                } else {
+                    TransitionConfig::Rows(
+                        rows.iter()
+                            .map(|(label, row)| Ok((label.clone(), hook_distribution(row)?)))
+                            .collect::<Result<_, E>>()?,
+                    )
+                };
+                Ok(Self::Transition {
+                    probability,
+                    transitions,
+                })
+            }
+            "pauli_leakage" => Ok(Self::PauliLeakage {
+                probability: hook_number(field("probability")?)?,
+                events: hook_distribution(field("events")?)?,
+            }),
+            "independent" => Ok(Self::Independent {
+                first: Box::new(Self::from_value(field("first")?)?),
+                second: Box::new(Self::from_value(field("second")?)?),
+            }),
+            _ => unreachable!("hook kind was validated above"),
+        }
+    }
+
     fn apply(
         &self,
         builder: GeneralNoiseModelBuilder,
@@ -1280,6 +1361,62 @@ mod tests {
                 assert!(serde_json::from_value::<HookConfig>(invalid).is_err());
             }
         }
+    }
+
+    #[test]
+    fn hook_json_numbers_parse_from_text() {
+        for json in [
+            r#"{"kind":"transition","probability":0.25,"transitions":{"L->0":1}}"#,
+            r#"{"kind":"transition","probability":2.5e-1,"transitions":{"L":{"0":1.0}}}"#,
+            r#"{"kind":"pauli_leakage","probability":0.25,"events":{"L":1}}"#,
+        ] {
+            let hook: HookConfig = serde_json::from_str(json).unwrap();
+            let expected: serde_json::Value = serde_json::from_str(json).unwrap();
+            // Compare numeric values, since arbitrary_precision preserves number spelling.
+            let encoded = serde_json::to_value(hook).unwrap();
+            assert_eq!(encoded["probability"].as_f64(), Some(0.25));
+            assert_eq!(encoded["kind"], expected["kind"]);
+            let independent = serde_json::json!({
+                "kind": "independent", "first": expected, "second": expected
+            });
+            let hook: HookConfig = serde_json::from_str(&independent.to_string()).unwrap();
+            assert!(
+                hook.apply(super::GeneralNoiseModel::builder(), true, false)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn hook_json_rejects_non_numeric_probabilities_and_missing_kind() {
+        for json in [
+            r#"{"kind":"transition","probability":"0.5","transitions":{"L->0":1}}"#,
+            r#"{"kind":"pauli_leakage","probability":false,"events":{"L":1}}"#,
+            r#"{"kind":"pauli_leakage","probability":null,"events":{"L":1}}"#,
+            r#"{"kind":"transition","probability":1,"transitions":{"L->0":"1"}}"#,
+            r#"{"kind":"transition","probability":1,"transitions":{"L":{"0":false}}}"#,
+            r#"{"kind":"pauli_leakage","probability":1,"events":{"L":[]}}"#,
+            r#"{"kind":"transition","probability":1,"transitions":{"L":{"0":1},"0->0":1}}"#,
+            r#"{"probability":1,"events":{"L":1}}"#,
+        ] {
+            assert!(serde_json::from_str::<HookConfig>(json).is_err(), "{json}");
+            let value: serde_json::Value = serde_json::from_str(json).unwrap();
+            for leg in ["first", "second"] {
+                let valid = serde_json::json!({
+                    "kind": "pauli_leakage", "probability": 1, "events": {"L": 1}
+                });
+                let mut independent = serde_json::json!({
+                    "kind": "independent", "first": valid, "second": valid
+                });
+                independent[leg] = value.clone();
+                assert!(
+                    serde_json::from_str::<HookConfig>(&independent.to_string()).is_err(),
+                    "{independent}"
+                );
+            }
+        }
+        let error = serde_json::from_str::<HookConfig>(r#"{"probability":1}"#).unwrap_err();
+        assert!(error.to_string().contains("missing field `kind`"));
     }
 
     #[test]

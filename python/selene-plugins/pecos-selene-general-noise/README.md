@@ -26,12 +26,14 @@ parity experiments do not need to duplicate a long setter chain:
 ```python
 from pecos import sim
 
-pecos_noise = parameters.to_pecos_builder(seed=7)
-pecos_results = sim(program).noise(pecos_noise).run(1_000)
+pecos_results = sim(program).noise(parameters).seed(7).run(1_000)
 ```
 
 ``local_groups`` is Selene-adapter topology rather than a
-``GeneralNoiseModel`` parameter, so it is not copied to the PECOS builder.
+``GeneralNoiseModel`` parameter. Direct ``sim().noise(parameters)`` use rejects
+parameters containing local groups rather than silently dropping topology.
+Call ``parameters.to_pecos_builder(seed=...)`` when an explicit native builder
+is useful; that lower-level conversion does not copy local groups.
 End-to-end crosstalk comparisons must arrange for the two runtimes to emit the
 same global and local crosstalk payloads. The channel probabilities and models
 themselves are shared exactly.

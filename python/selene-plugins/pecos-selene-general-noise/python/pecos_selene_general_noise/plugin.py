@@ -707,6 +707,22 @@ class GeneralNoiseParameters:
         general_noise = cast("Callable[[], _PecosGeneralNoiseBuilder]", pecos.general_noise)
         return self.apply_to_pecos_builder(general_noise(), seed=seed)
 
+    def __pecos_noise_builder__(self) -> _PecosGeneralNoiseBuilder:
+        """Convert this configuration for direct use by ``sim(...).noise(...)``.
+
+        ``local_groups`` belongs to the Selene adapter rather than PECOS's
+        ``GeneralNoiseModel``. Reject it on the direct path instead of silently
+        discarding topology that the user may expect ``sim()`` to apply.
+        """
+        if self.measurement.local_groups:
+            message = (
+                "measurement.local_groups is Selene-adapter topology and cannot be applied by "
+                "sim().noise(GeneralNoiseParameters); pass the parameters to GeneralNoisePlugin "
+                "or remove local_groups"
+            )
+            raise ValueError(message)
+        return self.to_pecos_builder()
+
 
 @dataclass
 class GeneralNoisePlugin(ErrorModel):

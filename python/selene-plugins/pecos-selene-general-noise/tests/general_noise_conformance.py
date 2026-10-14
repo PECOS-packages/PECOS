@@ -30,6 +30,42 @@ class OutcomeSample:
         """Return the observed multinomial counts."""
         return Counter(self.outcomes)
 
+    def assert_statistically_equivalent(
+        self,
+        other: OutcomeSample,
+        *,
+        failure_probability: float = 1e-6,
+    ) -> None:
+        """Compare two independent samples with a simultaneous Hoeffding bound."""
+        left_shots = len(self.outcomes)
+        right_shots = len(other.outcomes)
+        if left_shots <= 0 or right_shots <= 0:
+            message = "statistical equivalence requires two non-empty samples"
+            raise ValueError(message)
+        if not 0.0 < failure_probability < 1.0:
+            message = "failure_probability must be between zero and one"
+            raise ValueError(message)
+
+        left_counts = self.counts
+        right_counts = other.counts
+        outcomes = left_counts.keys() | right_counts.keys()
+        categories = max(1, len(outcomes))
+        log_factor = math.log(4.0 * categories / failure_probability)
+        tolerance = math.sqrt(log_factor / (2.0 * left_shots)) + math.sqrt(
+            log_factor / (2.0 * right_shots),
+        )
+        mismatches = []
+        for outcome in sorted(outcomes):
+            left_frequency = left_counts[outcome] / left_shots
+            right_frequency = right_counts[outcome] / right_shots
+            if abs(left_frequency - right_frequency) > tolerance:
+                mismatches.append(
+                    f"{outcome}: left={left_frequency:.4f}, right={right_frequency:.4f}",
+                )
+        details = "; ".join(mismatches)
+        message = f"empirical distributions differ beyond Hoeffding tolerance {tolerance:.4f}: {details}"
+        assert not mismatches, message
+
 
 @dataclass(frozen=True)
 class ExpectedDistribution:

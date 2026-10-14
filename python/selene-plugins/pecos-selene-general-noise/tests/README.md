@@ -9,8 +9,18 @@ as ordinary qubit groups rather than inferred from a hardware layout.
 
 - `ExpectedDistribution` describes a small analytic reference distribution.
 - `ConformanceExperiment` samples the native plugin with explicit component seeds.
+- `OutcomeSample.assert_statistically_equivalent` compares two independent
+  runtime samples with a simultaneous Hoeffding bound.
 - A Hoeffding bound compares every observed frequency with its reference without
   adding SciPy as a test dependency.
+
+`test_sim_parity.py` sends the same Guppy programs and immutable
+`GeneralNoiseParameters` through PECOS `sim()` and through Selene's error-model
+plugin. Both routes use PECOS state-vector simulation so the comparison isolates
+the general-noise integration boundary. The initial matrix covers asymmetric
+measurement noise plus explicit one- and two-qubit Pauli channels. Its slow case
+drives a repetition-code check round with a combined SPAM, Pauli, emission,
+leakage, and seepage profile at higher rates so route mismatches are amplified.
 
 `basis_state_reference.py` is an independent exact oracle for arbitrary circuits
 that remain in the computational basis. It propagates a full distribution over

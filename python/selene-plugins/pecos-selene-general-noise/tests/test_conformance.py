@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pecos_selene_statevec as statevec_module
 import pytest
-from general_noise_conformance import ConformanceExperiment, ExpectedDistribution
+from general_noise_conformance import ConformanceExperiment, ExpectedDistribution, OutcomeSample
 from guppylang import comptime, guppy
 from guppylang.std.angles import pi
 from guppylang.std.builtins import result
@@ -161,6 +161,26 @@ def repeated_measurement_crosstalk_probe(n_qubits: int, repetitions: int) -> Sel
 ZERO = ExpectedDistribution({(0,): 1.0})
 ONE = ExpectedDistribution({(1,): 1.0})
 ZERO_ZERO = ExpectedDistribution({(0, 0): 1.0})
+
+
+def test_identical_samples_are_statistically_equivalent() -> None:
+    """The two-sample helper accepts identical empirical distributions."""
+    sample = OutcomeSample(((0,), (1,)) * 256)
+    sample.assert_statistically_equivalent(sample)
+
+
+def test_disjoint_samples_are_not_statistically_equivalent() -> None:
+    """The two-sample helper rejects a clear distribution mismatch."""
+    zeros = OutcomeSample(((0,),) * 512)
+    ones = OutcomeSample(((1,),) * 512)
+    with pytest.raises(AssertionError, match="differ beyond Hoeffding tolerance"):
+        zeros.assert_statistically_equivalent(ones)
+
+
+def test_statistical_equivalence_requires_non_empty_samples() -> None:
+    """Empty samples cannot establish statistical equivalence."""
+    with pytest.raises(ValueError, match="two non-empty samples"):
+        OutcomeSample(()).assert_statistically_equivalent(OutcomeSample(((0,),)))
 
 
 @pytest.mark.parametrize(

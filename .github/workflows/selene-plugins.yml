@@ -62,7 +62,15 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # Assign on its own line so a git failure aborts the step (fail closed).
         run: |
-          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml scripts/ci/smoke_selene_wheel.py Cargo.toml Cargo.lock uv.lock)"
+          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins \
+            python/selene-plugins/ \
+            python/pecos-rslib/src/sim.rs \
+            python/pecos-rslib/src/engine_builders.rs \
+            crates/pecos-engines/src/noise/ \
+            crates/pecos-qis/ \
+            .github/workflows/selene-plugins.yml \
+            scripts/ci/smoke_selene_wheel.py \
+            Cargo.toml Cargo.lock uv.lock)"
           case "$run" in
             true|false) ;;
             *)
@@ -175,6 +183,14 @@ jobs:
           foreach ($pluginDir in (Get-ChildItem -Directory python/selene-plugins/pecos-selene-*)) {
             uv pip install --system -c "$env:RUNNER_TEMP/uv-constraints.txt" -e "$($pluginDir.FullName)[test]"
           }
+
+      - name: Install PECOS cross-runtime parity dependencies
+        if: runner.os == 'Linux'
+        run: |
+          uv pip install --system -c "${{ runner.temp }}/uv-constraints.txt" \
+            -e python/pecos-rslib-llvm \
+            -e python/pecos-rslib \
+            -e python/quantum-pecos
 
       - name: Run tests
         run: |

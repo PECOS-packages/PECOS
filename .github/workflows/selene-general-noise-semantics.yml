@@ -70,7 +70,10 @@ jobs:
             python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
           uv pip install --system \
             -e 'python/selene-plugins/pecos-selene-general-noise[test]' \
-            -e python/selene-plugins/pecos-selene-statevec
+            -e python/selene-plugins/pecos-selene-statevec \
+            -e python/pecos-rslib-llvm \
+            -e python/pecos-rslib \
+            -e python/quantum-pecos
 
       - name: Run extended semantic matrix
         # `set -o pipefail` is required: the default shell is `bash -e`, where the

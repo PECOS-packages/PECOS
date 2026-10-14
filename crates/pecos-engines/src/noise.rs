@@ -16,6 +16,9 @@
 //! realistic quantum computation with errors. Each noise model implements
 //! the `NoiseModel` trait and can be used with the quantum engines.
 
+mod channel_validation;
+pub use channel_validation::ChannelValidationError;
+
 pub mod biased_depolarizing;
 pub mod depolarizing;
 pub mod general;
@@ -34,10 +37,10 @@ pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder
 pub use self::utils::{NoiseUtils, ProbabilityValidator};
 pub use self::weighted_sampler::{
     CrosstalkWeightedSampler, P2PauliLeakageStep, P2TransitionStep, PauliLeakageChannel,
-    PauliLeakageDict, PauliLeakageWeightedSampler, QubitTransitionChannel, QubitTransitionState,
-    QubitTransitionWeightedSampler, SingleQubitWeightedSampler, TransitionDict,
-    TwoQubitPauliLeakageChannel, TwoQubitPauliLeakageWeightedSampler, TwoQubitTransitionChannel,
-    TwoQubitWeightedSampler, WeightedSampler,
+    PauliLeakageDict, PauliLeakageEvent, PauliLeakageWeightedSampler, QubitTransitionState,
+    QubitTransitionWeightedSampler, SingleQubitWeightedSampler, StateTransitionChannel,
+    TransitionDict, TwoQubitPauliLeakageChannel, TwoQubitPauliLeakageWeightedSampler,
+    TwoQubitStateTransitionChannel, TwoQubitWeightedSampler, WeightedSampler,
 };
 
 use crate::byte_message::ByteMessage;

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pecos_rslib import (
     GeneralNoiseModelBuilder,
     P2TransitionStep,
-    TransitionChannel,
+    StateTransitionChannel,
     TransitionDict,
-    TwoQubitTransitionChannel,
+    TwoQubitStateTransitionChannel,
 )
 
 
@@ -29,23 +31,13 @@ def test_transition_dict_tensor_product_and_mapping_api() -> None:
     assert product.to_dict() == product.transitions
 
 
-def test_transition_dict_composes_in_matrix_order() -> None:
-    leak_zero = TransitionDict({"0": {"L": 1.0}})
-    recover_to_one = TransitionDict({"L": {"1": 1.0}})
-
-    composed = recover_to_one @ leak_zero
-
-    assert composed["0"] == {"1": 1.0}
-    assert leak_zero.then(recover_to_one).transitions == composed.transitions
-
-
 def test_transition_dict_and_channel_products_build_p2_steps() -> None:
     first_dict = TransitionDict({"L": {"0": 1.0}})
     second_dict = TransitionDict({"L": {"1": 1.0}})
-    joint = TwoQubitTransitionChannel(0.25, first_dict * second_dict)
+    joint = TwoQubitStateTransitionChannel(0.25, first_dict * second_dict)
 
-    first = TransitionChannel(0.9, first_dict)
-    second = TransitionChannel(0.8, second_dict)
+    first = StateTransitionChannel(0.9, first_dict)
+    second = StateTransitionChannel(0.8, second_dict)
     independent = first * second
 
     builder = GeneralNoiseModelBuilder().with_p2_transition_steps_before_gate(
@@ -63,15 +55,15 @@ def test_single_qubit_transition_channel_round_trips_configuration() -> None:
         "1": {"0": 0.10, "1": 0.80, "L": 0.10},
         "L": {"0": 0.45, "1": 0.45, "L": 0.10},
     }
-    channel = TransitionChannel(0.01, transitions)
+    channel = StateTransitionChannel(0.01, transitions)
 
     assert channel.probability == 0.01
     assert channel.transitions == transitions
 
 
 def test_builder_accepts_ordered_single_qubit_transition_stacks() -> None:
-    leak = TransitionChannel(1.0, {"0": {"L": 1.0}})
-    recover = TransitionChannel.leak_recovery(0.9, p_zero=0.25)
+    leak = StateTransitionChannel(1.0, {"0": {"L": 1.0}, "1": {"1": 1.0}})
+    recover = StateTransitionChannel.leak_recovery(0.9, p_zero=0.25)
 
     builder = (
         GeneralNoiseModelBuilder()
@@ -83,11 +75,11 @@ def test_builder_accepts_ordered_single_qubit_transition_stacks() -> None:
 
 
 def test_p2_steps_accept_distinct_legs_and_joint_pair_states() -> None:
-    first = TransitionChannel.leak_recovery(0.9, p_zero=0.75)
-    second = TransitionChannel.leak_recovery(0.8, p_zero=0.25)
+    first = StateTransitionChannel.leak_recovery(0.9, p_zero=0.75)
+    second = StateTransitionChannel.leak_recovery(0.8, p_zero=0.25)
     independent = P2TransitionStep.independent(first, second)
 
-    joint_channel = TwoQubitTransitionChannel(
+    joint_channel = TwoQubitStateTransitionChannel(
         0.02,
         {
             "0L": {"L1": 0.2, "0L": 0.8},
@@ -114,7 +106,7 @@ def test_two_qubit_wildcards_are_identity_wires_on_either_leg() -> None:
         "*L": {"*0": 0.45, "*1": 0.45, "*L": 0.10},
         "L*": {"0*": 0.45, "1*": 0.45, "L*": 0.10},
     }
-    channel = TwoQubitTransitionChannel(1.0, transitions)
+    channel = TwoQubitStateTransitionChannel(1.0, transitions)
 
     builder = (
         GeneralNoiseModelBuilder()
@@ -124,3 +116,85 @@ def test_two_qubit_wildcards_are_identity_wires_on_either_leg() -> None:
 
     assert channel.transitions == transitions
     assert isinstance(builder, GeneralNoiseModelBuilder)
+
+
+@pytest.mark.parametrize("transitions", [{"0->0": 1.0}, {"1": {"1": 1.0}}])
+def test_incomplete_rows_explain_measurement(transitions: dict) -> None:
+    with pytest.raises(ValueError, match="both '0' and '1'.*MZ.*not the identity quantum map"):
+        StateTransitionChannel(1.0, transitions)
+
+
+@pytest.mark.parametrize("probability", [-0.1, 1.1, float("nan"), float("inf")])
+def test_invalid_outer_probability(probability: float) -> None:
+    with pytest.raises(ValueError, match="probability"):
+        StateTransitionChannel.leak_recovery(probability)
+
+
+@pytest.mark.parametrize(
+    "transitions",
+    [
+        {"L->0": 0.5},
+        {"L->0": -1.0, "L->1": 2.0},
+        {"L->0": float("nan")},
+        {"L->Q": 1.0},
+        {"L0": 1.0},
+        {},
+    ],
+)
+def test_invalid_transition_maps_raise_value_error(transitions: dict) -> None:
+    with pytest.raises(ValueError, match="channel|weight|source rows|wildcard"):
+        StateTransitionChannel(1.0, transitions)
+
+
+@pytest.mark.parametrize(
+    "transitions",
+    [
+        {"*L->00": 1.0},
+        {"*L->L*": 1.0},
+        {"*L->*0": 1.0, "LL->11": 1.0},
+        {"*0->*0": 1.0},
+    ],
+)
+def test_invalid_wildcard_groups(transitions: dict) -> None:
+    with pytest.raises(ValueError, match="channel|weight|source rows|wildcard"):
+        TwoQubitStateTransitionChannel(1.0, transitions)
+
+
+def test_flat_transition_syntax_round_trips_as_rows() -> None:
+    channel = StateTransitionChannel(0.4, {"0->L": 1.0, "1->1": 1.0})
+    assert channel.transitions == {"0": {"L": 1.0}, "1": {"1": 1.0}}
+    joint = TwoQubitStateTransitionChannel(1.0, {"*L->*0": 1.0})
+    assert joint.transitions == {"*L": {"*0": 1.0}}
+
+
+def test_mixed_family_insertion_order_changes_gate_site_state() -> None:
+    from pecos_rslib import PauliLeakageChannel, Qasm, sim
+
+    program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[1]; creg c[1]; z q[0]; measure q -> c;')
+    leak = PauliLeakageChannel(1.0, {"L": 1.0})
+    recover = StateTransitionChannel.leak_recovery(1.0, p_zero=1.0)
+    recovered = (
+        GeneralNoiseModelBuilder()
+        .add_p1_pauli_leakage_channel_before_gate(leak)
+        .add_p1_transition_channel_before_gate(recover)
+    )
+    leaked = (
+        GeneralNoiseModelBuilder()
+        .add_p1_transition_channel_before_gate(recover)
+        .add_p1_pauli_leakage_channel_before_gate(leak)
+    )
+    assert sim(program).noise(recovered).seed(42).run(16).to_dict()["c"] == [0] * 16
+    assert sim(program).noise(leaked).seed(42).run(16).to_dict()["c"] == [1] * 16
+
+
+def test_identity_rows_collapse_in_sim_and_internal_results_stay_hidden() -> None:
+    from pecos_rslib import Qasm, sim
+
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[1]; creg c[1]; h q[0]; h q[0]; measure q -> c;'
+    )
+    channel = StateTransitionChannel(1.0, {"0->0": 1.0, "1->1": 1.0})
+    noise = GeneralNoiseModelBuilder().add_p1_transition_channel_before_gate(channel)
+    outcomes = sim(program).noise(noise).seed(51).run(256).to_dict()["c"]
+    assert len(outcomes) == 256
+    assert 85 < sum(outcomes) < 171

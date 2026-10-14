@@ -121,6 +121,12 @@ impl Default for GeneralNoiseModel {
             pending_transition_batches: Vec::new(),
             transition_measurements: BTreeMap::new(),
             pending_gate_continuation: None,
+            pending_hook: None,
+            p1_hook_order_before_gate: Vec::new(),
+            p1_hook_order_after_gate: Vec::new(),
+            p2_hook_order_before_gate: Vec::new(),
+            p2_hook_order_after_gate: Vec::new(),
+
             pending_input: None,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_local: 0.0,

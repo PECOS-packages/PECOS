@@ -34,6 +34,7 @@ pub use crate::quantum_engine_builder::{
 // Noise models - both traits and common implementations
 pub use crate::noise::{
     BiasedDepolarizingNoiseModelBuilder,
+    ChannelValidationError,
     DepolarizingNoiseModel,
     DepolarizingNoiseModelBuilder,
     GeneralNoiseModelBuilder,
@@ -44,10 +45,12 @@ pub use crate::noise::{
     PassThroughNoiseModel,
     PauliLeakageChannel,
     PauliLeakageDict,
-    QubitTransitionChannel,
+    PauliLeakageEvent,
+    QubitTransitionState,
+    StateTransitionChannel,
     TransitionDict,
     TwoQubitPauliLeakageChannel,
-    TwoQubitTransitionChannel,
+    TwoQubitStateTransitionChannel,
     general::GeneralNoiseModel,
 };
 

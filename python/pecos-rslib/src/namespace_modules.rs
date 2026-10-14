@@ -125,10 +125,13 @@ pub fn register_noise_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     noise.add("P2PauliLeakageStep", parent.getattr("P2PauliLeakageStep")?)?;
     noise.add("TransitionDict", parent.getattr("TransitionDict")?)?;
-    noise.add("TransitionChannel", parent.getattr("TransitionChannel")?)?;
     noise.add(
-        "TwoQubitTransitionChannel",
-        parent.getattr("TwoQubitTransitionChannel")?,
+        "StateTransitionChannel",
+        parent.getattr("StateTransitionChannel")?,
+    )?;
+    noise.add(
+        "TwoQubitStateTransitionChannel",
+        parent.getattr("TwoQubitStateTransitionChannel")?,
     )?;
     noise.add("P2TransitionStep", parent.getattr("P2TransitionStep")?)?;
     noise.add(

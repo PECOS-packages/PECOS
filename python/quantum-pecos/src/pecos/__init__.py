@@ -320,8 +320,8 @@ PauliLeakageChannel = pecos_rslib.PauliLeakageChannel
 TwoQubitPauliLeakageChannel = pecos_rslib.TwoQubitPauliLeakageChannel
 P2PauliLeakageStep = pecos_rslib.P2PauliLeakageStep
 TransitionDict = pecos_rslib.TransitionDict
-TransitionChannel = pecos_rslib.TransitionChannel
-TwoQubitTransitionChannel = pecos_rslib.TwoQubitTransitionChannel
+StateTransitionChannel = pecos_rslib.StateTransitionChannel
+TwoQubitStateTransitionChannel = pecos_rslib.TwoQubitStateTransitionChannel
 P2TransitionStep = pecos_rslib.P2TransitionStep
 
 
@@ -373,11 +373,11 @@ __all__ = [
     "ShotMap",
     "ShotVec",
     "SignedInteger",
+    "StateTransitionChannel",
     "TimeUnits",
-    "TransitionChannel",
     "TransitionDict",
     "TwoQubitPauliLeakageChannel",
-    "TwoQubitTransitionChannel",
+    "TwoQubitStateTransitionChannel",
     "UnsignedClassicalSemantics",
     "UnsignedInteger",
     "Wasm",

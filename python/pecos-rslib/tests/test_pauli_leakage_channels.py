@@ -66,3 +66,15 @@ def test_channel_products_and_all_builder_hooks() -> None:
     assert P2PauliLeakageStep.tensor_product(first, second) is not None
     assert P2PauliLeakageStep.same_on_each(first) is not None
     assert isinstance(builder, GeneralNoiseModelBuilder)
+
+
+@pytest.mark.parametrize("events", [{"I": 1.0}, {"I": 0.3, "X": 0.7}])
+def test_explicit_identity_events(events: dict) -> None:
+    assert PauliLeakageChannel(1.0, events).events == events
+    assert TwoQubitPauliLeakageChannel(1.0, {"II": 1.0}).events == {"II": 1.0}
+
+
+@pytest.mark.parametrize("events", [{}, {"X": 2.0}, {"Q": 1.0}, {"X": float("nan")}, {"X": -0.1, "Z": 1.1}])
+def test_invalid_event_distributions(events: dict) -> None:
+    with pytest.raises(ValueError, match="channel|weight|source rows|wildcard"):
+        PauliLeakageChannel(1.0, events)

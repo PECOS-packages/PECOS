@@ -1,10 +1,15 @@
 """Tests for the public general-noise configuration API."""
 
+from __future__ import annotations
+
 import inspect
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import pecos_selene_statevec as statevec_module
 import pytest
@@ -230,6 +235,121 @@ def test_matches_all_configurable_pecos_builder_setters() -> None:
         if name.startswith("with_")
     }
     assert rust_setters == python_setters - {"with_local_crosstalk_groups"}
+
+
+class RecordingBuilder:
+    """Record immutable-style PECOS builder calls without importing quantum-pecos."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def __getattr__(self, name: str) -> Callable[..., RecordingBuilder]:
+        def record(*args: object) -> RecordingBuilder:
+            self.calls.append((name, args))
+            return self
+
+        return record
+
+
+def test_same_parameters_configure_a_pecos_sim_builder() -> None:
+    """The Selene configuration has a lossless PECOS ``sim()`` builder bridge."""
+    parameters = GeneralNoiseParameters(
+        preparation=PreparationNoise(
+            probability=0.01,
+            leakage_ratio=0.2,
+            average_crosstalk_probability=0.03,
+            scale=0.4,
+            crosstalk_scale=0.5,
+        ),
+        measurement=MeasurementNoise(
+            p0_to_1=0.06,
+            p1_to_0=0.07,
+            global_crosstalk_probability=0.08,
+            local_crosstalk_probability=0.09,
+            crosstalk_model={"0->0": 0.8, "0->L": 0.2, "1->0": 0.1, "1->1": 0.9},
+            local_groups=((0, 1),),
+            scale=0.6,
+            crosstalk_scale=0.7,
+        ),
+        single_qubit=GateNoise(
+            average_infidelity=0.02,
+            pauli_model={"X": 0.25, "Y": 0.25, "Z": 0.5},
+            emission_ratio=0.1,
+            emission_model={"X": 0.4, "L": 0.6},
+            seepage_probability=0.3,
+            scale=0.8,
+        ),
+        two_qubit=TwoQubitGateNoise(
+            probability=0.04,
+            pauli_model={"XI": 0.4, "IZ": 0.6},
+            emission_ratio=0.2,
+            emission_model={"IL": 0.55, "LI": 0.45},
+            seepage_probability=0.35,
+            scale=0.9,
+            angle_coefficients=(1.0, 0.2, 1.1, 0.3),
+            angle_power=1.2,
+            idle_after_gate=2e-6,
+        ),
+        idle=IdleNoise(
+            linear_rate=0.11,
+            linear_model={"Z": 1.0},
+            sin_squared_rate=0.12,
+            sin_squared_model={"X": 0.5, "Z": 0.5},
+            coherent_rate=0.13,
+            coherent_model={"RZ": 1.0},
+            scale=0.75,
+        ),
+        scaling=NoiseScaling(overall=0.5, leakage=0.6, emission=0.7),
+        noiseless_gates=("RZ",),
+    )
+    builder = RecordingBuilder()
+
+    returned = parameters.apply_to_pecos_builder(builder, seed=17)
+
+    assert returned is builder
+    assert builder.calls == [
+        ("with_scale", (0.5,)),
+        ("with_leakage_scale", (0.6,)),
+        ("with_emission_scale", (0.7,)),
+        ("with_p_prep", (0.01,)),
+        ("with_prep_leak_ratio", (0.2,)),
+        ("with_p_prep_crosstalk", (0.03 * 18.0 / 5.0,)),
+        ("with_prep_scale", (0.4,)),
+        ("with_p_prep_crosstalk_scale", (0.5,)),
+        ("with_average_p1", (0.02,)),
+        ("with_p1_pauli_model", ({"X": 0.25, "Y": 0.25, "Z": 0.5},)),
+        ("with_p1_emission_ratio", (0.1,)),
+        ("with_p1_emission_model", ({"X": 0.4, "L": 0.6},)),
+        ("with_p1_seepage_prob", (0.3,)),
+        ("with_p1_scale", (0.8,)),
+        ("with_p2", (0.04,)),
+        ("with_p2_pauli_model", ({"XI": 0.4, "IZ": 0.6},)),
+        ("with_p2_emission_ratio", (0.2,)),
+        ("with_p2_emission_model", ({"IL": 0.55, "LI": 0.45},)),
+        ("with_p2_seepage_prob", (0.35,)),
+        ("with_p2_scale", (0.9,)),
+        ("with_p2_angle_params", (1.0, 0.2, 1.1, 0.3)),
+        ("with_p2_angle_power", (1.2,)),
+        ("with_idle_after_2q", (2e-6,)),
+        ("with_p_idle_linear", (0.11, {"Z": 1.0})),
+        ("with_p_idle_sin_squared", (0.12, {"X": 0.5, "Z": 0.5})),
+        ("with_p_idle_coherent", (0.13, {"RZ": 1.0})),
+        ("with_idle_scale", (0.75,)),
+        ("with_p_meas_0", (0.06,)),
+        ("with_p_meas_1", (0.07,)),
+        ("with_p_meas_crosstalk_global", (0.08,)),
+        ("with_p_meas_crosstalk_local", (0.09,)),
+        ("with_p_meas_crosstalk_model", ({"0->0": 0.8, "0->L": 0.2, "1->0": 0.1, "1->1": 0.9},)),
+        ("with_meas_scale", (0.6,)),
+        ("with_p_meas_crosstalk_scale", (0.7,)),
+        ("with_noiseless_gate", ("RZ",)),
+        ("with_seed", (17,)),
+    ]
+
+
+def test_pecos_builder_bridge_rejects_negative_seed() -> None:
+    with pytest.raises(ValueError, match="seed must be non-negative"):
+        GeneralNoiseParameters().apply_to_pecos_builder(RecordingBuilder(), seed=-1)
 
 
 def test_plugin_executes_in_selene() -> None:

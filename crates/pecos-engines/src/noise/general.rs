@@ -1437,6 +1437,13 @@ impl GeneralNoiseModel {
     /// In physical systems, spontaneous emission errors can cause leakage out of the computational
     /// subspace, while Pauli errors represent standard decoherence and control errors.
     ///
+    /// This low-level method does not check for an in-flight noise continuation. When a hook
+    /// needs an internal MZ, it emits the measurement, records the rest of the gate as deferred
+    /// work, and returns. The caller must dispatch the builder's message and pass the reply to
+    /// [`Self::apply_noise_on_continue_processing`] before applying further gates. The
+    /// `apply_noise_on_start` / `ControlEngine` entry points follow this protocol and refuse to
+    /// start a new message while a continuation is pending.
+    ///
     /// # Panics
     ///
     /// Panics if sampling from the Pauli model fails or if an invalid Pauli operator is encountered.
@@ -1552,6 +1559,10 @@ impl GeneralNoiseModel {
     ///
     /// In physical systems, emission errors can cause leakage, while Pauli errors
     /// represent standard decoherence, cross-talk, and control errors.
+    ///
+    /// Like [`Self::apply_sq_faults`], this low-level method does not check for an in-flight
+    /// noise continuation; a hook that needs an internal MZ defers the rest of the gate until the
+    /// caller passes the simulator reply to [`Self::apply_noise_on_continue_processing`].
     ///
     /// # Panics
     ///

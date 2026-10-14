@@ -43,29 +43,57 @@ def test_single_and_two_qubit_channels_round_trip_configuration() -> None:
     assert joint.event_dict.arity == 2
 
 
-def test_channel_products_and_all_builder_hooks() -> None:
-    first = PauliLeakageChannel(0.9, {"L": 1.0})
-    second = PauliLeakageChannel(0.8, {"X": 1.0})
+@pytest.mark.parametrize(
+    "hook",
+    [
+        "p1_with_before",
+        "p1_add_before",
+        "p1_with_after",
+        "p1_add_after",
+        "p2_with_before",
+        "p2_add_step_before",
+        "p2_add_channel_before",
+        "p2_with_after",
+        "p2_add_step_after",
+        "p2_add_channel_after",
+        "tensor",
+        "same_on_each",
+    ],
+)
+def test_channel_products_and_all_builder_hooks(hook: str) -> None:
+    from pecos_rslib import Qasm, sim
+
+    first = PauliLeakageChannel(1.0, {"L": 1.0})
+    second = PauliLeakageChannel(1.0, {"X": 1.0})
     independent = first * second
-    joint = P2PauliLeakageStep.joint(TwoQubitPauliLeakageChannel(0.1, {"XL": 1.0}))
-
-    builder = (
-        GeneralNoiseModelBuilder()
-        .with_p1_pauli_leakage_channels_before_gate([first])
-        .add_p1_pauli_leakage_channel_before_gate(second)
-        .with_p1_pauli_leakage_channels_after_gate([second])
-        .add_p1_pauli_leakage_channel_after_gate(first)
-        .with_p2_pauli_leakage_steps_before_gate([independent])
-        .add_p2_pauli_leakage_step_before_gate(joint)
-        .add_p2_pauli_leakage_channel_before_gate(first)
-        .with_p2_pauli_leakage_steps_after_gate([joint])
-        .add_p2_pauli_leakage_step_after_gate(independent)
-        .add_p2_pauli_leakage_channel_after_gate(second)
+    joint = P2PauliLeakageStep.joint(TwoQubitPauliLeakageChannel(1.0, {"XL": 1.0}))
+    # Exercise each hook separately so another hook cannot mask a dropped attachment.
+    builders = {
+        "p1_with_before": GeneralNoiseModelBuilder().with_p1_pauli_leakage_channels_before_gate([first]),
+        "p1_add_before": GeneralNoiseModelBuilder().add_p1_pauli_leakage_channel_before_gate(second),
+        "p1_with_after": GeneralNoiseModelBuilder().with_p1_pauli_leakage_channels_after_gate([second]),
+        "p1_add_after": GeneralNoiseModelBuilder().add_p1_pauli_leakage_channel_after_gate(first),
+        "p2_with_before": GeneralNoiseModelBuilder().with_p2_pauli_leakage_steps_before_gate([independent]),
+        "p2_add_step_before": GeneralNoiseModelBuilder().add_p2_pauli_leakage_step_before_gate(joint),
+        "p2_add_channel_before": GeneralNoiseModelBuilder().add_p2_pauli_leakage_channel_before_gate(first),
+        "p2_with_after": GeneralNoiseModelBuilder().with_p2_pauli_leakage_steps_after_gate([joint]),
+        "p2_add_step_after": GeneralNoiseModelBuilder().add_p2_pauli_leakage_step_after_gate(independent),
+        "p2_add_channel_after": GeneralNoiseModelBuilder().add_p2_pauli_leakage_channel_after_gate(second),
+        "tensor": GeneralNoiseModelBuilder().with_p2_pauli_leakage_steps_before_gate(
+            [P2PauliLeakageStep.tensor_product(first, second)]
+        ),
+        "same_on_each": GeneralNoiseModelBuilder().with_p2_pauli_leakage_steps_before_gate(
+            [P2PauliLeakageStep.same_on_each(first)]
+        ),
+    }
+    builder = builders[hook]
+    single = hook.startswith("p1_")
+    gates = "z q[0];" if single else "RZZ(0) q[0], q[1];"
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; ' + gates + " measure q -> c;"
     )
-
-    assert P2PauliLeakageStep.tensor_product(first, second) is not None
-    assert P2PauliLeakageStep.same_on_each(first) is not None
-    assert isinstance(builder, GeneralNoiseModelBuilder)
+    # A deterministic X or leak reads one; P2 channels affect both operands.
+    assert sim(program).noise(builder).seed(42).run(16).to_dict()["c"] == [1 if single else 3] * 16
 
 
 @pytest.mark.parametrize("events", [{"I": 1.0}, {"I": 0.3, "X": 0.7}])

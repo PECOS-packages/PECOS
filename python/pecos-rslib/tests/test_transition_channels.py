@@ -7,9 +7,12 @@ import pytest
 from pecos_rslib import (
     GeneralNoiseModelBuilder,
     P2TransitionStep,
+    PauliLeakageChannel,
+    Qasm,
     StateTransitionChannel,
     TransitionDict,
     TwoQubitStateTransitionChannel,
+    sim,
 )
 
 
@@ -31,22 +34,31 @@ def test_transition_dict_tensor_product_and_mapping_api() -> None:
     assert product.to_dict() == product.transitions
 
 
-def test_transition_dict_and_channel_products_build_p2_steps() -> None:
+@pytest.mark.parametrize("step_form", ["product", "joint", "tensor", "stack"])
+def test_transition_dict_and_channel_products_build_p2_steps(step_form: str) -> None:
     first_dict = TransitionDict({"L": {"0": 1.0}})
     second_dict = TransitionDict({"L": {"1": 1.0}})
-    joint = TwoQubitStateTransitionChannel(0.25, first_dict * second_dict)
+    joint = TwoQubitStateTransitionChannel(1.0, first_dict * second_dict)
 
-    first = StateTransitionChannel(0.9, first_dict)
-    second = StateTransitionChannel(0.8, second_dict)
+    first = StateTransitionChannel(1.0, first_dict)
+    second = StateTransitionChannel(1.0, second_dict)
     independent = first * second
-
-    builder = GeneralNoiseModelBuilder().with_p2_transition_steps_before_gate(
-        [independent, P2TransitionStep.joint(joint)]
+    steps = {
+        "product": [independent],
+        "joint": [P2TransitionStep.joint(joint)],
+        "tensor": [P2TransitionStep.tensor_product(first, second)],
+        "stack": [independent, P2TransitionStep.joint(joint)],
+    }
+    builder = GeneralNoiseModelBuilder().with_p2_transition_steps_before_gate(steps[step_form])
+    # RZZ(0) is a native P2 identity; unlike cz, it adds no P1 decomposition hooks.
+    # Prepare LL at the Z gates; each product must recover the ordered pair to 01.
+    builder = builder.add_p1_pauli_leakage_channel_before_gate(PauliLeakageChannel(1.0, {"L": 1.0}))
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; '
+        "z q[0]; z q[1]; RZZ(0) q[0], q[1]; measure q -> c;"
     )
-
     assert joint.transition_dict.arity == 2
-    assert P2TransitionStep.tensor_product(first, second) is not None
-    assert isinstance(builder, GeneralNoiseModelBuilder)
+    assert sim(program).noise(builder).seed(42).run(16).to_dict()["c"] == [2] * 16
 
 
 def test_single_qubit_transition_channel_round_trips_configuration() -> None:
@@ -61,62 +73,81 @@ def test_single_qubit_transition_channel_round_trips_configuration() -> None:
     assert channel.transitions == transitions
 
 
-def test_builder_accepts_ordered_single_qubit_transition_stacks() -> None:
-    leak = StateTransitionChannel(1.0, {"0": {"L": 1.0}, "1": {"1": 1.0}})
-    recover = StateTransitionChannel.leak_recovery(0.9, p_zero=0.25)
-
+@pytest.mark.parametrize("placement", ["stack", "after"])
+def test_builder_accepts_ordered_single_qubit_transition_stacks(placement: str) -> None:
+    leak = StateTransitionChannel(1.0, {"0": {"L": 1.0}, "1": {"L": 1.0}})
+    recover = StateTransitionChannel.leak_recovery(1.0, p_zero=1.0)
     builder = (
         GeneralNoiseModelBuilder()
-        .with_p1_transition_channels_before_gate([leak, recover])
+        .with_p1_transition_channels_before_gate([leak, recover] if placement == "stack" else [leak])
         .add_p1_transition_channel_after_gate(recover)
     )
+    # In stack order, each X acts on recovered zero: two X gates still yield one.
+    # With recovery only after the gate, X is suppressed and recovery yields zero.
+    gates, expected = ("x q[0]; x q[0];", 1) if placement == "stack" else ("x q[0];", 0)
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[1]; creg c[1]; ' + gates + " measure q -> c;"
+    )
+    assert sim(program).noise(builder).seed(42).run(16).to_dict()["c"] == [expected] * 16
 
-    assert isinstance(builder, GeneralNoiseModelBuilder)
 
-
-def test_p2_steps_accept_distinct_legs_and_joint_pair_states() -> None:
-    first = StateTransitionChannel.leak_recovery(0.9, p_zero=0.75)
-    second = StateTransitionChannel.leak_recovery(0.8, p_zero=0.25)
+@pytest.mark.parametrize(
+    "hook",
+    ["before_steps", "before_channel", "after_steps", "after_joint", "after_single"],
+)
+def test_p2_steps_accept_distinct_legs_and_joint_pair_states(hook: str) -> None:
+    first = StateTransitionChannel.leak_recovery(1.0, p_zero=1.0)
+    second = StateTransitionChannel.leak_recovery(1.0, p_zero=0.0)
     independent = P2TransitionStep.independent(first, second)
-
     joint_channel = TwoQubitStateTransitionChannel(
-        0.02,
-        {
-            "0L": {"L1": 0.2, "0L": 0.8},
-            "1L": {"1L": 1.0},
-            "LL": {"00": 0.5, "11": 0.5},
-        },
+        1.0,
+        {"0L": {"L1": 1.0}, "1L": {"1L": 1.0}, "LL": {"00": 1.0}},
     )
     joint = P2TransitionStep.joint(joint_channel)
-
-    builder = (
-        GeneralNoiseModelBuilder()
-        .with_p2_transition_steps_before_gate([independent])
-        .add_p2_transition_channel_before_gate(joint_channel)
-        .with_p2_transition_steps_after_gate([joint])
-        .add_p2_transition_channel_after_gate(joint_channel)
-        .add_p2_transition_channel_after_gate(first)
-    )
-
-    assert joint_channel.transitions["0L"]["L1"] == 0.2
-    assert isinstance(builder, GeneralNoiseModelBuilder)
-
-
-def test_two_qubit_wildcards_are_identity_wires_on_either_leg() -> None:
-    transitions = {
-        "*L": {"*0": 0.45, "*1": 0.45, "*L": 0.10},
-        "L*": {"0*": 0.45, "1*": 0.45, "L*": 0.10},
+    builders = {
+        "before_steps": GeneralNoiseModelBuilder().with_p2_transition_steps_before_gate([independent]),
+        "before_channel": GeneralNoiseModelBuilder().add_p2_transition_channel_before_gate(joint_channel),
+        "after_steps": GeneralNoiseModelBuilder().with_p2_transition_steps_after_gate([joint]),
+        "after_joint": GeneralNoiseModelBuilder().add_p2_transition_channel_after_gate(joint_channel),
+        "after_single": GeneralNoiseModelBuilder().add_p2_transition_channel_after_gate(first),
     }
-    channel = TwoQubitStateTransitionChannel(1.0, transitions)
-
-    builder = (
-        GeneralNoiseModelBuilder()
-        .add_p2_transition_channel_before_gate(channel)
-        .add_p2_transition_channel_after_gate(channel)
+    builder = builders[hook]
+    builder = builder.add_p1_pauli_leakage_channel_before_gate(PauliLeakageChannel(1.0, {"L": 1.0}))
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; '
+        "z q[0]; z q[1]; RZZ(0) q[0], q[1]; measure q -> c;"
     )
+    # Independent recovery distinguishes the legs (01); joint and same-leg recovery yield 00.
+    expected = 2 if hook == "before_steps" else 0
+    assert joint_channel.transitions["0L"]["L1"] == 1.0
+    assert sim(program).noise(builder).seed(42).run(16).to_dict()["c"] == [expected] * 16
 
+
+@pytest.mark.parametrize("leaked_leg", [0, 1])
+@pytest.mark.parametrize("placement", ["before", "after"])
+def test_two_qubit_wildcards_are_identity_wires_on_either_leg(leaked_leg: int, placement: str) -> None:
+    from pecos_rslib import P2PauliLeakageStep, TwoQubitPauliLeakageChannel
+
+    transitions = {"*L": {"*0": 1.0}, "L*": {"0*": 1.0}}
+    channel = TwoQubitStateTransitionChannel(1.0, transitions)
+    # Leak only one operand at the native two-qubit identity RZZ(0), leaving the partner in |+>.
+    preparation = GeneralNoiseModelBuilder().add_p2_pauli_leakage_step_before_gate(
+        P2PauliLeakageStep.joint(TwoQubitPauliLeakageChannel(1.0, {"LI" if leaked_leg == 0 else "IL": 1.0}))
+    )
+    builder = (
+        preparation.add_p2_transition_channel_before_gate(channel)
+        if placement == "before"
+        else preparation.add_p2_transition_channel_after_gate(channel)
+    )
+    partner = 1 - leaked_leg
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; '
+        f"h q[{partner}]; RZZ(0) q[0], q[1]; h q[{partner}]; measure q -> c;"
+    )
+    # Recovery gives zero, and the wildcard preserves interference: H|+> = |0>.
+    # Measuring/collapsing the wildcard leg would instead give random partner outcomes.
     assert channel.transitions == transitions
-    assert isinstance(builder, GeneralNoiseModelBuilder)
+    assert sim(program).noise(builder).seed(42).run(32).to_dict()["c"] == [0] * 32
 
 
 @pytest.mark.parametrize(("transitions", "missing"), [({"0->0": 1.0}, "1"), ({"1": {"1": 1.0}}, "0")])
@@ -254,7 +285,11 @@ def test_overscaled_hook_probability_raises_value_error(joint: bool) -> None:
 
 @pytest.mark.parametrize(
     ("rows", "pattern", "missing"),
-    [({"0L->LL": 1.0}, "CL", "1L"), ({"L0->LL": 1.0}, "LC", "L1"), ({"00->LL": 1.0}, "CC", "01, 10, 11")],
+    [
+        ({"0L->LL": 1.0}, "CL", "1L"),
+        ({"L0->LL": 1.0}, "LC", "L1"),
+        ({"00->LL": 1.0}, "CC", "01, 10, 11"),
+    ],
 )
 def test_incomplete_joint_rows_name_missing_sources(rows: dict, pattern: str, missing: str) -> None:
     with pytest.raises(ValueError, match=f"pattern {pattern}: missing source rows {missing}"):

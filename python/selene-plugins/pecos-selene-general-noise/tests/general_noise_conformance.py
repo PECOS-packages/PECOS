@@ -19,6 +19,24 @@ if TYPE_CHECKING:
 type Outcome = tuple[int, ...]
 
 
+def _log_choose(n: int, k: int) -> float:
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+
+
+def _fisher_exact_p_value(left: int, pooled: int, left_shots: int, total_shots: int) -> float:
+    """Return the doubled smaller tail of a hypergeometric count."""
+    low = max(0, left_shots - (total_shots - pooled))
+    high = min(left_shots, pooled)
+    log_norm = _log_choose(total_shots, left_shots)
+    pmf = [
+        math.exp(_log_choose(pooled, k) + _log_choose(total_shots - pooled, left_shots - k) - log_norm)
+        for k in range(low, high + 1)
+    ]
+    lower_tail = math.fsum(pmf[: left - low + 1])
+    upper_tail = math.fsum(pmf[left - low :])
+    return min(1.0, 2.0 * min(lower_tail, upper_tail))
+
+
 @dataclass(frozen=True)
 class OutcomeSample:
     """Ordered outcomes from one reproducible Selene experiment."""
@@ -36,7 +54,15 @@ class OutcomeSample:
         *,
         failure_probability: float = 1e-6,
     ) -> None:
-        """Compare two independent samples with a simultaneous Hoeffding bound."""
+        """Compare two independent samples of Boolean outcome tuples.
+
+        Each outcome gets Fisher's exact test: if both samples come from one
+        distribution, an outcome's count in this sample, given its pooled count, is
+        hypergeometric. A Bonferroni correction over all ``2**width`` Boolean outcomes
+        bounds the probability of rejecting equal distributions by
+        ``failure_probability``. The exact test adapts to each outcome's variance, so
+        it resolves much smaller differences than a distribution-free Hoeffding bound.
+        """
         left_shots = len(self.outcomes)
         right_shots = len(other.outcomes)
         if left_shots <= 0 or right_shots <= 0:
@@ -46,24 +72,31 @@ class OutcomeSample:
             message = "failure_probability must be between zero and one"
             raise ValueError(message)
 
+        width = len(self.outcomes[0])
         left_counts = self.counts
         right_counts = other.counts
-        outcomes = left_counts.keys() | right_counts.keys()
-        categories = max(1, len(outcomes))
-        log_factor = math.log(4.0 * categories / failure_probability)
-        tolerance = math.sqrt(log_factor / (2.0 * left_shots)) + math.sqrt(
-            log_factor / (2.0 * right_shots),
-        )
+        if any(
+            len(outcome) != width or not set(outcome) <= {0, 1} for outcome in left_counts.keys() | right_counts.keys()
+        ):
+            message = "statistical equivalence requires Boolean outcomes of one width"
+            raise ValueError(message)
+
+        threshold = failure_probability / 2**width
         mismatches = []
-        for outcome in sorted(outcomes):
-            left_frequency = left_counts[outcome] / left_shots
-            right_frequency = right_counts[outcome] / right_shots
-            if abs(left_frequency - right_frequency) > tolerance:
+        for outcome in sorted(left_counts.keys() | right_counts.keys()):
+            p_value = _fisher_exact_p_value(
+                left_counts[outcome],
+                left_counts[outcome] + right_counts[outcome],
+                left_shots,
+                left_shots + right_shots,
+            )
+            if p_value <= threshold:
                 mismatches.append(
-                    f"{outcome}: left={left_frequency:.4f}, right={right_frequency:.4f}",
+                    f"{outcome}: left={left_counts[outcome] / left_shots:.4f}, "
+                    f"right={right_counts[outcome] / right_shots:.4f}, p={p_value:.2e}",
                 )
         details = "; ".join(mismatches)
-        message = f"empirical distributions differ beyond Hoeffding tolerance {tolerance:.4f}: {details}"
+        message = f"empirical distributions differ at per-outcome threshold {threshold:.2e}: {details}"
         assert not mismatches, message
 
 

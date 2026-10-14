@@ -131,7 +131,7 @@ impl Default for GeneralNoiseModel {
 
             scheduled_batch_active: false,
             pending_crosstalk: None,
-            crosstalk_failed: false,
+            continuation_failed: false,
             crosstalk_active: false,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_local: 0.0,

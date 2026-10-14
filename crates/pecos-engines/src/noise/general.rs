@@ -420,7 +420,7 @@ pub struct GeneralNoiseModel {
     // Original gates after an outcome-dependent crosstalk site. Some(empty)
     // still means its injected measurements must complete before a new start.
     pending_crosstalk: Option<std::vec::IntoIter<Gate>>,
-    crosstalk_failed: bool,
+    continuation_failed: bool,
     crosstalk_active: bool,
 
     /// Transition batches waiting for internal computational-basis measurements.
@@ -769,9 +769,9 @@ impl GeneralNoiseModel {
         input: &ByteMessage,
         boundaries: Option<&mut Vec<u32>>,
     ) -> Result<ByteMessage, PecosError> {
-        if self.crosstalk_active || self.crosstalk_failed {
+        if self.continuation_pending() || self.continuation_failed {
             return Err(PecosError::Processing(
-                "unfinished crosstalk continuation; reset required after failure".into(),
+                "unfinished noise continuation; reset required".into(),
             ));
         }
         let mut builder = NoiseUtils::create_quantum_builder();
@@ -966,9 +966,8 @@ impl GeneralNoiseModel {
     /// In physical systems, this represents detection errors, crosstalk, and special
     /// handling of qubit states outside the computational basis.
     ///
-    /// Note: Measurements do NOT unleak qubits. Only preparation operations unleak qubits.
-    /// If a leaked qubit is measured, it remains leaked and will continue to measure as 1
-    /// until a preparation operation is performed.
+    /// Measurements do not unleak qubits. A leaked qubit continues to measure as 1 until
+    /// preparation, seepage, or a recovery channel returns it to the computational subspace.
     ///
     /// Returns a `ByteMessage` destined for quantum simulation. Any results from measurements
     /// that are destined for the user are appended to `self.results_builder`.
@@ -983,19 +982,27 @@ impl GeneralNoiseModel {
         self.continue_with_boundaries(message, None, &mut 0)
     }
 
+    fn continuation_pending(&self) -> bool {
+        self.crosstalk_active
+            || self.pending_gate_continuation.is_some()
+            || self.pending_hook.is_some()
+            || self.pending_input.is_some()
+            || !self.pending_transition_batches.is_empty()
+    }
+
     fn continue_with_boundaries(
         &mut self,
         message: ByteMessage,
         boundaries: Option<&mut Vec<u32>>,
         prefix: &mut usize,
     ) -> Result<ByteMessage, PecosError> {
-        if self.crosstalk_failed {
+        if self.continuation_failed {
             return Err(PecosError::Processing(
-                "crosstalk continuation failed; reset required".into(),
+                "noise continuation failed; reset required".into(),
             ));
         }
         // Latch before any result handling/RNG mutation, including unwinding.
-        self.crosstalk_failed = self.crosstalk_active;
+        self.continuation_failed = self.continuation_pending();
         let transitions = self.apply_measurement_reply(message)?;
         let transition_gates = transitions.quantum_ops()?;
         *prefix = transition_gates.len();
@@ -1008,11 +1015,11 @@ impl GeneralNoiseModel {
         if let Some(remaining) = remaining_crosstalk {
             self.apply_gate_sequence(remaining, &mut builder, boundaries)?;
         }
-        self.crosstalk_failed = false;
         let commands = builder.build();
         if commands.is_empty()? && self.pending_crosstalk.is_none() {
             self.crosstalk_active = false;
         }
+        self.continuation_failed = false;
         Ok(commands)
     }
 
@@ -1688,6 +1695,15 @@ impl GeneralNoiseModel {
         }
     }
 
+    fn hook_order(&self, site: TransitionSite) -> &[HookChannel] {
+        match site {
+            TransitionSite::BeforeP1 => &self.p1_hook_order_before_gate,
+            TransitionSite::AfterP1 => &self.p1_hook_order_after_gate,
+            TransitionSite::BeforeP2 => &self.p2_hook_order_before_gate,
+            TransitionSite::AfterP2 => &self.p2_hook_order_after_gate,
+        }
+    }
+
     fn apply_hook(
         &mut self,
         gate: &Gate,
@@ -1695,48 +1711,29 @@ impl GeneralNoiseModel {
         start: usize,
         builder: &mut ByteMessageBuilder,
     ) -> bool {
-        let order = match site {
-            TransitionSite::BeforeP1 => self.p1_hook_order_before_gate.clone(),
-            TransitionSite::AfterP1 => self.p1_hook_order_after_gate.clone(),
-            TransitionSite::BeforeP2 => self.p2_hook_order_before_gate.clone(),
-            TransitionSite::AfterP2 => self.p2_hook_order_after_gate.clone(),
-        };
-        for (position, entry) in order.into_iter().enumerate().skip(start) {
+        for position in start..self.hook_order(site).len() {
+            let entry = self.hook_order(site)[position];
             let deferred = match (site, entry) {
-                (TransitionSite::BeforeP1, HookChannel::Transition(index)) => {
-                    let channel = self.p1_transition_channels_before_gate[index].clone();
-                    self.apply_p1_transition_channels(gate, &[channel], builder)
-                }
-                (TransitionSite::BeforeP1, HookChannel::PauliLeakage(index)) => {
-                    let channel = self.p1_pauli_leakage_channels_before_gate[index].clone();
-                    self.apply_p1_pauli_leakage_channels(gate, &[channel], builder);
+                (
+                    TransitionSite::BeforeP1 | TransitionSite::AfterP1,
+                    HookChannel::Transition(index),
+                ) => self.apply_p1_transition_channel(gate, site, index, builder),
+                (
+                    TransitionSite::BeforeP1 | TransitionSite::AfterP1,
+                    HookChannel::PauliLeakage(index),
+                ) => {
+                    self.apply_p1_pauli_leakage_channel(gate, site, index, builder);
                     false
                 }
-                (TransitionSite::AfterP1, HookChannel::Transition(index)) => {
-                    let channel = self.p1_transition_channels_after_gate[index].clone();
-                    self.apply_p1_transition_channels(gate, &[channel], builder)
-                }
-                (TransitionSite::AfterP1, HookChannel::PauliLeakage(index)) => {
-                    let channel = self.p1_pauli_leakage_channels_after_gate[index].clone();
-                    self.apply_p1_pauli_leakage_channels(gate, &[channel], builder);
-                    false
-                }
-                (TransitionSite::BeforeP2, HookChannel::Transition(index)) => {
-                    let channel = self.p2_transition_steps_before_gate[index].clone();
-                    self.apply_p2_transition_steps(gate, &[channel], builder)
-                }
-                (TransitionSite::BeforeP2, HookChannel::PauliLeakage(index)) => {
-                    let channel = self.p2_pauli_leakage_steps_before_gate[index].clone();
-                    self.apply_p2_pauli_leakage_steps(gate, &[channel], builder);
-                    false
-                }
-                (TransitionSite::AfterP2, HookChannel::Transition(index)) => {
-                    let channel = self.p2_transition_steps_after_gate[index].clone();
-                    self.apply_p2_transition_steps(gate, &[channel], builder)
-                }
-                (TransitionSite::AfterP2, HookChannel::PauliLeakage(index)) => {
-                    let channel = self.p2_pauli_leakage_steps_after_gate[index].clone();
-                    self.apply_p2_pauli_leakage_steps(gate, &[channel], builder);
+                (
+                    TransitionSite::BeforeP2 | TransitionSite::AfterP2,
+                    HookChannel::Transition(index),
+                ) => self.apply_p2_transition_step(gate, site, index, builder),
+                (
+                    TransitionSite::BeforeP2 | TransitionSite::AfterP2,
+                    HookChannel::PauliLeakage(index),
+                ) => {
+                    self.apply_p2_pauli_leakage_step(gate, site, index, builder);
                     false
                 }
             };
@@ -1752,35 +1749,44 @@ impl GeneralNoiseModel {
         false
     }
 
-    fn apply_p1_pauli_leakage_channels(
+    fn apply_p1_pauli_leakage_channel(
         &mut self,
         gate: &Gate,
-        channels: &[PauliLeakageWeightedSampler],
+        site: TransitionSite,
+        index: usize,
         builder: &mut ByteMessageBuilder,
     ) {
         for &qubit in &gate.qubits {
             let qubit = usize::from(qubit);
-            for channel in channels {
-                if let Some(event) = channel.sample_event(&mut self.rng) {
-                    self.apply_pauli_leakage_event(qubit, event, builder);
-                }
+            let channel = match site {
+                TransitionSite::BeforeP1 => &self.p1_pauli_leakage_channels_before_gate[index],
+                TransitionSite::AfterP1 => &self.p1_pauli_leakage_channels_after_gate[index],
+                _ => unreachable!("matching hook arity"),
+            };
+            if let Some(event) = channel.sample_event(&mut self.rng) {
+                self.apply_pauli_leakage_event(qubit, event, builder);
             }
         }
     }
 
-    fn apply_p2_pauli_leakage_steps(
+    fn apply_p2_pauli_leakage_step(
         &mut self,
         gate: &Gate,
-        steps: &[P2PauliLeakageWeightedStep],
+        site: TransitionSite,
+        index: usize,
         builder: &mut ByteMessageBuilder,
     ) {
         for pair in gate.qubits.as_chunks::<2>().0 {
             let qubits = [usize::from(pair[0]), usize::from(pair[1])];
-            for step in steps {
-                for (qubit, event) in qubits.into_iter().zip(step.sample_events(&mut self.rng)) {
-                    if let Some(event) = event {
-                        self.apply_pauli_leakage_event(qubit, event, builder);
-                    }
+            let step = match site {
+                TransitionSite::BeforeP2 => &self.p2_pauli_leakage_steps_before_gate[index],
+                TransitionSite::AfterP2 => &self.p2_pauli_leakage_steps_after_gate[index],
+                _ => unreachable!("matching hook arity"),
+            };
+            let events = step.sample_events(&mut self.rng);
+            for (qubit, event) in qubits.into_iter().zip(events) {
+                if let Some(event) = event {
+                    self.apply_pauli_leakage_event(qubit, event, builder);
                 }
             }
         }
@@ -1811,24 +1817,27 @@ impl GeneralNoiseModel {
         }
     }
 
-    fn apply_p1_transition_channels(
+    fn apply_p1_transition_channel(
         &mut self,
         gate: &Gate,
-        channels: &[QubitTransitionWeightedSampler],
+        site: TransitionSite,
+        index: usize,
         builder: &mut ByteMessageBuilder,
     ) -> bool {
         let mut deferred = false;
 
         for &qubit in &gate.qubits {
             let qubit = usize::from(qubit);
-            let selected = channels
-                .iter()
-                .filter(|channel| channel.is_selected(&mut self.rng))
-                .cloned()
-                .collect::<Vec<_>>();
-            if selected.is_empty() {
+            let channel = match site {
+                TransitionSite::BeforeP1 => &self.p1_transition_channels_before_gate[index],
+                TransitionSite::AfterP1 => &self.p1_transition_channels_after_gate[index],
+                _ => unreachable!("matching hook arity"),
+            };
+            if !channel.is_selected(&mut self.rng) {
                 continue;
             }
+            let measure = channel.has_computational_row();
+            let selected = channel.clone();
 
             let state = self
                 .is_leaked(qubit)
@@ -1836,13 +1845,9 @@ impl GeneralNoiseModel {
             let batch = PendingTransitionBatch {
                 qubits: vec![qubit],
                 states: vec![state],
-                kind: PendingTransitionKind::P1(selected.clone()),
+                kind: PendingTransitionKind::P1(vec![selected]),
             };
-            if state.is_none()
-                && selected
-                    .iter()
-                    .any(QubitTransitionWeightedSampler::has_computational_row)
-            {
+            if state.is_none() && measure {
                 self.schedule_transition_batch(batch, &[true], builder);
                 deferred = true;
             } else {
@@ -1852,39 +1857,39 @@ impl GeneralNoiseModel {
         deferred
     }
 
-    fn apply_p2_transition_steps(
+    fn apply_p2_transition_step(
         &mut self,
         gate: &Gate,
-        steps: &[P2TransitionWeightedStep],
+        site: TransitionSite,
+        index: usize,
         builder: &mut ByteMessageBuilder,
     ) -> bool {
         let mut deferred = false;
 
         for pair in gate.qubits.as_chunks::<2>().0 {
             let qubits = [usize::from(pair[0]), usize::from(pair[1])];
-            let selected = steps
-                .iter()
-                .filter_map(|step| step.select(&mut self.rng))
-                .collect::<Vec<_>>();
-            if selected.is_empty() {
+            let step = match site {
+                TransitionSite::BeforeP2 => &self.p2_transition_steps_before_gate[index],
+                TransitionSite::AfterP2 => &self.p2_transition_steps_after_gate[index],
+                _ => unreachable!("matching hook arity"),
+            };
+            let Some(selected) = step.select(&mut self.rng) else {
                 continue;
-            }
+            };
 
             let states = qubits.map(|qubit| {
                 self.is_leaked(qubit)
                     .then_some(QubitTransitionState::Leakage)
             });
             let mut measure = [false; 2];
-            for step in &selected {
-                let required = step.requires_computational_source();
-                for leg in 0..2 {
-                    measure[leg] |= states[leg].is_none() && required[leg];
-                }
+            let required = selected.requires_computational_source(states);
+            for leg in 0..2 {
+                measure[leg] = states[leg].is_none() && required[leg];
             }
             let batch = PendingTransitionBatch {
                 qubits: qubits.to_vec(),
                 states: states.to_vec(),
-                kind: PendingTransitionKind::P2(selected),
+                kind: PendingTransitionKind::P2(vec![selected]),
             };
             if measure.iter().any(|needed| *needed) {
                 self.schedule_transition_batch(batch, &measure, builder);
@@ -2057,7 +2062,7 @@ impl GeneralNoiseModel {
     ///
     /// - Regular `Measure` operations on leaked qubits always return 1
     /// - `MeasureLeaked` operations on leaked qubits return 2
-    /// - Leaked qubits remain leaked until a `Prep` operation is applied
+    /// - Preparation, seepage, and recovery channels can return leaked qubits to the computational subspace
     /// - Gates applied to leaked qubits have no effect on the quantum state
     ///
     /// # Use Cases
@@ -2103,24 +2108,14 @@ impl GeneralNoiseModel {
         self.leaked_qubits.remove(&qubit);
     }
 
-    fn unleak(&mut self, qubit: usize) -> Option<Gate> {
-        trace!("Replaced leakage with Pauli error on qubit {qubit}");
-        if self.leakage_scale == 0.0 {
-            // No leakage is being applied in the system
-            None
-        } else {
-            trace!("Marking qubit {qubit} as unleaked");
-            self.mark_as_unleaked(qubit);
-            Option::from(Gate::pz(&[qubit]))
-        }
+    fn unleak(&mut self, qubit: usize) -> Gate {
+        trace!("Marking qubit {qubit} as unleaked");
+        self.mark_as_unleaked(qubit);
+        Gate::pz(&[qubit])
     }
 
     fn unleak_random_bit(&mut self, qubit: usize) -> Vec<Gate> {
-        let mut noise = vec![];
-
-        if let Some(gate) = self.unleak(qubit) {
-            noise.push(gate);
-        }
+        let mut noise = vec![self.unleak(qubit)];
 
         if let Some(gate) = self.rng.random_pauli_or_none(qubit) {
             noise.push(gate);
@@ -2153,7 +2148,7 @@ impl GeneralNoiseModel {
         self.pending_input = None;
         self.scheduled_batch_active = false;
         self.pending_crosstalk = None;
-        self.crosstalk_failed = false;
+        self.continuation_failed = false;
         self.crosstalk_active = false;
         // Clear prepared qubits. This set is the crosstalk victim pool and is scoped
         // to one program run; carrying it across resets would let a qubit prepared in
@@ -2766,7 +2761,7 @@ mod tests {
         assert_eq!(outcomes[0], 1, "Leaked qubit should always measure as 1");
 
         // Verify that the qubit is still leaked after measurement
-        // Measurements do not unleak qubits - only prep operations do
+        // Measurement alone leaves qubits leaked.
         assert!(
             model.is_leaked(0),
             "Qubit should remain leaked after measurement"
@@ -5356,7 +5351,10 @@ mod tests {
     fn joint_p2_transition_maps_a_full_two_qutrit_basis_state() {
         let channel = crate::noise::TwoQubitStateTransitionChannel::new(
             1.0,
-            &BTreeMap::from([("0L".to_string(), BTreeMap::from([("L1".to_string(), 1.0)]))]),
+            &BTreeMap::from([
+                ("0L".to_string(), BTreeMap::from([("L1".to_string(), 1.0)])),
+                ("1L".to_string(), BTreeMap::from([("1L".to_string(), 1.0)])),
+            ]),
         )
         .unwrap();
         let step = crate::noise::P2TransitionStep::joint(channel);
@@ -5779,5 +5777,204 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2, 3]
         );
+    }
+
+    #[test]
+    fn seepage_clears_channel_leakage_at_zero_scale() {
+        let leak =
+            crate::noise::PauliLeakageChannel::new(1.0, &BTreeMap::from([("L".into(), 1.0)]))
+                .unwrap();
+        let mut noise = GeneralNoiseModel::builder()
+            .with_leakage_scale(0.0)
+            .with_p1(1.0)
+            .with_p1_emission_ratio(1.0)
+            .with_p1_seepage_prob(1.0)
+            .add_p1_pauli_leakage_channel_before_gate(&leak)
+            .build();
+        let commands = noise
+            .apply_noise_on_start(&ByteMessage::quantum_operations_builder().h(&[0]).build())
+            .unwrap();
+        assert!(!noise.is_leaked(0));
+        let resets = commands
+            .quantum_ops()
+            .unwrap()
+            .into_iter()
+            .filter(|gate| gate.gate_type == GateType::PZ)
+            .collect::<Vec<_>>();
+        assert_eq!(resets.len(), 2, "channel leakage and seepage each emit PZ");
+        assert!(
+            resets
+                .iter()
+                .all(|gate| gate.qubits.as_slice() == [QubitId(0)])
+        );
+    }
+
+    #[test]
+    fn channel_barrier_blocks_start_until_reset() {
+        let mut noise = GeneralNoiseModel::builder()
+            .add_p1_transition_channel_before_gate(&deterministic_transition("0", "0"))
+            .build();
+        let input = ByteMessage::quantum_operations_builder().h(&[0]).build();
+        assert_eq!(
+            gate_types(&noise.apply_noise_on_start(&input).unwrap()),
+            vec![GateType::MZ]
+        );
+        assert!(
+            noise
+                .apply_noise_on_start(&input)
+                .err()
+                .unwrap()
+                .contains("reset required")
+        );
+        noise.reset_noise_model();
+        assert!(noise.apply_noise_on_start(&input).is_ok());
+    }
+
+    #[test]
+    fn failed_channel_continuation_requires_reset() {
+        let mut noise = GeneralNoiseModel::builder()
+            .add_p1_transition_channel_before_gate(&deterministic_transition("0", "0"))
+            .build();
+        let input = ByteMessage::quantum_operations_builder().h(&[0]).build();
+        noise.apply_noise_on_start(&input).unwrap();
+        assert!(
+            noise
+                .apply_noise_on_continue_processing(outcome_message(&[0, 1]))
+                .is_err()
+        );
+        assert!(
+            noise
+                .apply_noise_on_continue_processing(outcome_message(&[0]))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("reset required")
+        );
+        assert!(
+            noise
+                .apply_noise_on_start(&input)
+                .err()
+                .unwrap()
+                .contains("reset required")
+        );
+        noise.reset_noise_model();
+        noise.apply_noise_on_start(&input).unwrap();
+        assert_eq!(
+            gate_types(
+                &noise
+                    .apply_noise_on_continue_processing(outcome_message(&[0]))
+                    .unwrap()
+            ),
+            vec![GateType::H]
+        );
+    }
+
+    #[test]
+    fn after_gate_transition_barrier_preserves_later_input_order() {
+        let mut noise = GeneralNoiseModel::builder()
+            .add_p1_transition_channel_after_gate(&deterministic_transition("0", "0"))
+            .build();
+        let input = ByteMessage::quantum_operations_builder()
+            .h(&[0])
+            .cz(&[(0, 1)])
+            .pz(&[2])
+            .mz(&[1])
+            .build();
+        assert_eq!(
+            gate_types(&noise.apply_noise_on_start(&input).unwrap()),
+            vec![GateType::H, GateType::MZ]
+        );
+        let resumed = noise
+            .apply_noise_on_continue_processing(outcome_message(&[0]))
+            .unwrap();
+        assert_eq!(
+            resumed.quantum_ops().unwrap(),
+            ByteMessage::quantum_operations_builder()
+                .cz(&[(0, 1)])
+                .pz(&[2])
+                .mz(&[1])
+                .build()
+                .quantum_ops()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn matching_joint_leakage_pattern_measures_and_applies_both_rows() {
+        let channel = crate::noise::TwoQubitStateTransitionChannel::from_transitions(
+            1.0,
+            &BTreeMap::from([("0L->LL".into(), 1.0), ("1L->1L".into(), 1.0)]),
+        )
+        .unwrap();
+        for outcome in [0, 1] {
+            let mut noise = GeneralNoiseModel::builder()
+                .add_p2_transition_channel_before_gate(&channel)
+                .build();
+            noise.mark_as_leaked(1);
+            let commands = noise
+                .apply_noise_on_start(
+                    &ByteMessage::quantum_operations_builder()
+                        .cz(&[(0, 1)])
+                        .build(),
+                )
+                .unwrap();
+            assert_eq!(commands.quantum_ops().unwrap(), vec![Gate::mz(&[0])]);
+            let resumed = noise
+                .apply_noise_on_continue_processing(outcome_message(&[outcome]))
+                .unwrap();
+            assert_eq!(noise.is_leaked(0), outcome == 0);
+            assert!(noise.is_leaked(1));
+            assert_eq!(
+                gate_types(&resumed),
+                if outcome == 0 {
+                    vec![GateType::PZ]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn p2_seepage_clears_channel_leakage_at_zero_scale() {
+        for event in ["LI", "IL", "LL"] {
+            let leak = crate::noise::P2PauliLeakageStep::joint(
+                crate::noise::TwoQubitPauliLeakageChannel::new(
+                    1.0,
+                    &BTreeMap::from([(event.to_string(), 1.0)]),
+                )
+                .unwrap(),
+            );
+            let mut noise = GeneralNoiseModel::builder()
+                .with_leakage_scale(0.0)
+                .with_p2(1.0)
+                .with_p2_emission_ratio(1.0)
+                .with_p2_seepage_prob(1.0)
+                .add_p2_pauli_leakage_step_before_gate(&leak)
+                .build();
+            let commands = noise
+                .apply_noise_on_start(
+                    &ByteMessage::quantum_operations_builder()
+                        .cz(&[(0, 1)])
+                        .build(),
+                )
+                .unwrap();
+            assert!(!noise.is_leaked(0));
+            assert!(!noise.is_leaked(1));
+            let gates = commands.quantum_ops().unwrap();
+            for (qubit, symbol) in event.chars().enumerate() {
+                let resets = gates
+                    .iter()
+                    .filter(|gate| {
+                        gate.gate_type == GateType::PZ && gate.qubits.as_slice() == [QubitId(qubit)]
+                    })
+                    .count();
+                assert_eq!(
+                    resets,
+                    if symbol == 'L' { 2 } else { 0 },
+                    "{event}, qubit {qubit}"
+                );
+            }
+        }
     }
 }

@@ -83,6 +83,7 @@ def test_p2_steps_accept_distinct_legs_and_joint_pair_states() -> None:
         0.02,
         {
             "0L": {"L1": 0.2, "0L": 0.8},
+            "1L": {"1L": 1.0},
             "LL": {"00": 0.5, "11": 0.5},
         },
     )
@@ -118,10 +119,14 @@ def test_two_qubit_wildcards_are_identity_wires_on_either_leg() -> None:
     assert isinstance(builder, GeneralNoiseModelBuilder)
 
 
-@pytest.mark.parametrize("transitions", [{"0->0": 1.0}, {"1": {"1": 1.0}}])
-def test_incomplete_rows_explain_measurement(transitions: dict) -> None:
-    with pytest.raises(ValueError, match="both '0' and '1'.*MZ.*not the identity quantum map"):
+@pytest.mark.parametrize(("transitions", "missing"), [({"0->0": 1.0}, "1"), ({"1": {"1": 1.0}}, "0")])
+def test_incomplete_rows_explain_measurement(transitions: dict, missing: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match=f"pattern C: missing source rows {missing}.*MZ.*not the identity quantum map",
+    ) as error:
         StateTransitionChannel(1.0, transitions)
+    assert f"'{missing}->{missing}': 1.0" in str(error.value)
 
 
 @pytest.mark.parametrize("probability", [-0.1, 1.1, float("nan"), float("inf")])
@@ -229,3 +234,28 @@ def test_explicit_leakage_ignores_legacy_depolarization_scale(
     family = "transition" if state_channel else "pauli_leakage"
     noise = getattr(builder, f"add_{arity}_{family}_channel_{placement}_gate")(channel)
     assert sim(program).noise(noise).seed(42).run(32).to_dict()["c"] == [3] * 32
+
+
+@pytest.mark.parametrize("joint", [False, True])
+def test_overscaled_hook_probability_raises_value_error(joint: bool) -> None:
+    from pecos_rslib import Qasm, sim
+
+    program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; measure q -> c;')
+    builder = GeneralNoiseModelBuilder().with_scale(2.0)
+    if joint:
+        channel = TwoQubitStateTransitionChannel(0.8, {"LL->00": 1.0})
+        noise = builder.add_p2_transition_channel_before_gate(channel)
+    else:
+        channel = StateTransitionChannel.leak_recovery(0.8)
+        noise = builder.add_p1_transition_channel_before_gate(channel)
+    with pytest.raises(ValueError, match="scaled .*hook probabilities.*between zero and one"):
+        sim(program).noise(noise).run(1)
+
+
+@pytest.mark.parametrize(
+    ("rows", "pattern", "missing"),
+    [({"0L->LL": 1.0}, "CL", "1L"), ({"L0->LL": 1.0}, "LC", "L1"), ({"00->LL": 1.0}, "CC", "01, 10, 11")],
+)
+def test_incomplete_joint_rows_name_missing_sources(rows: dict, pattern: str, missing: str) -> None:
+    with pytest.raises(ValueError, match=f"pattern {pattern}: missing source rows {missing}"):
+        TwoQubitStateTransitionChannel(1.0, rows)

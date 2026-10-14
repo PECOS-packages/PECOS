@@ -99,7 +99,8 @@ configuration retains its existing execution path.
 
 Every channel has its own outer `probability`. It is **not multiplied by `p1`, `p2`, or emission
 ratios**. As in the prototype, global `scale` and the corresponding `p1_scale` or `p2_scale`
-multiply this probability, clamped to `[0, 1]`; angle-dependent p2 scaling does not affect hooks.
+multiply this probability; configurations with scaled probabilities outside `[0, 1]` are rejected.
+Angle-dependent p2 scaling does not affect hooks.
 A failed outer coin is a no-op, including no measurement. An explicit `L` event or destination
 always marks the operand leaked, independently of `leakage_scale`. The legacy leakage paths
 retain that setting's leakage-to-depolarization approximation.
@@ -179,9 +180,16 @@ noise = (
 ### Joint Transitions and Identity Wires
 
 `TwoQubitStateTransitionChannel` accepts pair states `00`, `01`, `0L`, ..., `LL`, with one shared
-outer coin and a conditional destination distribution for each supplied source. Concrete
-computational labels require resolving the corresponding operand by MZ when the channel fires;
-even an omitted concrete row can therefore follow measurement. Use `*` for a true identity wire.
+outer coin and a conditional destination distribution for each supplied source. Each supplied
+leakage pattern must include all computational completions: `0L` requires `1L`, `L0` requires
+`L1`, and any of `00`, `01`, `10`, or `11` requires all four. `LL` stands alone. Missing rows
+are rejected with an error naming each incomplete leakage pattern and its required sources
+(`C` denotes `0` or `1` in these pattern names); explicit identity rows still follow MZ.
+
+When the channel fires, it measures a non-leaked leg only if the channel depends on that leg's
+computational state and at least one source row matches the pair's known leakage pattern.
+If no pattern matches, the channel is identity without measurement. Wildcard and tensor identity
+legs remain unmeasured. Use `*` for a true identity wire.
 
 ```python
 from pecos import TwoQubitStateTransitionChannel, P2TransitionStep

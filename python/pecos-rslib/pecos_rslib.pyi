@@ -1184,7 +1184,7 @@ class QisInterfaceBuilder:
 # Noise Model Builders
 # =============================================================================
 class PauliLeakageDict:
-    """Validated relative distribution of Pauli and ``L`` events."""
+    """Validated normalized distribution of Pauli and ``L`` events."""
 
     def __init__(self, events: dict[str, float]) -> None: ...
     @property
@@ -1256,6 +1256,8 @@ class TransitionDict:
 
     ``a * b`` is the tensor/Kronecker product. In a two-qubit mapping, ``*`` in
     the same source and destination position is an unmeasured identity wire.
+    Concrete one- and two-qubit maps require every computational completion of
+    each supplied leakage pattern; missing source rows raise ValueError.
     """
 
     def __init__(self, transitions: dict[str, float] | dict[str, dict[str, float]]) -> None: ...
@@ -1301,6 +1303,12 @@ class TwoQubitStateTransitionChannel:
 
     A matching ``*`` in one source/destination position leaves that qubit
     untouched and unresolved. Rules for ``*x`` and ``x*`` may coexist.
+    Concrete rows require both 0L/1L, both L0/L1, or all 00/01/10/11 when any
+    row in that group is supplied; LL stands alone. Missing rows raise ValueError
+    naming each incomplete leakage pattern (C denotes 0 or 1) and its missing sources.
+    A selected channel measures a non-leaked leg only when it depends on that
+    leg's computational state and a row matches the pair's leakage pattern.
+    Unmatched patterns and wildcard/tensor identity legs remain unmeasured.
     """
 
     def __init__(
@@ -1334,7 +1342,12 @@ class P2TransitionStep:
     def joint(channel: TwoQubitStateTransitionChannel) -> P2TransitionStep: ...
 
 class GeneralNoiseModelBuilder:
-    """Builder for general noise models."""
+    """Builder for general noise models.
+
+    Hook probabilities use the global and corresponding p1/p2 scale factors.
+    Scaled hook probabilities outside [0, 1] raise ValueError; each independent
+    leg is checked separately.
+    """
 
     def with_p1_pauli_leakage_channels_before_gate(
         self, channels: list[PauliLeakageChannel]

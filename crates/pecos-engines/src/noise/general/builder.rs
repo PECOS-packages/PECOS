@@ -8,6 +8,46 @@ use crate::noise::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+fn validate_hook_probabilities(
+    p1_transitions: [&[QubitTransitionWeightedSampler]; 2],
+    p1_events: [&[PauliLeakageWeightedSampler]; 2],
+    p2_transitions: [&[P2TransitionWeightedStep]; 2],
+    p2_events: [&[P2PauliLeakageWeightedStep]; 2],
+    p1_scale: f64,
+    p2_scale: f64,
+) -> Result<(), &'static str> {
+    let valid = |p: f64| p.is_finite() && (0.0..=1.0).contains(&p);
+    if !p1_transitions
+        .into_iter()
+        .flatten()
+        .map(QubitTransitionWeightedSampler::probability)
+        .chain(
+            p1_events
+                .into_iter()
+                .flatten()
+                .map(PauliLeakageWeightedSampler::probability),
+        )
+        .all(|p| valid(p * p1_scale))
+    {
+        return Err("scaled one-qubit hook probabilities must be finite and between zero and one");
+    }
+    if !p2_transitions
+        .into_iter()
+        .flatten()
+        .flat_map(P2TransitionWeightedStep::probabilities)
+        .chain(
+            p2_events
+                .into_iter()
+                .flatten()
+                .flat_map(P2PauliLeakageWeightedStep::probabilities),
+        )
+        .all(|p| valid(p * p2_scale))
+    {
+        return Err("scaled two-qubit hook probabilities must be finite and between zero and one");
+    }
+    Ok(())
+}
+
 /// The plain-Pauli probabilities plus optional angle-dependent two-qubit
 /// scaling and the spontaneous-emission ratios, as returned by
 /// [`GeneralNoiseModelBuilder::pauli_with_angle_scaling`].
@@ -201,7 +241,7 @@ impl GeneralNoiseModelBuilder {
     /// A `GeneralNoiseModel`
     ///
     /// # Panics
-    /// Panics if any probabilities are not set or are not between 0 and 1.
+    /// Panics if the configuration contains invalid probabilities or scale factors.
     #[must_use]
     pub fn build(mut self) -> GeneralNoiseModel {
         self.validate_configuration()
@@ -718,10 +758,6 @@ impl GeneralNoiseModelBuilder {
     /// Channels execute in slice order. State changes from one channel are visible to the next.
     /// Recovery can allow an incoming leaked qubit to participate in the ideal gate, while leakage
     /// can suppress it. Channel probabilities are affected by global and p1 scale factors.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a channel has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn with_p1_transition_channels_before_gate(
         mut self,
@@ -740,10 +776,6 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Append one transition channel before every single-qubit gate.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the channel has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn add_p1_transition_channel_before_gate(
         mut self,
@@ -762,10 +794,6 @@ impl GeneralNoiseModelBuilder {
     /// These channels run after the ideal gate or its suppression and after ordinary p1
     /// Pauli/emission noise. Recovery does not retroactively execute a suppressed gate. Prefer
     /// [`Self::with_p1_pauli_model`] for ordinary gate-local Pauli noise.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a channel has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn with_p1_transition_channels_after_gate(
         mut self,
@@ -783,10 +811,6 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Append one transition channel after every single-qubit noise site.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the channel has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn add_p1_transition_channel_after_gate(
         mut self,
@@ -983,10 +1007,6 @@ impl GeneralNoiseModelBuilder {
     /// Steps execute in slice order before PECOS checks the pair for leakage and before ordinary
     /// p2 noise. Recovery can allow the ideal gate to execute; leakage can suppress it.
     /// Probabilities are affected by global and p2 scale factors.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a step has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn with_p2_transition_steps_before_gate(mut self, steps: &[P2TransitionStep]) -> Self {
         self.p2_transition_steps_before_gate =
@@ -999,10 +1019,6 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Append one independent-leg or joint transition step before every two-qubit gate.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the step has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn add_p2_transition_step_before_gate(mut self, step: &P2TransitionStep) -> Self {
         self.p2_transition_steps_before_gate
@@ -1033,10 +1049,6 @@ impl GeneralNoiseModelBuilder {
     /// p2 Pauli/emission noise, but before after-2Q idle noise. A later step observes leakage or
     /// recovery produced by every earlier step. Prefer [`Self::with_p2_pauli_model`] for ordinary
     /// correlated two-qubit Pauli noise.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a step has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn with_p2_transition_steps_after_gate(mut self, steps: &[P2TransitionStep]) -> Self {
         self.p2_transition_steps_after_gate =
@@ -1049,10 +1061,6 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Append one independent-leg or joint transition step after every two-qubit noise site.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the step has an invalid outer probability, state label, or conditional row.
     #[must_use]
     pub fn add_p2_transition_step_after_gate(mut self, step: &P2TransitionStep) -> Self {
         self.p2_transition_steps_after_gate
@@ -1292,6 +1300,27 @@ impl GeneralNoiseModelBuilder {
         if !probability(scaled_p2) {
             return Err("scaled two-qubit probability must be between zero and one");
         }
+
+        validate_hook_probabilities(
+            [
+                &self.p1_transition_channels_before_gate,
+                &self.p1_transition_channels_after_gate,
+            ],
+            [
+                &self.p1_pauli_leakage_channels_before_gate,
+                &self.p1_pauli_leakage_channels_after_gate,
+            ],
+            [
+                &self.p2_transition_steps_before_gate,
+                &self.p2_transition_steps_after_gate,
+            ],
+            [
+                &self.p2_pauli_leakage_steps_before_gate,
+                &self.p2_pauli_leakage_steps_after_gate,
+            ],
+            p1_scale * scale,
+            p2_scale * scale,
+        )?;
 
         let default = GeneralNoiseModel::default();
         let prep_crosstalk = self.p_prep_crosstalk.unwrap_or(default.p_prep_crosstalk);
@@ -1560,7 +1589,31 @@ impl GeneralNoiseModelBuilder {
     /// This method should be called exactly once after setting all parameters
     /// and before using the noise model for simulation. Calling it multiple times will
     /// compound the scaling factors incorrectly.
+    ///
+    /// # Panics
+    /// Panics if the model's scaled hook probabilities are not finite or lie outside `[0, 1]`.
     pub fn scale_parameters(&mut self, model: &mut GeneralNoiseModel) {
+        validate_hook_probabilities(
+            [
+                &model.p1_transition_channels_before_gate,
+                &model.p1_transition_channels_after_gate,
+            ],
+            [
+                &model.p1_pauli_leakage_channels_before_gate,
+                &model.p1_pauli_leakage_channels_after_gate,
+            ],
+            [
+                &model.p2_transition_steps_before_gate,
+                &model.p2_transition_steps_after_gate,
+            ],
+            [
+                &model.p2_pauli_leakage_steps_before_gate,
+                &model.p2_pauli_leakage_steps_after_gate,
+            ],
+            self.p1_scale.unwrap_or(1.0) * self.scale.unwrap_or(1.0),
+            self.p2_scale.unwrap_or(1.0) * self.scale.unwrap_or(1.0),
+        )
+        .expect("invalid scaled gate-hook probabilities");
         // Note, leakage_scale is not included here as it is used as an active parameter in the
         // noise model
         let scale = self.scale.unwrap_or(1.0);
@@ -2067,5 +2120,17 @@ mod tests {
         assert_float_eq(model.p_idle_linear_rate, 0.1);
         assert_float_eq(model.p_idle_sin_squared_rate, 0.15);
         assert_float_eq(model.p_idle_coherent_rate, 0.2);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid scaled gate-hook probabilities")]
+    fn direct_scaling_checks_the_supplied_models_hooks() {
+        let channel = StateTransitionChannel::leak_recovery(0.8, 1.0).unwrap();
+        let mut model = GeneralNoiseModelBuilder::new()
+            .add_p1_transition_channel_before_gate(&channel)
+            .build();
+        GeneralNoiseModelBuilder::new()
+            .with_scale(2.0)
+            .scale_parameters(&mut model);
     }
 }

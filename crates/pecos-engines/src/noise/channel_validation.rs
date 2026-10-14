@@ -2,7 +2,7 @@
 //!
 //! Legacy weighted-noise configuration continues to use its existing validation paths.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// Invalid gate-hook channel configuration, with the offending field retained.
@@ -20,8 +20,8 @@ pub enum ChannelValidationError {
     InvalidWeight { label: String, value: f64 },
     /// A conditional row or event distribution does not sum to one.
     NotNormalized { source: Option<String>, total: f64 },
-    /// Only one computational source row was supplied.
-    IncompleteComputationalRows,
+    /// Missing source rows by leakage pattern, where C denotes a computational leg.
+    IncompleteComputationalRows(BTreeMap<String, Vec<String>>),
     /// Wildcard rules move the identity wire or mix with concrete rows.
     ConflictingWildcard(String),
 }
@@ -53,10 +53,24 @@ impl fmt::Display for ChannelValidationError {
                 "channel probabilities for {} must sum to one; total {total} deviates from 1.0",
                 source.as_deref().unwrap_or("all events")
             ),
-            Self::IncompleteComputationalRows => write!(
-                f,
-                "both '0' and '1' source rows are required when either is supplied: the channel performs MZ when it fires; even an explicit 'i->i': 1.0 row follows measurement and is not the identity quantum map. Add the missing row explicitly, for example '1->1': 1.0 alongside '0->L': 1.0 (or '0->0': 1.0 when '0' is missing)"
-            ),
+            Self::IncompleteComputationalRows(patterns) => {
+                write!(f, "incomplete computational rows (C denotes 0 or 1): ")?;
+                for (pattern, missing) in patterns {
+                    write!(
+                        f,
+                        "pattern {pattern}: missing source rows {}; ",
+                        missing.join(", ")
+                    )?;
+                }
+                write!(
+                    f,
+                    "supply every computational completion of each leakage pattern. The channel performs MZ when it fires on a matching computational source; explicit identity rows follow measurement and are not the identity quantum map. Add the missing rows explicitly, for example: "
+                )?;
+                for source in patterns.values().flatten() {
+                    write!(f, "'{source}->{source}': 1.0; ")?;
+                }
+                Ok(())
+            }
             Self::ConflictingWildcard(label) => write!(
                 f,
                 "conflicting wildcard rule {label:?}: each source and destination must contain exactly one '*' in the same position; concrete and wildcard groups cannot overlap"
@@ -167,8 +181,40 @@ pub(crate) fn transitions(
             );
         }
     }
-    if count == 1 && rows.contains_key("0") != rows.contains_key("1") {
-        return Err(ChannelValidationError::IncompleteComputationalRows);
+    if matches!(count, 1 | 2) && !wildcard {
+        let mut missing = BTreeSet::new();
+        for source in rows.keys() {
+            let mut completions = vec![String::new()];
+            for symbol in source.chars() {
+                let symbols: &[char] = if symbol == 'L' { &['L'] } else { &['0', '1'] };
+                completions = completions
+                    .into_iter()
+                    .flat_map(|prefix| {
+                        symbols
+                            .iter()
+                            .map(move |symbol| format!("{prefix}{symbol}"))
+                    })
+                    .collect();
+            }
+            missing.extend(
+                completions
+                    .into_iter()
+                    .filter(|row| !rows.contains_key(row)),
+            );
+        }
+        if !missing.is_empty() {
+            let mut patterns: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for source in missing {
+                let pattern = source
+                    .chars()
+                    .map(|symbol| if symbol == 'L' { 'L' } else { 'C' })
+                    .collect();
+                patterns.entry(pattern).or_default().push(source);
+            }
+            return Err(ChannelValidationError::IncompleteComputationalRows(
+                patterns,
+            ));
+        }
     }
     if wildcard {
         for factor in factors.iter().filter(|factor| !factor.is_empty()) {

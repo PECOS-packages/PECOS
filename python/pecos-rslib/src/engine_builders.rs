@@ -850,7 +850,7 @@ fn validate_channel<T>(
     construct().map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
-/// A validated relative distribution of stochastic Pauli-plus-leakage events.
+/// A validated normalized distribution of stochastic Pauli-plus-leakage events.
 #[pyclass(name = "PauliLeakageDict", from_py_object)]
 #[derive(Clone)]
 pub struct PyPauliLeakageDict {
@@ -1223,6 +1223,10 @@ impl PyStateTransitionChannel {
 }
 
 /// A joint conditional population-transition channel on two effective qutrits.
+///
+/// Each concrete leakage pattern requires every computational source completion.
+/// A selected hook measures only dependent, non-leaked legs when a source row matches
+/// the pair's leakage pattern; wildcard and tensor identity legs remain unmeasured.
 #[pyclass(name = "TwoQubitStateTransitionChannel", from_py_object)]
 #[derive(Clone)]
 pub struct PyTwoQubitStateTransitionChannel {
@@ -1415,7 +1419,10 @@ pub(crate) fn extract_scheduled_idle(
     }
 }
 
-/// Python wrapper for `GeneralNoiseModelBuilder`
+/// Python wrapper for `GeneralNoiseModelBuilder`.
+///
+/// Hook probabilities use global and p1/p2 scaling. Scaled probabilities outside `[0, 1]`
+/// raise `ValueError`, including either leg of an independent two-qubit hook.
 #[pyclass(name = "GeneralNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyGeneralNoiseModelBuilder {

@@ -50,19 +50,6 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
         Self::new_with_tolerance(weighted_map, NORMALIZATION_TOLERANCE)
     }
 
-    /// Create a sampler from non-negative relative weights.
-    ///
-    /// Unlike [`Self::new`], the weights need not sum to one. They are normalized internally.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the map is empty, a weight is negative or non-finite, the total is not positive,
-    /// or the weighted distribution cannot be created.
-    #[must_use]
-    pub fn new_relative(weighted_map: &BTreeMap<K, f64>) -> Self {
-        Self::new_impl(weighted_map, NORMALIZATION_TOLERANCE, false)
-    }
-
     /// Create a new weighted sampler with a specific tolerance for weight normalization
     ///
     /// # Panics
@@ -71,12 +58,8 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new_with_tolerance(weighted_map: &BTreeMap<K, f64>, tolerance: f64) -> Self {
-        Self::new_impl(weighted_map, tolerance, true)
-    }
-
-    fn new_impl(weighted_map: &BTreeMap<K, f64>, tolerance: f64, require_normalized: bool) -> Self {
         let (normalized_weighted_map, normalized_weights) =
-            Self::validate_and_normalize(weighted_map, tolerance, require_normalized);
+            Self::validate_and_normalize(weighted_map, tolerance);
 
         // BTreeMap already provides deterministic ordering of keys
         let keys: Vec<K> = weighted_map.keys().cloned().collect();
@@ -97,7 +80,6 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
     fn validate_and_normalize(
         weighted_map: &BTreeMap<K, f64>,
         tolerance: f64,
-        require_normalized: bool,
     ) -> (BTreeMap<K, f64>, Vec<f64>) {
         assert!(
             !weighted_map.is_empty(),
@@ -119,12 +101,10 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
         );
 
         // Check if weights are within tolerance of 1.0
-        if require_normalized {
-            assert!(
-                (total_weight - 1.0).abs() <= tolerance,
-                "WeightedSampler: total weight {total_weight} deviates from 1.0 by more than tolerance {tolerance}"
-            );
-        }
+        assert!(
+            (total_weight - 1.0).abs() <= tolerance,
+            "WeightedSampler: total weight {total_weight} deviates from 1.0 by more than tolerance {tolerance}"
+        );
 
         // Determine if we need to normalize (only normalize if not already very close to 1.0)
         let needs_normalization = (total_weight - 1.0).abs() > FLOAT_EPSILON;
@@ -180,21 +160,7 @@ fn create_pauli_gate(op: char, qubit: usize) -> Option<Gate> {
     }
 }
 
-fn validate_pauli_leakage_label(label: &str, arity: usize) {
-    assert_eq!(
-        label.chars().count(),
-        arity,
-        "PauliLeakageDict: event {label:?} must contain exactly {arity} symbols"
-    );
-    for symbol in label.chars() {
-        assert!(
-            matches!(symbol, 'I' | 'X' | 'Y' | 'Z' | 'L'),
-            "PauliLeakageDict: invalid symbol {symbol:?} in event {label:?}; expected 'I', 'X', 'Y', 'Z', or 'L'"
-        );
-    }
-}
-
-/// A validated relative distribution of stochastic Pauli-plus-leakage events.
+/// A validated normalized distribution of stochastic Pauli-plus-leakage events.
 ///
 /// Event labels contain `I`, `X`, `Y`, `Z`, or `L`, where `L` means `any -> L` on that leg.
 /// Identity may be explicit within the normalized conditional event distribution; a failed
@@ -217,28 +183,14 @@ impl PauliLeakageDict {
         Ok(Self::new_validated(events))
     }
 
-    /// Validate and construct an event dictionary, inferring arity from its labels.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the dictionary is empty, labels are invalid or inconsistent,
-    /// or the weights do not form a normalized distribution.
-    #[must_use]
+    /// Construct from validated event labels and weights.
     fn new_validated(events: &BTreeMap<String, f64>) -> Self {
-        assert!(
-            !events.is_empty(),
-            "PauliLeakageDict: events cannot be empty"
-        );
         let arity = events
             .keys()
             .next()
             .expect("nonempty event dictionary")
             .chars()
             .count();
-        assert!(arity > 0, "PauliLeakageDict: event labels cannot be empty");
-        for event in events.keys() {
-            validate_pauli_leakage_label(event, arity);
-        }
         let sampler = WeightedSampler::new(events);
         Self {
             arity,
@@ -335,7 +287,7 @@ impl PauliLeakageEvent {
 
 /// A stochastic single-qubit Pauli-plus-leakage channel.
 ///
-/// With the outer `probability`, one event is sampled from the normalized relative distribution.
+/// With the outer `probability`, one event is sampled from the normalized event distribution.
 /// If the outer coin fails, identity is implicit. `L` means `any -> L`; Pauli events have no
 /// effect while the qubit is already leaked.
 ///
@@ -618,53 +570,6 @@ impl QubitTransitionState {
     }
 }
 
-fn validate_transition_label(label: &str, arity: usize) {
-    assert_eq!(
-        label.chars().count(),
-        arity,
-        "TransitionDict: state {label:?} must contain exactly {arity} symbols"
-    );
-    for symbol in label.chars() {
-        assert!(
-            matches!(symbol, '0' | '1' | 'L'),
-            "TransitionDict: invalid symbol {symbol:?} in state {label:?}; expected '0', '1', or 'L'"
-        );
-    }
-}
-
-fn transition_wildcard_position(label: &str) -> Option<usize> {
-    let positions = label
-        .chars()
-        .enumerate()
-        .filter_map(|(position, symbol)| (symbol == '*').then_some(position))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        positions.len(),
-        1,
-        "TransitionDict: wildcard state {label:?} must contain exactly one '*'"
-    );
-    positions.first().copied()
-}
-
-fn validate_wildcard_transition_label(label: &str, wildcard_position: usize) {
-    assert_eq!(
-        label.chars().count(),
-        2,
-        "TransitionDict: wildcard state {label:?} must contain exactly two symbols"
-    );
-    assert_eq!(
-        transition_wildcard_position(label),
-        Some(wildcard_position),
-        "TransitionDict: destination {label:?} must preserve '*' in position {wildcard_position}"
-    );
-    for symbol in label.chars().filter(|symbol| *symbol != '*') {
-        assert!(
-            matches!(symbol, '0' | '1' | 'L'),
-            "TransitionDict: invalid symbol {symbol:?} in state {label:?}; expected '0', '1', 'L', or '*'"
-        );
-    }
-}
-
 fn transition_basis_labels(arity: usize) -> Vec<String> {
     let mut labels = vec![String::new()];
     for _ in 0..arity {
@@ -685,9 +590,10 @@ fn transition_basis_labels(arity: usize) -> Vec<String> {
 /// A validated conditional population-transition dictionary.
 ///
 /// `transitions[source][destination]` is `P(destination | source)` over strings in
-/// `{0, 1, L}^arity`. Supplied rows must sum to one. An omitted source row leaves its
-/// population unchanged but does not undo any MZ required by other rows. Tensor products
-/// retain per-operand measurement dependencies. Two-qubit maps
+/// `{0, 1, L}^arity`. Supplied rows must sum to one. For one or two qubits, each supplied
+/// leakage pattern must include every computational completion. An omitted leakage pattern
+/// acts as identity without measurement. Tensor products retain per-operand measurement
+/// dependencies. Two-qubit maps
 /// may instead use one matching `*` per source and destination as an unresolved identity wire.
 ///
 /// Use [`Self::tensor`] (or `*`) to form a higher-arity Kronecker product.
@@ -723,25 +629,14 @@ impl TransitionDict {
         Ok(Self::new_validated(&normalized))
     }
 
-    /// Validate and construct a transition dictionary, inferring arity from its source labels.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the dictionary is empty, labels are invalid or have inconsistent arity, or a
-    /// supplied row is empty, invalid, or does not sum to one.
-    #[must_use]
+    /// Construct from validated, normalized transition rows.
     fn new_validated(transitions: &BTreeMap<String, BTreeMap<String, f64>>) -> Self {
-        assert!(
-            !transitions.is_empty(),
-            "TransitionDict: transitions cannot be empty"
-        );
         let arity = transitions
             .keys()
             .next()
             .expect("nonempty transition dictionary")
             .chars()
             .count();
-        assert!(arity > 0, "TransitionDict: state labels cannot be empty");
 
         let contains_wildcard = transitions.iter().any(|(source, row)| {
             source.contains('*') || row.keys().any(|destination| destination.contains('*'))
@@ -751,22 +646,10 @@ impl TransitionDict {
         }
 
         let mut computational_dependencies = vec![false; arity];
-        for (source, row) in transitions {
-            validate_transition_label(source, arity);
+        for source in transitions.keys() {
             for (leg, symbol) in source.chars().enumerate() {
                 computational_dependencies[leg] |= matches!(symbol, '0' | '1');
             }
-            for destination in row.keys() {
-                validate_transition_label(destination, arity);
-            }
-            let _ = WeightedSampler::new(row);
-        }
-
-        if arity == 1 {
-            assert!(
-                transitions.contains_key("0") == transitions.contains_key("1"),
-                "StateTransitionChannel: both '0' and '1' source rows are required when either is supplied. The channel performs MZ when it fires; even an explicit 'i->i': 1.0 row follows measurement and is not the identity quantum map"
-            );
         }
 
         Self {
@@ -809,21 +692,13 @@ impl TransitionDict {
         transitions: &BTreeMap<String, BTreeMap<String, f64>>,
         arity: usize,
     ) -> Self {
-        assert_eq!(
-            arity, 2,
-            "TransitionDict: '*' identity labels are supported only for two-qubit channels"
-        );
         let mut factor_rows: [BTreeMap<String, BTreeMap<String, f64>>; 2] =
             std::array::from_fn(|_| BTreeMap::new());
 
         for (source, row) in transitions {
-            let wildcard_position = transition_wildcard_position(source)
+            let wildcard_position = source
+                .find('*')
                 .expect("wildcard transition source must contain '*'");
-            validate_wildcard_transition_label(source, wildcard_position);
-            assert!(
-                !row.is_empty(),
-                "TransitionDict: transition row for {source:?} cannot be empty"
-            );
             let acted_position = 1 - wildcard_position;
             let source_state = source
                 .chars()
@@ -831,7 +706,6 @@ impl TransitionDict {
                 .expect("two-symbol wildcard source");
             let mut factor_row = BTreeMap::new();
             for (destination, probability) in row {
-                validate_wildcard_transition_label(destination, wildcard_position);
                 let destination_state = destination
                     .chars()
                     .nth(acted_position)
@@ -1168,7 +1042,7 @@ impl QubitTransitionWeightedSampler {
     }
 
     pub(crate) fn scale_probability(&mut self, scale: f64) {
-        self.probability = (self.probability * scale).clamp(0.0, 1.0);
+        self.probability *= scale;
     }
 }
 
@@ -1193,7 +1067,11 @@ fn parse_two_qubit_transition_state(label: &str) -> [QubitTransitionState; 2] {
 ///
 /// `transitions[xy][wz]` is `P(wz | xy)`, where every concrete symbol is one of `0`, `1`, or `L`.
 /// Thus there are nine possible source and destination labels, from `00` through `LL`. Supplied
-/// rows must sum to one; omitted source rows are identity. A `*` in the same position in a source
+/// rows must sum to one. Each supplied leakage pattern must include all computational
+/// completions: `0L` and `1L`, `L0` and `L1`, or all of `00`, `01`, `10`, and `11`.
+/// A selected channel measures a non-leaked leg only if it depends on that leg's computational
+/// state and a source row matches the pair's leakage pattern. Omitted patterns are identity
+/// without measurement. A `*` in the same position in a source
 /// and all its destinations is an identity wire that is neither measured nor otherwise resolved.
 /// Factorized rules for both legs, such as `*L` and `L*`, may coexist in one channel.
 #[derive(Clone, Debug)]
@@ -1241,7 +1119,7 @@ impl TwoQubitStateTransitionChannel {
     ///
     /// # Errors
     ///
-    /// Panics under the same probability and row-validation conditions as
+    /// Returns an error under the same probability and row-validation conditions as
     /// [`StateTransitionChannel::new`], or if a source or destination is not a two-symbol state.
     pub fn new(
         probability: f64,
@@ -1414,6 +1292,13 @@ pub(crate) enum SelectedP2TransitionStep {
 }
 
 impl P2TransitionWeightedStep {
+    pub(crate) fn probabilities(&self) -> [f64; 2] {
+        match self {
+            Self::Independent { first, second } => [first.probability(), second.probability()],
+            Self::Joint { probability, .. } => [*probability; 2],
+        }
+    }
+
     pub(crate) fn new(step: &P2TransitionStep) -> Self {
         match step {
             P2TransitionStep::Independent { first, second } => Self::Independent {
@@ -1455,7 +1340,7 @@ impl P2TransitionWeightedStep {
                 second.scale_probability(scale);
             }
             Self::Joint { probability, .. } => {
-                *probability = (*probability * scale).clamp(0.0, 1.0);
+                *probability *= scale;
             }
         }
     }
@@ -1501,7 +1386,10 @@ impl SelectedP2TransitionStep {
         }
     }
 
-    pub(crate) fn requires_computational_source(&self) -> [bool; 2] {
+    pub(crate) fn requires_computational_source(
+        &self,
+        sources: [Option<QubitTransitionState>; 2],
+    ) -> [bool; 2] {
         match self {
             Self::Independent { first, second } => [
                 first
@@ -1512,9 +1400,20 @@ impl SelectedP2TransitionStep {
                     .is_some_and(QubitTransitionWeightedSampler::has_computational_row),
             ],
             Self::Joint {
+                rows,
                 computational_dependencies,
-                ..
-            } => *computational_dependencies,
+            } => {
+                if rows.keys().any(|row| {
+                    (0..2).all(|leg| {
+                        (row[leg] == QubitTransitionState::Leakage)
+                            == (sources[leg] == Some(QubitTransitionState::Leakage))
+                    })
+                }) {
+                    *computational_dependencies
+                } else {
+                    [false; 2]
+                }
+            }
         }
     }
 
@@ -1780,7 +1679,7 @@ impl PauliLeakageWeightedSampler {
     }
 
     pub(crate) fn scale_probability(&mut self, scale: f64) {
-        self.probability = (self.probability * scale).clamp(0.0, 1.0);
+        self.probability *= scale;
     }
 }
 
@@ -1826,7 +1725,7 @@ impl TwoQubitPauliLeakageWeightedSampler {
     }
 
     pub(crate) fn scale_probability(&mut self, scale: f64) {
-        self.probability = (self.probability * scale).clamp(0.0, 1.0);
+        self.probability *= scale;
     }
 }
 
@@ -1841,6 +1740,13 @@ pub(crate) enum P2PauliLeakageWeightedStep {
 }
 
 impl P2PauliLeakageWeightedStep {
+    pub(crate) fn probabilities(&self) -> [f64; 2] {
+        match self {
+            Self::Independent { first, second } => [first.probability(), second.probability()],
+            Self::Joint(channel) => [channel.probability(); 2],
+        }
+    }
+
     pub(crate) fn new(step: &P2PauliLeakageStep) -> Self {
         match step {
             P2PauliLeakageStep::Independent { first, second } => Self::Independent {
@@ -2727,8 +2633,10 @@ mod tests {
 
     #[test]
     fn joint_two_qubit_transition_supports_all_qutrit_pair_labels() {
-        let transitions =
-            BTreeMap::from([("0L".to_string(), BTreeMap::from([("L1".to_string(), 1.0)]))]);
+        let transitions = BTreeMap::from([
+            ("0L".to_string(), BTreeMap::from([("L1".to_string(), 1.0)])),
+            ("1L".to_string(), BTreeMap::from([("1L".to_string(), 1.0)])),
+        ]);
         let channel = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap();
         let step = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel));
         let mut rng = NoiseRng::<PecosRng>::with_seed(42);
@@ -2759,7 +2667,10 @@ mod tests {
         let selected = step.select(&mut rng).unwrap();
 
         assert_eq!(channel.transitions(), &transitions);
-        assert_eq!(selected.requires_computational_source(), [false, false]);
+        assert_eq!(
+            selected.requires_computational_source([None, Some(QubitTransitionState::Leakage)]),
+            [false, false]
+        );
         assert_eq!(
             selected
                 .sample_known_destinations(&mut rng, [None, Some(QubitTransitionState::Leakage)],),
@@ -2861,13 +2772,25 @@ mod tests {
 
     #[test]
     fn transition_rejects_incomplete_computational_rows() {
-        let error =
-            StateTransitionChannel::from_transitions(1.0, &BTreeMap::from([("0->0".into(), 1.0)]))
-                .unwrap_err();
-        assert!(matches!(
-            error,
-            ChannelValidationError::IncompleteComputationalRows
-        ));
+        for (present, missing) in [("0", "1"), ("1", "0")] {
+            let error = StateTransitionChannel::from_transitions(
+                1.0,
+                &BTreeMap::from([(format!("{present}->{present}"), 1.0)]),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                ChannelValidationError::IncompleteComputationalRows(BTreeMap::from([(
+                    "C".into(),
+                    vec![missing.into()]
+                )]))
+            );
+            let message = error.to_string();
+            assert!(message.contains(&format!("pattern C: missing source rows {missing}")));
+            assert!(message.contains("performs MZ when it fires"));
+            assert!(message.contains("not the identity quantum map"));
+            assert!(message.contains(&format!("'{missing}->{missing}': 1.0")));
+        }
     }
 
     #[test]
@@ -2902,5 +2825,56 @@ mod tests {
             counts.iter().all(|&count| (2200..2800).contains(&count)),
             "{counts:?}"
         );
+    }
+    #[test]
+    fn unmeasured_joint_sources_resolve_only_matching_identity_factors() {
+        use QubitTransitionState::{Leakage, One, Zero};
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        for (rows, sources) in [
+            (
+                BTreeMap::from([("0L->LL".into(), 1.0), ("1L->1L".into(), 1.0)]),
+                [None, None],
+            ),
+            (
+                BTreeMap::from([("L0->LL".into(), 1.0), ("L1->L1".into(), 1.0)]),
+                [None, Some(Leakage)],
+            ),
+        ] {
+            let channel = TwoQubitStateTransitionChannel::from_transitions(1.0, &rows).unwrap();
+            let selected = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel))
+                .select(&mut rng)
+                .unwrap();
+            assert_eq!(selected.requires_computational_source(sources), [false; 2]);
+            assert_eq!(
+                selected.sample_known_destinations(&mut rng, sources),
+                sources
+            );
+        }
+        let identity =
+            TransitionDict::from_transitions(&BTreeMap::from([("L->L".into(), 1.0)])).unwrap();
+        let recover =
+            TransitionDict::from_transitions(&BTreeMap::from([("L->1".into(), 1.0)])).unwrap();
+        for dict in [
+            identity.tensor(&recover),
+            TransitionDict::from_transitions(&BTreeMap::from([("*L->*1".into(), 1.0)])).unwrap(),
+        ] {
+            let channel = TwoQubitStateTransitionChannel::from_transition_dict(1.0, &dict).unwrap();
+            let selected = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel))
+                .select(&mut rng)
+                .unwrap();
+            let sources = [None, Some(Leakage)];
+            assert_eq!(selected.requires_computational_source(sources), [false; 2]);
+            assert_eq!(
+                selected.sample_known_destinations(&mut rng, sources),
+                [None, Some(One)]
+            );
+            // The unmeasured first leg is preserved for either possible computational value.
+            for first in [Zero, One] {
+                assert_eq!(
+                    selected.sample_destinations(&mut rng, [first, Leakage]),
+                    [first, One]
+                );
+            }
+        }
     }
 }

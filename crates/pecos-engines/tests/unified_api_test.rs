@@ -32,9 +32,11 @@ fn test_noise_conversions() {
     // Test IntoNoiseModel trait
     use pecos_engines::noise::IntoNoiseModel;
 
-    let _: Box<dyn NoiseModel> = PassThroughNoise.into_noise_model();
-    let _: Box<dyn NoiseModel> = DepolarizingNoise { p: 0.01 }.into_noise_model();
-    let _: Box<dyn NoiseModel> = BiasedDepolarizingNoise { p: 0.01 }.into_noise_model();
+    let _: Box<dyn NoiseModel> = PassThroughNoise.into_noise_model().unwrap();
+    let _: Box<dyn NoiseModel> = DepolarizingNoise { p: 0.01 }.into_noise_model().unwrap();
+    let _: Box<dyn NoiseModel> = BiasedDepolarizingNoise { p: 0.01 }
+        .into_noise_model()
+        .unwrap();
     let _: Box<dyn NoiseModel> = Box::new(GeneralNoiseModelBuilder::new().build());
 }
 

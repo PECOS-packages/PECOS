@@ -648,11 +648,11 @@ impl PySimBuilder {
                     } else if let Ok(depolarizing) =
                         noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                     {
-                        sim_builder.noise(depolarizing.inner.clone())
+                        sim_builder.noise(depolarizing.validated_inner()?)
                     } else if let Ok(biased) =
                         noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                     {
-                        sim_builder.noise(biased.inner.clone())
+                        sim_builder.noise(biased.validated_inner()?)
                     } else {
                         return Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER));
                     };
@@ -840,11 +840,11 @@ impl PySimBuilder {
                         } else if let Ok(depolarizing) =
                             noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                         {
-                            Ok(sim_builder.noise(depolarizing.inner.clone()))
+                            Ok(sim_builder.noise(depolarizing.validated_inner()?))
                         } else if let Ok(biased) =
                             noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                         {
-                            Ok(sim_builder.noise(biased.inner.clone()))
+                            Ok(sim_builder.noise(biased.validated_inner()?))
                         } else {
                             Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                         }
@@ -1056,11 +1056,11 @@ impl PySimBuilder {
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(depolarizing.inner.clone()))
+                                Ok(sim_builder.noise(depolarizing.validated_inner()?))
                             } else if let Ok(biased) =
                                 noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(biased.inner.clone()))
+                                Ok(sim_builder.noise(biased.validated_inner()?))
                             } else {
                                 Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                             }
@@ -1259,11 +1259,11 @@ impl PySimBuilder {
                             } else if let Ok(depolarizing) =
                                 noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(depolarizing.inner.clone()))
+                                Ok(sim_builder.noise(depolarizing.validated_inner()?))
                             } else if let Ok(biased) =
                                 noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
                             {
-                                Ok(sim_builder.noise(biased.inner.clone()))
+                                Ok(sim_builder.noise(biased.validated_inner()?))
                             } else {
                                 Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                             }
@@ -1473,9 +1473,9 @@ fn apply_noise_to_facade(
         } else if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
             Ok(facade.noise(general.validated_inner()?))
         } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {
-            Ok(facade.noise(depolarizing.inner.clone()))
+            Ok(facade.noise(depolarizing.validated_inner()?))
         } else if let Ok(biased) = noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py) {
-            Ok(facade.noise(biased.inner.clone()))
+            Ok(facade.noise(biased.validated_inner()?))
         } else {
             Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
         }

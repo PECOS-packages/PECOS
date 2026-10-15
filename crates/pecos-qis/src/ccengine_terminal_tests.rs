@@ -490,9 +490,11 @@ fn scheduled_midshot_reset_discards_aborted_shot_and_reuses_worker() {
         engine.operation_trace_collector = None;
         let profile = ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap();
         let noise = if mode == ScheduledTransport::V4 {
-            ScheduledEventIdleZ::new(profile, |_| Ok(Box::new(GatesOnly))).into_noise_model()
+            ScheduledEventIdleZ::new(profile, |_| Ok(Box::new(GatesOnly)))
+                .into_noise_model()
+                .unwrap()
         } else {
-            profile.into_noise_model()
+            profile.into_noise_model().unwrap()
         };
         let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
         let stage = engine.start(()).unwrap();
@@ -1214,10 +1216,12 @@ fn deferred_read_quantum(mode: ScheduledTransport) -> pecos_engines::quantum_sys
             Ok(Box::new(Gates))
         })
         .into_noise_model()
+        .unwrap()
     } else if mode == ScheduledTransport::V3 {
         ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
             .unwrap()
             .into_noise_model()
+            .unwrap()
     } else {
         Box::new(pecos_engines::noise::PassThroughNoiseModel::default())
     };

@@ -1352,6 +1352,10 @@ class GeneralNoiseModelBuilder:
     leg is checked separately.
     """
 
+    def with_config_json(self, json: str) -> GeneralNoiseModelBuilder:
+        """Apply model JSON; schema and recorded setter errors raise ValueError."""
+        ...
+
     def with_p1_pauli_leakage_channels_before_gate(
         self, channels: list[PauliLeakageChannel]
     ) -> GeneralNoiseModelBuilder: ...

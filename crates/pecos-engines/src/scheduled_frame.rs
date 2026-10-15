@@ -44,7 +44,7 @@ impl From<ScheduledIdleZ> for ScheduledNoise {
     }
 }
 impl IntoNoiseModel for ScheduledIdleZ {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
         self.0.into_noise_model()
     }
 }
@@ -185,7 +185,7 @@ impl From<ScheduledLocalNoise> for ScheduledNoise {
     }
 }
 impl IntoNoiseModel for ScheduledLocalNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
         ScheduledNoise::from(self).into_noise_model()
     }
 }
@@ -325,8 +325,8 @@ impl ScheduledNoise {
     }
 }
 impl IntoNoiseModel for ScheduledNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        Box::new(self.build_model())
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
+        Ok(Box::new(self.build_model()))
     }
 }
 pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> {

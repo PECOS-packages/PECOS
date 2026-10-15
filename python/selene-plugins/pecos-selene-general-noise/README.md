@@ -85,7 +85,7 @@ From the PECOS repository root:
 ```bash
 uv run --package pecos-selene-general-noise --extra test pytest \
   python/selene-plugins/pecos-selene-general-noise/tests
-cargo test -p pecos-selene-general-noise
+cargo test --release -p pecos-selene-general-noise-adapter
 ```
 
 
@@ -117,3 +117,12 @@ The corresponding `add_*` methods append one hook. Outer probabilities use the
 site scale and overall scale; independent legs are checked separately. Python
 validates shape and probabilities; native channel constructors validate labels
 and rows and report configuration errors at plugin initialization.
+
+## Composing a Rust plugin
+
+The reusable Selene bridge lives in the `pecos-selene-general-noise-adapter` crate
+(`crates/pecos-selene-general-noise-adapter`); this plugin only exports it to
+Selene. Downstream Rust plugins depend on that crate and export their own
+factory. The engine-owned `pecos_engines::GeneralNoiseConfig` supplies the model
+parameters; the adapter owns local-crosstalk groups. See its README for the typed
+constructor and JSON envelope used at plugin boundaries.

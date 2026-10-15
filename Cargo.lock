@@ -4769,6 +4769,15 @@ name = "pecos-selene-general-noise"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
+ "pecos-selene-general-noise-adapter",
+ "selene-core",
+]
+
+[[package]]
+name = "pecos-selene-general-noise-adapter"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
  "nalgebra",
  "num-complex 0.4.6",
  "pecos-core",

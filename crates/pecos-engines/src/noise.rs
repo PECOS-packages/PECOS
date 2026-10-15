@@ -31,7 +31,9 @@ pub use self::biased_depolarizing::{
     BiasedDepolarizingNoiseModel, BiasedDepolarizingNoiseModelBuilder,
 };
 pub use self::depolarizing::{DepolarizingNoiseModel, DepolarizingNoiseModelBuilder};
-pub use self::general::{GeneralNoiseModel, GeneralNoiseModelBuilder, PauliWithAngleScaling};
+pub use self::general::{
+    GeneralNoiseConfig, GeneralNoiseModel, GeneralNoiseModelBuilder, PauliWithAngleScaling,
+};
 pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};
 pub use self::utils::{NoiseUtils, ProbabilityValidator};
@@ -86,11 +88,14 @@ pub trait NoiseModel:
 
 /// Trait for types that can be converted into a noise model
 ///
-/// This trait enables lazy evaluation by storing a closure that builds
-/// the noise model when needed.
+/// This trait enables builders to construct the noise model when needed and
+/// report construction errors to the caller.
 pub trait IntoNoiseModel: Send + Sync {
-    /// Convert into a boxed noise model
-    fn into_noise_model(self) -> Box<dyn NoiseModel>;
+    /// Convert into a boxed noise model.
+    ///
+    /// # Errors
+    /// Returns an error if the implementation rejects the model configuration.
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError>;
 }
 
 // Register traits with dyn_clone

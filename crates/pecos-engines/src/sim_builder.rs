@@ -49,7 +49,7 @@ trait BoxedQuantumEngineBuilder: Send {
 
 /// Trait for building boxed noise models
 trait BoxedNoiseModelBuilder: Send {
-    fn build_boxed(self: Box<Self>) -> Box<dyn NoiseModel>;
+    fn build_boxed(self: Box<Self>) -> Result<Box<dyn NoiseModel>, PecosError>;
 }
 
 /// Wrapper that converts any `ClassicalControlEngineBuilder` to `BoxedClassicalEngineBuilder`
@@ -96,7 +96,7 @@ impl<N> BoxedNoiseModelBuilder for NoiseModelWrapper<N>
 where
     N: IntoNoiseModel + Send + 'static,
 {
-    fn build_boxed(self: Box<Self>) -> Box<dyn NoiseModel> {
+    fn build_boxed(self: Box<Self>) -> Result<Box<dyn NoiseModel>, PecosError> {
         self.noise.into_noise_model()
     }
 }
@@ -320,7 +320,7 @@ impl SimBuilder {
 
         // Build noise model (with default if not set)
         let noise_model = if let Some(builder) = self.noise_builder {
-            builder.build_boxed()
+            builder.build_boxed()?
         } else {
             // Default: no noise
             Box::new(PassThroughNoiseModel::new())
@@ -469,21 +469,23 @@ pub struct BiasedDepolarizingNoise {
 // ============================================================================
 
 impl crate::noise::IntoNoiseModel for PassThroughNoise {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(crate::noise::PassThroughNoiseModel::new())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(crate::noise::PassThroughNoiseModel::new()))
     }
 }
 
 impl crate::noise::IntoNoiseModel for DepolarizingNoise {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(crate::noise::DepolarizingNoiseModel::new_uniform(self.p))
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(
+            crate::noise::DepolarizingNoiseModel::try_new_uniform(self.p)?,
+        ))
     }
 }
 
 impl crate::noise::IntoNoiseModel for BiasedDepolarizingNoise {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(crate::noise::BiasedDepolarizingNoiseModel::new_uniform(
-            self.p,
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(
+            crate::noise::BiasedDepolarizingNoiseModel::try_new_uniform(self.p)?,
         ))
     }
 }

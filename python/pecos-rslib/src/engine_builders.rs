@@ -22,8 +22,8 @@ type RustSparseStabEngineBuilder = SparseStabEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
 use pecos_engines::noise::{
-    P2PauliLeakageStep, P2TransitionStep, PauliLeakageChannel, PauliLeakageDict,
-    StateTransitionChannel, TransitionDict, TwoQubitPauliLeakageChannel,
+    GeneralNoiseConfig, P2PauliLeakageStep, P2TransitionStep, PauliLeakageChannel,
+    PauliLeakageDict, StateTransitionChannel, TransitionDict, TwoQubitPauliLeakageChannel,
     TwoQubitStateTransitionChannel,
 };
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError};
@@ -1430,10 +1430,17 @@ pub struct PyGeneralNoiseModelBuilder {
 }
 
 impl PyGeneralNoiseModelBuilder {
+    fn from_setter(inner: GeneralNoiseModelBuilder) -> PyResult<Self> {
+        if let Some(message) = inner.setter_error() {
+            return Err(pyo3::exceptions::PyValueError::new_err(message.to_owned()));
+        }
+        Ok(Self { inner })
+    }
+
     pub(crate) fn validated_inner(&self) -> PyResult<GeneralNoiseModelBuilder> {
         self.inner
             .validate_configuration()
-            .map_err(|message| pyo3::exceptions::PyValueError::new_err(message.to_string()))?;
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         Ok(self.inner.clone())
     }
 }
@@ -1445,6 +1452,20 @@ impl PyGeneralNoiseModelBuilder {
         Self {
             inner: GeneralNoiseModelBuilder::new(),
         }
+    }
+
+    /// Apply the engine-owned JSON model schema to a new builder.
+    ///
+    /// Raises `ValueError` for schema or setter errors, including an error already
+    /// recorded on this builder. Cross-field validation remains deferred to execution.
+    fn with_config_json(&self, json: &str) -> PyResult<Self> {
+        let inner = Self::from_setter(self.inner.clone())?.inner;
+        let config = GeneralNoiseConfig::from_json(json)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let inner = config
+            .apply_to(inner)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Self::from_setter(inner)
     }
 
     /// Fill unset parameters with the legacy demonstration preset.
@@ -1464,73 +1485,53 @@ impl PyGeneralNoiseModelBuilder {
     ///   branches cause no leakage.
     /// * ``p1_seepage_prob = p2_seepage_prob = 0.5`` applies only to qubits that are already
     ///   leaked.
-    fn auto(&self) -> Self {
-        Self {
-            inner: self.inner.clone().auto(),
-        }
+    fn auto(&self) -> PyResult<Self> {
+        Self::from_setter(self.inner.clone().auto())
     }
 
     /// Set single-qubit gate error probability
     fn with_p1(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p1(p),
-        })
+        Self::from_setter(self.inner.clone().with_p1(p))
     }
 
     /// Set two-qubit gate error probability
     fn with_p2(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p2(p),
-        })
+        Self::from_setter(self.inner.clone().with_p2(p))
     }
 
     /// Set preparation error probability
     fn with_p_prep(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_prep(p),
-        })
+        Self::from_setter(self.inner.clone().with_p_prep(p))
     }
 
     /// Set measurement error probability for |0⟩ state
     fn with_p_meas_0(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_0(p),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_0(p))
     }
 
     /// Set measurement error probability for |1⟩ state
     fn with_p_meas_1(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_1(p),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_1(p))
     }
 
     /// Set seed for reproducibility
     fn with_seed(&self, seed: u64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_seed(seed),
-        })
+        Self::from_setter(self.inner.clone().with_seed(seed))
     }
 
     /// Set global scale factor
     fn with_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_scale(scale))
     }
 
     /// Set leakage scale factor
     fn with_leakage_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_leakage_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_leakage_scale(scale))
     }
 
     /// Set emission scale factor
     fn with_emission_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_emission_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_emission_scale(scale))
     }
 
     /// Set single-qubit Pauli error model
@@ -1540,9 +1541,7 @@ impl PyGeneralNoiseModelBuilder {
     ) -> PyResult<Self> {
         use std::collections::BTreeMap;
         let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
-        Ok(Self {
-            inner: self.inner.clone().with_p1_pauli_model(&btree_map),
-        })
+        Self::from_setter(self.inner.clone().with_p1_pauli_model(&btree_map))
     }
 
     /// Replace the ordered Pauli-plus-leakage stack before single-qubit gates.
@@ -1554,12 +1553,11 @@ impl PyGeneralNoiseModelBuilder {
             .into_iter()
             .map(|channel| channel.inner)
             .collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p1_pauli_leakage_channels_before_gate(&channels),
-        })
+        )
     }
 
     /// Append one Pauli-plus-leakage channel before single-qubit gates.
@@ -1567,12 +1565,11 @@ impl PyGeneralNoiseModelBuilder {
         &self,
         channel: &PyPauliLeakageChannel,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p1_pauli_leakage_channel_before_gate(&channel.inner),
-        })
+        )
     }
 
     /// Replace the ordered Pauli-plus-leakage stack after single-qubit noise sites.
@@ -1584,12 +1581,11 @@ impl PyGeneralNoiseModelBuilder {
             .into_iter()
             .map(|channel| channel.inner)
             .collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p1_pauli_leakage_channels_after_gate(&channels),
-        })
+        )
     }
 
     /// Append one Pauli-plus-leakage channel after single-qubit noise sites.
@@ -1597,12 +1593,11 @@ impl PyGeneralNoiseModelBuilder {
         &self,
         channel: &PyPauliLeakageChannel,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p1_pauli_leakage_channel_after_gate(&channel.inner),
-        })
+        )
     }
 
     /// Replace the ordered transition-channel stack before each single-qubit gate.
@@ -1614,12 +1609,11 @@ impl PyGeneralNoiseModelBuilder {
             .into_iter()
             .map(|channel| channel.inner)
             .collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p1_transition_channels_before_gate(&channels),
-        })
+        )
     }
 
     /// Append one transition channel before each single-qubit gate.
@@ -1627,12 +1621,11 @@ impl PyGeneralNoiseModelBuilder {
         &self,
         channel: &PyStateTransitionChannel,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p1_transition_channel_before_gate(&channel.inner),
-        })
+        )
     }
 
     /// Replace the ordered transition-channel stack after each single-qubit noise site.
@@ -1644,12 +1637,11 @@ impl PyGeneralNoiseModelBuilder {
             .into_iter()
             .map(|channel| channel.inner)
             .collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p1_transition_channels_after_gate(&channels),
-        })
+        )
     }
 
     /// Append one transition channel after each single-qubit noise site.
@@ -1657,12 +1649,11 @@ impl PyGeneralNoiseModelBuilder {
         &self,
         channel: &PyStateTransitionChannel,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p1_transition_channel_after_gate(&channel.inner),
-        })
+        )
     }
 
     /// Set two-qubit Pauli error model
@@ -1672,9 +1663,7 @@ impl PyGeneralNoiseModelBuilder {
     ) -> PyResult<Self> {
         use std::collections::BTreeMap;
         let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
-        Ok(Self {
-            inner: self.inner.clone().with_p2_pauli_model(&btree_map),
-        })
+        Self::from_setter(self.inner.clone().with_p2_pauli_model(&btree_map))
     }
 
     /// Replace the ordered Pauli-plus-leakage step stack before two-qubit gates.
@@ -1683,22 +1672,20 @@ impl PyGeneralNoiseModelBuilder {
         steps: Vec<PyP2PauliLeakageStep>,
     ) -> PyResult<Self> {
         let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p2_pauli_leakage_steps_before_gate(&steps),
-        })
+        )
     }
 
     /// Append one Pauli-plus-leakage step before two-qubit gates.
     fn add_p2_pauli_leakage_step_before_gate(&self, step: &PyP2PauliLeakageStep) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p2_pauli_leakage_step_before_gate(&step.inner),
-        })
+        )
     }
 
     /// Append the same independently drawn single-qubit channel before both gate legs.
@@ -1706,12 +1693,11 @@ impl PyGeneralNoiseModelBuilder {
         &self,
         channel: &PyPauliLeakageChannel,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p2_pauli_leakage_channel_before_gate(&channel.inner),
-        })
+        )
     }
 
     /// Replace the ordered Pauli-plus-leakage step stack after two-qubit noise sites.
@@ -1720,22 +1706,20 @@ impl PyGeneralNoiseModelBuilder {
         steps: Vec<PyP2PauliLeakageStep>,
     ) -> PyResult<Self> {
         let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p2_pauli_leakage_steps_after_gate(&steps),
-        })
+        )
     }
 
     /// Append one Pauli-plus-leakage step after two-qubit noise sites.
     fn add_p2_pauli_leakage_step_after_gate(&self, step: &PyP2PauliLeakageStep) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p2_pauli_leakage_step_after_gate(&step.inner),
-        })
+        )
     }
 
     /// Append the same independently drawn single-qubit channel after both gate legs.
@@ -1743,12 +1727,11 @@ impl PyGeneralNoiseModelBuilder {
         &self,
         channel: &PyPauliLeakageChannel,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p2_pauli_leakage_channel_after_gate(&channel.inner),
-        })
+        )
     }
 
     /// Replace the ordered transition-step stack before each two-qubit gate.
@@ -1757,30 +1740,26 @@ impl PyGeneralNoiseModelBuilder {
         steps: Vec<PyP2TransitionStep>,
     ) -> PyResult<Self> {
         let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p2_transition_steps_before_gate(&steps),
-        })
+        )
     }
 
     /// Append an independent-leg or joint transition step before each two-qubit gate.
     fn add_p2_transition_step_before_gate(&self, step: &PyP2TransitionStep) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p2_transition_step_before_gate(&step.inner),
-        })
+        )
     }
 
     /// Append a single-qubit-per-leg or joint channel before each two-qubit gate.
     fn add_p2_transition_channel_before_gate(&self, channel: &Bound<'_, PyAny>) -> PyResult<Self> {
         let step = extract_p2_transition_channel(channel)?;
-        Ok(Self {
-            inner: self.inner.clone().add_p2_transition_step_before_gate(&step),
-        })
+        Self::from_setter(self.inner.clone().add_p2_transition_step_before_gate(&step))
     }
 
     /// Replace the ordered transition-step stack after each two-qubit noise site.
@@ -1789,58 +1768,46 @@ impl PyGeneralNoiseModelBuilder {
         steps: Vec<PyP2TransitionStep>,
     ) -> PyResult<Self> {
         let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .with_p2_transition_steps_after_gate(&steps),
-        })
+        )
     }
 
     /// Append an independent-leg or joint transition step after each two-qubit noise site.
     fn add_p2_transition_step_after_gate(&self, step: &PyP2TransitionStep) -> PyResult<Self> {
-        Ok(Self {
-            inner: self
-                .inner
+        Self::from_setter(
+            self.inner
                 .clone()
                 .add_p2_transition_step_after_gate(&step.inner),
-        })
+        )
     }
 
     /// Append a single-qubit-per-leg or joint channel after each two-qubit site.
     fn add_p2_transition_channel_after_gate(&self, channel: &Bound<'_, PyAny>) -> PyResult<Self> {
         let step = extract_p2_transition_channel(channel)?;
-        Ok(Self {
-            inner: self.inner.clone().add_p2_transition_step_after_gate(&step),
-        })
+        Self::from_setter(self.inner.clone().add_p2_transition_step_after_gate(&step))
     }
 
     /// Set average single-qubit gate error probability
     fn with_average_p1(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_average_p1(p),
-        })
+        Self::from_setter(self.inner.clone().with_average_p1(p))
     }
 
     /// Set average two-qubit gate error probability
     fn with_average_p2(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_average_p2(p),
-        })
+        Self::from_setter(self.inner.clone().with_average_p2(p))
     }
 
     /// Set measurement error probability (symmetric)
     fn with_p_meas(&self, p: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas(p),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas(p))
     }
 
     /// Set measurement error probability (asymmetric)
     fn with_measurement_probability(&self, p0: f64, p1: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1))
     }
 
     /// Add a noiseless gate
@@ -1849,16 +1816,12 @@ impl PyGeneralNoiseModelBuilder {
         let gate_type = gate_name.parse::<GateType>().map_err(|_| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid gate type: {gate_name}"))
         })?;
-        Ok(Self {
-            inner: self.inner.clone().with_noiseless_gate(gate_type),
-        })
+        Self::from_setter(self.inner.clone().with_noiseless_gate(gate_type))
     }
 
     /// Set seepage probability
     fn with_seepage_prob(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_seepage_prob(prob),
-        })
+        Self::from_setter(self.inner.clone().with_seepage_prob(prob))
     }
 
     /// Set the DEM-style linear idle-noise family.
@@ -1880,9 +1843,7 @@ impl PyGeneralNoiseModelBuilder {
         rate: f64,
         model: std::collections::BTreeMap<String, f64>,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_idle_linear(rate, &model),
-        })
+        Self::from_setter(self.inner.clone().with_p_idle_linear(rate, &model))
     }
 
     /// Set the DEM-style stochastic sine-squared idle-noise family.
@@ -1912,9 +1873,7 @@ impl PyGeneralNoiseModelBuilder {
         rate: f64,
         model: std::collections::BTreeMap<String, f64>,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_idle_sin_squared(rate, &model),
-        })
+        Self::from_setter(self.inner.clone().with_p_idle_sin_squared(rate, &model))
     }
 
     /// Set the DEM-style coherent idle-noise family.
@@ -1956,51 +1915,37 @@ impl PyGeneralNoiseModelBuilder {
                 ("RZ".to_string(), 1.0),
             ])
         });
-        Ok(Self {
-            inner: self.inner.clone().with_p_idle_coherent(rate, &model),
-        })
+        Self::from_setter(self.inner.clone().with_p_idle_coherent(rate, &model))
     }
 
     /// Set idle scale factor
     fn with_idle_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_idle_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_idle_scale(scale))
     }
 
     /// Set the preparation leakage ratio
     fn with_prep_leak_ratio(&self, ratio: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_prep_leak_ratio(ratio),
-        })
+        Self::from_setter(self.inner.clone().with_prep_leak_ratio(ratio))
     }
 
     /// Set the probability of crosstalk during initialization operations
     fn with_p_prep_crosstalk(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_prep_crosstalk(prob),
-        })
+        Self::from_setter(self.inner.clone().with_p_prep_crosstalk(prob))
     }
 
     /// Set the scaling factor for initialization errors
     fn with_prep_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_prep_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_prep_scale(scale))
     }
 
     /// Set the scaling factor for initialization crosstalk probability
     fn with_p_prep_crosstalk_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_prep_crosstalk_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_p_prep_crosstalk_scale(scale))
     }
 
     /// Set the emission-to-absorption ratio for single-qubit gates
     fn with_p1_emission_ratio(&self, ratio: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p1_emission_ratio(ratio),
-        })
+        Self::from_setter(self.inner.clone().with_p1_emission_ratio(ratio))
     }
 
     /// Set the emission model for single-qubit gates
@@ -2010,44 +1955,32 @@ impl PyGeneralNoiseModelBuilder {
     ) -> PyResult<Self> {
         use std::collections::BTreeMap;
         let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
-        Ok(Self {
-            inner: self.inner.clone().with_p1_emission_model(&btree_map),
-        })
+        Self::from_setter(self.inner.clone().with_p1_emission_model(&btree_map))
     }
 
     /// Set the seepage probability for single-qubit gates
     fn with_p1_seepage_prob(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p1_seepage_prob(prob),
-        })
+        Self::from_setter(self.inner.clone().with_p1_seepage_prob(prob))
     }
 
     /// Set the scaling factor for single-qubit gate errors
     fn with_p1_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p1_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_p1_scale(scale))
     }
 
     /// Set angle-dependent parameters for two-qubit gates
     fn with_p2_angle_params(&self, a: f64, b: f64, c: f64, d: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p2_angle_params(a, b, c, d),
-        })
+        Self::from_setter(self.inner.clone().with_p2_angle_params(a, b, c, d))
     }
 
     /// Set angle-dependent power for two-qubit gates
     fn with_p2_angle_power(&self, power: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p2_angle_power(power),
-        })
+        Self::from_setter(self.inner.clone().with_p2_angle_power(power))
     }
 
     /// Set the emission-to-absorption ratio for two-qubit gates
     fn with_p2_emission_ratio(&self, ratio: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p2_emission_ratio(ratio),
-        })
+        Self::from_setter(self.inner.clone().with_p2_emission_ratio(ratio))
     }
 
     /// Set the emission model for two-qubit gates
@@ -2057,16 +1990,12 @@ impl PyGeneralNoiseModelBuilder {
     ) -> PyResult<Self> {
         use std::collections::BTreeMap;
         let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
-        Ok(Self {
-            inner: self.inner.clone().with_p2_emission_model(&btree_map),
-        })
+        Self::from_setter(self.inner.clone().with_p2_emission_model(&btree_map))
     }
 
     /// Set the seepage probability for two-qubit gates
     fn with_p2_seepage_prob(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p2_seepage_prob(prob),
-        })
+        Self::from_setter(self.inner.clone().with_p2_seepage_prob(prob))
     }
 
     /// Set the duration of the idle-noise site applied to each qubit after a two-qubit gate.
@@ -2079,37 +2008,27 @@ impl PyGeneralNoiseModelBuilder {
     /// idle noise; the equivalent is
     /// `with_p_idle_linear(0.01, {"Z": 1.0}).with_idle_after_2q(1.0)`.
     fn with_idle_after_2q(&self, duration: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_idle_after_2q(duration),
-        })
+        Self::from_setter(self.inner.clone().with_idle_after_2q(duration))
     }
 
     /// Set the scaling factor for two-qubit gate errors
     fn with_p2_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p2_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_p2_scale(scale))
     }
 
     /// Set the probability of crosstalk during measurement operations
     fn with_p_meas_crosstalk(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_crosstalk(prob),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_crosstalk(prob))
     }
 
     /// Set the probability of global crosstalk during measurement operations
     fn with_p_meas_crosstalk_global(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_crosstalk_global(prob),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_crosstalk_global(prob))
     }
 
     /// Set the probability of local crosstalk during measurement operations
     fn with_p_meas_crosstalk_local(&self, prob: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_crosstalk_local(prob),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_crosstalk_local(prob))
     }
 
     /// Set the transition model for measurement crosstalk
@@ -2119,24 +2038,26 @@ impl PyGeneralNoiseModelBuilder {
     ) -> PyResult<Self> {
         use std::collections::BTreeMap;
         let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_crosstalk_model(&btree_map),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_crosstalk_model(&btree_map))
     }
 
     /// Set the scaling factor for measurement errors
     fn with_meas_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_meas_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_meas_scale(scale))
     }
 
     /// Set the scaling factor for measurement crosstalk probability
     fn with_p_meas_crosstalk_scale(&self, scale: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.clone().with_p_meas_crosstalk_scale(scale),
-        })
+        Self::from_setter(self.inner.clone().with_p_meas_crosstalk_scale(scale))
     }
+}
+
+pub(crate) fn noise_configuration_error(error: pecos_core::errors::PecosError) -> PyErr {
+    let message = match error {
+        pecos_core::errors::PecosError::Input(message) => message,
+        error => error.to_string(),
+    };
+    pyo3::exceptions::PyValueError::new_err(message)
 }
 
 /// Python wrapper for `DepolarizingNoiseModelBuilder`
@@ -2144,6 +2065,15 @@ impl PyGeneralNoiseModelBuilder {
 #[derive(Clone)]
 pub struct PyDepolarizingNoiseModelBuilder {
     pub(crate) inner: DepolarizingNoiseModelBuilder,
+}
+
+impl PyDepolarizingNoiseModelBuilder {
+    pub(crate) fn validated_inner(&self) -> PyResult<DepolarizingNoiseModelBuilder> {
+        self.inner
+            .validate_configuration()
+            .map_err(noise_configuration_error)?;
+        Ok(self.inner.clone())
+    }
 }
 
 #[pymethods]
@@ -2203,6 +2133,15 @@ impl PyDepolarizingNoiseModelBuilder {
 #[derive(Clone)]
 pub struct PyBiasedDepolarizingNoiseModelBuilder {
     pub(crate) inner: BiasedDepolarizingNoiseModelBuilder,
+}
+
+impl PyBiasedDepolarizingNoiseModelBuilder {
+    pub(crate) fn validated_inner(&self) -> PyResult<BiasedDepolarizingNoiseModelBuilder> {
+        self.inner
+            .validate_configuration()
+            .map_err(noise_configuration_error)?;
+        Ok(self.inner.clone())
+    }
 }
 
 #[pymethods]

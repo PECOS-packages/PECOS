@@ -51,7 +51,8 @@ fn frame(gates: &[Gate], metadata: bool) -> ByteMessage {
 fn setup(builder: GeneralNoiseModelBuilder, seed: u64) -> QuantumSystem {
     let noise = RuntimeNoise::new(builder, 2, FrameLimits::default())
         .unwrap()
-        .into_noise_model();
+        .into_noise_model()
+        .unwrap();
     let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
     system.set_seed(seed);
     system.begin_shot(context(0)).unwrap();
@@ -329,7 +330,10 @@ fn invalid_suffixes_versions_ids_profiles_and_budgets_reject_before_prefix_effec
         },
     )
     .unwrap();
-    let mut limited = QuantumSystem::new(cfg.into_noise_model(), Box::new(StateVecEngine::new(2)));
+    let mut limited = QuantumSystem::new(
+        cfg.into_noise_model().unwrap(),
+        Box::new(StateVecEngine::new(2)),
+    );
     limited.begin_shot(context(0)).unwrap();
     assert!(limited.process(good).is_err()); // two-record bound >48
     assert_eq!(
@@ -419,7 +423,7 @@ fn errors_and_failed_reset_poison_owner_and_clones() {
         fail_reset: fail_reset.clone(),
     };
     let cfg = RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default()).unwrap();
-    let mut system = QuantumSystem::new(cfg.into_noise_model(), Box::new(sim));
+    let mut system = QuantumSystem::new(cfg.into_noise_model().unwrap(), Box::new(sim));
     system.begin_shot(context(0)).unwrap();
     let msg = message(&[Gate::x(&[0])]);
     assert!(system.process(msg.clone()).is_err());
@@ -727,7 +731,8 @@ fn capacity_edges_and_mutable_access_require_explicit_readmission() {
     let mut unsupported_sim = QuantumSystem::new(
         RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default())
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StabilizerEngine::new(2)),
     );
     unsupported_sim.begin_shot(context(0)).unwrap();
@@ -739,7 +744,8 @@ fn capacity_edges_and_mutable_access_require_explicit_readmission() {
     let mut too_small = QuantumSystem::new(
         RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default())
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     too_small.begin_shot(context(0)).unwrap();
@@ -787,7 +793,8 @@ fn metadata_preserves_consecutive_measurement_sampling() {
         for metadata in [false, true] {
             let noise = RuntimeNoise::new(GeneralNoiseModel::builder(), 4, FrameLimits::default())
                 .unwrap()
-                .into_noise_model();
+                .into_noise_model()
+                .unwrap();
             let mut actual = QuantumSystem::new(noise, Box::new(StateVecEngine::new(4)));
             actual.set_seed(seed);
             actual.begin_shot(context(0)).unwrap();
@@ -840,7 +847,8 @@ fn legacy_inputs_reject_undersized_simulator_before_mutation() {
         FrameLimits::default(),
     )
     .unwrap()
-    .into_noise_model();
+    .into_noise_model()
+    .unwrap();
     let mut simulator = StateVecEngine::new(1);
     simulator.process(message(&[Gate::x(&[0])])).unwrap();
     let mut system = QuantumSystem::new(noise, Box::new(simulator));
@@ -890,7 +898,7 @@ fn caught_execution_and_reset_panics_preserve_poison_in_clones() {
         panic_reset: panic_reset.clone(),
     };
     let cfg = RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default()).unwrap();
-    let mut system = QuantumSystem::new(cfg.into_noise_model(), Box::new(sim));
+    let mut system = QuantumSystem::new(cfg.into_noise_model().unwrap(), Box::new(sim));
     system.begin_shot(context(0)).unwrap();
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -945,8 +953,10 @@ fn expansion_admission_accounts_for_persistent_crosstalk_victims() {
             },
         )
         .unwrap();
-        let mut system =
-            QuantumSystem::new(cfg.into_noise_model(), Box::new(StateVecEngine::new(16)));
+        let mut system = QuantumSystem::new(
+            cfg.into_noise_model().unwrap(),
+            Box::new(StateVecEngine::new(16)),
+        );
         system.set_seed(29);
         system.begin_shot(context(0)).unwrap();
         system.process(message(&prepare)).unwrap();
@@ -1549,7 +1559,8 @@ fn maximum_frame_hook_yields_and_expansion_fit_derived_budgets() {
                 },
             )
             .unwrap()
-            .into_noise_model();
+            .into_noise_model()
+            .unwrap();
             let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
             system.set_seed(17);
             system.begin_shot(context(0)).unwrap();
@@ -1589,4 +1600,97 @@ fn maximum_frame_hook_yields_and_expansion_fit_derived_budgets() {
             vec![0]
         );
     }
+}
+
+#[test]
+fn sim_builder_reports_recorded_noise_setter_error() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(GeneralNoiseModelBuilder::new().with_p1(1.5))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(matches!(error, PecosError::Input(message)
+        if message == "Probability must be between 0 and 1, got 1.5"));
+}
+
+#[test]
+fn sim_builder_reports_depolarizing_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(DepolarizingNoise { p: 1.5 })
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+    );
+}
+
+#[test]
+fn sim_builder_reports_biased_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(BiasedDepolarizingNoise { p: -0.1 })
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+    );
+}
+
+#[test]
+fn sim_builder_reports_depolarizing_unset() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(noise::DepolarizingNoiseModelBuilder::new().with_p_prep(0.0))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Measurement probability must be set")
+    );
+}
+
+#[test]
+fn sim_builder_reports_biased_unset() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(noise::BiasedDepolarizingNoiseModelBuilder::new().with_p_prep(0.0))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Measurement 0->1 flip probability must be set")
+    );
+}
+
+#[test]
+fn sim_builder_reports_depolarizing_builder_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(noise::DepolarizingNoiseModelBuilder::new().with_uniform_probability(f64::NAN))
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+    );
+}
+
+#[test]
+fn sim_builder_reports_biased_builder_probability() {
+    let error = sim_builder()
+        .classical(ScriptBuilder(script(false)))
+        .noise(
+            noise::BiasedDepolarizingNoiseModelBuilder::new()
+                .with_uniform_probability(f64::INFINITY),
+        )
+        .build()
+        .err()
+        .expect("invalid noise must fail to build");
+    assert!(
+        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+    );
 }

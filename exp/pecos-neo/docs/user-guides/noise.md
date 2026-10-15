@@ -79,7 +79,7 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     .with_p1(0.001).with_p2(0.01)
-    .with_idle_t1_t2(50e-6, 30e-6)
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap()
     .with_p_meas_symmetric(0.02)
     .build();
 ```

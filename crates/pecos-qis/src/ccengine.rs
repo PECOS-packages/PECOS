@@ -911,29 +911,29 @@ impl QisEngine {
                         }
                         QuantumOp::RX(angle, qubit) => {
                             builder.rx(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RY(angle, qubit) => {
                             builder.ry(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RZ(angle, qubit) => {
                             builder.rz(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RXY(theta, phi, qubit) => {
                             builder.rxy1q(
-                                Angle64::from_radians(*theta),
-                                Angle64::from_radians(*phi),
+                                Angle64::try_from_radians(*theta)?,
+                                Angle64::try_from_radians(*phi)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
@@ -968,8 +968,8 @@ impl QisEngine {
                         }
                         QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
                             builder.rxyxy2q(
-                                Angle64::from_radians(*theta),
-                                Angle64::from_radians(*phi),
+                                Angle64::try_from_radians(*theta)?,
+                                Angle64::try_from_radians(*phi)?,
                                 &[(
                                     self.mapped_qubit(*qubit1, qop)?,
                                     self.mapped_qubit(*qubit2, qop)?,
@@ -979,7 +979,7 @@ impl QisEngine {
                         }
                         QuantumOp::RZZ(angle, qubit1, qubit2) => {
                             builder.rzz(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[(
                                     self.mapped_qubit(*qubit1, qop)?,
                                     self.mapped_qubit(*qubit2, qop)?,
@@ -988,6 +988,7 @@ impl QisEngine {
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::CRZ(angle, control, target) => {
+                            Angle64::try_from_radians(*angle)?;
                             let control = self.mapped_qubit(*control, qop)?;
                             let target = self.mapped_qubit(*target, qop)?;
                             let gates = pecos_core::controlled_rotations::lower_crz(
@@ -1177,21 +1178,21 @@ impl QisEngine {
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RX(angle, qubit) => {
-                        builder.rx(Angle64::from_radians(angle), &[qubit]);
+                        builder.rx(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RY(angle, qubit) => {
-                        builder.ry(Angle64::from_radians(angle), &[qubit]);
+                        builder.ry(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZ(angle, qubit) => {
-                        builder.rz(Angle64::from_radians(angle), &[qubit]);
+                        builder.rz(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RXY(theta, phi, qubit) => {
                         builder.rxy1q(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
+                            Angle64::try_from_radians(theta)?,
+                            Angle64::try_from_radians(phi)?,
                             &[qubit],
                         );
                         gate_metadata.push(metadata);
@@ -1220,17 +1221,18 @@ impl QisEngine {
                     }
                     QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
                         builder.rxyxy2q(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
+                            Angle64::try_from_radians(theta)?,
+                            Angle64::try_from_radians(phi)?,
                             &[(qubit1, qubit2)],
                         );
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                        builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
+                        builder.rzz(Angle64::try_from_radians(angle)?, &[(qubit1, qubit2)]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::CRZ(angle, control, target) => {
+                        Angle64::try_from_radians(angle)?;
                         let gates = pecos_core::controlled_rotations::lower_crz(
                             angle,
                             control.into(),
@@ -3593,6 +3595,28 @@ mod tests {
         let in_memory = collector.lock().expect("collector lock");
         assert_eq!(in_memory[1].stage, "trace_complete");
         assert_eq!(in_memory[1].measurement_results, BTreeMap::from([(7, 1)]));
+    }
+
+    #[test]
+    fn nonfinite_runtime_rotations_are_errors() {
+        for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for op in [
+                QuantumOp::RX(angle, 0),
+                QuantumOp::RY(angle, 0),
+                QuantumOp::RZ(angle, 0),
+                QuantumOp::RXY(0.0, angle, 0),
+                QuantumOp::RZZ(angle, 0, 1),
+                QuantumOp::RXYXY2Q(0.0, angle, 0, 1),
+                QuantumOp::CRZ(angle, 0, 1),
+            ] {
+                let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+                let error = engine
+                    .quantum_ops_to_lowered_commands(vec![op.into()])
+                    .err()
+                    .expect("nonfinite runtime angle must fail");
+                assert!(error.to_string().contains(&angle.to_string()));
+            }
+        }
     }
 
     #[test]

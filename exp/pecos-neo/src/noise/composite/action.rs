@@ -17,6 +17,9 @@
 
 use super::response::CompositeResponse;
 use crate::command::{GateCommand, GatePayload, GateType};
+use crate::noise::validation::{
+    MAX_ANGLE_FRACTION, MAX_ANGLE_RATE, ValidationResult, validate_bounded, validate_finite,
+};
 use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
@@ -1085,9 +1088,12 @@ pub struct InjectCoherentRZ {
 
 impl InjectCoherentRZ {
     /// Create with a given dephasing rate.
-    #[must_use]
-    pub fn new(rate: f64) -> Self {
-        Self { rate }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(rate: f64) -> ValidationResult<Self> {
+        validate_bounded(rate, MAX_ANGLE_RATE, "rate")?;
+        Ok(Self { rate })
     }
 }
 
@@ -1267,26 +1273,35 @@ pub struct CoherentRotation {
 
 impl CoherentRotation {
     /// Create a coherent rotation error.
-    #[must_use]
-    pub fn new(gate_type: GateType, angle: f64) -> Self {
-        Self { gate_type, angle }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(gate_type: GateType, angle: f64) -> ValidationResult<Self> {
+        validate_finite(angle, "angle")?;
+        Ok(Self { gate_type, angle })
     }
 
     /// RX rotation error.
-    #[must_use]
-    pub fn rx(angle: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn rx(angle: f64) -> ValidationResult<Self> {
         Self::new(GateType::RX, angle)
     }
 
     /// RY rotation error.
-    #[must_use]
-    pub fn ry(angle: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn ry(angle: f64) -> ValidationResult<Self> {
         Self::new(GateType::RY, angle)
     }
 
     /// RZ rotation error (phase error).
-    #[must_use]
-    pub fn rz(angle: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn rz(angle: f64) -> ValidationResult<Self> {
         Self::new(GateType::RZ, angle)
     }
 }
@@ -1332,7 +1347,7 @@ impl GateAction for CoherentRotation {
 /// use pecos_neo::command::GateType;
 ///
 /// // 1% over-rotation on all gates
-/// let error = over_rotation(GateType::RZ, 0.01);
+/// let error = over_rotation(GateType::RZ, 0.01).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct OverRotation {
@@ -1345,17 +1360,22 @@ impl OverRotation {
     ///
     /// - `fraction > 0`: over-rotation (gate rotates too much)
     /// - `fraction < 0`: under-rotation (gate rotates too little)
-    #[must_use]
-    pub fn new(gate_type: GateType, fraction: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(gate_type: GateType, fraction: f64) -> ValidationResult<Self> {
+        validate_bounded(fraction, MAX_ANGLE_FRACTION, "fraction")?;
+        Ok(Self {
             gate_type,
             fraction,
-        }
+        })
     }
 
     /// RZ over-rotation.
-    #[must_use]
-    pub fn rz(fraction: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn rz(fraction: f64) -> ValidationResult<Self> {
         Self::new(GateType::RZ, fraction)
     }
 }
@@ -1411,17 +1431,23 @@ pub struct ZZDephasing {
 
 impl ZZDephasing {
     /// Create ZZ dephasing with fixed angle.
-    #[must_use]
-    pub fn new(angle: f64) -> Self {
-        Self { angle }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn new(angle: f64) -> ValidationResult<Self> {
+        validate_finite(angle, "angle")?;
+        Ok(Self { angle })
     }
 
     /// Create ZZ dephasing scaled by idle duration.
     ///
     /// The actual angle will be `rate * duration` from the idle context.
-    #[must_use]
-    pub fn from_rate(rate: f64) -> ZZDephasingRate {
-        ZZDephasingRate { rate }
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn from_rate(rate: f64) -> ValidationResult<ZZDephasingRate> {
+        validate_bounded(rate, MAX_ANGLE_RATE, "rate")?;
+        Ok(ZZDephasingRate { rate })
     }
 }
 
@@ -1941,6 +1967,7 @@ pub mod actions {
         RandomOutcome, SampleEmission, SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
         TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak, ZZDephasing, ZZDephasingRate,
     };
+    use crate::noise::validation::ValidationResult;
 
     /// No-op action.
     #[must_use]
@@ -2181,8 +2208,10 @@ pub mod actions {
     /// Inject coherent RZ dephasing with given rate.
     ///
     /// The angle is computed as `rate * idle_duration`.
-    #[must_use]
-    pub fn coherent_rz(rate: f64) -> InjectCoherentRZ {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_rz(rate: f64) -> ValidationResult<InjectCoherentRZ> {
         InjectCoherentRZ::new(rate)
     }
 
@@ -2266,48 +2295,62 @@ pub mod actions {
     // --- Coherent Errors ---
 
     /// Coherent RX rotation error.
-    #[must_use]
-    pub fn coherent_rx(angle: f64) -> CoherentRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_rx(angle: f64) -> ValidationResult<CoherentRotation> {
         CoherentRotation::rx(angle)
     }
 
     /// Coherent RY rotation error.
-    #[must_use]
-    pub fn coherent_ry(angle: f64) -> CoherentRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_ry(angle: f64) -> ValidationResult<CoherentRotation> {
         CoherentRotation::ry(angle)
     }
 
     /// Coherent RZ rotation error (phase error).
-    #[must_use]
-    pub fn coherent_rz_fixed(angle: f64) -> CoherentRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn coherent_rz_fixed(angle: f64) -> ValidationResult<CoherentRotation> {
         CoherentRotation::rz(angle)
     }
 
     /// Over-rotation error (fraction of gate angle).
     ///
     /// The error angle is `gate_angle * fraction`.
-    #[must_use]
-    pub fn over_rotation(gate_type: GateType, fraction: f64) -> OverRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn over_rotation(gate_type: GateType, fraction: f64) -> ValidationResult<OverRotation> {
         OverRotation::new(gate_type, fraction)
     }
 
     /// RZ over-rotation error.
-    #[must_use]
-    pub fn over_rotation_rz(fraction: f64) -> OverRotation {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn over_rotation_rz(fraction: f64) -> ValidationResult<OverRotation> {
         OverRotation::rz(fraction)
     }
 
     // --- Correlated Dephasing (ZZ) ---
 
     /// ZZ dephasing with fixed angle.
-    #[must_use]
-    pub fn zz_dephasing(angle: f64) -> ZZDephasing {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn zz_dephasing(angle: f64) -> ValidationResult<ZZDephasing> {
         ZZDephasing::new(angle)
     }
 
     /// ZZ dephasing with rate (angle = rate * duration).
-    #[must_use]
-    pub fn zz_dephasing_rate(rate: f64) -> ZZDephasingRate {
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite value or a rate/fraction whose runtime angle can overflow.
+    pub fn zz_dephasing_rate(rate: f64) -> ValidationResult<ZZDephasingRate> {
         ZZDephasing::from_rate(rate)
     }
 
@@ -2769,7 +2812,7 @@ mod tests {
     fn test_coherent_rz_with_duration() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = InjectCoherentRZ::new(0.1); // 0.1 rad per time unit
+        let action = InjectCoherentRZ::new(0.1).unwrap(); // 0.1 rad per time unit
 
         // Set idle duration
         ctx.set_current_idle(pecos_core::TimeUnits::new(5)); // 5 time units
@@ -2791,7 +2834,7 @@ mod tests {
     fn test_coherent_rz_no_duration() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = InjectCoherentRZ::new(0.1);
+        let action = InjectCoherentRZ::new(0.1).unwrap();
 
         // No idle duration set
         let response = action.apply(QubitId(0), &mut ctx, &mut rng);

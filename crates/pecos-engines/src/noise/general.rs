@@ -645,10 +645,14 @@ impl GeneralNoiseModel {
             .p_idle_sin_squared_model
             .values()
             .all(|m| (self.p_idle_sin_squared_rate * m * duration).is_finite());
-        let coherent = self.p_idle_coherent_model.values().all(|m| {
-            (std::f64::consts::TAU * self.p_idle_coherent_rate * m * duration).is_finite()
-        });
-        if !linear.is_finite() || !stochastic || !coherent {
+        for multiplier in self.p_idle_coherent_model.values() {
+            Angle64::try_from_radians(Self::coherent_rotation_angle(
+                self.p_idle_coherent_rate,
+                *multiplier,
+                duration,
+            ))?;
+        }
+        if !linear.is_finite() || !stochastic {
             return Err(PecosError::Input(
                 "idle arithmetic exceeds runtime profile".into(),
             ));
@@ -793,6 +797,8 @@ impl GeneralNoiseModel {
         builder: &mut ByteMessageBuilder,
         mut boundaries: Option<&mut Vec<u32>>,
     ) -> Result<(), PecosError> {
+        // Continuations can reach the same idle helper after a two-qubit gate.
+        self.validate_frame_idle(self.idle_after_2q)?;
         let mut err = None;
         while let Some(gate) = gates.next() {
             let measurements_before = self.measured_qubits.len();
@@ -839,7 +845,7 @@ impl GeneralNoiseModel {
             // decide whether to add the original gate based on error models
             match gate.gate_type {
                 GateType::Idle => {
-                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder);
+                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder)?;
                 }
                 GateType::PZ => {
                     for &q in &gate.qubits {
@@ -1151,14 +1157,20 @@ impl GeneralNoiseModel {
         Ok(ops_builder.build())
     }
 
+    /// Apply idle faults after validating the duration and computed angles.
+    ///
+    /// # Errors
+    /// Returns an input error if idle arithmetic is not finite.
     pub fn apply_idle_faults(
         &mut self,
         gate: &Gate,
         linear_rate: f64,
         builder: &mut ByteMessageBuilder,
-    ) {
+    ) -> Result<(), PecosError> {
+        self.validate_frame_idle(gate.idle_duration())?;
         let qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
         self.apply_idle_faults_for_duration(linear_rate, gate.idle_duration(), &qubits, builder);
+        Ok(())
     }
 
     fn apply_idle_faults_for_duration(
@@ -2300,6 +2312,24 @@ mod tests {
     use crate::byte_message::ByteMessageBuilder;
     use crate::byte_message::GateType;
     use pecos_core::Angle64;
+
+    #[test]
+    fn gate_sequence_validates_after_two_qubit_idle_before_mutation() {
+        let coherent = BTreeMap::from([("RZ".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(1e300, &coherent)
+            .with_idle_after_2q(1e10)
+            .build();
+        let mut output = ByteMessage::quantum_operations_builder();
+        output.h(&[7]);
+        let expected = output.clone().build();
+        let error = model
+            .apply_gate_sequence(vec![Gate::h(&[0])].into_iter(), &mut output, None)
+            .unwrap_err();
+        assert!(matches!(error, PecosError::Input(_)));
+        assert!(error.to_string().contains("inf radians"));
+        assert_eq!(output.build().as_bytes(), expected.as_bytes());
+    }
 
     fn assert_float_eq(actual: f64, expected: f64) {
         assert!(
@@ -4151,6 +4181,20 @@ mod tests {
     }
 
     #[test]
+    fn overflowing_coherent_idle_angle_is_an_error() {
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(f64::MAX, &BTreeMap::from([("RZ".to_string(), 1.0)]))
+            .build();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.idle(2.0, &[0]);
+        let error = model
+            .apply_noise_on_start(&input.build())
+            .err()
+            .expect("overflow must fail");
+        assert!(error.contains("inf"), "{error}");
+    }
+
+    #[test]
     fn coherent_idle_angle_is_rate_times_multiplier_times_duration() {
         let rate = 0.25;
         let multiplier = 1.4;
@@ -4645,7 +4689,7 @@ mod tests {
         };
 
         // Apply idle faults - should use coherent dephasing (RZ gates)
-        model.apply_idle_faults(&gate, 0.0, &mut builder);
+        model.apply_idle_faults(&gate, 0.0, &mut builder).unwrap();
 
         // Get the message and verify it contains RZ gates
         let message = builder.build();
@@ -4669,7 +4713,9 @@ mod tests {
             channel: None,
         };
 
-        model.apply_idle_faults(&multi_qubit_gate, 0.0, &mut builder);
+        model
+            .apply_idle_faults(&multi_qubit_gate, 0.0, &mut builder)
+            .unwrap();
 
         let message = builder.build();
         let gates = message.quantum_ops().unwrap();
@@ -4718,7 +4764,7 @@ mod tests {
             .build();
 
         // Apply idle faults with incoherent dephasing.
-        model.apply_idle_faults(&gate, 0.0, &mut builder);
+        model.apply_idle_faults(&gate, 0.0, &mut builder).unwrap();
 
         // The message may contain Z gates or be empty depending on random outcomes
         let message = builder.build();

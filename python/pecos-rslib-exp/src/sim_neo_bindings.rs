@@ -279,11 +279,13 @@ impl PyNoiseModelBuilder {
     }
 
     /// Coherent idle RZ angle (radians) applied to both qubits after each CX.
-    fn idle_rz(&self, angle: f64) -> Self {
-        Self {
+    fn idle_rz(&self, angle: f64) -> PyResult<Self> {
+        Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             idle_rz_angle: angle,
             ..self.clone()
-        }
+        })
     }
 }
 
@@ -314,7 +316,7 @@ impl PyNoiseModelBuilder {
         }
         if self.idle_rz_angle > 0.0 {
             noise = noise.add_channel(crate::coherent_idle_channel::CoherentIdleChannel::new(
-                self.idle_rz_angle,
+                Angle64::from_radians(self.idle_rz_angle),
             ));
         }
         Some(noise)
@@ -1903,13 +1905,19 @@ fn build_gate_from_python(
     if let Ok(py_angle) = gate.getattr("angle")
         && let Ok(a) = py_angle.extract::<f64>()
     {
-        angles.push(pecos_core::Angle64::from_radians(a));
+        angles.push(
+            pecos_core::Angle64::try_from_radians(a)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
     }
     if let Ok(py_angles) = gate.getattr("angles")
         && let Ok(a_list) = py_angles.extract::<Vec<f64>>()
     {
         for a in a_list {
-            angles.push(pecos_core::Angle64::from_radians(a));
+            angles.push(
+                pecos_core::Angle64::try_from_radians(a)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
     }
 
@@ -1933,7 +1941,11 @@ fn extract_exact_gate_angles(
             angles.len()
         )));
     }
-    Ok(angles.into_iter().map(Angle64::from_radians).collect())
+    angles
+        .into_iter()
+        .map(Angle64::try_from_radians)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 fn extract_boundary_rotation_angle(gate: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
@@ -1944,6 +1956,8 @@ fn extract_boundary_rotation_angle(gate: &Bound<'_, PyAny>, name: &str) -> PyRes
             angles.len()
         )));
     };
+    Angle64::try_from_radians(*angle)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
     Ok(*angle)
 }
 

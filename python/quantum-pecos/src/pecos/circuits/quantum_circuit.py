@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from collections import defaultdict
 from collections.abc import MutableSequence
 from typing import TYPE_CHECKING
@@ -223,6 +224,13 @@ class QuantumCircuit(MutableSequence):
                 zz_angle = params.get("zz", 0.0)
                 yy_angle = params.get("yy", 0.0)
                 xx_angle = params.get("xx", 0.0)
+            # YY and XX are stored as metadata rather than native gate angles.
+            for angle in (yy_angle, xx_angle):
+                float_angle = float(angle)
+                if not math.isfinite(float_angle):
+                    value = "NaN" if math.isnan(float_angle) else str(float_angle)
+                    msg = f"angle must be finite, got {value} radians"
+                    raise ValueError(msg)
             composite_angles = f"{zz_angle},{yy_angle},{xx_angle}"
         else:
             angles = self._extract_angles_full(params)

@@ -191,7 +191,8 @@ where
 
         // Handle decimal numbers (with or without pi)
         if s.contains('.') {
-            return Ok(Self::from_radians(Self::parse_decimal(&s)?));
+            return Self::try_from_radians(Self::parse_decimal(&s)?)
+                .map_err(|_| ParseAngleError::Overflow);
         }
 
         // Split into numerator and denominator parts

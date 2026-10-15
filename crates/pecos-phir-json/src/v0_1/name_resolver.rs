@@ -24,21 +24,38 @@ use pecos_core::Angle64;
 ///
 /// Takes the gate name and optional angles (in radians) and returns
 /// the name that simulators recognize.
-#[must_use]
-pub fn resolve_sim_name(name: &str, angles: Option<&[f64]>) -> String {
-    match name {
+///
+/// # Errors
+/// Returns a validation error for non-finite angles.
+pub fn resolve_sim_name(
+    name: &str,
+    angles: Option<&[f64]>,
+) -> Result<String, pecos_core::errors::PecosError> {
+    let angles = angles
+        .map(|values| {
+            values
+                .iter()
+                .map(|&value| Angle64::try_from_radians(value))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map_err(|error| {
+            pecos_core::errors::PecosError::ValidationInvalidGateParameters(error.to_string())
+        })?;
+    let angles = angles.as_deref();
+    Ok(match name {
         "RZZ" => resolve_rzz(angles),
         "RZ" => resolve_rz(angles),
         "R1XY" => resolve_rxy1q(angles),
         _ => name.to_string(),
-    }
+    })
 }
 
-fn resolve_rzz(angles: Option<&[f64]>) -> String {
+fn resolve_rzz(angles: Option<&[Angle64]>) -> String {
     if let Some(angs) = angles
         && angs.len() == 1
     {
-        let a = Angle64::from_radians(angs[0]);
+        let a = angs[0];
         if a == Angle64::ZERO {
             return "I".to_string();
         }
@@ -52,22 +69,22 @@ fn resolve_rzz(angles: Option<&[f64]>) -> String {
     "RZZ".to_string()
 }
 
-fn resolve_rz(angles: Option<&[f64]>) -> String {
+fn resolve_rz(angles: Option<&[Angle64]>) -> String {
     if let Some(angs) = angles
         && angs.len() == 1
-        && let Some(name) = rz_angle_to_clifford(Angle64::from_radians(angs[0]))
+        && let Some(name) = rz_angle_to_clifford(angs[0])
     {
         return name.to_string();
     }
     "RZ".to_string()
 }
 
-fn resolve_rxy1q(angles: Option<&[f64]>) -> String {
+fn resolve_rxy1q(angles: Option<&[Angle64]>) -> String {
     if let Some(angs) = angles
         && angs.len() == 2
     {
-        let theta = Angle64::from_radians(angs[0]);
-        let phi = Angle64::from_radians(angs[1]);
+        let theta = angs[0];
+        let phi = angs[1];
         if let Some(name) = rxy1q_angles_to_clifford(theta, phi) {
             return name.to_string();
         }
@@ -142,70 +159,76 @@ mod tests {
 
     #[test]
     fn test_rzz_zero_is_identity() {
-        assert_eq!(resolve_sim_name("RZZ", Some(&[0.0])), "I");
+        assert_eq!(resolve_sim_name("RZZ", Some(&[0.0])).unwrap(), "I");
     }
 
     #[test]
     fn test_rzz_pi_over_2_is_szz() {
-        assert_eq!(resolve_sim_name("RZZ", Some(&[FRAC_PI_2])), "SZZ");
+        assert_eq!(resolve_sim_name("RZZ", Some(&[FRAC_PI_2])).unwrap(), "SZZ");
     }
 
     #[test]
     fn test_rzz_3pi_over_2_is_szzdg() {
-        assert_eq!(resolve_sim_name("RZZ", Some(&[PI * 1.5])), "SZZdg");
+        assert_eq!(resolve_sim_name("RZZ", Some(&[PI * 1.5])).unwrap(), "SZZdg");
     }
 
     #[test]
     fn test_rz_pi_is_z() {
-        assert_eq!(resolve_sim_name("RZ", Some(&[PI])), "Z");
+        assert_eq!(resolve_sim_name("RZ", Some(&[PI])).unwrap(), "Z");
     }
 
     #[test]
     fn test_rz_neg_pi_is_z() {
-        assert_eq!(resolve_sim_name("RZ", Some(&[-PI])), "Z");
+        assert_eq!(resolve_sim_name("RZ", Some(&[-PI])).unwrap(), "Z");
     }
 
     #[test]
     fn test_rz_pi_over_2_is_sz() {
-        assert_eq!(resolve_sim_name("RZ", Some(&[FRAC_PI_2])), "SZ");
+        assert_eq!(resolve_sim_name("RZ", Some(&[FRAC_PI_2])).unwrap(), "SZ");
     }
 
     #[test]
     fn test_rz_neg_pi_over_2_is_szdg() {
-        assert_eq!(resolve_sim_name("RZ", Some(&[-FRAC_PI_2])), "SZdg");
+        assert_eq!(resolve_sim_name("RZ", Some(&[-FRAC_PI_2])).unwrap(), "SZdg");
     }
 
     #[test]
     fn test_rz_3pi_over_2_is_szdg() {
         // 3pi/2 == -pi/2 mod 2pi, both should resolve to SZdg
-        assert_eq!(resolve_sim_name("RZ", Some(&[PI * 1.5])), "SZdg");
+        assert_eq!(resolve_sim_name("RZ", Some(&[PI * 1.5])).unwrap(), "SZdg");
     }
 
     #[test]
     fn test_rz_zero_is_identity() {
-        assert_eq!(resolve_sim_name("RZ", Some(&[0.0])), "I");
+        assert_eq!(resolve_sim_name("RZ", Some(&[0.0])).unwrap(), "I");
     }
 
     #[test]
     fn test_rxy1q_pi_0_is_x() {
-        assert_eq!(resolve_sim_name("R1XY", Some(&[PI, 0.0])), "X");
+        assert_eq!(resolve_sim_name("R1XY", Some(&[PI, 0.0])).unwrap(), "X");
     }
 
     #[test]
     fn test_rxy1q_pi_pi2_is_y() {
-        assert_eq!(resolve_sim_name("R1XY", Some(&[PI, FRAC_PI_2])), "Y");
+        assert_eq!(
+            resolve_sim_name("R1XY", Some(&[PI, FRAC_PI_2])).unwrap(),
+            "Y"
+        );
     }
 
     #[test]
     fn test_rxy1q_pi2_0_is_sx() {
-        assert_eq!(resolve_sim_name("R1XY", Some(&[FRAC_PI_2, 0.0])), "SX");
+        assert_eq!(
+            resolve_sim_name("R1XY", Some(&[FRAC_PI_2, 0.0])).unwrap(),
+            "SX"
+        );
     }
 
     #[test]
     fn test_rxy1q_3pi2_pi2_is_sydg() {
         // 3pi/2 == -pi/2 mod 2pi
         assert_eq!(
-            resolve_sim_name("R1XY", Some(&[PI * 1.5, FRAC_PI_2])),
+            resolve_sim_name("R1XY", Some(&[PI * 1.5, FRAC_PI_2])).unwrap(),
             "SYdg"
         );
     }
@@ -213,26 +236,32 @@ mod tests {
     #[test]
     fn test_rxy1q_neg_pi2_pi2_is_sydg() {
         assert_eq!(
-            resolve_sim_name("R1XY", Some(&[-FRAC_PI_2, FRAC_PI_2])),
+            resolve_sim_name("R1XY", Some(&[-FRAC_PI_2, FRAC_PI_2])).unwrap(),
             "SYdg"
         );
     }
 
     #[test]
     fn test_rxy1q_non_clifford_uses_canonical_simulator_name() {
-        assert_eq!(resolve_sim_name("R1XY", Some(&[0.123, 0.456])), "RXY1Q");
+        assert_eq!(
+            resolve_sim_name("R1XY", Some(&[0.123, 0.456])).unwrap(),
+            "RXY1Q"
+        );
     }
 
     #[test]
     fn test_passthrough() {
-        assert_eq!(resolve_sim_name("H", None), "H");
-        assert_eq!(resolve_sim_name("CX", None), "CX");
-        assert_eq!(resolve_sim_name("Measure", None), "Measure");
+        assert_eq!(resolve_sim_name("H", None).unwrap(), "H");
+        assert_eq!(resolve_sim_name("CX", None).unwrap(), "CX");
+        assert_eq!(resolve_sim_name("Measure", None).unwrap(), "Measure");
     }
     #[test]
     fn rxyxy2q_passes_through() {
         for angles in [[-0.73, 0.41], [0.0, 0.0], [std::f64::consts::PI, 0.0]] {
-            assert_eq!(resolve_sim_name("RXYXY2Q", Some(&angles)), "RXYXY2Q");
+            assert_eq!(
+                resolve_sim_name("RXYXY2Q", Some(&angles)).unwrap(),
+                "RXYXY2Q"
+            );
         }
     }
 }

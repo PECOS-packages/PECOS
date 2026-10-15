@@ -157,12 +157,21 @@ fn convert_angles(raw: &serde_json::Value) -> Result<Option<Vec<f64>>, String> {
     let unit = arr[1]
         .as_str()
         .ok_or("angles: second element must be a string")?;
-    match unit {
-        "rad" => Ok(Some(values)),
-        "deg" => Ok(Some(values.into_iter().map(|v| v * PI / 180.0).collect())),
-        "pi" => Ok(Some(values.into_iter().map(|v| v * PI).collect())),
-        _ => Err(format!("Unsupported angle unit: {unit}")),
-    }
+    let scale = match unit {
+        "rad" => 1.0,
+        "deg" => PI / 180.0,
+        "pi" => PI,
+        _ => return Err(format!("Unsupported angle unit: {unit}")),
+    };
+    values
+        .into_iter()
+        .map(|value| {
+            let radians = value * scale;
+            pecos_core::Angle64::try_from_radians(radians).map_err(|error| error.to_string())?;
+            Ok(radians)
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map(Some)
 }
 
 /// Helper: extract optional metadata from a JSON object.

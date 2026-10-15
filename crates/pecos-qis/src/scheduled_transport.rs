@@ -23,10 +23,7 @@ fn error(s: &str) -> PecosError {
     PecosError::Input(s.into())
 }
 fn angle(a: f64) -> Result<Angle64, PecosError> {
-    if !a.is_finite() {
-        return Err(error("nonfinite scheduled angle"));
-    }
-    Ok(Angle64::from_radians(a))
+    Ok(Angle64::try_from_radians(a)?)
 }
 fn q(q: u64) -> Result<usize, PecosError> {
     usize::try_from(q).map_err(|_| error("scheduled target overflow"))

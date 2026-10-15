@@ -497,8 +497,12 @@ impl ImprovedConverter {
                     return Err(PecosError::Input("RXYXY2Q requires two angles".to_string()));
                 };
                 QuantumOp::RXYXY2Q(
-                    Angle64::from_radians(angles[0]),
-                    Angle64::from_radians(angles[1]),
+                    Angle64::try_from_radians(angles[0]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(angles[1]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
                 )
             }
             "CPhase" => {
@@ -525,7 +529,9 @@ impl ImprovedConverter {
                         )));
                     }
                 };
-                QuantumOp::CPhase(Angle64::from_radians(radians))
+                QuantumOp::CPhase(Angle64::try_from_radians(radians).map_err(|error| {
+                    PecosError::ValidationInvalidGateParameters(error.to_string())
+                })?)
             }
             "Measure" => QuantumOp::Measure,
             _ => {

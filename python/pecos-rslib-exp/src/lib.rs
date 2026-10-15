@@ -100,7 +100,8 @@ pub(crate) fn extract_angle(
             "Expected a float 'angle' parameter for {gate_name}"
         ))
     })?;
-    Ok(Angle64::from_radians(radians))
+    Angle64::try_from_radians(radians)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 #[pymodule]

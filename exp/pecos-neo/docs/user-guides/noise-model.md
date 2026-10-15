@@ -17,7 +17,7 @@ let noise = ComposableNoiseModel::new()
     .add_channel(TwoQubitChannel::depolarizing(0.01)
         .with_angle_scaling(AngleScaling::linear()))
     .add_channel(MeasurementChannel::asymmetric(0.02, 0.03))
-    .add_channel(IdleChannel::linear(0.0001)
+    .add_channel(IdleChannel::linear(0.0001).unwrap()
         .with_linear_depolarizing());
 ```
 

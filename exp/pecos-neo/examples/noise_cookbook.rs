@@ -149,12 +149,15 @@ fn recipe_sim_neo_integration() {
     // Method 4: Reusable simulation with noise
     let mut sim = sim_neo(circuit)
         .auto()
-        .noise(realistic_device_noise(
-            &DeviceNoiseParams::new()
-                .with_p1(0.001)
-                .with_p2(0.01)
-                .with_measurement_error(0.02),
-        ))
+        .noise(
+            realistic_device_noise(
+                &DeviceNoiseParams::new()
+                    .with_p1(0.001)
+                    .with_p2(0.01)
+                    .with_measurement_error(0.02),
+            )
+            .unwrap(),
+        )
         .sampling(monte_carlo(500))
         .build();
 
@@ -413,6 +416,7 @@ fn recipe_realistic_device() {
                     .with_measurement_error(0.02) // 2% readout error
                     .with_prep_error(0.001), // 0.1% preparation error
             )
+            .unwrap()
         },
         1000,
     );

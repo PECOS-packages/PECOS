@@ -738,8 +738,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
                     self.builder.rxy1q(
-                        Angle64::from_radians(theta),
-                        Angle64::from_radians(phi),
+                        Angle64::try_from_radians(theta)?,
+                        Angle64::try_from_radians(phi)?,
                         &[qubit],
                     );
                     self.last_operation_end[qubit] = Some(end);
@@ -747,7 +747,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 Operation::RZGate { qubit_id, theta } => {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
-                    self.builder.rz(Angle64::from_radians(theta), &[qubit]);
+                    self.builder.rz(Angle64::try_from_radians(theta)?, &[qubit]);
                     self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RZZGate {
@@ -760,7 +760,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.add_idle_before(first, start)?;
                     self.add_idle_before(second, start)?;
                     self.builder
-                        .rzz(Angle64::from_radians(theta), &[(first, second)]);
+                        .rzz(Angle64::try_from_radians(theta)?, &[(first, second)]);
                     self.last_operation_end[first] = Some(end);
                     self.last_operation_end[second] = Some(end);
                 }
@@ -810,8 +810,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.add_idle_before(first, start)?;
                     self.add_idle_before(second, start)?;
                     self.builder.rxyxy2q(
-                        Angle64::from_radians(theta),
-                        Angle64::from_radians(phi),
+                        Angle64::try_from_radians(theta)?,
+                        Angle64::try_from_radians(phi)?,
                         &[(first, second)],
                     );
                     self.last_operation_end[first] = Some(end);
@@ -914,6 +914,58 @@ mod tests {
 
     use super::{Config, GeneralNoiseErrorModel, HookConfig};
     use crate::simulator::SeleneSimulator;
+
+    #[test]
+    fn all_runtime_rotation_parameters_reject_nonfinite_values() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for operation in [
+                Operation::RZGate {
+                    qubit_id: 0,
+                    theta: value,
+                },
+                Operation::RZZGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: value,
+                },
+                Operation::RXYGate {
+                    qubit_id: 0,
+                    theta: value,
+                    phi: 0.0,
+                },
+                Operation::RXYGate {
+                    qubit_id: 0,
+                    theta: 0.0,
+                    phi: value,
+                },
+                Operation::RPPGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: value,
+                    phi: 0.0,
+                },
+                Operation::RPPGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: 0.0,
+                    phi: value,
+                },
+            ] {
+                let mut model = build_error_model("{}", 2);
+                model.shot_start(0, 17).unwrap();
+                let error = model
+                    .handle_operations(runtime_batch(vec![operation], 0, 1), &mut ZeroSimulator)
+                    .err()
+                    .expect("non-finite runtime angle must fail");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("angle must be finite, got {value} radians")),
+                    "{error}"
+                );
+            }
+        }
+    }
 
     #[derive(Default)]
     struct ZeroSimulator;

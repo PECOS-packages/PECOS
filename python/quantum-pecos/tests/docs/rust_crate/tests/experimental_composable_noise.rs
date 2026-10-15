@@ -34,8 +34,8 @@ fn test_experimental_composable_noise_rust_2() {
             .with_p1(0.001)
             .with_p2(0.01)
             .with_measurement_error(0.02)
-            .with_t1(0.0001)
-    );
+            .with_t1(0.0001).unwrap()
+    ).unwrap();
 
     // Surface code optimized noise
     let model = surface_code_noise(0.001, true);
@@ -50,7 +50,7 @@ fn test_experimental_composable_noise_rust_3() {
         .with_depolarizing(0.001, 0.01)
         .with_measurement_error(0.02)
         .with_preparation_error(0.001)
-        .with_idle_noise(0.0001, 0.0005)  // T1 and T2 rates
+        .with_idle_noise(0.0001, 0.0005).unwrap()  // T1 and T2 rates
         .build();
 }
 
@@ -129,12 +129,12 @@ fn test_experimental_composable_noise_rust_7() {
 fn test_experimental_composable_noise_rust_8() {
     use pecos_neo::noise::prelude::*;
     let model = NoiseModelBuilder::new()
-        .with_idle_noise(0.0001, 0.0005)  // T1 rate, T2 rate
+        .with_idle_noise(0.0001, 0.0005).unwrap()  // T1 rate, T2 rate
         .build();
 
     // Using primitives for custom idle behavior
-    let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli()));
-    let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z()));
+    let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli()).unwrap());
+    let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z()).unwrap());
 }
 
 

@@ -578,7 +578,8 @@ fn test_idle_noise_with_time_scale() {
     // T1=10us=10000ns, T2=5us=5000ns
     let model = GeneralNoiseModelBuilder::new()
         .with_time_scale(TimeScale::NANOSECONDS)
-        .with_idle_t1_t2(10e-6, 5e-6) // 10us T1, 5us T2
+        .with_idle_t1_t2(10e-6, 5e-6)
+        .unwrap() // 10us T1, 5us T2
         .build();
 
     // Verify time scale is set

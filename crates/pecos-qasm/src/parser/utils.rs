@@ -18,15 +18,18 @@ use pecos_core::prelude::{Gate, GateType, QubitId};
 ///
 /// For rotation gates (RX, RY, RZ, RZZ, RXY1Q, RXYXY2Q, U), parameters are angles in radians.
 /// For other parameterized gates (like Idle), parameters are not angles.
-fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, Vec<f64>) {
+fn split_parameters(
+    gate_type: GateType,
+    parameters: &[f64],
+) -> Result<(Vec<Angle64>, Vec<f64>), PecosError> {
     let angle_count = gate_type.angle_arity();
     let angles: Vec<Angle64> = parameters
         .iter()
         .take(angle_count)
-        .map(|&r| Angle64::from_radians(r))
-        .collect();
+        .map(|&r| Angle64::try_from_radians(r))
+        .collect::<Result<Vec<_>, _>>()?;
     let other_params: Vec<f64> = parameters.iter().skip(angle_count).copied().collect();
-    (angles, other_params)
+    Ok((angles, other_params))
 }
 
 /// Expand all gate operations in the program to native gates
@@ -154,7 +157,7 @@ fn lower_native_gate(
     match (gate_type.quantum_arity(), qubits.len()) {
         (1, n) if n > 1 => {
             // Single-qubit gate applied to multiple qubits
-            let (angles, params) = split_parameters(gate_type, parameters);
+            let (angles, params) = split_parameters(gate_type, parameters)?;
             Ok(qubits
                 .iter()
                 .map(|&qubit| {
@@ -174,7 +177,7 @@ fn lower_native_gate(
                     "Two-qubit gate '{name}' applied to {n} qubits (must be even number)"
                 )));
             }
-            let (angles, params) = split_parameters(gate_type, parameters);
+            let (angles, params) = split_parameters(gate_type, parameters)?;
             Ok((0..n)
                 .step_by(2)
                 .map(|i| {
@@ -193,7 +196,7 @@ fn lower_native_gate(
         }
         _ => {
             // Correct number of qubits, no expansion needed
-            let (angles, params) = split_parameters(gate_type, parameters);
+            let (angles, params) = split_parameters(gate_type, parameters)?;
             let gate = Gate::new(
                 gate_type,
                 angles,

@@ -26,6 +26,7 @@ use super::{
     EventKinds, NoiseChannel, NoiseEvent, NoiseEventKind, NoiseGateRequirement, NoiseResponse,
 };
 use crate::command::GateType;
+use crate::noise::validation::{ValidationError, ValidationResult};
 use pecos_core::{QubitId, TimeScale};
 use pecos_random::PecosRng;
 
@@ -359,10 +360,6 @@ impl ComposableNoiseModel {
     /// * `t1_seconds` - T1 relaxation time in seconds
     /// * `t2_seconds` - Total T2 transverse coherence time in seconds
     ///
-    /// # Panics
-    /// Panics if `with_time_scale()` has not been called, if either time is non-finite or not
-    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
-    ///
     /// # Example
     /// ```
     /// use pecos_neo::noise::ComposableNoiseModel;
@@ -370,15 +367,20 @@ impl ComposableNoiseModel {
     ///
     /// let noise = ComposableNoiseModel::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6);  // T1=50us, T2=30us
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap();  // T1=50us, T2=30us
     /// ```
-    #[must_use]
-    pub fn with_idle_t1_t2(self, t1_seconds: f64, t2_seconds: f64) -> Self {
-        let scale = self
-            .time_scale
-            .expect("with_time_scale() must be called before with_idle_t1_t2()");
-        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
-        self.add_channel(channel)
+    ///
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a missing time scale.
+    pub fn with_idle_t1_t2(self, t1_seconds: f64, t2_seconds: f64) -> ValidationResult<Self> {
+        let scale = self.time_scale.ok_or_else(|| {
+            ValidationError::new(
+                "time_scale",
+                "with_time_scale() must be called before with_idle_t1_t2()",
+            )
+        })?;
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale)?;
+        Ok(self.add_channel(channel))
     }
 
     /// Get the number of channels in the model.
@@ -1193,12 +1195,15 @@ mod tests {
             .with_p_prep_crosstalk(0.2)
             .with_p_meas_crosstalk(0.3, 0.2)
             .with_p_idle_linear(0.1, &axes)
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let builder = match idle_family {
-            0 => builder.with_p_idle_sin_squared(0.2, &axes),
-            1 => builder.with_p_idle_quadratic(0.2),
+            0 => builder.with_p_idle_sin_squared(0.2, &axes).unwrap(),
+            1 => builder.with_p_idle_quadratic(0.2).unwrap(),
             2 => builder
                 .with_p_idle_quadratic(0.2)
+                .unwrap()
                 .with_p_idle_coherent(true),
             _ => unreachable!("test defines three idle configurations"),
         };

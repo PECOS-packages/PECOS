@@ -3094,9 +3094,9 @@ impl<'a> TickHandle<'a> {
     ///
     /// let mut circuit = TickCircuit::new();
     /// // Single qubit
-    /// circuit.tick().rx(PI / 2.0, &[0]);
+    /// circuit.tick().rx(pecos_core::Angle64::from_radians(PI / 2.0), &[0]);
     /// // Multiple qubits with same angle
-    /// circuit.tick().rx(PI / 4.0, &[1, 2, 3]);
+    /// circuit.tick().rx(pecos_core::Angle64::from_radians(PI / 4.0), &[1, 2, 3]);
     /// ```
     pub fn rx(
         &mut self,
@@ -3135,7 +3135,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().rxy1q(PI / 2.0, PI / 4.0, &[0]);
+    /// circuit.tick().rxy1q(pecos_core::Angle64::from_radians(PI / 2.0), pecos_core::Angle64::from_radians(PI / 4.0), &[0]);
     /// ```
     pub fn rxy1q(
         &mut self,
@@ -3157,7 +3157,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().u(PI / 2.0, 0.0, PI, &[0]);
+    /// circuit.tick().u(pecos_core::Angle64::from_radians(PI / 2.0), pecos_core::Angle64::from_radians(0.0), pecos_core::Angle64::from_radians(PI), &[0]);
     /// ```
     pub fn u(
         &mut self,
@@ -3324,7 +3324,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().rxx(PI / 4.0, &[(0, 1)]);
+    /// circuit.tick().rxx(pecos_core::Angle64::from_radians(PI / 4.0), &[(0, 1)]);
     /// ```
     pub fn rxx(
         &mut self,
@@ -3343,7 +3343,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().ryy(PI / 4.0, &[(0, 1)]);
+    /// circuit.tick().ryy(pecos_core::Angle64::from_radians(PI / 4.0), &[(0, 1)]);
     /// ```
     pub fn ryy(
         &mut self,
@@ -3363,9 +3363,9 @@ impl<'a> TickHandle<'a> {
     ///
     /// let mut circuit = TickCircuit::new();
     /// // Single pair
-    /// circuit.tick().rzz(PI / 4.0, &[(0, 1)]);
+    /// circuit.tick().rzz(pecos_core::Angle64::from_radians(PI / 4.0), &[(0, 1)]);
     /// // Multiple pairs with same angle
-    /// circuit.tick().rzz(PI / 2.0, &[(2, 3), (4, 5)]);
+    /// circuit.tick().rzz(pecos_core::Angle64::from_radians(PI / 2.0), &[(2, 3), (4, 5)]);
     /// ```
     pub fn rzz(
         &mut self,
@@ -3404,6 +3404,10 @@ impl<'a> TickHandle<'a> {
         theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> Result<&mut Self, TickGateError> {
+        Angle64::try_from_radians(theta_radians).map_err(|error| TickGateError::InvalidGate {
+            message: error.to_string(),
+            tick_idx: Some(self.tick_idx),
+        })?;
         if pairs.is_empty() {
             return Ok(self);
         }

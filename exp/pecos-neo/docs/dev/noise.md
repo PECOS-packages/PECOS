@@ -66,8 +66,8 @@ CompositeNoiseModelBuilder::new()
     .with_p2_angle_scaling(AngleScaling::Quadratic)
 
     // Apply configured idle noise for one time unit after each two-qubit gate
-    .with_p_idle_linear(0.001)
-    .with_idle_after_2q(1.0)
+    .with_p_idle_linear(0.001).unwrap()
+    .with_idle_after_2q(1.0).unwrap()
 
     // Custom two-qubit Pauli model
     .with_p2_pauli_model(TwoQubitPauliWeights { ... })
@@ -114,7 +114,7 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // T1/T2 style decoherence
-    .with_idle_t1_t2(50e-6, 30e-6)  // T1, T2 in seconds
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1, T2 in seconds
 
     // Set time scale for idle calculations
     .with_time_scale(TimeScale::Nanoseconds)
@@ -359,7 +359,7 @@ let noise = CompositeNoiseModelBuilder::new()
 let noise = CompositeNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
-    .with_idle_t1_t2(50e-6, 30e-6)
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap()
     .with_time_scale(TimeScale::Nanoseconds)
     .with_p_meas_symmetric(0.02)
     .build();
@@ -390,7 +390,7 @@ let noise = ComposableNoiseModel::new()
     .add_channel(TwoQubitChannel::depolarizing(0.01)
         .with_angle_scaling(AngleScaling::linear()))
     .add_channel(MeasurementChannel::asymmetric(0.02, 0.03))
-    .add_channel(IdleChannel::linear(0.0001)
+    .add_channel(IdleChannel::linear(0.0001).unwrap()
         .with_linear_depolarizing());
 ```
 
@@ -466,7 +466,7 @@ let commands = CommandBuilder::new()
     .build();
 
 let noise = ComposableNoiseModel::new()
-    .add_channel(IdleChannel::linear(0.001)  // 0.1% error per time unit
+    .add_channel(IdleChannel::linear(0.001).unwrap()  // 0.1% error per time unit
         .with_linear_depolarizing());        // X/Y/Z with equal probability
 ```
 
@@ -482,7 +482,7 @@ use pecos_core::TimeScale;
 // Define: 1 TimeUnit = 1 nanosecond, then use physical times
 let noise = ComposableNoiseModel::new()
     .with_time_scale(TimeScale::NANOSECONDS)
-    .with_idle_t1_t2(50e-6, 30e-6);  // T1=50us, T2=30us in seconds
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap();  // T1=50us, T2=30us in seconds
 ```
 
 Available time scales: `NANOSECONDS`, `MICROSECONDS`, `MILLISECONDS`, `SECONDS`,

@@ -15,6 +15,7 @@
 //! Primitives are the building blocks of noise decision trees. They compose
 //! together to form complex noise models while maintaining a simple, fixed API.
 
+use crate::noise::validation::{ValidationResult, validate_rate};
 use std::fmt::Write as _;
 
 use super::action::GateAction;
@@ -616,7 +617,7 @@ where
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // 0.001 error rate per time unit, applying Z error
-/// let idle_noise = prob_linear(0.001, pauli());
+/// let idle_noise = prob_linear(0.001, pauli()).unwrap();
 /// ```
 pub struct ProbLinear<P: Primitive> {
     rate_per_time_unit: f64,
@@ -638,12 +639,14 @@ impl<P: Primitive> ProbLinear<P> {
     /// # Arguments
     /// * `rate_per_time_unit` - Error rate per time unit
     /// * `inner` - Primitive to execute if probability check passes
-    #[must_use]
-    pub fn new(rate_per_time_unit: f64, inner: P) -> Self {
-        Self {
-            rate_per_time_unit: rate_per_time_unit.max(0.0),
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn new(rate_per_time_unit: f64, inner: P) -> ValidationResult<Self> {
+        Ok(Self {
+            rate_per_time_unit: validate_rate(rate_per_time_unit, "rate_per_time_unit")?,
             inner,
-        }
+        })
     }
 }
 
@@ -695,7 +698,7 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Quadratic dephasing with 0.01 rate
-/// let dephasing = prob_quadratic(0.01, inject_z());
+/// let dephasing = prob_quadratic(0.01, inject_z()).unwrap();
 /// ```
 pub struct ProbQuadratic<P: Primitive> {
     rate_per_time_unit: f64,
@@ -719,23 +722,27 @@ impl<P: Primitive> ProbQuadratic<P> {
     /// # Arguments
     /// * `rate_per_time_unit` - Dephasing rate per time unit
     /// * `inner` - Primitive to execute if probability check passes
-    #[must_use]
-    pub fn new(rate_per_time_unit: f64, inner: P) -> Self {
-        Self {
-            rate_per_time_unit: rate_per_time_unit.max(0.0),
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn new(rate_per_time_unit: f64, inner: P) -> ValidationResult<Self> {
+        Ok(Self {
+            rate_per_time_unit: validate_rate(rate_per_time_unit, "rate_per_time_unit")?,
             coherent_to_incoherent_factor: 1.0,
             inner,
-        }
+        })
     }
 
     /// Set the coherent-to-incoherent scaling factor.
     ///
     /// This factor adjusts the effective rate when modeling coherent dephasing
     /// using stochastic errors. Default is 1.0 (no adjustment).
-    #[must_use]
-    pub fn with_factor(mut self, factor: f64) -> Self {
-        self.coherent_to_incoherent_factor = factor;
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_factor(mut self, factor: f64) -> ValidationResult<Self> {
+        self.coherent_to_incoherent_factor = validate_rate(factor, "factor")?;
+        Ok(self)
     }
 }
 
@@ -1338,6 +1345,7 @@ pub mod primitives {
     use crate::noise::GateInfo;
     use crate::noise::composite::action::Nothing;
     use crate::noise::composite::condition::{Always, GateTypeIs, Leaked, NotLeaked, OutcomeIs};
+    use crate::noise::validation::ValidationResult;
 
     /// Probability gate.
     #[must_use]
@@ -1385,10 +1393,15 @@ pub mod primitives {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // T1 relaxation: 0.001 error per time unit
-    /// let t1_noise = prob_linear(0.001, pauli());
+    /// let t1_noise = prob_linear(0.001, pauli()).unwrap();
     /// ```
-    #[must_use]
-    pub fn prob_linear<P: Primitive>(rate_per_time_unit: f64, inner: P) -> ProbLinear<P> {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn prob_linear<P: Primitive>(
+        rate_per_time_unit: f64,
+        inner: P,
+    ) -> ValidationResult<ProbLinear<P>> {
         ProbLinear::new(rate_per_time_unit, inner)
     }
 
@@ -1402,10 +1415,15 @@ pub mod primitives {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // T2 dephasing
-    /// let t2_noise = prob_quadratic(0.01, inject_z());
+    /// let t2_noise = prob_quadratic(0.01, inject_z()).unwrap();
     /// ```
-    #[must_use]
-    pub fn prob_quadratic<P: Primitive>(rate_per_time_unit: f64, inner: P) -> ProbQuadratic<P> {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn prob_quadratic<P: Primitive>(
+        rate_per_time_unit: f64,
+        inner: P,
+    ) -> ValidationResult<ProbQuadratic<P>> {
         ProbQuadratic::new(rate_per_time_unit, inner)
     }
 
@@ -1965,7 +1983,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Linear rate: 0.1 per time unit
-        let noise = prob_linear(0.1, inject_z());
+        let noise = prob_linear(0.1, inject_z()).unwrap();
 
         // Set idle duration to 10 units -> p = 0.1 * 10 = 1.0 (100%)
         ctx.set_current_idle(pecos_core::TimeUnits::new(10));
@@ -2005,7 +2023,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Without idle context, duration is 0 -> p = 0
-        let noise = prob_linear(0.1, inject_z());
+        let noise = prob_linear(0.1, inject_z()).unwrap();
 
         let mut triggered = 0;
         for _ in 0..100 {
@@ -2028,7 +2046,7 @@ mod tests {
         // Quadratic rate for T2 dephasing: p = sin(rate * duration)^2
         // At rate = pi/2 and duration = 1, angle = pi/2, p = sin(pi/2)^2 = 1.0
         let rate = std::f64::consts::FRAC_PI_2;
-        let noise = prob_quadratic(rate, inject_z());
+        let noise = prob_quadratic(rate, inject_z()).unwrap();
 
         // Duration = 1 -> angle = pi/2 -> p = 100%
         ctx.set_current_idle(pecos_core::TimeUnits::new(1));
@@ -2045,7 +2063,7 @@ mod tests {
         // For 50% probability, we need sin(angle)^2 = 0.5, so angle = pi/4
         // Rate = pi/4, duration = 1 -> angle = pi/4 -> p = sin(pi/4)^2 = 0.5
         let rate_half = std::f64::consts::FRAC_PI_4;
-        let noise_half = prob_quadratic(rate_half, inject_z());
+        let noise_half = prob_quadratic(rate_half, inject_z()).unwrap();
         ctx.set_current_idle(pecos_core::TimeUnits::new(1));
         triggered = 0;
         for _ in 0..1000 {
@@ -2069,7 +2087,10 @@ mod tests {
 
         // Base rate pi/4, with factor 2.0 -> effective rate = pi/2
         // At duration = 1, angle = pi/2 -> p = 100%
-        let noise = prob_quadratic(std::f64::consts::FRAC_PI_4, inject_z()).with_factor(2.0);
+        let noise = prob_quadratic(std::f64::consts::FRAC_PI_4, inject_z())
+            .unwrap()
+            .with_factor(2.0)
+            .unwrap();
 
         ctx.set_current_idle(pecos_core::TimeUnits::new(1));
         let mut triggered = 0;

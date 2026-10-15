@@ -48,6 +48,10 @@ use super::{
     TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use crate::command::GateType;
+use crate::noise::validation::{
+    ValidationError, ValidationResult, validate_angle_rate, validate_duration,
+    validate_rate as checked_rate,
+};
 use pecos_core::TimeScale;
 use std::collections::BTreeMap;
 
@@ -328,10 +332,13 @@ impl GeneralNoiseModelBuilder {
     ///
     /// A duration of zero disables these sites. Nonzero sites receive all
     /// configured linear and quadratic idle mechanisms.
-    #[must_use]
-    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_after_2q(mut self, duration: f64) -> ValidationResult<Self> {
+        validate_duration(duration, "duration")?;
         self.idle_after_2q = duration;
-        self
+        Ok(self)
     }
 
     // ========================================================================
@@ -408,26 +415,29 @@ impl GeneralNoiseModelBuilder {
     /// per-axis mechanisms. The difference is second order in the rates; this setter aligns the
     /// units and axis alphabet that neo can represent, not that sampling structure.
     ///
-    /// # Panics
-    ///
-    /// Panics if `rate` or a model value is not finite and non-negative, if the model is not
-    /// normalized, or if it contains a key other than X, Y, or Z. L is rejected with guidance to
-    /// use [`LeakageChannel`].
-    #[must_use]
-    pub fn with_p_idle_linear(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
-        self.p_idle_linear_rate = Self::validate_finite_non_negative(rate, "linear idling rate");
-        self.p_idle_linear_weights = Self::validate_linear_model(model);
-        self
+    /// # Errors
+    /// Rejects non-finite or negative rates or weights, invalid axes, and unnormalized models.
+    pub fn with_p_idle_linear(
+        mut self,
+        rate: f64,
+        model: &BTreeMap<String, f64>,
+    ) -> ValidationResult<Self> {
+        self.p_idle_linear_rate = checked_rate(rate, "linear idling rate")?;
+        self.p_idle_linear_weights = Self::validate_linear_model(model)?;
+        Ok(self)
     }
 
     /// Set the quadratic idle noise rate (per time unit).
     ///
     /// The rate interpretation depends on your `TimeScale` configuration.
-    #[must_use]
-    pub fn with_p_idle_quadratic(mut self, rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_p_idle_quadratic(mut self, rate: f64) -> ValidationResult<Self> {
+        validate_angle_rate(rate, "rate")?;
         self.p_idle_quadratic_rate = rate;
         self.p_idle_quadratic_configured = true;
-        self
+        Ok(self)
     }
 
     /// Set the DEM-style stochastic sine-squared idle-noise family.
@@ -453,16 +463,17 @@ impl GeneralNoiseModelBuilder {
     /// All neo idle-noise families are off by default, so translating a DEM configuration only
     /// requires setting the requested families.
     ///
-    /// # Panics
-    ///
-    /// Panics if `rate` or a multiplier is not finite and non-negative, or if `model` contains a
-    /// key other than X, Y, Z, or L.
-    #[must_use]
-    pub fn with_p_idle_sin_squared(mut self, rate: f64, model: &BTreeMap<String, f64>) -> Self {
-        let rate = Self::validate_finite_non_negative(rate, "sine-squared idling rate");
-        Self::validate_sine_model(model);
+    /// # Errors
+    /// Rejects non-finite or negative rates or multipliers and invalid axes.
+    pub fn with_p_idle_sin_squared(
+        mut self,
+        rate: f64,
+        model: &BTreeMap<String, f64>,
+    ) -> ValidationResult<Self> {
+        let rate = checked_rate(rate, "sine-squared idling rate")?;
+        Self::validate_sine_model(model)?;
         self.p_idle_sin_squared = Some((rate, model.clone()));
-        self
+        Ok(self)
     }
 
     /// Set whether to use coherent dephasing for quadratic idle noise.
@@ -473,10 +484,16 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Set the coherent-to-incoherent conversion factor.
-    #[must_use]
-    pub fn with_p_idle_coherent_to_incoherent_factor(mut self, factor: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_p_idle_coherent_to_incoherent_factor(
+        mut self,
+        factor: f64,
+    ) -> ValidationResult<Self> {
+        checked_rate(factor, "factor")?;
         self.p_idle_coherent_to_incoherent_factor = factor;
-        self
+        Ok(self)
     }
 
     // ========================================================================
@@ -523,7 +540,7 @@ impl GeneralNoiseModelBuilder {
     ///
     /// let noise = GeneralNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1=50us, T2=30us
     ///     .build();
     /// ```
     #[must_use]
@@ -543,81 +560,79 @@ impl GeneralNoiseModelBuilder {
     /// from earlier PECOS versions. It produces the same configuration callers can write with the
     /// linear-family rate and weight setters.
     ///
-    /// # Panics
-    /// Panics if `with_time_scale()` has not been called, if either time is non-finite or not
-    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
-    #[must_use]
-    pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> Self {
-        let scale = self
-            .time_scale
-            .expect("with_time_scale() must be called before with_idle_t1_t2()");
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a missing time scale.
+    pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> ValidationResult<Self> {
+        let scale = self.time_scale.ok_or_else(|| {
+            ValidationError::new(
+                "time_scale",
+                "with_time_scale() must be called before with_idle_t1_t2()",
+            )
+        })?;
 
-        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale)?;
         self.p_idle_linear_rate = channel.linear_rate;
         self.p_idle_linear_weights = channel.linear_weights;
         self.p_idle_quadratic_rate = channel.quadratic_rate;
         self.p_idle_quadratic_configured = false;
-        self
+        Ok(self)
     }
 
     // ========================================================================
     // Build
     // ========================================================================
 
-    /// Validate that a value is finite and non-negative.
-    fn validate_finite_non_negative(value: f64, name: &str) -> f64 {
-        assert!(
-            value.is_finite() && value >= 0.0,
-            "{name} must be finite and non-negative, got {value}"
-        );
-        value
-    }
-
     /// Validate and convert a normalized X/Y/Z linear-family model.
-    fn validate_linear_model(model: &BTreeMap<String, f64>) -> PauliWeights {
+    fn validate_linear_model(model: &BTreeMap<String, f64>) -> ValidationResult<PauliWeights> {
         const NORMALIZATION_TOLERANCE: f64 = 1e-5;
-
-        let mut x = 0.0;
-        let mut y = 0.0;
-        let mut z = 0.0;
+        let mut weights = [0.0; 3];
         for (axis, weight) in model {
-            match axis.as_str() {
-                "X" => x = *weight,
-                "Y" => y = *weight,
-                "Z" => z = *weight,
-                "L" => panic!(
-                    "neo's idle linear family cannot represent leakage; use neo's \
-                     LeakageChannel for linear leakage"
-                ),
-                _ => panic!("p_idle_linear model has invalid key '{axis}'; expected X, Y, Z, or L"),
-            }
-            Self::validate_finite_non_negative(
-                *weight,
-                &format!("p_idle_linear weight for '{axis}'"),
+            let index = match axis.as_str() {
+                "X" => 0,
+                "Y" => 1,
+                "Z" => 2,
+                "L" => {
+                    return Err(ValidationError::new(
+                        "p_idle_linear",
+                        "use neo's LeakageChannel for linear leakage",
+                    ));
+                }
+                _ => {
+                    return Err(ValidationError::new("p_idle_linear", "expected X, Y, or Z")
+                        .with_value(axis));
+                }
+            };
+            weights[index] = checked_rate(*weight, &format!("p_idle_linear weight for '{axis}'"))?;
+        }
+        let total: f64 = weights.iter().sum();
+        if !total.is_finite() || (total - 1.0).abs() > NORMALIZATION_TOLERANCE {
+            return Err(
+                ValidationError::new("p_idle_linear", "model weights must sum to 1.0")
+                    .with_value(&total),
             );
         }
-
-        let total = x + y + z;
-        assert!(
-            total.is_finite() && (total - 1.0).abs() <= NORMALIZATION_TOLERANCE,
-            "p_idle_linear model weights must sum to 1.0 within tolerance \
-             {NORMALIZATION_TOLERANCE}, got {total}"
-        );
-        PauliWeights::custom(x / total, y / total, z / total)
+        Ok(PauliWeights::custom(
+            weights[0] / total,
+            weights[1] / total,
+            weights[2] / total,
+        ))
     }
 
     /// Validate an unnormalized sine-family multiplier model.
-    fn validate_sine_model(model: &BTreeMap<String, f64>) {
+    fn validate_sine_model(model: &BTreeMap<String, f64>) -> ValidationResult<()> {
         for (axis, multiplier) in model {
-            assert!(
-                matches!(axis.as_str(), "X" | "Y" | "Z" | "L"),
-                "p_idle_sin_squared model has invalid key '{axis}'; expected X, Y, Z, or L"
-            );
-            Self::validate_finite_non_negative(
+            if !matches!(axis.as_str(), "X" | "Y" | "Z" | "L") {
+                return Err(
+                    ValidationError::new("p_idle_sin_squared", "expected X, Y, Z, or L")
+                        .with_value(axis),
+                );
+            }
+            checked_rate(
                 *multiplier,
                 &format!("p_idle_sin_squared multiplier for '{axis}'"),
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// Validate combinations whose interpretation would otherwise depend on silent precedence.
@@ -816,16 +831,6 @@ mod tests {
     use pecos_core::QubitId;
     use pecos_random::PecosRng;
 
-    fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
-        if let Some(message) = panic.downcast_ref::<String>() {
-            message.clone()
-        } else if let Some(message) = panic.downcast_ref::<&str>() {
-            (*message).to_string()
-        } else {
-            "non-string panic".to_string()
-        }
-    }
-
     fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
         match response {
             NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
@@ -903,7 +908,9 @@ mod tests {
         let linear_model = BTreeMap::from([("X".to_string(), 1.0)]);
         let mut model = GeneralNoiseModelBuilder::new()
             .with_p_idle_linear(1.0, &linear_model)
+            .unwrap()
             .with_idle_after_2q(1.0)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
@@ -924,7 +931,9 @@ mod tests {
     fn quadratic_only_after_2q_configuration_builds_and_emits() {
         let mut model = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_idle_after_2q(1.0)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
@@ -946,7 +955,9 @@ mod tests {
         let sine_model = BTreeMap::from([("X".to_string(), 1.0)]);
         let mut model = GeneralNoiseModelBuilder::new()
             .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &sine_model)
+            .unwrap()
             .with_idle_after_2q(1.0)
+            .unwrap()
             .build();
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -966,6 +977,7 @@ mod tests {
         let sine_model = BTreeMap::from([("X".to_string(), 1.0), ("Z".to_string(), 1.0)]);
         let mut model = GeneralNoiseModelBuilder::new()
             .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &sine_model)
+            .unwrap()
             .build();
         let qubits = std::array::from_fn::<_, 16, _>(QubitId);
         let event = NoiseEvent::IdleTime {
@@ -984,6 +996,7 @@ mod tests {
         let sine_model = BTreeMap::from([("L".to_string(), 1.0)]);
         let mut model = GeneralNoiseModelBuilder::new()
             .with_p_idle_sin_squared(std::f64::consts::FRAC_PI_2, &sine_model)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["LeakageChannel", "IdleChannel"]);
 
@@ -1001,24 +1014,24 @@ mod tests {
     #[test]
     fn linear_family_rejects_unnormalized_model() {
         let linear_model = BTreeMap::from([("X".to_string(), 1.0), ("Z".to_string(), 1.0)]);
-        let panic = std::panic::catch_unwind(|| {
-            let _ = GeneralNoiseModelBuilder::new().with_p_idle_linear(0.1, &linear_model);
-        })
-        .unwrap_err();
+        let panic = GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(0.1, &linear_model)
+            .err()
+            .expect("invalid configuration must fail");
 
-        assert!(panic_message(panic.as_ref()).contains("must sum to 1.0"));
+        assert!(panic.to_string().contains("must sum to 1.0"));
     }
 
     #[test]
     fn linear_family_rejects_leakage_with_neo_guidance() {
         let linear_model = BTreeMap::from([("X".to_string(), 0.5), ("L".to_string(), 0.5)]);
-        let panic = std::panic::catch_unwind(|| {
-            let _ = GeneralNoiseModelBuilder::new().with_p_idle_linear(0.1, &linear_model);
-        })
-        .unwrap_err();
-        let message = panic_message(panic.as_ref());
+        let panic = GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(0.1, &linear_model)
+            .err()
+            .expect("invalid configuration must fail");
+        let message = panic.to_string();
 
-        assert!(message.contains("neo's idle linear family cannot represent leakage"));
+        assert!(message.contains("linear leakage"));
         assert!(message.contains("neo's LeakageChannel"));
     }
 
@@ -1026,30 +1039,48 @@ mod tests {
     fn linear_family_rejects_invalid_rates_axes_and_weights() {
         let normalized = BTreeMap::from([("X".to_string(), 1.0)]);
         for rate in [f64::INFINITY, f64::NAN, -0.1] {
-            let panic = std::panic::catch_unwind(|| {
-                let _ = GeneralNoiseModelBuilder::new().with_p_idle_linear(rate, &normalized);
-            })
-            .unwrap_err();
-            assert!(panic_message(panic.as_ref()).contains("finite and non-negative"));
+            let error = GeneralNoiseModelBuilder::new()
+                .with_p_idle_linear(rate, &normalized)
+                .err()
+                .expect("invalid configuration must fail");
+            assert_eq!(error.field, "linear idling rate");
+            assert_eq!(
+                error.message,
+                if rate.is_finite() {
+                    "rate cannot be negative"
+                } else {
+                    "must be finite"
+                }
+            );
         }
 
         let invalid_axis = BTreeMap::from([("A".to_string(), 1.0)]);
-        let panic = std::panic::catch_unwind(|| {
-            let _ = GeneralNoiseModelBuilder::new().with_p_idle_linear(0.1, &invalid_axis);
-        })
-        .unwrap_err();
-        assert!(panic_message(panic.as_ref()).contains("invalid key 'A'"));
+        let error = GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(0.1, &invalid_axis)
+            .err()
+            .expect("invalid configuration must fail");
+        assert_eq!(error.field, "p_idle_linear");
+        assert_eq!(error.message, "expected X, Y, or Z");
+        assert_eq!(error.value.as_deref(), Some("A"));
 
         for invalid_weight in [f64::INFINITY, f64::NAN, -1.0] {
             let invalid_model = BTreeMap::from([
                 ("X".to_string(), invalid_weight),
                 ("Z".to_string(), 1.0 - invalid_weight),
             ]);
-            let panic = std::panic::catch_unwind(|| {
-                let _ = GeneralNoiseModelBuilder::new().with_p_idle_linear(0.1, &invalid_model);
-            })
-            .unwrap_err();
-            assert!(panic_message(panic.as_ref()).contains("finite and non-negative"));
+            let error = GeneralNoiseModelBuilder::new()
+                .with_p_idle_linear(0.1, &invalid_model)
+                .err()
+                .expect("invalid configuration must fail");
+            assert_eq!(error.field, "p_idle_linear weight for 'X'");
+            assert_eq!(
+                error.message,
+                if invalid_weight.is_finite() {
+                    "rate cannot be negative"
+                } else {
+                    "must be finite"
+                }
+            );
         }
     }
 
@@ -1057,28 +1088,45 @@ mod tests {
     fn sine_family_rejects_invalid_rates_axes_and_multipliers() {
         let valid_model = BTreeMap::from([("X".to_string(), 1.0)]);
         for rate in [f64::INFINITY, f64::NAN, -0.1] {
-            let panic = std::panic::catch_unwind(|| {
-                let _ = GeneralNoiseModelBuilder::new().with_p_idle_sin_squared(rate, &valid_model);
-            })
-            .unwrap_err();
-            assert!(panic_message(panic.as_ref()).contains("finite and non-negative"));
+            let error = GeneralNoiseModelBuilder::new()
+                .with_p_idle_sin_squared(rate, &valid_model)
+                .err()
+                .expect("invalid configuration must fail");
+            assert_eq!(error.field, "sine-squared idling rate");
+            assert_eq!(
+                error.message,
+                if rate.is_finite() {
+                    "rate cannot be negative"
+                } else {
+                    "must be finite"
+                }
+            );
         }
 
         let invalid_axis = BTreeMap::from([("A".to_string(), 1.0)]);
-        let panic = std::panic::catch_unwind(|| {
-            let _ = GeneralNoiseModelBuilder::new().with_p_idle_sin_squared(0.1, &invalid_axis);
-        })
-        .unwrap_err();
-        assert!(panic_message(panic.as_ref()).contains("invalid key 'A'"));
+        let error = GeneralNoiseModelBuilder::new()
+            .with_p_idle_sin_squared(0.1, &invalid_axis)
+            .err()
+            .expect("invalid configuration must fail");
+        assert_eq!(error.field, "p_idle_sin_squared");
+        assert_eq!(error.message, "expected X, Y, Z, or L");
+        assert_eq!(error.value.as_deref(), Some("A"));
 
         for multiplier in [f64::INFINITY, f64::NAN, -1.0] {
             let invalid_model = BTreeMap::from([("X".to_string(), multiplier)]);
-            let panic = std::panic::catch_unwind(|| {
-                let _ =
-                    GeneralNoiseModelBuilder::new().with_p_idle_sin_squared(0.1, &invalid_model);
-            })
-            .unwrap_err();
-            assert!(panic_message(panic.as_ref()).contains("finite and non-negative"));
+            let error = GeneralNoiseModelBuilder::new()
+                .with_p_idle_sin_squared(0.1, &invalid_model)
+                .err()
+                .expect("invalid configuration must fail");
+            assert_eq!(error.field, "p_idle_sin_squared multiplier for 'X'");
+            assert_eq!(
+                error.message,
+                if multiplier.is_finite() {
+                    "rate cannot be negative"
+                } else {
+                    "must be finite"
+                }
+            );
         }
     }
 
@@ -1087,7 +1135,9 @@ mod tests {
         let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let builder = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.1)
-            .with_p_idle_sin_squared(0.1, &sine_model);
+            .unwrap()
+            .with_p_idle_sin_squared(0.1, &sine_model)
+            .unwrap();
         let error = builder.validate_configuration().unwrap_err();
 
         assert!(error.contains("with_p_idle_sin_squared"));
@@ -1103,6 +1153,7 @@ mod tests {
         let sine_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let builder = GeneralNoiseModelBuilder::new()
             .with_p_idle_sin_squared(0.1, &sine_model)
+            .unwrap()
             .with_p_idle_coherent(true);
         let error = builder.validate_configuration().unwrap_err();
 
@@ -1124,6 +1175,7 @@ mod tests {
             .with_p2(0.02)
             .with_p_meas(0.03, 0.04)
             .with_p_idle_linear(0.0001, &linear_model)
+            .unwrap()
             .with_leakage_scale(1.0)
             .build();
 
@@ -1184,8 +1236,9 @@ mod tests {
         // T1=50us, T2=30us with nanosecond time units
         let builder = GeneralNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
-            .with_idle_t1_t2(50e-6, 30e-6);
-        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+            .with_idle_t1_t2(50e-6, 30e-6)
+            .unwrap();
+        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap();
 
         assert!((builder.p_idle_linear_rate - expected.linear_rate).abs() < f64::EPSILON);
         assert!((builder.p_idle_linear_weights.x - expected.linear_weights.x).abs() < f64::EPSILON);
@@ -1209,18 +1262,14 @@ mod tests {
             (1.0, f64::NEG_INFINITY, "t2"),
             (1.0, f64::NAN, "t2"),
         ] {
-            let panic = std::panic::catch_unwind(|| {
-                let _ = GeneralNoiseModelBuilder::new()
-                    .with_time_scale(TimeScale::NANOSECONDS)
-                    .with_idle_t1_t2(t1, t2);
-            })
-            .expect_err("non-finite physical time must panic");
-            let message = panic_message(panic.as_ref());
+            let panic = GeneralNoiseModelBuilder::new()
+                .with_time_scale(TimeScale::NANOSECONDS)
+                .with_idle_t1_t2(t1, t2)
+                .err()
+                .expect("invalid configuration must fail");
+            let message = panic.to_string();
             assert!(message.contains(parameter), "unexpected panic: {message}");
-            assert!(
-                message.contains("finite and greater than zero"),
-                "unexpected panic: {message}"
-            );
+            assert!(message.contains("finite"), "unexpected panic: {message}");
         }
     }
 

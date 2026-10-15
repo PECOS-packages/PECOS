@@ -241,10 +241,13 @@ Foreign code can create and run PECOS quantum engines via the C ABI:
 | `pecos_circuit_z` | Pauli Z | qubits |
 | `pecos_circuit_sz` | S (phase) | qubits |
 | `pecos_circuit_cx` | CNOT | pairs |
-| `pecos_circuit_rx` | RX rotation | theta (radians), qubits |
-| `pecos_circuit_rz` | RZ rotation | theta (radians), qubits |
-| `pecos_circuit_rzz` | RZZ rotation | theta (radians), pairs |
+| `int32_t pecos_circuit_rx` | RX rotation | theta (radians), qubits |
+| `int32_t pecos_circuit_rz` | RZ rotation | theta (radians), qubits |
+| `int32_t pecos_circuit_rzz` | RZZ rotation | theta (radians), pairs |
 | `pecos_circuit_mz` | Z measurement | qubits |
+
+The three rotation functions return `0` on success and `-1` for a non-finite
+angle. Rejected calls leave the circuit builder unchanged.
 
 ### C Example
 

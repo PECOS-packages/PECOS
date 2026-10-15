@@ -446,6 +446,8 @@ impl PyStateVec {
                     }
                     Err(err) => return Err(err),
                 };
+                pecos_core::Angle64::try_from_radians(angle)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
                 let gates = match symbol {
                     "CRX" => {
                         pecos_core::controlled_rotations::lower_crx(angle, pair[0].0, pair[0].1)

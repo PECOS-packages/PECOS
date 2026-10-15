@@ -6135,6 +6135,7 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).mz(&[0]).build();
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.25)
+            .unwrap()
             .with_p_idle_coherent(true)
             .build();
 

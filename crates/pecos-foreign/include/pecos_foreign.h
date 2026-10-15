@@ -228,9 +228,10 @@ void pecos_circuit_x(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
 void pecos_circuit_z(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
 void pecos_circuit_sz(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
 void pecos_circuit_cx(PecosCircuitBuilder *c, const size_t *pairs, size_t num_pairs);
-void pecos_circuit_rx(PecosCircuitBuilder *c, double theta, const size_t *qubits, size_t n);
-void pecos_circuit_rz(PecosCircuitBuilder *c, double theta, const size_t *qubits, size_t n);
-void pecos_circuit_rzz(PecosCircuitBuilder *c, double theta, const size_t *pairs, size_t num_pairs);
+/* Rotations return 0 on success, -1 for non-finite angles without changing the circuit. */
+int32_t pecos_circuit_rx(PecosCircuitBuilder *c, double theta, const size_t *qubits, size_t n);
+int32_t pecos_circuit_rz(PecosCircuitBuilder *c, double theta, const size_t *qubits, size_t n);
+int32_t pecos_circuit_rzz(PecosCircuitBuilder *c, double theta, const size_t *pairs, size_t num_pairs);
 void pecos_circuit_mz(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
 void pecos_circuit_build(PecosCircuitBuilder *c, uint8_t **output, size_t *output_len);
 void pecos_circuit_reset(PecosCircuitBuilder *c);

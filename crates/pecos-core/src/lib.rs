@@ -43,7 +43,10 @@ pub mod sorted_vec_set;
 pub mod unitary_rep;
 pub mod value;
 
-pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
+pub use angle::{
+    Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto, NonFiniteAngleError,
+    ParseAngleError,
+};
 pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;
 pub use bit_uint::BitUInt;

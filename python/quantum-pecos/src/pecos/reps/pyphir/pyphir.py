@@ -17,6 +17,7 @@ circuit compilation, execution, and representation in the PECOS framework.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import pecos as pc
@@ -147,6 +148,11 @@ class PyPHIR:
 
                     if o.get("angles"):
                         angles = tuple(angle * (pc.f64.pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0])
+                        for angle in angles:
+                            if not math.isfinite(angle):
+                                value = "NaN" if math.isnan(angle) else str(angle)
+                                msg = f"angle must be finite, got {value} radians"
+                                raise ValueError(msg)
                     else:
                         angles = None
 

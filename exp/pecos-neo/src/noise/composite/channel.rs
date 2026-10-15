@@ -569,7 +569,7 @@ impl CompositeChannelBuilder {
     ///
     /// // T1-like relaxation with linear time dependence
     /// let t1_channel = CompositeChannelBuilder::idle("t1_decay",
-    ///     prob_linear(0.001, inject_z())
+    ///     prob_linear(0.001, inject_z()).unwrap()
     /// );
     /// ```
     #[must_use]

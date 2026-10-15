@@ -42,6 +42,10 @@ use super::channel::{
 use super::prelude::*;
 use crate::command::GateType;
 use crate::noise::two_qubit::AngleScaling;
+use crate::noise::validation::{
+    ValidationError, ValidationResult, validate_angle_rate, validate_duration,
+    validate_rate as checked_rate,
+};
 use crate::noise::{
     ComposableNoiseModel, CrosstalkTransitions, IdleChannel, SingleQubitEmissionWeights,
     TwoQubitEmissionWeights, TwoQubitPauliWeights,
@@ -62,23 +66,6 @@ fn validate_probability(value: f64, param_name: &str) -> f64 {
     } else if value.is_nan() {
         eprintln!("Warning: {param_name} is NaN, setting to 0.0");
         0.0
-    } else {
-        value
-    }
-}
-
-/// Validate that a rate is non-negative and warn if not.
-/// Returns the clamped value.
-fn validate_rate(value: f64, param_name: &str) -> f64 {
-    if value < 0.0 {
-        eprintln!("Warning: {param_name} = {value} is negative, clamping to 0.0");
-        0.0
-    } else if value.is_nan() {
-        eprintln!("Warning: {param_name} is NaN, setting to 0.0");
-        0.0
-    } else if value.is_infinite() {
-        eprintln!("Warning: {param_name} is infinite, clamping to f64::MAX");
-        f64::MAX
     } else {
         value
     }
@@ -399,10 +386,13 @@ impl CompositeNoiseModelBuilder {
     ///
     /// A duration of zero disables these sites. Nonzero sites receive all
     /// configured linear and quadratic idle mechanisms.
-    #[must_use]
-    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
-        self.idle_after_2q = validate_rate(duration, "idle_after_2q");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_after_2q(mut self, duration: f64) -> ValidationResult<Self> {
+        validate_duration(duration, "duration")?;
+        self.idle_after_2q = duration;
+        Ok(self)
     }
 
     // --- Preparation parameters ---
@@ -568,10 +558,13 @@ impl CompositeNoiseModelBuilder {
     /// `p = rate * duration`
     ///
     /// Units depend on the simulation's time units.
-    #[must_use]
-    pub fn with_p_idle_linear(mut self, rate_per_time_unit: f64) -> Self {
-        self.p_idle_linear_rate = validate_rate(rate_per_time_unit, "p_idle_linear_rate");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_p_idle_linear(mut self, rate_per_time_unit: f64) -> ValidationResult<Self> {
+        checked_rate(rate_per_time_unit, "rate_per_time_unit")?;
+        self.p_idle_linear_rate = rate_per_time_unit;
+        Ok(self)
     }
 
     /// Set the quadratic idle noise rate (T2-like dephasing).
@@ -581,10 +574,13 @@ impl CompositeNoiseModelBuilder {
     ///
     /// This models coherent dephasing converted to stochastic errors.
     /// Use `with_p_idle_coherent(true)` to use actual coherent RZ rotations instead.
-    #[must_use]
-    pub fn with_p_idle_quadratic(mut self, rate_per_time_unit: f64) -> Self {
-        self.p_idle_quadratic_rate = validate_rate(rate_per_time_unit, "p_idle_quadratic_rate");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_p_idle_quadratic(mut self, rate_per_time_unit: f64) -> ValidationResult<Self> {
+        validate_angle_rate(rate_per_time_unit, "rate_per_time_unit")?;
+        self.p_idle_quadratic_rate = rate_per_time_unit;
+        Ok(self)
     }
 
     /// Set whether to use coherent dephasing for quadratic idle noise.
@@ -605,21 +601,27 @@ impl CompositeNoiseModelBuilder {
     ///
     /// When modeling coherent dephasing using stochastic errors, this factor
     /// scales the effective rate. Default is 1.0 (no adjustment).
-    #[must_use]
-    pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> Self {
-        self.p_idle_coherent_to_incoherent_factor =
-            validate_rate(factor, "coherent_to_incoherent_factor");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> ValidationResult<Self> {
+        checked_rate(factor, "factor")?;
+        self.p_idle_coherent_to_incoherent_factor = factor;
+        Ok(self)
     }
 
     /// Set both T1 and T2 idle noise rates.
     ///
     /// Convenience method for setting both linear (T1) and quadratic (T2) rates.
-    #[must_use]
-    pub fn with_idle_noise(mut self, t1_rate: f64, t2_rate: f64) -> Self {
-        self.p_idle_linear_rate = validate_rate(t1_rate, "p_idle_linear_rate");
-        self.p_idle_quadratic_rate = validate_rate(t2_rate, "p_idle_quadratic_rate");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_noise(mut self, t1_rate: f64, t2_rate: f64) -> ValidationResult<Self> {
+        checked_rate(t1_rate, "t1_rate")?;
+        validate_angle_rate(t2_rate, "t2_rate")?;
+        self.p_idle_linear_rate = t1_rate;
+        self.p_idle_quadratic_rate = t2_rate;
+        Ok(self)
     }
 
     /// Set custom Pauli weights for linear (T1) idle noise.
@@ -696,7 +698,7 @@ impl CompositeNoiseModelBuilder {
     ///
     /// let noise = CompositeNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1=50us, T2=30us
     ///     .build();
     /// ```
     #[must_use]
@@ -713,11 +715,6 @@ impl CompositeNoiseModelBuilder {
     /// and numerical compatibility note are documented by [`IdleChannel::from_t1_t2`]. The
     /// convenience configures the linear family and leaves the quadratic family unused.
     ///
-    /// # Panics
-    ///
-    /// Panics if `with_time_scale()` has not been called first, if either time is non-finite or not
-    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
-    ///
     /// # Example
     ///
     /// ```
@@ -726,16 +723,21 @@ impl CompositeNoiseModelBuilder {
     ///
     /// let noise = CompositeNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us in seconds
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1=50us, T2=30us in seconds
     ///     .build();
     /// ```
-    #[must_use]
-    pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> Self {
-        let scale = self
-            .time_scale
-            .expect("with_time_scale() must be called before with_idle_t1_t2()");
+    ///
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a missing time scale.
+    pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> ValidationResult<Self> {
+        let scale = self.time_scale.ok_or_else(|| {
+            ValidationError::new(
+                "time_scale",
+                "with_time_scale() must be called before with_idle_t1_t2()",
+            )
+        })?;
 
-        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale)?;
         self.p_idle_linear_rate = channel.linear_rate;
         self.p_idle_linear_pauli_weights = Some(PauliWeights::custom(
             channel.linear_weights.x,
@@ -743,7 +745,7 @@ impl CompositeNoiseModelBuilder {
             channel.linear_weights.z,
         ));
         self.p_idle_quadratic_rate = channel.quadratic_rate;
-        self
+        Ok(self)
     }
 
     // --- Custom channels ---
@@ -1375,7 +1377,9 @@ mod tests {
         // Test that idle noise channels are created
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
+            .unwrap()
             .with_p_idle_quadratic(0.01)
+            .unwrap()
             .build();
 
         // Should have 1 idle channel
@@ -1386,6 +1390,7 @@ mod tests {
     fn test_idle_noise_t1_only() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
+            .unwrap()
             .build();
 
         assert_eq!(model.channel_count(), 1);
@@ -1395,7 +1400,9 @@ mod tests {
     fn test_idle_noise_t2_only() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.01)
+            .unwrap()
             .with_coherent_to_incoherent_factor(2.0)
+            .unwrap()
             .build();
 
         assert_eq!(model.channel_count(), 1);
@@ -1405,6 +1412,7 @@ mod tests {
     fn test_idle_noise_convenience() {
         let model = CompositeNoiseModelBuilder::new()
             .with_idle_noise(0.001, 0.01)
+            .unwrap()
             .build();
 
         assert_eq!(model.channel_count(), 1);
@@ -1418,6 +1426,7 @@ mod tests {
             .with_p_prep(0.005)
             .with_p_meas_symmetric(0.03)
             .with_idle_noise(0.001, 0.01)
+            .unwrap()
             .build();
 
         // SQ + TQ + Prep + Meas + Idle = 5 channels
@@ -1474,8 +1483,10 @@ mod tests {
     fn after_2q_idle_uses_idle_channel_without_p2() {
         let mut model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(1.0)
+            .unwrap()
             .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
             .with_idle_after_2q(1.0)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
@@ -1496,7 +1507,9 @@ mod tests {
     fn quadratic_only_after_2q_noise_uses_the_idle_channel() {
         let mut model = CompositeNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_idle_after_2q(1.0)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
@@ -1517,6 +1530,7 @@ mod tests {
     fn after_2q_duration_without_rates_builds_only_the_idle_channel() {
         let model = CompositeNoiseModelBuilder::new()
             .with_idle_after_2q(2.0)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
     }
@@ -1685,6 +1699,7 @@ mod tests {
         // Test with Z-only idle noise (typical for T2 dephasing)
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
+            .unwrap()
             .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0)) // Z-only
             .build();
 
@@ -1696,9 +1711,11 @@ mod tests {
     fn test_idle_linear_weights_with_t2() {
         // Combined T1 (custom weights) and T2
         let model = CompositeNoiseModelBuilder::new()
-            .with_idle_noise(0.001, 0.01) // Both T1 and T2
+            .with_idle_noise(0.001, 0.01)
+            .unwrap() // Both T1 and T2
             .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0)) // X-only for T1
             .with_coherent_to_incoherent_factor(2.0)
+            .unwrap()
             .build();
 
         // Should have 1 idle channel
@@ -2042,8 +2059,9 @@ mod tests {
         // T1=50us, T2=30us with nanosecond time units
         let builder = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
-            .with_idle_t1_t2(50e-6, 30e-6);
-        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+            .with_idle_t1_t2(50e-6, 30e-6)
+            .unwrap();
+        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap();
         let actual_weights = builder
             .p_idle_linear_pauli_weights
             .expect("T1/T2 convenience must set linear Pauli weights");
@@ -2068,6 +2086,7 @@ mod tests {
             .with_p1(0.01)
             .with_p2(0.02)
             .with_idle_t1_t2(50e-6, 30e-6)
+            .unwrap()
             .build();
 
         // SQ + TQ + Idle = 3 channels
@@ -2076,11 +2095,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "with_time_scale() must be called before with_idle_t1_t2()")]
-    fn test_idle_t1_t2_without_time_scale_panics() {
-        let _ = CompositeNoiseModelBuilder::new()
-            .with_idle_t1_t2(50e-6, 30e-6) // Should panic - no time scale set
-            .build();
+    fn test_idle_t1_t2_without_time_scale_returns_error() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_idle_t1_t2(50e-6, 30e-6)
+            .err()
+            .expect("missing time scale must fail");
+        assert_eq!(error.field, "time_scale");
+        assert_eq!(
+            error.message,
+            "with_time_scale() must be called before with_idle_t1_t2()"
+        );
     }
 
     // --- Validation Tests ---

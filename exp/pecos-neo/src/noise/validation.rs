@@ -163,15 +163,66 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
     Ok(())
 }
 
+/// Validate a finite signed angle, rate, or scale.
+///
+/// # Errors
+/// Returns an error naming the parameter and its non-finite value.
+pub fn validate_finite(value: f64, field: &str) -> ValidationResult<f64> {
+    if !value.is_finite() {
+        return Err(ValidationError::new(field, "must be finite").with_value(&value));
+    }
+    Ok(value)
+}
+
+/// Largest `TimeUnits` duration after conversion to f64 (`u64::MAX` rounds to 2^64).
+pub const MAX_DURATION: f64 = 18_446_744_073_709_551_616.0;
+
+/// Largest rate whose product with every representable duration remains finite.
+pub const MAX_ANGLE_RATE: f64 = f64::MAX / MAX_DURATION;
+
+/// Largest fraction whose product with a gate angle (at most TAU) remains finite.
+pub const MAX_ANGLE_FRACTION: f64 = f64::MAX / std::f64::consts::TAU;
+
+/// Validate a signed scalar against a finite magnitude bound.
+///
+/// # Errors
+/// Returns an error naming the parameter if it is non-finite or exceeds the bound.
+pub fn validate_bounded(value: f64, bound: f64, field: &str) -> ValidationResult<f64> {
+    validate_finite(value, field)?;
+    if value.abs() > bound {
+        return Err(
+            ValidationError::new(field, format!("magnitude must not exceed {bound}"))
+                .with_value(&value),
+        );
+    }
+    Ok(value)
+}
+
+/// Validate a duration supplied as f64 against the `TimeUnits` domain.
+///
+/// # Errors
+/// Returns an error for negative, non-finite, or excessively large durations.
+pub fn validate_duration(value: f64, field: &str) -> ValidationResult<f64> {
+    validate_rate(value, field)?;
+    validate_bounded(value, MAX_DURATION, field)
+}
+
+/// Validate a non-negative rate that becomes an angle after multiplication by duration.
+///
+/// # Errors
+/// Returns an error for negative, non-finite, or excessively large rates.
+pub fn validate_angle_rate(value: f64, field: &str) -> ValidationResult<f64> {
+    validate_rate(value, field)?;
+    validate_bounded(value, MAX_ANGLE_RATE, field)
+}
+
 /// Validate a rate (non-negative value).
 ///
 /// # Errors
 ///
-/// Returns an error if the rate is negative or NaN.
+/// Returns an error if the rate is negative or non-finite.
 pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
-    if rate.is_nan() {
-        return Err(ValidationError::new(field, "rate cannot be NaN").with_value(&rate));
-    }
+    validate_finite(rate, field)?;
     if rate < 0.0 {
         return Err(ValidationError::new(field, "rate cannot be negative")
             .with_value(&rate)
@@ -186,9 +237,7 @@ pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
 ///
 /// Returns an error if the value is not positive.
 pub fn validate_positive(value: f64, field: &str) -> ValidationResult<f64> {
-    if value.is_nan() {
-        return Err(ValidationError::new(field, "value cannot be NaN").with_value(&value));
-    }
+    validate_finite(value, field)?;
     if value <= 0.0 {
         return Err(ValidationError::new(field, "value must be positive")
             .with_value(&value)

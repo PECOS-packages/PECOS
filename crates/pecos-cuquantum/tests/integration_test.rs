@@ -221,21 +221,21 @@ fn test_custatevec_rotation_gates() {
     let mut sim = CuStateVec::new(2).expect("Failed to create CuStateVec");
 
     // RX(pi) should flip |0> to |1>
-    sim.rx(PI.into(), &[QubitId(0)]);
+    sim.rx(pecos_core::Angle64::from_radians(PI), &[QubitId(0)]);
     let result = sim.mz(&[QubitId(0)]);
     assert!(result[0].outcome, "RX(pi)|0> should give |1>");
 
     sim.reset();
 
     // RZ should not change measurement outcome (only phase)
-    sim.rz((PI / 2.0).into(), &[QubitId(0)]);
+    sim.rz(pecos_core::Angle64::from_radians(PI / 2.0), &[QubitId(0)]);
     let result = sim.mz(&[QubitId(0)]);
     assert!(!result[0].outcome, "RZ|0> should still be |0>");
 
     sim.reset();
 
     // RY(pi) should flip |0> to |1>
-    sim.ry(PI.into(), &[QubitId(0)]);
+    sim.ry(pecos_core::Angle64::from_radians(PI), &[QubitId(0)]);
     let result = sim.mz(&[QubitId(0)]);
     assert!(result[0].outcome, "RY(pi)|0> should give |1>");
 }
@@ -342,7 +342,10 @@ fn test_custatevec_rzz_gate() {
     let mut sim = CuStateVec::with_seed(2, 42).expect("Failed to create CuStateVec");
 
     // RZZ on |00> should not change measurement outcomes (only adds global phase)
-    sim.rzz((PI / 4.0).into(), &[(QubitId(0), QubitId(1))]);
+    sim.rzz(
+        pecos_core::Angle64::from_radians(PI / 4.0),
+        &[(QubitId(0), QubitId(1))],
+    );
     let result = sim.mz(&[QubitId(0), QubitId(1)]);
     assert!(
         !result[0].outcome,
@@ -359,7 +362,10 @@ fn test_custatevec_rzz_gate() {
     // |00> + |11> -> e^(-i*theta/2)|00> + e^(-i*theta/2)|11> (same phase)
     sim.h(&[QubitId(0)]);
     sim.cx(&[(QubitId(0), QubitId(1))]);
-    sim.rzz(PI.into(), &[(QubitId(0), QubitId(1))]); // RZZ(pi) adds -i to both |00> and |11>
+    sim.rzz(
+        pecos_core::Angle64::from_radians(PI),
+        &[(QubitId(0), QubitId(1))],
+    ); // RZZ(pi) adds -i to both |00> and |11>
 
     // Measure - should still be perfectly correlated
     let result = sim.mz(&[QubitId(0), QubitId(1)]);
@@ -379,7 +385,10 @@ fn test_custatevec_rxx_gate() {
     let mut sim = CuStateVec::with_seed(2, 42).expect("Failed to create CuStateVec");
 
     // RXX(pi) on |00> should give |11> (up to global phase)
-    sim.rxx(PI.into(), &[(QubitId(0), QubitId(1))]);
+    sim.rxx(
+        pecos_core::Angle64::from_radians(PI),
+        &[(QubitId(0), QubitId(1))],
+    );
     let result = sim.mz(&[QubitId(0), QubitId(1)]);
     assert!(
         result[0].outcome,
@@ -393,7 +402,10 @@ fn test_custatevec_rxx_gate() {
     sim.reset();
 
     // RXX(pi/2) on |00> creates superposition
-    sim.rxx((PI / 2.0).into(), &[(QubitId(0), QubitId(1))]);
+    sim.rxx(
+        pecos_core::Angle64::from_radians(PI / 2.0),
+        &[(QubitId(0), QubitId(1))],
+    );
 
     // Sample many times - should get both correlated outcomes
     let samples = sim.sample(100);
@@ -417,7 +429,10 @@ fn test_custatevec_ryy_gate() {
     let mut sim = CuStateVec::with_seed(2, 42).expect("Failed to create CuStateVec");
 
     // RYY(pi) on |00> should give -|11> (up to global phase, measurement gives |11>)
-    sim.ryy(PI.into(), &[(QubitId(0), QubitId(1))]);
+    sim.ryy(
+        pecos_core::Angle64::from_radians(PI),
+        &[(QubitId(0), QubitId(1))],
+    );
     let result = sim.mz(&[QubitId(0), QubitId(1)]);
     assert!(
         result[0].outcome,
@@ -431,7 +446,10 @@ fn test_custatevec_ryy_gate() {
     sim.reset();
 
     // RYY(pi/2) on |00> creates superposition
-    sim.ryy((PI / 2.0).into(), &[(QubitId(0), QubitId(1))]);
+    sim.ryy(
+        pecos_core::Angle64::from_radians(PI / 2.0),
+        &[(QubitId(0), QubitId(1))],
+    );
 
     // Sample many times - should get correlated outcomes
     let samples = sim.sample(100);
@@ -459,7 +477,10 @@ fn test_custatevec_combined_rotations() {
 
     // Apply sequence: H-RZZ(pi/2)-H on both qubits is equivalent to RXX(pi/2)
     sim.h(&[QubitId(0), QubitId(1)]);
-    sim.rzz((PI / 2.0).into(), &[(QubitId(0), QubitId(1))]);
+    sim.rzz(
+        pecos_core::Angle64::from_radians(PI / 2.0),
+        &[(QubitId(0), QubitId(1))],
+    );
     sim.h(&[QubitId(0), QubitId(1)]);
 
     // Sample and check correlation

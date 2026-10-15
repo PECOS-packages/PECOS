@@ -30,10 +30,8 @@ pub struct CoherentIdleChannel {
 
 impl CoherentIdleChannel {
     /// Create a coherent idle channel with the given RZ angle (radians).
-    pub fn new(angle_radians: f64) -> Self {
-        Self {
-            angle: Angle64::from_radians(angle_radians),
-        }
+    pub fn new(angle: Angle64) -> Self {
+        Self { angle }
     }
 }
 

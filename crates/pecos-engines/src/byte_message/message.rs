@@ -422,10 +422,7 @@ impl ByteMessage {
                 trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
             }
             if i < angle_count {
-                if !param.is_finite() {
-                    return Err(PecosError::Input("gate angle must be finite".into()));
-                }
-                angles.push(Angle64::from_radians(param));
+                angles.push(Angle64::try_from_radians(param)?);
             } else {
                 params.push(param);
             }

@@ -695,8 +695,9 @@ impl PyGate {
         let angles: Vec<Angle64> = params
             .iter()
             .take(angle_count)
-            .map(|&r| Angle64::from_radians(r))
-            .collect();
+            .map(|&r| Angle64::try_from_radians(r))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let other_params: Vec<f64> = params.into_iter().skip(angle_count).collect();
         let inner = Gate::try_new(gate_type.inner, angles, other_params, qubits)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
@@ -3979,8 +3980,9 @@ impl PyTickHandle {
                 let angle_vals: Vec<Angle64> = angles
                     .unwrap_or_default()
                     .into_iter()
-                    .map(Angle64::from_radians)
-                    .collect();
+                    .map(Angle64::try_from_radians)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
                 if angle_arity > 0 && angle_vals.len() != angle_arity {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "Gate '{name}' requires {angle_arity} angle(s), got {}",
@@ -4062,8 +4064,9 @@ impl PyTickHandle {
         let angle_vals: Vec<Angle64> = angles
             .unwrap_or_default()
             .into_iter()
-            .map(Angle64::from_radians)
-            .collect();
+            .map(Angle64::try_from_radians)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         let handle = slf.borrow_mut(py);
         let tick_idx = handle.tick_idx;

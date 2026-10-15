@@ -445,7 +445,8 @@ fn angle_param(params: &[f64], index: usize, gate_type: GateType) -> Result<Angl
             params.len()
         )));
     }
-    Ok(Angle64::from_radians(params[index]))
+    Angle64::try_from_radians(params[index])
+        .map_err(|error| pecos_phir::PhirError::internal(error.to_string()))
 }
 
 #[cfg(test)]

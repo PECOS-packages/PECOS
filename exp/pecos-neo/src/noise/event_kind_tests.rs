@@ -165,7 +165,12 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
             EventKinds::of(AfterPreparation),
         ),
         (
-            Box::new(IdleChannel::linear(0.2).with_idle_after_2q(1.0)),
+            Box::new(
+                IdleChannel::linear(0.2)
+                    .unwrap()
+                    .with_idle_after_2q(1.0)
+                    .unwrap(),
+            ),
             EventKinds::of(IdleTime).with(AfterGate),
         ),
         (

@@ -1292,6 +1292,7 @@ mod tests {
     fn coherent_idle_is_rejected_by_importance_runner_during_configuration() {
         let noise = crate::noise::GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.25)
+            .unwrap()
             .with_p_idle_coherent(true)
             .build();
 

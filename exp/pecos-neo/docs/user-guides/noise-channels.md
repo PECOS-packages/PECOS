@@ -79,11 +79,11 @@ PreparationChannel::new(0.001)
 T1/T2 decay during idle periods. Rate scales with duration.
 
 ```rust
-IdleChannel::linear(0.0001)                   // Rate per time unit
+IdleChannel::linear(0.0001).unwrap()                   // Rate per time unit
     .with_linear_depolarizing()               // Uniform X/Y/Z
 
 // T1=50us and total T2=30us when one abstract time unit is 1ns
-IdleChannel::from_t1_t2(50_000.0, 30_000.0)
+IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap()
 ```
 
 `from_t1_t2` uses the first-order Pauli twirl, requires total `T2 <= 2 * T1`, and is valid for

@@ -74,6 +74,8 @@ use super::composer::ComposableNoiseModel;
 use super::composite::prelude::*;
 #[cfg(feature = "composite-noise")]
 use super::topology::{chain_neighbors, grid_neighbors};
+#[cfg(feature = "composite-noise")]
+use super::validation::{ValidationResult, validate_rate};
 
 // ============================================================================
 // Simple Patterns
@@ -423,17 +425,21 @@ impl DeviceNoiseParams {
     }
 
     /// Set T1 relaxation rate (per time unit).
-    #[must_use]
-    pub fn with_t1(mut self, rate: f64) -> Self {
-        self.t1_rate = rate;
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_t1(mut self, rate: f64) -> ValidationResult<Self> {
+        self.t1_rate = validate_rate(rate, "t1_rate")?;
+        Ok(self)
     }
 
     /// Set T2 dephasing rate (per time unit).
-    #[must_use]
-    pub fn with_t2(mut self, rate: f64) -> Self {
-        self.t2_rate = rate;
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_t2(mut self, rate: f64) -> ValidationResult<Self> {
+        self.t2_rate = validate_rate(rate, "t2_rate")?;
+        Ok(self)
     }
 }
 
@@ -454,13 +460,19 @@ impl DeviceNoiseParams {
 ///         .with_p1(0.001)
 ///         .with_p2(0.01)
 ///         .with_measurement_error(0.02)
-///         .with_t1(0.0001)
-///         .with_t2(0.0005)
-/// );
+///         .with_t1(0.0001).unwrap()
+///         .with_t2(0.0005).unwrap()
+/// ).unwrap();
 /// ```
-#[must_use]
+///
+/// # Errors
+/// Returns an error for non-finite or negative rates, factors, or durations.
 #[cfg(feature = "composite-noise")]
-pub fn realistic_device_noise(params: &DeviceNoiseParams) -> ComposableNoiseModel {
+pub fn realistic_device_noise(
+    params: &DeviceNoiseParams,
+) -> ValidationResult<ComposableNoiseModel> {
+    validate_rate(params.t1_rate, "t1_rate")?;
+    validate_rate(params.t2_rate, "t2_rate")?;
     let mut builder = NoiseModelBuilder::new();
 
     // Gate noise
@@ -500,18 +512,18 @@ pub fn realistic_device_noise(params: &DeviceNoiseParams) -> ComposableNoiseMode
     if params.t1_rate > 0.0 {
         // T1 decay: energy relaxation causes bit flips (amplitude damping approximated as Pauli)
         let t1_channel =
-            CompositeChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli()));
+            CompositeChannelBuilder::idle("t1_decay", prob_linear(params.t1_rate, pauli())?);
         model = model.add_channel(t1_channel);
     }
 
     if params.t2_rate > 0.0 {
         // T2 dephasing: pure dephasing (Z errors)
         let t2_channel =
-            CompositeChannelBuilder::idle("t2_dephasing", prob_linear(params.t2_rate, inject_z()));
+            CompositeChannelBuilder::idle("t2_dephasing", prob_linear(params.t2_rate, inject_z())?);
         model = model.add_channel(t2_channel);
     }
 
-    model
+    Ok(model)
 }
 
 // ============================================================================
@@ -673,7 +685,7 @@ mod tests {
             .with_p2(0.01)
             .with_measurement_error(0.02);
 
-        let model = realistic_device_noise(&params);
+        let model = realistic_device_noise(&params).unwrap();
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::with_seed(1, 42);
@@ -713,7 +725,9 @@ mod tests {
             .with_leakage(0.1)
             .with_seepage(0.5)
             .with_t1(0.0001)
-            .with_t2(0.0005);
+            .unwrap()
+            .with_t2(0.0005)
+            .unwrap();
 
         assert_eq!(params.p1, 0.001);
         assert_eq!(params.p2, 0.01);

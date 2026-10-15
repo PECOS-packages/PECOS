@@ -442,7 +442,7 @@ impl PhirClassicalInterpreter {
             );
         }
 
-        let sim_name = resolve_sim_name(qop_name, angles.as_deref());
+        let sim_name = resolve_sim_name(qop_name, angles.as_deref())?;
 
         let ret = if returns.is_empty() {
             None

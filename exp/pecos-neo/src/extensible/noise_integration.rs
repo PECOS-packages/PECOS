@@ -40,10 +40,18 @@ impl GateNoiseParams {
     }
 
     /// Set the gate duration.
-    #[must_use]
-    pub fn with_duration(mut self, duration_ns: f64) -> Self {
-        self.duration_ns = Some(duration_ns);
-        self
+    ///
+    /// # Errors
+    /// Returns an error if the duration is outside the finite `TimeUnits` domain.
+    pub fn with_duration(
+        mut self,
+        duration_ns: f64,
+    ) -> crate::noise::validation::ValidationResult<Self> {
+        self.duration_ns = Some(crate::noise::validation::validate_duration(
+            duration_ns,
+            "duration_ns",
+        )?);
+        Ok(self)
     }
 
     /// Set custom Pauli weights.
@@ -308,6 +316,7 @@ mod tests {
     fn test_gate_noise_params_builder() {
         let params = GateNoiseParams::with_error(0.01)
             .with_duration(100.0)
+            .unwrap()
             .with_pauli_weights(0.5, 0.3, 0.2);
 
         assert_eq!(params.error_probability, 0.01);

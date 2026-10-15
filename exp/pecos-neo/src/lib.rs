@@ -329,7 +329,7 @@ pub mod prelude {
     pub use crate::runner::{CircuitRunner, EventHandlers, ExecutionError, GateOverrides};
 
     // Re-export commonly used types from dependencies
-    pub use pecos_core::{Angle64, QubitId};
+    pub use pecos_core::{Angle64, NonFiniteAngleError, QubitId};
 }
 
 #[cfg(test)]

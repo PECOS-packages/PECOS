@@ -783,8 +783,10 @@ mod tests {
         let two_qubit = TwoQubitChannel::depolarizing(0.5)
             .with_pauli_weights(TwoQubitPauliWeights::custom(weights));
         let idle = IdleChannel::linear(1.0)
+            .unwrap()
             .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
-            .with_idle_after_2q(1.0);
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,

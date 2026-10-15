@@ -2626,7 +2626,7 @@ impl DagCircuit {
 
     /// Apply RZZ (ZZ rotation) gate(s).
     ///
-    /// Implements exp(-i * theta/2 * Z*Z). The angle can be `Angle64` or `f64` (radians).
+    /// Implements exp(-i * theta/2 * Z*Z). Use an explicit angle constructor for floating-point radians.
     pub fn rzz(
         &mut self,
         theta: impl Into<Angle64>,
@@ -4823,11 +4823,11 @@ mod tests {
 
         let mut circuit = DagCircuit::new();
 
-        // Test that rotation gates accept both Angle64 and f64
+        // Test rotation gates with explicit angle constructors
         // API follows simulator convention: rx(theta, q)
         circuit
             .h(&[0])
-            .rz(PI / 4.0, &[0]) // f64 in radians, then qubit
+            .rz(Angle64::from_radians(PI / 4.0), &[0])
             .rx(Angle64::QUARTER_TURN, &[0]); // Angle64, then qubit
         circuit.mz(&[0]);
 
@@ -4922,10 +4922,10 @@ mod tests {
         // Matches ArbitraryRotationGateable API: rx(theta, q)
         let mut circuit2 = DagCircuit::new();
         circuit2
-            .rx(FRAC_PI_4, &[0])
-            .ry(FRAC_PI_4, &[0])
-            .rz(FRAC_PI_4, &[0])
-            .rzz(FRAC_PI_4, &[(0, 1)]); // rzz(theta, &[(q1, q2)])
+            .rx(Angle64::from_radians(FRAC_PI_4), &[0])
+            .ry(Angle64::from_radians(FRAC_PI_4), &[0])
+            .rz(Angle64::from_radians(FRAC_PI_4), &[0])
+            .rzz(Angle64::from_radians(FRAC_PI_4), &[(0, 1)]); // rzz(theta, &[(q1, q2)])
 
         assert_eq!(circuit2.gate_count(), 4);
     }

@@ -185,6 +185,8 @@ fn native_sequence(op: &QuantumOp, native_set: RuntimeNativeGateSet) -> Result<R
         }
         // Reuse controlled_rotations.rs:62-73, including its 4pi wrap parity.
         QuantumOp::CRZ(theta, c, t) => {
+            pecos_core::Angle64::try_from_radians(theta)
+                .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
             pecos_core::controlled_rotations::lower_crz(theta, c.into(), t.into())
                 .into_iter()
                 .map(|gate| crz_native_gate(&gate))

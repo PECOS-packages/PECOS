@@ -1682,9 +1682,15 @@ impl OperationProcessor {
                     ));
                 };
                 builder.u(
-                    Angle64::from_radians(*theta),
-                    Angle64::from_radians(*phi),
-                    Angle64::from_radians(*lambda),
+                    Angle64::try_from_radians(*theta).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(*phi).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(*lambda).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
                     qubit_args,
                 );
             }
@@ -1695,12 +1701,21 @@ impl OperationProcessor {
                 builder.sxdg(qubit_args);
             }
             "RZ" => {
-                builder.rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
+                builder.rz(
+                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    &[qubit_args[0]],
+                );
             }
             "R1XY" => {
                 builder.rxy1q(
-                    Angle64::from_radians(angle_args[0]),
-                    Angle64::from_radians(angle_args[1]),
+                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
                     &[qubit_args[0]],
                 );
             }
@@ -1708,17 +1723,27 @@ impl OperationProcessor {
                 crate::v0_1::ast::validate_rxyxy2q(Some(angle_args), qubit_args.len())
                     .map_err(PecosError::ValidationInvalidGateParameters)?;
                 builder.rxyxy2q(
-                    Angle64::from_radians(angle_args[0]),
-                    Angle64::from_radians(angle_args[1]),
+                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
                     &pairs()?,
                 );
             }
             "RXXRYYRZZ" => {
                 let pairs = pairs()?;
                 let gate = Gate::rxxryyrzz(
-                    Angle64::from_radians(angle_args[0]),
-                    Angle64::from_radians(angle_args[1]),
-                    Angle64::from_radians(angle_args[2]),
+                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
+                    Angle64::try_from_radians(angle_args[2]).map_err(|error| {
+                        PecosError::ValidationInvalidGateParameters(error.to_string())
+                    })?,
                     &pairs,
                 );
                 builder.add_gate_command(&gate);

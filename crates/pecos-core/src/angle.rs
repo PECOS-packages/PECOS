@@ -33,6 +33,23 @@ pub use parse::ParseAngleError;
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign};
 
+/// A non-finite floating-point angle, with its original value and unit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NonFiniteAngleError {
+    /// The rejected value.
+    pub value: f64,
+    /// The input unit ("radians" or "turns").
+    pub unit: &'static str,
+}
+
+impl fmt::Display for NonFiniteAngleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "angle must be finite, got {} {}", self.value, self.unit)
+    }
+}
+
+impl std::error::Error for NonFiniteAngleError {}
+
 /// Alias for `Angle` with an 8-bit unsigned integer.
 #[allow(clippy::module_name_repetitions)]
 pub type Angle8 = Angle<u8>;
@@ -234,23 +251,50 @@ where
     /// Creates an angle from a value in radians.
     ///
     /// # Panics
-    /// This function will panic if the conversion from f64 to the target type fails.
+    /// Panics when the input is not finite.
     #[inline]
     #[must_use]
     pub fn from_radians(radians: f64) -> Self {
-        const TAU: f64 = std::f64::consts::TAU;
-
-        Self::from_normalized_turns(radians.rem_euclid(TAU) / TAU)
+        Self::try_from_radians(radians).unwrap_or_else(|error| panic!("{error}"))
     }
 
     /// Creates an angle from a value in turns.
     ///
     /// # Panics
-    /// This function will panic if the conversion from f64 to the target type fails.
+    /// Panics when the input is not finite.
     #[inline]
     #[must_use]
     pub fn from_turns(turns: f64) -> Self {
-        Self::from_normalized_turns(turns.rem_euclid(1.0))
+        Self::try_from_turns(turns).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Creates an angle from radians.
+    ///
+    /// # Errors
+    /// Returns an error containing the value and unit when the input is not finite.
+    pub fn try_from_radians(radians: f64) -> Result<Self, NonFiniteAngleError> {
+        const TAU: f64 = std::f64::consts::TAU;
+        if !radians.is_finite() {
+            return Err(NonFiniteAngleError {
+                value: radians,
+                unit: "radians",
+            });
+        }
+        Ok(Self::from_normalized_turns(radians.rem_euclid(TAU) / TAU))
+    }
+
+    /// Creates an angle from turns.
+    ///
+    /// # Errors
+    /// Returns an error containing the value and unit when the input is not finite.
+    pub fn try_from_turns(turns: f64) -> Result<Self, NonFiniteAngleError> {
+        if !turns.is_finite() {
+            return Err(NonFiniteAngleError {
+                value: turns,
+                unit: "turns",
+            });
+        }
+        Ok(Self::from_normalized_turns(turns.rem_euclid(1.0)))
     }
 
     fn from_normalized_turns(turns: f64) -> Self {
@@ -391,7 +435,7 @@ where
     /// ```
     ///
     /// # Panics
-    /// Panics if the conversion between `f64` and `T` fails.
+    /// Panics when the input is NaN. Infinite tolerances saturate.
     #[must_use]
     pub fn epsilon_from_radians(radians: f64) -> T {
         Self::epsilon_from_turns(radians.abs() / std::f64::consts::TAU)
@@ -411,7 +455,7 @@ where
     /// ```
     ///
     /// # Panics
-    /// Panics if the conversion between `f64` and `T` fails.
+    /// Panics when the input is NaN. Infinite tolerances saturate.
     #[must_use]
     pub fn epsilon_from_turns(turns: f64) -> T {
         let max = T::max_value()
@@ -622,24 +666,6 @@ impl_angle_constants!(u16);
 impl_angle_constants!(u32);
 impl_angle_constants!(u64);
 impl_angle_constants!(u128);
-
-/// Implements `From<f64>` for common Angle types, treating f64 as radians.
-///
-/// This allows convenient angle creation: `Angle64::from(1.5708)` or `angle.into()`
-/// where the f64 value is interpreted as radians.
-macro_rules! impl_from_f64 {
-    ($($t:ty),*) => {
-        $(
-            impl From<f64> for Angle<$t> {
-                fn from(radians: f64) -> Self {
-                    Self::from_radians(radians)
-                }
-            }
-        )*
-    };
-}
-
-impl_from_f64!(u8, u16, u32, u64, u128);
 
 /// Implements addition for angles, with modular wrapping.
 impl<T> Add for Angle<T>
@@ -1125,7 +1151,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Conversion of fraction to target type failed")]
+    #[should_panic(expected = "angle must be finite, got inf radians")]
     fn test_from_radians_overflow() {
         let _ = Angle32::from_radians(f64::INFINITY);
     }

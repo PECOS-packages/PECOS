@@ -60,6 +60,9 @@ use super::{
     SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use crate::command::GateType;
+use crate::noise::validation::{
+    ValidationResult, validate_angle_rate, validate_duration, validate_rate as checked_rate,
+};
 use pecos_core::TimeScale;
 
 /// Unified builder for constructing noise models.
@@ -253,10 +256,13 @@ impl NoiseModelBuilder {
     ///
     /// A duration of zero disables these sites. Nonzero sites receive all
     /// configured linear and quadratic idle mechanisms.
-    #[must_use]
-    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_after_2q(mut self, duration: f64) -> ValidationResult<Self> {
+        validate_duration(duration, "duration")?;
         self.idle_after_2q = duration;
-        self
+        Ok(self)
     }
 
     /// Set symmetric measurement error probability.
@@ -336,19 +342,30 @@ impl NoiseModelBuilder {
     }
 
     /// Set idle noise parameters.
-    #[must_use]
-    pub fn with_idle_noise(mut self, linear_rate: f64, quadratic_rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_noise(
+        mut self,
+        linear_rate: f64,
+        quadratic_rate: f64,
+    ) -> ValidationResult<Self> {
+        checked_rate(linear_rate, "linear_rate")?;
+        validate_angle_rate(quadratic_rate, "quadratic_rate")?;
         self.p_idle_linear_rate = linear_rate;
         self.p_idle_quadratic_rate = quadratic_rate;
-        self
+        Ok(self)
     }
 
     /// Enable coherent idle noise.
-    #[must_use]
-    pub fn with_coherent_idle(mut self, factor: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_coherent_idle(mut self, factor: f64) -> ValidationResult<Self> {
+        checked_rate(factor, "factor")?;
         self.p_idle_coherent = true;
         self.p_idle_coherent_factor = factor;
-        self
+        Ok(self)
     }
 
     /// Set time scale for physical time interpretation.
@@ -666,7 +683,9 @@ mod tests {
     fn after_2q_builder_routes_quadratic_noise_without_a_two_qubit_channel() {
         let mut model = NoiseModelBuilder::new()
             .with_idle_noise(0.0, std::f64::consts::PI)
+            .unwrap()
             .with_idle_after_2q(1.0)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
@@ -687,8 +706,11 @@ mod tests {
     fn idle_builder_routes_weights_and_quadratic_rate_in_coherent_mode() {
         let mut builder = NoiseModelBuilder::new()
             .with_idle_noise(1.0, 0.75)
+            .unwrap()
             .with_coherent_idle(1.0)
-            .with_idle_after_2q(2.0);
+            .unwrap()
+            .with_idle_after_2q(2.0)
+            .unwrap();
         builder.p_idle_linear_weights = crate::noise::PauliWeights::custom(1.0, 0.0, 0.0);
         let mut model = builder.build();
         let qubits = [QubitId(0), QubitId(1)];
@@ -719,7 +741,9 @@ mod tests {
     fn idle_builder_routes_the_incoherent_conversion_factor() {
         let mut builder = NoiseModelBuilder::new()
             .with_idle_noise(0.0, std::f64::consts::FRAC_PI_2)
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         builder.p_idle_coherent_factor = 2.0;
         let mut model = builder.build();
         let qubits = std::array::from_fn::<_, 16, _>(QubitId);
@@ -736,7 +760,10 @@ mod tests {
 
     #[test]
     fn after_2q_duration_alone_still_builds_the_idle_policy_channel() {
-        let mut model = NoiseModelBuilder::new().with_idle_after_2q(1.0).build();
+        let mut model = NoiseModelBuilder::new()
+            .with_idle_after_2q(1.0)
+            .unwrap()
+            .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
@@ -757,6 +784,7 @@ mod tests {
     fn quadratic_only_configuration_builds_the_idle_channel() {
         let mut model = NoiseModelBuilder::new()
             .with_idle_noise(0.0, std::f64::consts::PI)
+            .unwrap()
             .build();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 

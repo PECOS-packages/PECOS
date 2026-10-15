@@ -2257,17 +2257,17 @@ pub fn emit_parsed(
         }
         // .ll angles are f64 radians (the wire format); convert to fixed-point Angle64 at the boundary.
         ParsedOp::Rz(q, t) => {
-            RzOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+            RzOp::new(ctx, slot_of[&q], Angle64::try_from_radians(t)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Rx(q, t) => {
-            RxOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+            RxOp::new(ctx, slot_of[&q], Angle64::try_from_radians(t)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }
         ParsedOp::Ry(q, t) => {
-            RyOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+            RyOp::new(ctx, slot_of[&q], Angle64::try_from_radians(t)?)
                 .get_operation()
                 .insert_at_back(block, ctx);
         }

@@ -2803,7 +2803,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0));
+        let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0).unwrap());
 
         let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2818,6 +2818,7 @@ mod tests {
     fn coherent_idle_without_rotation_support_fails_during_configuration() {
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_p_idle_coherent(true)
             .build();
 
@@ -2847,13 +2848,16 @@ mod tests {
                 "NoiseModelBuilder::with_coherent_idle(..)",
                 NoiseModelBuilder::new()
                     .with_idle_noise(0.0, 0.25)
+                    .unwrap()
                     .with_coherent_idle(1.0)
+                    .unwrap()
                     .build(),
             ),
             (
                 "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
                 CompositeNoiseModelBuilder::new()
                     .with_p_idle_quadratic(0.25)
+                    .unwrap()
                     .with_p_idle_coherent(true)
                     .build(),
             ),
@@ -2896,6 +2900,7 @@ mod tests {
             .build();
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_p_idle_coherent(true)
             .build();
 
@@ -2916,7 +2921,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(CompositeChannelBuilder::idle(
             "coherent_idle",
-            prob(1.0, coherent_rz(0.25)),
+            prob(1.0, coherent_rz(0.25).unwrap()),
         ));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);

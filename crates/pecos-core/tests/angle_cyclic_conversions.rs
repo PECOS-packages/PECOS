@@ -372,3 +372,50 @@ fn tiny_controlled_phases_have_expected_angles() {
         assert_eq!(rz.angles.as_slice(), &[half_angle], "input={input}");
     }
 }
+
+#[test]
+#[should_panic(expected = "angle must be finite, got NaN radians")]
+fn nonfinite_infallible_constructor_names_value() {
+    let _angle = Angle64::from_radians(f64::NAN);
+}
+
+#[test]
+fn decimal_pi_overflow_is_an_error() {
+    let text = format!("{}{}.0pi", "1", "0".repeat(308));
+    assert!(matches!(
+        Angle64::from_str_radians(&text),
+        Err(pecos_core::ParseAngleError::Overflow)
+    ));
+}
+
+#[test]
+fn scientific_notation_is_rejected_by_integer_parser() {
+    assert!(matches!(
+        Angle64::from_str_radians("1e400"),
+        Err(pecos_core::ParseAngleError::InvalidFormat)
+    ));
+}
+#[test]
+fn nonfinite_angles_are_errors() {
+    macro_rules! check {
+        ($angle:ty) => {{
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let error = <$angle>::try_from_radians(value).unwrap_err();
+                assert!(error.to_string().contains(&value.to_string()));
+                assert!(error.to_string().contains("radians"));
+                let error = <$angle>::try_from_turns(value).unwrap_err();
+                assert!(error.to_string().contains(&value.to_string()));
+                assert!(error.to_string().contains("turns"));
+            }
+            for value in [0.0, -1.0, 1e300, -1e300, f64::MAX, f64::MIN] {
+                assert!(<$angle>::try_from_radians(value).is_ok());
+                assert!(<$angle>::try_from_turns(value).is_ok());
+            }
+        }};
+    }
+    check!(Angle8);
+    check!(Angle16);
+    check!(Angle32);
+    check!(Angle64);
+    check!(Angle128);
+}

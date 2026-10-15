@@ -330,6 +330,9 @@ pub unsafe extern "C" fn pecos_circuit_cx(
 
 /// Add RX rotation gate(s) to the circuit.
 ///
+/// # Returns
+/// 0 on success, -1 if the angle is not finite. On error the circuit is unchanged.
+///
 /// # Safety
 /// `circuit` must be valid. `qubits` must point to `num_qubits` valid `usize` values.
 #[unsafe(no_mangle)]
@@ -338,13 +341,20 @@ pub unsafe extern "C" fn pecos_circuit_rx(
     theta_radians: f64,
     qubits: *const usize,
     num_qubits: usize,
-) {
+) -> i32 {
+    let Ok(angle) = Angle64::try_from_radians(theta_radians) else {
+        return -1;
+    };
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    c.builder.rx(Angle64::from_radians(theta_radians), qs);
+    c.builder.rx(angle, qs);
+    0
 }
 
 /// Add RZ rotation gate(s) to the circuit.
+///
+/// # Returns
+/// 0 on success, -1 if the angle is not finite. On error the circuit is unchanged.
 ///
 /// # Safety
 /// `circuit` must be valid. `qubits` must point to `num_qubits` valid `usize` values.
@@ -354,13 +364,20 @@ pub unsafe extern "C" fn pecos_circuit_rz(
     theta_radians: f64,
     qubits: *const usize,
     num_qubits: usize,
-) {
+) -> i32 {
+    let Ok(angle) = Angle64::try_from_radians(theta_radians) else {
+        return -1;
+    };
     let c = unsafe { &mut *circuit };
     let qs = unsafe { std::slice::from_raw_parts(qubits, num_qubits) };
-    c.builder.rz(Angle64::from_radians(theta_radians), qs);
+    c.builder.rz(angle, qs);
+    0
 }
 
 /// Add RZZ rotation gate(s) to the circuit.
+///
+/// # Returns
+/// 0 on success, -1 if the angle is not finite. On error the circuit is unchanged.
 ///
 /// # Panics
 ///
@@ -374,7 +391,10 @@ pub unsafe extern "C" fn pecos_circuit_rzz(
     theta_radians: f64,
     pairs: *const usize,
     num_pairs: usize,
-) {
+) -> i32 {
+    let Ok(angle) = Angle64::try_from_radians(theta_radians) else {
+        return -1;
+    };
     let c = unsafe { &mut *circuit };
     let flat_len = num_pairs.checked_mul(2).expect("num_pairs overflow");
     let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
@@ -384,8 +404,8 @@ pub unsafe extern "C" fn pecos_circuit_rzz(
         .iter()
         .map(|p| (p[0], p[1]))
         .collect();
-    c.builder
-        .rzz(Angle64::from_radians(theta_radians), &pair_vec);
+    c.builder.rzz(angle, &pair_vec);
+    0
 }
 
 /// Add Z-basis measurement(s) to the circuit.

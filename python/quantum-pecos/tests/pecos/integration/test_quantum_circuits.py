@@ -1559,3 +1559,14 @@ def test_zero_qubit_params_conflict_reports_values() -> None:
         qc.update("barrier", {None}, flag=1)
     assert '{"flag": true}' in str(error.value)
     assert '{"flag": 1}' in str(error.value)
+
+
+@pytest.mark.parametrize("angle", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_rotation_is_atomic(angle):
+    """Invalid angles raise ValueError before the circuit changes."""
+    from pecos import QuantumCircuit
+
+    circuit = QuantumCircuit()
+    with pytest.raises(ValueError, match="finite"):
+        circuit.append({"RZ": {0}}, angles=(angle,))
+    assert len(circuit) == 0

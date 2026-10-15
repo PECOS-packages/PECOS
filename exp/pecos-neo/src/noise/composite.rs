@@ -89,7 +89,7 @@
 //!     .with_p1(0.001)                 // Single-qubit gate error
 //!     .with_p2(0.01)                  // Two-qubit gate error
 //!     .with_p_meas(0.02, 0.03)        // Asymmetric measurement error
-//!     .with_idle_noise(0.001, 0.01)   // T1 and T2 decay
+//!     .with_idle_noise(0.001, 0.01).unwrap()   // T1 and T2 decay
 //!     .with_leakage(0.001, 0.1)       // Leakage and seepage
 //!     .build();
 //! ```
@@ -111,7 +111,7 @@
 //!     .with_leakage_scale(0.5)
 //!
 //!     // Custom Pauli weights for idle noise (Z-only for pure dephasing)
-//!     .with_p_idle_linear(0.001)
+//!     .with_p_idle_linear(0.001).unwrap()
 //!     .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0))
 //!
 //!     .build();
@@ -127,12 +127,12 @@
 //!
 //! // T1 relaxation: probability grows linearly with time
 //! let t1_channel = CompositeChannelBuilder::idle("t1",
-//!     prob_linear(0.001, pauli())  // 0.001 per time unit
+//!     prob_linear(0.001, pauli()).unwrap()  // 0.001 per time unit
 //! );
 //!
 //! // T2 dephasing: probability follows sin^2(rate * duration)
 //! let t2_channel = CompositeChannelBuilder::idle("t2",
-//!     prob_quadratic(0.01, inject_z())
+//!     prob_quadratic(0.01, inject_z()).unwrap()
 //! );
 //! ```
 //!
@@ -165,10 +165,11 @@ mod response;
 
 // Re-export main types
 pub use action::{
-    CrosstalkAction, Emission, FlipOutcomeAction, ForceOutcomeAction, GateAction,
+    CoherentRotation, CrosstalkAction, Emission, FlipOutcomeAction, ForceOutcomeAction, GateAction,
     IndependentEmissionWithPartnerDepolarize, Inject, InjectCoherentRZ, Leak,
-    LeakedMeasurementAction, Nothing, PartnerDepolarize, Pauli, PauliWeights, RandomOutcome, Seep,
-    SkipGate, TwoQubitEmission, TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak,
+    LeakedMeasurementAction, Nothing, OverRotation, PartnerDepolarize, Pauli, PauliWeights,
+    RandomOutcome, Seep, SkipGate, TwoQubitEmission, TwoQubitEmissionWithPartnerDepolarize,
+    TwoQubitPauli, Unleak, ZZDephasing, ZZDephasingRate,
 };
 pub use builder::CompositeNoiseModelBuilder;
 pub use channel::{
@@ -869,7 +870,7 @@ mod tests {
         use pecos_core::TimeUnits;
 
         // Create idle noise with linear time dependence: rate 0.1 per time unit
-        let idle_noise = prob_linear(0.1, inject_z());
+        let idle_noise = prob_linear(0.1, inject_z()).unwrap();
         let channel = CompositeChannelBuilder::idle("idle_linear", idle_noise);
 
         let mut ctx = NoiseContext::new();
@@ -926,7 +927,7 @@ mod tests {
 
         // Create idle noise with quadratic time dependence (T2-like dephasing)
         // Rate = pi/2 -> at duration 1, angle = pi/2, p = sin(pi/2)^2 = 1.0
-        let idle_noise = prob_quadratic(std::f64::consts::FRAC_PI_2, inject_z());
+        let idle_noise = prob_quadratic(std::f64::consts::FRAC_PI_2, inject_z()).unwrap();
         let channel = CompositeChannelBuilder::idle("idle_quadratic", idle_noise);
 
         let mut ctx = NoiseContext::new();
@@ -963,10 +964,10 @@ mod tests {
         let rate = 0.3; // 30% per time unit
 
         // Traditional IdleChannel
-        let traditional = IdleChannel::linear(rate);
+        let traditional = IdleChannel::linear(rate).unwrap();
 
         // Composite-based equivalent
-        let flow_noise = prob_linear(rate, inject_z());
+        let flow_noise = prob_linear(rate, inject_z()).unwrap();
         let flow_channel = CompositeChannelBuilder::idle("flow_idle", flow_noise);
 
         let mut ctx = NoiseContext::new();

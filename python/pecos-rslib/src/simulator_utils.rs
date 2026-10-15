@@ -1120,9 +1120,9 @@ pub fn extract_angle(params: Option<&Bound<'_, PyDict>>, gate_name: &str) -> PyR
             "{gate_name} requires an 'angle' parameter"
         ))
     })?;
-    let angle = value.extract::<AngleParam>().map_err(|_| {
+    let angle = value.extract::<AngleParam>().map_err(|error| {
         pyo3::exceptions::PyValueError::new_err(format!(
-            "Expected a valid angle parameter for {gate_name}"
+            "Expected a valid angle parameter for {gate_name}: {error}"
         ))
     })?;
     Ok(angle.0)
@@ -1144,9 +1144,9 @@ pub fn extract_angles(
             "{gate_name} requires an 'angles' parameter"
         ))
     })?;
-    let angles = value.extract::<Vec<AngleParam>>().map_err(|_| {
+    let angles = value.extract::<Vec<AngleParam>>().map_err(|error| {
         pyo3::exceptions::PyValueError::new_err(format!(
-            "Expected valid angle parameters for {gate_name}"
+            "Expected valid angle parameters for {gate_name}: {error}"
         ))
     })?;
     if angles.len() != count {

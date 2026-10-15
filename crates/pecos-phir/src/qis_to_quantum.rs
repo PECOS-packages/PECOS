@@ -307,7 +307,7 @@ fn resolve_angle(
             "qis_to_quantum: cannot resolve {context} (SSA {ssa}) to a constant"
         ))
     })?;
-    Ok(Angle64::from_radians(radians))
+    Angle64::try_from_radians(radians).map_err(|error| PhirError::internal(error.to_string()))
 }
 
 #[cfg(test)]

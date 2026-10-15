@@ -459,13 +459,10 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
             let q1 = word(bytes, offset + 16);
             let theta = f64::from_bits(word(bytes, offset + 24));
             let phi = f64::from_bits(word(bytes, offset + 32));
-            if !theta.is_finite() || !phi.is_finite() {
-                return Err(error("nonfinite scheduled angle"));
-            }
             let q0 = usize::try_from(q0).map_err(|_| error("target overflow"))?;
             let q1 = usize::try_from(q1).map_err(|_| error("target overflow"))?;
-            let a = Angle64::from_radians(theta);
-            let p = Angle64::from_radians(phi);
+            let a = Angle64::try_from_radians(theta)?;
+            let p = Angle64::try_from_radians(phi)?;
             let gate = match op {
                 1 => Gate::rxy1q(a, p, &[q0]),
                 2 => Gate::rz(a, &[q0]),

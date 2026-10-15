@@ -308,19 +308,27 @@ where
     /// logical operator computation, and other GF(2) operations.
     ///
     /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that allocated tableau dimensions fit symplectic columns is broken.
     #[must_use]
     pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
         let generators = self.stabs.generators();
         pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
+            .expect("allocated tableau dimensions fit the symplectic column capacity")
     }
 
     /// Extracts the destabilizer generators as a [`PauliSequence`].
     ///
     /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that allocated tableau dimensions fit symplectic columns is broken.
     #[must_use]
     pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
         let generators = self.destabs.generators();
         pecos_quantum::PauliSequence::new(generators)
+            .expect("allocated tableau dimensions fit the symplectic column capacity")
     }
 
     /// Returns generator data as sparse index vectors.
@@ -638,8 +646,8 @@ where
     S: IndexSet,
     R: SeedableRng + Rng + Debug,
 {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     #[inline]
@@ -2171,19 +2179,27 @@ where
     /// logical operator computation, and other GF(2) operations.
     ///
     /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that allocated tableau dimensions fit symplectic columns is broken.
     #[must_use]
     pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
         let generators = self.stabs.generators();
         pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
+            .expect("allocated tableau dimensions fit the symplectic column capacity")
     }
 
     /// Extracts the destabilizer generators as a [`PauliSequence`].
     ///
     /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that allocated tableau dimensions fit symplectic columns is broken.
     #[must_use]
     pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
         let generators = self.destabs.generators();
         pecos_quantum::PauliSequence::new(generators)
+            .expect("allocated tableau dimensions fit the symplectic column capacity")
     }
 
     /// Returns a reference to the stabilizer generators.
@@ -2493,8 +2509,8 @@ impl<R> QuantumSimulator for SparseStabHybrid<R>
 where
     R: SeedableRng + Rng + Debug,
 {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     #[inline]

@@ -1374,10 +1374,9 @@ impl UnitaryRep {
             // Pauli adjoint: Paulis are Hermitian, but phase conjugates
             Self::Pauli(ps) => {
                 let conj_phase = ps.phase().conjugate();
-                Self::Pauli(PauliString::with_phase_and_paulis(
-                    conj_phase,
-                    ps.iter_pairs().collect(),
-                ))
+                let mut adjoint = ps.clone();
+                adjoint.set_phase(conj_phase);
+                Self::Pauli(adjoint)
             }
             // Gate adjoint: negate angle for rotations, wrap for non-self-adjoint named gates
             Self::Gate(
@@ -1498,10 +1497,9 @@ impl UnitaryRep {
         if let Self::Pauli(ps) = self {
             if let Some(quarter_phase) = angle_to_quarter_phase(phase) {
                 let new_phase = ps.phase().multiply(&quarter_phase);
-                return Self::Pauli(PauliString::with_phase_and_paulis(
-                    new_phase,
-                    ps.iter_pairs().collect(),
-                ));
+                let mut result = ps;
+                result.set_phase(new_phase);
+                return Self::Pauli(result);
             }
             return Self::Compose(vec![
                 Self::phase_gate(phase, smallvec::smallvec![]),
@@ -1813,7 +1811,7 @@ impl UnitaryRep {
                     RotationType::RY | RotationType::RYY => Pauli::Y,
                     RotationType::RZ | RotationType::RZZ => Pauli::Z,
                 };
-                PauliString::try_with_phase_and_paulis(
+                PauliString::with_phase_and_paulis(
                     QuarterPhase::MinusI,
                     qubits.into_iter().map(|q| (pauli, QubitId(q))).collect(),
                 )
@@ -1833,7 +1831,7 @@ impl UnitaryRep {
                 match (num_qubits, gamma) {
                     (0, angle) => {
                         let phase = angle_to_quarter_phase(angle)?;
-                        Some(PauliString::with_phase_and_paulis(phase, Vec::new()))
+                        Some(PauliString::from_paulis_with_phase(phase, &[]))
                     }
                     (1 | 2, Angle64::ZERO) => Some(PauliString::identity()),
                     (1, Angle64::HALF_TURN) => Some(PauliString::z(qubits[0])),
@@ -3015,8 +3013,12 @@ fn extend_clifford(
 
     // Copy the generator images from the original
     for q in 0..cliff.num_qubits() {
-        result.set_x_image(q, cliff.x_image(q).clone());
-        result.set_z_image(q, cliff.z_image(q).clone());
+        result
+            .set_x_image(q, cliff.x_image(q).clone())
+            .expect("generator index and image lie within the allocated tableau width");
+        result
+            .set_z_image(q, cliff.z_image(q).clone())
+            .expect("generator index and image lie within the allocated tableau width");
     }
     // Additional qubits remain as identity (already set by CliffordRep::identity)
 

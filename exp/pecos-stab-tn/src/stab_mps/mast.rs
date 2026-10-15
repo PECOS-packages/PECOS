@@ -746,8 +746,8 @@ impl QuantumSimulator for Mast {
         self
     }
 
-    fn num_qubits(&self) -> usize {
-        self.num_data_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_data_qubits)
     }
 }
 

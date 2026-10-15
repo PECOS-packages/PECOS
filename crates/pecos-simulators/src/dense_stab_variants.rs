@@ -706,8 +706,8 @@ impl<R: SeedableRng + Rng + Debug> DenseStabColOnly<R> {
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabColOnly<R> {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {
@@ -1240,8 +1240,8 @@ impl<R: SeedableRng + Rng + Debug> DenseStabRowOnly<R> {
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStabRowOnly<R> {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {
@@ -1688,8 +1688,8 @@ impl SparseColOnly {
 }
 
 impl QuantumSimulator for SparseColOnly {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {
@@ -2141,8 +2141,8 @@ impl SparseRowOnly {
 }
 
 impl QuantumSimulator for SparseRowOnly {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {

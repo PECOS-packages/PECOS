@@ -564,24 +564,24 @@ impl fmt::Display for MeasResolveError {
         match self {
             Self::Unknown(id) => write!(
                 f,
-                "MeasId({}) does not name a measurement in this circuit",
+                "MeasId({}) does not name a measurement in this circuit; use a MeasId returned by this circuit",
                 id.index()
             ),
             Self::Removed(id) => write!(
                 f,
-                "MeasId({})'s measurement was removed from this circuit",
+                "MeasId({})'s measurement was removed from this circuit; use a current measurement ID",
                 id.index()
             ),
             Self::RecordLess { id, node } => write!(
                 f,
                 "MeasId({}) names a measurement at node {node} that consumes no \
-                 measurement record",
+                 measurement record; use a record-consuming measurement",
                 id.index()
             ),
             Self::Inconsistent(id) => write!(
                 f,
                 "MeasId({})'s bookkeeping is inconsistent -- held but unreserved, or \
-                 held by more than one gate",
+                 held by more than one gate; assign each MeasId to exactly one reserved measurement",
                 id.index()
             ),
         }

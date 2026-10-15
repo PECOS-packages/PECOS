@@ -253,7 +253,9 @@ fn assert_probability_eq(actual: f64, expected: f64, msg: &str) {
 /// Verify the initial state is |0...0⟩.
 pub fn verify_initial_state<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
-    let n = sim.num_qubits();
+    let n = sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count");
     let dim = 1 << n;
 
     assert_amplitude_eq(
@@ -274,7 +276,11 @@ pub fn verify_initial_state<S: StateVectorSimulator>(sim: &mut S) {
 pub fn verify_reset<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
-    if sim.num_qubits() >= 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        >= 2
+    {
         sim.cx(&qid2(0, 1));
     }
     sim.reset();
@@ -290,11 +296,18 @@ pub fn verify_reset<S: StateVectorSimulator>(sim: &mut S) {
 pub fn verify_normalization<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
-    if sim.num_qubits() >= 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        >= 2
+    {
         sim.cx(&qid2(0, 1));
     }
 
-    let dim = 1 << sim.num_qubits();
+    let dim = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
     let mut norm_sq = 0.0;
     for i in 0..dim {
         norm_sq += sim.get_amplitude(i).norm_sqr();
@@ -319,7 +332,11 @@ pub fn verify_probability<S: StateVectorSimulator>(sim: &mut S) {
     assert_probability_eq(amp1.norm_sqr(), 0.5, "P(|1⟩) in |+⟩ state");
 
     // Bell state: P(|00⟩) = P(|11⟩) = 0.5, P(|01⟩) = P(|10⟩) = 0
-    if sim.num_qubits() >= 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        >= 2
+    {
         sim.reset();
         sim.h(&qid(0));
         sim.cx(&qid2(0, 1));
@@ -349,7 +366,10 @@ pub fn verify_probability<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify preparation of all computational basis states.
 pub fn verify_prepare_all_basis_states<S: StateVectorSimulator>(sim: &mut S) {
-    let n = sim.num_qubits().min(4); // Limit to 4 qubits to keep test fast
+    let n = sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        .min(4); // Limit to 4 qubits to keep test fast
     let dim = 1 << n;
 
     for target_state in 0..dim {
@@ -376,7 +396,10 @@ pub fn verify_prepare_all_basis_states<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify unitarity: operations preserve total probability.
 pub fn verify_unitarity<S: StateVectorSimulator>(sim: &mut S) {
-    let dim = 1 << sim.num_qubits();
+    let dim = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     // Test various gate sequences
     #[allow(clippy::type_complexity)]
@@ -414,11 +437,18 @@ pub fn verify_unitarity<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify unitarity for two-qubit operations.
 pub fn verify_unitarity_two_qubit<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
-    let dim = 1 << sim.num_qubits();
+    let dim = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     // Test two-qubit gate sequences
     sim.reset();
@@ -589,7 +619,11 @@ pub fn verify_sy_gate<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify CX (CNOT) gate.
 pub fn verify_cx_gate<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -628,7 +662,11 @@ pub fn verify_cx_gate<S: StateVectorSimulator>(sim: &mut S) {
 /// Note: Different simulators may have different phase conventions for CY.
 /// We verify that CY flips target when control is |1⟩ (checking magnitude).
 pub fn verify_cy_gate<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -644,7 +682,11 @@ pub fn verify_cy_gate<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify CZ gate.
 pub fn verify_cz_gate<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -673,7 +715,11 @@ pub fn verify_cz_gate<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify SWAP gate.
 pub fn verify_swap_gate<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -690,7 +736,11 @@ pub fn verify_swap_gate<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify iSWAP gate.
 pub fn verify_iswap_gate<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -767,7 +817,11 @@ pub fn verify_rz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: 
 
 /// Verify RXX gate.
 pub fn verify_rxx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -788,7 +842,11 @@ pub fn verify_rxx_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
 
 /// Verify RYY gate.
 pub fn verify_ryy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -807,7 +865,11 @@ pub fn verify_ryy_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim:
 
 /// Verify RZZ gate.
 pub fn verify_rzz_gate<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -929,7 +991,11 @@ pub fn verify_pnz<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify pz on multiple qubits.
 pub fn verify_pz_multiple_qubits<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -967,7 +1033,11 @@ pub fn verify_pz_multiple_qubits<S: StateVectorSimulator>(sim: &mut S) {
 /// The bug it catches: if mpz projects onto |0⟩ without proper measurement
 /// sampling + conditional X, subsequent gates after PZ produce wrong results.
 pub fn verify_mid_circuit_reset<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -1031,7 +1101,11 @@ pub fn verify_mz_detailed<S: StateVectorSimulator>(sim: &mut S) {
     );
 
     // Test multi-qubit measurement
-    if sim.num_qubits() >= 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        >= 2
+    {
         sim.reset();
         sim.x(&qid(0));
         sim.x(&qid(1)); // |11⟩
@@ -1097,7 +1171,11 @@ pub fn verify_gate_identities<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify batch single-qubit gates produce same result as sequential application.
 pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
@@ -1106,7 +1184,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     // Test H gate: batch vs sequential
     sim.reset();
     sim.h(&qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1114,7 +1195,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.h(&qid(1));
     sim.h(&qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1128,7 +1212,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     // Test X gate: batch vs sequential
     sim.reset();
     sim.x(&qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1136,7 +1223,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.x(&qid(0));
     sim.x(&qid(1));
     sim.x(&qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1151,7 +1241,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qubits_batch); // Create superposition first
     sim.z(&qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1162,7 +1255,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.z(&qid(0));
     sim.z(&qid(1));
     sim.z(&qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1177,7 +1273,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qubits_batch);
     sim.sz(&qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1188,7 +1287,10 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.sz(&qid(0));
     sim.sz(&qid(1));
     sim.sz(&qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1202,7 +1304,11 @@ pub fn verify_batch_single_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify batch two-qubit gates produce same result as sequential application.
 pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 4 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 4
+    {
         return;
     }
 
@@ -1214,7 +1320,10 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.x(&qid(0)); // Set control qubits to |1⟩
     sim.x(&qid(2));
     sim.cx(&pairs_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1223,7 +1332,10 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.x(&qid(2));
     sim.cx(&qid2(0, 1));
     sim.cx(&qid2(2, 3));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1238,7 +1350,10 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]); // Superposition
     sim.cz(&pairs_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1246,7 +1361,10 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
     sim.cz(&qid2(0, 1));
     sim.cz(&qid2(2, 3));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1261,7 +1379,10 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.x(&qid(0)); // |1000⟩
     sim.swap(&pairs_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1269,7 +1390,10 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
     sim.x(&qid(0));
     sim.swap(&qid2(0, 1));
     sim.swap(&qid2(2, 3));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1283,7 +1407,11 @@ pub fn verify_batch_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify batch measurements work correctly.
 pub fn verify_batch_measurements<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
@@ -1317,7 +1445,11 @@ pub fn verify_batch_measurements<S: StateVectorSimulator>(sim: &mut S) {
 pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGateable>(
     sim: &mut S,
 ) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
@@ -1327,7 +1459,10 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     // Test RX gate: batch vs sequential
     sim.reset();
     sim.rx(theta, &qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1335,7 +1470,10 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     sim.rx(theta, &qid(0));
     sim.rx(theta, &qid(1));
     sim.rx(theta, &qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1349,7 +1487,10 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     // Test RY gate: batch vs sequential
     sim.reset();
     sim.ry(theta, &qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1357,7 +1498,10 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     sim.ry(theta, &qid(0));
     sim.ry(theta, &qid(1));
     sim.ry(theta, &qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1372,7 +1516,10 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     sim.reset();
     sim.h(&qubits_batch); // Create superposition to see RZ effects
     sim.rz(theta, &qubits_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1383,7 +1530,10 @@ pub fn verify_batch_rotation_gates<S: StateVectorSimulator + ArbitraryRotationGa
     sim.rz(theta, &qid(0));
     sim.rz(theta, &qid(1));
     sim.rz(theta, &qid(2));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1401,7 +1551,11 @@ pub fn verify_batch_two_qubit_rotation_gates<
 >(
     sim: &mut S,
 ) {
-    if sim.num_qubits() < 4 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 4
+    {
         return;
     }
 
@@ -1412,7 +1566,10 @@ pub fn verify_batch_two_qubit_rotation_gates<
     sim.reset();
     sim.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]); // Superposition
     sim.rzz(theta, &pairs_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1420,7 +1577,10 @@ pub fn verify_batch_two_qubit_rotation_gates<
     sim.h(&[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]);
     sim.rzz(theta, &qid2(0, 1));
     sim.rzz(theta, &qid2(2, 3));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1434,14 +1594,20 @@ pub fn verify_batch_two_qubit_rotation_gates<
     // Test RXX gate: batch vs sequential
     sim.reset();
     sim.rxx(theta, &pairs_batch);
-    let batch_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let batch_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
     sim.reset();
     sim.rxx(theta, &qid2(0, 1));
     sim.rxx(theta, &qid2(2, 3));
-    let seq_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let seq_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -1731,11 +1897,18 @@ pub fn verify_single_qubit_rotation<S: StateVectorSimulator + ArbitraryRotationG
 
 /// Verify single-qubit gates only affect the target qubit.
 pub fn verify_single_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     // Prepare qubit 1 as |1⟩, then apply H to qubit 0 only.
     // Qubit 1 and 2 should be unaffected.
@@ -1783,7 +1956,11 @@ pub fn verify_single_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify two-qubit gates only affect the target qubits.
 pub fn verify_two_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 4 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 4
+    {
         return;
     }
 
@@ -1793,7 +1970,10 @@ pub fn verify_two_qubit_locality<S: StateVectorSimulator>(sim: &mut S) {
     sim.x(&qid(0)); // |1000⟩
     sim.cx(&qid2(0, 1)); // should flip qubit 1: |1100⟩
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
     let expected_idx = 0b0011; // qubits 0 and 1 are |1⟩
     for i in 0..n {
         let amp = sim.get_amplitude(i);
@@ -1946,11 +2126,18 @@ pub fn verify_adjoint_gates<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify that two-qubit adjoint gates are proper inverses.
 pub fn verify_adjoint_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     // SXX · SXXdg = I
     sim.reset();
@@ -2002,7 +2189,11 @@ pub fn verify_adjoint_two_qubit_gates<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify Bell state preparation via standard circuit.
 pub fn verify_bell_state_preparation<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -2043,7 +2234,11 @@ pub fn verify_bell_state_preparation<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify GHZ state preparation.
 pub fn verify_ghz_state<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
@@ -2053,7 +2248,10 @@ pub fn verify_ghz_state<S: StateVectorSimulator>(sim: &mut S) {
     sim.cx(&qid2(0, 1));
     sim.cx(&qid2(0, 2));
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
     let idx_all_zero = 0;
     let idx_first_three_one = 0b111; // qubits 0, 1, 2 are |1⟩
 
@@ -2074,12 +2272,20 @@ pub fn verify_ghz_state<S: StateVectorSimulator>(sim: &mut S) {
 pub fn verify_equal_superposition<S: StateVectorSimulator + ArbitraryRotationGateable>(
     sim: &mut S,
 ) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
     sim.reset();
-    for q in 0..sim.num_qubits().min(3) {
+    for q in 0..sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        .min(3)
+    {
         sim.h(&[QubitId(q)]);
     }
 
@@ -2099,7 +2305,11 @@ pub fn verify_equal_superposition<S: StateVectorSimulator + ArbitraryRotationGat
 
 /// Verify standard gate decompositions hold.
 pub fn verify_gate_decompositions<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -2108,7 +2318,10 @@ pub fn verify_gate_decompositions<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.h(&qid(1)); // superposition to detect phase
     sim.cz(&qid2(0, 1));
-    let cz_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let cz_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2118,7 +2331,10 @@ pub fn verify_gate_decompositions<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(1));
     sim.cx(&qid2(0, 1));
     sim.h(&qid(1));
-    let decomp_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let decomp_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2132,7 +2348,11 @@ pub fn verify_gate_decompositions<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify SWAP = CX(a,b)·CX(b,a)·CX(a,b).
 pub fn verify_swap_decomposition<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -2141,7 +2361,10 @@ pub fn verify_swap_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.x(&qid(1));
     sim.swap(&qid2(0, 1));
-    let swap_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let swap_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2151,7 +2374,10 @@ pub fn verify_swap_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     sim.cx(&qid2(0, 1));
     sim.cx(&qid2(1, 0));
     sim.cx(&qid2(0, 1));
-    let decomp_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let decomp_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2168,7 +2394,10 @@ pub fn verify_x_hzh_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     // Apply X to |0⟩
     sim.reset();
     sim.x(&qid(0));
-    let x_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let x_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2177,7 +2406,10 @@ pub fn verify_x_hzh_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.z(&qid(0));
     sim.h(&qid(0));
-    let hzh_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let hzh_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2195,7 +2427,10 @@ pub fn verify_z_from_sz<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
     sim.z(&qid(0));
-    let z_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let z_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2203,7 +2438,10 @@ pub fn verify_z_from_sz<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.sz(&qid(0));
     sim.sz(&qid(0));
-    let ss_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let ss_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2221,7 +2459,10 @@ pub fn verify_y_xz_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
     sim.y(&qid(0));
-    let y_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let y_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2230,7 +2471,10 @@ pub fn verify_y_xz_decomposition<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.z(&qid(0));
     sim.x(&qid(0));
-    let xz_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let xz_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2270,14 +2514,20 @@ pub fn verify_non_commutativity<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
     sim.x(&qid(0));
-    let hx_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let hx_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
     sim.reset();
     sim.x(&qid(0));
     sim.h(&qid(0));
-    let xh_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let xh_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2293,14 +2543,20 @@ pub fn verify_non_commutativity<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.z(&qid(0));
     sim.h(&qid(0));
-    let hz_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let hz_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
     sim.reset();
     sim.h(&qid(0));
     sim.z(&qid(0));
-    let zh_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let zh_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2313,7 +2569,11 @@ pub fn verify_non_commutativity<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify that commuting gates produce the same result regardless of order.
 pub fn verify_commutativity<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 2 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 2
+    {
         return;
     }
 
@@ -2321,14 +2581,20 @@ pub fn verify_commutativity<S: StateVectorSimulator>(sim: &mut S) {
     sim.reset();
     sim.h(&qid(0));
     sim.x(&qid(1));
-    let hx_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let hx_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
     sim.reset();
     sim.x(&qid(1));
     sim.h(&qid(0));
-    let xh_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let xh_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2345,7 +2611,10 @@ pub fn verify_commutativity<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0)); // |+⟩
     sim.x(&qid(0));
     sim.z(&qid(0));
-    let xz_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let xz_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2353,7 +2622,10 @@ pub fn verify_commutativity<S: StateVectorSimulator>(sim: &mut S) {
     sim.h(&qid(0));
     sim.z(&qid(0));
     sim.x(&qid(0));
-    let zx_amps: Vec<_> = (0..(1 << sim.num_qubits()))
+    let zx_amps: Vec<_> = (0..(1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count")))
         .map(|i| sim.get_amplitude(i))
         .collect();
 
@@ -2368,7 +2640,10 @@ pub fn verify_commutativity<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify face gates: F·Fdg = I and F^3 = I (cyclic permutation of Paulis).
 pub fn verify_face_gates<S: StateVectorSimulator>(sim: &mut S) {
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     // F · Fdg = I
     sim.reset();
@@ -2402,7 +2677,10 @@ pub fn verify_face_gates<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify face gate variants: F2·F2dg = I, F3·F3dg = I, F4·F4dg = I.
 pub fn verify_face_gate_adjoints<S: StateVectorSimulator>(sim: &mut S) {
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
     let q = &qid(0);
 
     // F2 · F2dg = I, F3 · F3dg = I, F4 · F4dg = I (exact amplitude check)
@@ -2440,7 +2718,10 @@ pub fn verify_face_gate_adjoints<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify Hadamard variants are involutions: Hi^2 = I (up to global phase).
 pub fn verify_hadamard_variants<S: StateVectorSimulator>(sim: &mut S) {
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
     let q = &qid(0);
 
     // Each Hadamard variant should be an involution (Hi^2 = I up to global phase).
@@ -2553,11 +2834,18 @@ pub fn verify_hadamard_variants_distinct<S: StateVectorSimulator>(sim: &mut S) {
 /// Verify normalization is preserved through long gate sequences.
 /// Verify that a long gate sequence and its inverse returns to the initial state.
 pub fn verify_long_circuit_inverse<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     sim.reset();
     let before: Vec<_> = (0..n).map(|i| sim.get_amplitude(i)).collect();
@@ -2603,11 +2891,18 @@ pub fn verify_long_circuit_inverse<S: StateVectorSimulator>(sim: &mut S) {
 
 /// Verify that applying a circuit and its reverse returns to the initial state.
 pub fn verify_circuit_inverse<S: StateVectorSimulator>(sim: &mut S) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     sim.reset();
     let before: Vec<_> = (0..n).map(|i| sim.get_amplitude(i)).collect();
@@ -2638,11 +2933,18 @@ pub fn verify_circuit_inverse<S: StateVectorSimulator>(sim: &mut S) {
 pub fn verify_rotation_circuit_inverse<S: StateVectorSimulator + ArbitraryRotationGateable>(
     sim: &mut S,
 ) {
-    if sim.num_qubits() < 3 {
+    if sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count")
+        < 3
+    {
         return;
     }
 
-    let n = 1 << sim.num_qubits();
+    let n = 1
+        << sim
+            .num_qubits()
+            .expect("state-vector test fixture has a representable qubit count");
 
     sim.reset();
     let before: Vec<_> = (0..n).map(|i| sim.get_amplitude(i)).collect();
@@ -2691,7 +2993,9 @@ pub fn run_basic_state_vector_test_suite<S: StateVectorSimulator>(sim: &mut S) {
 pub fn run_clifford_test_suite<S: StateVectorSimulator>(sim: &mut S) {
     // Shared measurement-based Clifford tests (gate identities, adjoint pairs,
     // face gates, Hadamard variants, entanglement, decompositions, and more).
-    let num_qubits = sim.num_qubits();
+    let num_qubits = sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count");
     crate::clifford_test_utils::run_clifford_gate_tests(sim, num_qubits);
 
     // Amplitude-specific tests below test exact gate matrix values.
@@ -2758,7 +3062,9 @@ pub fn run_clifford_test_suite<S: StateVectorSimulator>(sim: &mut S) {
 pub fn run_rotation_test_suite<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
     // Shared measurement-based rotation tests (Clifford-angle equivalences, inverse
     // rotations, T gate, composition, two-qubit rotations, and more).
-    let num_qubits = sim.num_qubits();
+    let num_qubits = sim
+        .num_qubits()
+        .expect("state-vector test fixture has a representable qubit count");
     crate::rotation_test_utils::run_rotation_gate_tests(sim, num_qubits);
 
     // Amplitude-specific rotation tests below.

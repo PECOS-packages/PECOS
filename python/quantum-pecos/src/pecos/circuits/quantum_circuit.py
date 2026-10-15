@@ -247,7 +247,7 @@ class QuantumCircuit(MutableSequence):
 
         for loc in loc_list:
             if composite_angles is not None and not (isinstance(loc, tuple) and len(loc) == 2):
-                msg = "RXXRYYRZZ requires a pair of qubits"
+                msg = f"RXXRYYRZZ requires a pair of qubits, got {loc!r}; supply a tuple of two distinct qubits"
                 raise ValueError(msg)
             qubits = list(loc) if isinstance(loc, tuple) else [loc]
             chunks = (
@@ -287,7 +287,10 @@ class QuantumCircuit(MutableSequence):
                     stored[stored_index] = self._gate_identity(target, stored_index, target.get_gate(stored_index))
                 if self._gate_identity(candidate, index, gate) == stored[stored_index]:
                     continue
-            msg = f"Conflicting gate {self._decode_gate(candidate, index, gate)[0]} on qubits {gate.qubits}"
+            msg = (
+                f"Conflicting gate {self._decode_gate(candidate, index, gate)[0]} on qubits {gate.qubits}; "
+                "move the conflicting gate to another tick"
+            )
             raise QubitConflictError(msg)
         return free
 
@@ -304,6 +307,7 @@ class QuantumCircuit(MutableSequence):
         msg = f"Stored zero-qubit operation {stored_symbol!r} conflicts with requested {symbol!r}"
         if stored_symbol == symbol:
             msg += f": stored params {stored_key}, requested params {requested_key}"
+        msg += "; use a separate tick for the requested operation"
         raise ValueError(msg)
 
     def _prepare_tick(self, gate_dict: GateDict, params: JSONDict) -> QuantumCircuit:

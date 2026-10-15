@@ -243,6 +243,7 @@ impl WeightedPauliIterator {
             .collect();
 
         PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+            .expect("error enumeration chooses distinct qubit positions")
     }
 }
 
@@ -706,6 +707,7 @@ fn pauli_string_for_assignment(positions: &[usize], paulis: &[usize]) -> PauliSt
         .collect();
 
     PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+        .expect("error enumeration chooses distinct qubit positions")
 }
 
 fn increment_pauli_assignment(paulis: &mut [usize]) -> bool {
@@ -764,6 +766,7 @@ mod tests {
             pecos_core::QuarterPhase::PlusOne,
             paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+        .unwrap()
     }
 
     fn five_qubit_code() -> StabilizerCodeSpec {

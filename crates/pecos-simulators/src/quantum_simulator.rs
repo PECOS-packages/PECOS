@@ -45,5 +45,8 @@ pub trait QuantumSimulator {
     /// `BitmaskPauliProp` retains its configured width or the largest extent reached
     /// by tracking and gate operations, whichever is greater; clearing support or
     /// resetting does not shrink it.
-    fn num_qubits(&self) -> usize;
+    ///
+    /// # Errors
+    /// Returns an error if tracked support has no representable qubit count.
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError>;
 }

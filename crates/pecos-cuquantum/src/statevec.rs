@@ -565,8 +565,8 @@ impl QuantumSimulator for CuStateVec {
         self
     }
 
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 }
 

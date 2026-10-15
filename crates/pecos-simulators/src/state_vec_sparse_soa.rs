@@ -169,13 +169,26 @@ impl<R: Rng> SparseStateVecSoA<R> {
     /// Qubit k is basis-index bit k, so existing sparse indices stay unchanged;
     /// the new high bits are implicitly zero without allocating amplitudes.
     /// Requests at or below the current size do nothing; this never shrinks.
-    pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
+    ///
+    /// # Errors
+    /// Returns an error if the requested count exceeds the representation capacity.
+    pub fn ensure_qubit_count(
+        &mut self,
+        required_qubits: usize,
+    ) -> Result<(), pecos_core::errors::PecosError> {
+        let maximum = (isize::MAX as usize / size_of::<Complex64>()).ilog2() as usize;
+        if required_qubits > maximum {
+            return Err(pecos_core::errors::PecosError::Input(format!(
+                "requested {required_qubits} qubits exceeds supported maximum {maximum}; request at most {maximum} qubits"
+            )));
+        }
         if required_qubits > self.num_qubits {
             // Retain deferred frames and their phases on existing qubits.
             self.frames.resize(required_qubits, CliffordFrame::IDENTITY);
             self.frame_phases.resize(required_qubits, 0);
             self.num_qubits = required_qubits;
         }
+        Ok(())
     }
 
     /// Set the amplitude truncation threshold
@@ -1922,8 +1935,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
 // --- QuantumSimulator trait implementation ---
 
 impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {

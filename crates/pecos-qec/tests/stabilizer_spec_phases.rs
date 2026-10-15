@@ -7,7 +7,7 @@ use pecos_qec::StabilizerCodeSpec;
 #[test]
 fn imaginary_stabilizer_is_rejected_during_verification() {
     let spec = StabilizerCodeSpec::new(2, vec![i * Z(0)], vec![Z(1)], vec![X(1)]).unwrap();
-    let expected = "Stabilizer 0 has non-real phase; its square is -I (empty code space)";
+    let expected = "Stabilizer 0 has non-real phase PlusI; its square is -I (empty code space); use phase +1 or -1";
     assert_eq!(spec.verify().unwrap_err().to_string(), expected);
     assert_eq!(
         spec.verify_as_complete_code().unwrap_err().to_string(),

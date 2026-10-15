@@ -79,7 +79,7 @@ fn test_user_guide_quantum_operator_algebra_rust_4() {
     assert_eq!(sparse, explicit_sparse);
     assert_eq!(dense, explicit_dense);
     assert_eq!(sparse.to_sparse_str(), "+X0 Z3");
-    assert_eq!(sparse.to_dense_str(None), "+XIIZ");
+    assert_eq!(sparse.to_dense_str(), "+XIIZ");
 }
 
 
@@ -237,7 +237,7 @@ fn test_user_guide_quantum_operator_algebra_rust_13() {
         Zs([0, 1]),
         Zs([1, 2]),
         Zs([0, 2]),  // linearly dependent on the first two
-    ]);
+    ]).unwrap();
 
     // GF(2) rank: number of linearly independent Paulis
     assert_eq!(seq.rank(), 2);
@@ -337,7 +337,7 @@ fn test_user_guide_quantum_operator_algebra_rust_17() {
     let set: PauliSet = PauliSet::from_iter(vec![Zs([0, 1])]);
 
     // Downward (narrowing) -- validates constraints
-    let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
+    let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
     let group: PauliGroup = seq.try_into().unwrap();     // checks commutativity
     let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases and absence of -I
 

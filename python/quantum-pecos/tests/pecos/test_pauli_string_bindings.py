@@ -270,3 +270,14 @@ def test_pauli_string_order_and_identities_do_not_affect_keys() -> None:
         assert pauli.get_paulis() == [(Pauli.X, 0), (Pauli.X, 2)]
     with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
         PauliString([(Pauli.I, 0), (Pauli.X, 0)])
+
+
+def test_constructor_and_width_errors_are_value_errors():
+    """Caller errors must stay ordinary Python exceptions, never PanicException."""
+    import pytest
+    from pecos_rslib import Pauli, PauliString
+
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 7"):
+        PauliString([(Pauli.X, 7), (Pauli.Z, 7)])
+    with pytest.raises(ValueError, match="qubit 7 is outside num_qubits 3"):
+        PauliString([(Pauli.X, 7)]).to_dense_str(num_qubits=3)

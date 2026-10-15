@@ -106,39 +106,35 @@ pub struct StabilizerCheck {
 impl StabilizerCheck {
     /// Create a new stabilizer check.
     ///
-    /// # Panics
-    /// Panics if any qubit occurs more than once, including identity entries.
-    #[must_use]
-    pub fn new(index: usize, paulis: Vec<PauliOp>) -> Self {
+    /// # Errors
+    /// Returns an error if any qubit occurs more than once, including identity entries.
+    pub fn new(index: usize, paulis: Vec<PauliOp>) -> Result<Self, String> {
         let duplicates = pecos_core::duplicate_qubits(paulis.iter().map(|p| p.qubit));
-        assert!(
-            duplicates.is_empty(),
-            "stabilizer check has duplicate qubits {duplicates:?}"
-        );
-        Self {
+        if let Some(&qubit) = duplicates.first() {
+            return Err(pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string());
+        }
+        Ok(Self {
             index,
             paulis,
             color: None,
             is_boundary: false,
             position: None,
-        }
+        })
     }
 
     /// Create an X-type stabilizer check on the given qubits.
     ///
-    /// # Panics
-    /// Panics if any qubit occurs more than once.
-    #[must_use]
-    pub fn x_check(index: usize, qubits: &[usize]) -> Self {
+    /// # Errors
+    /// Returns an error if any qubit occurs more than once.
+    pub fn x_check(index: usize, qubits: &[usize]) -> Result<Self, String> {
         Self::new(index, qubits.iter().map(|&q| PauliOp::x(q)).collect())
     }
 
     /// Create a Z-type stabilizer check on the given qubits.
     ///
-    /// # Panics
-    /// Panics if any qubit occurs more than once.
-    #[must_use]
-    pub fn z_check(index: usize, qubits: &[usize]) -> Self {
+    /// # Errors
+    /// Returns an error if any qubit occurs more than once.
+    pub fn z_check(index: usize, qubits: &[usize]) -> Result<Self, String> {
         Self::new(index, qubits.iter().map(|&q| PauliOp::z(q)).collect())
     }
 
@@ -186,7 +182,7 @@ impl StabilizerCheck {
         if let Some(&qubit) = pecos_core::duplicate_qubits(paulis.iter().map(|p| p.qubit)).first() {
             return Err(pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string());
         }
-        Ok(Self::new(index, paulis))
+        Self::new(index, paulis)
     }
 
     /// Set the color of this check.
@@ -250,10 +246,9 @@ impl StabilizerCheck {
 
     /// Convert this check to a [`PauliString`] for use with [`StabilizerCodeSpec`].
     ///
-    /// # Panics
-    /// Panics if the public entries have been mutated to repeat a qubit, including identities.
-    #[must_use]
-    pub fn to_pauli_string(&self) -> PauliString {
+    /// # Errors
+    /// Returns an error if the public entries have been mutated to repeat a qubit, including identities.
+    pub fn to_pauli_string(&self) -> Result<PauliString, pecos_core::ParsePauliStringError> {
         let paulis: Vec<(Pauli, QubitId)> = self
             .paulis
             .iter()
@@ -387,10 +382,9 @@ impl CheckSchedule {
 
     /// Convert all checks to [`PauliString`] for use with [`StabilizerCodeSpec`].
     ///
-    /// # Panics
-    /// Panics if a check contains repeated qubits, including identity entries.
-    #[must_use]
-    pub fn to_pauli_strings(&self) -> Vec<PauliString> {
+    /// # Errors
+    /// Returns an error if a check contains repeated qubits, including identity entries.
+    pub fn to_pauli_strings(&self) -> Result<Vec<PauliString>, pecos_core::ParsePauliStringError> {
         self.all_checks()
             .into_iter()
             .map(StabilizerCheck::to_pauli_string)
@@ -417,7 +411,7 @@ pub struct LogicalOperator {
 
 impl LogicalOperator {
     /// Create a logical X operator.
-    /// Repeated qubits are retained; converting this value with `to_pauli_string` panics.
+    /// Repeated qubits are retained; converting this value with `to_pauli_string` returns an error.
     #[must_use]
     pub fn x(data_qubits: Vec<usize>) -> Self {
         Self {
@@ -428,7 +422,7 @@ impl LogicalOperator {
     }
 
     /// Create a logical Z operator.
-    /// Repeated qubits are retained; converting this value with `to_pauli_string` panics.
+    /// Repeated qubits are retained; converting this value with `to_pauli_string` returns an error.
     #[must_use]
     pub fn z(data_qubits: Vec<usize>) -> Self {
         Self {
@@ -440,10 +434,9 @@ impl LogicalOperator {
 
     /// Convert to a [`PauliString`].
     ///
-    /// # Panics
-    /// Panics if `data_qubits` contains a repeated qubit.
-    #[must_use]
-    pub fn to_pauli_string(&self) -> PauliString {
+    /// # Errors
+    /// Returns an error if `data_qubits` contains a repeated qubit.
+    pub fn to_pauli_string(&self) -> Result<PauliString, pecos_core::ParsePauliStringError> {
         let paulis: Vec<(Pauli, QubitId)> = self
             .data_qubits
             .iter()
@@ -461,35 +454,29 @@ mod tests {
     #[test]
     fn check_constructors_reject_duplicates_including_identity() {
         for pauli in [Pauli::I, Pauli::X] {
-            assert!(
-                std::panic::catch_unwind(|| StabilizerCheck::new(
-                    0,
-                    vec![PauliOp::new(1, pauli), PauliOp::x(1)],
-                ))
-                .is_err()
-            );
+            assert!(StabilizerCheck::new(0, vec![PauliOp::new(1, pauli), PauliOp::x(1)],).is_err());
         }
         for constructor in [StabilizerCheck::x_check, StabilizerCheck::z_check] {
-            assert!(std::panic::catch_unwind(|| constructor(0, &[1, 1])).is_err());
+            assert!(constructor(0, &[1, 1]).is_err());
         }
         assert!(StabilizerCheck::from_string(0, "IX", &[1, 1]).is_err());
-        let mut check = StabilizerCheck::x_check(0, &[1]);
+        let mut check = StabilizerCheck::x_check(0, &[1]).unwrap();
         check.paulis.push(PauliOp::new(1, Pauli::I));
-        assert!(std::panic::catch_unwind(|| check.to_pauli_string()).is_err());
+        assert!(check.to_pauli_string().is_err());
     }
 
     #[test]
     fn fallible_check_constructor_rejects_repeated_qubits() {
         assert_eq!(
             StabilizerCheck::from_string(0, "XZ", &[0, 0]).unwrap_err(),
-            "duplicate Pauli entry for qubit 0"
+            "duplicate Pauli entry for qubit 0; merge duplicate entries so each qubit occurs once"
         );
         assert!(StabilizerCheck::from_string(0, "I", &[1, 1]).is_err());
     }
 
     #[test]
     fn test_stabilizer_check_creation() {
-        let check = StabilizerCheck::x_check(0, &[0, 1, 2, 3]);
+        let check = StabilizerCheck::x_check(0, &[0, 1, 2, 3]).unwrap();
         assert_eq!(check.weight(), 4);
         assert_eq!(check.pauli_string(), "XXXX");
         assert!(check.is_css());
@@ -512,8 +499,8 @@ mod tests {
     #[test]
     fn test_check_schedule_sequential() {
         let checks = vec![
-            StabilizerCheck::x_check(0, &[0, 1]),
-            StabilizerCheck::z_check(1, &[1, 2]),
+            StabilizerCheck::x_check(0, &[0, 1]).unwrap(),
+            StabilizerCheck::z_check(1, &[1, 2]).unwrap(),
         ];
         let schedule = CheckSchedule::sequential(checks);
         assert_eq!(schedule.num_rounds(), 2);
@@ -523,10 +510,10 @@ mod tests {
     #[test]
     fn test_check_schedule_parallel_xz() {
         let checks = vec![
-            StabilizerCheck::x_check(0, &[0, 1]),
-            StabilizerCheck::x_check(1, &[2, 3]),
-            StabilizerCheck::z_check(2, &[0, 2]),
-            StabilizerCheck::z_check(3, &[1, 3]),
+            StabilizerCheck::x_check(0, &[0, 1]).unwrap(),
+            StabilizerCheck::x_check(1, &[2, 3]).unwrap(),
+            StabilizerCheck::z_check(2, &[0, 2]).unwrap(),
+            StabilizerCheck::z_check(3, &[1, 3]).unwrap(),
         ];
         let schedule = CheckSchedule::parallel_xz(checks);
         assert_eq!(schedule.num_rounds(), 2);
@@ -536,21 +523,22 @@ mod tests {
 
     #[test]
     fn test_stabilizer_check_to_pauli_string() {
-        let check = StabilizerCheck::x_check(0, &[0, 2, 4]);
-        let ps = check.to_pauli_string();
+        let check = StabilizerCheck::x_check(0, &[0, 2, 4]).unwrap();
+        let ps = check.to_pauli_string().unwrap();
         assert_eq!(ps.weight(), 3);
     }
 
     #[test]
     fn test_logical_operator() {
         let logical_x = LogicalOperator::x(vec![0, 1, 2]);
-        let ps = logical_x.to_pauli_string();
+        let ps = logical_x.to_pauli_string().unwrap();
         assert_eq!(ps.weight(), 3);
     }
 
     #[test]
     fn test_stabilizer_check_with_color() {
         let check = StabilizerCheck::x_check(0, &[0, 1, 2])
+            .unwrap()
             .with_color(StabilizerColor::Red)
             .as_boundary();
         assert_eq!(check.color, Some(StabilizerColor::Red));

@@ -140,7 +140,7 @@ fn custom_p1_weights_affect_decoder() {
 
     // Uniform weights
     let noise_uniform = NoiseConfig::uniform(0.001);
-    let d_uniform = LookupDecoder::build(&map, &noise_uniform, 2);
+    let d_uniform = LookupDecoder::build(&map, &noise_uniform, 2).unwrap();
 
     // Biased weights: Z only
     let noise_biased = NoiseConfig::uniform(0.001).set_p1_weights(PauliWeights::from([
@@ -148,7 +148,7 @@ fn custom_p1_weights_affect_decoder() {
         (Y(0), 0.0),
         (Z(0), 1.0),
     ]));
-    let d_biased = LookupDecoder::build(&map, &noise_biased, 2);
+    let d_biased = LookupDecoder::build(&map, &noise_biased, 2).unwrap();
 
     // Both should build successfully
     assert!(d_uniform.num_syndromes() > 0);
@@ -342,7 +342,7 @@ fn probability_sums_to_one() {
         .expect("circuit is replayable");
 
     let noise = NoiseConfig::uniform(0.001);
-    let decoder = LookupDecoder::build(&map, &noise, 3);
+    let decoder = LookupDecoder::build(&map, &noise, 3).unwrap();
 
     assert!(
         decoder.truncation_bound() < 1e-4,

@@ -137,10 +137,11 @@ impl PySymplecticMatrix {
     }
 
     #[classmethod]
-    fn zeros(_cls: &Bound<'_, PyType>, num_rows: usize, num_qubits: usize) -> Self {
-        Self {
-            inner: RustSymplecticMatrix::zeros(num_rows, num_qubits),
-        }
+    fn zeros(_cls: &Bound<'_, PyType>, num_rows: usize, num_qubits: usize) -> PyResult<Self> {
+        Ok(Self {
+            inner: RustSymplecticMatrix::zeros(num_rows, num_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        })
     }
 
     fn num_rows(&self) -> usize {

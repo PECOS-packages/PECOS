@@ -35,7 +35,7 @@ pub enum ParseAngleError {
     /// Division by zero in fractions
     DivisionByZero,
     /// Angle value exceeds the representable range
-    Overflow,
+    Overflow { value: String },
 }
 
 impl std::fmt::Display for ParseAngleError {
@@ -43,7 +43,10 @@ impl std::fmt::Display for ParseAngleError {
         match self {
             Self::InvalidFormat => write!(f, "invalid angle format"),
             Self::DivisionByZero => write!(f, "division by zero"),
-            Self::Overflow => write!(f, "angle too large to represent"),
+            Self::Overflow { value } => write!(
+                f,
+                "angle {value} is too large to represent; use a finite angle with smaller numerator and denominator"
+            ),
         }
     }
 }
@@ -191,8 +194,11 @@ where
 
         // Handle decimal numbers (with or without pi)
         if s.contains('.') {
-            return Self::try_from_radians(Self::parse_decimal(&s)?)
-                .map_err(|_| ParseAngleError::Overflow);
+            return Self::try_from_radians(Self::parse_decimal(&s)?).map_err(|error| {
+                ParseAngleError::Overflow {
+                    value: format!("{} {} (input {s:?})", error.value, error.unit),
+                }
+            });
         }
 
         // Split into numerator and denominator parts
@@ -213,7 +219,7 @@ where
                 && num_part[1..].chars().all(|c| c.is_ascii_digit())
                 || num_part.chars().all(|c| c.is_ascii_digit());
             if is_valid {
-                return Err(ParseAngleError::Overflow);
+                return Err(ParseAngleError::Overflow { value: s.clone() });
             }
             return Err(ParseAngleError::InvalidFormat);
         };
@@ -235,7 +241,7 @@ where
 
         // Check for potential overflow in multiplication when has_pi is true
         if has_pi && (num_val.checked_mul(2).is_none() || den_val.checked_mul(2).is_none()) {
-            return Err(ParseAngleError::Overflow);
+            return Err(ParseAngleError::Overflow { value: s.clone() });
         }
 
         // Convert to angle using appropriate method
@@ -280,7 +286,9 @@ where
                 .parse::<f64>()
                 .map_err(|_| ParseAngleError::InvalidFormat)?;
             if !value.is_finite() {
-                return Err(ParseAngleError::Overflow);
+                return Err(ParseAngleError::Overflow {
+                    value: s.to_string(),
+                });
             }
             Ok(value * std::f64::consts::PI)
         } else {
@@ -291,7 +299,9 @@ where
                 .parse::<f64>()
                 .map_err(|_| ParseAngleError::InvalidFormat)?;
             if !value.is_finite() {
-                return Err(ParseAngleError::Overflow);
+                return Err(ParseAngleError::Overflow {
+                    value: s.to_string(),
+                });
             }
             Ok(value)
         }
@@ -313,7 +323,9 @@ where
             let is_valid = n.starts_with('-') && n[1..].chars().all(|c| c.is_ascii_digit())
                 || n.chars().all(|c| c.is_ascii_digit());
             if is_valid {
-                Err(ParseAngleError::Overflow)
+                Err(ParseAngleError::Overflow {
+                    value: n.to_string(),
+                })
             } else {
                 Err(ParseAngleError::InvalidFormat)
             }

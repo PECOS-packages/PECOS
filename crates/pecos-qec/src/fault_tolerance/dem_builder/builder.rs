@@ -2504,7 +2504,7 @@ fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {
 fn two_qubit_label_for_replay(pauli: &pecos_core::PauliString) -> Result<String, DemBuilderError> {
     super::types::two_qubit_pauli_label(pauli, [pecos_core::QubitId(0), pecos_core::QubitId(1)])
         .map_err(|_| DemBuilderError::ConfigurationError(format!(
-            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path",
+            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path; use a Pauli supported on the gate operands",
             pauli.to_sparse_str()
         )))
 }

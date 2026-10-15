@@ -1106,12 +1106,14 @@ pub fn certified_stabilizer_coset_weight(
 ) -> Result<Option<CertifiedDistance>, CosetWeightError> {
     let num_qubits = code.num_qubits();
     let group = pecos_quantum::SymplecticMatrix::from_pauli_sequence_ignoring_phase(
-        &pecos_quantum::PauliSequence::new(code.stabilizers().to_vec()),
+        &pecos_quantum::PauliSequence::new(code.stabilizers().to_vec())
+            .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?,
         num_qubits,
     )
     .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?;
     let representative_rows = pecos_quantum::SymplecticMatrix::from_pauli_sequence_ignoring_phase(
-        &pecos_quantum::PauliSequence::new(vec![operator.clone()]),
+        &pecos_quantum::PauliSequence::new(vec![operator.clone()])
+            .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?,
         num_qubits,
     )
     .map_err(|error| CosetWeightError::Symplectic(error.to_string()))?;
@@ -1967,6 +1969,7 @@ mod tests {
                 QuarterPhase::PlusOne,
                 terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
             )
+            .unwrap()
         };
         StabilizerCodeSpec::new(
             5,
@@ -2134,7 +2137,8 @@ mod tests {
         let logical_x = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusOne,
             (0..5).map(|q| (Pauli::X, QubitId::new(q))).collect(),
-        );
+        )
+        .unwrap();
         let certified = certified_stabilizer_coset_weight(&spec, &logical_x, 5)
             .unwrap()
             .unwrap();
@@ -2235,6 +2239,7 @@ mod tests {
                 QuarterPhase::PlusOne,
                 terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
             )
+            .unwrap()
         };
         let spec = StabilizerCodeSpec::new(
             2,

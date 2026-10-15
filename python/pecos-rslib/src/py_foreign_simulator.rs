@@ -124,13 +124,10 @@ impl QuantumSimulator for PyForeignSimulator {
         self
     }
 
-    fn num_qubits(&self) -> usize {
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
         Python::attach(|py| {
-            self.inner
-                .call_method0(py, "num_qubits")
-                .expect("Python simulator num_qubits() failed")
-                .extract::<usize>(py)
-                .expect("num_qubits() must return an integer")
+            let value = self.inner.call_method0(py, "num_qubits").map_err(|error| pecos_core::errors::PecosError::Input(format!("Python simulator num_qubits() failed: {error}; return a nonnegative integer count")))?;
+            value.extract::<usize>(py).map_err(|error| pecos_core::errors::PecosError::Input(format!("Python simulator num_qubits() returned {value:?}: {error}; return a nonnegative integer that fits usize")))
         })
     }
 }

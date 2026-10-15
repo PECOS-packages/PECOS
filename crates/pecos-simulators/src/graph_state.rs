@@ -473,8 +473,8 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
 // ============================================================================
 
 impl<R: SeedableRng + Rng + Debug> QuantumSimulator for GraphStateSim<R> {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {
@@ -662,7 +662,10 @@ impl<R: SeedableRng + Rng + Debug> crate::StabilizerTableauSimulator for GraphSt
 ///
 /// Produces e.g. `"+ZI\n"` or `"-iXY\n"`.
 fn pauli_string_to_tableau_line(ps: &pecos_core::PauliString, n: usize, out: &mut String) {
-    out.push_str(&ps.to_dense_str(Some(n)));
+    out.push_str(
+        &ps.to_dense_str_width(n)
+            .expect("simulator-generated tableau rows fit the simulator width"),
+    );
     out.push('\n');
 }
 

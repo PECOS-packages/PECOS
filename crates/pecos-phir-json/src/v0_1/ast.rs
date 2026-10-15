@@ -161,7 +161,11 @@ fn convert_angles(raw: &serde_json::Value) -> Result<Option<Vec<f64>>, String> {
         "rad" => 1.0,
         "deg" => PI / 180.0,
         "pi" => PI,
-        _ => return Err(format!("Unsupported angle unit: {unit}")),
+        _ => {
+            return Err(format!(
+                "Unsupported angle unit: {unit}; use rad, deg, or pi"
+            ));
+        }
     };
     values
         .into_iter()

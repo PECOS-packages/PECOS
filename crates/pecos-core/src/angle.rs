@@ -44,7 +44,11 @@ pub struct NonFiniteAngleError {
 
 impl fmt::Display for NonFiniteAngleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "angle must be finite, got {} {}", self.value, self.unit)
+        write!(
+            f,
+            "angle must be finite, got {} {}; check the computation or input that produced it",
+            self.value, self.unit
+        )
     }
 }
 

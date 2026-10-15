@@ -36,26 +36,29 @@ def to_pauli_string(
         return PauliString.from_str(value)
     if isinstance(value, QuantumCircuit):
         if len(value) != 1:
-            msg = "A Pauli circuit must contain exactly one tick"
+            msg = f"A Pauli circuit must contain exactly one tick, got {len(value)}; supply a single-tick circuit"
             raise ValueError(msg)
         if value.metadata:
-            msg = "A Pauli circuit must have no circuit metadata"
+            msg = f"A Pauli circuit must have no circuit metadata, got {value.metadata!r}; remove the metadata"
             raise ValueError(msg)
         entries = []
         for symbol, locations, metadata in value.items():
             if metadata:
-                msg = "A Pauli circuit must have no operation metadata"
+                msg = f"Pauli operation {symbol!r} has metadata {metadata!r}; remove the operation metadata"
                 raise ValueError(msg)
             entries.append((symbol, locations))
     elif isinstance(value, Mapping):
         entries = list(value.items())
     else:
-        msg = "Expected a PauliString, string, mapping, or single-tick QuantumCircuit"
+        msg = (
+            f"value has type {type(value).__name__} and value {value!r}; "
+            "expected a PauliString, string, mapping, or single-tick QuantumCircuit"
+        )
         raise TypeError(msg)
     paulis = []
     for symbol, locations in entries:
         if symbol not in {"I", "X", "Y", "Z"}:
-            msg = f"Invalid Pauli symbol: {symbol!r}"
+            msg = f"Invalid Pauli symbol: {symbol!r}; use I, X, Y, or Z"
             raise ValueError(msg)
         pauli = Pauli.from_str(symbol)
         paulis.extend((pauli, qubit) for qubit in locations)
@@ -65,7 +68,7 @@ def to_pauli_string(
 def pauli_to_dict(pauli: PauliString) -> dict[str, set[int]]:
     """Convert to nonidentity qubit sets; reject phases other than +1."""
     if pauli.get_phase() != 0:
-        msg = "A Pauli mapping cannot represent a phase other than +1"
+        msg = f"Pauli {pauli} has phase {pauli.get_phase()}; a mapping requires phase +1 (0 quarter turns)"
         raise ValueError(msg)
     result: dict[str, set[int]] = {}
     for symbol, qubit in pauli.get_paulis():
@@ -98,11 +101,15 @@ def compatible_stabilizer_groups(
     Element and maximal-clique enumeration have exponential cost.
     """
     if operator.get_phase() not in (0, 2):
-        msg = "The operator must have a real phase (+1 or -1)"
+        msg = f"Operator {operator} has phase {operator.get_phase()}; supply a real phase (+1 or -1)"
         raise ValueError(msg)
-    if any(not operator.commutes_with(generator) for generator in group.stabilizers()):
-        msg = "The operator must commute with every stabilizer generator"
-        raise ValueError(msg)
+    for index, generator in enumerate(group.stabilizers()):
+        if not operator.commutes_with(generator):
+            msg = (
+                f"Operator {operator} anticommutes with generator {index} ({generator}); "
+                "supply an operator commuting with every stabilizer generator"
+            )
+            raise ValueError(msg)
     elements = group.elements()
     stabilizers = sorted((s for s in elements if s.weight()), key=str)
     graph = nx.Graph()

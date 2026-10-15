@@ -308,7 +308,7 @@ For low error rates with many qubits, the system uses geometric sampling to skip
 ```rust
 // Automatic for channels with probability < 0.01 and > 100 qubits
 let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()).unwrap())
-    .with_probability(0.001)  // Enables geometric sampling
+    .with_probability(0.001).unwrap()  // Enables geometric sampling
     .with_filter(CompositeEventFilter::SingleQubitGate);
 ```
 

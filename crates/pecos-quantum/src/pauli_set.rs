@@ -79,6 +79,7 @@ impl PauliKey {
     fn to_pauli_string(&self) -> PauliString {
         let paulis: Vec<(Pauli, QubitId)> = self.ops.iter().map(|(q, p)| (*p, *q)).collect();
         PauliString::with_phase_and_paulis(self.phase, paulis)
+            .expect("PauliKey preserves canonical distinct qubits")
     }
 }
 
@@ -209,8 +210,10 @@ impl PauliSet {
     /// Converts to a [`PauliSequence`] for symplectic analysis.
     ///
     /// The resulting sequence's order matches this set's deterministic iteration order.
-    #[must_use]
-    pub fn to_sequence(&self) -> PauliSequence {
+    ///
+    /// # Errors
+    /// Returns an error if the set support exceeds the symplectic column capacity.
+    pub fn to_sequence(&self) -> Result<PauliSequence, pecos_core::ParsePauliStringError> {
         PauliSequence::new(self.iter().collect())
     }
 
@@ -278,7 +281,7 @@ impl PauliSet {
     /// ```
     #[must_use]
     pub fn to_dense_str(&self) -> String {
-        let elements: Vec<String> = self.iter().map(|p| p.to_dense_str(None)).collect();
+        let elements: Vec<String> = self.iter().map(|p| p.to_dense_str()).collect();
         format!("{{{}}}", elements.join(", "))
     }
 }
@@ -512,7 +515,7 @@ mod tests {
     #[test]
     fn test_to_sequence() {
         let set = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
-        let coll = set.to_sequence();
+        let coll = set.to_sequence().unwrap();
         assert_eq!(coll.len(), 2);
         assert_eq!(coll.rank(), 2);
     }
@@ -553,11 +556,13 @@ mod tests {
         let ps1 = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusOne,
             vec![(Pauli::X, QubitId::new(0)), (Pauli::Z, QubitId::new(1))],
-        );
+        )
+        .unwrap();
         let ps2 = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusOne,
             vec![(Pauli::Z, QubitId::new(1)), (Pauli::X, QubitId::new(0))],
-        );
+        )
+        .unwrap();
         let set = PauliSet::from_iter([ps1, ps2]);
         assert_eq!(set.len(), 1);
     }
@@ -705,7 +710,7 @@ mod tests {
 
     #[test]
     fn test_from_sequence() {
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Z(0)]);
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Z(0)]).unwrap();
         let set = PauliSet::from(seq);
         // Z(0) appears twice in the sequence but is deduplicated in the set
         assert_eq!(set.len(), 2);
@@ -716,7 +721,7 @@ mod tests {
     #[test]
     fn test_roundtrip_set_to_sequence_to_set() {
         let original = PauliSet::from_iter([Zs([0, 1]), Zs([1, 2])]);
-        let seq = original.to_sequence();
+        let seq = original.to_sequence().unwrap();
         let recovered = PauliSet::from(seq);
         assert_eq!(recovered, original);
     }

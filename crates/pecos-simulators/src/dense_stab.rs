@@ -1030,8 +1030,8 @@ impl<R: SeedableRng + Rng + Debug> DenseStab<R> {
 }
 
 impl<R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for DenseStab<R> {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {
@@ -1386,6 +1386,7 @@ impl<R: Rng> DenseStab<R> {
             phase = phase.multiply(&QuarterPhase::MinusI);
         }
         PauliString::with_phase_and_paulis(phase, paulis)
+            .expect("tableau conversion emits one Pauli per qubit")
     }
 
     fn generators_from_rows(
@@ -1417,6 +1418,9 @@ impl<R: Rng> DenseStab<R> {
     /// stabilizer type used by state inspection and quantum-info routines.
     ///
     /// [`PauliStabilizerGroup`]: pecos_quantum::PauliStabilizerGroup
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that allocated tableau dimensions fit symplectic columns is broken.
     #[must_use]
     pub fn to_stabilizer_group(&self) -> pecos_quantum::PauliStabilizerGroup {
         let generators = self.generators_from_rows(
@@ -1426,11 +1430,15 @@ impl<R: Rng> DenseStab<R> {
             &self.stab_signs_i,
         );
         pecos_quantum::PauliStabilizerGroup::from_generators_unchecked(generators)
+            .expect("allocated tableau dimensions fit the symplectic column capacity")
     }
 
     /// Extracts the destabilizer generators as a [`PauliSequence`].
     ///
     /// [`PauliSequence`]: pecos_quantum::PauliSequence
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that allocated tableau dimensions fit symplectic columns is broken.
     #[must_use]
     pub fn to_destabilizer_sequence(&self) -> pecos_quantum::PauliSequence {
         let generators = self.generators_from_rows(
@@ -1440,6 +1448,7 @@ impl<R: Rng> DenseStab<R> {
             &self.destab_signs_i,
         );
         pecos_quantum::PauliSequence::new(generators)
+            .expect("allocated tableau dimensions fit the symplectic column capacity")
     }
 
     /// Produces a tableau string from dense bit arrays.

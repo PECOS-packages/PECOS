@@ -450,7 +450,19 @@ where
     /// New qubits have indices starting at the old qubit count and are in |0>.
     /// Qubit k is basis-index bit k, so existing amplitudes keep their indices.
     /// Requests at or below the current size do nothing; this never shrinks.
-    pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
+    ///
+    /// # Errors
+    /// Returns an error if the requested count exceeds the representation capacity.
+    pub fn ensure_qubit_count(
+        &mut self,
+        required_qubits: usize,
+    ) -> Result<(), pecos_core::errors::PecosError> {
+        let maximum = (isize::MAX as usize / size_of::<f64>()).ilog2() as usize;
+        if required_qubits > maximum {
+            return Err(pecos_core::errors::PecosError::Input(format!(
+                "requested {required_qubits} qubits exceeds supported maximum {maximum}; request at most {maximum} qubits"
+            )));
+        }
         if required_qubits > self.num_qubits {
             let size = 1 << required_qubits;
             // Apply deferred gates while the state is still small.
@@ -461,6 +473,7 @@ where
             // two_qubit_unitary resizes its scratch buffers lazily.
             self.num_qubits = required_qubits;
         }
+        Ok(())
     }
 
     /// Flush pending gates for a specific qubit.
@@ -2626,8 +2639,8 @@ impl<R> QuantumSimulator for StateVecSoA<R>
 where
     R: Rng,
 {
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_qubits)
     }
 
     fn reset(&mut self) -> &mut Self {

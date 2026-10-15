@@ -652,8 +652,11 @@ impl PyPauliProp {
     /// Raises `ValueError` if a tracked qubit is outside the requested dense width.
     #[pyo3(signature = (num_qubits=None))]
     pub fn dense_string(&self, num_qubits: Option<usize>) -> PyResult<String> {
-        self.inner
-            .try_dense_string(num_qubits)
+        num_qubits
+            .map_or_else(
+                || Ok(self.inner.dense_string()),
+                |n| self.inner.dense_string_width(n),
+            )
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
@@ -666,8 +669,11 @@ impl PyPauliProp {
     /// Raises `ValueError` if a tracked qubit is outside the requested dense width.
     #[pyo3(signature = (num_qubits=None))]
     pub fn to_dense_string(&self, num_qubits: Option<usize>) -> PyResult<String> {
-        self.inner
-            .try_to_dense_string(num_qubits)
+        num_qubits
+            .map_or_else(
+                || Ok(self.inner.to_dense_string()),
+                |n| self.inner.to_dense_string_width(n),
+            )
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 

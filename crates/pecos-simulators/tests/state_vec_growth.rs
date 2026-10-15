@@ -8,7 +8,7 @@ use pecos_simulators::{
     StateVectorSimulator,
 };
 
-fn check_growth<S>(grow: fn(&mut S, usize))
+fn check_growth<S>(grow: fn(&mut S, usize) -> Result<(), pecos_core::errors::PecosError>)
 where
     S: StateVectorSimulator + ArbitraryRotationGateable + RngManageable<Rng = PecosRng> + Clone,
 {
@@ -25,10 +25,10 @@ where
     // Advance beyond the seeded RNG's initial state before testing preservation.
     let _ = sim.rng_mut().random::<u64>();
     let mut expected_rng = sim.rng().clone();
-    grow(&mut sim, 4);
-    grow(&mut sim, 4);
-    grow(&mut sim, 1);
-    assert_eq!(sim.num_qubits(), 4);
+    grow(&mut sim, 4).unwrap();
+    grow(&mut sim, 4).unwrap();
+    grow(&mut sim, 1).unwrap();
+    assert_eq!(sim.num_qubits().unwrap(), 4);
     assert_eq!(sim.rng_mut().random::<u64>(), expected_rng.random::<u64>());
 
     // All implementations map qubit k to bit k: new high bits must be zero.
@@ -50,7 +50,7 @@ where
     // Exercise the new qubits, cross-boundary gates, and a second growth.
     sim.x(&[QubitId(2)]);
     sim.cx(&[(QubitId(0), QubitId(3))]);
-    grow(&mut sim, 5);
+    grow(&mut sim, 5).unwrap();
     for i in 0..32 {
         let expected = if i & 0b10100 == 0b00100 && ((i >> 3) & 1) == (i & 1) {
             old[i & 0b11]
@@ -60,15 +60,15 @@ where
         assert!((sim.get_amplitude(i) - expected).norm() < 1e-12);
     }
     sim.reset();
-    assert_eq!(sim.num_qubits(), 5);
+    assert_eq!(sim.num_qubits().unwrap(), 5);
     assert_eq!(sim.get_amplitude(0), Complex64::new(1.0, 0.0));
     for i in 1..32 {
         assert_eq!(sim.get_amplitude(i), Complex64::new(0.0, 0.0));
     }
 
     let mut empty = S::with_seed(0, 42);
-    grow(&mut empty, 0);
-    grow(&mut empty, 2);
+    grow(&mut empty, 0).unwrap();
+    grow(&mut empty, 2).unwrap();
     empty.x(&[QubitId(1)]);
     assert_eq!(empty.get_amplitude(2), Complex64::new(1.0, 0.0));
 }
@@ -97,7 +97,7 @@ fn dense_soa_growth_resizes_reused_unitary_scratch() {
     });
     sim.two_qubit_unitary(0, 1, identity);
     let before = sim.state();
-    sim.ensure_qubit_count(4);
+    sim.ensure_qubit_count(4).unwrap();
     sim.x(&[QubitId(3)]);
     sim.two_qubit_unitary(0, 3, identity);
     for i in 0..16 {

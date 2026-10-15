@@ -1301,10 +1301,10 @@ impl Gate {
                 return Err("GateType::Channel requires a channel payload".to_string());
             };
             if !self.angles.is_empty() || !self.params.is_empty() || !self.meas_ids.is_empty() {
-                return Err(
-                    "Channel gates cannot carry angle, parameter, or measurement-id payloads"
-                        .to_string(),
-                );
+                return Err(format!(
+                    "Channel gate has angles {:?}, parameters {:?}, measurement IDs {:?}; remove these payloads from the channel gate",
+                    self.angles, self.params, self.meas_ids
+                ));
             }
             let expected = channel
                 .qubits()
@@ -1320,7 +1320,10 @@ impl Gate {
             return Ok(());
         }
         if self.channel.is_some() {
-            return Err("Only GateType::Channel can carry a channel payload".to_string());
+            return Err(format!(
+                "Gate {:?} has channel payload {:?}; use GateType::Channel or remove the channel payload",
+                self.gate_type, self.channel
+            ));
         }
         if self.gate_type == GateType::Custom {
             let duplicates = duplicate_qubits(self.qubits.iter().map(|q| q.0));
@@ -1331,7 +1334,10 @@ impl Gate {
                 ));
             }
             if !self.meas_ids.is_empty() {
-                return Err("Custom gates cannot carry measurement-id payloads".to_string());
+                return Err(format!(
+                    "Custom gate has measurement IDs {:?}; remove measurement IDs from custom gates",
+                    self.meas_ids
+                ));
             }
             return Ok(());
         }
@@ -1388,8 +1394,8 @@ impl Gate {
             }
         } else if !self.meas_ids.is_empty() {
             return Err(format!(
-                "Gate {:?} cannot carry measurement-id payloads",
-                self.gate_type
+                "Gate {:?} has measurement IDs {:?}; remove measurement IDs from non-measurement gates",
+                self.gate_type, self.meas_ids
             ));
         }
         Ok(())
@@ -1868,7 +1874,7 @@ mod tests {
             non_measurement
                 .validate()
                 .unwrap_err()
-                .contains("cannot carry measurement-id payloads")
+                .contains("remove measurement IDs from non-measurement gates")
         );
     }
 
@@ -1891,7 +1897,7 @@ mod tests {
             stale_angles
                 .validate()
                 .unwrap_err()
-                .contains("cannot carry angle, parameter, or measurement-id payloads")
+                .contains("remove these payloads from the channel gate")
         );
 
         let mut channel_payload_on_ideal_gate = Gate::x(&[0]);
@@ -1900,7 +1906,7 @@ mod tests {
             channel_payload_on_ideal_gate
                 .validate()
                 .unwrap_err()
-                .contains("Only GateType::Channel can carry a channel payload")
+                .contains("use GateType::Channel or remove the channel payload")
         );
     }
 }

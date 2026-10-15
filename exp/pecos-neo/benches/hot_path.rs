@@ -835,11 +835,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     group.bench_function("composite_noise_emission_1q", |b| {
         let mut noise = CompositeNoiseModelBuilder::new()
             .with_p1(p1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2(p2)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .build()
-            .unwrap();
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0)];
 
@@ -876,11 +876,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     group.bench_function("composite_noise_emission_2q", |b| {
         let mut noise = CompositeNoiseModelBuilder::new()
             .with_p1(p1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2(p2)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .build()
-            .unwrap();
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0), QubitId(1)];
 
@@ -913,11 +913,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     group.bench_function("composite_bell_shot", |b| {
         let noise = CompositeNoiseModelBuilder::new()
             .with_p1(p1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2(p2)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .build()
-            .unwrap();
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -945,11 +945,11 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     group.bench_function("composite_20q_shot", |b| {
         let noise = CompositeNoiseModelBuilder::new()
             .with_p1(p1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2(p2)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .build()
-            .unwrap();
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
         let mut state = SparseStab::new(20);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -981,19 +981,19 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
     group.bench_function("composite_20q_with_leakage", |b| {
         let noise = CompositeNoiseModelBuilder::new()
             .with_p1(p1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p1_emission_ratio(0.1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p1_seepage(0.05)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2(p2)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2_emission_ratio(0.1)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_p2_seepage(0.05)
-            .unwrap()
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .build()
-            .unwrap();
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
         let mut state = SparseStab::new(20);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -1025,26 +1025,26 @@ fn bench_batch_filtering(c: &mut Criterion) {
         // Low probability (p=0.001) - geometric should shine here
         group.bench_function(BenchmarkId::new("filter_p0.001", num_qubits), |b| {
             let mut rng = PecosRng::seed_from_u64(42);
-            b.iter(|| black_box(filter_by_probability(&qubits, 0.001, &mut rng)));
+            b.iter(|| black_box(filter_by_probability(&qubits, 0.001, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
         });
 
         // Medium probability (p=0.01)
         group.bench_function(BenchmarkId::new("filter_p0.01", num_qubits), |b| {
             let mut rng = PecosRng::seed_from_u64(42);
-            b.iter(|| black_box(filter_by_probability(&qubits, 0.01, &mut rng)));
+            b.iter(|| black_box(filter_by_probability(&qubits, 0.01, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
         });
 
         // Higher probability (p=0.1) - linear should be fine here
         group.bench_function(BenchmarkId::new("filter_p0.1", num_qubits), |b| {
             let mut rng = PecosRng::seed_from_u64(42);
-            b.iter(|| black_box(filter_by_probability(&qubits, 0.1, &mut rng)));
+            b.iter(|| black_box(filter_by_probability(&qubits, 0.1, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
         });
     }
 
     // Compare filter_range (no pre-allocated vec) at 1M
     group.bench_function("filter_range_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 0.001, &mut rng)));
+        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 0.001, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
     });
 
     // Compare with RngProbabilityExt optimized version
@@ -1067,7 +1067,7 @@ fn bench_batch_filtering(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("geometric_p1e-4", num_qubits), |b| {
             let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
             let mut rng = PecosRng::seed_from_u64(42);
-            b.iter(|| black_box(filter_by_probability(&qubits, 1e-4, &mut rng)));
+            b.iter(|| black_box(filter_by_probability(&qubits, 1e-4, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
         });
     }
 
@@ -1076,19 +1076,19 @@ fn bench_batch_filtering(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("geometric_p1e-5", num_qubits), |b| {
             let qubits: Vec<_> = (0..num_qubits).map(QubitId).collect();
             let mut rng = PecosRng::seed_from_u64(42);
-            b.iter(|| black_box(filter_by_probability(&qubits, 1e-5, &mut rng)));
+            b.iter(|| black_box(filter_by_probability(&qubits, 1e-5, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
         });
     }
 
     // Compare: filter_range (avoids vec allocation) at low probabilities
     group.bench_function("filter_range_1M_p1e-4", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 1e-4, &mut rng)));
+        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 1e-4, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
     });
 
     group.bench_function("filter_range_1M_p1e-5", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 1e-5, &mut rng)));
+        b.iter(|| black_box(filter_range_by_probability(0, 1_000_000, 1e-5, &mut rng).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")));
     });
 
     // Benchmark BatchState operations at scale
@@ -1157,14 +1157,14 @@ fn bench_batch_processor(c: &mut Criterion) {
 
             let mut ctx = NoiseContext::new();
             let mut rng = PecosRng::seed_from_u64(42);
-            let processor = fast_depolarizing(1e-4, pauli());
+            let processor = fast_depolarizing(1e-4, pauli()).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
 
             b.iter(|| black_box(processor.process_all(&state, &mut ctx, &mut rng)));
         });
 
         // BatchCompositeChannel (geometric sampling via NoiseChannel interface)
         let batch_channel =
-            CompositeChannelBuilder::batch_single_qubit("batch", 1e-4, pauli()).unwrap();
+            CompositeChannelBuilder::batch_single_qubit("batch", 1e-4, pauli()).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
         group.bench_function(BenchmarkId::new("batch_channel_p1e-4", num_qubits), |b| {
             let mut ctx = NoiseContext::new();
             let mut rng = PecosRng::seed_from_u64(42);
@@ -1180,6 +1180,7 @@ fn bench_batch_processor(c: &mut Criterion) {
         // CompositeChannel with probability (geometric sampling - new consolidated API)
         let composite_with_prob = CompositeChannel::new("composite_fast", pauli())
             .with_probability(1e-4)
+            .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
             .with_filter(CompositeEventFilter::SingleQubitGate);
         group.bench_function(
             BenchmarkId::new("composite_with_prob_p1e-4", num_qubits),
@@ -1199,7 +1200,7 @@ fn bench_batch_processor(c: &mut Criterion) {
         // CompositeChannel (linear, no probability) - skip for 1M (too slow)
         if num_qubits <= 100_000 {
             let composite_channel =
-                CompositeChannelBuilder::single_qubit("composite", prob(1e-4, pauli()).unwrap());
+                CompositeChannelBuilder::single_qubit("composite", prob(1e-4, pauli()).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds"));
             group.bench_function(
                 BenchmarkId::new("composite_linear_p1e-4", num_qubits),
                 |b| {
@@ -1237,7 +1238,7 @@ fn bench_batch_processor(c: &mut Criterion) {
 
                 let mut ctx = NoiseContext::new();
                 let mut rng = PecosRng::seed_from_u64(42);
-                let processor = fast_depolarizing(1e-4, pauli());
+                let processor = fast_depolarizing(1e-4, pauli()).expect("fixed benchmark and example noise parameters satisfy their probability and time bounds");
 
                 b.iter(|| black_box(processor.process_all(&state, &mut ctx, &mut rng)));
             },

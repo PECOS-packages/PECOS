@@ -27,10 +27,14 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum StabilizerCodeSpecError {
     /// An imaginary stabilizer squares to -I and stabilizes no state.
-    #[error("Stabilizer {0} has non-real phase; its square is -I (empty code space)")]
-    NonRealStabilizerPhase(usize),
+    #[error(
+        "Stabilizer {index} has non-real phase {phase:?}; its square is -I (empty code space); use phase +1 or -1"
+    )]
+    NonRealStabilizerPhase { index: usize, phase: QuarterPhase },
     /// An operator acts outside the code's physical data qubits.
-    #[error("{role} operator {index}: qubit {qubit} is outside num_qubits {num_qubits}")]
+    #[error(
+        "{role} operator {index}: qubit {qubit} is outside num_qubits {num_qubits}; pass a width greater than qubit {qubit}"
+    )]
     QubitOutOfBounds {
         /// Operator list: stabilizer, destabilizer, logical Z, or logical X.
         role: &'static str,
@@ -61,7 +65,9 @@ pub enum StabilizerCodeSpecError {
     CrossLogicalAnticommute(usize, usize),
 
     /// Stabilizer generators are linearly dependent over GF(2).
-    #[error("Stabilizer generators are dependent: rank {rank}, count {count}")]
+    #[error(
+        "Stabilizer generators are dependent: rank {rank}, count {count}; remove redundant generators"
+    )]
     DependentStabilizers { rank: usize, count: usize },
 
     /// The supplied logical pairs do not form a complete ordinary-code basis.
@@ -139,12 +145,24 @@ impl std::fmt::Display for StabilizerCodeSpec {
 
         writeln!(f, "Stabilizer generators:")?;
         for stabilizer in &self.stabilizers {
-            writeln!(f, "{}", stabilizer.to_dense_str(Some(self.num_qubits)))?;
+            writeln!(
+                f,
+                "{}",
+                stabilizer
+                    .to_dense_str_width(self.num_qubits)
+                    .expect("validated code operators fit the code width")
+            )?;
         }
 
         writeln!(f, "Destabilizer generators:")?;
         for destabilizer in &self.destabilizers {
-            writeln!(f, "{}", destabilizer.to_dense_str(Some(self.num_qubits)))?;
+            writeln!(
+                f,
+                "{}",
+                destabilizer
+                    .to_dense_str_width(self.num_qubits)
+                    .expect("validated code operators fit the code width")
+            )?;
         }
 
         writeln!(f, "Logical operators:")?;
@@ -155,13 +173,17 @@ impl std::fmt::Display for StabilizerCodeSpec {
                 f,
                 "Z{}: {}",
                 index + 1,
-                logical_z.to_dense_str(Some(self.num_qubits))
+                logical_z
+                    .to_dense_str_width(self.num_qubits)
+                    .expect("validated code operators fit the code width")
             )?;
             writeln!(
                 f,
                 "X{}: {}",
                 index + 1,
-                logical_x.to_dense_str(Some(self.num_qubits))
+                logical_x
+                    .to_dense_str_width(self.num_qubits)
+                    .expect("validated code operators fit the code width")
             )?;
         }
 
@@ -299,7 +321,9 @@ impl StabilizerCodeSpec {
         }
 
         let stabilizer_count = stabilizers.len();
-        let stabilizer_rank = PauliSequence::new(stabilizers.clone()).rank();
+        let stabilizer_rank = PauliSequence::new(stabilizers.clone())
+            .map_err(|error| StabilizerCodeSpecError::InvalidCode(error.to_string()))?
+            .rank();
         if stabilizer_rank != stabilizer_count {
             return Err(StabilizerCodeSpecError::DependentStabilizers {
                 rank: stabilizer_rank,
@@ -677,7 +701,10 @@ impl StabilizerCodeSpec {
                 stabilizer.phase(),
                 QuarterPhase::PlusI | QuarterPhase::MinusI
             ) {
-                return Err(StabilizerCodeSpecError::NonRealStabilizerPhase(index));
+                return Err(StabilizerCodeSpecError::NonRealStabilizerPhase {
+                    index,
+                    phase: stabilizer.phase(),
+                });
             }
         }
         self.verify_stabilizers_commute()?;
@@ -1381,7 +1408,7 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "destabilizer operator 1: qubit 5 is outside num_qubits 3"
+            "destabilizer operator 1: qubit 5 is outside num_qubits 3; pass a width greater than qubit 5"
         );
     }
 
@@ -1486,7 +1513,8 @@ mod tests {
         let identity = PauliString::with_phase_and_paulis(
             pecos_core::QuarterPhase::PlusOne,
             vec![(Pauli::I, pecos_core::QubitId::new(5))],
-        );
+        )
+        .unwrap();
         let spec = StabilizerCodeSpec::with_destabilizers(
             3,
             vec![PauliString::z(2)],
@@ -1515,6 +1543,7 @@ mod tests {
             pecos_core::QuarterPhase::PlusOne,
             paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+        .unwrap()
     }
 
     #[test]
@@ -1535,7 +1564,7 @@ mod tests {
         assert!(destabilizer_section < logical_section);
 
         for operator in code.stabilizers().iter().chain(code.destabilizers()) {
-            assert!(rendered.contains(&operator.to_dense_str(Some(3))));
+            assert!(rendered.contains(&operator.to_dense_str_width(3).unwrap()));
         }
         assert!(rendered.contains("Z1: "));
         assert!(rendered.contains("X1: "));
@@ -1613,7 +1642,7 @@ mod tests {
         ));
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Stabilizer generators are dependent: rank 2, count 3"
+            "Stabilizer generators are dependent: rank 2, count 3; remove redundant generators"
         );
     }
 

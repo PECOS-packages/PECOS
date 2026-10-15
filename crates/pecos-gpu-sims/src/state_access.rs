@@ -19,7 +19,7 @@
 //! returning the same little-endian data shapes as the CPU state-access traits.
 
 use num_complex::Complex64;
-use pecos_simulators::{QuantumSimulator, StateAccessError};
+use pecos_simulators::StateAccessError;
 
 use crate::{GpuDensityMatrix, GpuStateVec32, GpuStateVec64, GpuStateVecBackend};
 
@@ -87,7 +87,7 @@ pub trait GpuDensityMatrixHostAccess {
 
 impl GpuStateVectorHostAccess for GpuStateVec32 {
     fn num_qubits(&self) -> usize {
-        QuantumSimulator::num_qubits(self)
+        self.num_qubits() as usize
     }
 
     fn state_vector_host_snapshot(&mut self) -> Result<Vec<Complex64>, StateAccessError> {
@@ -102,7 +102,7 @@ impl GpuStateVectorHostAccess for GpuStateVec32 {
 
 impl GpuStateVectorHostAccess for GpuStateVec64 {
     fn num_qubits(&self) -> usize {
-        QuantumSimulator::num_qubits(self)
+        self.num_qubits() as usize
     }
 
     fn state_vector_host_snapshot(&mut self) -> Result<Vec<Complex64>, StateAccessError> {

@@ -202,14 +202,14 @@ impl fmt::Display for QubitConflictError {
         if let Some(idx) = self.tick_idx {
             write!(
                 f,
-                "Qubit(s) {} already in use in tick {}",
+                "Qubit(s) {} already in use in tick {}; move the conflicting gate to another tick",
                 qubits.join(", "),
                 idx
             )
         } else {
             write!(
                 f,
-                "Qubit(s) {} already in use in this tick",
+                "Qubit(s) {} already in use in this tick; move the conflicting gate to another tick",
                 qubits.join(", ")
             )
         }
@@ -1415,17 +1415,17 @@ impl fmt::Display for TickMeasResolveError {
         match self {
             Self::Unknown(id) => write!(
                 f,
-                "MeasId({}) does not name a measurement in this circuit",
+                "MeasId({}) does not name a measurement in this circuit; use a MeasId returned by this circuit",
                 id.index()
             ),
             Self::Inconsistent(id) => write!(
                 f,
-                "MeasId({}) has inconsistent measurement holders",
+                "MeasId({}) has inconsistent measurement holders; assign each MeasId to exactly one record-consuming measurement",
                 id.index()
             ),
             Self::RecordLess { id, tick, gate_idx } => write!(
                 f,
-                "MeasId({}) at tick {tick}, batch {gate_idx} consumes no measurement record",
+                "MeasId({}) at tick {tick}, batch {gate_idx} consumes no measurement record; refer to a measurement that produces a record",
                 id.index()
             ),
         }
@@ -5217,7 +5217,9 @@ mod tests {
         };
         let err = dag
             .detector_labeled("not-a-measurement", &[forged])
-            .expect_err("H consumes no measurement record");
+            .expect_err(
+                "H consumes no measurement record; refer to a measurement that produces a record",
+            );
         assert!(matches!(err, AnnotationRefError::NotAMeasurement { .. }));
     }
 

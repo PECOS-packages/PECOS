@@ -102,7 +102,7 @@ impl CompositeEventFilter {
 ///
 /// # Performance
 ///
-/// When a probability is set via `.with_probability()`, the channel uses
+/// When a probability is set via `.with_probability().unwrap()`, the channel uses
 /// geometric sampling for O(n*p) complexity instead of O(n). This enables
 /// efficient processing of millions of qubits:
 ///
@@ -118,7 +118,7 @@ impl CompositeEventFilter {
 ///
 /// // Fast path: probability at channel level (geometric sampling)
 /// let channel = CompositeChannel::new("sq_depolarizing", pauli())
-///     .with_probability(0.01)
+///     .with_probability(0.01).unwrap()
 ///     .with_filter(CompositeEventFilter::SingleQubitGate);
 ///
 /// // Or with complex primitives (no probability = linear, applies to all)
@@ -177,14 +177,17 @@ impl<P: Primitive> CompositeChannel<P> {
     /// linear iteration. This is dramatically faster for low probabilities
     /// and high qubit counts.
     ///
-    /// **Important**: When using `.with_probability()`, the primitive should
+    /// **Important**: When using `.with_probability().unwrap()`, the primitive should
     /// NOT include a `prob()` wrapper - the channel handles probability filtering.
-    #[must_use]
-    pub fn with_probability(mut self, probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if probability is not finite and within [0, 1].
+    pub fn with_probability(mut self, probability: f64) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
         if probability > 0.0 && probability < 1.0 {
-            self.sampler = Some(GeometricSampler::new(probability));
+            self.sampler = Some(GeometricSampler::new(probability)?);
         }
-        self
+        Ok(self)
     }
 
     /// Add an event filter that this channel responds to.
@@ -758,7 +761,7 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         validate_probability(probability, "probability")?;
         Ok(Self {
             name,
-            sampler: GeometricSampler::new(probability),
+            sampler: GeometricSampler::new(probability)?,
             primitive,
             filters: Vec::new(),
             priority: 0,

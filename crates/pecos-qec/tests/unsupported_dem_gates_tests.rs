@@ -588,11 +588,13 @@ fn clifford_rotation_replay_matches_named_gates(
     let raw_map = InfluenceBuilder::new(&raw)
         .unwrap()
         .with_z(&[0, 1])
+        .unwrap()
         .build()
         .unwrap();
     let lowered_map = InfluenceBuilder::new(&lowered)
         .unwrap()
         .with_z(&[0, 1])
+        .unwrap()
         .build()
         .unwrap();
     if distinguishes_identity {
@@ -600,6 +602,7 @@ fn clifford_rotation_replay_matches_named_gates(
         let removed_map = InfluenceBuilder::new(&removed)
             .unwrap()
             .with_z(&[0, 1])
+            .unwrap()
             .build()
             .unwrap();
         // Measurement ordinals keep this comparison independent of shifted DAG node IDs.

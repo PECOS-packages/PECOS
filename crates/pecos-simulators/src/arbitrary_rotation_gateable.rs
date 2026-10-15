@@ -356,8 +356,8 @@ mod tests {
             self
         }
 
-        fn num_qubits(&self) -> usize {
-            3
+        fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+            Ok(3)
         }
     }
 

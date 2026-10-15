@@ -105,13 +105,39 @@ impl CliffordRep {
     }
 
     /// Sets how X on the given qubit transforms.
-    pub fn set_x_image(&mut self, qubit: usize, image: PauliString) {
-        self.x_images[qubit] = image;
+    ///
+    /// # Errors
+    /// Returns an error if the generator or its image is outside this Clifford's width.
+    pub fn set_x_image(
+        &mut self,
+        qubit: usize,
+        image: PauliString,
+    ) -> Result<(), crate::PauliWidthError> {
+        image.validate_width(self.num_qubits)?;
+        let slot = self.x_images.get_mut(qubit).ok_or(crate::PauliWidthError {
+            qubit,
+            num_qubits: self.num_qubits,
+        })?;
+        *slot = image;
+        Ok(())
     }
 
     /// Sets how Z on the given qubit transforms.
-    pub fn set_z_image(&mut self, qubit: usize, image: PauliString) {
-        self.z_images[qubit] = image;
+    ///
+    /// # Errors
+    /// Returns an error if the generator or its image is outside this Clifford's width.
+    pub fn set_z_image(
+        &mut self,
+        qubit: usize,
+        image: PauliString,
+    ) -> Result<(), crate::PauliWidthError> {
+        image.validate_width(self.num_qubits)?;
+        let slot = self.z_images.get_mut(qubit).ok_or(crate::PauliWidthError {
+            qubit,
+            num_qubits: self.num_qubits,
+        })?;
+        *slot = image;
+        Ok(())
     }
 
     /// Composes two Clifford representations: self * other.
@@ -122,8 +148,6 @@ impl CliffordRep {
     /// If the two representations have different numbers of qubits,
     /// the smaller one is implicitly extended with identity on the extra qubits.
     ///
-    /// # Panics
-    /// Panics if custom generator images overlap a qubit passed through outside the declared width.
     #[must_use]
     pub fn compose(&self, other: &CliffordRep) -> CliffordRep {
         let n = self.num_qubits.max(other.num_qubits);
@@ -166,12 +190,13 @@ impl CliffordRep {
     ///
     /// The result is the product of all transformed single-qubit terms.
     ///
+    ///
     /// # Panics
-    /// Panics if custom generator images overlap a qubit passed through outside the declared width.
+    /// Panics if the internal invariant that generator images fit the Clifford width is broken.
     #[must_use]
     pub fn apply(&self, pauli: &PauliString) -> PauliString {
         // Start with the input phase
-        let mut result = PauliString::with_phase_and_paulis(pauli.phase(), vec![]);
+        let mut result = PauliString::from_paulis_with_phase(pauli.phase(), &[]);
 
         for (p, qubit_id) in pauli.iter_pairs() {
             let qubit = usize::from(qubit_id);
@@ -181,7 +206,7 @@ impl CliffordRep {
                 let paulis: Vec<_> = result.iter_pairs().collect();
                 let mut new_paulis = paulis;
                 new_paulis.push((p, qubit_id));
-                result = PauliString::with_phase_and_paulis(result.phase(), new_paulis);
+                result = PauliString::with_phase_and_paulis(result.phase(), new_paulis).expect("validated generator images lie inside the Clifford width and passed-through input qubits are distinct and outside it");
                 continue;
             }
 
@@ -221,8 +246,6 @@ impl CliffordRep {
     /// let transformed = h.apply_to(&stabilizer).unwrap();
     /// ```
     ///
-    /// # Panics
-    /// Panics if custom generator images overlap a qubit passed through outside the declared width.
     #[must_use]
     pub fn apply_to(&self, op: &UnitaryRep) -> Option<UnitaryRep> {
         match op {
@@ -267,21 +290,21 @@ impl CliffordRep {
         let mut result = CliffordRep::identity(n);
         for q in 0..n {
             // X_q inverse image (from row q of inv)
-            let x_inv_body = Self::symplectic_row_to_pauli_string(&inv[q], n);
+            let mut x_inv_body = Self::symplectic_row_to_pauli_string(&inv[q], n);
             // Apply forward map to the body to find what phase correction is needed
             let forward = self.apply(&x_inv_body);
             // forward should equal (some_phase) * X_q
             // So C^{-1}(X_q) = conjugate(some_phase) * x_inv_body
             let phase = forward.phase().conjugate();
-            result.x_images[q] =
-                PauliString::with_phase_and_paulis(phase, x_inv_body.iter_pairs().collect());
+            x_inv_body.set_phase(phase);
+            result.x_images[q] = x_inv_body;
 
             // Z_q inverse image (from row n+q of inv)
-            let z_inv_body = Self::symplectic_row_to_pauli_string(&inv[n + q], n);
+            let mut z_inv_body = Self::symplectic_row_to_pauli_string(&inv[n + q], n);
             let forward = self.apply(&z_inv_body);
             let phase = forward.phase().conjugate();
-            result.z_images[q] =
-                PauliString::with_phase_and_paulis(phase, z_inv_body.iter_pairs().collect());
+            z_inv_body.set_phase(phase);
+            result.z_images[q] = z_inv_body;
         }
 
         result
@@ -369,6 +392,7 @@ impl CliffordRep {
             paulis.push((pauli, crate::QubitId::new(q)));
         }
         PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+            .expect("symplectic rows and PauliString entries contain distinct qubits")
     }
 
     // --- Standard single-qubit Clifford gates ---
@@ -902,8 +926,6 @@ impl Mul for CliffordRep {
     type Output = CliffordRep;
 
     /// Composes two Cliffords: `self * rhs` means "apply self, then rhs".
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: CliffordRep) -> CliffordRep {
         self.compose(&rhs)
     }
@@ -912,8 +934,6 @@ impl Mul for CliffordRep {
 impl Mul<&CliffordRep> for CliffordRep {
     type Output = CliffordRep;
 
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: &CliffordRep) -> CliffordRep {
         self.compose(rhs)
     }
@@ -922,8 +942,6 @@ impl Mul<&CliffordRep> for CliffordRep {
 impl Mul<CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: CliffordRep) -> CliffordRep {
         self.compose(&rhs)
     }
@@ -932,8 +950,6 @@ impl Mul<CliffordRep> for &CliffordRep {
 impl Mul<&CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: &CliffordRep) -> CliffordRep {
         self.compose(rhs)
     }
@@ -955,8 +971,6 @@ impl BitAnd for CliffordRep {
     type Output = CliffordRep;
 
     /// Tensor product of two `CliffordReps` acting on disjoint qubits.
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(&self, &rhs);
         // Since compose auto-extends with identity on extra qubits,
@@ -968,8 +982,6 @@ impl BitAnd for CliffordRep {
 impl BitAnd<&CliffordRep> for CliffordRep {
     type Output = CliffordRep;
 
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(&self, rhs);
         self.compose(rhs)
@@ -979,8 +991,6 @@ impl BitAnd<&CliffordRep> for CliffordRep {
 impl BitAnd<CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(self, &rhs);
         self.compose(&rhs)
@@ -990,8 +1000,6 @@ impl BitAnd<CliffordRep> for &CliffordRep {
 impl BitAnd<&CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
-    /// # Panics
-    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(self, rhs);
         self.compose(rhs)
@@ -1029,12 +1037,16 @@ impl From<PauliString> for CliffordRep {
             if x_sign == QuarterPhase::MinusOne {
                 let mut img = cliff.x_image(q).clone();
                 img.set_phase(img.phase().multiply(&QuarterPhase::MinusOne));
-                cliff.set_x_image(q, img);
+                cliff
+                    .set_x_image(q, img)
+                    .expect("changing an existing generator phase preserves its validated width");
             }
             if z_sign == QuarterPhase::MinusOne {
                 let mut img = cliff.z_image(q).clone();
                 img.set_phase(img.phase().multiply(&QuarterPhase::MinusOne));
-                cliff.set_z_image(q, img);
+                cliff
+                    .set_z_image(q, img)
+                    .expect("changing an existing generator phase preserves its validated width");
             }
         }
 

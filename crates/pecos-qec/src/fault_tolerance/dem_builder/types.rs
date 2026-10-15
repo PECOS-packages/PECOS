@@ -4202,7 +4202,7 @@ pub(crate) fn two_qubit_pauli_label(
     }
     if let Some((_, qubit)) = ps.iter_pairs().find(|(_, q)| !operands.contains(q)) {
         return Err(format!(
-            "Pauli qubit {qubit} is outside operands {operands:?}"
+            "Pauli qubit {qubit} is outside operands {operands:?}; restrict the Pauli to these operands"
         ));
     }
     Ok(operands
@@ -7940,6 +7940,7 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
         paulis.push((pa2, pecos_core::QubitId::from(1usize)));
     }
     pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+        .expect("pair weights use distinct fixed qubits 0 and 1")
 }
 
 #[cfg(test)]
@@ -10766,7 +10767,8 @@ mod tests {
                 pecos_core::PauliString::with_phase_and_paulis(
                     pecos_core::QuarterPhase::PlusOne,
                     Vec::new(),
-                ),
+                )
+                .unwrap(),
                 1.0,
             )],
         );

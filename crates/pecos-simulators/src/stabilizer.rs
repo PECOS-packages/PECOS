@@ -131,8 +131,8 @@ impl Stabilizer {
 }
 
 impl QuantumSimulator for Stabilizer {
-    fn num_qubits(&self) -> usize {
-        self.inner.num_qubits()
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.inner.num_qubits())
     }
 
     #[inline]

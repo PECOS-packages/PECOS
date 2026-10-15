@@ -1660,6 +1660,36 @@ impl OperationProcessor {
         qubit_args: &[usize],
         angle_args: &[f64],
     ) -> Result<(), PecosError> {
+        let signature = match gate_type {
+            "U" => Some((1, 3, false)),
+            "RZ" => Some((1, 1, true)),
+            "R1XY" => Some((1, 2, true)),
+            "RXYXY2Q" => Some((2, 2, false)),
+            "RXXRYYRZZ" => Some((2, 3, false)),
+            "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg" | "CX" => Some((2, 0, false)),
+            "H" | "X" | "Y" | "Z" => Some((1, 0, true)),
+            "SX" | "SXdg" | "Measure" | "Init" => Some((1, 0, false)),
+            _ => None,
+        };
+        if let Some((arity, angles, single)) = signature {
+            let valid_qubits = if single {
+                qubit_args.len() == arity
+            } else {
+                !qubit_args.is_empty() && qubit_args.len().is_multiple_of(arity)
+            };
+            if !valid_qubits || angle_args.len() != angles {
+                let qubits = if single {
+                    format!("exactly {arity}")
+                } else {
+                    format!("a nonzero multiple of {arity}")
+                };
+                return Err(PecosError::ValidationInvalidGateParameters(format!(
+                    "gate '{gate_type}' expected {qubits} qubits and {angles} angles, got {} qubits and {} angles; supply the expected counts",
+                    qubit_args.len(),
+                    angle_args.len()
+                )));
+            }
+        }
         let pairs = || {
             if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
                 return Err(PecosError::ValidationInvalidGateParameters(format!(

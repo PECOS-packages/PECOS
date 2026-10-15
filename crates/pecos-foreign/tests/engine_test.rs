@@ -256,3 +256,16 @@ fn nonfinite_rotation_calls_preserve_circuit_bytes() {
         }
     }
 }
+
+#[test]
+fn rzz_pair_count_overflow_returns_error() {
+    let circuit = pecos_circuit_new();
+    let pair = [0, 1];
+    unsafe {
+        assert_eq!(
+            pecos_circuit_rzz(circuit, 0.0, pair.as_ptr(), usize::MAX),
+            -1
+        );
+        pecos_circuit_free(circuit);
+    }
+}

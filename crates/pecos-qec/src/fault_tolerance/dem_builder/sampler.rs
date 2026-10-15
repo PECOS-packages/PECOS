@@ -1775,6 +1775,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -1797,6 +1798,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -1820,6 +1822,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2325,6 +2328,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2364,6 +2368,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2383,6 +2388,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2411,6 +2417,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 

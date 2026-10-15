@@ -1152,7 +1152,7 @@ impl DemOutputMetadata {
 ///
 /// let map = DagFaultInfluenceMap::with_capacity(0);
 /// for loc in map.gate_fault_locations() {
-///     for event in loc.events() {
+///     for event in loc.events().unwrap() {
 ///         println!("{}: dets={:?}", event.pauli, event.detectors);
 ///     }
 /// }
@@ -1253,14 +1253,14 @@ impl GateFaultLocation<'_> {
     /// map. E.g., a measurement-before location might only yield X
     /// faults since Z before MZ is invisible.
     ///
-    /// # Panics
-    ///
-    /// Panics if the influence map repeats an active qubit at this gate location.
-    #[must_use]
-    pub fn possible_faults(&self) -> Vec<pecos_core::PauliString> {
+    /// # Errors
+    /// Returns an error if the influence map repeats an active qubit at this gate location.
+    pub fn possible_faults(
+        &self,
+    ) -> Result<Vec<pecos_core::PauliString>, pecos_core::ParsePauliStringError> {
         let active = self.active_paulis_per_qubit();
         if active.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let mut combos: Vec<Vec<(usize, pecos_core::Pauli)>> = vec![vec![]];
@@ -1295,16 +1295,15 @@ impl GateFaultLocation<'_> {
     /// All fault events that have non-trivial effects (flip at least one
     /// detector or logical).
     ///
-    /// # Panics
-    ///
-    /// Panics if the influence map repeats an active qubit at this gate location.
-    #[must_use]
-    pub fn events(&self) -> Vec<FaultEffect> {
-        self.possible_faults()
+    /// # Errors
+    /// Returns an error if the influence map repeats an active qubit at this gate location.
+    pub fn events(&self) -> Result<Vec<FaultEffect>, pecos_core::ParsePauliStringError> {
+        Ok(self
+            .possible_faults()?
             .into_iter()
             .map(|ps| self.query(&ps))
             .filter(|e| !e.detectors.is_empty() || !e.dem_outputs.is_empty())
-            .collect()
+            .collect())
     }
 
     /// All physically possible fault events, including those with no effect.
@@ -1313,14 +1312,14 @@ impl GateFaultLocation<'_> {
     /// Events with empty detectors and `dem_outputs` are "trivial" faults that
     /// happen with real probability but don't change any observable.
     ///
-    /// # Panics
-    /// Panics if the public `qubits` field contains repeated qubits.
-    #[must_use]
-    pub fn all_events(&self) -> Vec<FaultEffect> {
-        self.all_physical_paulis()
+    /// # Errors
+    /// Returns an error if the public `qubits` field contains repeated qubits.
+    pub fn all_events(&self) -> Result<Vec<FaultEffect>, pecos_core::ParsePauliStringError> {
+        Ok(self
+            .all_physical_paulis()?
             .into_iter()
             .map(|ps| self.query(&ps))
-            .collect()
+            .collect())
     }
 
     /// All physically meaningful single-qubit Paulis per qubit, regardless
@@ -1328,7 +1327,9 @@ impl GateFaultLocation<'_> {
     ///
     /// Gate-type filtering applies (PZ/MZ only X/Y) but effect filtering
     /// does not. This ensures correct probability accounting.
-    fn all_physical_paulis(&self) -> Vec<pecos_core::PauliString> {
+    fn all_physical_paulis(
+        &self,
+    ) -> Result<Vec<pecos_core::PauliString>, pecos_core::ParsePauliStringError> {
         let physical: &[pecos_core::Pauli] = match self.gate_type {
             // Z-basis prep/measurement: only X (bit-flip) fault.
             GateType::PZ
@@ -1571,7 +1572,7 @@ impl DagFaultInfluenceMap {
     ///
     /// let map = DagFaultInfluenceMap::with_capacity(0);
     /// for loc in map.gate_fault_locations() {
-    ///     for event in loc.events() {
+    ///     for event in loc.events().unwrap() {
     ///         println!("{}: dets={:?} dem_outputs={:?}", event.pauli, event.detectors, event.dem_outputs);
     ///     }
     /// }
@@ -1650,18 +1651,23 @@ impl DagFaultInfluenceMap {
     ///             println!("  {} at loc {}", c.event.pauli, c.location_index);
     ///         }
     ///     }
-    /// });
+    /// }).unwrap();
     /// ```
     ///
-    /// # Panics
-    ///
-    /// Panics if the influence map repeats an active qubit at a gate location.
-    pub fn for_each_fault_combo(&self, weight: usize, mut f: impl FnMut(&FaultCombo)) {
+    /// # Errors
+    /// Returns an error if the influence map repeats an active qubit at a gate location.
+    pub fn for_each_fault_combo(
+        &self,
+        weight: usize,
+        mut f: impl FnMut(&FaultCombo),
+    ) -> Result<(), pecos_core::ParsePauliStringError> {
         let locs = self.gate_fault_locations();
 
         // Pre-compute events for each location
-        let all_events: Vec<Vec<FaultEffect>> =
-            locs.iter().map(GateFaultLocation::events).collect();
+        let all_events: Vec<Vec<FaultEffect>> = locs
+            .iter()
+            .map(GateFaultLocation::events)
+            .collect::<Result<_, _>>()?;
 
         let empty_effect = FaultEffect {
             pauli: pecos_core::PauliString::identity(),
@@ -1681,6 +1687,7 @@ impl DagFaultInfluenceMap {
             &mut effects_stack,
             &mut f,
         );
+        Ok(())
     }
 }
 
@@ -3375,6 +3382,7 @@ mod tests {
         let map = crate::fault_tolerance::InfluenceBuilder::new(&dag)
             .unwrap()
             .with_z(&[0])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 

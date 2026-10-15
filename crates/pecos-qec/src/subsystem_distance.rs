@@ -151,7 +151,11 @@ pub fn subsystem_dressed_distance(
     // relation below is the subsystem-correct form.
     spec.verify()?;
 
-    let stabilizer_sequence = PauliSequence::new(spec.stabilizers().to_vec());
+    let stabilizer_sequence = PauliSequence::new(spec.stabilizers().to_vec()).map_err(|error| {
+        SubsystemCodeError::InvalidSymplecticRepresentation {
+            details: error.to_string(),
+        }
+    })?;
     let stabilizer_matrix =
         SymplecticMatrix::from_pauli_sequence_ignoring_phase(&stabilizer_sequence, num_qubits)
             .map_err(
@@ -167,7 +171,12 @@ pub fn subsystem_dressed_distance(
             .chain(gauge_generators)
             .cloned()
             .collect(),
-    );
+    )
+    .map_err(
+        |error| SubsystemCodeError::InvalidSymplecticRepresentation {
+            details: error.to_string(),
+        },
+    )?;
     let full_gauge_matrix =
         SymplecticMatrix::from_pauli_sequence_ignoring_phase(&full_gauge_sequence, num_qubits)
             .map_err(
@@ -231,6 +240,7 @@ mod tests {
             QuarterPhase::PlusOne,
             terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+        .unwrap()
     }
 
     /// Bacon-Shor on an `m x n` grid: qubit (r, c) at index `r * n + c`.

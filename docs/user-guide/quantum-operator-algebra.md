@@ -125,7 +125,7 @@ assert_eq!(sparse, dense);
 assert_eq!(sparse, explicit_sparse);
 assert_eq!(dense, explicit_dense);
 assert_eq!(sparse.to_sparse_str(), "+X0 Z3");
-assert_eq!(sparse.to_dense_str(None), "+XIIZ");
+assert_eq!(sparse.to_dense_str(), "+XIIZ");
 ```
 
 ---
@@ -335,7 +335,7 @@ let seq = PauliSequence::new(vec![
     Zs([0, 1]),
     Zs([1, 2]),
     Zs([0, 2]),  // linearly dependent on the first two
-]);
+]).unwrap();
 
 // GF(2) rank: number of linearly independent Paulis
 assert_eq!(seq.rank(), 2);
@@ -423,7 +423,7 @@ assert!(!stab.contains_with_phase(&(-Zs([0, 2])))); // -ZIZ is not
 // Clifford transformation: conjugate all generators
 use pecos_core::clifford_rep::CliffordRep;
 let h = CliffordRep::h(0);
-let transformed = stab.apply_clifford(&h);
+let transformed = stab.apply_clifford(&h).unwrap();
 // Z(0)Z(1) becomes X(0)Z(1) under H on qubit 0
 ```
 
@@ -440,7 +440,7 @@ let seq: PauliSequence = group.into();               // drop commutativity const
 let set: PauliSet = PauliSet::from_iter(vec![Zs([0, 1])]);
 
 // Downward (narrowing) -- validates constraints
-let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
+let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
 let group: PauliGroup = seq.try_into().unwrap();     // checks commutativity
 let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases and absence of -I
 

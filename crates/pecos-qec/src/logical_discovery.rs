@@ -77,7 +77,7 @@ pub enum LogicalDiscoveryError {
     /// The code specification is invalid.
     InvalidCodeSpec(crate::StabilizerCodeSpecError),
     /// The stabilizers are not independent (linearly dependent).
-    StabilizersNotIndependent,
+    StabilizersNotIndependent { rank: usize, count: usize },
     /// The stabilizers do not all commute.
     StabilizersDoNotCommute,
     /// Failed to refactor a stabilizer into the tableau.
@@ -94,12 +94,15 @@ impl std::fmt::Display for LogicalDiscoveryError {
             } => {
                 write!(
                     f,
-                    "stabilizer operator {index}: qubit {qubit} is outside num_qubits {num_qubits}"
+                    "stabilizer operator {index}: qubit {qubit} is outside num_qubits {num_qubits}; pass a width greater than qubit {qubit}"
                 )
             }
             Self::InvalidCodeSpec(error) => write!(f, "{error}"),
-            Self::StabilizersNotIndependent => {
-                write!(f, "Stabilizers are not independent (linearly dependent)")
+            Self::StabilizersNotIndependent { rank, count } => {
+                write!(
+                    f,
+                    "Stabilizers are not independent: rank {rank}, count {count}; remove redundant generators"
+                )
             }
             Self::StabilizersDoNotCommute => {
                 write!(f, "Stabilizers do not all commute with each other")
@@ -116,8 +119,8 @@ impl std::error::Error for LogicalDiscoveryError {}
 impl From<crate::StabilizerCodeSpecError> for LogicalDiscoveryError {
     fn from(error: crate::StabilizerCodeSpecError) -> Self {
         match error {
-            crate::StabilizerCodeSpecError::DependentStabilizers { .. } => {
-                Self::StabilizersNotIndependent
+            crate::StabilizerCodeSpecError::DependentStabilizers { rank, count } => {
+                Self::StabilizersNotIndependent { rank, count }
             }
             error => Self::InvalidCodeSpec(error),
         }
@@ -275,7 +278,10 @@ pub fn discover_logical_operators(
             let classification = state.stabs().classify_pauli_string(state.destabs(), stab);
             match classification {
                 pecos_simulators::PauliClassification::Stabilizer => {
-                    return Err(LogicalDiscoveryError::StabilizersNotIndependent);
+                    return Err(LogicalDiscoveryError::StabilizersNotIndependent {
+                        rank: check_idx,
+                        count: check_idx + 1,
+                    });
                 }
                 _ => {
                     return Err(LogicalDiscoveryError::RefactorFailed(check_idx));
@@ -359,6 +365,7 @@ pub fn discover_logical_operators(
 fn restrict_to_data_qubits(ps: &PauliString, n: usize) -> PauliString {
     let paulis: Vec<(Pauli, QubitId)> = ps.iter_pairs().filter(|(_, q)| q.0 < n).collect();
     PauliString::with_phase_and_paulis(ps.phase(), paulis)
+        .expect("filtering canonical PauliString entries preserves distinct qubits")
 }
 
 #[cfg(test)]
@@ -371,6 +378,7 @@ mod tests {
             QuarterPhase::PlusOne,
             paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+        .unwrap()
     }
 
     #[test]
@@ -387,7 +395,7 @@ mod tests {
         ));
         assert_eq!(
             error.to_string(),
-            "stabilizer operator 1: qubit 5 is outside num_qubits 3"
+            "stabilizer operator 1: qubit 5 is outside num_qubits 3; pass a width greater than qubit 5"
         );
     }
 
@@ -519,7 +527,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(LogicalDiscoveryError::StabilizersNotIndependent)
+            Err(LogicalDiscoveryError::StabilizersNotIndependent { .. })
         ));
     }
 

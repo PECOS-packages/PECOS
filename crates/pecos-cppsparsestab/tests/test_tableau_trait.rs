@@ -42,7 +42,7 @@ fn test_tableau_trait_generic_function() {
         sim.x(&qid(0));
         let stab = sim.stab_tableau();
         assert!(stab.contains('Z')); // X gate changes Z stabilizer
-        assert_eq!(sim.num_qubits(), 1);
+        assert_eq!(sim.num_qubits().unwrap(), 1);
     }
 
     let sim = CppSparseStab::new(1);

@@ -32,18 +32,20 @@ pub(crate) fn extract_unsigned_index(
     label: impl std::fmt::Display,
 ) -> PyResult<u64> {
     use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
+    let supplied = value.repr()?.to_string();
+    let type_name = value.get_type().name()?.to_string();
     if value.is_instance_of::<pyo3::types::PyBool>() {
         return Err(PyTypeError::new_err(format!(
-            "{label} must be an integer, not bool"
+            "{label} must be an integer, got bool {supplied}; supply an integer instead"
         )));
     }
     value.extract::<u64>().map_err(|err| {
         if err.is_instance_of::<PyOverflowError>(value.py()) {
             PyValueError::new_err(format!(
-                "{label} must be a nonnegative unsigned 64-bit integer"
+                "{label} must be a nonnegative unsigned 64-bit integer, got {supplied}; use a value from 0 through 18446744073709551615"
             ))
         } else if err.is_instance_of::<PyTypeError>(value.py()) {
-            PyTypeError::new_err(format!("{label} must be an integer"))
+            PyTypeError::new_err(format!("{label} must be an integer, got {type_name} {supplied}; supply an integer"))
         } else {
             err
         }
@@ -51,8 +53,12 @@ pub(crate) fn extract_unsigned_index(
 }
 
 fn extract_qubit(value: &Bound<'_, PyAny>, label: impl std::fmt::Display) -> PyResult<usize> {
-    usize::try_from(extract_unsigned_index(value, &label)?).map_err(|_| {
-        pyo3::exceptions::PyValueError::new_err(format!("{label} exceeds the qubit index range"))
+    let index = extract_unsigned_index(value, &label)?;
+    usize::try_from(index).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{label} {index} exceeds the qubit index range; use an index at most {}",
+            usize::MAX
+        ))
     })
 }
 
@@ -66,7 +72,7 @@ fn extract_qubits(qubits: &[Bound<'_, PyAny>]) -> PyResult<Vec<usize>> {
 
 /// Build `pauli` on each qubit, rejecting invalid indices and repeated qubits.
 fn uniform_pauli_string(pauli: RustPauli, qubits: &[Bound<'_, PyAny>]) -> PyResult<PauliString> {
-    RustPauliString::try_with_phase_and_paulis(
+    RustPauliString::with_phase_and_paulis(
         QuarterPhase::PlusOne,
         extract_qubits(qubits)?
             .into_iter()
@@ -308,7 +314,7 @@ impl PauliString {
             Vec::new()
         };
 
-        let inner = RustPauliString::try_with_phase_and_paulis(rust_phase, rust_paulis)
+        let inner = RustPauliString::with_phase_and_paulis(rust_phase, rust_paulis)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         Ok(PauliString { inner })
@@ -394,8 +400,11 @@ impl PauliString {
     /// Raises `ValueError` if a non-identity qubit index is >= `num_qubits`.
     #[pyo3(signature = (num_qubits=None))]
     fn to_dense_str(&self, num_qubits: Option<usize>) -> PyResult<String> {
-        self.inner
-            .try_to_dense_str(num_qubits)
+        num_qubits
+            .map_or_else(
+                || Ok(self.inner.to_dense_str()),
+                |n| self.inner.to_dense_str_width(n),
+            )
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 

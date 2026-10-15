@@ -260,10 +260,7 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
         let pauli = if let Some(pauli) = pauli {
             pauli
         } else if replacement {
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                Vec::new(),
-            )
+            pecos_core::PauliString::identity()
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "plain p2_weights cannot contain identity pair 'II'; use '~II' (or ':replace:II') for a replacement branch that only omits the gate",
@@ -1200,7 +1197,7 @@ impl PyInfluenceBuilder {
             })
             .collect::<PyResult<_>>()?;
         slf.tracked_paulis.push(
-            pecos_core::PauliString::try_with_phase_and_paulis(
+            pecos_core::PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::PlusOne,
                 paulis,
             )
@@ -1242,10 +1239,14 @@ impl PyInfluenceBuilder {
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         if !self.tracked_x_qubits.is_empty() {
-            builder = builder.with_x(&self.tracked_x_qubits);
+            builder = builder
+                .with_x(&self.tracked_x_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
         if !self.tracked_z_qubits.is_empty() {
-            builder = builder.with_z(&self.tracked_z_qubits);
+            builder = builder
+                .with_z(&self.tracked_z_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
 
         if self.use_circuit_tracked_paulis {

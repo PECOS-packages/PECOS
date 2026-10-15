@@ -377,11 +377,7 @@ pub unsafe extern "C" fn pecos_circuit_rz(
 /// Add RZZ rotation gate(s) to the circuit.
 ///
 /// # Returns
-/// 0 on success, -1 if the angle is not finite. On error the circuit is unchanged.
-///
-/// # Panics
-///
-/// Panics if `num_pairs * 2` overflows `usize`.
+/// 0 on success, -1 if the angle is not finite or the pair count exceeds the slice size limit. On error the circuit is unchanged.
 ///
 /// # Safety
 /// `circuit` must be valid. `pairs` must point to `2 * num_pairs` valid `usize` values.
@@ -395,8 +391,13 @@ pub unsafe extern "C" fn pecos_circuit_rzz(
     let Ok(angle) = Angle64::try_from_radians(theta_radians) else {
         return -1;
     };
+    let Some(flat_len) = num_pairs
+        .checked_mul(2)
+        .filter(|&len| len <= isize::MAX as usize / size_of::<usize>())
+    else {
+        return -1;
+    };
     let c = unsafe { &mut *circuit };
-    let flat_len = num_pairs.checked_mul(2).expect("num_pairs overflow");
     let flat = unsafe { std::slice::from_raw_parts(pairs, flat_len) };
     let pair_vec: Vec<(usize, usize)> = flat
         .as_chunks::<2>()

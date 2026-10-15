@@ -2470,10 +2470,12 @@ impl PyTickCircuit {
         mode: &str,
         gate_indices: Vec<usize>,
     ) -> PyResult<()> {
-        let source = request
-            .inner
-            .get_tick(0)
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("request has no tick"))?;
+        let tick_count = self.inner.num_ticks();
+        let source = request.inner.get_tick(0).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "request has 0 ticks; supply a request containing one tick",
+            )
+        })?;
         for (name, signature) in request.inner.gate_signatures() {
             self.inner
                 .validate_gate_signature(name, signature.quantum_arity, signature.angle_arity)
@@ -2488,9 +2490,9 @@ impl PyTickCircuit {
             }
             "insert" => {
                 if index > self.inner.num_ticks() {
-                    return Err(pyo3::exceptions::PyIndexError::new_err(
-                        "tick index out of bounds",
-                    ));
+                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                        "tick index {index} is out of bounds for {tick_count} ticks; use index < {tick_count}, or index <= {tick_count} for insert"
+                    )));
                 }
                 let _ = self.inner.insert_tick(index);
                 *self.inner.get_tick_mut(index).ok_or_else(|| {
@@ -2499,7 +2501,7 @@ impl PyTickCircuit {
             }
             "replace" => {
                 let tick = self.inner.get_tick_mut(index).ok_or_else(|| {
-                    pyo3::exceptions::PyIndexError::new_err("tick index out of bounds")
+                    pyo3::exceptions::PyIndexError::new_err(format!("tick index {index} is out of bounds for {tick_count} ticks; use index < {tick_count}, or index <= {tick_count} for insert"))
                 })?;
                 let mut replacement = source.clone();
                 for (key, value) in tick.tick_attrs() {
@@ -2514,12 +2516,12 @@ impl PyTickCircuit {
                     .iter()
                     .map(|&idx| {
                         source.gate_batches().get(idx).cloned().ok_or_else(|| {
-                            pyo3::exceptions::PyIndexError::new_err("gate index out of bounds")
+                            pyo3::exceptions::PyIndexError::new_err(format!("gate index {idx} is out of bounds for {} gates; use a smaller index", source.gate_batches().len()))
                         })
                     })
                     .collect::<PyResult<Vec<_>>>()?;
                 let tick = self.inner.get_tick_mut(index).ok_or_else(|| {
-                    pyo3::exceptions::PyIndexError::new_err("tick index out of bounds")
+                    pyo3::exceptions::PyIndexError::new_err(format!("tick index {index} is out of bounds for {tick_count} ticks; use index < {tick_count}, or index <= {tick_count} for insert"))
                 })?;
                 let inserted = tick
                     .try_add_gates(gates)
@@ -2542,9 +2544,9 @@ impl PyTickCircuit {
                 }
             }
             _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "unknown tick commit mode",
-                ));
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown tick commit mode {mode:?}; use append, insert, replace, or update"
+                )));
             }
         }
         self.inner

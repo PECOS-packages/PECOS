@@ -118,6 +118,7 @@ pub fn z_distance(
 
 fn single_qubit_pauli(pauli: Pauli, qubit: usize) -> PauliString {
     PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, vec![(pauli, QubitId::new(qubit))])
+        .expect("witness conversion emits at most one Pauli per enumerated qubit")
 }
 
 pub(crate) fn mechanisms_from_stabilizer_code(
@@ -180,6 +181,7 @@ fn mechanism_witness_to_pauli(num_qubits: usize, mechanism_indices: &[usize]) ->
             .map(|(qubit, pauli)| (pauli, QubitId::new(qubit)))
             .collect(),
     )
+    .expect("witness conversion emits at most one Pauli per enumerated qubit")
 }
 
 /// Computes connected-cluster distance for any stabilizer code specification.

@@ -436,7 +436,7 @@ fn check_operand_relative_weights(check_decoder: bool) {
                 assert_eq!(reference[0].1, expected, "{operands:?} {label}");
                 assert!((reference[0].0 - 0.1).abs() < 1e-12);
                 if check_decoder {
-                    let decoder = LookupDecoder::build(&influence, &noise, 1);
+                    let decoder = LookupDecoder::build(&influence, &noise, 1).unwrap();
                     for mask in 1..16 {
                         let syndrome: Vec<u32> = (0..4).filter(|i| mask & (1 << i) != 0).collect();
                         let corrections: Vec<_> = (0..4)

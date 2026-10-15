@@ -17,7 +17,11 @@ where
     sim.h(&[QubitId(0)]);
     sim.cx(&[(QubitId(0), QubitId(1))]);
 
-    println!("Number of qubits: {}", sim.num_qubits());
+    println!(
+        "Number of qubits: {}",
+        sim.num_qubits()
+            .expect("example tableau has a representable qubit count")
+    );
     println!("\nStabilizers:");
     println!("{}", sim.stab_tableau());
     println!("Destabilizers:");

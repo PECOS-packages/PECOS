@@ -226,7 +226,7 @@ impl IdleChannel {
         if t2 > 2.0 * t1 {
             return Err(ValidationError::new(
                 "t2",
-                "total transverse coherence time must satisfy t2 <= 2 * t1",
+                format!("total transverse coherence time must satisfy t2 <= 2 * t1; t1 is {t1}, so use t2 <= {}", 2.0 * t1),
             )
             .with_value(&t2));
         }

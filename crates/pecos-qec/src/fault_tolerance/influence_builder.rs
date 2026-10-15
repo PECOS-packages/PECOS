@@ -221,32 +221,50 @@ impl<'a> InfluenceBuilder<'a> {
 
     /// Add a tracked X Pauli (X on all specified qubits).
     ///
-    /// # Panics
-    /// Panics if `qubits` contains a repeated qubit.
-    #[must_use]
-    pub fn with_x(mut self, qubits: &[usize]) -> Self {
-        self.push_single_term_output(PauliString::xs(qubits), None);
-        self
+    /// # Errors
+    /// Returns an error if `qubits` contains a repeated qubit.
+    pub fn with_x(mut self, qubits: &[usize]) -> Result<Self, pecos_core::ParsePauliStringError> {
+        let pauli = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            qubits
+                .iter()
+                .map(|&q| (pecos_core::Pauli::X, pecos_core::QubitId(q)))
+                .collect(),
+        )?;
+        self.push_single_term_output(pauli, None);
+        Ok(self)
     }
 
     /// Add a tracked Z Pauli (Z on all specified qubits).
     ///
-    /// # Panics
-    /// Panics if `qubits` contains a repeated qubit.
-    #[must_use]
-    pub fn with_z(mut self, qubits: &[usize]) -> Self {
-        self.push_single_term_output(PauliString::zs(qubits), None);
-        self
+    /// # Errors
+    /// Returns an error if `qubits` contains a repeated qubit.
+    pub fn with_z(mut self, qubits: &[usize]) -> Result<Self, pecos_core::ParsePauliStringError> {
+        let pauli = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            qubits
+                .iter()
+                .map(|&q| (pecos_core::Pauli::Z, pecos_core::QubitId(q)))
+                .collect(),
+        )?;
+        self.push_single_term_output(pauli, None);
+        Ok(self)
     }
 
     /// Add a tracked Y Pauli (Y on all specified qubits).
     ///
-    /// # Panics
-    /// Panics if `qubits` contains a repeated qubit.
-    #[must_use]
-    pub fn with_y(mut self, qubits: &[usize]) -> Self {
-        self.push_single_term_output(PauliString::ys(qubits), None);
-        self
+    /// # Errors
+    /// Returns an error if `qubits` contains a repeated qubit.
+    pub fn with_y(mut self, qubits: &[usize]) -> Result<Self, pecos_core::ParsePauliStringError> {
+        let pauli = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            qubits
+                .iter()
+                .map(|&q| (pecos_core::Pauli::Y, pecos_core::QubitId(q)))
+                .collect(),
+        )?;
+        self.push_single_term_output(pauli, None);
+        Ok(self)
     }
 
     /// Add a Pauli check: track whether this Pauli string flips due to faults.
@@ -308,6 +326,9 @@ impl<'a> InfluenceBuilder<'a> {
     /// non-measurement gate, or a tracked Pauli with no meta gate. Dropping
     /// such references silently produced outputs with missing propagation
     /// terms.
+    ///
+    /// # Panics
+    /// Panics if an internally constructed single-qubit Pauli contains duplicate entries.
     pub fn with_circuit_annotations(mut self) -> Result<Self, AnnotationIngestError> {
         let circuit = self.dag;
         // Meta gates are inserted when their annotations are added, so on an
@@ -339,7 +360,8 @@ impl<'a> InfluenceBuilder<'a> {
                         let pauli = PauliString::with_phase_and_paulis(
                             pecos_core::QuarterPhase::PlusOne,
                             vec![(basis, qubit)],
-                        );
+                        )
+                        .expect("a single measured Pauli has exactly one qubit");
                         terms.push(PauliPropagationTerm {
                             pauli,
                             start_node: Some(mref.node),
@@ -1381,7 +1403,7 @@ mod tests {
         dag.cx(&[(0, 2)]);
         dag.mz(&[2]);
 
-        let builder = InfluenceBuilder::new(&dag).unwrap().with_z(&[0]); // Track Z logical on qubit 0
+        let builder = InfluenceBuilder::new(&dag).unwrap().with_z(&[0]).unwrap(); // Track Z logical on qubit 0
 
         let map = builder.build().expect("circuit is replayable");
 

@@ -350,7 +350,7 @@ pub struct ShotResult {
 }
 
 fn logical_paulis(support: &[QubitId]) -> Result<(PauliString, PauliString), ShotError> {
-    let x = PauliString::try_with_phase_and_paulis(
+    let x = PauliString::with_phase_and_paulis(
         QuarterPhase::PlusOne,
         support.iter().map(|&q| (Pauli::X, q)).collect(),
     )
@@ -362,6 +362,7 @@ fn logical_paulis(support: &[QubitId]) -> Result<(PauliString, PauliString), Sho
         QuarterPhase::MinusOne
     };
     let y =
-        PauliString::with_phase_and_paulis(sign, support.iter().map(|&q| (Pauli::Y, q)).collect());
+        PauliString::with_phase_and_paulis(sign, support.iter().map(|&q| (Pauli::Y, q)).collect())
+            .expect("the same support was validated by the preceding X constructor");
     Ok((x, y))
 }

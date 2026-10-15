@@ -617,7 +617,7 @@ impl GeneralNoiseModelBuilder {
                 "L" => {
                     return Err(ValidationError::new(
                         "p_idle_linear",
-                        "use neo's LeakageChannel for linear leakage",
+                        "axis L is unsupported for p_idle_linear; use neo's LeakageChannel for linear leakage",
                     ));
                 }
                 _ => {

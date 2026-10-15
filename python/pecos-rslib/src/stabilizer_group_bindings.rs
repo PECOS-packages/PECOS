@@ -122,12 +122,12 @@ impl PyPauliStabilizerGroup {
     ///
     /// Raises `ValueError` if the rank exceeds 30.
     fn elements(&self) -> PyResult<Vec<PauliString>> {
-        if self.inner.rank() > 30 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "elements() supports rank at most 30",
-            ));
-        }
-        Ok(self.inner.elements().map(PauliString::from_rust).collect())
+        Ok(self
+            .inner
+            .elements()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+            .map(PauliString::from_rust)
+            .collect())
     }
 
     /// Multiply generators selected by the bits of an unsigned 64-bit mask.
@@ -138,13 +138,10 @@ impl PyPauliStabilizerGroup {
     /// Raises `ValueError` for masks outside the generator range or unsigned 64-bit range.
     fn element(&self, mask: &Bound<'_, PyAny>) -> PyResult<PauliString> {
         let mask = extract_unsigned_index(mask, "mask")?;
-        let n = self.inner.num_generators();
-        if n < 64 && mask >= (1u64 << n) {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "mask {mask} exceeds number of generators ({n})",
-            )));
-        }
-        Ok(PauliString::from_rust(self.inner.element(mask)))
+        self.inner
+            .element(mask)
+            .map(PauliString::from_rust)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Get the list of stabilizer generators.
@@ -186,8 +183,12 @@ impl PyPauliStabilizerGroup {
     ///     ValueError: If index is negative or exceeds the platform index range
     ///     IndexError: If index is out of range
     fn remove_generator(&mut self, index: &Bound<'_, PyAny>) -> PyResult<PauliString> {
-        let index = usize::try_from(extract_unsigned_index(index, "index")?).map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err("index exceeds the platform index range")
+        let index = extract_unsigned_index(index, "index")?;
+        let index = usize::try_from(index).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "index {index} exceeds the platform index range; use at most {}",
+                usize::MAX
+            ))
         })?;
         if index >= self.inner.num_generators() {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(

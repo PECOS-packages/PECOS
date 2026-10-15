@@ -501,7 +501,7 @@ impl SamplingEngine {
                 pecos_core::duplicate_qubits(loc.qubits.iter().map(pecos_core::QubitId::index));
             if !duplicates.is_empty() {
                 return Err(super::DemBuilderError::ConfigurationError(format!(
-                    "gate location node {} qubits {:?} contains duplicate qubits {duplicates:?}",
+                    "gate location node {} qubits {:?} contains duplicate qubits {duplicates:?}; use distinct qubits within each gate",
                     loc.node, loc.qubits
                 )));
             }
@@ -514,7 +514,9 @@ impl SamplingEngine {
                 continue;
             }
 
-            let events = loc.all_events();
+            let events = loc
+                .all_events()
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             if events.is_empty() {
                 continue;
             }
@@ -2994,6 +2996,7 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
         paulis.push((pa2, pecos_core::QubitId::from(1usize)));
     }
     pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+        .expect("pair weights use distinct fixed qubits 0 and 1")
 }
 
 /// XORs two [`DemMechanism`]s (symmetric difference of detectors and standard observables).

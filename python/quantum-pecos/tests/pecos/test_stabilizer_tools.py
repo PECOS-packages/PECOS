@@ -157,7 +157,7 @@ def test_invalid_edge_inputs() -> None:
         to_pauli_string({"H": {0}})
     with pytest.raises(ValueError, match="symbol"):
         to_pauli_string(QuantumCircuit([{"H": {0}}]))
-    with pytest.raises(TypeError, match="Expected"):
+    with pytest.raises(TypeError, match="value has type int and value 123"):
         to_pauli_string(123)
     for circuit in [QuantumCircuit(), QuantumCircuit([{"X": {0}}, {"Z": {0}}])]:
         with pytest.raises(ValueError, match="one tick"):

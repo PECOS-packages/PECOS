@@ -271,7 +271,7 @@ fn example_idle_noise() {
     let noise = GeneralNoiseModelBuilder::new()
         .with_time_scale(TimeScale::NANOSECONDS)
         .with_idle_t1_t2(10e-6, 5e-6)
-        .unwrap() // T1=10us, T2=5us
+        .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds") // T1=10us, T2=5us
         .build();
 
     let mut state = SparseStab::new(1);

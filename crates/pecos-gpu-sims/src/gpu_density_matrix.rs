@@ -549,8 +549,8 @@ impl<SV: GpuStateVecBackend> QuantumSimulator for GpuDensityMatrix<SV> {
         self
     }
 
-    fn num_qubits(&self) -> usize {
-        self.num_physical_qubits
+    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+        Ok(self.num_physical_qubits)
     }
 }
 
@@ -1066,8 +1066,8 @@ mod tests {
             self
         }
 
-        fn num_qubits(&self) -> usize {
-            self.0.num_qubits()
+        fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
+            Ok(self.0.num_qubits())
         }
     }
 

@@ -1,16 +1,4 @@
-use pecos_simulators::{PauliProp, QuantumSimulator, StateVec, StateVecAoS, StateVecSoA};
-
-#[test]
-fn tracked_extent_overflow_returns_error() {
-    let mut prop = PauliProp::new();
-    prop.track_x(&[usize::MAX]);
-    assert!(
-        prop.num_qubits()
-            .unwrap_err()
-            .to_string()
-            .contains(&usize::MAX.to_string())
-    );
-}
+use pecos_simulators::{PauliProp, StateVec, StateVecAoS, StateVecSoA};
 
 #[test]
 fn tracker_dense_string_width_returns_error() {

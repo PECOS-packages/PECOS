@@ -35,7 +35,7 @@
 //! let paulis = PauliSequence::new(vec![
 //!     Zs(&[0, 1]),
 //!     Zs(&[1, 2]),
-//! ]).unwrap();
+//! ]);
 //!
 //! assert_eq!(paulis.rank(), 2);
 //! assert!(paulis.is_abelian());
@@ -531,9 +531,9 @@ impl ScalarSubgroup {
 
 /// An ordered sequence of [`PauliString`]s with symplectic analysis tools.
 ///
-/// Each entry carries a [`QuarterPhase`] (`{+1, -1, +i, -i}`). The Pauli strings
-/// can anticommute, have any phase, or be linearly dependent. Construction
-/// validates that the support and tracking columns have representable dimensions. Analysis operations use the binary symplectic
+/// Each entry carries a [`QuarterPhase`] (`{+1, -1, +i, -i}`). No constraints
+/// are enforced -- the Pauli strings can anticommute, have any phase, or be
+/// linearly dependent. Analysis operations use the binary symplectic
 /// representation over GF(2).
 ///
 /// For a constrained version that enforces commutativity and restricts phases
@@ -554,7 +554,7 @@ impl ScalarSubgroup {
 /// let gens = PauliSequence::new(vec![
 ///     Zs(&[0, 1]),
 ///     Zs(&[1, 2]),
-/// ]).unwrap();
+/// ]);
 ///
 /// assert_eq!(gens.len(), 2);
 /// assert_eq!(gens.num_qubits(), 3);
@@ -568,31 +568,9 @@ pub struct PauliSequence {
 
 impl PauliSequence {
     /// Creates a new `PauliSequence` from a sequence of Pauli strings.
-    ///
-    /// # Errors
-    /// Returns an error if the support cannot fit a symplectic matrix with tracking columns.
-    pub fn new(paulis: Vec<PauliString>) -> Result<Self, ParsePauliStringError> {
-        Self::validate_dimensions(&paulis)?;
-        Ok(Self { paulis })
-    }
-
-    fn validate_dimensions(paulis: &[PauliString]) -> Result<(), ParsePauliStringError> {
-        if let Some(qubit) = paulis.iter().flat_map(PauliString::qubits).max() {
-            let columns = qubit
-                .checked_add(1)
-                .and_then(|n| n.checked_mul(2))
-                .and_then(|n| n.checked_add(paulis.len()));
-            if columns.is_none_or(|columns| columns > isize::MAX as usize) {
-                return Err(ParsePauliStringError::InvalidSyntax {
-                    message: format!(
-                        "qubit {qubit} with {} operators exceeds the symplectic column capacity {}; use smaller qubit indices or fewer operators",
-                        paulis.len(),
-                        isize::MAX
-                    ),
-                });
-            }
-        }
-        Ok(())
+    #[must_use]
+    pub fn new(paulis: Vec<PauliString>) -> Self {
+        Self { paulis }
     }
 
     /// Creates a `PauliSequence` from string representations.
@@ -615,7 +593,7 @@ impl PauliSequence {
             .map(|s| s.parse())
             .collect::<Result<_, _>>()?;
 
-        Self::new(paulis)
+        Ok(Self { paulis })
     }
 
     /// Returns a reference to the Pauli strings.
@@ -637,27 +615,18 @@ impl PauliSequence {
     }
 
     /// Returns the number of qubits (inferred as max qubit index + 1).
-    ///
-    /// # Panics
-    /// Panics if the internal invariant that sequence support fits the validated symplectic width is broken.
     #[must_use]
     pub fn num_qubits(&self) -> usize {
         self.paulis
             .iter()
             .flat_map(PauliString::qubits)
             .max()
-            .map_or(0, |m| {
-                m.checked_add(1)
-                    .expect("sequence support was validated to fit symplectic columns")
-            })
+            .map_or(0, |m| m + 1)
     }
 
     /// Appends a Pauli string to the sequence.
-    ///
-    /// # Errors
-    /// Returns an error if the resulting support exceeds the symplectic column capacity.
-    pub fn push(&mut self, pauli: PauliString) -> Result<(), ParsePauliStringError> {
-        self.extend(std::iter::once(pauli))
+    pub fn push(&mut self, pauli: PauliString) {
+        self.paulis.push(pauli);
     }
 
     /// Removes and returns the Pauli string at the given index.
@@ -670,18 +639,8 @@ impl PauliSequence {
     }
 
     /// Extends the sequence with an iterator of Pauli strings.
-    ///
-    /// # Errors
-    /// Returns an error without changing the sequence if its dimensions are unrepresentable.
-    pub fn extend(
-        &mut self,
-        paulis: impl IntoIterator<Item = PauliString>,
-    ) -> Result<(), ParsePauliStringError> {
-        let mut combined = self.paulis.clone();
-        combined.extend(paulis);
-        Self::validate_dimensions(&combined)?;
-        self.paulis = combined;
-        Ok(())
+    pub fn extend(&mut self, paulis: impl IntoIterator<Item = PauliString>) {
+        self.paulis.extend(paulis);
     }
 
     /// Iterates over the Pauli strings.
@@ -737,11 +696,11 @@ impl PauliSequence {
     /// use pecos_core::pauli::*;
     ///
     /// // Two independent generators
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     /// assert_eq!(gens.rank(), 2);
     ///
     /// // Adding a dependent generator (ZIZ = ZZI * IZZ in GF(2))
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])]).unwrap();
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2]), Zs(&[0, 2])]);
     /// assert_eq!(gens.rank(), 2);
     /// ```
     #[must_use]
@@ -762,7 +721,7 @@ impl PauliSequence {
     /// use pecos_quantum::PauliSequence;
     /// use pecos_core::pauli::*;
     ///
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     ///
     /// // ZIZ = ZZI * IZZ (symplectic addition), so it's in the group
     /// assert!(gens.contains(&Zs(&[0, 2])));
@@ -778,7 +737,8 @@ impl PauliSequence {
         let n = self.num_qubits();
 
         // If the target touches qubits beyond our generators, it can't be in the span
-        if pauli.qubits().into_iter().any(|q| q >= n) {
+        let target_max = pauli.qubits().into_iter().max().map_or(0, |m| m + 1);
+        if target_max > n {
             return false;
         }
 
@@ -825,7 +785,8 @@ impl PauliSequence {
         let k = self.paulis.len();
 
         // If the target touches qubits beyond our generators, it can't be in the span
-        if pauli.qubits().into_iter().any(|q| q >= n) {
+        let target_max = pauli.qubits().into_iter().max().map_or(0, |m| m + 1);
+        if target_max > n {
             return false;
         }
 
@@ -873,11 +834,11 @@ impl PauliSequence {
     /// use pecos_core::pauli::*;
     ///
     /// // Commuting generators
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
     /// assert!(gens.is_abelian());
     ///
     /// // Non-commuting generators
-    /// let gens = PauliSequence::new(vec![X(0), Z(0)]).unwrap();
+    /// let gens = PauliSequence::new(vec![X(0), Z(0)]);
     /// assert!(!gens.is_abelian());
     /// ```
     #[must_use]
@@ -918,9 +879,6 @@ impl PauliSequence {
     /// The returned groups preserve the input order within each group. This is
     /// a graph-coloring heuristic on the anticommutation graph, so it is not
     /// guaranteed to produce the minimum possible number of groups.
-    ///
-    /// # Panics
-    /// Panics if the internal invariant that partitioning a validated sequence cannot increase its dimensions is broken.
     #[must_use]
     pub fn group_commuting(&self) -> Vec<PauliSequence> {
         let anticommutation = self.commutation_matrix();
@@ -948,7 +906,6 @@ impl PauliSequence {
                         .map(|idx| self.paulis[idx].clone())
                         .collect(),
                 )
-                .expect("partitioning a validated sequence cannot increase its dimensions")
             })
             .collect()
     }
@@ -970,11 +927,7 @@ impl PauliSequence {
 
     /// Reduces [symplectic | identity], retaining a decomposition for every row.
     fn row_reduce_with_tracking(&self, n: usize) -> (F2Matrix, Vec<usize>) {
-        let columns = n
-            .checked_mul(2)
-            .and_then(|width| width.checked_add(self.len()))
-            .expect("sequence construction validates symplectic and tracking column dimensions");
-        let mut mat = F2Matrix::zeros(self.len(), columns);
+        let mut mat = F2Matrix::zeros(self.len(), 2 * n + self.len());
         for (row, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
                 mat.set(row, q, 1);
@@ -1103,15 +1056,13 @@ impl PauliSequence {
     ///
     /// // Repetition code: ZZI, IZZ on 3 qubits
     /// // Centralizer dimension = 2n - rank = 6 - 2 = 4
-    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
-    /// let cent = gens.centralizer().unwrap();
+    /// let gens = PauliSequence::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]);
+    /// let cent = gens.centralizer();
     /// assert_eq!(cent.len(), 4);
     /// ```
-    ///
-    /// # Errors
-    /// Returns an error if the inferred symplectic width is not representable.
-    pub fn centralizer(&self) -> Result<Vec<Vec<u8>>, crate::SymplecticMatrixError> {
-        self.centralizer_in(self.num_qubits())
+    #[must_use]
+    pub fn centralizer(&self) -> Vec<Vec<u8>> {
+        Self::centralizer_from_matrix(&self.to_symplectic_matrix(), self.num_qubits())
     }
 
     /// Computes the centralizer with an explicit qubit count.
@@ -1125,10 +1076,11 @@ impl PauliSequence {
         &self,
         num_qubits: usize,
     ) -> Result<Vec<Vec<u8>>, crate::SymplecticMatrixError> {
-        let n = num_qubits;
-        let mat = crate::SymplecticMatrix::from_pauli_sequence_ignoring_phase(self, n)?
-            .matrix()
-            .clone();
+        let mat = crate::SymplecticMatrix::from_pauli_sequence_ignoring_phase(self, num_qubits)?;
+        Ok(Self::centralizer_from_matrix(mat.matrix(), num_qubits))
+    }
+
+    fn centralizer_from_matrix(mat: &F2Matrix, n: usize) -> Vec<Vec<u8>> {
         // Build S * Omega where Omega swaps X and Z blocks
         let mut s_omega = F2Matrix::zeros(mat.num_rows(), 2 * n);
         for i in 0..mat.num_rows() {
@@ -1138,7 +1090,7 @@ impl PauliSequence {
             }
         }
 
-        Ok(s_omega.kernel())
+        s_omega.kernel()
     }
 
     fn to_packed_xz_rows(&self, num_qubits: usize) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
@@ -1210,7 +1162,7 @@ impl PauliSequence {
     /// use pecos_quantum::PauliSequence;
     /// use pecos_core::pauli::*;
     ///
-    /// let seq = PauliSequence::new(vec![X(0) & Z(2), Z(1)]).unwrap();
+    /// let seq = PauliSequence::new(vec![X(0) & Z(2), Z(1)]);
     /// assert_eq!(seq.to_sparse_str(), "+X0 Z2\n+Z1");
     /// ```
     #[must_use]
@@ -1225,13 +1177,11 @@ impl PauliSequence {
     /// Transforms all Pauli strings by a Clifford gate: each `P_i` -> `C P_i C†`.
     ///
     /// Returns a new `PauliSequence` with the transformed Pauli strings.
-    ///
-    /// # Errors
-    /// Returns an error if transformed support exceeds the symplectic column capacity.
+    #[must_use]
     pub fn apply_clifford(
         &self,
         clifford: &pecos_core::clifford_rep::CliffordRep,
-    ) -> Result<PauliSequence, ParsePauliStringError> {
+    ) -> PauliSequence {
         let transformed: Vec<PauliString> = self.paulis.iter().map(|p| clifford.apply(p)).collect();
         PauliSequence::new(transformed)
     }
@@ -1268,7 +1218,7 @@ impl FromStr for PauliSequence {
             .map(str::parse)
             .collect::<Result<_, _>>()?;
 
-        Self::new(paulis)
+        Ok(Self { paulis })
     }
 }
 
@@ -1285,12 +1235,7 @@ mod tests {
 
     #[test]
     fn centralizer_rejects_out_of_width_support() {
-        assert!(
-            PauliSequence::new(vec![Z(5)])
-                .unwrap()
-                .centralizer_in(3)
-                .is_err()
-        );
+        assert!(PauliSequence::new(vec![Z(5)]).centralizer_in(3).is_err());
     }
 
     #[test]
@@ -1301,11 +1246,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            PauliSequence::new(vec![p])
-                .unwrap()
-                .centralizer_in(1)
-                .unwrap()
-                .len(),
+            PauliSequence::new(vec![p]).centralizer_in(1).unwrap().len(),
             2
         );
     }
@@ -1336,7 +1277,7 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(gens.len(), 2);
         assert_eq!(gens.num_qubits(), 3);
     }
@@ -1363,79 +1304,79 @@ mod tests {
     #[test]
     fn test_symplectic_matrix_y() {
         // Y has both X and Z bits set
-        let gens = PauliSequence::new(vec![Y(0)]).unwrap();
+        let gens = PauliSequence::new(vec![Y(0)]);
         let mat = gens.to_symplectic_matrix();
         assert_eq!(mat.row(0), &[1, 1]); // x=1, z=1
     }
 
     #[test]
     fn test_rank_independent() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(gens.rank(), 2);
     }
 
     #[test]
     fn test_rank_dependent() {
         // ZIZ = ZZI * IZZ (symplectic: 110 XOR 011 = 101), so rank should still be 2
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]);
         assert_eq!(gens.rank(), 2);
     }
 
     #[test]
     fn test_rank_single() {
-        let gens = PauliSequence::new(vec![X(0)]).unwrap();
+        let gens = PauliSequence::new(vec![X(0)]);
         assert_eq!(gens.rank(), 1);
     }
 
     #[test]
     fn test_rank_empty() {
-        let gens = PauliSequence::new(vec![]).unwrap();
+        let gens = PauliSequence::new(vec![]);
         assert_eq!(gens.rank(), 0);
     }
 
     #[test]
     fn test_contains_generator() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert!(gens.contains(&Zs([0, 1])));
         assert!(gens.contains(&Zs([1, 2])));
     }
 
     #[test]
     fn test_contains_product() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         // ZIZ = ZZI * IZZ (symplectic: 110 XOR 011 = 101)
         assert!(gens.contains(&Zs([0, 2])));
     }
 
     #[test]
     fn test_not_contains() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert!(!gens.contains(&X(0)));
         assert!(!gens.contains(&Z(0)));
     }
 
     #[test]
     fn test_contains_identity() {
-        let gens = PauliSequence::new(vec![Zs([0, 1])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1])]);
         // Identity is always in the group (product of zero generators)
         assert!(gens.contains(&I()));
     }
 
     #[test]
     fn test_is_abelian_commuting() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert!(gens.is_abelian());
     }
 
     #[test]
     fn test_is_abelian_anticommuting() {
-        let gens = PauliSequence::new(vec![X(0), Z(0)]).unwrap();
+        let gens = PauliSequence::new(vec![X(0), Z(0)]);
         assert!(!gens.is_abelian());
     }
 
     #[test]
     fn test_commutation_matrix() {
-        let gens = PauliSequence::new(vec![X(0), Z(0), Y(0)]).unwrap();
+        let gens = PauliSequence::new(vec![X(0), Z(0), Y(0)]);
         let cm = gens.commutation_matrix();
         // X,Z anticommute
         assert_eq!(cm.get(0, 1), 1);
@@ -1459,8 +1400,7 @@ mod tests {
             Z(65),
             Y(130),
             Zs([0, 65, 130]),
-        ])
-        .unwrap();
+        ]);
         let cm = gens.commutation_matrix();
 
         assert_eq!(cm.num_rows(), gens.len());
@@ -1475,7 +1415,7 @@ mod tests {
 
     #[test]
     fn group_commuting_partitions_into_abelian_sequences() {
-        let gens = PauliSequence::new(vec![X(0), Z(0), X(1), Z(1)]).unwrap();
+        let gens = PauliSequence::new(vec![X(0), Z(0), X(1), Z(1)]);
         let groups = gens.group_commuting();
 
         assert_eq!(groups.len(), 2);
@@ -1486,16 +1426,16 @@ mod tests {
 
     #[test]
     fn group_commuting_handles_empty_single_and_all_commuting_inputs() {
-        let empty = PauliSequence::new(Vec::new()).unwrap();
+        let empty = PauliSequence::new(Vec::new());
         assert_eq!(empty.group_commuting(), []);
 
-        let single = PauliSequence::new(vec![X(3)]).unwrap();
+        let single = PauliSequence::new(vec![X(3)]);
         let single_groups = single.group_commuting();
         assert_eq!(single_groups.len(), 1);
         assert_eq!(single_groups[0].paulis(), &[X(3)]);
         assert!(single_groups[0].is_abelian());
 
-        let commuting = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1]), X(2)]).unwrap();
+        let commuting = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1]), X(2)]);
         let commuting_groups = commuting.group_commuting();
         assert_eq!(commuting_groups.len(), 1);
         assert_eq!(commuting_groups[0].paulis(), commuting.paulis());
@@ -1505,7 +1445,7 @@ mod tests {
     #[test]
     fn test_row_reduce() {
         // ZIZ = ZZI * IZZ, so one generator is redundant
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]);
         let reduced = gens.row_reduce();
         assert_eq!(reduced.len(), 2);
         assert_eq!(reduced.rank(), 2);
@@ -1528,8 +1468,7 @@ mod tests {
             Zs([0, 2, 4, 6]),
             Zs([1, 2, 5, 6]),
             Zs([3, 4, 5, 6]),
-        ])
-        .unwrap();
+        ]);
         assert_eq!(gens.rank(), 6);
         assert!(gens.is_abelian());
 
@@ -1540,7 +1479,7 @@ mod tests {
 
     #[test]
     fn test_contains_with_phase() {
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
 
         // +ZZI is in the group with correct phase
         assert!(gens.contains_with_phase(&Zs([0, 1])));
@@ -1595,7 +1534,7 @@ mod tests {
 
     #[test]
     fn test_to_sparse_str() {
-        let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(seq.to_sparse_str(), "+Z0 Z1\n+Z1 Z2");
     }
 
@@ -1611,7 +1550,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_sparse() {
-        let original = PauliSequence::new(vec![X(0) & Z(2), Z(1)]).unwrap();
+        let original = PauliSequence::new(vec![X(0) & Z(2), Z(1)]);
         let s = original.to_sparse_str();
         let roundtripped: PauliSequence = s.parse().unwrap();
         assert_eq!(roundtripped.len(), original.len());
@@ -1623,19 +1562,19 @@ mod tests {
 
     #[test]
     fn test_push() {
-        let mut seq = PauliSequence::new(vec![X(0)]).unwrap();
+        let mut seq = PauliSequence::new(vec![X(0)]);
         assert_eq!(seq.len(), 1);
         assert_eq!(seq.num_qubits(), 1);
 
-        seq.push(Z(2)).unwrap();
+        seq.push(Z(2));
         assert_eq!(seq.len(), 2);
         assert_eq!(seq.num_qubits(), 3);
     }
 
     #[test]
     fn test_extend() {
-        let mut seq = PauliSequence::new(Vec::new()).unwrap();
-        seq.extend(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
+        let mut seq = PauliSequence::new(Vec::new());
+        seq.extend(vec![Zs([0, 1]), Zs([1, 2])]);
         assert_eq!(seq.len(), 2);
         assert_eq!(seq.num_qubits(), 3);
     }
@@ -1643,31 +1582,31 @@ mod tests {
     #[test]
     fn test_centralizer_repetition_code() {
         // ZZI, IZZ on 3 qubits: centralizer dimension = 2*3 - 2 = 4
-        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        let cent = gens.centralizer().unwrap();
+        let gens = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
+        let cent = gens.centralizer();
         assert_eq!(cent.len(), 4);
     }
 
     #[test]
     fn test_centralizer_single_qubit() {
         // Z on 1 qubit: centralizer = {Z, I} = dimension 1
-        let gens = PauliSequence::new(vec![Z(0)]).unwrap();
-        let cent = gens.centralizer().unwrap();
+        let gens = PauliSequence::new(vec![Z(0)]);
+        let cent = gens.centralizer();
         assert_eq!(cent.len(), 1);
     }
 
     #[test]
     fn test_centralizer_empty() {
         // No generators, inferred n=0: centralizer is trivially empty
-        let gens = PauliSequence::new(Vec::new()).unwrap();
-        let cent = gens.centralizer().unwrap();
+        let gens = PauliSequence::new(Vec::new());
+        let cent = gens.centralizer();
         assert_eq!(cent.len(), 0);
     }
 
     #[test]
     fn test_centralizer_in_explicit_qubits() {
         // No generators on 2 qubits: everything commutes, dimension = 2*2 = 4
-        let gens = PauliSequence::new(Vec::new()).unwrap();
+        let gens = PauliSequence::new(Vec::new());
         let cent = gens.centralizer_in(2).unwrap();
         assert_eq!(cent.len(), 4);
     }
@@ -1720,9 +1659,8 @@ mod tests {
             Zs([0, 2, 4, 6]),
             Zs([1, 2, 5, 6]),
             Zs([3, 4, 5, 6]),
-        ])
-        .unwrap();
-        let cent = gens.centralizer().unwrap();
+        ]);
+        let cent = gens.centralizer();
         assert_eq!(cent.len(), 8); // 6 stabilizer directions + 2 logical
     }
 
@@ -1734,32 +1672,31 @@ mod tests {
             X(1) & Z(2) & Z(3) & X(4),
             X(0) & X(2) & Z(3) & Z(4),
             Z(0) & X(1) & X(3) & Z(4),
-        ])
-        .unwrap();
-        let cent = gens.centralizer().unwrap();
+        ]);
+        let cent = gens.centralizer();
         assert_eq!(cent.len(), 6);
     }
 
     #[test]
     fn test_push_identity_doesnt_change_num_qubits() {
-        let mut seq = PauliSequence::new(vec![X(5)]).unwrap();
-        seq.push(PauliString::identity()).unwrap();
+        let mut seq = PauliSequence::new(vec![X(5)]);
+        seq.push(PauliString::identity());
         assert_eq!(seq.num_qubits(), 6);
         assert_eq!(seq.len(), 2);
     }
 
     #[test]
     fn test_push_smaller_qubit() {
-        let mut seq = PauliSequence::new(vec![X(5)]).unwrap();
-        seq.push(Z(0)).unwrap();
+        let mut seq = PauliSequence::new(vec![X(5)]);
+        seq.push(Z(0));
         assert_eq!(seq.num_qubits(), 6);
         assert_eq!(seq.len(), 2);
     }
 
     #[test]
     fn test_push_with_phase() {
-        let mut seq = PauliSequence::new(vec![]).unwrap();
-        seq.push(-X(0)).unwrap();
+        let mut seq = PauliSequence::new(vec![]);
+        seq.push(-X(0));
         assert_eq!(seq.len(), 1);
         let ps = &seq.paulis()[0];
         assert_eq!(ps.phase(), pecos_core::QuarterPhase::MinusOne);
@@ -1767,16 +1704,16 @@ mod tests {
 
     #[test]
     fn test_extend_empty() {
-        let mut seq = PauliSequence::new(vec![X(0)]).unwrap();
+        let mut seq = PauliSequence::new(vec![X(0)]);
         let before = seq.len();
-        seq.extend(Vec::<PauliString>::new()).unwrap();
+        seq.extend(Vec::<PauliString>::new());
         assert_eq!(seq.len(), before, "extend with empty should be a no-op");
     }
 
     #[test]
     fn test_symplectic_matrix_y_operator_both_bits() {
         // Y has both x and z bits set
-        let seq = PauliSequence::new(vec![Y(0)]).unwrap();
+        let seq = PauliSequence::new(vec![Y(0)]);
         let mat = seq.to_symplectic_matrix();
         // For 1 qubit, symplectic vector is [x0, z0]
         assert_eq!(mat.row(0), vec![1, 1], "Y should set both x and z bits");
@@ -1814,8 +1751,8 @@ mod tests {
     fn test_centralizer_with_y_generators() {
         // Single Y generator on 1 qubit: Y commutes with Y and I
         // Centralizer of Y in 1-qubit Paulis should be dimension 1 (just Y itself plus I)
-        let seq = PauliSequence::new(vec![Y(0)]).unwrap();
-        let cent = seq.centralizer().unwrap();
+        let seq = PauliSequence::new(vec![Y(0)]);
+        let cent = seq.centralizer();
         // For 1 qubit, the symplectic space is 2D.
         // Y has vector [1,1]. The centralizer kernel should have dimension 2 - 1 = 1.
         assert_eq!(
@@ -1960,9 +1897,9 @@ mod tests {
     fn test_apply_clifford() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let seq = PauliSequence::new(vec![Z(0), Z(1)]).unwrap();
+        let seq = PauliSequence::new(vec![Z(0), Z(1)]);
         let h_all = CliffordRep::h(0).compose(&CliffordRep::h(1));
-        let transformed = seq.apply_clifford(&h_all).unwrap();
+        let transformed = seq.apply_clifford(&h_all);
 
         // H: Z -> X on both qubits
         assert!(transformed.contains(&X(0)));
@@ -1973,9 +1910,9 @@ mod tests {
     fn test_apply_clifford_identity() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let seq = PauliSequence::new(vec![X(0) & Z(1), Y(0)]).unwrap();
+        let seq = PauliSequence::new(vec![X(0) & Z(1), Y(0)]);
         let id = CliffordRep::identity(2);
-        let transformed = seq.apply_clifford(&id).unwrap();
+        let transformed = seq.apply_clifford(&id);
 
         assert!(transformed.contains(&(X(0) & Z(1))));
         assert!(transformed.contains(&Y(0)));
@@ -1987,9 +1924,9 @@ mod tests {
         use pecos_core::clifford_rep::CliffordRep;
 
         // Z gate: X -> -X
-        let seq = PauliSequence::new(vec![X(0)]).unwrap();
+        let seq = PauliSequence::new(vec![X(0)]);
         let z_gate = CliffordRep::z(0);
-        let transformed = seq.apply_clifford(&z_gate).unwrap();
+        let transformed = seq.apply_clifford(&z_gate);
 
         let p = &transformed.paulis()[0];
         assert_eq!(p.get(0), pecos_core::Pauli::X);
@@ -2001,9 +1938,9 @@ mod tests {
         use pecos_core::clifford_rep::CliffordRep;
 
         // CX on ZZ -> Z_0 * (Z_0 Z_1) = Z_1
-        let seq = PauliSequence::new(vec![Zs([0, 1])]).unwrap();
+        let seq = PauliSequence::new(vec![Zs([0, 1])]);
         let cx = CliffordRep::cx(0, 1);
-        let transformed = seq.apply_clifford(&cx).unwrap();
+        let transformed = seq.apply_clifford(&cx);
 
         assert!(transformed.contains(&Z(1)));
     }
@@ -2012,9 +1949,9 @@ mod tests {
     fn test_apply_clifford_empty_sequence() {
         use pecos_core::clifford_rep::CliffordRep;
 
-        let seq = PauliSequence::new(vec![]).unwrap();
+        let seq = PauliSequence::new(vec![]);
         let h = CliffordRep::h(0).extended_to(2);
-        let transformed = seq.apply_clifford(&h).unwrap();
+        let transformed = seq.apply_clifford(&h);
 
         assert!(transformed.is_empty());
     }

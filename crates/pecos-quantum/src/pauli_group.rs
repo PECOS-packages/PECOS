@@ -62,8 +62,6 @@ use std::str::FromStr;
 /// Errors that can occur when constructing a [`PauliGroup`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PauliGroupError {
-    /// Dimensions or operands cannot be represented.
-    InvalidInput(String),
     /// Requested generator does not exist.
     GeneratorIndex { index: usize, count: usize },
     /// The base-two order exceeds the operation's limit.
@@ -75,7 +73,6 @@ pub enum PauliGroupError {
 impl fmt::Display for PauliGroupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidInput(message) => write!(f, "{message}"),
             Self::GeneratorIndex { index, count } => write!(
                 f,
                 "generator index {index} is outside {count} generators; use an index less than {count}"
@@ -92,12 +89,6 @@ impl fmt::Display for PauliGroupError {
 }
 
 impl std::error::Error for PauliGroupError {}
-
-impl From<pecos_core::ParsePauliStringError> for PauliGroupError {
-    fn from(error: pecos_core::ParsePauliStringError) -> Self {
-        Self::InvalidInput(error.to_string())
-    }
-}
 
 /// Returns a period of the powers of a Pauli with this phase.
 ///
@@ -160,24 +151,20 @@ impl PauliGroup {
             }
         }
 
-        let inner = PauliSequence::new(generators)?;
+        let inner = PauliSequence::new(generators);
         Ok(Self { inner })
     }
 
-    /// Creates a `PauliGroup` without checking commutativity.
+    /// Creates a `PauliGroup` without validation.
     ///
     /// # Safety
     ///
     /// The caller must ensure that the generators mutually commute.
-    ///
-    /// # Errors
-    /// Returns an error if generator support exceeds the symplectic column capacity.
-    pub fn from_generators_unchecked(
-        generators: Vec<PauliString>,
-    ) -> Result<Self, PauliGroupError> {
-        Ok(Self {
-            inner: PauliSequence::new(generators)?,
-        })
+    #[must_use]
+    pub fn from_generators_unchecked(generators: Vec<PauliString>) -> Self {
+        Self {
+            inner: PauliSequence::new(generators),
+        }
     }
 
     /// Creates a `PauliGroup` from a [`PauliSet`], reducing bodies and preserving scalars.
@@ -189,7 +176,7 @@ impl PauliGroup {
     ///
     /// Returns [`PauliGroupError::NonCommuting`] if any pair of elements anticommute.
     pub fn try_from_set(set: &PauliSet) -> Result<Self, PauliGroupError> {
-        Self::try_from(set.to_sequence()?)
+        Self::try_from(set.to_sequence())
     }
 
     /// Creates a `PauliGroup` from string representations.
@@ -475,13 +462,8 @@ impl PauliGroup {
     /// Clifford conjugation preserves commutativity and maps quarter-turn phases
     /// to quarter-turn phases, so the result is always a valid `PauliGroup`.
     /// Unitary conjugation maps `-I` to `-I`, preserving membership in both directions.
-    ///
-    /// # Errors
-    /// Returns an error if transformed generator support exceeds the symplectic column capacity.
-    pub fn apply_clifford(
-        &self,
-        clifford: &pecos_core::clifford_rep::CliffordRep,
-    ) -> Result<PauliGroup, PauliGroupError> {
+    #[must_use]
+    pub fn apply_clifford(&self, clifford: &pecos_core::clifford_rep::CliffordRep) -> PauliGroup {
         let transformed: Vec<PauliString> = self
             .inner
             .paulis()
@@ -489,9 +471,9 @@ impl PauliGroup {
             .map(|g| clifford.apply(g))
             .collect();
 
-        Ok(PauliGroup {
-            inner: PauliSequence::new(transformed)?,
-        })
+        PauliGroup {
+            inner: PauliSequence::new(transformed),
+        }
     }
 
     // --- Mutation methods ---
@@ -510,7 +492,7 @@ impl PauliGroup {
             }
         }
 
-        self.inner.push(generator)?;
+        self.inner.push(generator);
         Ok(())
     }
 
@@ -546,7 +528,7 @@ impl PauliGroup {
             }
         }
 
-        self.inner.extend(other.generators().iter().cloned())?;
+        self.inner.extend(other.generators().iter().cloned());
         Ok(())
     }
 }
@@ -596,7 +578,7 @@ impl TryFrom<PauliSequence> for PauliGroup {
             } else {
                 QuarterPhase::MinusOne
             };
-            reduced.push(PauliString::from_paulis_with_phase(phase, &[]))?;
+            reduced.push(PauliString::from_paulis_with_phase(phase, &[]));
         }
         Ok(Self { inner: reduced })
     }
@@ -644,7 +626,7 @@ impl TryFrom<PauliSequence> for PauliStabilizerGroup {
                     .collect(),
             });
         }
-        Self::from_generators_unchecked(reduced.paulis().to_vec())
+        Ok(Self::from_generators_unchecked(reduced.paulis().to_vec()))
     }
 }
 
@@ -1028,7 +1010,7 @@ mod tests {
 
         // H on qubit 0: X -> Z, Z -> X
         let h0 = CliffordRep::h(0).extended_to(2);
-        let transformed = group.apply_clifford(&h0).unwrap();
+        let transformed = group.apply_clifford(&h0);
 
         assert_eq!(transformed.num_generators(), 2);
         assert!(transformed.contains_minus_identity());
@@ -1224,7 +1206,7 @@ mod tests {
 
     #[test]
     fn try_from_sequence_independent() {
-        let seq = PauliSequence::new(vec![Z(0), Z(1)]).unwrap();
+        let seq = PauliSequence::new(vec![Z(0), Z(1)]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(group.is_independent());
@@ -1233,7 +1215,7 @@ mod tests {
     #[test]
     fn try_from_sequence_reduces_redundant() {
         // Z(0)*Z(1) is a product of Z(0) and Z(1), so it's redundant
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]).unwrap();
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(group.is_independent());
@@ -1241,14 +1223,14 @@ mod tests {
 
     #[test]
     fn try_from_sequence_non_commuting_fails() {
-        let seq = PauliSequence::new(vec![X(0), Z(0)]).unwrap();
+        let seq = PauliSequence::new(vec![X(0), Z(0)]);
         let result = PauliGroup::try_from(seq);
         assert_eq!(result.unwrap_err(), PauliGroupError::NonCommuting(0, 1));
     }
 
     #[test]
     fn try_from_sequence_imaginary_phases() {
-        let seq = PauliSequence::new(vec![i * X(0), Z(1)]).unwrap();
+        let seq = PauliSequence::new(vec![i * X(0), Z(1)]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 2);
         assert!(!group.has_real_phases());
@@ -1256,7 +1238,7 @@ mod tests {
 
     #[test]
     fn try_from_sequence_empty() {
-        let seq = PauliSequence::new(vec![]).unwrap();
+        let seq = PauliSequence::new(vec![]);
         let group = PauliGroup::try_from(seq).unwrap();
         assert_eq!(group.num_generators(), 0);
         assert_eq!(group.num_qubits(), 0);
@@ -1265,7 +1247,7 @@ mod tests {
     #[test]
     fn try_from_sequence_generates_same_group() {
         // Three generators where one is redundant
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]).unwrap();
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]);
         let group = PauliGroup::try_from(seq).unwrap();
 
         // The reduced group should contain all original elements
@@ -1293,21 +1275,21 @@ mod tests {
 
     #[test]
     fn try_from_sequence_to_stabilizer() {
-        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]).unwrap();
+        let seq = PauliSequence::new(vec![Z(0), Z(1), Zs([0, 1])]);
         let stab = PauliStabilizerGroup::try_from(seq).unwrap();
         assert_eq!(stab.rank(), 2);
     }
 
     #[test]
     fn try_from_sequence_to_stabilizer_imaginary_fails() {
-        let seq = PauliSequence::new(vec![i * X(0), Z(1)]).unwrap();
+        let seq = PauliSequence::new(vec![i * X(0), Z(1)]);
         let result = PauliStabilizerGroup::try_from(seq);
         assert!(result.is_err());
     }
 
     #[test]
     fn try_from_sequence_to_stabilizer_non_commuting_fails() {
-        let seq = PauliSequence::new(vec![X(0), Z(0)]).unwrap();
+        let seq = PauliSequence::new(vec![X(0), Z(0)]);
         let result = PauliStabilizerGroup::try_from(seq);
         assert!(matches!(
             result.unwrap_err(),
@@ -1353,7 +1335,7 @@ mod tests {
 
     #[test]
     fn roundtrip_sequence_to_group_to_sequence() {
-        let original = PauliSequence::new(vec![Z(0), Z(1)]).unwrap();
+        let original = PauliSequence::new(vec![Z(0), Z(1)]);
         let group = PauliGroup::try_from(original.clone()).unwrap();
         let recovered = PauliSequence::from(group);
         assert_eq!(recovered.len(), original.len());

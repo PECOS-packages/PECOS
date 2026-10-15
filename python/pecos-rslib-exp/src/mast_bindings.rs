@@ -54,10 +54,7 @@ pub struct PyMast {
 
 impl PyMast {
     fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
-        let num_qubits = self
-            .inner
-            .num_qubits()
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let num_qubits = self.inner.num_qubits();
         let Ok(q) = usize::try_from(q) else {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "{method}: qubit {q} out of bounds (num_qubits={num_qubits}); use an index in 0..{num_qubits}"
@@ -175,10 +172,8 @@ impl PyMast {
     /// Number of addressable data qubits.
     ///
     /// Preallocated injection ancillas are internal and excluded.
-    fn num_qubits(&self) -> PyResult<usize> {
-        self.inner
-            .num_qubits()
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
     }
 
     #[getter]

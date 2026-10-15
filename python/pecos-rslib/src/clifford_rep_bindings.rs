@@ -422,13 +422,10 @@ impl PyCliffordRep {
     /// Apply this Clifford to a `PauliStabilizerGroup`.
     ///
     /// Transforms all generators: `g_i` -> `C g_i C†`.
-    fn apply_to_group(&self, group: &PyPauliStabilizerGroup) -> PyResult<PyPauliStabilizerGroup> {
-        Ok(PyPauliStabilizerGroup {
-            inner: group
-                .inner
-                .apply_clifford(&self.inner)
-                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
-        })
+    fn apply_to_group(&self, group: &PyPauliStabilizerGroup) -> PyPauliStabilizerGroup {
+        PyPauliStabilizerGroup {
+            inner: group.inner.apply_clifford(&self.inner),
+        }
     }
 
     /// Check if this is a valid Clifford (preserves commutation relations).

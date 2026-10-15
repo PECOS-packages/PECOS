@@ -188,22 +188,18 @@ impl PauliStabilizerGroup {
         Ok(Self { inner })
     }
 
-    /// Creates a `PauliStabilizerGroup` without checking the stabilizer conditions.
+    /// Creates a `PauliStabilizerGroup` without validation.
     ///
     /// # Safety
     ///
     /// The caller must ensure that the generators mutually commute and have
     /// real phases, and that their group does not generate `-I`. This is intended
     /// for internal use with valid generators (e.g., from a simulator tableau).
-    ///
-    /// # Errors
-    /// Returns an error if generator support exceeds the symplectic column capacity.
-    pub fn from_generators_unchecked(
-        generators: Vec<PauliString>,
-    ) -> Result<Self, PauliStabilizerGroupError> {
-        Ok(Self {
-            inner: PauliGroup::from_generators_unchecked(generators)?,
-        })
+    #[must_use]
+    pub fn from_generators_unchecked(generators: Vec<PauliString>) -> Self {
+        Self {
+            inner: PauliGroup::from_generators_unchecked(generators),
+        }
     }
 
     /// Creates a `PauliStabilizerGroup` from string representations.
@@ -231,7 +227,7 @@ impl PauliStabilizerGroup {
     /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator
     /// has a non-real phase.
     pub fn try_from_set(set: &PauliSet) -> Result<Self, PauliStabilizerGroupError> {
-        Self::try_from(set.to_sequence().map_err(PauliGroupError::from)?)
+        Self::try_from(set.to_sequence())
     }
 
     /// Returns a reference to the underlying [`PauliGroup`].
@@ -451,23 +447,21 @@ impl PauliStabilizerGroup {
     /// let h_all = CliffordRep::h(0)
     ///     .compose(&CliffordRep::h(1))
     ///     .compose(&CliffordRep::h(2));
-    /// let transformed = stab.apply_clifford(&h_all).unwrap();
+    /// let transformed = stab.apply_clifford(&h_all);
     ///
     /// // Now we should have XX_, _XX stabilizers
     /// assert!(transformed.contains(&Xs([0, 1])));
     /// assert!(transformed.contains(&Xs([1, 2])));
     /// ```
-    ///
-    /// # Errors
-    /// Returns an error if transformed support exceeds the symplectic column capacity.
+    #[must_use]
     pub fn apply_clifford(
         &self,
         clifford: &pecos_core::clifford_rep::CliffordRep,
-    ) -> Result<PauliStabilizerGroup, PauliStabilizerGroupError> {
+    ) -> PauliStabilizerGroup {
         // Clifford conjugation also preserves the absence of -I.
-        Ok(PauliStabilizerGroup {
-            inner: self.inner.apply_clifford(clifford)?,
-        })
+        PauliStabilizerGroup {
+            inner: self.inner.apply_clifford(clifford),
+        }
     }
 
     // ========================================================================
@@ -886,7 +880,7 @@ mod tests {
         let h_all = CliffordRep::h(0)
             .compose(&CliffordRep::h(1))
             .compose(&CliffordRep::h(2));
-        let transformed = stab.apply_clifford(&h_all).unwrap();
+        let transformed = stab.apply_clifford(&h_all);
 
         // Verify body AND phase
         assert!(transformed.contains_with_phase(&Xs([0, 1])));
@@ -900,7 +894,7 @@ mod tests {
 
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let id = CliffordRep::identity(3);
-        let transformed = stab.apply_clifford(&id).unwrap();
+        let transformed = stab.apply_clifford(&id);
 
         assert!(transformed.contains_with_phase(&Zs([0, 1])));
         assert!(transformed.contains_with_phase(&Zs([1, 2])));
@@ -916,7 +910,7 @@ mod tests {
         // CX(0,1): Z_0 stays, Z_1 -> Z_0 Z_1
         // So ZZ = Z_0 * Z_1 -> Z_0 * (Z_0 * Z_1) = Z_1
         let cx = CliffordRep::cx(0, 1);
-        let transformed = stab.apply_clifford(&cx).unwrap();
+        let transformed = stab.apply_clifford(&cx);
 
         assert!(transformed.contains_with_phase(&Z(1)));
     }
@@ -930,7 +924,7 @@ mod tests {
 
         // Z on qubit 0: X -> -X, so XX -> -XX (phase flip)
         let z0 = CliffordRep::z(0).extended_to(2);
-        let transformed = stab.apply_clifford(&z0).unwrap();
+        let transformed = stab.apply_clifford(&z0);
 
         // Phase should be -1 now
         assert!(transformed.contains_with_phase(&(-Xs([0, 1]))));
@@ -945,7 +939,7 @@ mod tests {
 
         // SZ on qubit 0: X -> Y, Z -> Z
         let s0 = CliffordRep::sz(0).extended_to(2);
-        let transformed = stab.apply_clifford(&s0).unwrap();
+        let transformed = stab.apply_clifford(&s0);
 
         // XZ -> YZ with phase +1
         assert!(transformed.contains_with_phase(&(Y(0) & Z(1))));
@@ -959,7 +953,7 @@ mod tests {
         let stab = PauliStabilizerGroup::new(vec![X(0) & Z(1)]).unwrap();
 
         let swap = CliffordRep::swap(0, 1);
-        let transformed = stab.apply_clifford(&swap).unwrap();
+        let transformed = stab.apply_clifford(&swap);
 
         // SWAP exchanges qubits: XZ -> ZX
         assert!(transformed.contains_with_phase(&(Z(0) & X(1))));
@@ -974,7 +968,7 @@ mod tests {
 
         // CZ: X_0 -> X_0 Z_1
         let cz = CliffordRep::cz(0, 1);
-        let transformed = stab.apply_clifford(&cz).unwrap();
+        let transformed = stab.apply_clifford(&cz);
 
         assert!(transformed.contains_with_phase(&(X(0) & Z(1))));
     }
@@ -1117,7 +1111,7 @@ mod tests {
     fn new_matches_unchecked() {
         let gens = vec![Zs([0, 1]), Zs([1, 2])];
         let checked = PauliStabilizerGroup::new(gens.clone()).unwrap();
-        let unchecked = PauliStabilizerGroup::from_generators_unchecked(gens).unwrap();
+        let unchecked = PauliStabilizerGroup::from_generators_unchecked(gens);
         assert_eq!(checked.rank(), unchecked.rank());
         assert_eq!(checked.num_qubits(), unchecked.num_qubits());
         assert_eq!(checked.stabilizers().len(), unchecked.stabilizers().len());

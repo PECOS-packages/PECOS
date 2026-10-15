@@ -28,7 +28,7 @@ where
     grow(&mut sim, 4).unwrap();
     grow(&mut sim, 4).unwrap();
     grow(&mut sim, 1).unwrap();
-    assert_eq!(sim.num_qubits().unwrap(), 4);
+    assert_eq!(sim.num_qubits(), 4);
     assert_eq!(sim.rng_mut().random::<u64>(), expected_rng.random::<u64>());
 
     // All implementations map qubit k to bit k: new high bits must be zero.
@@ -60,7 +60,7 @@ where
         assert!((sim.get_amplitude(i) - expected).norm() < 1e-12);
     }
     sim.reset();
-    assert_eq!(sim.num_qubits().unwrap(), 5);
+    assert_eq!(sim.num_qubits(), 5);
     assert_eq!(sim.get_amplitude(0), Complex64::new(1.0, 0.0));
     for i in 1..32 {
         assert_eq!(sim.get_amplitude(i), Complex64::new(0.0, 0.0));

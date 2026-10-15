@@ -292,7 +292,7 @@ fn prepare_three_qubit_state<S: StateVectorSimulator + ArbitraryRotationGateable
 }
 
 fn state_vector<S: StateVectorSimulator>(sim: &mut S) -> Vec<Complex64> {
-    (0..(1 << sim.num_qubits().unwrap()))
+    (0..(1 << sim.num_qubits()))
         .map(|basis_state| sim.get_amplitude(basis_state))
         .collect()
 }

@@ -49,12 +49,11 @@ impl PyPauliSequence {
     ///     paulis: List of PauliString objects
     #[new]
     #[pyo3(signature = (paulis))]
-    fn new(paulis: Vec<PauliString>) -> PyResult<Self> {
+    fn new(paulis: Vec<PauliString>) -> Self {
         let rust_paulis = paulis.into_iter().map(|p| p.to_rust()).collect();
-        Ok(Self {
-            inner: RustPauliSequence::new(rust_paulis)
-                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
-        })
+        Self {
+            inner: RustPauliSequence::new(rust_paulis),
+        }
     }
 
     /// Create from newline-delimited Pauli strings.
@@ -159,10 +158,8 @@ impl PyPauliSequence {
     /// Returns the basis for all n-qubit Pauli strings (ignoring phase)
     /// that commute with every element in this sequence. Each vector has
     /// length 2*num_qubits: (x_0..x_{n-1} | z_0..z_{n-1}).
-    fn centralizer(&self) -> PyResult<Vec<Vec<u8>>> {
-        self.inner
-            .centralizer()
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    fn centralizer(&self) -> Vec<Vec<u8>> {
+        self.inner.centralizer()
     }
 
     // ========================================================================

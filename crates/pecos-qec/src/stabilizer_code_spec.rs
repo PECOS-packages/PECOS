@@ -321,9 +321,7 @@ impl StabilizerCodeSpec {
         }
 
         let stabilizer_count = stabilizers.len();
-        let stabilizer_rank = PauliSequence::new(stabilizers.clone())
-            .map_err(|error| StabilizerCodeSpecError::InvalidCode(error.to_string()))?
-            .rank();
+        let stabilizer_rank = PauliSequence::new(stabilizers.clone()).rank();
         if stabilizer_rank != stabilizer_count {
             return Err(StabilizerCodeSpecError::DependentStabilizers {
                 rank: stabilizer_rank,

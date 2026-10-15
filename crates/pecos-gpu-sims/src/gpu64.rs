@@ -128,12 +128,6 @@ pub struct GpuStateVec64 {
 }
 
 impl GpuStateVec64 {
-    /// Return the number of qubits allocated by this simulator.
-    #[must_use]
-    pub fn num_qubits(&self) -> u32 {
-        self.num_qubits
-    }
-
     fn compute_workgroups(num_elements: usize) -> (u32, u32) {
         #[allow(clippy::cast_possible_truncation)]
         let total_workgroups = num_elements.div_ceil(256) as u32;
@@ -1272,8 +1266,8 @@ impl QuantumSimulator for GpuStateVec64 {
         self
     }
 
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.num_qubits as usize)
+    fn num_qubits(&self) -> usize {
+        self.num_qubits as usize
     }
 }
 

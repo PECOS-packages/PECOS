@@ -2465,8 +2465,8 @@ impl<R: Rng + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
         self
     }
 
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.num_qubits as usize)
+    fn num_qubits(&self) -> usize {
+        self.num_qubits as usize
     }
 }
 

@@ -40,8 +40,6 @@ use std::fmt::Debug;
 /// Error returned by state-inspection capability traits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StateAccessError {
-    /// The simulator cannot represent its support extent.
-    InvalidQubitCount(String),
     /// `2^num_qubits` cannot be represented as a `usize`.
     DimensionOverflow {
         /// Number of qubits requested.
@@ -100,7 +98,6 @@ pub enum StateAccessError {
 impl fmt::Display for StateAccessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidQubitCount(message) => write!(f, "{message}"),
             Self::DimensionOverflow { num_qubits } => {
                 write!(
                     f,
@@ -153,10 +150,7 @@ impl Error for StateAccessError {}
 /// Common metadata for state-inspection capabilities.
 pub trait StateInfo {
     /// Returns the number of qubits represented by the state.
-    ///
-    /// # Errors
-    /// Returns an error if the simulator support has no representable qubit count.
-    fn num_qubits(&self) -> Result<usize, StateAccessError>;
+    fn num_qubits(&self) -> usize;
 
     /// Returns the Hilbert-space dimension `2^num_qubits`.
     ///
@@ -165,7 +159,7 @@ pub trait StateInfo {
     /// Returns [`StateAccessError::DimensionOverflow`] if the dimension cannot
     /// be represented as a `usize`.
     fn hilbert_dim(&self) -> Result<usize, StateAccessError> {
-        hilbert_dim(self.num_qubits()?)
+        hilbert_dim(self.num_qubits())
     }
 }
 
@@ -173,9 +167,8 @@ impl<T> StateInfo for T
 where
     T: QuantumSimulator,
 {
-    fn num_qubits(&self) -> Result<usize, StateAccessError> {
+    fn num_qubits(&self) -> usize {
         QuantumSimulator::num_qubits(self)
-            .map_err(|error| StateAccessError::InvalidQubitCount(error.to_string()))
     }
 }
 
@@ -260,8 +253,8 @@ pub trait DensityMatrixAccess: StateInfo {
         row: usize,
         col: usize,
     ) -> Result<Complex64, StateAccessError> {
-        validate_basis_index(self.num_qubits()?, row)?;
-        validate_basis_index(self.num_qubits()?, col)?;
+        validate_basis_index(self.num_qubits(), row)?;
+        validate_basis_index(self.num_qubits(), col)?;
         let rho = self.density_matrix()?;
         Ok(rho[row][col])
     }
@@ -446,7 +439,7 @@ where
     R: Rng,
 {
     fn amplitude(&mut self, basis_state: usize) -> Result<Complex64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.get_amplitude(basis_state))
     }
 
@@ -458,7 +451,7 @@ where
     }
 
     fn basis_probability(&mut self, basis_state: usize) -> Result<f64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.probability(basis_state))
     }
 }
@@ -468,7 +461,7 @@ where
     R: Rng,
 {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
-        let num_qubits = StateInfo::num_qubits(self)?;
+        let num_qubits = StateInfo::num_qubits(self);
         pauli_expectation_from_state_vector(&self.state_vector()?, num_qubits, pauli)
     }
 }
@@ -478,7 +471,7 @@ where
     R: Rng + Debug,
 {
     fn amplitude(&mut self, basis_state: usize) -> Result<Complex64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.get_amplitude(basis_state))
     }
 
@@ -490,7 +483,7 @@ where
     }
 
     fn basis_probability(&mut self, basis_state: usize) -> Result<f64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.probability(basis_state))
     }
 }
@@ -500,7 +493,7 @@ where
     R: Rng + Debug,
 {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
-        let num_qubits = StateInfo::num_qubits(self)?;
+        let num_qubits = StateInfo::num_qubits(self);
         pauli_expectation_from_state_vector(&self.state_vector()?, num_qubits, pauli)
     }
 }
@@ -510,7 +503,7 @@ where
     R: Rng + SeedableRng + Debug,
 {
     fn amplitude(&mut self, basis_state: usize) -> Result<Complex64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.state()[basis_state])
     }
 
@@ -522,7 +515,7 @@ where
     }
 
     fn basis_probability(&mut self, basis_state: usize) -> Result<f64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.probability(basis_state))
     }
 }
@@ -532,7 +525,7 @@ where
     R: Rng + SeedableRng + Debug,
 {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
-        let num_qubits = StateInfo::num_qubits(self)?;
+        let num_qubits = StateInfo::num_qubits(self);
         pauli_expectation_from_state_vector(&self.state_vector()?, num_qubits, pauli)
     }
 }
@@ -542,7 +535,7 @@ where
     R: Rng + Debug,
 {
     fn amplitude(&mut self, basis_state: usize) -> Result<Complex64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.get_amplitude(basis_state))
     }
 
@@ -561,7 +554,7 @@ where
     R: Rng + Debug,
 {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
-        let num_qubits = StateInfo::num_qubits(self)?;
+        let num_qubits = StateInfo::num_qubits(self);
         pauli_expectation_from_state_vector(&self.state_vector()?, num_qubits, pauli)
     }
 }
@@ -571,7 +564,7 @@ where
     R: Rng,
 {
     fn amplitude(&mut self, basis_state: usize) -> Result<Complex64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         let amp = self.get_amplitude(basis_state);
         Ok(Complex64::new(f64::from(amp.re), f64::from(amp.im)))
     }
@@ -588,7 +581,7 @@ where
     }
 
     fn basis_probability(&mut self, basis_state: usize) -> Result<f64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.probability(basis_state))
     }
 }
@@ -598,7 +591,7 @@ where
     R: Rng,
 {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
-        let num_qubits = StateInfo::num_qubits(self)?;
+        let num_qubits = StateInfo::num_qubits(self);
         pauli_expectation_from_state_vector(&self.state_vector()?, num_qubits, pauli)
     }
 }
@@ -615,7 +608,7 @@ where
     }
 
     fn basis_probability(&mut self, basis_state: usize) -> Result<f64, StateAccessError> {
-        validate_basis_index(StateInfo::num_qubits(self)?, basis_state)?;
+        validate_basis_index(StateInfo::num_qubits(self), basis_state)?;
         Ok(self.probability(basis_state))
     }
 }
@@ -625,7 +618,7 @@ where
     R: Rng + SeedableRng + Debug + Clone,
 {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
-        let num_qubits = StateInfo::num_qubits(self)?;
+        let num_qubits = StateInfo::num_qubits(self);
         pauli_expectation_from_density_matrix(&self.density_matrix()?, num_qubits, pauli)
     }
 }
@@ -638,7 +631,7 @@ where
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
         pauli_expectation_from_stabilizer_group(
             &self.to_stabilizer_group(),
-            StateInfo::num_qubits(self)?,
+            StateInfo::num_qubits(self),
             pauli,
         )
     }
@@ -651,7 +644,7 @@ where
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
         pauli_expectation_from_stabilizer_group(
             &self.to_stabilizer_group(),
-            StateInfo::num_qubits(self)?,
+            StateInfo::num_qubits(self),
             pauli,
         )
     }
@@ -664,7 +657,7 @@ where
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
         pauli_expectation_from_stabilizer_group(
             &self.to_stabilizer_group(),
-            StateInfo::num_qubits(self)?,
+            StateInfo::num_qubits(self),
             pauli,
         )
     }
@@ -674,7 +667,7 @@ impl PauliExpectationAccess for Stabilizer {
     fn pauli_expectation(&mut self, pauli: &PauliString) -> Result<Complex64, StateAccessError> {
         pauli_expectation_from_stabilizer_group(
             &self.to_stabilizer_group(),
-            StateInfo::num_qubits(self)?,
+            StateInfo::num_qubits(self),
             pauli,
         )
     }
@@ -763,7 +756,7 @@ fn sample_z_via_clifford<T>(
 where
     T: CliffordGateable + StateInfo,
 {
-    validate_qubit_support(StateInfo::num_qubits(backend)?, qubits)?;
+    validate_qubit_support(StateInfo::num_qubits(backend), qubits)?;
     Ok(backend.mz(qubits))
 }
 
@@ -774,7 +767,7 @@ fn sample_x_via_clifford<T>(
 where
     T: CliffordGateable + StateInfo,
 {
-    validate_qubit_support(StateInfo::num_qubits(backend)?, qubits)?;
+    validate_qubit_support(StateInfo::num_qubits(backend), qubits)?;
     Ok(backend.mx(qubits))
 }
 
@@ -785,7 +778,7 @@ fn sample_y_via_clifford<T>(
 where
     T: CliffordGateable + StateInfo,
 {
-    validate_qubit_support(StateInfo::num_qubits(backend)?, qubits)?;
+    validate_qubit_support(StateInfo::num_qubits(backend), qubits)?;
     Ok(backend.my(qubits))
 }
 

@@ -247,8 +247,8 @@ impl QuantumSimulator for StabActive {
         self.amplitudes.push(Complex64::new(1.0, 0.0));
         self
     }
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.structure.num_qubits())
+    fn num_qubits(&self) -> usize {
+        self.structure.num_qubits()
     }
 }
 

@@ -316,17 +316,15 @@ impl StabilizerCode {
     /// Transforms all generators by a Clifford gate: each `g_i` -> `C g_i C†`.
     ///
     /// Returns a new `StabilizerCode` with the same `num_qubits` and transformed group.
-    ///
-    /// # Errors
-    /// Returns an error if transformed generator support exceeds the symplectic column capacity.
+    #[must_use]
     pub fn apply_clifford(
         &self,
         clifford: &pecos_core::clifford_rep::CliffordRep,
-    ) -> Result<StabilizerCode, pecos_quantum::PauliStabilizerGroupError> {
-        Ok(StabilizerCode {
-            group: self.group.apply_clifford(clifford)?,
+    ) -> StabilizerCode {
+        StabilizerCode {
+            group: self.group.apply_clifford(clifford),
             num_qubits: self.num_qubits,
-        })
+        }
     }
 
     // ========================================================================
@@ -363,8 +361,7 @@ impl StabilizerCode {
         );
         let generators: Vec<PauliString> = (0..n - 1).map(|i| Zs([i, i + 1])).collect();
         Self {
-            group: PauliStabilizerGroup::from_generators_unchecked(generators)
-                .expect("standard code construction uses bounded, distinct enumerated qubits"),
+            group: PauliStabilizerGroup::from_generators_unchecked(generators),
             num_qubits: n,
         }
     }
@@ -385,9 +382,6 @@ impl StabilizerCode {
     /// assert_eq!(code.num_logical_qubits(), 1);
     /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the built-in code generators violate their fixed, representable support invariant.
     #[must_use]
     pub fn steane() -> Self {
         use pecos_core::pauli::{Xs, Zs};
@@ -400,8 +394,7 @@ impl StabilizerCode {
             Zs([3, 4, 5, 6]),
         ];
         Self {
-            group: PauliStabilizerGroup::from_generators_unchecked(generators)
-                .expect("standard code construction uses bounded, distinct enumerated qubits"),
+            group: PauliStabilizerGroup::from_generators_unchecked(generators),
             num_qubits: 7,
         }
     }
@@ -423,9 +416,6 @@ impl StabilizerCode {
     /// assert_eq!(code.num_logical_qubits(), 1);
     /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the built-in code generators violate their fixed, representable support invariant.
     #[must_use]
     pub fn five_qubit() -> Self {
         use pecos_core::pauli::{X, Z};
@@ -436,8 +426,7 @@ impl StabilizerCode {
             Z(0) & X(1) & X(3) & Z(4), // ZXIXZ
         ];
         Self {
-            group: PauliStabilizerGroup::from_generators_unchecked(generators)
-                .expect("standard code construction uses bounded, distinct enumerated qubits"),
+            group: PauliStabilizerGroup::from_generators_unchecked(generators),
             num_qubits: 5,
         }
     }
@@ -457,9 +446,6 @@ impl StabilizerCode {
     /// assert_eq!(code.num_logical_qubits(), 1);
     /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the built-in code generators violate their fixed, representable support invariant.
     #[must_use]
     pub fn shor() -> Self {
         use pecos_core::pauli::{Xs, Zs};
@@ -474,8 +460,7 @@ impl StabilizerCode {
             Zs([3, 4, 5, 6, 7, 8]),
         ];
         Self {
-            group: PauliStabilizerGroup::from_generators_unchecked(generators)
-                .expect("standard code construction uses bounded, distinct enumerated qubits"),
+            group: PauliStabilizerGroup::from_generators_unchecked(generators),
             num_qubits: 9,
         }
     }
@@ -497,16 +482,12 @@ impl StabilizerCode {
     /// assert_eq!(code.num_logical_qubits(), 2);
     /// assert_eq!(code.distance().unwrap(), Some(2));
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the built-in code generators violate their fixed, representable support invariant.
     #[must_use]
     pub fn four_two_two() -> Self {
         use pecos_core::pauli::{Xs, Zs};
         let generators = vec![Xs([0, 1, 2, 3]), Zs([0, 1, 2, 3])];
         Self {
-            group: PauliStabilizerGroup::from_generators_unchecked(generators)
-                .expect("standard code construction uses bounded, distinct enumerated qubits"),
+            group: PauliStabilizerGroup::from_generators_unchecked(generators),
             num_qubits: 4,
         }
     }
@@ -574,8 +555,7 @@ impl StabilizerCode {
         }
 
         Self {
-            group: PauliStabilizerGroup::from_generators_unchecked(generators)
-                .expect("standard code construction uses bounded, distinct enumerated qubits"),
+            group: PauliStabilizerGroup::from_generators_unchecked(generators),
             num_qubits: n,
         }
     }
@@ -939,7 +919,7 @@ mod tests {
         let code = StabilizerCode::steane();
 
         let h0 = CliffordRep::h(0).extended_to(7);
-        let transformed = code.apply_clifford(&h0).unwrap();
+        let transformed = code.apply_clifford(&h0);
 
         assert_eq!(transformed.num_qubits(), 7);
         assert_eq!(transformed.num_logical_qubits(), 1);
@@ -956,7 +936,7 @@ mod tests {
 
         // H on qubit 0 maps Z->X on that qubit: ZZI -> XZI
         let h0 = CliffordRep::h(0).extended_to(3);
-        let transformed = code.apply_clifford(&h0).unwrap();
+        let transformed = code.apply_clifford(&h0);
 
         // ZZI should have become XZI (no longer in original group)
         assert!(!transformed.group().contains(&Zs([0, 1])));

@@ -78,12 +78,6 @@ pub struct PhasePoly {
 }
 
 impl PhasePoly {
-    /// Returns the physical qubit count.
-    #[must_use]
-    pub fn num_qubits(&self) -> usize {
-        self.x0.len()
-    }
-
     /// Construct `|0^n>` with a fresh time-based random seed.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
@@ -455,8 +449,8 @@ impl QuantumSimulator for PhasePoly {
         self
     }
 
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.x0.len())
+    fn num_qubits(&self) -> usize {
+        self.x0.len()
     }
 }
 

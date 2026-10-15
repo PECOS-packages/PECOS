@@ -3,6 +3,20 @@ use pecos_qec::geometry::{PauliOp, StabilizerCheck};
 use pecos_quantum::DagCircuit;
 
 #[test]
+fn clifford_expanded_support_preserves_logical_width_errors() {
+    let code = pecos_qec::StabilizerCode::repetition(2)
+        .apply_clifford(&pecos_core::clifford_rep::CliffordRep::cx(2, 1));
+    assert_eq!(code.num_qubits(), 2);
+    let expected = pecos_quantum::SymplecticMatrixError::OperatorExceedsWidth {
+        row: 0,
+        qubit: 2,
+        num_qubits: 2,
+    };
+    assert_eq!(code.logical_operators().unwrap_err(), expected);
+    assert_eq!(code.distance().unwrap_err(), expected);
+}
+
+#[test]
 fn influence_x_duplicates_return_errors() {
     let dag = DagCircuit::new();
     let error = InfluenceBuilder::new(&dag)

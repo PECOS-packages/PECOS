@@ -1037,8 +1037,8 @@ impl<R> QuantumSimulator for DensityMatrix<R>
 where
     R: Rng + SeedableRng + Debug + Clone,
 {
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.num_physical_qubits)
+    fn num_qubits(&self) -> usize {
+        self.num_physical_qubits
     }
 
     /// Reset the quantum state to |0...0⟩⟨0...0|

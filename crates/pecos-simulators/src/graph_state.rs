@@ -473,8 +473,8 @@ impl<R: SeedableRng + Rng + Debug> GraphStateSim<R> {
 // ============================================================================
 
 impl<R: SeedableRng + Rng + Debug> QuantumSimulator for GraphStateSim<R> {
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.num_qubits)
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
     }
 
     fn reset(&mut self) -> &mut Self {

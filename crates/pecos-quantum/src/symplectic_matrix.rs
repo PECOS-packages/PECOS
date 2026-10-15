@@ -314,11 +314,9 @@ mod tests {
             vec![(Pauli::X, QubitId::new(0)), (Pauli::I, QubitId::new(5))],
         )
         .unwrap();
-        let matrix = SymplecticMatrix::from_pauli_sequence_ignoring_phase(
-            &PauliSequence::new(vec![p]).unwrap(),
-            1,
-        )
-        .unwrap();
+        let matrix =
+            SymplecticMatrix::from_pauli_sequence_ignoring_phase(&PauliSequence::new(vec![p]), 1)
+                .unwrap();
         assert_eq!(matrix.to_positive_paulis(), vec![PauliString::x(0)]);
     }
 
@@ -326,7 +324,7 @@ mod tests {
     fn pauli_round_trip_ignores_phase_and_preserves_explicit_width() {
         let negative_y: PauliString = "-Y0".parse().unwrap();
         let imaginary_xz: PauliString = "+i X1 Z3".parse().unwrap();
-        let sequence = PauliSequence::new(vec![negative_y, imaginary_xz]).unwrap();
+        let sequence = PauliSequence::new(vec![negative_y, imaginary_xz]);
 
         let matrix = SymplecticMatrix::from_pauli_sequence_ignoring_phase(&sequence, 5).unwrap();
         assert_eq!(matrix.num_rows(), 2);
@@ -376,7 +374,7 @@ mod tests {
 
     #[test]
     fn pauli_sequence_rejects_operator_beyond_explicit_width() {
-        let sequence = PauliSequence::new(vec![PauliString::x(9)]).unwrap();
+        let sequence = PauliSequence::new(vec![PauliString::x(9)]);
 
         assert_eq!(
             SymplecticMatrix::from_pauli_sequence_ignoring_phase(&sequence, 3).unwrap_err(),

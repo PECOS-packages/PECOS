@@ -38,44 +38,8 @@ fn stabilizer_mask_returns_error() {
 }
 
 #[test]
-fn tracking_columns_rejects_overflow() {
-    let pauli = PauliString::x(usize::MAX / 2);
-    assert!(PauliSequence::new(vec![pauli.clone()]).is_err());
-    let mut sequence = PauliSequence::new(vec![]).unwrap();
-    assert!(sequence.push(pauli).is_err());
-    assert!(sequence.is_empty());
-}
-
-#[test]
-fn tracking_x_support_rejects_overflow() {
-    let pauli = PauliString::x(1 << (usize::BITS - 1));
-    assert!(PauliSequence::new(vec![pauli.clone()]).is_err());
-    let mut sequence = PauliSequence::new(vec![]).unwrap();
-    assert!(sequence.push(pauli).is_err());
-    assert!(sequence.is_empty());
-}
-
-#[test]
-fn tracking_z_support_rejects_overflow() {
-    let pauli = PauliString::z(1 << (usize::BITS - 1));
-    assert!(PauliSequence::new(vec![pauli.clone()]).is_err());
-    let mut sequence = PauliSequence::new(vec![]).unwrap();
-    assert!(sequence.push(pauli).is_err());
-    assert!(sequence.is_empty());
-}
-
-#[test]
-fn sequence_natural_extent_rejects_overflow() {
-    let pauli = PauliString::z(usize::MAX);
-    assert!(PauliSequence::new(vec![pauli.clone()]).is_err());
-    let mut sequence = PauliSequence::new(vec![]).unwrap();
-    assert!(sequence.push(pauli).is_err());
-    assert!(sequence.is_empty());
-}
-
-#[test]
 fn centralizer_width_returns_error() {
-    let sequence = PauliSequence::new(vec![PauliString::z(5)]).unwrap();
+    let sequence = PauliSequence::new(vec![PauliString::z(5)]);
     assert!(
         sequence
             .centralizer_in(3)
@@ -87,28 +51,28 @@ fn centralizer_width_returns_error() {
 
 #[test]
 fn centralizer_x_dimensions_reject_overflow() {
-    let sequence = PauliSequence::new(vec![PauliString::x(0)]).unwrap();
+    let sequence = PauliSequence::new(vec![PauliString::x(0)]);
     let width = 1 << (usize::BITS - 1);
     assert!(sequence.centralizer_in(width).is_err());
 }
 
 #[test]
 fn centralizer_z_dimensions_reject_overflow() {
-    let sequence = PauliSequence::new(vec![PauliString::z(0)]).unwrap();
+    let sequence = PauliSequence::new(vec![PauliString::z(0)]);
     let width = 1 << (usize::BITS - 1);
     assert!(sequence.centralizer_in(width).is_err());
 }
 
 #[test]
 fn symplectic_x_dimensions_reject_overflow() {
-    let sequence = PauliSequence::new(vec![PauliString::x(0)]).unwrap();
+    let sequence = PauliSequence::new(vec![PauliString::x(0)]);
     let width = 1 << (usize::BITS - 1);
     assert!(SymplecticMatrix::from_pauli_sequence_ignoring_phase(&sequence, width).is_err());
 }
 
 #[test]
 fn symplectic_z_dimensions_reject_overflow() {
-    let sequence = PauliSequence::new(vec![PauliString::z(0)]).unwrap();
+    let sequence = PauliSequence::new(vec![PauliString::z(0)]);
     let width = 1 << (usize::BITS - 1);
     assert!(SymplecticMatrix::from_pauli_sequence_ignoring_phase(&sequence, width).is_err());
 }

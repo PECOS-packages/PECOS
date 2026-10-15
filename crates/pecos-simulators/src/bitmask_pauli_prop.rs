@@ -193,8 +193,8 @@ impl QuantumSimulator for BitmaskPauliProp {
         self
     }
 
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        Ok(self.num_qubits)
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
     }
 }
 
@@ -561,9 +561,7 @@ mod tests {
             apply_bitmask(&mut bitmask);
             assert_eq!(
                 bitmask.dense_string(),
-                sparse
-                    .dense_string_width(bitmask.num_qubits().unwrap())
-                    .unwrap(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "{name}: {input}"
             );
         }
@@ -595,9 +593,7 @@ mod tests {
             );
             assert_eq!(
                 bitmask.dense_string(),
-                sparse
-                    .dense_string_width(bitmask.num_qubits().unwrap())
-                    .unwrap(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "{name}: {input} frame"
             );
         }
@@ -616,9 +612,7 @@ mod tests {
             apply_bitmask(&mut bitmask, &pair);
             assert_eq!(
                 bitmask.dense_string(),
-                sparse
-                    .dense_string_width(bitmask.num_qubits().unwrap())
-                    .unwrap(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "{name}: {input}"
             );
         }
@@ -649,9 +643,7 @@ mod tests {
                 apply_bitmask(&mut bitmask, &pairs);
                 assert_eq!(
                     bitmask.dense_string(),
-                    sparse
-                        .dense_string_width(bitmask.num_qubits().unwrap())
-                        .unwrap(),
+                    sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                     "{name}: pair {pair:?}, input {input}"
                 );
             }
@@ -1300,9 +1292,7 @@ mod tests {
 
         assert_eq!(
             bitmask.dense_string(),
-            sparse
-                .dense_string_width(bitmask.num_qubits().unwrap())
-                .unwrap()
+            sparse.dense_string_width(bitmask.num_qubits()).unwrap()
         );
 
         let sparse_meas = sparse.mz(&qids);
@@ -1352,9 +1342,7 @@ mod tests {
             sequence(&mut sparse, &mut bitmask);
             assert_eq!(
                 bitmask.dense_string(),
-                sparse
-                    .dense_string_width(bitmask.num_qubits().unwrap())
-                    .unwrap(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "sequential composition: {input}"
             );
         }

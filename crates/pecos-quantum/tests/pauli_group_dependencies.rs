@@ -69,7 +69,7 @@ fn stabilizer_entry_points_reject_minus_identity() {
         vec![-PauliString::identity()],
     ] {
         assert!(closure(&generators).contains(&-PauliString::identity()));
-        let sequence = PauliSequence::new(generators.clone()).unwrap();
+        let sequence = PauliSequence::new(generators.clone());
         let set = PauliSet::from_iter(generators.clone());
         for result in [
             PauliStabilizerGroup::new(generators.clone()),
@@ -89,7 +89,7 @@ fn stabilizer_entry_points_reject_minus_identity() {
     assert!("XX\nZZ\nYY".parse::<PauliStabilizerGroup>().is_err());
     for generators in [vec![i * Z(0)], vec![i * X(0), i * X(0)]] {
         assert_eq!(
-            PauliStabilizerGroup::try_from(PauliSequence::new(generators).unwrap()).unwrap_err(),
+            PauliStabilizerGroup::try_from(PauliSequence::new(generators)).unwrap_err(),
             PauliStabilizerGroupError::NonRealPhase {
                 index: 0,
                 phase: pecos_core::QuarterPhase::PlusI
@@ -173,7 +173,7 @@ fn conversions_preserve_scalar_subgroup() {
         vec![i * PauliString::identity()],
     ] {
         let expected = closure(&generators);
-        let sequence = PauliSequence::new(generators.clone()).unwrap();
+        let sequence = PauliSequence::new(generators.clone());
         let set = PauliSet::from_iter(generators);
         for group in [
             PauliGroup::try_from(sequence).unwrap(),
@@ -187,8 +187,7 @@ fn conversions_preserve_scalar_subgroup() {
         }
     }
     let group =
-        PauliGroup::try_from(PauliSequence::new(vec![Xs([0, 1]), Zs([0, 1]), Ys([0, 1])]).unwrap())
-            .unwrap();
+        PauliGroup::try_from(PauliSequence::new(vec![Xs([0, 1]), Zs([0, 1]), Ys([0, 1])])).unwrap();
     assert_eq!(group.num_generators(), 3);
     assert_eq!(group.rank(), 2);
     assert!(!group.is_independent());
@@ -196,7 +195,7 @@ fn conversions_preserve_scalar_subgroup() {
         group.generators().last().unwrap(),
         &-PauliString::identity()
     );
-    let group = PauliGroup::try_from(PauliSequence::new(vec![i * X(0), X(0)]).unwrap()).unwrap();
+    let group = PauliGroup::try_from(PauliSequence::new(vec![i * X(0), X(0)])).unwrap();
     assert_eq!(group.generators(), &[i * X(0), i * PauliString::identity()]);
 }
 
@@ -226,7 +225,7 @@ fn sequence_membership_includes_noncommuting_products() {
         vec![X(0), Z(0), Y(0)],
     ] {
         let expected = closure(&generators);
-        let sequence = PauliSequence::new(generators).unwrap();
+        let sequence = PauliSequence::new(generators);
         for target in all_two_qubit_paulis() {
             assert_eq!(
                 sequence.contains_with_phase(&target),
@@ -244,7 +243,7 @@ fn sequence_membership_includes_noncommuting_products() {
             for third in &paulis {
                 let generators = vec![first.clone(), second.clone(), third.clone()];
                 let expected = closure(&generators);
-                let sequence = PauliSequence::new(generators).unwrap();
+                let sequence = PauliSequence::new(generators);
                 for target in &paulis {
                     assert_eq!(
                         sequence.contains_with_phase(target),
@@ -273,10 +272,7 @@ fn clifford_preserves_minus_identity_in_both_directions() {
             CliffordRep::cx(0, 1),
         ] {
             assert_eq!(
-                group
-                    .apply_clifford(&clifford)
-                    .unwrap()
-                    .contains_minus_identity(),
+                group.apply_clifford(&clifford).contains_minus_identity(),
                 expected
             );
         }
@@ -437,7 +433,7 @@ fn check_exhaustive_case(generators: &[PauliString], targets: &[PauliString]) {
         imaginary_count == 0 && !minus_identity
     );
     // Both conversion paths must preserve the entire closure, including scalars.
-    let reduced = PauliGroup::try_from(PauliSequence::new(generators.to_vec()).unwrap()).unwrap();
+    let reduced = PauliGroup::try_from(PauliSequence::new(generators.to_vec())).unwrap();
     assert_eq!(
         reduced.elements().unwrap().collect::<HashSet<_>>(),
         expected

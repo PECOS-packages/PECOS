@@ -106,8 +106,8 @@ impl PauliProp {
 impl QuantumSimulator for PauliProp {
     /// Returns the extent of the current support, not a register size.
     /// Empty trackers return zero; otherwise this is one past the highest tracked qubit.
-    fn num_qubits(&self) -> std::result::Result<usize, pecos_core::errors::PecosError> {
-        self.xs.iter().chain(&self.zs).max().map_or(Ok(0), |&qubit| qubit.checked_add(1).ok_or_else(|| pecos_core::errors::PecosError::Input(format!("tracked qubit {qubit} has no representable support extent; use a qubit index less than {}", usize::MAX))))
+    fn num_qubits(&self) -> usize {
+        self.xs.iter().chain(&self.zs).max().map_or(0, |q| q + 1)
     }
 
     /// Resets the state by clearing all Pauli all tracked X and Z operators.
@@ -1331,11 +1331,11 @@ mod tests {
     #[test]
     fn support_extent_and_natural_dense_width() {
         for mut prop in [PauliProp::new(), PauliProp::with_sign_tracking()] {
-            assert_eq!(prop.num_qubits().unwrap(), 0);
+            assert_eq!(prop.num_qubits(), 0);
             assert_eq!(prop.dense_string(), "I");
             assert_eq!(prop.dense_string_width(0).unwrap(), "");
             prop.track_z(&[5]);
-            assert_eq!(prop.num_qubits().unwrap(), 6);
+            assert_eq!(prop.num_qubits(), 6);
             assert_eq!(prop.dense_string(), "IIIIIZ");
             assert_eq!(prop.dense_string_width(7).unwrap(), "IIIIIZI");
             assert_eq!(
@@ -1350,11 +1350,11 @@ mod tests {
                 })
             );
             prop.track_x(&[7]);
-            assert_eq!(prop.num_qubits().unwrap(), 8);
+            assert_eq!(prop.num_qubits(), 8);
             prop.track_x(&[7]);
-            assert_eq!(prop.num_qubits().unwrap(), 6);
+            assert_eq!(prop.num_qubits(), 6);
             prop.reset();
-            assert_eq!(prop.num_qubits().unwrap(), 0);
+            assert_eq!(prop.num_qubits(), 0);
         }
     }
 

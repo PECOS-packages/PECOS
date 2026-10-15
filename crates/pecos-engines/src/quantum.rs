@@ -142,7 +142,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
         validate_dispatch_gate(cmd)?;
-        check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits()?)?;
+        check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
             // Single-qubit Clifford gates
             GateType::X => {
@@ -250,7 +250,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                     check_qubit_capacity(
                         batch[cmd_idx].gate_type,
                         &batch[cmd_idx].qubits,
-                        sim.num_qubits()?,
+                        sim.num_qubits(),
                     )?;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
@@ -395,7 +395,7 @@ fn process_general_message<
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
         validate_dispatch_gate(cmd)?;
-        check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits()?)?;
+        check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
             // Single-qubit Clifford gates
             GateType::X => {
@@ -622,7 +622,7 @@ fn process_general_message<
                     check_qubit_capacity(
                         batch[cmd_idx].gate_type,
                         &batch[cmd_idx].qubits,
-                        sim.num_qubits()?,
+                        sim.num_qubits(),
                     )?;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
@@ -818,10 +818,10 @@ where
     /// # Errors
     /// Returns an error if the requested count exceeds the simulator capacity.
     pub fn ensure_qubit_count(&mut self, required_qubits: usize) -> Result<(), PecosError> {
-        if self.simulator.num_qubits()? < required_qubits {
+        if self.simulator.num_qubits() < required_qubits {
             debug!(
                 "StateVectorEngine: Expanding simulator (was {} qubits, now {} qubits)",
-                self.simulator.num_qubits()?,
+                self.simulator.num_qubits(),
                 required_qubits
             );
             self.simulator.ensure_qubit_count(required_qubits)?;
@@ -890,7 +890,7 @@ where
                 .map(|q| usize::from(*q))
                 .max()
                 .unwrap_or(0);
-            let required_qubits = max_qubit_index.checked_add(1).ok_or_else(|| PecosError::Input(format!("qubit index {max_qubit_index} cannot be represented as a qubit count; use a smaller qubit index")))?;
+            let required_qubits = max_qubit_index + 1;
             self.ensure_qubit_count(required_qubits)?;
         }
 

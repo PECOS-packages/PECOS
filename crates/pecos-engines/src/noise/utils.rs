@@ -23,6 +23,7 @@ use crate::byte_message::{ByteMessage, ByteMessageBuilder};
 use pecos_core::errors::PecosError;
 
 // Preserve the raw input message for the legacy panicking noise APIs.
+#[track_caller]
 pub(super) fn panic_on_noise_error(error: PecosError) -> ! {
     match error {
         PecosError::Input(message) => panic!("{message}"),

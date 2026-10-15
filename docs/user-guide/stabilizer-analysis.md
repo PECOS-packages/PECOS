@@ -21,12 +21,8 @@ assert pauli_to_dict("IXYX") == {"X": {1, 3}, "Y": {2}}
 assert pauli_to_string({"X": {1}}, 3) == "IXI"
 assert commutes(pauli_to_circuit("XX"), "ZZ")
 assert not measurement_compatible("XX", "ZZ")
-assert list(iter_stabilizer_products(["XX", "ZZ"])) == [
-    ("+", "II"), ("+", "ZZ"), ("+", "XX"), ("-", "YY")
-]
-assert compatible_stabilizer_groups(["XX", "ZZ"], "II")["+II"] == [
-    {"+XX"}, {"+ZZ"}, {"-YY"}
-]
+assert list(iter_stabilizer_products(["XX", "ZZ"])) == [("+", "II"), ("+", "ZZ"), ("+", "XX"), ("-", "YY")]
+assert compatible_stabilizer_groups(["XX", "ZZ"], "II")["+II"] == [{"+XX"}, {"+ZZ"}, {"-YY"}]
 ```
 
 `measurement_compatible` means that operators can share individual-qubit

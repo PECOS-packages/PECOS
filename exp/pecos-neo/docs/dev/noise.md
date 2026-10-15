@@ -21,10 +21,10 @@ Both produce a `ComposableNoiseModel` that integrates with `CircuitRunner`.
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)           // Single-qubit gate error rate
-    .with_p2(0.01)            // Two-qubit gate error rate
-    .with_p_meas(0.02, 0.03)  // Measurement error (0→1, 1→0)
-    .build();
+    .with_p1(0.001).unwrap()           // Single-qubit gate error rate
+    .with_p2(0.01).unwrap()            // Two-qubit gate error rate
+    .with_p_meas(0.02, 0.03).unwrap()  // Measurement error (0→1, 1→0)
+    .build().unwrap();
 ```
 
 ### All Parameters
@@ -34,13 +34,13 @@ let noise = CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Base error probability
-    .with_p1(0.001)
+    .with_p1(0.001).unwrap()
 
     // Of errors, what fraction are emission (vs Pauli)
-    .with_p1_emission_ratio(0.1)
+    .with_p1_emission_ratio(0.1).unwrap()
 
     // Seepage probability (leaked qubit returns to computational space)
-    .with_p1_seepage(0.05)
+    .with_p1_seepage(0.05).unwrap()
 
     // Custom Pauli weights (default: uniform X, Y, Z)
     .with_p1_pauli_weights(PauliWeights::new(0.25, 0.25, 0.50))  // More Z errors
@@ -54,13 +54,13 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Base error probability
-    .with_p2(0.01)
+    .with_p2(0.01).unwrap()
 
     // Emission vs Pauli ratio
-    .with_p2_emission_ratio(0.1)
+    .with_p2_emission_ratio(0.1).unwrap()
 
     // Seepage for leaked qubits
-    .with_p2_seepage(0.05)
+    .with_p2_seepage(0.05).unwrap()
 
     // Angle-dependent scaling (for RZZ, etc.)
     .with_p2_angle_scaling(AngleScaling::Quadratic)
@@ -78,13 +78,13 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Preparation error rate
-    .with_p_prep(0.001)
+    .with_p_prep(0.001).unwrap()
 
     // Of prep errors, fraction that leak (vs bit flip)
-    .with_p_prep_leak_ratio(0.1)
+    .with_p_prep_leak_ratio(0.1).unwrap()
 
     // Crosstalk during preparation
-    .with_p_prep_crosstalk(0.0001)
+    .with_p_prep_crosstalk(0.0001).unwrap()
 ```
 
 #### Measurement
@@ -92,10 +92,10 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Asymmetric measurement error
-    .with_p_meas(0.02, 0.03)  // P(report 1 | true 0), P(report 0 | true 1)
+    .with_p_meas(0.02, 0.03).unwrap()  // P(report 1 | true 0), P(report 0 | true 1)
 
     // Symmetric measurement error
-    .with_p_meas_symmetric(0.02)
+    .with_p_meas_symmetric(0.02).unwrap()
 ```
 
 #### Leakage
@@ -106,7 +106,7 @@ CompositeNoiseModelBuilder::new()
     .with_leakage(
         0.001,  // Probability of leaking per gate
         0.1,    // Probability of seeping back per gate
-    )
+    ).unwrap()
 ```
 
 #### Idle/Decoherence
@@ -125,10 +125,10 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Measurement-induced crosstalk
-    .with_measurement_crosstalk(
+    .with_p_meas_crosstalk(
         0.001,  // Global probability (affects all other qubits)
         0.01,   // Local probability (affects nearby qubits)
-    )
+    ).unwrap()
 
     // Custom neighbor function
     .with_crosstalk_neighbors(|q1, q2| distance(q1, q2) < 3)
@@ -159,9 +159,9 @@ let circuit = CommandBuilder::new()
 
 // Build noise model
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)
-    .with_p2(0.01)
-    .build();
+    .with_p1(0.001).unwrap()
+    .with_p2(0.01).unwrap()
+    .build().unwrap();
 
 // Run with noise
 let mut state = SparseStab::new(2);
@@ -185,7 +185,7 @@ use pecos_neo::noise::composite::{CompositeChannel, CompositeEventFilter};
 // Custom single-qubit noise: skip leaked qubits, then apply depolarizing
 let sq_primitive = seq(vec![
     skip_if_leaked(),
-    prob(0.001, depolarize()),
+    prob(0.001, depolarize()).unwrap(),
 ]);
 
 // Create channel
@@ -203,7 +203,7 @@ let model = ComposableNoiseModel::new()
 
 ```rust
 // Probability gate
-prob(0.01, action)
+prob(0.01, action).unwrap()
 
 // Dynamic probability based on gate
 prob_fn(|gate| gate.angle().map(|a| a.to_radians().abs()).unwrap_or(0.0), action)
@@ -307,7 +307,7 @@ For low error rates with many qubits, the system uses geometric sampling to skip
 
 ```rust
 // Automatic for channels with probability < 0.01 and > 100 qubits
-let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()))
+let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()).unwrap())
     .with_probability(0.001)  // Enables geometric sampling
     .with_filter(CompositeEventFilter::SingleQubitGate);
 ```
@@ -344,34 +344,34 @@ for warning in warnings {
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.0001)
-    .with_p2(0.001)
-    .with_p1_emission_ratio(0.1)
-    .with_p2_emission_ratio(0.1)
-    .with_leakage(0.0001, 0.1)
-    .with_p_meas(0.001, 0.01)
-    .build();
+    .with_p1(0.0001).unwrap()
+    .with_p2(0.001).unwrap()
+    .with_p1_emission_ratio(0.1).unwrap()
+    .with_p2_emission_ratio(0.1).unwrap()
+    .with_leakage(0.0001, 0.1).unwrap()
+    .with_p_meas(0.001, 0.01).unwrap()
+    .build().unwrap();
 ```
 
 ### Superconducting Style
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)
-    .with_p2(0.01)
+    .with_p1(0.001).unwrap()
+    .with_p2(0.01).unwrap()
     .with_idle_t1_t2(50e-6, 30e-6).unwrap()
     .with_time_scale(TimeScale::Nanoseconds)
-    .with_p_meas_symmetric(0.02)
-    .build();
+    .with_p_meas_symmetric(0.02).unwrap()
+    .build().unwrap();
 ```
 
 ### Pure Depolarizing (Testing)
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(p)
-    .with_p2(p)
-    .build();
+    .with_p1(p).unwrap()
+    .with_p2(p).unwrap()
+    .build().unwrap();
 ```
 
 ## ComposableNoiseModel (Direct Composition)

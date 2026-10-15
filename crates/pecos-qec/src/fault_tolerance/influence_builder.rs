@@ -308,11 +308,6 @@ impl<'a> InfluenceBuilder<'a> {
     /// non-measurement gate, or a tracked Pauli with no meta gate. Dropping
     /// such references silently produced outputs with missing propagation
     /// terms.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a resolved measurement names a missing gate, violating
-    /// `DagCircuit::find_measurement`'s measurement-reference invariant.
     pub fn with_circuit_annotations(mut self) -> Result<Self, AnnotationIngestError> {
         let circuit = self.dag;
         // Meta gates are inserted when their annotations are added, so on an
@@ -334,21 +329,16 @@ impl<'a> InfluenceBuilder<'a> {
                     for &meas_id in measurement_ids {
                         // Each id seeds its measurement basis on its own qubit,
                         // including when it belongs to a batched node.
-                        let mref = circuit.find_measurement(meas_id).map_err(|source| {
-                            AnnotationIngestError::ObservableRefUnresolved {
-                                annotation_index,
-                                meas_id,
-                                source,
-                            }
-                        })?;
-                        let gate = circuit.gate(mref.node).expect("resolved measurement node");
-                        let basis = gate
-                            .gate_type
-                            .measured_pauli()
-                            .expect("resolved measurement basis");
+                        let unresolved = |source| AnnotationIngestError::ObservableRefUnresolved {
+                            annotation_index,
+                            meas_id,
+                            source,
+                        };
+                        let mref = circuit.find_measurement(meas_id).map_err(unresolved)?;
+                        let (basis, qubit) = circuit.measurement_basis(mref).map_err(unresolved)?;
                         let pauli = PauliString::with_phase_and_paulis(
                             pecos_core::QuarterPhase::PlusOne,
-                            vec![(basis, mref.qubit)],
+                            vec![(basis, qubit)],
                         );
                         terms.push(PauliPropagationTerm {
                             pauli,

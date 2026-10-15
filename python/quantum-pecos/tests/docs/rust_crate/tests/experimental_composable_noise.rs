@@ -38,7 +38,7 @@ fn test_experimental_composable_noise_rust_2() {
     ).unwrap();
 
     // Surface code optimized noise
-    let model = surface_code_noise(0.001, true);
+    let model = surface_code_noise(0.001, true).unwrap();
 }
 
 
@@ -70,7 +70,7 @@ fn test_experimental_composable_noise_rust_4() {
                     (0.9, pauli()),          // 90% are Pauli errors
                 ]
             )
-        ),
+        ).unwrap(),
     ];
 
     let model = NoiseModelBuilder::new()
@@ -87,8 +87,8 @@ fn test_experimental_composable_noise_rust_5() {
     let model = depolarizing_only(0.001, 0.01);
 
     // Using primitives
-    let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli()));
-    let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli()));
+    let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli()).unwrap());
+    let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli()).unwrap());
 }
 
 
@@ -104,8 +104,8 @@ fn test_experimental_composable_noise_rust_6() {
 
     // Using primitives for outcome-dependent noise
     let meas_noise = seq![
-        on_zero(prob(0.01, flip_outcome())),  // 1% flip when measuring 0
-        on_one(prob(0.03, flip_outcome())),   // 3% flip when measuring 1
+        on_zero(prob(0.01, flip_outcome()).unwrap()),  // 1% flip when measuring 0
+        on_one(prob(0.03, flip_outcome()).unwrap()),   // 3% flip when measuring 1
     ];
 }
 
@@ -119,7 +119,7 @@ fn test_experimental_composable_noise_rust_7() {
         0.01,   // p2: two-qubit error rate
         0.1,    // 10% of errors cause leakage
         0.5,    // 50% seepage rate (return from leaked state)
-    );
+    ).unwrap();
 }
 
 
@@ -143,13 +143,13 @@ fn test_experimental_composable_noise_rust_8() {
 #[test]
 fn test_experimental_composable_noise_rust_9() {
     use pecos_neo::noise::prelude::*;
-    let model = chain_measurement_crosstalk(0.01);
+    let model = chain_measurement_crosstalk(0.01).unwrap();
 
     // 2D grid crosstalk (5 columns)
-    let model = grid_measurement_crosstalk(5, 0.01);
+    let model = grid_measurement_crosstalk(5, 0.01).unwrap();
 
     // Custom crosstalk with composite primitives
-    let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z()))
+    let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z()).unwrap())
         .responds_to_measurement()
         .local(chain_neighbors);  // Only affect adjacent qubits
 }
@@ -160,10 +160,10 @@ fn test_experimental_composable_noise_rust_9() {
 #[test]
 fn test_experimental_composable_noise_rust_10() {
     use pecos_neo::noise::prelude::*;
-    let model = chain_correlated(0.01, 0.5);  // 50% correlation factor
+    let model = chain_correlated(0.01, 0.5).unwrap();  // 50% correlation factor
 
     // Using CorrelatedNoiseChannel directly
-    let channel = CorrelatedNoiseChannel::new(0.01, 0.5);
+    let channel = CorrelatedNoiseChannel::new(0.01, 0.5).unwrap();
 }
 
 

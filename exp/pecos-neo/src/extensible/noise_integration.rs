@@ -6,6 +6,7 @@
 //! - Integration helpers for the existing noise system
 
 use super::{GateCategory, GateId, GateSpec, gates};
+use crate::noise::validation::{ValidationResult, validate_probability};
 
 /// Noise configuration for a specific gate.
 #[derive(Clone, Debug)]
@@ -259,11 +260,13 @@ impl PartialEq for DecompositionNoiseStrategy {
 
 impl DecompositionNoiseStrategy {
     /// Create a blended strategy.
-    #[must_use]
-    pub fn blended(high_level_weight: f64) -> Self {
-        Self::Blended {
-            high_level_weight: high_level_weight.clamp(0.0, 1.0),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn blended(high_level_weight: f64) -> ValidationResult<Self> {
+        Ok(Self::Blended {
+            high_level_weight: validate_probability(high_level_weight, "high_level_weight")?,
+        })
     }
 
     /// Calculate effective error probability for a decomposed gate.
@@ -433,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_decomposition_noise_strategy_blended() {
-        let strategy = DecompositionNoiseStrategy::blended(0.5);
+        let strategy = DecompositionNoiseStrategy::blended(0.5).unwrap();
 
         // 50% blend of per-gate (~0.0297) and high-level (0.03)
         let per_gate = 1.0 - 0.99_f64.powi(3);
@@ -445,11 +448,11 @@ mod tests {
     #[test]
     fn test_decomposition_noise_strategy_blended_weights() {
         // weight 0 = per-gate only
-        let strategy0 = DecompositionNoiseStrategy::blended(0.0);
+        let strategy0 = DecompositionNoiseStrategy::blended(0.0).unwrap();
         let per_gate = strategy0.effective_error(0.03, &[0.01, 0.01, 0.01]);
 
         // weight 1 = high-level only
-        let strategy1 = DecompositionNoiseStrategy::blended(1.0);
+        let strategy1 = DecompositionNoiseStrategy::blended(1.0).unwrap();
         let high_level = strategy1.effective_error(0.03, &[0.01, 0.01, 0.01]);
 
         assert!((per_gate - 0.029_701).abs() < 0.0001);
@@ -479,8 +482,8 @@ mod tests {
             DecompositionNoiseStrategy::HighLevel
         );
         assert_eq!(
-            DecompositionNoiseStrategy::blended(0.5),
-            DecompositionNoiseStrategy::blended(0.5)
+            DecompositionNoiseStrategy::blended(0.5).unwrap(),
+            DecompositionNoiseStrategy::blended(0.5).unwrap()
         );
         assert_ne!(
             DecompositionNoiseStrategy::PerGate,

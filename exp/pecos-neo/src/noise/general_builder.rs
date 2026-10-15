@@ -50,7 +50,7 @@ use super::{
 use crate::command::GateType;
 use crate::noise::validation::{
     ValidationError, ValidationResult, validate_angle_rate, validate_duration,
-    validate_rate as checked_rate,
+    validate_rate as checked_rate, validate_scaled_angle_rate,
 };
 use pecos_core::TimeScale;
 use std::collections::BTreeMap;
@@ -433,8 +433,15 @@ impl GeneralNoiseModelBuilder {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_p_idle_quadratic(mut self, rate: f64) -> ValidationResult<Self> {
         validate_angle_rate(rate, "rate")?;
+        validate_scaled_angle_rate(
+            rate,
+            self.p_idle_coherent_to_incoherent_factor,
+            "rate",
+            "coherent_to_incoherent_factor",
+        )?;
         self.p_idle_quadratic_rate = rate;
         self.p_idle_quadratic_configured = true;
         Ok(self)
@@ -465,6 +472,7 @@ impl GeneralNoiseModelBuilder {
     ///
     /// # Errors
     /// Rejects non-finite or negative rates or multipliers and invalid axes.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_p_idle_sin_squared(
         mut self,
         rate: f64,
@@ -472,6 +480,14 @@ impl GeneralNoiseModelBuilder {
     ) -> ValidationResult<Self> {
         let rate = checked_rate(rate, "sine-squared idling rate")?;
         Self::validate_sine_model(model)?;
+        for (axis, multiplier) in model {
+            validate_scaled_angle_rate(
+                rate,
+                *multiplier,
+                "sine-squared idling rate",
+                &format!("p_idle_sin_squared multiplier for '{axis}'"),
+            )?;
+        }
         self.p_idle_sin_squared = Some((rate, model.clone()));
         Ok(self)
     }
@@ -487,11 +503,18 @@ impl GeneralNoiseModelBuilder {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_p_idle_coherent_to_incoherent_factor(
         mut self,
         factor: f64,
     ) -> ValidationResult<Self> {
         checked_rate(factor, "factor")?;
+        validate_scaled_angle_rate(
+            self.p_idle_quadratic_rate,
+            factor,
+            "rate",
+            "coherent_to_incoherent_factor",
+        )?;
         self.p_idle_coherent_to_incoherent_factor = factor;
         Ok(self)
     }
@@ -1287,7 +1310,10 @@ mod tests {
             .with_p_meas(0.02, 0.03) // Traditional measurement channel
             .with_channel(
                 // Flow 2Q channel
-                CompositeChannelBuilder::two_qubit("custom_2q", seq![prob(0.01, pauli()),]),
+                CompositeChannelBuilder::two_qubit(
+                    "custom_2q",
+                    seq![prob(0.01, pauli()).unwrap(),],
+                ),
             )
             .build();
 
@@ -1301,10 +1327,13 @@ mod tests {
 
         // Mix composite channels with a traditional channel
         let model = CompositeNoiseModelBuilder::new()
-            .with_p1(0.001) // Flow 1Q channel
-            .with_p2(0.01) // Flow 2Q channel
+            .with_p1(0.001)
+            .unwrap() // Flow 1Q channel
+            .with_p2(0.01)
+            .unwrap() // Flow 2Q channel
             .with_channel(MeasurementChannel::symmetric(0.02)) // Traditional
-            .build();
+            .build()
+            .unwrap();
 
         // 1Q + 2Q + Meas = 3 channels
         assert_eq!(model.channel_count(), 3);
@@ -1322,7 +1351,7 @@ mod tests {
             .with_p1(0.0) // No traditional 1Q noise
             .with_channel(
                 // But use composite for 2Q
-                CompositeChannelBuilder::two_qubit("flow_2q", prob(0.5, pauli())),
+                CompositeChannelBuilder::two_qubit("flow_2q", prob(0.5, pauli()).unwrap()),
             )
             .build();
 
@@ -1388,7 +1417,11 @@ mod tests {
         // Run with CompositeNoiseModelBuilder
         let mut flow_ones = 0;
         for seed in 0..shots {
-            let model = CompositeNoiseModelBuilder::new().with_p1(p1).build();
+            let model = CompositeNoiseModelBuilder::new()
+                .with_p1(p1)
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
@@ -1459,7 +1492,11 @@ mod tests {
         // Run with CompositeNoiseModelBuilder
         let mut composite_errors = 0;
         for seed in 0..shots {
-            let model = CompositeNoiseModelBuilder::new().with_p2(p2).build();
+            let model = CompositeNoiseModelBuilder::new()
+                .with_p2(p2)
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
@@ -1523,7 +1560,9 @@ mod tests {
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new()
                 .with_p_meas_symmetric(p_meas)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)

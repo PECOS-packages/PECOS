@@ -112,16 +112,6 @@ pub fn validate_probability(p: f64, field: &str) -> ValidationResult<f64> {
     Ok(p)
 }
 
-/// Validate that a value is a valid probability, clamping to [0.0, 1.0].
-///
-/// This is a lenient version that clamps instead of returning an error.
-/// Useful when you want to accept slightly out-of-range values due to
-/// floating point errors.
-#[must_use]
-pub fn clamp_probability(p: f64) -> f64 {
-    if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) }
-}
-
 /// Validate that weights are non-negative.
 ///
 /// # Errors
@@ -196,6 +186,29 @@ pub fn validate_bounded(value: f64, bound: f64, field: &str) -> ValidationResult
         );
     }
     Ok(value)
+}
+
+/// Validate the product of an already validated rate and scale before duration scaling.
+///
+/// # Errors
+/// Returns an error naming both parameters if their product can overflow at `MAX_DURATION`.
+pub(crate) fn validate_scaled_angle_rate(
+    rate: f64,
+    factor: f64,
+    rate_name: &str,
+    factor_name: &str,
+) -> ValidationResult<f64> {
+    validate_bounded(
+        rate * factor,
+        MAX_ANGLE_RATE,
+        &format!("{rate_name} * {factor_name}"),
+    )
+    .map_err(|error| {
+        error.with_suggestion(format!(
+            "Reduce {rate_name} or {factor_name} so their product is at most {MAX_ANGLE_RATE}; \
+             larger products overflow once multiplied by an idle duration"
+        ))
+    })
 }
 
 /// Validate a duration supplied as f64 against the `TimeUnits` domain.
@@ -332,14 +345,6 @@ mod tests {
         assert!(validate_probability(-0.1, "test").is_err());
         assert!(validate_probability(1.1, "test").is_err());
         assert!(validate_probability(f64::NAN, "test").is_err());
-    }
-
-    #[test]
-    fn test_clamp_probability() {
-        assert_eq!(clamp_probability(0.5), 0.5);
-        assert_eq!(clamp_probability(-0.1), 0.0);
-        assert_eq!(clamp_probability(1.5), 1.0);
-        assert_eq!(clamp_probability(f64::NAN), 0.0);
     }
 
     #[test]

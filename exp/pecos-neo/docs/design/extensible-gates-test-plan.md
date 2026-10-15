@@ -597,8 +597,8 @@ fn test_build_warns_unhandled_by_noise() {
     ]);
 
     let noise = CompositeNoiseModelBuilder::new()
-        .with_p1(0.01)  // Only handles SingleQubitUnitary
-        .build();
+        .with_p1(0.01).unwrap()  // Only handles SingleQubitUnitary
+        .build().unwrap();
 
     let result = ToolBuilder::new()
         .with_program(circuit)
@@ -827,8 +827,8 @@ fn test_custom_gate_gets_two_qubit_noise() {
     });
 
     let noise = CompositeNoiseModelBuilder::new()
-        .with_p2(1.0) // 100% error on 2Q gates for testing
-        .build();
+        .with_p2(1.0).unwrap() // 100% error on 2Q gates for testing
+        .build().unwrap();
 
     // ... setup adaptor and builder ...
 

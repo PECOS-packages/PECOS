@@ -75,8 +75,8 @@ let bias_config = OutcomeBiasConfig::new()
 
 // Create runner with biased sampling
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)
-    .build();
+    .with_p1(0.001).unwrap()
+    .build().unwrap();
 
 let mut runner = ImportanceSamplingRunner::new(SparseStab::new(num_qubits))
     .with_noise(noise)
@@ -190,9 +190,9 @@ Importance sampling can be combined with noise models:
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)
-    .with_p2(0.01)
-    .build();
+    .with_p1(0.001).unwrap()
+    .with_p2(0.01).unwrap()
+    .build().unwrap();
 
 let runner = ImportanceSamplingRunner::new(SparseStab::new(num_qubits))
     .with_noise(noise)

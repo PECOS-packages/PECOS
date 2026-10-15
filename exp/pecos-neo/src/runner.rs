@@ -2859,7 +2859,8 @@ mod tests {
                     .with_p_idle_quadratic(0.25)
                     .unwrap()
                     .with_p_idle_coherent(true)
-                    .build(),
+                    .build()
+                    .unwrap(),
             ),
             (
                 "IdleChannel::with_coherent_dephasing(true)",
@@ -2921,7 +2922,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(CompositeChannelBuilder::idle(
             "coherent_idle",
-            prob(1.0, coherent_rz(0.25).unwrap()),
+            prob(1.0, coherent_rz(0.25).unwrap()).unwrap(),
         ));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);

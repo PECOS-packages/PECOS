@@ -28,22 +28,23 @@ use pecos_neo::prelude::*;
 use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_simulators::SparseStab;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Noise Cookbook ===\n");
 
-    recipe_quick_start();
-    recipe_sim_neo_integration();
-    recipe_measurement_noise();
-    recipe_leakage_model();
-    recipe_custom_composite();
-    recipe_crosstalk();
-    recipe_realistic_device();
+    recipe_quick_start()?;
+    recipe_sim_neo_integration()?;
+    recipe_measurement_noise()?;
+    recipe_leakage_model()?;
+    recipe_custom_composite()?;
+    recipe_crosstalk()?;
+    recipe_realistic_device()?;
+    Ok(())
 }
 
 /// Recipe 1: Quick Start with Pre-built Patterns
 ///
 /// The easiest way to add noise - use ready-made configurations.
-fn recipe_quick_start() {
+fn recipe_quick_start() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 1: Quick Start ---");
 
     // Simple X gate circuit
@@ -52,9 +53,9 @@ fn recipe_quick_start() {
     // Method 1: One-liner with pre-built pattern
     let error_rate = run_with_noise(
         &commands,
-        || depolarizing_with_measurement(0.01, 0.05, 0.02),
+        || Ok(depolarizing_with_measurement(0.01, 0.05, 0.02)),
         1000,
-    );
+    )?;
     println!(
         "  depolarizing_with_measurement: {:.1}% error rate",
         error_rate * 100.0
@@ -64,22 +65,23 @@ fn recipe_quick_start() {
     let error_rate = run_with_noise(
         &commands,
         || {
-            NoiseModelBuilder::new()
+            Ok(NoiseModelBuilder::new()
                 .with_depolarizing(0.01, 0.05)
                 .with_measurement_error(0.02)
-                .build()
+                .build())
         },
         1000,
-    );
+    )?;
     println!("  NoiseModelBuilder: {:.1}% error rate", error_rate * 100.0);
 
     println!();
+    Ok(())
 }
 
 /// Recipe 2: `sim_neo()` Integration
 ///
 /// Use noise patterns with the high-level `sim_neo()` builder API.
-fn recipe_sim_neo_integration() {
+fn recipe_sim_neo_integration() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 2: sim_neo() Integration ---");
 
     let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
@@ -91,8 +93,7 @@ fn recipe_sim_neo_integration() {
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
-        .run()
-        .expect("simulation should succeed");
+        .run()?;
 
     let error_rate = results
         .outcomes
@@ -109,8 +110,7 @@ fn recipe_sim_neo_integration() {
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
-        .run()
-        .expect("simulation should succeed");
+        .run()?;
 
     let error_rate = results
         .outcomes
@@ -135,8 +135,7 @@ fn recipe_sim_neo_integration() {
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
-        .run()
-        .expect("simulation should succeed");
+        .run()?;
 
     let error_rate = results
         .outcomes
@@ -149,21 +148,18 @@ fn recipe_sim_neo_integration() {
     // Method 4: Reusable simulation with noise
     let mut sim = sim_neo(circuit)
         .auto()
-        .noise(
-            realistic_device_noise(
-                &DeviceNoiseParams::new()
-                    .with_p1(0.001)
-                    .with_p2(0.01)
-                    .with_measurement_error(0.02),
-            )
-            .unwrap(),
-        )
+        .noise(realistic_device_noise(
+            &DeviceNoiseParams::new()
+                .with_p1(0.001)
+                .with_p2(0.01)
+                .with_measurement_error(0.02),
+        )?)
         .sampling(monte_carlo(500))
         .build();
 
     // Run multiple times with different seeds
-    let results1 = sim.seed(100).run().expect("simulation should succeed");
-    let results2 = sim.seed(200).run().expect("simulation should succeed");
+    let results1 = sim.seed(100).run()?;
+    let results2 = sim.seed(200).run()?;
 
     let err1 = results1
         .outcomes
@@ -178,12 +174,13 @@ fn recipe_sim_neo_integration() {
     println!("  Reusable sim (seed 100): {err1} errors, (seed 200): {err2} errors");
 
     println!();
+    Ok(())
 }
 
 /// Recipe 3: Measurement Noise Variations
 ///
 /// Different ways to model measurement errors.
-fn recipe_measurement_noise() {
+fn recipe_measurement_noise() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 3: Measurement Noise ---");
 
     let commands = CommandBuilder::new()
@@ -192,14 +189,14 @@ fn recipe_measurement_noise() {
         .build();
 
     // Symmetric measurement error (same rate for 0->1 and 1->0)
-    let error_rate = run_with_noise(&commands, || measurement_only(0.05, 0.05), 1000);
+    let error_rate = run_with_noise(&commands, || Ok(measurement_only(0.05, 0.05)), 1000)?;
     println!(
         "  Symmetric (5%/5%): {:.1}% flipped to 1",
         error_rate * 100.0
     );
 
     // Asymmetric: easier to flip 0->1 than 1->0
-    let error_rate = run_with_noise(&commands, || measurement_only(0.10, 0.02), 1000);
+    let error_rate = run_with_noise(&commands, || Ok(measurement_only(0.10, 0.02)), 1000)?;
     println!(
         "  Asymmetric (10%/2%): {:.1}% flipped to 1",
         error_rate * 100.0
@@ -210,24 +207,25 @@ fn recipe_measurement_noise() {
         &commands,
         || {
             let meas_noise = seq![
-                on_zero(prob(0.10, flip_outcome())), // 10% flip when measuring 0
-                on_one(prob(0.02, flip_outcome())),  // 2% flip when measuring 1
+                on_zero(prob(0.10, flip_outcome())?), // 10% flip when measuring 0
+                on_one(prob(0.02, flip_outcome())?),  // 2% flip when measuring 1
             ];
-            NoiseModelBuilder::new()
+            Ok(NoiseModelBuilder::new()
                 .with_measurement_noise(meas_noise)
-                .build()
+                .build())
         },
         1000,
-    );
+    )?;
     println!("  Flow primitives: {:.1}% flipped to 1", error_rate * 100.0);
 
     println!();
+    Ok(())
 }
 
 /// Recipe 4: Leakage Model
 ///
 /// Model qubits that leak outside the computational basis.
-fn recipe_leakage_model() {
+fn recipe_leakage_model() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 4: Leakage Model ---");
 
     // Multiple gates to accumulate leakage effects
@@ -243,7 +241,7 @@ fn recipe_leakage_model() {
 
     // Using pre-built leakage pattern
     // 10% of errors cause leakage, 50% seepage rate
-    let error_rate = run_with_noise(&commands, || with_leakage(0.1, 0.2, 0.1, 0.5), 1000);
+    let error_rate = run_with_noise(&commands, || with_leakage(0.1, 0.2, 0.1, 0.5), 1000)?;
     println!(
         "  with_leakage pattern: {:.1}% error rate",
         error_rate * 100.0
@@ -264,27 +262,28 @@ fn recipe_leakage_model() {
                             (0.9, pauli()), // 90% are Pauli errors
                         ]
                     )
-                ),
+                )?,
             ];
 
-            NoiseModelBuilder::new()
+            Ok(NoiseModelBuilder::new()
                 .with_single_qubit_noise(sq_noise)
-                .build()
+                .build())
         },
         1000,
-    );
+    )?;
     println!(
         "  Custom composite primitives: {:.1}% error rate",
         error_rate * 100.0
     );
 
     println!();
+    Ok(())
 }
 
 /// Recipe 5: Custom Composite Primitives
 ///
 /// Build exactly the noise model you need with composite primitives.
-fn recipe_custom_composite() {
+fn recipe_custom_composite() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 5: Custom Composite Primitives ---");
 
     let commands = CommandBuilder::new()
@@ -308,31 +307,32 @@ fn recipe_custom_composite() {
                         (0.3, inject_x()), // 30% X errors (bit flip)
                         (0.2, inject_y()), // 20% Y errors
                     ]
-                ),
+                )?,
             ];
 
-            NoiseModelBuilder::new()
+            Ok(NoiseModelBuilder::new()
                 .with_two_qubit_noise(tq_noise)
-                .build()
+                .build())
         },
         1000,
-    );
+    )?;
     println!(
         "  Z-biased two-qubit noise: {:.1}% error rate",
         error_rate * 100.0
     );
 
     // Pure dephasing model (Z errors only)
-    let error_rate = run_with_noise_2q(&commands, || dephasing_only(0.01, 0.05), 1000);
+    let error_rate = run_with_noise_2q(&commands, || dephasing_only(0.01, 0.05), 1000)?;
     println!("  Pure dephasing: {:.1}% error rate", error_rate * 100.0);
 
     println!();
+    Ok(())
 }
 
 /// Recipe 6: Topology-Aware Crosstalk
 ///
 /// Model errors that spread to neighboring qubits.
-fn recipe_crosstalk() {
+fn recipe_crosstalk() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 6: Crosstalk ---");
 
     // 3-qubit chain: measure middle qubit, observe neighbors
@@ -348,7 +348,7 @@ fn recipe_crosstalk() {
     // Chain crosstalk: measuring qubit 1 can flip qubits 0 and 2
     let mut neighbor_errors = 0;
     for seed in 0..1000 {
-        let crosstalk = CompositeCrosstalkChannel::new("chain_xt", prob(0.1, inject_x()))
+        let crosstalk = CompositeCrosstalkChannel::new("chain_xt", prob(0.1, inject_x())?)
             .responds_to_measurement()
             .local(chain_neighbors);
 
@@ -358,7 +358,7 @@ fn recipe_crosstalk() {
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, &commands)?;
 
         // Count errors on neighbor qubits (should be 0 without crosstalk)
         if outcomes
@@ -388,12 +388,13 @@ fn recipe_crosstalk() {
     println!("    grid_distance(cols)(a, b) - Manhattan distance on grid");
 
     println!();
+    Ok(())
 }
 
 /// Recipe 7: Realistic Device Noise
 ///
 /// Comprehensive noise model for real quantum hardware.
-fn recipe_realistic_device() {
+fn recipe_realistic_device() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Recipe 7: Realistic Device Noise ---");
 
     let commands = CommandBuilder::new()
@@ -416,10 +417,9 @@ fn recipe_realistic_device() {
                     .with_measurement_error(0.02) // 2% readout error
                     .with_prep_error(0.001), // 0.1% preparation error
             )
-            .unwrap()
         },
         1000,
-    );
+    )?;
 
     println!(
         "  Realistic device: {:.1}% same outcome (expect ~95-99% with noise)",
@@ -427,13 +427,15 @@ fn recipe_realistic_device() {
     );
 
     // Surface code optimized noise
-    let same_outcome = count_bell_correlation(&commands, || surface_code_noise(0.001, false), 1000);
+    let same_outcome =
+        count_bell_correlation(&commands, || surface_code_noise(0.001, false), 1000)?;
     println!(
         "  Surface code noise (p=0.1%): {:.1}% same outcome",
         same_outcome as f64 / 10.0
     );
 
     println!();
+    Ok(())
 }
 
 // ============================================================================
@@ -441,18 +443,22 @@ fn recipe_realistic_device() {
 // ============================================================================
 
 /// Run circuit with noise and return error rate (fraction of 1 outcomes on qubit 0).
-fn run_with_noise<F>(commands: &CommandQueue, make_noise: F, shots: u64) -> f64
+fn run_with_noise<F>(
+    commands: &CommandQueue,
+    make_noise: F,
+    shots: u64,
+) -> Result<f64, Box<dyn std::error::Error>>
 where
-    F: Fn() -> ComposableNoiseModel,
+    F: Fn() -> ValidationResult<ComposableNoiseModel>,
 {
     let mut ones = 0;
     for seed in 0..shots {
-        let noise = make_noise();
+        let noise = make_noise()?;
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands)?;
         if outcomes
             .get(pecos_core::QubitId(0))
             .is_some_and(|o| o.outcome)
@@ -460,22 +466,26 @@ where
             ones += 1;
         }
     }
-    f64::from(ones) / shots as f64
+    Ok(f64::from(ones) / shots as f64)
 }
 
 /// Run 2-qubit circuit and return error rate (either qubit has wrong outcome).
-fn run_with_noise_2q<F>(commands: &CommandQueue, make_noise: F, shots: u64) -> f64
+fn run_with_noise_2q<F>(
+    commands: &CommandQueue,
+    make_noise: F,
+    shots: u64,
+) -> Result<f64, Box<dyn std::error::Error>>
 where
-    F: Fn() -> ComposableNoiseModel,
+    F: Fn() -> ValidationResult<ComposableNoiseModel>,
 {
     let mut errors = 0;
     for seed in 0..shots {
-        let noise = make_noise();
+        let noise = make_noise()?;
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands)?;
         // For a CX on |00>, expect |00>
         let o0 = outcomes.get(pecos_core::QubitId(0)).map(|o| o.outcome);
         let o1 = outcomes.get(pecos_core::QubitId(1)).map(|o| o.outcome);
@@ -483,27 +493,31 @@ where
             errors += 1;
         }
     }
-    f64::from(errors) / shots as f64
+    Ok(f64::from(errors) / shots as f64)
 }
 
 /// Count how many times Bell state qubits have same outcome.
-fn count_bell_correlation<F>(commands: &CommandQueue, make_noise: F, shots: u64) -> u64
+fn count_bell_correlation<F>(
+    commands: &CommandQueue,
+    make_noise: F,
+    shots: u64,
+) -> Result<u64, Box<dyn std::error::Error>>
 where
-    F: Fn() -> ComposableNoiseModel,
+    F: Fn() -> ValidationResult<ComposableNoiseModel>,
 {
     let mut same = 0;
     for seed in 0..shots {
-        let noise = make_noise();
+        let noise = make_noise()?;
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
             .with_seed(seed);
-        let outcomes = runner.apply_circuit(&mut state, commands).unwrap();
+        let outcomes = runner.apply_circuit(&mut state, commands)?;
         let o0 = outcomes.get(pecos_core::QubitId(0)).map(|o| o.outcome);
         let o1 = outcomes.get(pecos_core::QubitId(1)).map(|o| o.outcome);
         if o0 == o1 {
             same += 1;
         }
     }
-    same
+    Ok(same)
 }

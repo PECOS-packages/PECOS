@@ -103,15 +103,15 @@ impl GeometricSampler {
     /// Create a new geometric sampler for the given probability.
     ///
     /// # Arguments
-    /// * `probability` - Event probability in range (0.0, 1.0)
+    /// * `probability` - Event probability in range [0.0, 1.0]
     ///
     /// # Panics
-    /// Panics if probability is not in (0.0, 1.0).
+    /// Panics if probability is not in [0.0, 1.0].
     #[must_use]
     pub fn new(probability: f64) -> Self {
         assert!(
-            probability > 0.0 && probability < 1.0,
-            "Probability must be in (0, 1), got {probability}"
+            (0.0..=1.0).contains(&probability),
+            "Probability must be in [0, 1], got {probability}"
         );
 
         #[allow(
@@ -123,7 +123,7 @@ impl GeometricSampler {
         let threshold_u64 = (probability * (u64::MAX as f64)) as u64;
         Self {
             probability,
-            log_1_minus_p: (1.0 - probability).ln(),
+            log_1_minus_p: (-probability).ln_1p(),
             threshold_u64,
         }
     }
@@ -155,6 +155,12 @@ impl GeometricSampler {
     /// Returns the index of the next event, or None if it exceeds `end`.
     #[inline]
     pub fn next_event(&self, start: usize, end: usize, rng: &mut PecosRng) -> Option<usize> {
+        if self.probability == 0.0 || start >= end {
+            return None;
+        }
+        if self.probability >= 1.0 {
+            return Some(start);
+        }
         let u: f64 = rng.random();
         let skip = if u > 0.0 {
             // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
@@ -166,7 +172,7 @@ impl GeometricSampler {
             0
         };
 
-        let pos = start + skip;
+        let pos = start.checked_add(skip)?;
         if pos < end { Some(pos) } else { None }
     }
 
@@ -185,23 +191,9 @@ impl GeometricSampler {
         let mut result = Vec::with_capacity(expected.max(16));
 
         let mut idx = start;
-        while idx < end {
-            let u: f64 = rng.random();
-            let skip = if u > 0.0 {
-                // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                {
-                    (u.ln() / self.log_1_minus_p).floor() as usize
-                }
-            } else {
-                0
-            };
-
-            idx += skip;
-            if idx < end {
-                result.push(idx);
-                idx += 1;
-            }
+        while let Some(pos) = self.next_event(idx, end, rng) {
+            result.push(pos);
+            idx = pos + 1;
         }
 
         result
@@ -228,7 +220,7 @@ impl GeometricSampler {
     /// Check if a single event occurs (for occasional single checks).
     #[inline]
     pub fn check_single(&self, rng: &mut PecosRng) -> bool {
-        rng.next_u64() < self.threshold_u64
+        self.probability >= 1.0 || rng.next_u64() < self.threshold_u64
     }
 }
 
@@ -397,6 +389,27 @@ pub fn geometric(probability: f64) -> GeometricSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geometric_sampler_handles_boundaries_and_tiny_probabilities() {
+        let mut rng = PecosRng::seed_from_u64(42);
+        assert_eq!(
+            GeometricSampler::new(0.0).sample_range(3, 10, &mut rng),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            GeometricSampler::new(1.0).sample_range(3, 10, &mut rng),
+            (3..10).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            GeometricSampler::new(1e-300).next_event(3, 10, &mut rng),
+            None
+        );
+        assert_eq!(
+            GeometricSampler::new(1e-300).sample_range(3, 10, &mut rng),
+            Vec::<usize>::new()
+        );
+    }
 
     #[test]
     fn test_geometric_sampler_basic() {

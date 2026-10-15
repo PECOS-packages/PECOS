@@ -62,6 +62,7 @@ use super::{
 use crate::command::GateType;
 use crate::noise::validation::{
     ValidationResult, validate_angle_rate, validate_duration, validate_rate as checked_rate,
+    validate_scaled_angle_rate,
 };
 use pecos_core::TimeScale;
 
@@ -345,6 +346,7 @@ impl NoiseModelBuilder {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_idle_noise(
         mut self,
         linear_rate: f64,
@@ -353,6 +355,12 @@ impl NoiseModelBuilder {
         checked_rate(linear_rate, "linear_rate")?;
         validate_angle_rate(quadratic_rate, "quadratic_rate")?;
         self.p_idle_linear_rate = linear_rate;
+        validate_scaled_angle_rate(
+            quadratic_rate,
+            self.p_idle_coherent_factor,
+            "quadratic_rate",
+            "factor",
+        )?;
         self.p_idle_quadratic_rate = quadratic_rate;
         Ok(self)
     }
@@ -361,9 +369,16 @@ impl NoiseModelBuilder {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_coherent_idle(mut self, factor: f64) -> ValidationResult<Self> {
         checked_rate(factor, "factor")?;
         self.p_idle_coherent = true;
+        validate_scaled_angle_rate(
+            self.p_idle_quadratic_rate,
+            factor,
+            "quadratic_rate",
+            "factor",
+        )?;
         self.p_idle_coherent_factor = factor;
         Ok(self)
     }
@@ -405,7 +420,7 @@ impl NoiseModelBuilder {
     /// let model = NoiseModelBuilder::new()
     ///     .with_single_qubit_noise(seq![
     ///         skip_if_leaked(),
-    ///         prob(0.001, when_leaked(seep(), pauli())),
+    ///         prob(0.001, when_leaked(seep(), pauli())).unwrap(),
     ///     ])
     ///     .build();
     /// ```
@@ -465,7 +480,7 @@ impl NoiseModelBuilder {
     ///     .with_custom_channel(
     ///         CompositeChannelBuilder::any_gate("custom_noise", seq![
     ///             skip_if_leaked(),
-    ///             prob(0.05, pauli()),
+    ///             prob(0.05, pauli()).unwrap(),
     ///         ])
     ///     )
     ///     .build();
@@ -653,7 +668,7 @@ mod tests {
     #[test]
     fn test_composed_single_qubit() {
         let model = NoiseModelBuilder::new()
-            .with_single_qubit_noise(prob(0.1, pauli()))
+            .with_single_qubit_noise(prob(0.1, pauli()).unwrap())
             .build();
 
         assert!(model.channel_count() >= 1);
@@ -663,7 +678,7 @@ mod tests {
     fn test_mixed_configuration() {
         let model = NoiseModelBuilder::new()
             .with_p2(0.01)
-            .with_single_qubit_noise(seq![skip_if_leaked(), prob(0.001, pauli())])
+            .with_single_qubit_noise(seq![skip_if_leaked(), prob(0.001, pauli()).unwrap()])
             .with_measurement_error(0.02)
             .build();
 
@@ -830,7 +845,7 @@ mod tests {
         let mut composed_errors = 0;
         for seed in 0..shots {
             let model = NoiseModelBuilder::new()
-                .with_single_qubit_noise(prob(p1, pauli()))
+                .with_single_qubit_noise(prob(p1, pauli()).unwrap())
                 .build();
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)

@@ -924,10 +924,8 @@ impl DagCircuit {
     ///   id). It is a real measurement, but nothing that reads records can
     ///   resolve through it.
     ///
-    /// # Panics
-    ///
-    /// Panics if a gate holds more ids than qubits. DAG insertion and update
-    /// reject such payloads using [`Gate::validate`]; `Gate` itself has public fields.
+    /// Malformed gates that hold more ids than qubits return
+    /// [`MeasResolveError::Inconsistent`].
     pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
         let found = self.scan_measurements(&[id]);
         self.resolve_measurement(id, found.get(&id))
@@ -981,14 +979,18 @@ impl DagCircuit {
             // been removed. Either way the holder cannot legitimately own it.
             return Err(MeasResolveError::Inconsistent(id));
         }
-        let gate = self.gates[node].as_ref().expect("found above");
+        let gate = self
+            .gates
+            .get(node)
+            .and_then(Option::as_ref)
+            .ok_or(MeasResolveError::Inconsistent(id))?;
         if !gate.gate_type.consumes_measurement_record() {
             return Err(MeasResolveError::RecordLess { id, node });
         }
         let qubit = *gate
             .qubits
             .get(position)
-            .expect("a validated measurement carries one id per qubit");
+            .ok_or(MeasResolveError::Inconsistent(id))?;
         Ok(MeasRef {
             node,
             qubit,
@@ -1000,9 +1002,6 @@ impl DagCircuit {
     ///
     /// # Errors
     /// Returns the same resolution errors as [`Self::find_measurement`].
-    ///
-    /// # Panics
-    /// Panics on malformed internal gates as described by [`Self::find_measurement`].
     pub fn measured_pauli(
         &self,
         id: MeasId,
@@ -1015,9 +1014,6 @@ impl DagCircuit {
     ///
     /// # Errors
     /// Returns the first error in input order, using [`Self::find_measurement`]'s rules.
-    ///
-    /// # Panics
-    /// Panics on malformed internal gates as described by [`Self::find_measurement`].
     pub fn measured_paulis(
         &self,
         ids: &[MeasId],
@@ -1028,13 +1024,20 @@ impl DagCircuit {
             .collect()
     }
 
-    fn measurement_basis(
+    /// Return the measured Pauli and qubit for an already resolved reference.
+    ///
+    /// # Errors
+    /// Returns [`MeasResolveError::Inconsistent`] if the referenced gate is gone, and
+    /// [`MeasResolveError::RecordLess`] if it does not consume a measurement record.
+    pub fn measurement_basis(
         &self,
         reference: MeasRef,
     ) -> Result<(pecos_core::Pauli, QubitId), MeasResolveError> {
-        let gate = self.gates[reference.node]
-            .as_ref()
-            .expect("resolved measurement node");
+        let gate = self
+            .gates
+            .get(reference.node)
+            .and_then(Option::as_ref)
+            .ok_or(MeasResolveError::Inconsistent(reference.meas_id))?;
         let pauli = gate
             .gate_type
             .measured_pauli()

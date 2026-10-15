@@ -2482,7 +2482,9 @@ impl PyTickCircuit {
         match mode {
             "append" => {
                 let idx = self.inner.tick().index();
-                *self.inner.get_tick_mut(idx).expect("new tick") = source.clone();
+                *self.inner.get_tick_mut(idx).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("created tick is missing")
+                })? = source.clone();
             }
             "insert" => {
                 if index > self.inner.num_ticks() {
@@ -2491,7 +2493,9 @@ impl PyTickCircuit {
                     ));
                 }
                 let _ = self.inner.insert_tick(index);
-                *self.inner.get_tick_mut(index).expect("inserted tick") = source.clone();
+                *self.inner.get_tick_mut(index).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("created tick is missing")
+                })? = source.clone();
             }
             "replace" => {
                 let tick = self.inner.get_tick_mut(index).ok_or_else(|| {

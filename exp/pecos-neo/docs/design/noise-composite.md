@@ -123,7 +123,7 @@ let prep_noise = seq([
             (leak_ratio, leak()),
             (1.0 - leak_ratio, inject(X)),
         ])
-    ),
+    ).unwrap(),
 ]);
 ```
 
@@ -157,14 +157,14 @@ let sq_noise = seq([
     prob(p1,
         when(leaked,
             // Leaked: seepage opportunity
-            prob(p_seep, seep()),
+            prob(p_seep, seep()).unwrap(),
             // Not leaked: emission vs pauli
             sample([
                 (emission_ratio, emission_noise),
                 (1.0 - emission_ratio, pauli(weights)),
             ])
         )
-    ),
+    ).unwrap(),
 ]);
 ```
 
@@ -200,7 +200,7 @@ let tq_noise = seq([
     skip_if_any(leaked),
     prob_fn(|gate| p2_angle_error_rate(gate.angle()),
         when(any_leaked,
-            per_qubit(prob(p_seep, seep())),
+            per_qubit(prob(p_seep, seep()).unwrap()),
             sample([
                 (emission_ratio, tq_emission_noise),
                 (1.0 - emission_ratio, tq_pauli(weights)),
@@ -231,8 +231,8 @@ let meas_noise = seq([
     when(leaked, force_outcome(1)),
 
     // Step 2: Asymmetric flip noise (applies to possibly-forced outcome)
-    on_outcome(0, prob(p_meas_0, flip_outcome())),
-    on_outcome(1, prob(p_meas_1, flip_outcome())),
+    on_outcome(0, prob(p_meas_0, flip_outcome()).unwrap()),
+    on_outcome(1, prob(p_meas_1, flip_outcome()).unwrap()),
 ]);
 ```
 
@@ -381,7 +381,7 @@ let noise = NoiseModel::new()
 
 The tree structure naturally supports early exit:
 ```rust
-prob(0.01, ...)  // 99% of the time, exit here
+prob(0.01, ...).unwrap()  // 99% of the time, exit here
 ```
 
 ### RNG Batching
@@ -446,8 +446,8 @@ fn in_hot_zone(qubit: QubitId, ctx: &Ctx) -> bool {
 
 // Use them
 let noise = when(in_hot_zone,
-    prob(0.1, AmplitudeDamping { gamma: 0.05 }),
-    prob(0.01, depolarize()),
+    prob(0.1, AmplitudeDamping { gamma: 0.05 }).unwrap(),
+    prob(0.01, depolarize()).unwrap(),
 );
 ```
 
@@ -682,13 +682,13 @@ fn test_sq_noise_expression() {
         SkipIf::new(Leaked),
         Prob::new(p1,
             When::new(Leaked,
-                Prob::new(p_seep, Seep),
+                Prob::new(p_seep, Seep).unwrap(),
                 Sample::new(vec![
                     (emission_ratio, EmissionNoise::new(...)),
                     (1.0 - emission_ratio, Pauli::uniform()),
                 ])
             )
-        ),
+        ).unwrap(),
     ]);
 
     // Verify statistical distribution

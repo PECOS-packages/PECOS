@@ -44,23 +44,23 @@ use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 
 let noise = CompositeNoiseModelBuilder::new()
     // Gate errors
-    .with_p1(0.001)                     // Single-qubit error rate
-    .with_p2(0.01)                      // Two-qubit error rate
-    .with_p1_emission_ratio(0.1)        // Fraction of errors that leak (vs Pauli)
+    .with_p1(0.001).unwrap()                     // Single-qubit error rate
+    .with_p2(0.01).unwrap()                      // Two-qubit error rate
+    .with_p1_emission_ratio(0.1).unwrap()        // Fraction of errors that leak (vs Pauli)
 
     // Measurement
-    .with_p_meas(0.02, 0.03)           // Asymmetric: P(report 1|true 0), P(report 0|true 1)
+    .with_p_meas(0.02, 0.03).unwrap()           // Asymmetric: P(report 1|true 0), P(report 0|true 1)
 
     // Preparation
-    .with_p_prep(0.001)                // Prep error rate
+    .with_p_prep(0.001).unwrap()                // Prep error rate
 
     // Leakage
-    .with_leakage(0.001, 0.1)         // Leak rate, seepage rate
+    .with_leakage(0.001, 0.1).unwrap()         // Leak rate, seepage rate
 
     // Crosstalk
-    .with_measurement_crosstalk(0.001, 0.01)  // Global, local rates
+    .with_p_meas_crosstalk(0.001, 0.01).unwrap()  // Global, local rates
 
-    .build();
+    .build().unwrap();
 ```
 
 ## Common Presets
@@ -68,25 +68,25 @@ let noise = CompositeNoiseModelBuilder::new()
 **Ion trap style:**
 ```rust
 CompositeNoiseModelBuilder::new()
-    .with_p1(0.0001).with_p2(0.001)
-    .with_p1_emission_ratio(0.1).with_p2_emission_ratio(0.1)
-    .with_leakage(0.0001, 0.1)
-    .with_p_meas(0.001, 0.01)
-    .build();
+    .with_p1(0.0001).unwrap().with_p2(0.001).unwrap()
+    .with_p1_emission_ratio(0.1).unwrap().with_p2_emission_ratio(0.1).unwrap()
+    .with_leakage(0.0001, 0.1).unwrap()
+    .with_p_meas(0.001, 0.01).unwrap()
+    .build().unwrap();
 ```
 
 **Superconducting style:**
 ```rust
 CompositeNoiseModelBuilder::new()
-    .with_p1(0.001).with_p2(0.01)
+    .with_p1(0.001).unwrap().with_p2(0.01).unwrap()
     .with_idle_t1_t2(50e-6, 30e-6).unwrap()
-    .with_p_meas_symmetric(0.02)
-    .build();
+    .with_p_meas_symmetric(0.02).unwrap()
+    .build().unwrap();
 ```
 
 **Pure depolarizing (testing):**
 ```rust
-CompositeNoiseModelBuilder::new().with_p1(p).with_p2(p).build();
+CompositeNoiseModelBuilder::new().with_p1(p).unwrap().with_p2(p).unwrap().build().unwrap();
 ```
 
 ## Going Deeper

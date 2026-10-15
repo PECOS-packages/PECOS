@@ -177,7 +177,10 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
             Box::new(CrosstalkChannel::global_only(0.2)),
             after_gate.with(AfterPreparation).with(AfterMeasurement),
         ),
-        (Box::new(CorrelatedNoiseChannel::new(0.2, 0.5)), after_gate),
+        (
+            Box::new(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap()),
+            after_gate,
+        ),
         (
             Box::new(CategoryBasedChannel::new().with_default(0.2)),
             after_gate,

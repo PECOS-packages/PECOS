@@ -55,7 +55,7 @@
 
 use super::validation::{
     ValidationError, ValidationResult, validate_angle_rate, validate_duration, validate_positive,
-    validate_rate,
+    validate_rate, validate_scaled_angle_rate,
 };
 use super::{
     NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse, PauliWeights,
@@ -237,8 +237,16 @@ impl IdleChannel {
     ///
     /// # Errors
     /// Rejects a non-finite or negative rate.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_quadratic_rate(mut self, rate: f64) -> ValidationResult<Self> {
-        self.quadratic_rate = validate_angle_rate(rate, "quadratic_rate")?;
+        validate_angle_rate(rate, "quadratic_rate")?;
+        validate_scaled_angle_rate(
+            rate,
+            self.coherent_to_incoherent_factor,
+            "quadratic_rate",
+            "coherent_to_incoherent_factor",
+        )?;
+        self.quadratic_rate = rate;
         Ok(self)
     }
 
@@ -246,6 +254,7 @@ impl IdleChannel {
     ///
     /// # Errors
     /// Rejects non-finite or negative values and axes other than X, Y, Z, L.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_sin_squared(
         mut self,
         rate: f64,
@@ -260,6 +269,12 @@ impl IdleChannel {
                 );
             }
             validate_rate(*multiplier, &format!("sin_squared multiplier for '{axis}'"))?;
+            validate_scaled_angle_rate(
+                rate,
+                *multiplier,
+                "sin_squared_rate",
+                &format!("sin_squared multiplier for '{axis}'"),
+            )?;
         }
         self.sin_squared_rate = rate;
         self.sin_squared_model = model;
@@ -299,9 +314,16 @@ impl IdleChannel {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> ValidationResult<Self> {
-        self.coherent_to_incoherent_factor =
-            validate_rate(factor, "coherent_to_incoherent_factor")?;
+        validate_rate(factor, "coherent_to_incoherent_factor")?;
+        validate_scaled_angle_rate(
+            self.quadratic_rate,
+            factor,
+            "quadratic_rate",
+            "coherent_to_incoherent_factor",
+        )?;
+        self.coherent_to_incoherent_factor = factor;
         Ok(self)
     }
 
@@ -574,6 +596,32 @@ mod tests {
             qubits,
             angles: &[],
             gate_id: None,
+        }
+    }
+
+    #[test]
+    fn scaled_angle_boundary_probabilities_are_finite() {
+        use crate::noise::validation::{MAX_ANGLE_RATE, MAX_DURATION};
+        let channel = IdleChannel::default()
+            .with_quadratic_rate(MAX_ANGLE_RATE / 2.0)
+            .unwrap()
+            .with_coherent_to_incoherent_factor(2.0)
+            .unwrap()
+            .with_sin_squared(
+                MAX_ANGLE_RATE / 2.0,
+                BTreeMap::from([("X".to_owned(), 2.0)]),
+            )
+            .unwrap();
+        for probability in [
+            channel.quadratic_probability(MAX_DURATION),
+            IdleChannel::sin_squared_probability(
+                channel.sin_squared_rate,
+                channel.sin_squared_model["X"],
+                MAX_DURATION,
+            ),
+        ] {
+            assert!(probability.is_finite());
+            assert!((0.0..=1.0).contains(&probability));
         }
     }
 

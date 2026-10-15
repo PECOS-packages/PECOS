@@ -19,6 +19,7 @@ use super::response::CompositeResponse;
 use crate::command::{GateCommand, GatePayload, GateType};
 use crate::noise::validation::{
     MAX_ANGLE_FRACTION, MAX_ANGLE_RATE, ValidationResult, validate_bounded, validate_finite,
+    validate_probability,
 };
 use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
@@ -735,11 +736,13 @@ pub struct SampleEmissionWithProb {
 
 impl SampleEmissionWithProb {
     /// Create with given emission probability.
-    #[must_use]
-    pub fn new(prob: f64) -> Self {
-        Self {
-            prob: prob.clamp(0.0, 1.0),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(prob: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            prob: validate_probability(prob, "prob")?,
+        })
     }
 }
 
@@ -786,7 +789,7 @@ impl GateAction for SampleEmissionWithProb {
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Two-qubit gate with emission probability and partner depolarizing
-/// let tq_noise = prob(0.01, two_qubit_emission_with_partner_depolarize());
+/// let tq_noise = prob(0.01, two_qubit_emission_with_partner_depolarize()).unwrap();
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct TwoQubitEmissionWithPartnerDepolarize {
@@ -893,12 +896,14 @@ pub struct IndependentEmissionWithPartnerDepolarize {
 
 impl IndependentEmissionWithPartnerDepolarize {
     /// Create with given emission probability.
-    #[must_use]
-    pub fn new(emission_prob: f64) -> Self {
-        Self {
-            emission_prob: emission_prob.clamp(0.0, 1.0),
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(emission_prob: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            emission_prob: validate_probability(emission_prob, "emission_prob")?,
             partner_pauli_weights: PauliWeights::uniform(),
-        }
+        })
     }
 
     /// Create with custom partner depolarizing weights.
@@ -1201,29 +1206,35 @@ pub struct BiasedAmplitudeDamping {
 
 impl BiasedAmplitudeDamping {
     /// Create with given X probability (remainder is Z).
-    #[must_use]
-    pub fn new(x_probability: f64) -> Self {
-        Self {
-            x_probability: x_probability.clamp(0.0, 1.0),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(x_probability: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            x_probability: validate_probability(x_probability, "x_probability")?,
+        })
     }
 
     /// Standard T1 approximation (50% X, 50% Z).
     #[must_use]
     pub fn standard() -> Self {
-        Self::new(0.5)
+        Self { x_probability: 0.5 }
     }
 
     /// X-biased (more aggressive relaxation).
     #[must_use]
     pub fn x_biased() -> Self {
-        Self::new(0.75)
+        Self {
+            x_probability: 0.75,
+        }
     }
 
     /// Z-biased (more conservative, mostly dephasing).
     #[must_use]
     pub fn z_biased() -> Self {
-        Self::new(0.25)
+        Self {
+            x_probability: 0.25,
+        }
     }
 }
 
@@ -2198,8 +2209,10 @@ pub mod actions {
     ///
     /// Unlike `sample_emission()` which should be wrapped in `prob()`,
     /// this action handles the probability sampling itself.
-    #[must_use]
-    pub fn sample_emission_with_prob(prob: f64) -> SampleEmissionWithProb {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn sample_emission_with_prob(prob: f64) -> ValidationResult<SampleEmissionWithProb> {
         SampleEmissionWithProb::new(prob)
     }
 
@@ -2253,7 +2266,7 @@ pub mod actions {
     /// ```
     /// # use pecos_neo::noise::composite::prelude::*;
     /// // 1% chance of emission, with automatic partner depolarizing
-    /// let noise = prob(0.01, two_qubit_emission_with_partner_depolarize());
+    /// let noise = prob(0.01, two_qubit_emission_with_partner_depolarize()).unwrap();
     /// ```
     #[must_use]
     pub fn two_qubit_emission_with_partner_depolarize() -> TwoQubitEmissionWithPartnerDepolarize {
@@ -2271,10 +2284,14 @@ pub mod actions {
     /// ```
     /// # use pecos_neo::noise::composite::prelude::*;
     /// // Each qubit has 1% independent emission probability
-    /// let noise = independent_emission(0.01);
+    /// let noise = independent_emission(0.01).unwrap();
     /// ```
-    #[must_use]
-    pub fn independent_emission(emission_prob: f64) -> IndependentEmissionWithPartnerDepolarize {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn independent_emission(
+        emission_prob: f64,
+    ) -> ValidationResult<IndependentEmissionWithPartnerDepolarize> {
         IndependentEmissionWithPartnerDepolarize::new(emission_prob)
     }
 
@@ -2287,8 +2304,12 @@ pub mod actions {
     }
 
     /// Biased amplitude damping with custom X probability.
-    #[must_use]
-    pub fn amplitude_damping_biased(x_probability: f64) -> BiasedAmplitudeDamping {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn amplitude_damping_biased(
+        x_probability: f64,
+    ) -> ValidationResult<BiasedAmplitudeDamping> {
         BiasedAmplitudeDamping::new(x_probability)
     }
 
@@ -2399,7 +2420,7 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))),
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))).unwrap(),
     /// ];
     /// ```
     ///
@@ -2572,7 +2593,7 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))),
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))).unwrap(),
     /// ];
     /// ```
     #[must_use]
@@ -3029,7 +3050,7 @@ mod tests {
     fn test_sample_emission_with_prob() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = SampleEmissionWithProb::new(0.5); // 50% emission probability
+        let action = SampleEmissionWithProb::new(0.5).unwrap(); // 50% emission probability
 
         let mut fired_count = 0;
 
@@ -3062,14 +3083,14 @@ mod tests {
         // === Stage 1: Sample emission for each qubit ===
 
         // Qubit 0: sample with 100% probability (always fires for testing)
-        let action0 = SampleEmissionWithProb::new(1.0);
+        let action0 = SampleEmissionWithProb::new(1.0).unwrap();
         ctx.set_current_qubit_index(0, &qubits);
         action0.apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(ctx.is_fired(0), "Qubit 0 should have fired");
 
         // Qubit 1: sample with 0% probability (never fires for testing)
-        let action1 = SampleEmissionWithProb::new(0.0);
+        let action1 = SampleEmissionWithProb::new(0.0).unwrap();
         ctx.set_current_qubit_index(1, &qubits);
         action1.apply(QubitId(1), &mut ctx, &mut rng);
 

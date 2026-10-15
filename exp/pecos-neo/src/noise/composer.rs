@@ -1212,7 +1212,7 @@ mod tests {
             .add_channel(CategoryBasedChannel::new().with_default(0.2))
             .add_channel(GateDependentChannel::new().with_gate_error(GateType::H, 0.2))
             .add_channel(GateIdDependentChannel::new().with_gate_type_error(GateType::CX, 0.2))
-            .add_channel(CorrelatedNoiseChannel::new(0.2, 0.5))
+            .add_channel(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap())
             .add_channel(
                 PerGatePauliChannel::new()
                     .with_base(0.2, 0.2)
@@ -1230,6 +1230,7 @@ mod tests {
             )
             .add_channel(
                 BatchCompositeChannel::new("batch", 0.2, pauli())
+                    .unwrap()
                     .with_filter(CompositeEventFilter::AnyGate),
             )
             .add_channel(

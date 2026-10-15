@@ -1590,7 +1590,7 @@ static CORE_CATEGORY: [GateCategory; 256] = const {
 
 ```rust
 // Define noise that applies to ALL 2-qubit gates
-let two_qubit_noise = CompositeChannel::new("tq_depol", prob(0.01, two_qubit_pauli()))
+let two_qubit_noise = CompositeChannel::new("tq_depol", prob(0.01, two_qubit_pauli()).unwrap())
     .with_filter(CompositeEventFilter::TwoQubitGate);
 
 // Define noise for parameterized gates with angle-dependent probability

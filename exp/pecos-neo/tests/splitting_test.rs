@@ -1114,9 +1114,12 @@ fn test_subset_simulation_with_noise() {
     let noise_builder = || -> Option<ComposableNoiseModel> {
         Some(
             CompositeNoiseModelBuilder::new()
-                .with_p1(0.05) // 5% single-qubit gate error
-                .with_p_meas(0.01, 0.01) // 1% measurement error (symmetric)
-                .build(),
+                .with_p1(0.05)
+                .unwrap() // 5% single-qubit gate error
+                .with_p_meas(0.01, 0.01)
+                .unwrap() // 1% measurement error (symmetric)
+                .build()
+                .unwrap(),
         )
     };
 

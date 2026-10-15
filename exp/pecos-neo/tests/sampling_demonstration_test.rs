@@ -340,7 +340,7 @@ fn demo_outcome_biasing() {
     println!("  Unbiased: {}% measured '1'", f64::from(count_one) / 10.0);
 
     // With biasing toward '1': more '1' outcomes (but with weights)
-    let bias_config = OutcomeBiasConfig::bias_toward_one(0.9);
+    let bias_config = OutcomeBiasConfig::bias_toward_one(0.9).unwrap();
     let mut biased_runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
         .with_outcome_bias(bias_config)
         .with_seed(42);

@@ -54,7 +54,7 @@
 //!             seep(),    // If leaked: seepage (return to computational basis)
 //!             pauli()    // If not leaked: random Pauli error
 //!         )
-//!     ),
+//!     ).unwrap(),
 //! ];
 //! ```
 //!
@@ -69,7 +69,7 @@
 //! // Create a composite-based noise channel
 //! let gate_noise = seq![
 //!     skip_if_leaked(),
-//!     prob(0.01, pauli()),
+//!     prob(0.01, pauli()).unwrap(),
 //! ];
 //! let channel = CompositeChannelBuilder::single_qubit("sq_depolarizing", gate_noise);
 //!
@@ -86,12 +86,12 @@
 //! use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 //!
 //! let model = CompositeNoiseModelBuilder::new()
-//!     .with_p1(0.001)                 // Single-qubit gate error
-//!     .with_p2(0.01)                  // Two-qubit gate error
-//!     .with_p_meas(0.02, 0.03)        // Asymmetric measurement error
+//!     .with_p1(0.001).unwrap()                 // Single-qubit gate error
+//!     .with_p2(0.01).unwrap()                  // Two-qubit gate error
+//!     .with_p_meas(0.02, 0.03).unwrap()        // Asymmetric measurement error
 //!     .with_idle_noise(0.001, 0.01).unwrap()   // T1 and T2 decay
-//!     .with_leakage(0.001, 0.1)       // Leakage and seepage
-//!     .build();
+//!     .with_leakage(0.001, 0.1).unwrap()       // Leakage and seepage
+//!     .build().unwrap();
 //! ```
 //!
 //! ## Advanced Builder Features
@@ -103,18 +103,18 @@
 //!
 //! let model = CompositeNoiseModelBuilder::new()
 //!     // Angle-dependent two-qubit noise
-//!     .with_p2(0.01)
+//!     .with_p2(0.01).unwrap()
 //!     .with_p2_angle_scaling(AngleScaling::linear())
 //!
 //!     // Leakage scaling (0.5 = half become leakage, half depolarizing)
-//!     .with_p1_emission_ratio(0.1)
-//!     .with_leakage_scale(0.5)
+//!     .with_p1_emission_ratio(0.1).unwrap()
+//!     .with_leakage_scale(0.5).unwrap()
 //!
 //!     // Custom Pauli weights for idle noise (Z-only for pure dephasing)
 //!     .with_p_idle_linear(0.001).unwrap()
 //!     .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0))
 //!
-//!     .build();
+//!     .build().unwrap();
 //! ```
 //!
 //! # Idle Noise (T1/T2)
@@ -238,7 +238,8 @@ mod tests {
                         (1.0 - emission_ratio, pauli()),
                     ],
                 ),
-            ),
+            )
+            .unwrap(),
         ];
 
         let mut ctx = NoiseContext::new();
@@ -282,7 +283,7 @@ mod tests {
     /// Test that leaked qubits get their gates skipped.
     #[test]
     fn test_leaked_qubit_skips_gate() {
-        let sq_noise = seq![skip_if_leaked(), prob(1.0, pauli())];
+        let sq_noise = seq![skip_if_leaked(), prob(1.0, pauli()).unwrap()];
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -300,7 +301,7 @@ mod tests {
     /// Test seepage for leaked qubits.
     #[test]
     fn test_leaked_qubit_seepage() {
-        let sq_noise = prob(1.0, when_leaked(seep(), nothing()));
+        let sq_noise = prob(1.0, when_leaked(seep(), nothing())).unwrap();
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -328,7 +329,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         // Create a composite-based noise channel with 100% error rate for testing
-        let sq_noise = prob(1.0, pauli());
+        let sq_noise = prob(1.0, pauli()).unwrap();
         let channel = CompositeChannelBuilder::single_qubit("test_depolarizing", sq_noise);
 
         // Add to composable noise model
@@ -359,7 +360,7 @@ mod tests {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         // Composite-based gate noise
-        let gate_noise = prob(0.0, pauli()); // No gate noise
+        let gate_noise = prob(0.0, pauli()).unwrap(); // No gate noise
         let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", gate_noise);
 
         // Traditional measurement noise channel
@@ -436,8 +437,8 @@ mod tests {
         // Asymmetric noise: 2% error on 0, 5% error on 1
         // (using 100% here for deterministic testing)
         let meas_noise = seq![
-            on_zero(prob(1.0, flip_outcome())), // Always flip 0 -> 1
-            on_one(prob(0.0, flip_outcome())),  // Never flip 1 -> 0
+            on_zero(prob(1.0, flip_outcome()).unwrap()), // Always flip 0 -> 1
+            on_one(prob(0.0, flip_outcome()).unwrap()),  // Never flip 1 -> 0
         ];
 
         // Test with outcome 0 - should flip
@@ -680,7 +681,7 @@ mod tests {
             }
 
             // Composite-based approach (recreate each iteration)
-            let flow_noise = prob(p1, pauli());
+            let flow_noise = prob(p1, pauli()).unwrap();
             let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", flow_noise);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
 
@@ -743,7 +744,7 @@ mod tests {
             }
 
             // Composite-based approach (recreate each iteration)
-            let flow_meas_noise = prob(p_meas, flip_outcome());
+            let flow_meas_noise = prob(p_meas, flip_outcome()).unwrap();
             let flow_channel = CompositeChannel::new("flow_meas", flow_meas_noise)
                 .with_filter(CompositeEventFilter::AfterMeasurement);
             let flow_noise_model = ComposableNoiseModel::new().add_channel(flow_channel);
@@ -823,10 +824,10 @@ mod tests {
             }
 
             // Composite-based equivalent (recreate each iteration)
-            let sq_noise = prob(p1, pauli());
+            let sq_noise = prob(p1, pauli()).unwrap();
             let sq_channel = CompositeChannelBuilder::single_qubit("flow_sq", sq_noise);
 
-            let meas_noise = prob(p_meas, flip_outcome());
+            let meas_noise = prob(p_meas, flip_outcome()).unwrap();
             let meas_channel = CompositeChannel::new("flow_meas", meas_noise)
                 .with_filter(CompositeEventFilter::AfterMeasurement);
 
@@ -1103,7 +1104,7 @@ mod tests {
     #[test]
     fn test_probabilistic_crosstalk() {
         // Create probabilistic crosstalk: 10% chance of state-dependent effect
-        let crosstalk_noise = prob(0.1, crosstalk());
+        let crosstalk_noise = prob(0.1, crosstalk()).unwrap();
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1141,7 +1142,7 @@ mod tests {
         // Stage 1: 100% emission probability (always fires)
         // Stage 2: If partner fired and I didn't, apply Pauli
         let noise = two_stage(
-            prob(1.0, sample_emission()),                   // Stage 1: 100% emission
+            prob(1.0, sample_emission()).unwrap(), // Stage 1: 100% emission
             when(partner_only_fired(), pauli(), nothing()), // Stage 2: partner depolarizing
         );
 
@@ -1181,7 +1182,7 @@ mod tests {
         // Stage 1: Sample emission with 50% prob (we'll run many times to get both cases)
         // Stage 2: If partner fired and I didn't, apply Pauli
         let noise = two_stage(
-            prob(0.5, sample_emission()),
+            prob(0.5, sample_emission()).unwrap(),
             when(partner_only_fired(), pauli(), nothing()),
         );
 
@@ -1363,7 +1364,7 @@ mod tests {
         assert_eq!(action.describe(), "pauli");
 
         // Prob with inner
-        let prob_noise = prob(0.01, pauli());
+        let prob_noise = prob(0.01, pauli()).unwrap();
         let desc = prob_noise.describe();
         assert!(desc.contains("0.01"), "Should contain probability: {desc}");
         assert!(desc.contains("pauli"), "Should contain inner: {desc}");
@@ -1385,7 +1386,8 @@ mod tests {
             prob(
                 0.01,
                 when_leaked(seep(), sample![(0.25, leak()), (0.75, pauli()),],)
-            ),
+            )
+            .unwrap(),
         ];
 
         let tree = noise.describe_tree();
@@ -1410,7 +1412,7 @@ mod tests {
         use crate::noise::ComposableNoiseModel;
 
         let channel1 =
-            CompositeChannelBuilder::single_qubit("sq_depolarizing", prob(0.01, pauli()));
+            CompositeChannelBuilder::single_qubit("sq_depolarizing", prob(0.01, pauli()).unwrap());
         let channel2 = CompositeChannelBuilder::after_measurement("meas_error", flip_outcome());
 
         let model = ComposableNoiseModel::new()

@@ -15,7 +15,9 @@
 //! Primitives are the building blocks of noise decision trees. They compose
 //! together to form complex noise models while maintaining a simple, fixed API.
 
-use crate::noise::validation::{ValidationResult, validate_rate};
+use crate::noise::validation::{
+    ValidationResult, validate_probability, validate_rate, validate_scaled_angle_rate,
+};
 use std::fmt::Write as _;
 
 use super::action::GateAction;
@@ -253,7 +255,7 @@ pub trait TwoStagePrimitive: Send + Sync {
 ///
 /// // Two-stage emission with partner depolarizing
 /// let noise = two_stage(
-///     prob(0.01, sample_emission()),           // Stage 1: sample emission
+///     prob(0.01, sample_emission()).unwrap(),           // Stage 1: sample emission
 ///     when(partner_only_fired(), pauli(), nothing())  // Stage 2: partner depolarizing
 /// );
 /// ```
@@ -449,12 +451,14 @@ impl<P: Primitive> Prob<P> {
     /// # Arguments
     /// * `probability` - Probability of executing inner (0.0 to 1.0)
     /// * `inner` - Primitive to execute if probability check passes
-    #[must_use]
-    pub fn new(probability: f64, inner: P) -> Self {
-        Self {
-            probability: probability.clamp(0.0, 1.0),
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(probability: f64, inner: P) -> ValidationResult<Self> {
+        Ok(Self {
+            probability: validate_probability(probability, "probability")?,
             inner,
-        }
+        })
     }
 
     /// Get the probability value.
@@ -725,9 +729,12 @@ impl<P: Primitive> ProbQuadratic<P> {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn new(rate_per_time_unit: f64, inner: P) -> ValidationResult<Self> {
+        validate_rate(rate_per_time_unit, "rate_per_time_unit")?;
+        validate_scaled_angle_rate(rate_per_time_unit, 1.0, "rate_per_time_unit", "factor")?;
         Ok(Self {
-            rate_per_time_unit: validate_rate(rate_per_time_unit, "rate_per_time_unit")?,
+            rate_per_time_unit,
             coherent_to_incoherent_factor: 1.0,
             inner,
         })
@@ -740,8 +747,16 @@ impl<P: Primitive> ProbQuadratic<P> {
     ///
     /// # Errors
     /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn with_factor(mut self, factor: f64) -> ValidationResult<Self> {
-        self.coherent_to_incoherent_factor = validate_rate(factor, "factor")?;
+        validate_rate(factor, "factor")?;
+        validate_scaled_angle_rate(
+            self.rate_per_time_unit,
+            factor,
+            "rate_per_time_unit",
+            "factor",
+        )?;
+        self.coherent_to_incoherent_factor = factor;
         Ok(self)
     }
 }
@@ -1189,7 +1204,7 @@ impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
 ///
 /// let noise = seq![
 ///     skip_if_leaked(),
-///     prob(0.01, pauli()),
+///     prob(0.01, pauli()).unwrap(),
 /// ];
 /// ```
 #[macro_export]
@@ -1348,8 +1363,10 @@ pub mod primitives {
     use crate::noise::validation::ValidationResult;
 
     /// Probability gate.
-    #[must_use]
-    pub fn prob<P: Primitive>(probability: f64, inner: P) -> Prob<P> {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn prob<P: Primitive>(probability: f64, inner: P) -> ValidationResult<Prob<P>> {
         Prob::new(probability, inner)
     }
 
@@ -1536,8 +1553,8 @@ pub mod primitives {
     /// # use pecos_neo::noise::composite::prelude::*;
     /// // Asymmetric measurement noise
     /// let meas_noise = seq![
-    ///     on_outcome(false, prob(0.02, flip_outcome())),  // 2% error on 0
-    ///     on_outcome(true, prob(0.05, flip_outcome())),   // 5% error on 1
+    ///     on_outcome(false, prob(0.02, flip_outcome()).unwrap()),  // 2% error on 0
+    ///     on_outcome(true, prob(0.05, flip_outcome()).unwrap()),   // 5% error on 1
     /// ];
     /// ```
     #[must_use]
@@ -1661,7 +1678,7 @@ pub mod primitives {
     ///
     /// // Two-stage emission with partner depolarizing
     /// let noise = two_stage(
-    ///     prob(0.01, sample_emission()),           // Stage 1: sample emission
+    ///     prob(0.01, sample_emission()).unwrap(),           // Stage 1: sample emission
     ///     when(partner_only_fired(), pauli(), nothing())  // Stage 2: partner depolarizing
     /// );
     /// ```
@@ -1694,12 +1711,37 @@ mod tests {
     }
 
     #[test]
+    fn quadratic_boundary_probability_is_finite_and_applied() {
+        use crate::noise::validation::{MAX_ANGLE_RATE, MAX_DURATION};
+        let noise = prob_quadratic(MAX_ANGLE_RATE / 2.0, inject_z())
+            .unwrap()
+            .with_factor(2.0)
+            .unwrap();
+        let angle = (noise.rate_per_time_unit * noise.coherent_to_incoherent_factor) * MAX_DURATION;
+        assert!(angle.is_finite());
+        let probability = angle.sin().powi(2);
+        assert!(probability.is_finite());
+        assert!((0.0..=1.0).contains(&probability));
+        let mut ctx = NoiseContext::new();
+        ctx.set_current_idle(pecos_core::TimeUnits::new(u64::MAX));
+        let mut rng = PecosRng::seed_from_u64(42);
+        let mut expected_rng = rng.clone();
+        for _ in 0..100 {
+            let expected = expected_rng.random::<f64>() < probability;
+            assert_eq!(
+                !noise.apply(QubitId(0), &mut ctx, &mut rng).is_none(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn test_prob_passes() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Probability 1.0 should always pass
-        let prim = prob(1.0, leak());
+        let prim = prob(1.0, leak()).unwrap();
         let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(response.causes_leak());
@@ -1711,7 +1753,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Probability 0.0 should never pass
-        let prim = prob(0.0, leak());
+        let prim = prob(0.0, leak()).unwrap();
         let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(response.is_none());
@@ -1722,7 +1764,7 @@ mod tests {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let prim = prob(0.3, leak());
+        let prim = prob(0.3, leak()).unwrap();
         let mut leak_count = 0;
 
         for _ in 0..1000 {
@@ -1836,13 +1878,16 @@ mod tests {
         //     seep(),
         //     pauli()
         //   )
-        // )
+        // ).unwrap()
 
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Heterogeneous sequence - use macro
-        let noise = seq![skip_if_leaked(), prob(0.5, when_leaked(seep(), pauli())),];
+        let noise = seq![
+            skip_if_leaked(),
+            prob(0.5, when_leaked(seep(), pauli())).unwrap(),
+        ];
 
         // Not leaked: should sometimes apply pauli
         let mut pauli_count = 0;

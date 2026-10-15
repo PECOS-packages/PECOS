@@ -84,9 +84,9 @@ let config = SubsetConfig::new()
 // Run with noise
 let noise_builder = || {
     Some(CompositeNoiseModelBuilder::new()
-        .with_p1(0.01)
-        .with_p2(0.05)
-        .build())
+        .with_p1(0.01).unwrap()
+        .with_p2(0.05).unwrap()
+        .build().unwrap())
 };
 
 let result = SubsetSimulation::new(circuit, 2, score_fn, is_failure_fn)

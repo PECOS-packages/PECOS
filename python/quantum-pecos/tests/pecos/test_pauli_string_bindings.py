@@ -2,8 +2,9 @@
 #
 # Licensed under the Apache License, Version 2.0
 
+import numpy as np
 import pytest
-from pecos_rslib import H, Pauli, PauliString, X, Y, Z
+from pecos_rslib import H, Pauli, PauliString, X, Xs, Y, Ys, Z, Zs
 
 
 def test_pauli_string_from_str_accepts_dense_and_sparse_formats() -> None:
@@ -151,3 +152,65 @@ def test_quantum_namespace_exports_pauli_constructors() -> None:
     assert pauli_string("XIIZ") == expected
     assert pauli_string(((quantum.Pauli.X, 0), (quantum.Pauli.Z, 3))) == expected
     assert pauli_string({0: quantum.Pauli.X, 3: quantum.Pauli.Z}) == expected
+
+
+@pytest.mark.parametrize("position", [0, 1])
+@pytest.mark.parametrize(
+    ("index", "error"),
+    [
+        (True, TypeError),
+        (False, TypeError),
+        (None, TypeError),
+        ("1", TypeError),
+        (1.0, TypeError),
+        (-1, ValueError),
+        (2**128, ValueError),
+    ],
+)
+def test_constructor_index_errors(index: object, error: type[Exception], position: int) -> None:
+    """The same invalid index has the same error at every tuple position."""
+    items = [(Pauli.X, 0), (Pauli.Z, 1)]
+    items[position] = (Pauli.X, index)
+    with pytest.raises(error, match=f"paulis item {position} qubit"):
+        PauliString(items)
+
+
+@pytest.mark.parametrize("name", ["X", "Y", "Z"])
+@pytest.mark.parametrize(
+    ("index", "error"),
+    [
+        (True, TypeError),
+        (False, TypeError),
+        (None, TypeError),
+        ("1", TypeError),
+        (1.0, TypeError),
+        (-1, ValueError),
+        (2**128, ValueError),
+    ],
+)
+def test_helper_index_errors(name: str, index: object, error: type[Exception]) -> None:
+    """All Pauli-building helpers share qubit validation."""
+    single = {"X": X, "Y": Y, "Z": Z}[name]
+    multiple = {"X": Xs, "Y": Ys, "Z": Zs}[name]
+    with pytest.raises(error, match="qubit"):
+        single(index)
+    with pytest.raises(error, match="qubit"):
+        getattr(PauliString, name)(index)
+    for position, indices in enumerate([[index, 2], [2, index]]):
+        with pytest.raises(error, match=f"qubits item {position}"):
+            multiple(indices)
+
+
+@pytest.mark.parametrize("integer_type", [np.int64, np.uint32])
+def test_constructor_helpers_accept_numpy_indices(integer_type: type) -> None:
+    """Every explicit-index constructor retains NumPy integer interoperability."""
+    assert PauliString([(Pauli.X, integer_type(0)), (Pauli.Y, integer_type(1))]) == X(0) * Y(1)
+    for name, single, multiple in [("X", X, Xs), ("Y", Y, Ys), ("Z", Z, Zs)]:
+        assert single(integer_type(2)) == single(2)
+        assert getattr(PauliString, name)(integer_type(2)) == single(2)
+        assert multiple([integer_type(0), integer_type(2)]) == single(0) * single(2)
+
+
+def test_constructor_implicit_paulis() -> None:
+    """Shape selection retains the implicit-index form."""
+    assert PauliString([Pauli.X, Pauli.I, Pauli.Z]) == X(0) * Z(2)

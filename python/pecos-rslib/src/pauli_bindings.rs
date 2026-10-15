@@ -27,6 +27,44 @@ use crate::prelude::{
 use pecos_core::{Xs as RustXs, Ys as RustYs, Zs as RustZs};
 use pyo3::prelude::*;
 
+/// Extract an unsigned integer through Python's index protocol, excluding bool.
+pub(crate) fn extract_unsigned_index(
+    value: &Bound<'_, PyAny>,
+    label: impl std::fmt::Display,
+) -> PyResult<u64> {
+    use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
+    if value.is_instance_of::<pyo3::types::PyBool>() {
+        return Err(PyTypeError::new_err(format!(
+            "{label} must be an integer, not bool"
+        )));
+    }
+    value.extract::<u64>().map_err(|err| {
+        if err.is_instance_of::<PyOverflowError>(value.py()) {
+            PyValueError::new_err(format!(
+                "{label} must be a nonnegative unsigned 64-bit integer"
+            ))
+        } else if err.is_instance_of::<PyTypeError>(value.py()) {
+            PyTypeError::new_err(format!("{label} must be an integer"))
+        } else {
+            err
+        }
+    })
+}
+
+fn extract_qubit(value: &Bound<'_, PyAny>, label: impl std::fmt::Display) -> PyResult<usize> {
+    usize::try_from(extract_unsigned_index(value, &label)?).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!("{label} exceeds the qubit index range"))
+    })
+}
+
+fn extract_qubits(qubits: &[Bound<'_, PyAny>]) -> PyResult<Vec<usize>> {
+    qubits
+        .iter()
+        .enumerate()
+        .map(|(index, value)| extract_qubit(value, format_args!("qubits item {index}")))
+        .collect()
+}
+
 /// Single-qubit Pauli operator (I, X, Y, Z)
 ///
 /// This represents the four single-qubit Pauli operators:
@@ -223,18 +261,21 @@ impl PauliString {
                 // Check first element to determine format
                 let first = list.get_item(0)?;
 
-                // Try to extract as tuple (explicit qubit indices)
-                if first.extract::<(Pauli, usize)>().is_ok() {
+                // Choose explicit indices by shape, independently of index validity.
+                if first.is_instance_of::<pyo3::types::PyTuple>() {
                     // Format: [(Pauli, qubit_id), ...]
                     list.iter()
-                        .map(|item| {
-                            let (pauli, qubit): (Pauli, usize) = item.extract()?;
+                        .enumerate()
+                        .map(|(index, item)| {
+                            let (pauli, qubit): (Pauli, Bound<'_, PyAny>) = item.extract()?;
+                            let qubit =
+                                extract_qubit(&qubit, format_args!("paulis item {index} qubit"))?;
                             Ok((pauli.0, QubitId::new(qubit)))
                         })
                         .collect::<PyResult<Vec<_>>>()?
                 }
                 // Try to extract as Pauli (implicit sequential indices)
-                else if first.extract::<Pauli>().is_ok() {
+                else if first.is_instance_of::<Pauli>() {
                     // Format: [Pauli, ...] with implicit 0, 1, 2, ...
                     list.iter()
                         .enumerate()
@@ -449,6 +490,11 @@ impl PauliString {
         self.inner.commutes_with(&other.inner)
     }
 
+    /// Check commutation on every qubit, ignoring phases and absent qubits.
+    fn qubitwise_commutes_with(&self, other: &PauliString) -> bool {
+        self.inner.qubitwise_commutes_with(&other.inner)
+    }
+
     /// Check if this `PauliString` anticommutes with another.
     fn anticommutes_with(&self, other: &PauliString) -> bool {
         !self.inner.commutes_with(&other.inner)
@@ -459,28 +505,22 @@ impl PauliString {
     /// Create X on a single qubit: `PauliString.X(3)`
     #[staticmethod]
     #[allow(non_snake_case)]
-    fn X(qubit: usize) -> Self {
-        PauliString {
-            inner: RustPauliString::x(qubit),
-        }
+    fn X(qubit: &Bound<'_, PyAny>) -> PyResult<Self> {
+        X(qubit)
     }
 
     /// Create Y on a single qubit: `PauliString.Y(3)`
     #[staticmethod]
     #[allow(non_snake_case)]
-    fn Y(qubit: usize) -> Self {
-        PauliString {
-            inner: RustPauliString::y(qubit),
-        }
+    fn Y(qubit: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Y(qubit)
     }
 
     /// Create Z on a single qubit: `PauliString.Z(3)`
     #[staticmethod]
     #[allow(non_snake_case)]
-    fn Z(qubit: usize) -> Self {
-        PauliString {
-            inner: RustPauliString::z(qubit),
-        }
+    fn Z(qubit: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Z(qubit)
     }
 
     /// Create identity: `PauliString.I()`
@@ -572,49 +612,49 @@ impl PauliString {
 /// Create a single-qubit X `PauliString`: `X(3)`
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn X(qubit: usize) -> PauliString {
-    PauliString {
-        inner: RustPauliString::x(qubit),
-    }
+pub fn X(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+    Ok(PauliString {
+        inner: RustPauliString::x(extract_qubit(qubit, "qubit")?),
+    })
 }
 
 /// Create a single-qubit Y `PauliString`: `Y(3)`
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Y(qubit: usize) -> PauliString {
-    PauliString {
-        inner: RustPauliString::y(qubit),
-    }
+pub fn Y(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+    Ok(PauliString {
+        inner: RustPauliString::y(extract_qubit(qubit, "qubit")?),
+    })
 }
 
 /// Create a single-qubit Z `PauliString`: `Z(3)`
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Z(qubit: usize) -> PauliString {
-    PauliString {
-        inner: RustPauliString::z(qubit),
-    }
+pub fn Z(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+    Ok(PauliString {
+        inner: RustPauliString::z(extract_qubit(qubit, "qubit")?),
+    })
 }
 
 /// Create a multi-qubit X `PauliString`: `Xs([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Xs(qubits: Vec<usize>) -> PauliString {
-    PauliString::from_rust(RustXs(qubits))
+pub fn Xs(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
+    Ok(PauliString::from_rust(RustXs(extract_qubits(&qubits)?)))
 }
 
 /// Create a multi-qubit Y `PauliString`: `Ys([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Ys(qubits: Vec<usize>) -> PauliString {
-    PauliString::from_rust(RustYs(qubits))
+pub fn Ys(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
+    Ok(PauliString::from_rust(RustYs(extract_qubits(&qubits)?)))
 }
 
 /// Create a multi-qubit Z `PauliString`: `Zs([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Zs(qubits: Vec<usize>) -> PauliString {
-    PauliString::from_rust(RustZs(qubits))
+pub fn Zs(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
+    Ok(PauliString::from_rust(RustZs(extract_qubits(&qubits)?)))
 }
 
 /// Register Pauli types with Python module

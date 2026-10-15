@@ -135,6 +135,21 @@ impl PauliString {
         }
     }
 
+    /// Returns whether the strings commute on every individual qubit.
+    ///
+    /// Missing qubits are identity and phases are ignored.
+    #[must_use]
+    pub fn qubitwise_commutes_with(&self, other: &PauliString) -> bool {
+        for (p1, q1) in &self.paulis {
+            for (p2, q2) in &other.paulis {
+                if q1 == q2 && p1 != p2 && *p1 != Pauli::I && *p2 != Pauli::I {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Creates an identity operator (empty `PauliString` with phase +1).
     #[inline]
     #[must_use]
@@ -1485,6 +1500,45 @@ mod tests {
     }
 
     // --- PauliOperator trait method tests (commutes_with, x_positions, z_positions) ---
+
+    #[test]
+    fn test_qubitwise_commutes_with_explicit_identity() {
+        let explicit_identity = PauliString::with_phase_and_paulis(
+            QuarterPhase::MinusOne,
+            vec![(Pauli::I, QubitId::new(0))],
+        );
+        assert_eq!(
+            explicit_identity.get_paulis(),
+            &vec![(Pauli::I, QubitId::new(0))]
+        );
+        let x = PauliString::x(0);
+        assert!(explicit_identity.qubitwise_commutes_with(&x));
+        assert!(x.qubitwise_commutes_with(&explicit_identity));
+    }
+
+    #[test]
+    fn test_qubitwise_commutes_with() {
+        let xx: PauliString = "XX".parse().unwrap();
+        let zz: PauliString = "ZZ".parse().unwrap();
+        assert!(xx.commutes_with(&zz));
+        assert!(!xx.qubitwise_commutes_with(&zz));
+        for (left, right, expected) in [
+            ("X0", "Z1", true),
+            ("Y0", "Y0", true),
+            ("X", "XIX", true),
+            ("X0 Z100", "Y100", false),
+            ("-Y", "iY", true),
+            ("-X", "iZ", false),
+            ("", "XYZ", true),
+            ("XYZ", "", true),
+            ("", "", true),
+        ] {
+            let left: PauliString = left.parse().unwrap();
+            let right: PauliString = right.parse().unwrap();
+            assert_eq!(left.qubitwise_commutes_with(&right), expected);
+            assert_eq!(right.qubitwise_commutes_with(&left), expected);
+        }
+    }
 
     #[test]
     fn test_commutes_with_same_type() {

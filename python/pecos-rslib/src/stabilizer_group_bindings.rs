@@ -16,7 +16,7 @@ use crate::prelude::PauliString as RustPauliString;
 use pecos_quantum::PauliStabilizerGroup as RustGroup;
 use pyo3::prelude::*;
 
-use crate::pauli_bindings::PauliString;
+use crate::pauli_bindings::{PauliString, extract_unsigned_index};
 
 /// A validated Pauli stabilizer group.
 ///
@@ -118,6 +118,35 @@ impl PyPauliStabilizerGroup {
         self.inner.contains_with_phase(&pauli.to_rust())
     }
 
+    /// Return each distinct element once, in Rust enumeration order.
+    ///
+    /// Raises `ValueError` if the rank exceeds 30.
+    fn elements(&self) -> PyResult<Vec<PauliString>> {
+        if self.inner.rank() > 30 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "elements() supports rank at most 30",
+            ));
+        }
+        Ok(self.inner.elements().map(PauliString::from_rust).collect())
+    }
+
+    /// Multiply generators selected by the bits of an unsigned 64-bit mask.
+    ///
+    /// Bit zero selects the first supplied generator, including dependent generators.
+    /// Generators at indices >= 64 cannot be selected, even with 64 or more generators.
+    /// Raises `TypeError` for bool or non-integer masks.
+    /// Raises `ValueError` for masks outside the generator range or unsigned 64-bit range.
+    fn element(&self, mask: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+        let mask = extract_unsigned_index(mask, "mask")?;
+        let n = self.inner.num_generators();
+        if n < 64 && mask >= (1u64 << n) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "mask {mask} exceeds number of generators ({n})",
+            )));
+        }
+        Ok(PauliString::from_rust(self.inner.element(mask)))
+    }
+
     /// Get the list of stabilizer generators.
     fn stabilizers(&self) -> Vec<PauliString> {
         self.inner
@@ -153,8 +182,13 @@ impl PyPauliStabilizerGroup {
     ///     index: Index of the generator to remove
     ///
     /// Raises:
+    ///     TypeError: If index is bool or does not support the integer protocol
+    ///     ValueError: If index is negative or exceeds the platform index range
     ///     IndexError: If index is out of range
-    fn remove_generator(&mut self, index: usize) -> PyResult<PauliString> {
+    fn remove_generator(&mut self, index: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+        let index = usize::try_from(extract_unsigned_index(index, "index")?).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("index exceeds the platform index range")
+        })?;
         if index >= self.inner.num_generators() {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
                 "index {index} out of range for {} generators",

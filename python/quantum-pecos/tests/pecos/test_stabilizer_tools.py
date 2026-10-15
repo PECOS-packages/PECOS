@@ -6,14 +6,12 @@ import numpy as np
 import pytest
 from pecos import QuantumCircuit
 from pecos.analysis.stabilizer_tools import (
-    commutes,
     compatible_stabilizer_groups,
-    iter_stabilizer_products,
-    measurement_compatible,
     pauli_to_circuit,
     pauli_to_dict,
-    pauli_to_string,
+    to_pauli_string,
 )
+from pecos_rslib import PauliStabilizerGroup, PauliString
 
 MATRICES = {
     "I": np.eye(2),
@@ -33,102 +31,153 @@ def matrix(body: str) -> np.ndarray:
     return result
 
 
-def test_conversions_and_explicit_identity_width() -> None:
-    """Round trips preserve identity padding, including empty support."""
+def test_conversions() -> None:
+    """All edge forms preserve support, with width supplied at rendering time."""
     for body in ["", "III", "IXYZI"]:
-        mapping = pauli_to_dict(body)
-        assert pauli_to_string(mapping, len(body)) == body
-        assert pauli_to_string(pauli_to_circuit(body), len(body)) == body
-    assert pauli_to_dict("IXYX") == {"X": {1, 3}, "Y": {2}}
-    assert pauli_to_string({"I": {2}, "X": {0}}, 4) == "XIII"
+        pauli = to_pauli_string(body)
+        assert to_pauli_string(pauli) is pauli
+        assert to_pauli_string(pauli_to_dict(pauli)) == pauli
+        circuit = pauli_to_circuit(pauli)
+        assert len(circuit) == 1
+        assert to_pauli_string(circuit) == pauli
+        assert pauli.to_dense_str(len(body)) == "+" + body
+    assert pauli_to_dict(to_pauli_string("IXYX")) == {"X": {1, 3}, "Y": {2}}
+    assert to_pauli_string("-XZ") == -to_pauli_string("X0 Z1")
+    assert to_pauli_string({"I": {2}, "X": {0}}).to_dense_str(4) == "+XIII"
+    assert to_pauli_string({"X": {np.int64(1)}, "Z": {np.uint32(3)}}) == to_pauli_string("X1 Z3")
+    assert to_pauli_string(QuantumCircuit([{"X": {np.int64(1)}}])) == to_pauli_string("X1")
 
 
-def test_commutation_against_matrix_oracle() -> None:
-    """All two-qubit pairs agree with matrix commutation in all input forms."""
+def test_products_against_matrix_oracle() -> None:
+    """All two-qubit pairs preserve multiplication order and complex phases."""
+    initial = to_pauli_string("XY")
     for first, second in product(PAULIS, repeat=2):
         a, b = matrix(first), matrix(second)
-        expected = np.array_equal(a @ b, b @ a)
-        assert commutes(first, second) == expected
-        assert commutes(pauli_to_dict(first), pauli_to_circuit(second)) == expected
-    assert commutes("X", "XI")
-    assert not commutes({"X": {1_000_000}}, {"Z": {1_000_000}})
+        left, right = to_pauli_string(first), to_pauli_string(second)
+        assert left.commutes_with(right) == np.array_equal(a @ b, b @ a)
+        actual = initial * left * right
+        sign = ("+", "+i", "-", "-i")[actual.get_phase()]
+        body = actual.to_dense_str(2)[len(sign) :]
+        np.testing.assert_array_equal(PHASES[sign] * matrix(body), matrix("XY") @ a @ b)
 
 
-def test_ordered_products_against_matrix_oracle() -> None:
-    """All two-qubit generator pairs preserve product order and complex phases."""
-    initial = matrix("XY")
-    for first, second in product(PAULIS, repeat=2):
-        a, b = matrix(first), matrix(second)
-        expected = [initial, initial @ b, initial @ a, initial @ a @ b]
-        actual = list(iter_stabilizer_products([first, second], "XY"))
-        for (sign, body), reference in zip(actual, expected, strict=True):
-            np.testing.assert_array_equal(PHASES[sign] * matrix(body), reference)
+@pytest.mark.parametrize("generators", [["XX", "ZZ"], ["-XX", "ZZ"], ["XX", "ZZ", "-YY"]])
+def test_group_products_against_matrix_oracle(generators: list[str]) -> None:
+    """Generator masks and distinct elements retain absolute product phases."""
+    group = PauliStabilizerGroup([to_pauli_string(g) for g in generators])
+    products = []
+    for mask in range(1 << len(generators)):
+        expected = np.eye(4)
+        for index, generator in enumerate(generators):
+            if mask & (1 << index):
+                expected = expected @ ((-1 if generator.startswith("-") else 1) * matrix(generator.lstrip("-")))
+        actual = group.element(mask)
+        sign = ("+", "+i", "-", "-i")[actual.get_phase()]
+        np.testing.assert_array_equal(PHASES[sign] * matrix(actual.to_dense_str(2)[len(sign) :]), expected)
+        products.append(actual)
+    assert set(group.elements()) == set(products)
+    assert len(group.elements()) == 4
 
 
-def test_empty_and_dependent_generators() -> None:
-    """Empty and redundant inputs have explicit, deterministic behavior."""
-    assert list(iter_stabilizer_products([])) == [("+", "")]
-    assert list(iter_stabilizer_products([], "II")) == [("+", "II")]
-    assert list(iter_stabilizer_products(["X", "X"])) == [("+", "I"), ("+", "X"), ("+", "X"), ("+", "I")]
-    assert compatible_stabilizer_groups([], "X") == {}
+@pytest.mark.parametrize("first", ["XX", "-XX"])
+def test_bell_groups(first: str) -> None:
+    """Signed generators produce absolute phases in both keys and groups."""
+    group = PauliStabilizerGroup.from_str(first + "\nZZ")
+    identity = to_pauli_string("II")
+    xx, zz = to_pauli_string(first), to_pauli_string("ZZ")
+    yy = xx * zz
+    result = compatible_stabilizer_groups(group, identity)
+    if first == "XX":
+        assert result[identity] == [{yy}, {xx}, {zz}]
+        assert list(result) == [yy, identity, xx, zz]
+    else:
+        assert result[identity] == [{xx}, {yy}, {zz}]
+        assert list(result) == [xx, identity, yy, zz]
+    assert result[xx] == [{xx}]
+    assert result[yy] == [{yy}]
+    assert result[zz] == [{zz}]
+    assert compatible_stabilizer_groups(group, xx) == result
+    negative = compatible_stabilizer_groups(group, -identity)
+    assert negative == {-variant: cliques for variant, cliques in result.items()}
 
 
-def test_measurement_compatibility_is_stronger_than_commutation() -> None:
-    """Commuting XX and ZZ still need different local measurement bases."""
-    assert commutes("XX", "ZZ")
-    assert not measurement_compatible("XX", "ZZ")
-    assert measurement_compatible("XI", "IX")
-    assert measurement_compatible("", "")
+def test_dependent_and_invalid_groups() -> None:
+    """Redundant generators are valid, but negative identity is not."""
+    independent = PauliStabilizerGroup.from_str("XX\nZZ")
+    dependent = PauliStabilizerGroup.from_str("XX\nZZ\n-YY")
+    assert compatible_stabilizer_groups(dependent, PauliString()) == compatible_stabilizer_groups(
+        independent,
+        PauliString(),
+    )
+    with pytest.raises(ValueError, match="-I"):
+        PauliStabilizerGroup.from_str("XX\nZZ\nYY")
+    assert compatible_stabilizer_groups(PauliStabilizerGroup([]), to_pauli_string("X")) == {}
+    # XX and its variant -YY commute with ZZ but share no local basis with it.
+    assert compatible_stabilizer_groups(PauliStabilizerGroup.from_str("Z0 Z1"), to_pauli_string("X0 X1")) == {}
 
 
 def test_groups_are_maximal_jointly_compatible_and_deterministic() -> None:
     """A shared compatible neighbor must not merge incompatible XX/ZZ groups."""
-    generators = ["XXII", "ZZII", "IIXX"]
-    result = compatible_stabilizer_groups(generators, "IIII")
-    assert result == compatible_stabilizer_groups(generators, "IIII")
-    assert result["+IIII"] == [
-        {"+IIXX", "+XXII", "+XXXX"},
-        {"+IIXX", "+ZZII", "+ZZXX"},
-        {"+IIXX", "-YYII", "-YYXX"},
-    ]
-    stabs = {s + p for s, p in iter_stabilizer_products(generators) if p != "IIII"}
+    group = PauliStabilizerGroup.from_str("XXII\nZZII\nIIXX")
+    result = compatible_stabilizer_groups(group, PauliString())
+    assert result == compatible_stabilizer_groups(group, PauliString())
+    stabilizers = {s for s in group.elements() if s.weight()}
     for variant, groups in result.items():
-        candidates = {s for s in stabs if measurement_compatible(variant[1:], s[1:])}
+        candidates = {s for s in stabilizers if variant.qubitwise_commutes_with(s)}
         assert set.union(*groups) == candidates
-        for group in groups:
-            assert all(measurement_compatible(a[1:], b[1:]) for a, b in combinations(group, 2))
-            assert all(any(not measurement_compatible(s[1:], g[1:]) for g in group) for s in candidates - group)
+        assert groups == sorted(groups, key=lambda clique: tuple(sorted(map(str, clique))))
+        for clique in groups:
+            assert all(a.qubitwise_commutes_with(b) for a, b in combinations(clique, 2))
+            assert all(any(not s.qubitwise_commutes_with(g) for g in clique) for s in candidates - clique)
 
 
-@pytest.mark.parametrize("body", ["A", "x", "X0", "+X", " X", "iY"])
-def test_invalid_dense_inputs(body: str) -> None:
-    """Dense APIs reject ambiguous notation rather than dropping a phase."""
-    with pytest.raises(ValueError, match="phase-free"):
-        pauli_to_dict(body)
-    with pytest.raises(ValueError, match="phase-free"):
-        list(iter_stabilizer_products([body]))
+@pytest.mark.parametrize("operator", ["iII", "-iXX", "XI"])
+def test_invalid_operator(operator: str) -> None:
+    """Operators must be real and centralize the stabilizer group."""
+    with pytest.raises(ValueError, match=r"real phase|commute"):
+        compatible_stabilizer_groups(PauliStabilizerGroup.from_str("XX\nZZ"), to_pauli_string(operator))
 
 
-def test_validation() -> None:
-    """Reject malformed supports, truncation, mismatched widths and conditions."""
-    for mapping in [{"X": {-1}}, {"X": {True}}, {"H": {0}}, {"X": {0}, "Z": {0}}]:
-        with pytest.raises(ValueError, match="Pauli"):
-            pauli_to_string(mapping, 2)
-    with pytest.raises(ValueError, match="exceeds"):
-        pauli_to_string({"X": {2}}, 2)
-    with pytest.raises(ValueError, match="exceeds"):
-        pauli_to_string("III", 2)
-    with pytest.raises(ValueError, match="equal lengths"):
-        measurement_compatible("X", "XX")
-    with pytest.raises(ValueError, match="equal lengths"):
-        list(iter_stabilizer_products(["X", "XX"]))
-    with pytest.raises(ValueError, match="equal lengths"):
-        list(iter_stabilizer_products(["X"], "XX"))
-    with pytest.raises(ValueError, match="must commute"):
-        compatible_stabilizer_groups(["X", "Z"], "I")
-    with pytest.raises(ValueError, match="one tick"):
-        commutes(QuantumCircuit([{"X": {0}}, {"Z": {0}}]), "X")
+@pytest.mark.parametrize("phase", ["-", "i", "-i"])
+def test_lossy_bridges_rejected(phase: str) -> None:
+    """Legacy types cannot represent phases, even on identity."""
+    for body in ["X", "I"]:
+        pauli = to_pauli_string(phase + body)
+        with pytest.raises(ValueError, match="phase"):
+            pauli_to_dict(pauli)
+        with pytest.raises(ValueError, match="phase"):
+            pauli_to_circuit(pauli)
+
+
+def test_invalid_edge_inputs() -> None:
+    """Validate symbols and circuits while delegating qubit checks to bindings."""
+    with pytest.raises(ValueError, match="multiple"):
+        to_pauli_string({"X": {np.int64(0)}, "Z": {0}})
+    with pytest.raises(ValueError, match="symbol"):
+        to_pauli_string({"H": {0}})
+    with pytest.raises(ValueError, match="symbol"):
+        to_pauli_string(QuantumCircuit([{"H": {0}}]))
+    with pytest.raises(TypeError, match="Expected"):
+        to_pauli_string(123)
+    for circuit in [QuantumCircuit(), QuantumCircuit([{"X": {0}}, {"Z": {0}}])]:
+        with pytest.raises(ValueError, match="one tick"):
+            to_pauli_string(circuit)
     conditioned = QuantumCircuit()
     conditioned.append("X", {0}, cond={"a": "c", "op": "==", "b": 1})
-    with pytest.raises(ValueError, match="metadata"):
-        commutes(conditioned, "X")
+    for circuit in [conditioned, QuantumCircuit([{"X": {0}}], label="test")]:
+        with pytest.raises(ValueError, match="metadata"):
+            to_pauli_string(circuit)
+
+
+@pytest.mark.parametrize("index", [True, False, None, "1", 1.0])
+def test_mapping_rejects_noninteger_qubits(index: object) -> None:
+    """Mappings use the binding's strict integer protocol."""
+    with pytest.raises(TypeError, match="item 0"):
+        to_pauli_string({"X": [index]})
+
+
+@pytest.mark.parametrize("index", [-1, 2**128])
+def test_mapping_rejects_out_of_range_qubits(index: int) -> None:
+    """Invalid integer indices get a value error identifying the item."""
+    with pytest.raises(ValueError, match="item 0"):
+        to_pauli_string({"X": [index]})

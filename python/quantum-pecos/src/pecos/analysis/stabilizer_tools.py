@@ -1,179 +1,122 @@
-"""Pauli conversion, ordered generator products, and local measurement groups.
+"""Bridges for Rust Paulis and maximal local measurement groups.
 
-Dense inputs use one I/X/Y/Z character per qubit, starting at qubit zero.
-Input phases are not accepted; product phases are returned separately. Products
-and maximal compatible groups can grow exponentially with the generator count.
+Group elements are materialized in exponential space in the rank. Enumerating
+all maximal compatible groups can also take exponential time and space.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from itertools import chain, combinations, product
+from itertools import combinations
 from typing import TYPE_CHECKING
 
 import networkx as nx
-from pecos_rslib import PauliString
+from pecos_rslib import Pauli, PauliString
 
 from pecos.circuits import QuantumCircuit
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
-    from collections.abc import Set as AbstractSet
+    from collections.abc import Iterable
+    from typing import SupportsIndex
 
-PauliInput = str | Mapping[str, "AbstractSet[int]"] | QuantumCircuit
-
-
-def _validate_dense(operator: str) -> None:
-    if not isinstance(operator, str):
-        msg = "Expected a dense I/X/Y/Z string"
-        raise TypeError(msg)
-    if set(operator) - set("IXYZ"):
-        msg = "Expected a phase-free dense I/X/Y/Z string"
-        raise ValueError(msg)
+    from pecos_rslib import PauliStabilizerGroup
 
 
-def pauli_to_dict(operator: str) -> dict[str, set[int]]:
-    """Convert a dense Pauli to disjoint nonidentity qubit sets."""
-    _validate_dense(operator)
-    result: dict[str, set[int]] = {}
-    for qubit, symbol in enumerate(operator):
-        if symbol != "I":
-            result.setdefault(symbol, set()).add(qubit)
-    return result
+def to_pauli_string(
+    value: PauliString | str | Mapping[str, Iterable[SupportsIndex]] | QuantumCircuit,
+) -> PauliString:
+    """Convert a Pauli, signed dense/sparse string, mapping, or one-tick circuit.
 
-
-def _locations(operator: PauliInput) -> dict[int, str]:
-    if isinstance(operator, str):
-        operator = pauli_to_dict(operator)
-    if isinstance(operator, QuantumCircuit):
-        if len(operator) != 1:
+    Circuits must have no circuit or operation metadata. Qubit extraction and
+    duplicate nonidentity-qubit validation use the Rust binding constructor.
+    """
+    if isinstance(value, PauliString):
+        return value
+    if isinstance(value, str):
+        return PauliString.from_str(value)
+    if isinstance(value, QuantumCircuit):
+        if len(value) != 1:
             msg = "A Pauli circuit must contain exactly one tick"
             raise ValueError(msg)
+        if value.metadata:
+            msg = "A Pauli circuit must have no circuit metadata"
+            raise ValueError(msg)
         entries = []
-        for symbol, locations, metadata in operator.items():
+        for symbol, locations, metadata in value.items():
             if metadata:
                 msg = "A Pauli circuit must have no operation metadata"
                 raise ValueError(msg)
             entries.append((symbol, locations))
-    elif isinstance(operator, Mapping):
-        entries = list(operator.items())
+    elif isinstance(value, Mapping):
+        entries = list(value.items())
     else:
-        msg = "Expected a Pauli string, mapping, or single-tick QuantumCircuit"
+        msg = "Expected a PauliString, string, mapping, or single-tick QuantumCircuit"
         raise TypeError(msg)
-    result: dict[int, str] = {}
+    paulis = []
     for symbol, locations in entries:
         if symbol not in {"I", "X", "Y", "Z"}:
             msg = f"Invalid Pauli symbol: {symbol!r}"
             raise ValueError(msg)
-        for qubit in locations:
-            if isinstance(qubit, bool) or not isinstance(qubit, int) or qubit < 0:
-                msg = "Pauli locations must be nonnegative integer qubit indices"
-                raise ValueError(msg)
-            if qubit in result:
-                msg = f"Multiple Pauli operators specified for qubit {qubit}"
-                raise ValueError(msg)
-            result[qubit] = symbol
+        pauli = Pauli.from_str(symbol)
+        paulis.extend((pauli, qubit) for qubit in locations)
+    return PauliString(paulis)
+
+
+def pauli_to_dict(pauli: PauliString) -> dict[str, set[int]]:
+    """Convert to nonidentity qubit sets; reject phases other than +1."""
+    if pauli.get_phase() != 0:
+        msg = "A Pauli mapping cannot represent a phase other than +1"
+        raise ValueError(msg)
+    result: dict[str, set[int]] = {}
+    for symbol, qubit in pauli.get_paulis():
+        if symbol != Pauli.I:
+            result.setdefault(str(symbol), set()).add(qubit)
     return result
 
 
-def pauli_to_string(operator: PauliInput, num_qubits: int) -> str:
-    """Convert to dense form, preserving explicit width and rejecting truncation."""
-    if isinstance(num_qubits, bool) or not isinstance(num_qubits, int) or num_qubits < 0:
-        msg = "num_qubits must be a nonnegative integer"
-        raise ValueError(msg)
-    locations = _locations(operator)
-    if (isinstance(operator, str) and len(operator) > num_qubits) or any(q >= num_qubits for q in locations):
-        msg = "Pauli operator exceeds num_qubits"
-        raise ValueError(msg)
-    return "".join(locations.get(q, "I") for q in range(num_qubits))
+def pauli_to_circuit(pauli: PauliString) -> QuantumCircuit:
+    """Convert to one tick, omitting identity; reject phases other than +1."""
+    return QuantumCircuit([pauli_to_dict(pauli)])
 
 
-def pauli_to_circuit(operator: str) -> QuantumCircuit:
-    """Convert a dense Pauli into one tick, omitting identity operations."""
-    return QuantumCircuit([pauli_to_dict(operator)])
+def compatible_stabilizer_groups(
+    group: PauliStabilizerGroup,
+    operator: PauliString,
+) -> dict[PauliString, list[set[PauliString]]]:
+    """Find maximal jointly measurable stabilizer groups for each operator variant.
 
+    The operator must have real phase and commute with every generator.
+    Identity and group members are valid operators. Variants are operator * s
+    for each distinct group element s, retaining absolute phases. Candidates
+    are nonidentity group elements qubitwise compatible with the variant.
+    Variants with no candidates are omitted. Groups are maximal cliques and
+    may overlap; this is not a minimum measurement-setting partition.
 
-def commutes(first: PauliInput, second: PauliInput) -> bool:
-    """Check Pauli commutation; absent qubits are identities in every input form."""
-    first_locs, second_locs = _locations(first), _locations(second)
-    left = PauliString.from_sparse_str(" ".join(f"{p}{q}" for q, p in first_locs.items() if p != "I"))
-    right = PauliString.from_sparse_str(" ".join(f"{p}{q}" for q, p in second_locs.items() if p != "I"))
-    return left.commutes_with(right)
-
-
-def measurement_compatible(first: str, second: str) -> bool:
-    """Whether equal-width Paulis share a product measurement basis.
-
-    This is qubit-wise compatibility, stronger than commutation: XX and ZZ
-    commute, but cannot be measured in the same individual-qubit bases.
+    Variant keys are ordered lexicographically by str(pauli). Each clique is
+    sorted by that same string and the group list is ordered lexicographically
+    by the resulting tuples of strings. Group members themselves form sets.
+    Element and maximal-clique enumeration have exponential cost.
     """
-    _validate_dense(first)
-    _validate_dense(second)
-    if len(first) != len(second):
-        msg = "Pauli strings must have equal lengths"
+    if operator.get_phase() not in (0, 2):
+        msg = "The operator must have a real phase (+1 or -1)"
         raise ValueError(msg)
-    return all(a == "I" or b == "I" or a == b for a, b in zip(first, second, strict=True))
-
-
-def iter_stabilizer_products(
-    generators: Sequence[str],
-    operator: str | None = None,
-) -> Iterator[tuple[str, str]]:
-    """Yield an operator times each ordered subset of Pauli generators.
-
-    Subsets follow binary lexicographic order (last generator varies fastest).
-    Multiplication is operator * generator[0] * generator[1] * ...; phases are
-    '+', '+i', '-', or '-i'. Noncommuting generators are allowed, so imaginary
-    phases are retained. Dependent generators retain duplicate products.
-    Empty generators yield the supplied operator, or the zero-qubit identity.
-    Work is exponential, but results are yielded without materializing 2**n items.
-    Validation happens when iteration starts.
-    """
-    generators = tuple(generators)
-    for generator in generators:
-        _validate_dense(generator)
-    if operator is not None:
-        _validate_dense(operator)
-    width = len(generators[0]) if generators else len(operator or "")
-    if any(len(g) != width for g in generators) or (operator is not None and len(operator) != width):
-        msg = "Generators and operator must have equal lengths"
+    if any(not operator.commutes_with(generator) for generator in group.stabilizers()):
+        msg = "The operator must commute with every stabilizer generator"
         raise ValueError(msg)
-    initial = PauliString.from_str(operator if operator is not None else "I" * width)
-    parsed = [PauliString.from_str(g) for g in generators]
-    for selected in product((False, True), repeat=len(parsed)):
-        value = initial
-        for include, generator in zip(selected, parsed, strict=True):
-            if include:
-                value = value * generator
-        phase = ("+", "+i", "-", "-i")[value.get_phase()]
-        yield phase, value.to_dense_str(width)[len(phase) :]
-
-
-def compatible_stabilizer_groups(generators: Sequence[str], operator: str) -> dict[str, list[set[str]]]:
-    """Find all maximal jointly measurable stabilizer groups for each variant.
-
-    Each group is pairwise qubit-wise compatible, including with the operator
-    variant. Identity stabilizers are excluded. Groups may overlap; this is not
-    a minimum measurement-setting partition. Generators must commute. Outputs
-    have deterministic variant and group order, and include product signs.
-    Both product enumeration and maximal-clique enumeration are exponential.
-    """
-    generators = tuple(generators)
-    variants = iter_stabilizer_products(generators, operator)
-    first_variant = next(variants)  # Validate inputs before graph construction.
-    if any(not commutes(a, b) for a, b in combinations(generators, 2)):
-        msg = "Stabilizer generators must commute"
-        raise ValueError(msg)
-    stabilizers = sorted({(sign, body) for sign, body in iter_stabilizer_products(generators) if set(body) - {"I"}})
+    elements = group.elements()
+    stabilizers = sorted((s for s in elements if s.weight()), key=str)
     graph = nx.Graph()
-    graph.add_nodes_from(sign + body for sign, body in stabilizers)
-    for (sign_a, a), (sign_b, b) in combinations(stabilizers, 2):
-        if measurement_compatible(a, b):
-            graph.add_edge(sign_a + a, sign_b + b)
-    result: dict[str, list[set[str]]] = {}
-    for sign, body in chain((first_variant,), variants):
-        candidates = [s + p for s, p in stabilizers if measurement_compatible(body, p)]
+    graph.add_nodes_from(stabilizers)
+    for first, second in combinations(stabilizers, 2):
+        if first.qubitwise_commutes_with(second):
+            graph.add_edge(first, second)
+    result: dict[PauliString, list[set[PauliString]]] = {}
+    for variant in sorted((operator * s for s in elements), key=str):
+        candidates = [s for s in stabilizers if variant.qubitwise_commutes_with(s)]
         if candidates:
-            cliques = sorted(tuple(sorted(c)) for c in nx.find_cliques(graph.subgraph(candidates)))
-            result[sign + body] = [set(c) for c in cliques]
+            cliques = sorted(
+                nx.find_cliques(graph.subgraph(candidates)),
+                key=lambda clique: tuple(sorted(map(str, clique))),
+            )
+            result[variant] = [set(clique) for clique in cliques]
     return result

@@ -10,7 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use super::channel_validation::{self as validate_channel, ChannelValidationError};
 use std::collections::BTreeMap;
+use std::ops::Mul;
 
 use crate::Gate;
 use crate::noise::noise_rng::NoiseRng;
@@ -18,7 +20,7 @@ use crate::noise::utils::{SingleQubitNoiseResult, TwoQubitNoiseResult};
 use rand::distr::weighted::WeightedIndex;
 
 /// Tolerance for weight normalization - total weights should be within this amount of 1.0
-const NORMALIZATION_TOLERANCE: f64 = 1e-5;
+pub(super) const NORMALIZATION_TOLERANCE: f64 = 1e-5;
 /// Small margin for floating-point equality comparisons
 const FLOAT_EPSILON: f64 = 1e-10;
 
@@ -84,6 +86,13 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
             "WeightedSampler: weighted_map cannot be empty"
         );
 
+        for weight in weighted_map.values() {
+            assert!(
+                weight.is_finite() && *weight >= 0.0,
+                "WeightedSampler: weights must be finite and non-negative, got {weight}"
+            );
+        }
+
         let total_weight: f64 = weighted_map.values().sum();
 
         assert!(
@@ -93,7 +102,7 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
 
         // Check if weights are within tolerance of 1.0
         assert!(
-            (total_weight - 1.0).abs() <= tolerance, // Use <= instead of !( > )
+            (total_weight - 1.0).abs() <= tolerance,
             "WeightedSampler: total weight {total_weight} deviates from 1.0 by more than tolerance {tolerance}"
         );
 
@@ -148,6 +157,295 @@ fn create_pauli_gate(op: char, qubit: usize) -> Option<Gate> {
         'Z' => Some(Gate::z(&[qubit])),
         'I' => None, // Identity - no operation
         _ => panic!("Invalid Pauli operator '{op}'"),
+    }
+}
+
+/// A validated normalized distribution of stochastic Pauli-plus-leakage events.
+///
+/// Event labels contain `I`, `X`, `Y`, `Z`, or `L`, where `L` means `any -> L` on that leg.
+/// Identity may be explicit within the normalized conditional event distribution; a failed
+/// outer application coin also leaves the state unchanged.
+///
+/// Use [`Self::tensor`] (or `*`) to form a higher-arity Kronecker product distribution.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PauliLeakageDict {
+    arity: usize,
+    events: BTreeMap<String, f64>,
+}
+
+impl PauliLeakageDict {
+    /// Validate and construct a channel configuration dictionary.
+    ///
+    /// # Errors
+    /// Returns a structured error for invalid labels, weights, or incomplete rows.
+    pub fn new(events: &BTreeMap<String, f64>) -> Result<Self, ChannelValidationError> {
+        validate_channel::events(events)?;
+        Ok(Self::new_validated(events))
+    }
+
+    /// Construct from validated event labels and weights.
+    fn new_validated(events: &BTreeMap<String, f64>) -> Self {
+        let arity = events
+            .keys()
+            .next()
+            .expect("nonempty event dictionary")
+            .chars()
+            .count();
+        let sampler = WeightedSampler::new(events);
+        Self {
+            arity,
+            events: sampler.get_weighted_map().clone(),
+        }
+    }
+
+    /// Number of qubit legs represented by each event label.
+    #[must_use]
+    pub fn arity(&self) -> usize {
+        self.arity
+    }
+
+    /// Return the normalized event distribution.
+    #[must_use]
+    pub fn events(&self) -> &BTreeMap<String, f64> {
+        &self.events
+    }
+
+    /// Form the tensor/Kronecker product of two event distributions.
+    #[must_use]
+    pub fn tensor(&self, other: &Self) -> Self {
+        let mut events = BTreeMap::new();
+        for (left, left_probability) in &self.events {
+            for (right, right_probability) in &other.events {
+                *events.entry(format!("{left}{right}")).or_insert(0.0) +=
+                    left_probability * right_probability;
+            }
+        }
+        Self::new_validated(&events)
+    }
+}
+
+impl Mul for PauliLeakageDict {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        self.tensor(&rhs)
+    }
+}
+
+impl Mul<&PauliLeakageDict> for &PauliLeakageDict {
+    type Output = PauliLeakageDict;
+
+    fn mul(self, rhs: &PauliLeakageDict) -> Self::Output {
+        self.tensor(rhs)
+    }
+}
+
+impl Mul<&PauliLeakageDict> for PauliLeakageDict {
+    type Output = Self;
+
+    fn mul(self, rhs: &PauliLeakageDict) -> Self::Output {
+        self.tensor(rhs)
+    }
+}
+
+impl Mul<PauliLeakageDict> for &PauliLeakageDict {
+    type Output = PauliLeakageDict;
+
+    fn mul(self, rhs: PauliLeakageDict) -> Self::Output {
+        self.tensor(&rhs)
+    }
+}
+
+/// A state-independent event on one operand of a gate-hook channel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum PauliLeakageEvent {
+    /// Leave the operand unchanged.
+    I,
+    /// Apply Pauli X in the computational subspace.
+    X,
+    /// Apply Pauli Y in the computational subspace.
+    Y,
+    /// Apply Pauli Z in the computational subspace.
+    Z,
+    /// Mark the operand as leaked, independently of the legacy leakage scale.
+    Leakage,
+}
+
+impl PauliLeakageEvent {
+    /// Configuration label for this event.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::I => "I",
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+            Self::Leakage => "L",
+        }
+    }
+}
+
+/// A stochastic single-qubit Pauli-plus-leakage channel.
+///
+/// With the outer `probability`, one event is sampled from the normalized event distribution.
+/// If the outer coin fails, identity is implicit. `L` means `any -> L`; Pauli events have no
+/// effect while the qubit is already leaked.
+///
+/// # Example
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use pecos_engines::noise::{GeneralNoiseModel, PauliLeakageChannel};
+///
+/// let events = BTreeMap::from([
+///     ("X".to_string(), 0.4),
+///     ("Y".to_string(), 0.2),
+///     ("Z".to_string(), 0.3),
+///     ("L".to_string(), 0.1),
+/// ]);
+/// let channel = PauliLeakageChannel::new(0.001, &events).unwrap();
+/// let noise = GeneralNoiseModel::builder()
+///     .add_p1_pauli_leakage_channel_after_gate(&channel)
+///     .build();
+/// ```
+#[derive(Clone, Debug)]
+pub struct PauliLeakageChannel {
+    probability: f64,
+    events: PauliLeakageDict,
+}
+
+impl PauliLeakageChannel {
+    /// Construct a normalized distribution using typed events.
+    ///
+    /// # Errors
+    /// Returns a structured error for invalid outer probability or event weights.
+    pub fn from_events(
+        probability: f64,
+        events: &BTreeMap<PauliLeakageEvent, f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        let events = events
+            .iter()
+            .map(|(event, &p)| (event.as_str().to_string(), p))
+            .collect();
+        Self::new(probability, &events)
+    }
+
+    /// Configure a single-qubit channel from a plain event dictionary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `probability` or the event dictionary is invalid.
+    pub fn new(
+        probability: f64,
+        events: &BTreeMap<String, f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        Self::from_event_dict(probability, &PauliLeakageDict::new(events)?)
+    }
+
+    /// Configure a channel from an already validated, single-qubit event dictionary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `probability` is invalid or `events` does not have arity one.
+    pub fn from_event_dict(
+        probability: f64,
+        events: &PauliLeakageDict,
+    ) -> Result<Self, ChannelValidationError> {
+        validate_channel::probability(probability)?;
+        validate_channel::arity(1, events.arity())?;
+        Ok(Self {
+            probability,
+            events: events.clone(),
+        })
+    }
+
+    /// Return the outer application probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    /// Return the normalized event weights.
+    #[must_use]
+    pub fn events(&self) -> &BTreeMap<String, f64> {
+        self.events.events()
+    }
+
+    /// Return the validated event dictionary.
+    #[must_use]
+    pub fn event_dict(&self) -> &PauliLeakageDict {
+        &self.events
+    }
+}
+
+/// A stochastic joint two-qubit Pauli-plus-leakage channel.
+#[derive(Clone, Debug)]
+pub struct TwoQubitPauliLeakageChannel {
+    probability: f64,
+    events: PauliLeakageDict,
+}
+
+impl TwoQubitPauliLeakageChannel {
+    /// Construct a normalized distribution using typed events.
+    ///
+    /// # Errors
+    /// Returns a structured error for invalid outer probability or event weights.
+    pub fn from_events(
+        probability: f64,
+        events: &BTreeMap<[PauliLeakageEvent; 2], f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        let events = events
+            .iter()
+            .map(|(event, &p)| (event.iter().map(|e| e.as_str()).collect::<String>(), p))
+            .collect();
+        Self::new(probability, &events)
+    }
+
+    /// Configure a joint two-qubit channel from a plain event dictionary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `probability` or the event dictionary is invalid.
+    pub fn new(
+        probability: f64,
+        events: &BTreeMap<String, f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        Self::from_event_dict(probability, &PauliLeakageDict::new(events)?)
+    }
+
+    /// Configure a channel from an already validated, two-qubit event dictionary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `probability` is invalid or `events` does not have arity two.
+    pub fn from_event_dict(
+        probability: f64,
+        events: &PauliLeakageDict,
+    ) -> Result<Self, ChannelValidationError> {
+        validate_channel::probability(probability)?;
+        validate_channel::arity(2, events.arity())?;
+        Ok(Self {
+            probability,
+            events: events.clone(),
+        })
+    }
+
+    /// Return the outer application probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    /// Return the normalized event weights.
+    #[must_use]
+    pub fn events(&self) -> &BTreeMap<String, f64> {
+        self.events.events()
+    }
+
+    /// Return the validated event dictionary.
+    #[must_use]
+    pub fn event_dict(&self) -> &PauliLeakageDict {
+        &self.events
     }
 }
 
@@ -236,6 +534,955 @@ impl SingleQubitWeightedSampler {
 #[derive(Clone, Debug)]
 pub struct TwoQubitWeightedSampler {
     sampler: WeightedSampler<String>,
+}
+
+/// A basis-population state in PECOS's effective `{|0>, |1>, |L>}` space.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum QubitTransitionState {
+    /// Computational basis state |0>.
+    Zero,
+    /// Computational basis state |1>.
+    One,
+    /// Abstract leakage state |L>.
+    Leakage,
+}
+
+impl QubitTransitionState {
+    /// Configuration label for this effective state.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Zero => "0",
+            Self::One => "1",
+            Self::Leakage => "L",
+        }
+    }
+
+    fn parse(label: &str) -> Self {
+        match label {
+            "0" => Self::Zero,
+            "1" => Self::One,
+            "L" => Self::Leakage,
+            _ => {
+                panic!("StateTransitionChannel: invalid state {label:?}; expected '0', '1', or 'L'")
+            }
+        }
+    }
+}
+
+fn transition_basis_labels(arity: usize) -> Vec<String> {
+    let mut labels = vec![String::new()];
+    for _ in 0..arity {
+        labels = labels
+            .into_iter()
+            .flat_map(|prefix| {
+                ['0', '1', 'L'].map(move |symbol| {
+                    let mut label = prefix.clone();
+                    label.push(symbol);
+                    label
+                })
+            })
+            .collect();
+    }
+    labels
+}
+
+/// A validated conditional population-transition dictionary.
+///
+/// `transitions[source][destination]` is `P(destination | source)` over strings in
+/// `{0, 1, L}^arity`. Supplied rows must sum to one. For one or two qubits, each supplied
+/// leakage pattern must include every computational completion. An omitted leakage pattern
+/// acts as identity without measurement. Tensor products retain per-operand measurement
+/// dependencies. Two-qubit maps
+/// may instead use one matching `*` per source and destination as an unresolved identity wire.
+///
+/// Use [`Self::tensor`] (or `*`) to form a higher-arity Kronecker product.
+/// Use ordered gate hooks for sequential application.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransitionDict {
+    arity: usize,
+    transitions: BTreeMap<String, BTreeMap<String, f64>>,
+    expanded_transitions: BTreeMap<String, BTreeMap<String, f64>>,
+    computational_dependencies: Vec<bool>,
+}
+
+impl TransitionDict {
+    /// Validate and construct a channel configuration dictionary.
+    ///
+    /// # Errors
+    /// Returns a structured error for invalid labels, weights, or incomplete rows.
+    pub fn new(
+        transitions: &BTreeMap<String, BTreeMap<String, f64>>,
+    ) -> Result<Self, ChannelValidationError> {
+        validate_channel::transitions(transitions)?;
+        // Normalize each validated row before tensor expansion so accepted rounding error
+        // cannot accumulate into an invalid joint distribution.
+        let normalized = transitions
+            .iter()
+            .map(|(source, row)| {
+                (
+                    source.clone(),
+                    WeightedSampler::new(row).get_weighted_map().clone(),
+                )
+            })
+            .collect();
+        Ok(Self::new_validated(&normalized))
+    }
+
+    /// Construct from validated, normalized transition rows.
+    fn new_validated(transitions: &BTreeMap<String, BTreeMap<String, f64>>) -> Self {
+        let arity = transitions
+            .keys()
+            .next()
+            .expect("nonempty transition dictionary")
+            .chars()
+            .count();
+
+        let contains_wildcard = transitions.iter().any(|(source, row)| {
+            source.contains('*') || row.keys().any(|destination| destination.contains('*'))
+        });
+        if contains_wildcard {
+            return Self::new_two_qubit_wildcard(transitions, arity);
+        }
+
+        let mut computational_dependencies = vec![false; arity];
+        for source in transitions.keys() {
+            for (leg, symbol) in source.chars().enumerate() {
+                computational_dependencies[leg] |= matches!(symbol, '0' | '1');
+            }
+        }
+
+        Self {
+            arity,
+            transitions: transitions.clone(),
+            expanded_transitions: transitions.clone(),
+            computational_dependencies,
+        }
+    }
+
+    /// Construct conditional rows from labels such as `"0->L"` or `"*L->*0"`.
+    ///
+    /// # Errors
+    /// Returns an error on malformed labels or invalid conditional rows.
+    pub fn from_transitions(
+        transitions: &BTreeMap<String, f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        let mut rows: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
+        for (transition, probability) in transitions {
+            let (source, destination) = transition
+                .split_once("->")
+                .ok_or_else(|| ChannelValidationError::InvalidLabel(transition.clone()))?;
+            rows.entry(source.to_string())
+                .or_default()
+                .insert(destination.to_string(), *probability);
+        }
+        Self::new(&rows)
+    }
+
+    fn identity(arity: usize) -> Self {
+        Self {
+            arity,
+            transitions: BTreeMap::new(),
+            expanded_transitions: BTreeMap::new(),
+            computational_dependencies: vec![false; arity],
+        }
+    }
+
+    fn new_two_qubit_wildcard(
+        transitions: &BTreeMap<String, BTreeMap<String, f64>>,
+        arity: usize,
+    ) -> Self {
+        let mut factor_rows: [BTreeMap<String, BTreeMap<String, f64>>; 2] =
+            std::array::from_fn(|_| BTreeMap::new());
+
+        for (source, row) in transitions {
+            let wildcard_position = source
+                .find('*')
+                .expect("wildcard transition source must contain '*'");
+            let acted_position = 1 - wildcard_position;
+            let source_state = source
+                .chars()
+                .nth(acted_position)
+                .expect("two-symbol wildcard source");
+            let mut factor_row = BTreeMap::new();
+            for (destination, probability) in row {
+                let destination_state = destination
+                    .chars()
+                    .nth(acted_position)
+                    .expect("two-symbol wildcard destination");
+                factor_row.insert(destination_state.to_string(), *probability);
+            }
+            factor_rows[acted_position].insert(source_state.to_string(), factor_row);
+        }
+
+        let factors = factor_rows.map(|rows| {
+            if rows.is_empty() {
+                Self::identity(1)
+            } else {
+                Self::new_validated(&rows)
+            }
+        });
+        let expanded = factors[0].tensor_expanded(&factors[1]);
+        Self {
+            arity,
+            transitions: transitions.clone(),
+            expanded_transitions: expanded.expanded_transitions,
+            computational_dependencies: expanded.computational_dependencies,
+        }
+    }
+
+    /// Number of effective qutrits represented by each source and destination label.
+    #[must_use]
+    pub fn arity(&self) -> usize {
+        self.arity
+    }
+
+    /// Return the validated nested transition mapping.
+    ///
+    /// Products of two one-qubit dictionaries use wildcard rows to preserve identity wires
+    /// when reconstructed with [`Self::new`].
+    #[must_use]
+    pub fn transitions(&self) -> &BTreeMap<String, BTreeMap<String, f64>> {
+        &self.transitions
+    }
+
+    pub(crate) fn expanded_transitions(&self) -> &BTreeMap<String, BTreeMap<String, f64>> {
+        &self.expanded_transitions
+    }
+
+    /// Whether applying the map can require resolving a computational source on each leg.
+    #[must_use]
+    pub(crate) fn computational_dependencies(&self) -> &[bool] {
+        &self.computational_dependencies
+    }
+
+    fn effective_row(&self, source: &str) -> BTreeMap<String, f64> {
+        self.expanded_transitions
+            .get(source)
+            .cloned()
+            .unwrap_or_else(|| BTreeMap::from([(source.to_string(), 1.0)]))
+    }
+
+    /// Form the tensor/Kronecker product of two conditional transition dictionaries.
+    ///
+    /// Omitted rows are expanded as identity only where the other factor acts. The returned
+    /// object retains per-leg dependency metadata so an identity factor does not cause an
+    /// unnecessary computational-basis measurement when used as a joint channel.
+    /// For two one-qubit operands, the public rows use matching wildcards so reconstructing
+    /// from [`Self::transitions`] preserves these dependencies. Higher-arity products expose
+    /// concrete expanded rows.
+    #[must_use]
+    pub fn tensor(&self, other: &Self) -> Self {
+        let mut result = self.tensor_expanded(other);
+        if self.arity == 1 && other.arity == 1 {
+            result.transitions = [(self, "", "*"), (other, "*", "")]
+                .into_iter()
+                .flat_map(|(factor, prefix, suffix)| {
+                    factor.transitions.iter().map(move |(source, row)| {
+                        (
+                            format!("{prefix}{source}{suffix}"),
+                            row.iter()
+                                .map(|(destination, &probability)| {
+                                    (format!("{prefix}{destination}{suffix}"), probability)
+                                })
+                                .collect(),
+                        )
+                    })
+                })
+                .collect();
+        }
+        result
+    }
+
+    /// Expand a tensor into concrete rows while retaining per-leg dependencies.
+    fn tensor_expanded(&self, other: &Self) -> Self {
+        let mut transitions = BTreeMap::new();
+        for left_source in transition_basis_labels(self.arity) {
+            for right_source in transition_basis_labels(other.arity) {
+                let left_explicit = self.expanded_transitions.contains_key(&left_source);
+                let right_explicit = other.expanded_transitions.contains_key(&right_source);
+                if !left_explicit && !right_explicit {
+                    continue;
+                }
+
+                let source = format!("{left_source}{right_source}");
+                let mut row = BTreeMap::new();
+                for (left_destination, left_probability) in self.effective_row(&left_source) {
+                    for (right_destination, right_probability) in other.effective_row(&right_source)
+                    {
+                        *row.entry(format!("{left_destination}{right_destination}"))
+                            .or_insert(0.0) += left_probability * right_probability;
+                    }
+                }
+                transitions.insert(source, row);
+            }
+        }
+
+        let mut result = Self::new_validated(&transitions);
+        result.computational_dependencies = self
+            .computational_dependencies
+            .iter()
+            .chain(&other.computational_dependencies)
+            .copied()
+            .collect();
+        result
+    }
+}
+
+impl Mul for TransitionDict {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        self.tensor(&rhs)
+    }
+}
+
+impl Mul<&TransitionDict> for &TransitionDict {
+    type Output = TransitionDict;
+
+    fn mul(self, rhs: &TransitionDict) -> Self::Output {
+        self.tensor(rhs)
+    }
+}
+
+impl Mul<&TransitionDict> for TransitionDict {
+    type Output = Self;
+
+    fn mul(self, rhs: &TransitionDict) -> Self::Output {
+        self.tensor(rhs)
+    }
+}
+
+impl Mul<TransitionDict> for &TransitionDict {
+    type Output = TransitionDict;
+
+    fn mul(self, rhs: TransitionDict) -> Self::Output {
+        self.tensor(&rhs)
+    }
+}
+
+/// A conditional population-transition channel on `{|0>, |1>, |L>}`.
+///
+/// `transitions[y][x]` is `P(x | y)`: the outer key is the source state and the inner key is the
+/// destination. Each supplied source row must sum to one. Both computational rows must be
+/// supplied together or both omitted. Omitting both preserves computational coherence;
+/// supplying either requires MZ, including for explicit identity rows. An omitted leakage row
+/// leaves leakage unchanged. Omitted destinations have probability zero.
+///
+/// The channel is selected with the outer `probability`, giving the effective transition matrix
+/// `T_eff = (1 - p) I + p T`. This outer coin provides a fast path for the low error rates typical
+/// of QEC simulations.
+///
+/// A supplied computational row uses Z-basis measurement-and-transition semantics. It therefore
+/// removes computational-basis coherence when the channel is selected. This is a classical
+/// population channel, not a Pauli channel: use the general noise model's existing p1/p2 models
+/// for coherent `rho -> P rho P` faults. PECOS tracks leakage as a classical state and does not
+/// preserve coherence between the computational and leakage sectors.
+///
+/// # Example
+///
+/// Recover a leaked qubit with 90% probability, equally often to |0> and |1>:
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use pecos_engines::noise::{GeneralNoiseModel, StateTransitionChannel};
+///
+/// let transitions = BTreeMap::from([(
+///     "L".to_string(),
+///     BTreeMap::from([("0".to_string(), 0.5), ("1".to_string(), 0.5)]),
+/// )]);
+/// let recovery = StateTransitionChannel::new(0.9, &transitions).unwrap();
+/// let noise = GeneralNoiseModel::builder()
+///     .add_p2_transition_channel_after_gate(&recovery)
+///     .build();
+/// ```
+#[derive(Clone, Debug)]
+pub struct StateTransitionChannel {
+    probability: f64,
+    transitions: TransitionDict,
+}
+
+impl StateTransitionChannel {
+    /// Construct from typed source/destination rows. Use `from_transitions` for wildcard labels.
+    ///
+    /// # Errors
+    /// Returns a structured error for invalid probabilities or incomplete computational rows.
+    pub fn from_rows(
+        probability: f64,
+        rows: &BTreeMap<QubitTransitionState, BTreeMap<QubitTransitionState, f64>>,
+    ) -> Result<Self, ChannelValidationError> {
+        let label = |state: &QubitTransitionState| state.as_str().to_string();
+        let rows = rows
+            .iter()
+            .map(|(source, row)| {
+                (
+                    label(source),
+                    row.iter().map(|(dest, &p)| (label(dest), p)).collect(),
+                )
+            })
+            .collect();
+        Self::new(probability, &rows)
+    }
+
+    /// Construct a channel from `"i->j"` conditional probabilities.
+    ///
+    /// # Errors
+    /// Returns an error on invalid probabilities, labels, arity, or incomplete computational rows.
+    pub fn from_transitions(
+        probability: f64,
+        transitions: &BTreeMap<String, f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        Self::from_transition_dict(probability, &TransitionDict::from_transitions(transitions)?)
+    }
+
+    /// Configure an overall application probability and conditional transition rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the outer probability is invalid, the transition map is empty, a state label is
+    /// invalid, a supplied row is empty, or a row contains invalid probabilities or does not sum
+    /// to one.
+    pub fn new(
+        probability: f64,
+        transitions: &BTreeMap<String, BTreeMap<String, f64>>,
+    ) -> Result<Self, ChannelValidationError> {
+        Self::from_transition_dict(probability, &TransitionDict::new(transitions)?)
+    }
+
+    /// Configure a channel from an already validated, single-qubit transition dictionary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `transitions` does not have arity one or `probability` is invalid.
+    pub fn from_transition_dict(
+        probability: f64,
+        transitions: &TransitionDict,
+    ) -> Result<Self, ChannelValidationError> {
+        validate_channel::probability(probability)?;
+        validate_channel::arity(1, transitions.arity())?;
+        Ok(Self {
+            probability,
+            transitions: transitions.clone(),
+        })
+    }
+
+    /// Return the unscaled outer application probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    /// Return the configured conditional transition rows.
+    #[must_use]
+    pub fn transitions(&self) -> &BTreeMap<String, BTreeMap<String, f64>> {
+        self.transitions.transitions()
+    }
+
+    /// Return the validated transition dictionary, including composition metadata.
+    #[must_use]
+    pub fn transition_dict(&self) -> &TransitionDict {
+        &self.transitions
+    }
+
+    /// Configure leakage recovery with a biased computational-basis destination.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either probability is not finite or lies outside `[0, 1]`.
+    pub fn leak_recovery(
+        recovery_probability: f64,
+        p_zero: f64,
+    ) -> Result<Self, ChannelValidationError> {
+        validate_channel::probability(p_zero)?;
+        let transitions = BTreeMap::from([(
+            "L".to_string(),
+            BTreeMap::from([("0".to_string(), p_zero), ("1".to_string(), 1.0 - p_zero)]),
+        )]);
+        Self::new(recovery_probability, &transitions)
+    }
+}
+
+/// Compiled sampler for a [`StateTransitionChannel`].
+#[derive(Clone, Debug)]
+pub struct QubitTransitionWeightedSampler {
+    probability: f64,
+    rows: BTreeMap<QubitTransitionState, WeightedSampler<QubitTransitionState>>,
+}
+
+impl QubitTransitionWeightedSampler {
+    /// Compile an already validated transition channel.
+    #[must_use]
+    pub fn new(channel: &StateTransitionChannel) -> Self {
+        let rows = channel
+            .transitions
+            .transitions()
+            .iter()
+            .map(|(source, row)| {
+                let typed_row = row
+                    .iter()
+                    .map(|(destination, probability)| {
+                        (QubitTransitionState::parse(destination), *probability)
+                    })
+                    .collect();
+                (
+                    QubitTransitionState::parse(source),
+                    WeightedSampler::new(&typed_row),
+                )
+            })
+            .collect();
+        Self {
+            probability: channel.probability,
+            rows,
+        }
+    }
+
+    /// Draw the channel's outer application coin.
+    #[must_use]
+    pub fn is_selected(&self, rng: &mut NoiseRng) -> bool {
+        rng.occurs(self.probability)
+    }
+
+    /// Whether a source state has an explicitly supplied transition row.
+    #[must_use]
+    pub fn has_row(&self, source: QubitTransitionState) -> bool {
+        self.rows.contains_key(&source)
+    }
+
+    /// Whether the channel can depend on an unknown computational-basis source.
+    #[must_use]
+    pub(crate) fn has_computational_row(&self) -> bool {
+        self.has_row(QubitTransitionState::Zero) || self.has_row(QubitTransitionState::One)
+    }
+
+    /// Sample `P(destination | source)`, using identity for an omitted source row.
+    #[must_use]
+    pub fn sample_destination(
+        &self,
+        rng: &mut NoiseRng,
+        source: QubitTransitionState,
+    ) -> QubitTransitionState {
+        self.rows.get(&source).map_or(source, |row| row.sample(rng))
+    }
+
+    /// Return the scaled outer probability used by the compiled channel.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    pub(crate) fn scale_probability(&mut self, scale: f64) {
+        self.probability *= scale;
+    }
+}
+
+fn parse_two_qubit_transition_state(label: &str) -> [QubitTransitionState; 2] {
+    let mut states = label
+        .chars()
+        .map(|state| QubitTransitionState::parse(&state.to_string()));
+    let first = states.next().unwrap_or_else(|| {
+        panic!("TwoQubitStateTransitionChannel: state {label:?} must contain exactly two symbols")
+    });
+    let second = states.next().unwrap_or_else(|| {
+        panic!("TwoQubitStateTransitionChannel: state {label:?} must contain exactly two symbols")
+    });
+    assert!(
+        states.next().is_none(),
+        "TwoQubitStateTransitionChannel: state {label:?} must contain exactly two symbols"
+    );
+    [first, second]
+}
+
+/// A joint conditional population-transition channel on two effective qutrits.
+///
+/// `transitions[xy][wz]` is `P(wz | xy)`, where every concrete symbol is one of `0`, `1`, or `L`.
+/// Thus there are nine possible source and destination labels, from `00` through `LL`. Supplied
+/// rows must sum to one. Each supplied leakage pattern must include all computational
+/// completions: `0L` and `1L`, `L0` and `L1`, or all of `00`, `01`, `10`, and `11`.
+/// A selected channel measures a non-leaked leg only if it depends on that leg's computational
+/// state and a source row matches the pair's leakage pattern. Omitted patterns are identity
+/// without measurement. A `*` in the same position in a source
+/// and all its destinations is an identity wire that is neither measured nor otherwise resolved.
+/// Factorized rules for both legs, such as `*L` and `L*`, may coexist in one channel.
+#[derive(Clone, Debug)]
+pub struct TwoQubitStateTransitionChannel {
+    probability: f64,
+    transitions: TransitionDict,
+}
+
+impl TwoQubitStateTransitionChannel {
+    /// Construct from typed source/destination rows. Use `from_transitions` for wildcard labels.
+    ///
+    /// # Errors
+    /// Returns a structured error for invalid probabilities or incomplete computational rows.
+    pub fn from_rows(
+        probability: f64,
+        rows: &BTreeMap<[QubitTransitionState; 2], BTreeMap<[QubitTransitionState; 2], f64>>,
+    ) -> Result<Self, ChannelValidationError> {
+        let label = |state: &[QubitTransitionState; 2]| {
+            state.iter().map(|s| s.as_str()).collect::<String>()
+        };
+        let rows = rows
+            .iter()
+            .map(|(source, row)| {
+                (
+                    label(source),
+                    row.iter().map(|(dest, &p)| (label(dest), p)).collect(),
+                )
+            })
+            .collect();
+        Self::new(probability, &rows)
+    }
+
+    /// Construct a channel from `"i->j"` conditional probabilities.
+    ///
+    /// # Errors
+    /// Returns an error on invalid probabilities, labels, arity, or incomplete computational rows.
+    pub fn from_transitions(
+        probability: f64,
+        transitions: &BTreeMap<String, f64>,
+    ) -> Result<Self, ChannelValidationError> {
+        Self::from_transition_dict(probability, &TransitionDict::from_transitions(transitions)?)
+    }
+
+    /// Configure a joint two-qubit conditional transition matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same probability and row-validation conditions as
+    /// [`StateTransitionChannel::new`], or if a source or destination is not a two-symbol state.
+    pub fn new(
+        probability: f64,
+        transitions: &BTreeMap<String, BTreeMap<String, f64>>,
+    ) -> Result<Self, ChannelValidationError> {
+        Self::from_transition_dict(probability, &TransitionDict::new(transitions)?)
+    }
+
+    /// Configure a joint channel from an already validated, two-qubit transition dictionary.
+    ///
+    /// Passing a [`TransitionDict`] produced by [`TransitionDict::tensor`] preserves enough
+    /// information to avoid resolving a computational-basis state on an identity factor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `transitions` does not have arity two or `probability` is invalid.
+    pub fn from_transition_dict(
+        probability: f64,
+        transitions: &TransitionDict,
+    ) -> Result<Self, ChannelValidationError> {
+        validate_channel::probability(probability)?;
+        validate_channel::arity(2, transitions.arity())?;
+        Ok(Self {
+            probability,
+            transitions: transitions.clone(),
+        })
+    }
+
+    /// Return the unscaled outer application probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    /// Return the configured joint conditional transition rows.
+    #[must_use]
+    pub fn transitions(&self) -> &BTreeMap<String, BTreeMap<String, f64>> {
+        self.transitions.transitions()
+    }
+
+    /// Return the validated transition dictionary, including composition metadata.
+    #[must_use]
+    pub fn transition_dict(&self) -> &TransitionDict {
+        &self.transitions
+    }
+}
+
+/// One ordered transition step attached to a two-qubit gate.
+#[derive(Clone, Debug)]
+pub enum P2TransitionStep {
+    /// Apply distinct single-qubit channels independently to the first and second gate legs.
+    Independent {
+        /// Channel for the first gate leg.
+        first: StateTransitionChannel,
+        /// Channel for the second gate leg.
+        second: StateTransitionChannel,
+    },
+    /// Apply one joint conditional matrix to the two-leg state.
+    Joint(TwoQubitStateTransitionChannel),
+}
+
+impl P2TransitionStep {
+    /// Construct an independent-leg step from two potentially different channels.
+    #[must_use]
+    pub fn independent(first: StateTransitionChannel, second: StateTransitionChannel) -> Self {
+        Self::Independent { first, second }
+    }
+
+    /// Alias for [`Self::independent`] emphasizing the product of two one-qubit channels.
+    #[must_use]
+    pub fn tensor_product(first: StateTransitionChannel, second: StateTransitionChannel) -> Self {
+        Self::independent(first, second)
+    }
+
+    /// Apply the same single-qubit channel independently to both gate legs.
+    #[must_use]
+    pub fn same_on_each(channel: StateTransitionChannel) -> Self {
+        Self::Independent {
+            first: channel.clone(),
+            second: channel,
+        }
+    }
+
+    /// Construct a joint two-qubit transition step.
+    #[must_use]
+    pub fn joint(channel: TwoQubitStateTransitionChannel) -> Self {
+        Self::Joint(channel)
+    }
+}
+
+impl From<StateTransitionChannel> for P2TransitionStep {
+    fn from(channel: StateTransitionChannel) -> Self {
+        Self::same_on_each(channel)
+    }
+}
+
+impl From<&StateTransitionChannel> for P2TransitionStep {
+    fn from(channel: &StateTransitionChannel) -> Self {
+        Self::same_on_each(channel.clone())
+    }
+}
+
+impl From<TwoQubitStateTransitionChannel> for P2TransitionStep {
+    fn from(channel: TwoQubitStateTransitionChannel) -> Self {
+        Self::joint(channel)
+    }
+}
+
+impl From<&TwoQubitStateTransitionChannel> for P2TransitionStep {
+    fn from(channel: &TwoQubitStateTransitionChannel) -> Self {
+        Self::joint(channel.clone())
+    }
+}
+
+impl Mul for StateTransitionChannel {
+    type Output = P2TransitionStep;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        P2TransitionStep::tensor_product(self, rhs)
+    }
+}
+
+impl Mul<&StateTransitionChannel> for &StateTransitionChannel {
+    type Output = P2TransitionStep;
+
+    fn mul(self, rhs: &StateTransitionChannel) -> Self::Output {
+        P2TransitionStep::tensor_product(self.clone(), rhs.clone())
+    }
+}
+
+impl Mul<&StateTransitionChannel> for StateTransitionChannel {
+    type Output = P2TransitionStep;
+
+    fn mul(self, rhs: &StateTransitionChannel) -> Self::Output {
+        P2TransitionStep::tensor_product(self, rhs.clone())
+    }
+}
+
+impl Mul<StateTransitionChannel> for &StateTransitionChannel {
+    type Output = P2TransitionStep;
+
+    fn mul(self, rhs: StateTransitionChannel) -> Self::Output {
+        P2TransitionStep::tensor_product(self.clone(), rhs)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum P2TransitionWeightedStep {
+    Independent {
+        first: QubitTransitionWeightedSampler,
+        second: QubitTransitionWeightedSampler,
+    },
+    Joint {
+        probability: f64,
+        rows: BTreeMap<[QubitTransitionState; 2], WeightedSampler<[QubitTransitionState; 2]>>,
+        computational_dependencies: [bool; 2],
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum SelectedP2TransitionStep {
+    Independent {
+        first: Option<QubitTransitionWeightedSampler>,
+        second: Option<QubitTransitionWeightedSampler>,
+    },
+    Joint {
+        rows: BTreeMap<[QubitTransitionState; 2], WeightedSampler<[QubitTransitionState; 2]>>,
+        computational_dependencies: [bool; 2],
+    },
+}
+
+impl P2TransitionWeightedStep {
+    pub(crate) fn probabilities(&self) -> [f64; 2] {
+        match self {
+            Self::Independent { first, second } => [first.probability(), second.probability()],
+            Self::Joint { probability, .. } => [*probability; 2],
+        }
+    }
+
+    pub(crate) fn new(step: &P2TransitionStep) -> Self {
+        match step {
+            P2TransitionStep::Independent { first, second } => Self::Independent {
+                first: QubitTransitionWeightedSampler::new(first),
+                second: QubitTransitionWeightedSampler::new(second),
+            },
+            P2TransitionStep::Joint(channel) => Self::Joint {
+                probability: channel.probability,
+                computational_dependencies: channel
+                    .transitions
+                    .computational_dependencies()
+                    .try_into()
+                    .expect("two-qubit transition dictionary must have two dependency entries"),
+                rows: channel
+                    .transitions
+                    .expanded_transitions()
+                    .iter()
+                    .map(|(source, row)| {
+                        let typed_row = row
+                            .iter()
+                            .map(|(destination, probability)| {
+                                (parse_two_qubit_transition_state(destination), *probability)
+                            })
+                            .collect();
+                        (
+                            parse_two_qubit_transition_state(source),
+                            WeightedSampler::new(&typed_row),
+                        )
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    pub(crate) fn scale_probability(&mut self, scale: f64) {
+        match self {
+            Self::Independent { first, second } => {
+                first.scale_probability(scale);
+                second.scale_probability(scale);
+            }
+            Self::Joint { probability, .. } => {
+                *probability *= scale;
+            }
+        }
+    }
+
+    pub(crate) fn select(&self, rng: &mut NoiseRng) -> Option<SelectedP2TransitionStep> {
+        match self {
+            Self::Independent { first, second } => {
+                let first = first.is_selected(rng).then(|| first.clone());
+                let second = second.is_selected(rng).then(|| second.clone());
+                (first.is_some() || second.is_some())
+                    .then_some(SelectedP2TransitionStep::Independent { first, second })
+            }
+            Self::Joint {
+                probability,
+                rows,
+                computational_dependencies,
+            } => rng
+                .occurs(*probability)
+                .then(|| SelectedP2TransitionStep::Joint {
+                    rows: rows.clone(),
+                    computational_dependencies: *computational_dependencies,
+                }),
+        }
+    }
+}
+
+impl SelectedP2TransitionStep {
+    pub(crate) fn sample_destinations(
+        &self,
+        rng: &mut NoiseRng,
+        sources: [QubitTransitionState; 2],
+    ) -> [QubitTransitionState; 2] {
+        match self {
+            Self::Independent { first, second } => [
+                first.as_ref().map_or(sources[0], |channel| {
+                    channel.sample_destination(rng, sources[0])
+                }),
+                second.as_ref().map_or(sources[1], |channel| {
+                    channel.sample_destination(rng, sources[1])
+                }),
+            ],
+            Self::Joint { rows, .. } => rows.get(&sources).map_or(sources, |row| row.sample(rng)),
+        }
+    }
+
+    pub(crate) fn requires_computational_source(
+        &self,
+        sources: [Option<QubitTransitionState>; 2],
+    ) -> [bool; 2] {
+        match self {
+            Self::Independent { first, second } => [
+                first
+                    .as_ref()
+                    .is_some_and(QubitTransitionWeightedSampler::has_computational_row),
+                second
+                    .as_ref()
+                    .is_some_and(QubitTransitionWeightedSampler::has_computational_row),
+            ],
+            Self::Joint {
+                rows,
+                computational_dependencies,
+            } => {
+                if rows.keys().any(|row| {
+                    (0..2).all(|leg| {
+                        (row[leg] == QubitTransitionState::Leakage)
+                            == (sources[leg] == Some(QubitTransitionState::Leakage))
+                    })
+                }) {
+                    *computational_dependencies
+                } else {
+                    [false; 2]
+                }
+            }
+        }
+    }
+
+    pub(crate) fn sample_known_destinations(
+        &self,
+        rng: &mut NoiseRng,
+        sources: [Option<QubitTransitionState>; 2],
+    ) -> [Option<QubitTransitionState>; 2] {
+        if let [Some(first), Some(second)] = sources {
+            return self.sample_destinations(rng, [first, second]).map(Some);
+        }
+
+        match self {
+            Self::Independent { first, second } => [
+                sources[0].map(|source| {
+                    first
+                        .as_ref()
+                        .map_or(source, |channel| channel.sample_destination(rng, source))
+                }),
+                sources[1].map(|source| {
+                    second
+                        .as_ref()
+                        .map_or(source, |channel| channel.sample_destination(rng, source))
+                }),
+            ],
+            Self::Joint { rows, .. } => {
+                let concrete_sources = [
+                    sources[0].unwrap_or(QubitTransitionState::Zero),
+                    sources[1].unwrap_or(QubitTransitionState::Zero),
+                ];
+                let destinations = rows
+                    .get(&concrete_sources)
+                    .map_or(concrete_sources, |row| row.sample(rng));
+                [
+                    sources[0].map(|_| destinations[0]),
+                    sources[1].map(|_| destinations[1]),
+                ]
+            }
+        }
+    }
 }
 
 impl TwoQubitWeightedSampler {
@@ -340,6 +1587,226 @@ impl TwoQubitWeightedSampler {
         let gates_option = if gates.is_empty() { None } else { Some(gates) };
 
         TwoQubitNoiseResult::with_leakage(qubit0_leaked, qubit1_leaked, gates_option)
+    }
+}
+
+/// One Pauli-plus-leakage step attached to a two-qubit gate hook.
+#[derive(Clone, Debug)]
+pub enum P2PauliLeakageStep {
+    /// Draw distinct single-qubit channels independently on the two gate legs.
+    Independent {
+        /// Channel for the first gate leg.
+        first: PauliLeakageChannel,
+        /// Channel for the second gate leg.
+        second: PauliLeakageChannel,
+    },
+    /// Draw one correlated joint event for the pair.
+    Joint(TwoQubitPauliLeakageChannel),
+}
+
+impl P2PauliLeakageStep {
+    /// Construct an independent-leg step from two potentially different channels.
+    #[must_use]
+    pub fn independent(first: PauliLeakageChannel, second: PauliLeakageChannel) -> Self {
+        Self::Independent { first, second }
+    }
+
+    /// Alias for [`Self::independent`] emphasizing the product of two one-qubit channels.
+    #[must_use]
+    pub fn tensor_product(first: PauliLeakageChannel, second: PauliLeakageChannel) -> Self {
+        Self::independent(first, second)
+    }
+
+    /// Apply the same independently drawn channel to both legs.
+    #[must_use]
+    pub fn same_on_each(channel: PauliLeakageChannel) -> Self {
+        Self::Independent {
+            first: channel.clone(),
+            second: channel,
+        }
+    }
+
+    /// Apply one correlated two-qubit event channel.
+    #[must_use]
+    pub fn joint(channel: TwoQubitPauliLeakageChannel) -> Self {
+        Self::Joint(channel)
+    }
+}
+
+impl Mul for PauliLeakageChannel {
+    type Output = P2PauliLeakageStep;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        P2PauliLeakageStep::tensor_product(self, rhs)
+    }
+}
+
+impl Mul<&PauliLeakageChannel> for &PauliLeakageChannel {
+    type Output = P2PauliLeakageStep;
+
+    fn mul(self, rhs: &PauliLeakageChannel) -> Self::Output {
+        P2PauliLeakageStep::tensor_product(self.clone(), rhs.clone())
+    }
+}
+
+impl Mul<&PauliLeakageChannel> for PauliLeakageChannel {
+    type Output = P2PauliLeakageStep;
+
+    fn mul(self, rhs: &PauliLeakageChannel) -> Self::Output {
+        P2PauliLeakageStep::tensor_product(self, rhs.clone())
+    }
+}
+
+impl Mul<PauliLeakageChannel> for &PauliLeakageChannel {
+    type Output = P2PauliLeakageStep;
+
+    fn mul(self, rhs: PauliLeakageChannel) -> Self::Output {
+        P2PauliLeakageStep::tensor_product(self.clone(), rhs)
+    }
+}
+
+/// Compiled sampler for a [`PauliLeakageChannel`].
+#[derive(Clone, Debug)]
+pub struct PauliLeakageWeightedSampler {
+    probability: f64,
+    sampler: WeightedSampler<String>,
+}
+
+impl PauliLeakageWeightedSampler {
+    /// Compile an already validated channel.
+    #[must_use]
+    pub fn new(channel: &PauliLeakageChannel) -> Self {
+        Self {
+            probability: channel.probability,
+            // Channel validation permits identity; legacy fault samplers do not.
+            // Keep identity in the distribution, including its sampling draw.
+            sampler: WeightedSampler::new(channel.events()),
+        }
+    }
+
+    /// Draw the outer coin and, when selected, one event symbol.
+    pub(crate) fn sample_event(&self, rng: &mut NoiseRng) -> Option<char> {
+        self.is_selected(rng).then(|| {
+            self.sampler
+                .sample(rng)
+                .chars()
+                .next()
+                .expect("arity-one event")
+        })
+    }
+
+    /// Draw the channel's outer application coin.
+    #[must_use]
+    pub fn is_selected(&self, rng: &mut NoiseRng) -> bool {
+        rng.occurs(self.probability)
+    }
+
+    /// Return the scaled outer probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    pub(crate) fn scale_probability(&mut self, scale: f64) {
+        self.probability *= scale;
+    }
+}
+
+/// Compiled sampler for a [`TwoQubitPauliLeakageChannel`].
+#[derive(Clone, Debug)]
+pub struct TwoQubitPauliLeakageWeightedSampler {
+    probability: f64,
+    sampler: WeightedSampler<String>,
+}
+
+impl TwoQubitPauliLeakageWeightedSampler {
+    /// Compile an already validated channel.
+    #[must_use]
+    pub fn new(channel: &TwoQubitPauliLeakageChannel) -> Self {
+        Self {
+            probability: channel.probability,
+            // Preserve II as an explicitly sampled event without changing legacy validation.
+            sampler: WeightedSampler::new(channel.events()),
+        }
+    }
+
+    fn sample_events(&self, rng: &mut NoiseRng) -> Option<[char; 2]> {
+        self.is_selected(rng).then(|| {
+            self.sampler
+                .sample(rng)
+                .chars()
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("arity-two event")
+        })
+    }
+
+    /// Draw the channel's outer application coin.
+    #[must_use]
+    pub fn is_selected(&self, rng: &mut NoiseRng) -> bool {
+        rng.occurs(self.probability)
+    }
+
+    /// Return the scaled outer probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    pub(crate) fn scale_probability(&mut self, scale: f64) {
+        self.probability *= scale;
+    }
+}
+
+/// Compiled sampler for a [`P2PauliLeakageStep`].
+#[derive(Clone, Debug)]
+pub(crate) enum P2PauliLeakageWeightedStep {
+    Independent {
+        first: PauliLeakageWeightedSampler,
+        second: PauliLeakageWeightedSampler,
+    },
+    Joint(TwoQubitPauliLeakageWeightedSampler),
+}
+
+impl P2PauliLeakageWeightedStep {
+    pub(crate) fn probabilities(&self) -> [f64; 2] {
+        match self {
+            Self::Independent { first, second } => [first.probability(), second.probability()],
+            Self::Joint(channel) => [channel.probability(); 2],
+        }
+    }
+
+    pub(crate) fn new(step: &P2PauliLeakageStep) -> Self {
+        match step {
+            P2PauliLeakageStep::Independent { first, second } => Self::Independent {
+                first: PauliLeakageWeightedSampler::new(first),
+                second: PauliLeakageWeightedSampler::new(second),
+            },
+            P2PauliLeakageStep::Joint(channel) => {
+                Self::Joint(TwoQubitPauliLeakageWeightedSampler::new(channel))
+            }
+        }
+    }
+
+    pub(crate) fn sample_events(&self, rng: &mut NoiseRng) -> [Option<char>; 2] {
+        match self {
+            Self::Independent { first, second } => {
+                [first.sample_event(rng), second.sample_event(rng)]
+            }
+            Self::Joint(channel) => channel
+                .sample_events(rng)
+                .map_or([None, None], |events| events.map(Some)),
+        }
+    }
+
+    pub(crate) fn scale_probability(&mut self, scale: f64) {
+        match self {
+            Self::Independent { first, second } => {
+                first.scale_probability(scale);
+                second.scale_probability(scale);
+            }
+            Self::Joint(channel) => channel.scale_probability(scale),
+        }
     }
 }
 
@@ -960,6 +2427,527 @@ mod tests {
             );
             assert!(r1.qubit_leaked, "All results should indicate leakage");
             assert!(r1.gate.is_none(), "No gates should be present");
+        }
+    }
+
+    #[test]
+    fn pauli_leakage_dict_tensor_product_multiplies_relative_weights() {
+        let first = PauliLeakageDict::new(&BTreeMap::from([
+            ("X".to_string(), 0.25),
+            ("L".to_string(), 0.75),
+        ]))
+        .unwrap();
+        let second = PauliLeakageDict::new(&BTreeMap::from([
+            ("Y".to_string(), 0.4),
+            ("Z".to_string(), 0.6),
+        ]))
+        .unwrap();
+
+        let product = &first * &second;
+
+        assert_eq!(product.arity(), 2);
+        assert!((product.events()["XY"] - 0.10).abs() < f64::EPSILON);
+        assert!((product.events()["XZ"] - 0.15).abs() < f64::EPSILON);
+        assert!((product.events()["LY"] - 0.30).abs() < f64::EPSILON);
+        assert!((product.events()["LZ"] - 0.45).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn pauli_leakage_channel_product_preserves_independent_outer_coins() {
+        let first =
+            PauliLeakageChannel::new(0.9, &BTreeMap::from([("L".to_string(), 1.0)])).unwrap();
+        let second =
+            PauliLeakageChannel::new(0.8, &BTreeMap::from([("X".to_string(), 1.0)])).unwrap();
+
+        let P2PauliLeakageStep::Independent { first, second } = &first * &second else {
+            panic!("channel product must produce an independent step");
+        };
+
+        assert!((first.probability() - 0.9).abs() < f64::EPSILON);
+        assert!((second.probability() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn identity_channels_preserve_seeded_event_draws() {
+        for mixed in [false, true] {
+            let weights = if mixed { vec![0.75, 0.25] } else { vec![1.0] };
+            let events = ["I", "X"]
+                .into_iter()
+                .zip(weights.iter().copied())
+                .map(|(key, weight)| (key.to_string(), weight))
+                .collect();
+            let joint_events = ["II", "XI"]
+                .into_iter()
+                .zip(weights.iter().copied())
+                .map(|(key, weight)| (key.to_string(), weight))
+                .collect();
+            // Relabel a legacy distribution with the same ordered weights. Its RNG
+            // consumption must match even when the channel samples only identity.
+            let reference = SingleQubitWeightedSampler::new(
+                &["X", "Y"]
+                    .into_iter()
+                    .zip(weights.iter().copied())
+                    .map(|(key, weight)| (key.to_string(), weight))
+                    .collect(),
+            );
+            for probability in [0.0, 0.6, 1.0] {
+                let single = PauliLeakageWeightedSampler::new(
+                    &PauliLeakageChannel::new(probability, &events).unwrap(),
+                );
+                let joint = TwoQubitPauliLeakageWeightedSampler::new(
+                    &TwoQubitPauliLeakageChannel::new(probability, &joint_events).unwrap(),
+                );
+                let mut expected_rng = NoiseRng::with_seed(41);
+                let mut single_rng = expected_rng.clone();
+                let mut joint_rng = expected_rng.clone();
+                for _ in 0..128 {
+                    let expected = expected_rng.occurs(probability).then(|| {
+                        if reference.sample_keys(&mut expected_rng) == "X" {
+                            'I'
+                        } else {
+                            'X'
+                        }
+                    });
+                    assert_eq!(single.sample_event(&mut single_rng), expected);
+                    assert_eq!(
+                        joint.sample_events(&mut joint_rng),
+                        expected.map(|event| [event, 'I'])
+                    );
+                }
+                assert_eq!(
+                    single_rng.random_float().to_bits(),
+                    expected_rng.clone().random_float().to_bits()
+                );
+                assert_eq!(
+                    joint_rng.random_float().to_bits(),
+                    expected_rng.random_float().to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "SingleQubitWeightedSampler: invalid key 'I'")]
+    fn legacy_single_qubit_sampler_still_rejects_identity() {
+        let _ = SingleQubitWeightedSampler::new(&BTreeMap::from([("I".into(), 1.0)]));
+    }
+
+    #[test]
+    #[should_panic(expected = "TwoQubitWeightedSampler: key 'II' is not allowed")]
+    fn legacy_two_qubit_sampler_still_rejects_identity() {
+        let _ = TwoQubitWeightedSampler::new(&BTreeMap::from([("II".into(), 1.0)]));
+    }
+
+    #[test]
+    fn pauli_leakage_dict_accepts_all_identity_event() {
+        let events = PauliLeakageDict::new(&BTreeMap::from([("II".to_string(), 1.0)])).unwrap();
+        assert_eq!(events.events()["II"], 1.0);
+    }
+
+    #[test]
+    fn transition_channel_uses_conditional_rows_and_omitted_rows_are_identity() {
+        let transitions = BTreeMap::from([
+            ("1".to_string(), BTreeMap::from([("1".to_string(), 1.0)])),
+            (
+                "0".to_string(),
+                BTreeMap::from([
+                    ("0".to_string(), 0.05),
+                    ("1".to_string(), 0.05),
+                    ("L".to_string(), 0.90),
+                ]),
+            ),
+            (
+                "L".to_string(),
+                BTreeMap::from([
+                    ("0".to_string(), 0.45),
+                    ("1".to_string(), 0.45),
+                    ("L".to_string(), 0.10),
+                ]),
+            ),
+        ]);
+        let channel = StateTransitionChannel::new(0.25, &transitions).unwrap();
+        let sampler = QubitTransitionWeightedSampler::new(&channel);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+
+        assert!((channel.probability() - 0.25).abs() < f64::EPSILON);
+        assert!(sampler.has_computational_row());
+        assert_eq!(
+            sampler.sample_destination(&mut rng, QubitTransitionState::One),
+            QubitTransitionState::One
+        );
+    }
+
+    #[test]
+    fn transition_dict_tensor_product_expands_only_affected_rows() {
+        let first = TransitionDict::new(&BTreeMap::from([(
+            "L".to_string(),
+            BTreeMap::from([("0".to_string(), 1.0)]),
+        )]))
+        .unwrap();
+        let second = TransitionDict::new(&BTreeMap::from([(
+            "L".to_string(),
+            BTreeMap::from([("1".to_string(), 1.0)]),
+        )]))
+        .unwrap();
+
+        let product = &first * &second;
+
+        assert_eq!(product.arity(), 2);
+        assert_eq!(
+            product.transitions(),
+            &BTreeMap::from([
+                ("L*".to_string(), BTreeMap::from([("0*".to_string(), 1.0)])),
+                ("*L".to_string(), BTreeMap::from([("*1".to_string(), 1.0)])),
+            ])
+        );
+        assert_eq!(product.expanded_transitions().len(), 5);
+        assert_eq!(
+            product.expanded_transitions()["0L"],
+            BTreeMap::from([("01".to_string(), 1.0)])
+        );
+        assert_eq!(
+            product.expanded_transitions()["L0"],
+            BTreeMap::from([("00".to_string(), 1.0)])
+        );
+        assert_eq!(
+            product.expanded_transitions()["LL"],
+            BTreeMap::from([("01".to_string(), 1.0)])
+        );
+        assert_eq!(product.computational_dependencies(), &[false, false]);
+    }
+
+    #[test]
+    fn transition_dict_tensor_round_trips_all_one_qubit_source_sets() {
+        let source_sets: [&[&str]; 3] = [&["L"], &["0", "1"], &["0", "1", "L"]];
+        for left_sources in source_sets {
+            for right_sources in source_sets {
+                let factor = |sources: &[&str]| {
+                    TransitionDict::new(
+                        &sources
+                            .iter()
+                            .map(|&source| {
+                                let row = match source {
+                                    "0" => [("1".to_string(), 0.25), ("L".to_string(), 0.75)],
+                                    "1" => [("0".to_string(), 0.75), ("L".to_string(), 0.25)],
+                                    _ => [("0".to_string(), 0.25), ("1".to_string(), 0.75)],
+                                };
+                                (source.to_string(), BTreeMap::from(row))
+                            })
+                            .collect(),
+                    )
+                    .unwrap()
+                };
+                let product = factor(left_sources).tensor(&factor(right_sources));
+                let rebuilt = TransitionDict::new(product.transitions()).unwrap();
+                assert_eq!(
+                    rebuilt.expanded_transitions(),
+                    product.expanded_transitions()
+                );
+                assert_eq!(
+                    rebuilt.computational_dependencies(),
+                    product.computational_dependencies(),
+                    "source sets {left_sources:?} and {right_sources:?}"
+                );
+                assert_eq!(rebuilt, product);
+            }
+        }
+    }
+
+    #[test]
+    fn multiplying_single_qubit_channels_preserves_independent_outer_coins() {
+        let first = StateTransitionChannel::leak_recovery(0.9, 1.0).unwrap();
+        let second = StateTransitionChannel::leak_recovery(0.8, 0.0).unwrap();
+
+        let P2TransitionStep::Independent { first, second } = &first * &second else {
+            panic!("channel product must produce an independent transition step");
+        };
+
+        assert!((first.probability() - 0.9).abs() < f64::EPSILON);
+        assert!((second.probability() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn transition_application_probability_is_close_to_requested_probability() {
+        let channel = StateTransitionChannel::leak_recovery(0.9, 0.5).unwrap();
+        let sampler = QubitTransitionWeightedSampler::new(&channel);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        let samples = 10_000_u32;
+        let selected = (0..samples)
+            .filter(|_| sampler.is_selected(&mut rng))
+            .count();
+        let observed = f64::from(u32::try_from(selected).unwrap()) / f64::from(samples);
+
+        assert!(
+            (observed - 0.9).abs() < 0.02,
+            "observed probability {observed}"
+        );
+    }
+
+    #[test]
+    fn leak_recovery_helper_uses_conditional_destination_probabilities() {
+        let channel = StateTransitionChannel::leak_recovery(1.0, 0.25).unwrap();
+        let sampler = QubitTransitionWeightedSampler::new(&channel);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        let samples = 10_000_u32;
+        let zero = (0..samples)
+            .filter(|_| {
+                sampler.sample_destination(&mut rng, QubitTransitionState::Leakage)
+                    == QubitTransitionState::Zero
+            })
+            .count();
+        let observed = f64::from(u32::try_from(zero).unwrap()) / f64::from(samples);
+
+        assert!((observed - 0.25).abs() < 0.02, "observed P(0|L) {observed}");
+        assert_eq!(
+            channel.transitions()["L"],
+            BTreeMap::from([("0".to_string(), 0.25), ("1".to_string(), 0.75)])
+        );
+    }
+
+    #[test]
+    fn joint_two_qubit_transition_supports_all_qutrit_pair_labels() {
+        let transitions = BTreeMap::from([
+            ("0L".to_string(), BTreeMap::from([("L1".to_string(), 1.0)])),
+            ("1L".to_string(), BTreeMap::from([("1L".to_string(), 1.0)])),
+        ]);
+        let channel = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap();
+        let step = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel));
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        let selected = step.select(&mut rng).unwrap();
+
+        assert_eq!(
+            selected.sample_known_destinations(
+                &mut rng,
+                [
+                    Some(QubitTransitionState::Zero),
+                    Some(QubitTransitionState::Leakage),
+                ],
+            ),
+            [
+                Some(QubitTransitionState::Leakage),
+                Some(QubitTransitionState::One),
+            ]
+        );
+    }
+
+    #[test]
+    fn wildcard_transition_rules_preserve_the_other_leg_without_resolving_it() {
+        let transitions =
+            BTreeMap::from([("*L".to_string(), BTreeMap::from([("*0".to_string(), 1.0)]))]);
+        let channel = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap();
+        let step = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel.clone()));
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        let selected = step.select(&mut rng).unwrap();
+
+        assert_eq!(channel.transitions(), &transitions);
+        assert_eq!(
+            selected.requires_computational_source([None, Some(QubitTransitionState::Leakage)]),
+            [false, false]
+        );
+        assert_eq!(
+            selected
+                .sample_known_destinations(&mut rng, [None, Some(QubitTransitionState::Leakage)],),
+            [None, Some(QubitTransitionState::Zero)]
+        );
+    }
+
+    #[test]
+    fn wildcard_rules_for_both_legs_compose_for_double_leakage() {
+        let transitions = BTreeMap::from([
+            ("*L".to_string(), BTreeMap::from([("*0".to_string(), 1.0)])),
+            ("L*".to_string(), BTreeMap::from([("1*".to_string(), 1.0)])),
+        ]);
+        let channel = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap();
+        let step = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel));
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        let selected = step.select(&mut rng).unwrap();
+
+        assert_eq!(
+            selected.sample_known_destinations(
+                &mut rng,
+                [
+                    Some(QubitTransitionState::Leakage),
+                    Some(QubitTransitionState::Leakage),
+                ],
+            ),
+            [
+                Some(QubitTransitionState::One),
+                Some(QubitTransitionState::Zero),
+            ]
+        );
+    }
+
+    #[test]
+    fn wildcard_transition_rejects_destination_that_touches_identity_leg() {
+        let transitions =
+            BTreeMap::from([("*L".to_string(), BTreeMap::from([("00".to_string(), 1.0)]))]);
+        let error = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap_err();
+        assert!(matches!(
+            error,
+            ChannelValidationError::ConflictingWildcard(_)
+        ));
+    }
+
+    #[test]
+    fn independent_p2_step_can_use_distinct_leg_channels() {
+        let first = StateTransitionChannel::leak_recovery(1.0, 1.0).unwrap();
+        let second = StateTransitionChannel::leak_recovery(1.0, 0.0).unwrap();
+        let step = P2TransitionWeightedStep::new(&P2TransitionStep::independent(first, second));
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        let selected = step.select(&mut rng).unwrap();
+
+        assert_eq!(
+            selected.sample_known_destinations(
+                &mut rng,
+                [
+                    Some(QubitTransitionState::Leakage),
+                    Some(QubitTransitionState::Leakage),
+                ],
+            ),
+            [
+                Some(QubitTransitionState::Zero),
+                Some(QubitTransitionState::One),
+            ]
+        );
+    }
+
+    #[test]
+    fn transition_channel_rejects_non_normalized_rows() {
+        let transitions = BTreeMap::from([(
+            "L".to_string(),
+            BTreeMap::from([("0".to_string(), 0.8), ("1".to_string(), 0.1)]),
+        )]);
+        let error = StateTransitionChannel::new(1.0, &transitions).unwrap_err();
+        assert!(matches!(
+            error,
+            ChannelValidationError::NotNormalized { .. }
+        ));
+    }
+
+    #[test]
+    fn transition_channel_rejects_unknown_states() {
+        let transitions =
+            BTreeMap::from([("C".to_string(), BTreeMap::from([("0".to_string(), 1.0)]))]);
+        let error = StateTransitionChannel::new(1.0, &transitions).unwrap_err();
+        assert!(matches!(error, ChannelValidationError::InvalidLabel(_)));
+    }
+
+    #[test]
+    fn transition_channel_rejects_invalid_application_probability() {
+        let transitions =
+            BTreeMap::from([("L".to_string(), BTreeMap::from([("0".to_string(), 1.0)]))]);
+        let error = StateTransitionChannel::new(1.1, &transitions).unwrap_err();
+        assert!(matches!(
+            error,
+            ChannelValidationError::InvalidProbability(_)
+        ));
+    }
+
+    #[test]
+    fn transition_rejects_incomplete_computational_rows() {
+        for (present, missing) in [("0", "1"), ("1", "0")] {
+            let error = StateTransitionChannel::from_transitions(
+                1.0,
+                &BTreeMap::from([(format!("{present}->{present}"), 1.0)]),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                ChannelValidationError::IncompleteComputationalRows(BTreeMap::from([(
+                    "C".into(),
+                    vec![missing.into()]
+                )]))
+            );
+            let message = error.to_string();
+            assert!(message.contains(&format!("pattern C: missing source rows {missing}")));
+            assert!(message.contains("performs MZ when it fires"));
+            assert!(message.contains("not the identity quantum map"));
+            assert!(message.contains(&format!("'{missing}->{missing}': 1.0")));
+        }
+    }
+
+    #[test]
+    fn wildcard_rejects_overlapping_concrete_rows() {
+        let error = TwoQubitStateTransitionChannel::from_transitions(
+            1.0,
+            &BTreeMap::from([("*L->*0".into(), 1.0), ("LL->11".into(), 1.0)]),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ChannelValidationError::ConflictingWildcard(_)
+        ));
+    }
+
+    #[test]
+    fn symmetric_independent_transition_draws_separate_coins() {
+        let channel = StateTransitionChannel::leak_recovery(0.5, 1.0).unwrap();
+        let step = P2TransitionWeightedStep::new(&P2TransitionStep::same_on_each(channel));
+        let mut rng = NoiseRng::<PecosRng>::with_seed(19);
+        let mut counts = [0_u32; 4];
+        let sources = [QubitTransitionState::Leakage; 2];
+        for _ in 0..10_000 {
+            let result = step.select(&mut rng).map_or(sources, |selected| {
+                selected.sample_destinations(&mut rng, sources)
+            });
+            let index = usize::from(result[0] == QubitTransitionState::Zero)
+                + 2 * usize::from(result[1] == QubitTransitionState::Zero);
+            counts[index] += 1;
+        }
+        assert!(
+            counts.iter().all(|&count| (2200..2800).contains(&count)),
+            "{counts:?}"
+        );
+    }
+    #[test]
+    fn unmeasured_joint_sources_resolve_only_matching_identity_factors() {
+        use QubitTransitionState::{Leakage, One, Zero};
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
+        for (rows, sources) in [
+            (
+                BTreeMap::from([("0L->LL".into(), 1.0), ("1L->1L".into(), 1.0)]),
+                [None, None],
+            ),
+            (
+                BTreeMap::from([("L0->LL".into(), 1.0), ("L1->L1".into(), 1.0)]),
+                [None, Some(Leakage)],
+            ),
+        ] {
+            let channel = TwoQubitStateTransitionChannel::from_transitions(1.0, &rows).unwrap();
+            let selected = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel))
+                .select(&mut rng)
+                .unwrap();
+            assert_eq!(selected.requires_computational_source(sources), [false; 2]);
+            assert_eq!(
+                selected.sample_known_destinations(&mut rng, sources),
+                sources
+            );
+        }
+        let identity =
+            TransitionDict::from_transitions(&BTreeMap::from([("L->L".into(), 1.0)])).unwrap();
+        let recover =
+            TransitionDict::from_transitions(&BTreeMap::from([("L->1".into(), 1.0)])).unwrap();
+        for dict in [
+            identity.tensor(&recover),
+            TransitionDict::from_transitions(&BTreeMap::from([("*L->*1".into(), 1.0)])).unwrap(),
+        ] {
+            let channel = TwoQubitStateTransitionChannel::from_transition_dict(1.0, &dict).unwrap();
+            let selected = P2TransitionWeightedStep::new(&P2TransitionStep::joint(channel))
+                .select(&mut rng)
+                .unwrap();
+            let sources = [None, Some(Leakage)];
+            assert_eq!(selected.requires_computational_source(sources), [false; 2]);
+            assert_eq!(
+                selected.sample_known_destinations(&mut rng, sources),
+                [None, Some(One)]
+            );
+            // The unmeasured first leg is preserved for either possible computational value.
+            for first in [Zero, One] {
+                assert_eq!(
+                    selected.sample_destinations(&mut rng, [first, Leakage]),
+                    [first, One]
+                );
+            }
         }
     }
 }

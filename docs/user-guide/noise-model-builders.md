@@ -90,6 +90,195 @@ noise = (
 )
 ```
 
+### Gate-Hook Channels
+
+`StateTransitionChannel` and `PauliLeakageChannel` add stochastic operations before or after
+single- and two-qubit gate events. They use the general model's existing samplers, leakage
+tracking, and internal measurement continuation. Legacy p1/p2, emission, seepage, and crosstalk
+configuration retains its existing execution path.
+
+Every channel has its own outer `probability`. It is **not multiplied by `p1`, `p2`, or emission
+ratios**. As in the prototype, global `scale` and the corresponding `p1_scale` or `p2_scale`
+multiply this probability; configurations with scaled probabilities outside `[0, 1]` are rejected.
+Angle-dependent p2 scaling does not affect hooks.
+A failed outer coin is a no-op, including no measurement. An explicit `L` event or destination
+always marks the operand leaked, independently of `leakage_scale`. The legacy leakage paths
+retain that setting's leakage-to-depolarization approximation.
+
+At each gate event:
+
+1. Before hooks execute in insertion order **across both channel families**, completing any
+   internal measurements. Recovery may enable the ideal gate; new leakage may suppress it.
+2. The existing ideal-gate and ordinary p1/p2 noise logic runs.
+3. After hooks execute in insertion order across both families. They run even when leakage
+   suppressed the ideal gate; recovery here cannot retroactively execute it.
+4. Configured after-two-qubit idle noise runs last.
+
+`add_*` appends one entry. A family-specific `with_*` list replaces that family's entries at
+that hook and appends the replacement list in slice order, preserving other-family entries.
+Batching two-qubit gates does not couple the pairs: leakage, recovery, selection, and suppression
+are evaluated for each pair. Gates in `noiseless_gates` bypass these hooks, just as they bypass
+ordinary noise. Preparation, measurement, and idle events do not trigger these gate hooks.
+
+### State Transition Channels
+
+`StateTransitionChannel` models stochastic transitions among `0`, `1`, and classically tracked
+leakage `L`. Use `"i->j"` keys with probabilities `P(j | i)`. Each supplied source row must sum
+to one separately. A nested `{source: {destination: probability}}` map is also accepted.
+
+If either computational source row is supplied, **both `0` and `1` rows are required**.
+When the channel fires on a computational qubit, it performs `MZ`, consumes that result, then
+samples the destination. Even `{"0->0": 1.0, "1->1": 1.0}` collapses superpositions: explicit
+identity population rows are not the identity quantum map. Internal MZ results are not program
+measurement results and do not receive configured readout errors. Omitting both computational
+rows, as in a leakage-only recovery channel, preserves computational coherence. An omitted
+leakage row leaves leakage unchanged; omitted destinations have probability zero.
+
+```python
+from pecos import GeneralNoiseModelBuilder, StateTransitionChannel, PauliLeakageChannel
+
+population = StateTransitionChannel(
+    probability=0.02,
+    transitions={"0->0": 0.8, "0->L": 0.2, "1->1": 0.9, "1->L": 0.1},
+)
+recovery = StateTransitionChannel.leak_recovery(probability=0.7, p_zero=0.5)
+leakage = PauliLeakageChannel(0.03, {"L": 1.0})
+
+noise = (
+    GeneralNoiseModelBuilder()
+    .add_p1_pauli_leakage_channel_before_gate(leakage)
+    .add_p1_transition_channel_before_gate(recovery)
+    .with_p1_transition_channels_after_gate([population, recovery])
+    # One outer coin per operand: symmetric independent recovery.
+    .add_p2_transition_channel_before_gate(recovery)
+)
+```
+
+Reversing `leakage` and `recovery` reverses their execution order. The values in these examples
+are illustrative, not device calibration parameters.
+
+### Pauli and Leakage Channels
+
+`PauliLeakageChannel(p, events)` samples a state-independent event over `{I, X, Y, Z, L}` when
+its outer coin succeeds. Event weights must be finite, lie in `[0, 1]`, and sum to one **globally**.
+`I` is allowed, including `II` in a joint channel. `L` means `any -> L`; Paulis are ignored on
+already leaked operands. Pauli events preserve coherence according to their usual quantum map.
+
+```python
+from pecos import PauliLeakageChannel, TwoQubitPauliLeakageChannel, P2PauliLeakageStep
+
+single = PauliLeakageChannel(0.01, {"I": 0.1, "X": 0.6, "L": 0.3})
+joint = TwoQubitPauliLeakageChannel(0.02, {"IX": 0.4, "XL": 0.4, "LL": 0.2})
+noise = (
+    GeneralNoiseModelBuilder()
+    .with_p1_pauli_leakage_channels_after_gate([single])
+    .add_p2_pauli_leakage_channel_before_gate(single)
+    .with_p2_pauli_leakage_steps_after_gate([P2PauliLeakageStep.joint(joint)])
+)
+```
+
+### Joint Transitions and Identity Wires
+
+`TwoQubitStateTransitionChannel` accepts pair states `00`, `01`, `0L`, ..., `LL`, with one shared
+outer coin and a conditional destination distribution for each supplied source. Each supplied
+leakage pattern must include all computational completions: `0L` requires `1L`, `L0` requires
+`L1`, and any of `00`, `01`, `10`, or `11` requires all four. `LL` stands alone. Missing rows
+are rejected with an error naming each incomplete leakage pattern and its required sources
+(`C` denotes `0` or `1` in these pattern names); explicit identity rows still follow MZ.
+
+When the channel fires, it measures a non-leaked leg only if the channel depends on that leg's
+computational state and at least one source row matches the pair's known leakage pattern.
+If no pattern matches, the channel is identity without measurement. Wildcard and tensor identity
+legs remain unmeasured. Use `*` for a true identity wire.
+
+```python
+from pecos import TwoQubitStateTransitionChannel, P2TransitionStep
+
+joint = TwoQubitStateTransitionChannel(0.2, {"LL->00": 0.5, "LL->11": 0.5})
+recover_either = TwoQubitStateTransitionChannel(0.8, {"*L->*0": 0.5, "*L->*1": 0.5, "L*->0*": 0.5, "L*->1*": 0.5})
+noise = (
+    GeneralNoiseModelBuilder()
+    .add_p2_transition_channel_before_gate(recover_either)
+    .with_p2_transition_steps_after_gate([P2TransitionStep.joint(joint)])
+)
+```
+
+The wildcard must remain in the same position in every destination. That wire is not resolved,
+measured, collapsed, or changed by the rule. `*L` and `L*` may coexist: they write different
+operands and both apply to `LL` under the shared outer coin, with independent conditional draws.
+Computational wildcard groups such as `*0` and `*1` must be supplied together. Mixing concrete
+and wildcard rows is rejected, preventing overlapping groups from writing conflicting outcomes.
+Use separate ordered channels if both forms are needed.
+
+For asymmetric independent operands, use `P2TransitionStep.independent(first, second)` or
+`P2PauliLeakageStep.independent(first, second)`. The existing `first * second` shorthand has the
+same independent-coin meaning. `TransitionDict` and `PauliLeakageDict` can tensor conditional
+maps with `left * right` for a joint channel with one outer coin. A tensor of two one-qubit
+`TransitionDict`s exposes wildcard rows through `.transitions` and `to_dict()`, so rebuilding
+from a plain dictionary preserves identity wires and measures the same legs. Higher-arity
+transition tensors continue to expose expanded rows.
+
+### Rust Construction and Validation
+
+Rust provides the same placements, ordering, independent/joint modes, and validation as Python.
+Channel and dictionary constructors return `Result<_, ChannelValidationError>`. Python translates
+these structured errors to `ValueError`. Weights use the existing sampler normalization tolerance
+of `1e-5` for row sums; each probability and weight must independently be finite and in `[0, 1]`.
+The row-sum tolerance never permits an individual weight above one. Wrong arity, malformed labels,
+incomplete computational rows, and conflicting wildcard groups are rejected.
+
+```rust
+use std::collections::BTreeMap;
+use pecos_engines::noise::{
+    ChannelValidationError, GeneralNoiseModel, PauliLeakageChannel, PauliLeakageEvent,
+    QubitTransitionState, StateTransitionChannel, TwoQubitStateTransitionChannel,
+};
+
+fn configured_noise() -> Result<GeneralNoiseModel, ChannelValidationError> {
+    use QubitTransitionState::{Leakage, Zero, One};
+    let recovery = StateTransitionChannel::from_rows(0.7, &BTreeMap::from([
+        (Leakage, BTreeMap::from([(Zero, 0.5), (One, 0.5)])),
+    ]))?;
+    let faults = PauliLeakageChannel::from_events(0.02, &BTreeMap::from([
+        (PauliLeakageEvent::X, 0.8), (PauliLeakageEvent::Leakage, 0.2),
+    ]))?;
+    // String configuration also supports joint identity-wire rules.
+    let joint = TwoQubitStateTransitionChannel::from_transitions(0.8, &BTreeMap::from([
+        ("*L->*0".into(), 1.0),
+    ]))?;
+    Ok(GeneralNoiseModel::builder()
+        .add_p1_pauli_leakage_channel_before_gate(&faults)
+        .add_p1_transition_channel_before_gate(&recovery)
+        .add_p2_transition_channel_before_gate(&recovery)
+        .add_p2_transition_channel_after_gate(&joint)
+        .build())
+}
+```
+
+For typed joint construction, `TwoQubitStateTransitionChannel::from_rows` uses
+`[QubitTransitionState; 2]` keys and `TwoQubitPauliLeakageChannel::from_events` uses
+`[PauliLeakageEvent; 2]` keys. `new` accepts nested string transition rows or string event maps;
+`from_transitions` accepts flat `"i->j"` maps.
+
+### Scope and Prototype Migration
+
+The draft's public `TransitionChannel` (Rust `QubitTransitionChannel`) and
+`TwoQubitTransitionChannel` names are now `StateTransitionChannel` and
+`TwoQubitStateTransitionChannel`. Update Rust callers to handle constructor results. Replace
+prototype matrix composition (`@`, `compose`, `then`) with ordered hooks. No compatibility aliases
+are provided for these draft APIs.
+
+This increment does not provide mixture/product channel objects, conditional follow-up channels,
+arbitrary Kraus composition, or coherent superpositions involving leakage. Hooks trigger on the
+single- and two-qubit gates the model processes, so every gate execution path that uses
+`GeneralNoiseModel` runs them: ordinary `sim()` execution, the Selene general-noise wrapper
+(which exposes these ordered hook lists through plain-data hook specs and matching fluent
+setters), and runtime frames. In a runtime frame, a hook that needs an internal measurement
+holds later frame records until the paused gate completes, as a measurement-crosstalk payload
+does. Scheduled profiles do not accept hooks: they allow one simulator call per batch. Existing
+gate-noise configuration is not migrated into this channel executor; such a migration would
+require separate seeded and statistical parity checks.
+
 ### Leakage readout within a batch
 
 The Rust general noise model records leakage when each measurement is emitted.

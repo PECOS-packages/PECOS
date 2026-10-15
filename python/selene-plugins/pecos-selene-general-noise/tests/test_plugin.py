@@ -16,15 +16,18 @@ import pytest
 from guppylang import guppy
 from guppylang.std.angles import pi
 from guppylang.std.builtins import result
-from guppylang.std.quantum import measure, qubit, rz
+from guppylang.std.quantum import cz, measure, qubit, rz
 from pecos_selene_general_noise import (
     GateNoise,
     GeneralNoiseParameters,
     GeneralNoisePlugin,
     IdleNoise,
+    IndependentHook,
     MeasurementNoise,
     NoiseScaling,
+    PauliLeakageHook,
     PreparationNoise,
+    TransitionHook,
     TwoQubitGateNoise,
 )
 from selene_sim import Stim
@@ -225,14 +228,14 @@ def test_compensating_scales_are_order_independent() -> None:
     GeneralNoisePlugin(parameters=parameters)
 
 
-def test_matches_all_configurable_pecos_builder_setters() -> None:
+def test_matches_shared_pecos_builder_setters() -> None:
     workspace = Path(__file__).parents[4]
     builder_source = (workspace / "crates/pecos-engines/src/noise/general/builder.rs").read_text()
-    rust_setters = set(re.findall(r"pub fn (with_[a-zA-Z0-9_]+)", builder_source)) - {"with_seed"}
+    rust_setters = set(re.findall(r"pub fn ((?:with|add)_[a-zA-Z0-9_]+)", builder_source)) - {"with_seed"}
     python_setters = {
         name
         for name, member in inspect.getmembers(GeneralNoiseParameters, predicate=inspect.isfunction)
-        if name.startswith("with_")
+        if name.startswith(("with_", "add_"))
     }
     assert rust_setters == python_setters - {"with_local_crosstalk_groups"}
 
@@ -439,3 +442,69 @@ def test_custom_single_qubit_pauli_channel_executes_in_selene() -> None:
     noise = GeneralNoisePlugin(parameters=parameters, random_seed=7)
     results = dict(runner.run(Stim(random_seed=11), n_qubits=1, error_model=noise))
     assert results["outcome"] == 1
+
+
+@pytest.mark.parametrize("recover", [False, True])
+def test_selene_hook_bridge_seeded_parity(recover: bool) -> None:
+    """Independent legs and recovery agree through Selene and sim()."""
+    pecos = pytest.importorskip("pecos")
+
+    @guppy
+    def main() -> None:
+        a, b = qubit(), qubit()
+        cz(a, b)
+        result("first", measure(a).read())
+        result("second", measure(b).read())
+
+    @guppy
+    def recovery_program() -> None:
+        a, b = qubit(), qubit()
+        rz(a, pi)
+        result("first", measure(a).read())
+        result("second", measure(b).read())
+
+    first = TransitionHook(1.0, {"0->1": 1.0, "1->0": 1.0})
+    second = TransitionHook(0.0, {"L->0": 1.0})
+    parameters = GeneralNoiseParameters().add_p2_transition_step_after_gate(IndependentHook(first, second))
+    if recover:
+        parameters = (
+            GeneralNoiseParameters()
+            .add_p1_pauli_leakage_channel_before_gate(PauliLeakageHook(1.0, {"L": 1.0}))
+            .add_p1_transition_channel_before_gate(TransitionHook(1.0, {"L->0": 1.0}))
+        )
+    runner = build(recovery_program.compile() if recover else main.compile())
+    actual = dict(
+        runner.run(
+            Stim(random_seed=11),
+            n_qubits=2,
+            error_model=GeneralNoisePlugin(parameters=parameters, random_seed=17),
+        ),
+    )
+    expected = 0 if recover else 1
+    assert actual == {"first": expected, "second": 0}
+    operation = "rz(pi) q[0];" if recover else "cz q[0], q[1];"
+    program = pecos.Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2]; reset q; ' + operation + " measure q -> c;",
+    )
+    bridged = pecos.sim(program).noise(parameters.to_pecos_builder(seed=17)).seed(17).run(4).to_dict()["c"]
+    direct = pecos.sim(program).noise(parameters).seed(17).run(4).to_dict()["c"]
+    assert bridged == direct == [expected] * 4
+
+
+def test_recording_builder_receives_real_hook_channels_in_order() -> None:
+    """The bridge constructs native channels and preserves cross-family order."""
+    pecos = pytest.importorskip("pecos")
+    parameters = (
+        GeneralNoiseParameters()
+        .add_p1_pauli_leakage_channel_before_gate(PauliLeakageHook(1.0, {"L": 1.0}))
+        .add_p1_transition_channel_before_gate(TransitionHook(1.0, {"L": {"0": 1.0}}))
+    )
+    calls = parameters.apply_to_pecos_builder(RecordingBuilder()).calls
+    assert [name for name, _ in calls] == [
+        "add_p1_pauli_leakage_channel_before_gate",
+        "add_p1_transition_channel_before_gate",
+    ]
+    assert isinstance(calls[0][1][0], pecos.PauliLeakageChannel)
+    assert isinstance(calls[1][1][0], pecos.StateTransitionChannel)
+    assert calls[0][1][0].events == {"L": 1.0}
+    assert calls[1][1][0].transitions == {"L": {"0": 1.0}}

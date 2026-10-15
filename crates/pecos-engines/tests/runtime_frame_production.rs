@@ -1,6 +1,8 @@
 //! All execution here enters exported QuantumSystem/HybridEngine/SimBuilder APIs.
 use pecos_core::{QubitId, RngManageable};
-use pecos_engines::noise::{GeneralNoiseModelBuilder, IntoNoiseModel};
+use pecos_engines::noise::{
+    GeneralNoiseModelBuilder, IntoNoiseModel, PauliLeakageChannel, StateTransitionChannel,
+};
 use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::runtime_frame::{
     FLIP, FrameLimits, FrameRecord, METADATA, RuntimeNoise, ShotContext, encode_frame,
@@ -1375,5 +1377,216 @@ fn stochastic_crosstalk_metadata_preserves_results_and_both_rngs() {
             );
             assert_rng_equal(&framed, &legacy);
         }
+    }
+}
+
+fn hook_channel(rows: &[(&str, f64)]) -> StateTransitionChannel {
+    StateTransitionChannel::from_transitions(
+        1.0,
+        &rows.iter().map(|(row, p)| ((*row).into(), *p)).collect(),
+    )
+    .unwrap()
+}
+
+fn compare_hook_inputs(builder: &GeneralNoiseModelBuilder, inputs: &[Vec<Gate>]) {
+    for seed in 0..32 {
+        let mut framed = setup(builder.clone(), seed);
+        let mut ordinary = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        ordinary.set_seed(seed);
+        for input in inputs {
+            assert_eq!(
+                framed
+                    .process(frame(input, true))
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                ordinary
+                    .process(message(input))
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                "seed {seed}"
+            );
+            assert_rng_equal(&framed, &ordinary);
+        }
+    }
+}
+
+#[test]
+fn before_hook_finishes_before_flip_and_resumes_later_gates() {
+    let builder = GeneralNoiseModel::builder()
+        .add_p1_transition_channel_before_gate(&hook_channel(&[("0->L", 1.0), ("1->L", 1.0)]))
+        .add_p1_transition_channel_after_gate(&hook_channel(&[("L->1", 1.0)]));
+    let records = [
+        FrameRecord::gate(Gate::z(&[0])),
+        FrameRecord::Event {
+            id: FLIP,
+            target: 0,
+        },
+        FrameRecord::gate(Gate::pz(&[1])),
+        FrameRecord::gate(Gate::mz(&[0])),
+    ];
+    for seed in 0..32 {
+        let mut framed = setup(builder.clone(), seed);
+        let mut ordinary = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        ordinary.set_seed(seed);
+        ordinary.process(message(&[Gate::z(&[0])])).unwrap();
+        // An event is an unnoised simulator command, so the ordinary reference
+        // completes the first source gate before applying it directly.
+        ordinary
+            .quantum_engine_mut()
+            .process(message(&[Gate::x(&[0])]))
+            .unwrap();
+        let expected = ordinary
+            .process(message(&[Gate::pz(&[1]), Gate::mz(&[0])]))
+            .unwrap()
+            .outcomes()
+            .unwrap();
+        assert_eq!(expected, vec![0]);
+        assert_eq!(
+            framed
+                .process(encode_frame(&records).unwrap())
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            expected
+        );
+        assert_rng_equal(&framed, &ordinary);
+    }
+}
+
+#[test]
+fn after_hook_on_last_gate_completes_with_trailing_metadata() {
+    let identity = hook_channel(&[("0->0", 1.0), ("1->1", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder().add_p1_transition_channel_after_gate(&identity),
+        &[vec![Gate::pz(&[0]), Gate::h(&[0])], vec![Gate::mz(&[0])]],
+    );
+}
+
+#[test]
+fn two_measuring_hooks_at_one_site_resume_once_each() {
+    let flip = hook_channel(&[("0->1", 1.0), ("1->0", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder()
+            .add_p1_transition_channel_before_gate(&flip)
+            .add_p1_transition_channel_before_gate(&flip),
+        &[
+            vec![Gate::h(&[0]), Gate::z(&[0]), Gate::mz(&[0])],
+            vec![Gate::mz(&[0])],
+        ],
+    );
+}
+
+#[test]
+fn hook_pause_resumes_into_measurement_crosstalk_payload() {
+    let identity = hook_channel(&[("0->0", 1.0), ("1->1", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder()
+            .add_p1_transition_channel_before_gate(&identity)
+            .with_p_meas_crosstalk_local(1.0)
+            .with_p_meas_crosstalk_model(&BTreeMap::from([
+                ("0->1".into(), 1.0),
+                ("1->0".into(), 1.0),
+            ])),
+        &[vec![
+            Gate::pz(&[0]),
+            Gate::z(&[0]),
+            Gate::simple(GateType::MeasCrosstalkLocalPayload, vec![0.into()]),
+            Gate::mz(&[0]),
+            Gate::pz(&[0]),
+            Gate::h(&[0]),
+            Gate::mz(&[0]),
+        ]],
+    );
+}
+
+#[test]
+fn leakage_only_hooks_preserve_runtime_frame_compatibility_without_yields() {
+    let leak = PauliLeakageChannel::new(1.0, &BTreeMap::from([("L".into(), 1.0)])).unwrap();
+    let recovery = hook_channel(&[("L->1", 1.0)]);
+    compare_hook_inputs(
+        &GeneralNoiseModel::builder()
+            .add_p1_pauli_leakage_channel_before_gate(&leak)
+            .add_p1_transition_channel_after_gate(&recovery),
+        &[vec![
+            Gate::z(&[0]),
+            Gate::mz(&[0]),
+            Gate::h(&[0]),
+            Gate::measure_leaked(&[0]),
+        ]],
+    );
+}
+
+#[test]
+fn maximum_frame_hook_yields_and_expansion_fit_derived_budgets() {
+    let flip = hook_channel(&[("0->1", 1.0), ("1->0", 1.0)]);
+    let mut builder = GeneralNoiseModel::builder();
+    for _ in 0..12 {
+        builder = builder
+            .add_p1_transition_channel_before_gate(&flip)
+            .add_p1_transition_channel_after_gate(&flip);
+    }
+    // Every hook emits an internal MZ and an X: 24 barriers and 48 hook
+    // commands per gate, plus the ideal Z. Every record attains the per-hook
+    // yield and command allowances; the base allowance stays unused here.
+    let gates = vec![Gate::z(&[0]); 128];
+    let bound = 128 * (16 * (2 + 1) + 2 * 24);
+    for legacy_input in [false, true] {
+        let make = |budget| {
+            let noise = RuntimeNoise::new(
+                builder.clone(),
+                2,
+                FrameLimits {
+                    records: 128,
+                    expanded_operations: budget,
+                },
+            )
+            .unwrap()
+            .into_noise_model();
+            let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
+            system.set_seed(17);
+            system.begin_shot(context(0)).unwrap();
+            system
+        };
+        let input = if legacy_input {
+            message(&gates)
+        } else {
+            frame(&gates, false)
+        };
+        let mut rejected = make(bound - 1);
+        let before = rejected.clone();
+        assert!(rejected.process(input.clone()).is_err());
+        assert_rng_equal(&rejected, &before);
+        rejected.process(frame(&[Gate::mz(&[0])], true)).unwrap();
+        let mut accepted = make(bound);
+        let mut ordinary = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        ordinary.set_seed(17);
+        assert_eq!(
+            accepted.process(input).unwrap().outcomes().unwrap(),
+            ordinary
+                .process(message(&gates))
+                .unwrap()
+                .outcomes()
+                .unwrap()
+        );
+        assert_rng_equal(&accepted, &ordinary);
+        assert_eq!(
+            accepted
+                .process(frame(&[Gate::mz(&[0])], true))
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![0]
+        );
     }
 }

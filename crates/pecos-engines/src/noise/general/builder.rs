@@ -1,9 +1,52 @@
+use super::HookChannel;
 use crate::GateType;
+use crate::noise::weighted_sampler::{P2PauliLeakageWeightedStep, P2TransitionWeightedStep};
 use crate::noise::{
-    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler,
-    TwoQubitWeightedSampler,
+    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, P2PauliLeakageStep, P2TransitionStep,
+    PauliLeakageChannel, PauliLeakageWeightedSampler, QubitTransitionWeightedSampler,
+    SingleQubitWeightedSampler, StateTransitionChannel, TwoQubitWeightedSampler,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+fn validate_hook_probabilities(
+    p1_transitions: [&[QubitTransitionWeightedSampler]; 2],
+    p1_events: [&[PauliLeakageWeightedSampler]; 2],
+    p2_transitions: [&[P2TransitionWeightedStep]; 2],
+    p2_events: [&[P2PauliLeakageWeightedStep]; 2],
+    p1_scale: f64,
+    p2_scale: f64,
+) -> Result<(), &'static str> {
+    let valid = |p: f64| p.is_finite() && (0.0..=1.0).contains(&p);
+    if !p1_transitions
+        .into_iter()
+        .flatten()
+        .map(QubitTransitionWeightedSampler::probability)
+        .chain(
+            p1_events
+                .into_iter()
+                .flatten()
+                .map(PauliLeakageWeightedSampler::probability),
+        )
+        .all(|p| valid(p * p1_scale))
+    {
+        return Err("scaled one-qubit hook probabilities must be finite and between zero and one");
+    }
+    if !p2_transitions
+        .into_iter()
+        .flatten()
+        .flat_map(P2TransitionWeightedStep::probabilities)
+        .chain(
+            p2_events
+                .into_iter()
+                .flatten()
+                .flat_map(P2PauliLeakageWeightedStep::probabilities),
+        )
+        .all(|p| valid(p * p2_scale))
+    {
+        return Err("scaled two-qubit hook probabilities must be finite and between zero and one");
+    }
+    Ok(())
+}
 
 /// The plain-Pauli probabilities plus optional angle-dependent two-qubit
 /// scaling and the spontaneous-emission ratios, as returned by
@@ -29,6 +72,10 @@ pub type PauliWithAngleScaling = (
 /// Builder for creating general noise models
 #[derive(Debug, Clone)]
 pub struct GeneralNoiseModelBuilder {
+    p1_hook_order_before_gate: Vec<HookChannel>,
+    p1_hook_order_after_gate: Vec<HookChannel>,
+    p2_hook_order_before_gate: Vec<HookChannel>,
+    p2_hook_order_after_gate: Vec<HookChannel>,
     // global params
     noiseless_gates: Option<BTreeSet<GateType>>,
     seed: Option<u64>,
@@ -53,6 +100,10 @@ pub struct GeneralNoiseModelBuilder {
     p1_emission_model: Option<SingleQubitWeightedSampler>,
     p1_seepage_prob: Option<f64>,
     p1_pauli_model: Option<SingleQubitWeightedSampler>,
+    p1_transition_channels_before_gate: Vec<QubitTransitionWeightedSampler>,
+    p1_transition_channels_after_gate: Vec<QubitTransitionWeightedSampler>,
+    p1_pauli_leakage_channels_before_gate: Vec<PauliLeakageWeightedSampler>,
+    p1_pauli_leakage_channels_after_gate: Vec<PauliLeakageWeightedSampler>,
     p1_scale: Option<f64>,
     // two-qubit gate noise
     p2: Option<f64>,
@@ -62,6 +113,10 @@ pub struct GeneralNoiseModelBuilder {
     p2_emission_model: Option<TwoQubitWeightedSampler>,
     p2_seepage_prob: Option<f64>,
     p2_pauli_model: Option<TwoQubitWeightedSampler>,
+    p2_transition_steps_before_gate: Vec<P2TransitionWeightedStep>,
+    p2_transition_steps_after_gate: Vec<P2TransitionWeightedStep>,
+    p2_pauli_leakage_steps_before_gate: Vec<P2PauliLeakageWeightedStep>,
+    p2_pauli_leakage_steps_after_gate: Vec<P2PauliLeakageWeightedStep>,
     /// Duration of the idle-noise sites applied after two-qubit gates.
     ///
     /// These sites use the configured linear and quadratic idle mechanisms; this value is not a
@@ -89,6 +144,10 @@ impl GeneralNoiseModelBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            p1_hook_order_before_gate: Vec::new(),
+            p1_hook_order_after_gate: Vec::new(),
+            p2_hook_order_before_gate: Vec::new(),
+            p2_hook_order_after_gate: Vec::new(),
             // global params
             noiseless_gates: None,
             seed: None,
@@ -113,6 +172,10 @@ impl GeneralNoiseModelBuilder {
             p1_emission_model: None,
             p1_seepage_prob: None,
             p1_pauli_model: None,
+            p1_transition_channels_before_gate: Vec::new(),
+            p1_transition_channels_after_gate: Vec::new(),
+            p1_pauli_leakage_channels_before_gate: Vec::new(),
+            p1_pauli_leakage_channels_after_gate: Vec::new(),
             p1_scale: None,
             // two-qubit gate noise
             p2: None,
@@ -122,6 +185,10 @@ impl GeneralNoiseModelBuilder {
             p2_emission_model: None,
             p2_seepage_prob: None,
             p2_pauli_model: None,
+            p2_transition_steps_before_gate: Vec::new(),
+            p2_transition_steps_after_gate: Vec::new(),
+            p2_pauli_leakage_steps_before_gate: Vec::new(),
+            p2_pauli_leakage_steps_after_gate: Vec::new(),
             idle_after_2q: None,
             p2_scale: None,
             // measurement noise
@@ -174,7 +241,7 @@ impl GeneralNoiseModelBuilder {
     /// A `GeneralNoiseModel`
     ///
     /// # Panics
-    /// Panics if any probabilities are not set or are not between 0 and 1.
+    /// Panics if the configuration contains invalid probabilities or scale factors.
     #[must_use]
     pub fn build(mut self) -> GeneralNoiseModel {
         self.validate_configuration()
@@ -254,6 +321,17 @@ impl GeneralNoiseModelBuilder {
             model.p1_pauli_model = model_map;
         }
 
+        model.p1_hook_order_before_gate = self.p1_hook_order_before_gate.clone();
+        model.p1_hook_order_after_gate = self.p1_hook_order_after_gate.clone();
+        model.p2_hook_order_before_gate = self.p2_hook_order_before_gate.clone();
+        model.p2_hook_order_after_gate = self.p2_hook_order_after_gate.clone();
+        model.p1_transition_channels_before_gate = self.p1_transition_channels_before_gate.clone();
+        model.p1_transition_channels_after_gate = self.p1_transition_channels_after_gate.clone();
+        model.p1_pauli_leakage_channels_before_gate =
+            self.p1_pauli_leakage_channels_before_gate.clone();
+        model.p1_pauli_leakage_channels_after_gate =
+            self.p1_pauli_leakage_channels_after_gate.clone();
+
         // two-qubit gate noise
         // -----------------------------------------------------------------------------------------
         if let Some(p2) = self.p2 {
@@ -285,6 +363,11 @@ impl GeneralNoiseModelBuilder {
         if let Some(model_map) = self.p2_pauli_model.clone() {
             model.p2_pauli_model = model_map;
         }
+
+        model.p2_transition_steps_before_gate = self.p2_transition_steps_before_gate.clone();
+        model.p2_transition_steps_after_gate = self.p2_transition_steps_after_gate.clone();
+        model.p2_pauli_leakage_steps_before_gate = self.p2_pauli_leakage_steps_before_gate.clone();
+        model.p2_pauli_leakage_steps_after_gate = self.p2_pauli_leakage_steps_after_gate.clone();
 
         if let Some(idle_after_2q) = self.idle_after_2q {
             model.idle_after_2q = idle_after_2q;
@@ -597,6 +680,150 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
+    /// Replace the ordered Pauli-plus-leakage channel stack before single-qubit gates.
+    ///
+    /// This stack is appended in builder insertion order across both channel families.
+    /// A sampled `L` can suppress the ideal gate,
+    /// while a later before-gate transition channel can recover it. Outer probabilities follow
+    /// the global and p1 scale factors.
+    #[must_use]
+    pub fn with_p1_pauli_leakage_channels_before_gate(
+        mut self,
+        channels: &[PauliLeakageChannel],
+    ) -> Self {
+        self.p1_pauli_leakage_channels_before_gate = channels
+            .iter()
+            .map(PauliLeakageWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p1_hook_order_before_gate.extend(
+            (0..self.p1_pauli_leakage_channels_before_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage channel before single-qubit gates.
+    #[must_use]
+    pub fn add_p1_pauli_leakage_channel_before_gate(
+        mut self,
+        channel: &PauliLeakageChannel,
+    ) -> Self {
+        self.p1_pauli_leakage_channels_before_gate
+            .push(PauliLeakageWeightedSampler::new(channel));
+        self.p1_hook_order_before_gate
+            .push(HookChannel::PauliLeakage(
+                self.p1_pauli_leakage_channels_before_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Replace the ordered Pauli-plus-leakage channel stack after single-qubit noise sites.
+    ///
+    /// This stack runs after ordinary p1 noise, in insertion order across both families.
+    #[must_use]
+    pub fn with_p1_pauli_leakage_channels_after_gate(
+        mut self,
+        channels: &[PauliLeakageChannel],
+    ) -> Self {
+        self.p1_pauli_leakage_channels_after_gate = channels
+            .iter()
+            .map(PauliLeakageWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p1_hook_order_after_gate.extend(
+            (0..self.p1_pauli_leakage_channels_after_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage channel after single-qubit noise sites.
+    #[must_use]
+    pub fn add_p1_pauli_leakage_channel_after_gate(
+        mut self,
+        channel: &PauliLeakageChannel,
+    ) -> Self {
+        self.p1_pauli_leakage_channels_after_gate
+            .push(PauliLeakageWeightedSampler::new(channel));
+        self.p1_hook_order_after_gate
+            .push(HookChannel::PauliLeakage(
+                self.p1_pauli_leakage_channels_after_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Replace the ordered transition-channel stack before every single-qubit gate.
+    ///
+    /// Channels execute in slice order. State changes from one channel are visible to the next.
+    /// Recovery can allow an incoming leaked qubit to participate in the ideal gate, while leakage
+    /// can suppress it. Channel probabilities are affected by global and p1 scale factors.
+    #[must_use]
+    pub fn with_p1_transition_channels_before_gate(
+        mut self,
+        channels: &[StateTransitionChannel],
+    ) -> Self {
+        self.p1_transition_channels_before_gate = channels
+            .iter()
+            .map(QubitTransitionWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p1_hook_order_before_gate.extend(
+            (0..self.p1_transition_channels_before_gate.len()).map(HookChannel::Transition),
+        );
+        self
+    }
+
+    /// Append one transition channel before every single-qubit gate.
+    #[must_use]
+    pub fn add_p1_transition_channel_before_gate(
+        mut self,
+        channel: &StateTransitionChannel,
+    ) -> Self {
+        self.p1_transition_channels_before_gate
+            .push(QubitTransitionWeightedSampler::new(channel));
+        self.p1_hook_order_before_gate.push(HookChannel::Transition(
+            self.p1_transition_channels_before_gate.len() - 1,
+        ));
+        self
+    }
+
+    /// Replace the ordered transition-channel stack after every single-qubit noise site.
+    ///
+    /// These channels run after the ideal gate or its suppression and after ordinary p1
+    /// Pauli/emission noise. Recovery does not retroactively execute a suppressed gate. Prefer
+    /// [`Self::with_p1_pauli_model`] for ordinary gate-local Pauli noise.
+    #[must_use]
+    pub fn with_p1_transition_channels_after_gate(
+        mut self,
+        channels: &[StateTransitionChannel],
+    ) -> Self {
+        self.p1_transition_channels_after_gate = channels
+            .iter()
+            .map(QubitTransitionWeightedSampler::new)
+            .collect();
+        self.p1_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p1_hook_order_after_gate
+            .extend((0..self.p1_transition_channels_after_gate.len()).map(HookChannel::Transition));
+        self
+    }
+
+    /// Append one transition channel after every single-qubit noise site.
+    #[must_use]
+    pub fn add_p1_transition_channel_after_gate(
+        mut self,
+        channel: &StateTransitionChannel,
+    ) -> Self {
+        self.p1_transition_channels_after_gate
+            .push(QubitTransitionWeightedSampler::new(channel));
+        self.p1_hook_order_after_gate.push(HookChannel::Transition(
+            self.p1_transition_channels_after_gate.len() - 1,
+        ));
+        self
+    }
+
     /// Set the scaling factor for single-qubit gate errors
     ///
     /// Multiplier for single-qubit gate error probabilities. Allows adjustment of the
@@ -699,6 +926,163 @@ impl GeneralNoiseModelBuilder {
     pub fn with_p2_pauli_model(mut self, model: &BTreeMap<String, f64>) -> Self {
         self.p2_pauli_model = Some(TwoQubitWeightedSampler::new(model));
         self
+    }
+
+    /// Replace the ordered Pauli-plus-leakage step stack before two-qubit gates.
+    ///
+    /// This stack is appended in builder insertion order across both channel families.
+    /// Each step is either two independently drawn
+    /// single-qubit channels or one correlated joint event channel.
+    #[must_use]
+    pub fn with_p2_pauli_leakage_steps_before_gate(mut self, steps: &[P2PauliLeakageStep]) -> Self {
+        self.p2_pauli_leakage_steps_before_gate =
+            steps.iter().map(P2PauliLeakageWeightedStep::new).collect();
+        self.p2_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p2_hook_order_before_gate.extend(
+            (0..self.p2_pauli_leakage_steps_before_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage step before two-qubit gates.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_step_before_gate(mut self, step: &P2PauliLeakageStep) -> Self {
+        self.p2_pauli_leakage_steps_before_gate
+            .push(P2PauliLeakageWeightedStep::new(step));
+        self.p2_hook_order_before_gate
+            .push(HookChannel::PauliLeakage(
+                self.p2_pauli_leakage_steps_before_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Append the same independently drawn single-qubit channel to both two-qubit gate legs.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_channel_before_gate(self, channel: &PauliLeakageChannel) -> Self {
+        self.add_p2_pauli_leakage_step_before_gate(&P2PauliLeakageStep::same_on_each(
+            channel.clone(),
+        ))
+    }
+
+    /// Replace the ordered Pauli-plus-leakage step stack after two-qubit noise sites.
+    ///
+    /// This stack runs after ordinary p2 noise, in insertion order across both families.
+    #[must_use]
+    pub fn with_p2_pauli_leakage_steps_after_gate(mut self, steps: &[P2PauliLeakageStep]) -> Self {
+        self.p2_pauli_leakage_steps_after_gate =
+            steps.iter().map(P2PauliLeakageWeightedStep::new).collect();
+        self.p2_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::PauliLeakage(_)));
+        self.p2_hook_order_after_gate.extend(
+            (0..self.p2_pauli_leakage_steps_after_gate.len()).map(HookChannel::PauliLeakage),
+        );
+        self
+    }
+
+    /// Append one Pauli-plus-leakage step after two-qubit noise sites.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_step_after_gate(mut self, step: &P2PauliLeakageStep) -> Self {
+        self.p2_pauli_leakage_steps_after_gate
+            .push(P2PauliLeakageWeightedStep::new(step));
+        self.p2_hook_order_after_gate
+            .push(HookChannel::PauliLeakage(
+                self.p2_pauli_leakage_steps_after_gate.len() - 1,
+            ));
+        self
+    }
+
+    /// Append the same independently drawn single-qubit channel after both gate legs.
+    #[must_use]
+    pub fn add_p2_pauli_leakage_channel_after_gate(self, channel: &PauliLeakageChannel) -> Self {
+        self.add_p2_pauli_leakage_step_after_gate(&P2PauliLeakageStep::same_on_each(
+            channel.clone(),
+        ))
+    }
+
+    /// Replace the ordered transition-step stack before every two-qubit gate.
+    ///
+    /// A step is either two single-qubit channels applied independently to their respective gate
+    /// legs, or one joint conditional matrix on the nine pair states from `00` through `LL`.
+    /// Steps execute in slice order before PECOS checks the pair for leakage and before ordinary
+    /// p2 noise. Recovery can allow the ideal gate to execute; leakage can suppress it.
+    /// Probabilities are affected by global and p2 scale factors.
+    #[must_use]
+    pub fn with_p2_transition_steps_before_gate(mut self, steps: &[P2TransitionStep]) -> Self {
+        self.p2_transition_steps_before_gate =
+            steps.iter().map(P2TransitionWeightedStep::new).collect();
+        self.p2_hook_order_before_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p2_hook_order_before_gate
+            .extend((0..self.p2_transition_steps_before_gate.len()).map(HookChannel::Transition));
+        self
+    }
+
+    /// Append one independent-leg or joint transition step before every two-qubit gate.
+    #[must_use]
+    pub fn add_p2_transition_step_before_gate(mut self, step: &P2TransitionStep) -> Self {
+        self.p2_transition_steps_before_gate
+            .push(P2TransitionWeightedStep::new(step));
+        self.p2_hook_order_before_gate.push(HookChannel::Transition(
+            self.p2_transition_steps_before_gate.len() - 1,
+        ));
+        self
+    }
+
+    /// Append a transition channel before every two-qubit gate.
+    ///
+    /// A [`StateTransitionChannel`] is applied independently to both gate legs. A
+    /// [`TwoQubitStateTransitionChannel`](crate::noise::TwoQubitStateTransitionChannel) is applied as one
+    /// joint map on the pair state. Use [`Self::add_p2_transition_step_before_gate`] when the two
+    /// legs need different single-qubit channels.
+    #[must_use]
+    pub fn add_p2_transition_channel_before_gate(
+        self,
+        channel: impl Into<P2TransitionStep>,
+    ) -> Self {
+        self.add_p2_transition_step_before_gate(&channel.into())
+    }
+
+    /// Replace the ordered transition-step stack after every two-qubit noise site.
+    ///
+    /// Each independent-leg or joint step runs after the ideal gate (or suppression) and ordinary
+    /// p2 Pauli/emission noise, but before after-2Q idle noise. A later step observes leakage or
+    /// recovery produced by every earlier step. Prefer [`Self::with_p2_pauli_model`] for ordinary
+    /// correlated two-qubit Pauli noise.
+    #[must_use]
+    pub fn with_p2_transition_steps_after_gate(mut self, steps: &[P2TransitionStep]) -> Self {
+        self.p2_transition_steps_after_gate =
+            steps.iter().map(P2TransitionWeightedStep::new).collect();
+        self.p2_hook_order_after_gate
+            .retain(|entry| !matches!(entry, HookChannel::Transition(_)));
+        self.p2_hook_order_after_gate
+            .extend((0..self.p2_transition_steps_after_gate.len()).map(HookChannel::Transition));
+        self
+    }
+
+    /// Append one independent-leg or joint transition step after every two-qubit noise site.
+    #[must_use]
+    pub fn add_p2_transition_step_after_gate(mut self, step: &P2TransitionStep) -> Self {
+        self.p2_transition_steps_after_gate
+            .push(P2TransitionWeightedStep::new(step));
+        self.p2_hook_order_after_gate.push(HookChannel::Transition(
+            self.p2_transition_steps_after_gate.len() - 1,
+        ));
+        self
+    }
+
+    /// Append a transition channel after every two-qubit noise site.
+    ///
+    /// A [`StateTransitionChannel`] is applied independently to both gate legs. A
+    /// [`TwoQubitStateTransitionChannel`](crate::noise::TwoQubitStateTransitionChannel) is applied as one
+    /// joint map on the pair state. Use [`Self::add_p2_transition_step_after_gate`] when the two
+    /// legs need different single-qubit channels.
+    #[must_use]
+    pub fn add_p2_transition_channel_after_gate(
+        self,
+        channel: impl Into<P2TransitionStep>,
+    ) -> Self {
+        self.add_p2_transition_step_after_gate(&channel.into())
     }
 
     /// Set the duration of the idle-noise site applied to each qubit after a two-qubit gate.
@@ -917,6 +1301,27 @@ impl GeneralNoiseModelBuilder {
             return Err("scaled two-qubit probability must be between zero and one");
         }
 
+        validate_hook_probabilities(
+            [
+                &self.p1_transition_channels_before_gate,
+                &self.p1_transition_channels_after_gate,
+            ],
+            [
+                &self.p1_pauli_leakage_channels_before_gate,
+                &self.p1_pauli_leakage_channels_after_gate,
+            ],
+            [
+                &self.p2_transition_steps_before_gate,
+                &self.p2_transition_steps_after_gate,
+            ],
+            [
+                &self.p2_pauli_leakage_steps_before_gate,
+                &self.p2_pauli_leakage_steps_after_gate,
+            ],
+            p1_scale * scale,
+            p2_scale * scale,
+        )?;
+
         let default = GeneralNoiseModel::default();
         let prep_crosstalk = self.p_prep_crosstalk.unwrap_or(default.p_prep_crosstalk);
         if !probability(prep_crosstalk * prep_crosstalk_scale * prep_scale * scale) {
@@ -1011,7 +1416,7 @@ impl GeneralNoiseModelBuilder {
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let emission_off =
             zero_or_unset(self.p1_emission_ratio) && zero_or_unset(self.p2_emission_ratio);
-        if self.is_plain_pauli_except_angle_and_emission()
+        if self.is_plain_pauli_except_angle_and_emission(false)
             && self.resolved_angle_scaling().is_none()
             && emission_off
         {
@@ -1019,6 +1424,19 @@ impl GeneralNoiseModelBuilder {
         } else {
             None
         }
+    }
+
+    // Frame events execute as unnoised physical commands. Hooks may coexist
+    // with them: a FLIP on a hook-leaked qubit only changes the simulator's
+    // placeholder state, which no readout in this profile can observe (MZ reads
+    // 1, MeasureLeaked reads 2, and every exit from leakage resets the qubit).
+    // Other callers of simple_probabilities must still reject hooks they
+    // cannot translate.
+    pub(crate) fn runtime_frame_supports_physical_events(&self) -> bool {
+        self.is_plain_pauli_except_angle_and_emission(true)
+            && self.resolved_angle_scaling().is_none()
+            && self.p1_emission_ratio.is_none_or(|p| p == 0.0)
+            && self.p2_emission_ratio.is_none_or(|p| p == 0.0)
     }
 
     /// Like [`Self::simple_probabilities`], but ALSO permits angle-dependent
@@ -1046,7 +1464,7 @@ impl GeneralNoiseModelBuilder {
     /// noiseless gates must be off).
     #[must_use]
     pub fn pauli_with_angle_scaling(&self) -> Option<PauliWithAngleScaling> {
-        if self.is_plain_pauli_except_angle_and_emission() {
+        if self.is_plain_pauli_except_angle_and_emission(false) {
             let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
             let (p1_emission, p2_emission) = self.resolved_emission_ratios();
             Some((
@@ -1071,7 +1489,7 @@ impl GeneralNoiseModelBuilder {
     /// `pauli_with_angle_scaling` (which extracts them). The emission DISTRIBUTION
     /// must still be the default uniform model (`p1/p2_emission_model` unset) --
     /// custom emission samplers are NOT in this subset.
-    fn is_plain_pauli_except_angle_and_emission(&self) -> bool {
+    fn is_plain_pauli_except_angle_and_emission(&self, allow_hooks: bool) -> bool {
         let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
         let one_or_unset = |v: Option<f64>| v.is_none() || v == Some(1.0);
 
@@ -1096,6 +1514,15 @@ impl GeneralNoiseModelBuilder {
             && self.p2_pauli_model.is_none()
             && self.p_meas_crosstalk_model.is_none();
 
+        let hooks_off = self.p1_pauli_leakage_channels_before_gate.is_empty()
+            && self.p1_pauli_leakage_channels_after_gate.is_empty()
+            && self.p1_transition_channels_before_gate.is_empty()
+            && self.p1_transition_channels_after_gate.is_empty()
+            && self.p2_pauli_leakage_steps_before_gate.is_empty()
+            && self.p2_pauli_leakage_steps_after_gate.is_empty()
+            && self.p2_transition_steps_before_gate.is_empty()
+            && self.p2_transition_steps_after_gate.is_empty();
+
         let scales_neutral = one_or_unset(self.scale)
             && one_or_unset(self.idle_scale)
             && one_or_unset(self.prep_scale)
@@ -1113,7 +1540,11 @@ impl GeneralNoiseModelBuilder {
 
         let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
 
-        optional_features_off && custom_models_off && scales_neutral && gates_default
+        optional_features_off
+            && custom_models_off
+            && (allow_hooks || hooks_off)
+            && scales_neutral
+            && gates_default
     }
 
     /// Resolve the base Pauli probabilities `(p_prep, p_meas_0, p_meas_1, p1,
@@ -1176,7 +1607,31 @@ impl GeneralNoiseModelBuilder {
     /// This method should be called exactly once after setting all parameters
     /// and before using the noise model for simulation. Calling it multiple times will
     /// compound the scaling factors incorrectly.
+    ///
+    /// # Panics
+    /// Panics if the model's scaled hook probabilities are not finite or lie outside `[0, 1]`.
     pub fn scale_parameters(&mut self, model: &mut GeneralNoiseModel) {
+        validate_hook_probabilities(
+            [
+                &model.p1_transition_channels_before_gate,
+                &model.p1_transition_channels_after_gate,
+            ],
+            [
+                &model.p1_pauli_leakage_channels_before_gate,
+                &model.p1_pauli_leakage_channels_after_gate,
+            ],
+            [
+                &model.p2_transition_steps_before_gate,
+                &model.p2_transition_steps_after_gate,
+            ],
+            [
+                &model.p2_pauli_leakage_steps_before_gate,
+                &model.p2_pauli_leakage_steps_after_gate,
+            ],
+            self.p1_scale.unwrap_or(1.0) * self.scale.unwrap_or(1.0),
+            self.p2_scale.unwrap_or(1.0) * self.scale.unwrap_or(1.0),
+        )
+        .expect("invalid scaled gate-hook probabilities");
         // Note, leakage_scale is not included here as it is used as an active parameter in the
         // noise model
         let scale = self.scale.unwrap_or(1.0);
@@ -1191,9 +1646,33 @@ impl GeneralNoiseModelBuilder {
 
         // Scale single-qubit gate error probability
         model.p1 *= p1_scale * scale;
+        for channel in &mut model.p1_transition_channels_before_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
+        for channel in &mut model.p1_transition_channels_after_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
+        for channel in &mut model.p1_pauli_leakage_channels_before_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
+        for channel in &mut model.p1_pauli_leakage_channels_after_gate {
+            channel.scale_probability(p1_scale * scale);
+        }
 
         // Scale two-qubit gate error probability
         model.p2 *= p2_scale * scale;
+        for step in &mut model.p2_transition_steps_before_gate {
+            step.scale_probability(p2_scale * scale);
+        }
+        for step in &mut model.p2_transition_steps_after_gate {
+            step.scale_probability(p2_scale * scale);
+        }
+        for step in &mut model.p2_pauli_leakage_steps_before_gate {
+            step.scale_probability(p2_scale * scale);
+        }
+        for step in &mut model.p2_pauli_leakage_steps_after_gate {
+            step.scale_probability(p2_scale * scale);
+        }
 
         model.p_meas_0 *= meas_scale * scale;
         model.p_meas_1 *= meas_scale * scale;
@@ -1237,6 +1716,7 @@ impl crate::noise::IntoNoiseModel for GeneralNoiseModelBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::noise::TwoQubitStateTransitionChannel;
 
     fn assert_float_eq(actual: f64, expected: f64) {
         assert!(
@@ -1521,6 +2001,104 @@ mod tests {
     }
 
     #[test]
+    fn simple_subsets_reject_transition_channel() {
+        let channel = StateTransitionChannel::leak_recovery(0.9, 0.5).unwrap();
+        let builder =
+            GeneralNoiseModelBuilder::new().add_p2_transition_channel_after_gate(&channel);
+
+        assert!(builder.simple_probabilities().is_none());
+        assert!(builder.pauli_with_angle_scaling().is_none());
+    }
+
+    #[test]
+    fn p2_transition_channel_methods_accept_joint_channels_directly() {
+        let transitions = BTreeMap::from([(
+            "LL".to_string(),
+            BTreeMap::from([("00".to_string(), 0.9), ("LL".to_string(), 0.1)]),
+        )]);
+        let channel = TwoQubitStateTransitionChannel::new(1.0, &transitions).unwrap();
+        let model = GeneralNoiseModelBuilder::new()
+            .add_p2_transition_channel_before_gate(&channel)
+            .add_p2_transition_channel_after_gate(&channel)
+            .build();
+
+        assert_eq!(model.p2_transition_steps_before_gate.len(), 1);
+        assert_eq!(model.p2_transition_steps_after_gate.len(), 1);
+    }
+
+    #[test]
+    fn transition_application_probability_uses_gate_and_global_scales() {
+        let channel = StateTransitionChannel::leak_recovery(0.2, 0.5).unwrap();
+        let model = GeneralNoiseModelBuilder::new()
+            .add_p1_transition_channel_after_gate(&channel)
+            .add_p2_transition_channel_after_gate(&channel)
+            .with_scale(2.0)
+            .with_p1_scale(2.0)
+            .with_p2_scale(0.5)
+            .build();
+
+        assert!(
+            (model
+                .p1_transition_channels_after_gate
+                .first()
+                .unwrap()
+                .probability()
+                - 0.8)
+                .abs()
+                < f64::EPSILON
+        );
+        match model.p2_transition_steps_after_gate.first().unwrap() {
+            P2TransitionWeightedStep::Independent { first, second } => {
+                assert!((first.probability() - 0.2).abs() < f64::EPSILON);
+                assert!((second.probability() - 0.2).abs() < f64::EPSILON);
+            }
+            P2TransitionWeightedStep::Joint { .. } => panic!("expected independent step"),
+        }
+    }
+
+    #[test]
+    fn pauli_leakage_application_probability_uses_gate_and_global_scales() {
+        let channel =
+            PauliLeakageChannel::new(0.2, &BTreeMap::from([("L".to_string(), 1.0)])).unwrap();
+        let model = GeneralNoiseModelBuilder::new()
+            .add_p1_pauli_leakage_channel_after_gate(&channel)
+            .add_p2_pauli_leakage_channel_after_gate(&channel)
+            .with_scale(2.0)
+            .with_p1_scale(2.0)
+            .with_p2_scale(0.5)
+            .build();
+
+        assert!(
+            (model
+                .p1_pauli_leakage_channels_after_gate
+                .first()
+                .unwrap()
+                .probability()
+                - 0.8)
+                .abs()
+                < f64::EPSILON
+        );
+        match model.p2_pauli_leakage_steps_after_gate.first().unwrap() {
+            P2PauliLeakageWeightedStep::Independent { first, second } => {
+                assert!((first.probability() - 0.2).abs() < f64::EPSILON);
+                assert!((second.probability() - 0.2).abs() < f64::EPSILON);
+            }
+            P2PauliLeakageWeightedStep::Joint(_) => panic!("expected independent step"),
+        }
+    }
+
+    #[test]
+    fn simple_subsets_reject_pauli_leakage_channels() {
+        let channel =
+            PauliLeakageChannel::new(0.2, &BTreeMap::from([("L".to_string(), 1.0)])).unwrap();
+        let builder =
+            GeneralNoiseModelBuilder::new().add_p2_pauli_leakage_channel_after_gate(&channel);
+
+        assert!(builder.simple_probabilities().is_none());
+        assert!(builder.pauli_with_angle_scaling().is_none());
+    }
+
+    #[test]
     fn cross_field_validation_rejects_invalid_effective_probabilities() {
         assert_eq!(
             GeneralNoiseModelBuilder::new()
@@ -1560,5 +2138,17 @@ mod tests {
         assert_float_eq(model.p_idle_linear_rate, 0.1);
         assert_float_eq(model.p_idle_sin_squared_rate, 0.15);
         assert_float_eq(model.p_idle_coherent_rate, 0.2);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid scaled gate-hook probabilities")]
+    fn direct_scaling_checks_the_supplied_models_hooks() {
+        let channel = StateTransitionChannel::leak_recovery(0.8, 1.0).unwrap();
+        let mut model = GeneralNoiseModelBuilder::new()
+            .add_p1_transition_channel_before_gate(&channel)
+            .build();
+        GeneralNoiseModelBuilder::new()
+            .with_scale(2.0)
+            .scale_parameters(&mut model);
     }
 }

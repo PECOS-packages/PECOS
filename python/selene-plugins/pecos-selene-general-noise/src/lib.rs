@@ -17,9 +17,271 @@ use selene_core::export_error_model_plugin;
 use selene_core::runtime::{BatchOperation, Operation};
 use selene_core::simulator::SimulatorInterface;
 use selene_core::utils::MetricValue;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::simulator::SeleneSimulator;
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum TransitionConfig {
+    Flat(BTreeMap<String, f64>),
+    Rows(BTreeMap<String, BTreeMap<String, f64>>),
+}
+
+impl TransitionConfig {
+    fn arity(&self) -> usize {
+        let label = match self {
+            Self::Flat(rows) => rows
+                .keys()
+                .next()
+                .map(|key| key.split("->").next().unwrap_or(key)),
+            Self::Rows(rows) => rows.keys().next().map(String::as_str),
+        };
+        label.map_or(1, |label| label.trim().len())
+    }
+
+    fn single(&self, probability: f64) -> Result<StateTransitionChannel> {
+        Ok(match self {
+            Self::Flat(rows) => StateTransitionChannel::from_transitions(probability, rows)?,
+            Self::Rows(rows) => StateTransitionChannel::new(probability, rows)?,
+        })
+    }
+
+    fn joint(&self, probability: f64) -> Result<TwoQubitStateTransitionChannel> {
+        Ok(match self {
+            Self::Flat(rows) => {
+                TwoQubitStateTransitionChannel::from_transitions(probability, rows)?
+            }
+            Self::Rows(rows) => TwoQubitStateTransitionChannel::new(probability, rows)?,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum HookConfig {
+    Transition {
+        probability: f64,
+        transitions: TransitionConfig,
+    },
+    PauliLeakage {
+        probability: f64,
+        events: BTreeMap<String, f64>,
+    },
+    Independent {
+        first: Box<HookConfig>,
+        second: Box<HookConfig>,
+    },
+}
+
+// Read JSON values directly: serde's buffered enum deserializers cannot read
+// serde_json numbers when workspace feature unification enables arbitrary_precision.
+impl<'de> Deserialize<'de> for HookConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_value(&Value::deserialize(deserializer)?)
+    }
+}
+
+fn hook_number<E: serde::de::Error>(value: &Value) -> Result<f64, E> {
+    value
+        .as_f64()
+        .ok_or_else(|| E::custom("invalid type: expected f64"))
+}
+
+fn hook_distribution<E: serde::de::Error>(value: &Value) -> Result<BTreeMap<String, f64>, E> {
+    value
+        .as_object()
+        .ok_or_else(|| E::custom("invalid type: expected a map of probabilities"))?
+        .iter()
+        .map(|(label, value)| Ok((label.clone(), hook_number(value)?)))
+        .collect()
+}
+
+impl HookConfig {
+    fn from_value<E: serde::de::Error>(value: &Value) -> Result<Self, E> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| E::custom("invalid type: expected a hook object"))?;
+        let field = |name| object.get(name).ok_or_else(|| E::missing_field(name));
+        let kind = field("kind")?
+            .as_str()
+            .ok_or_else(|| E::custom("invalid type: expected a string for `kind`"))?;
+        let fields: &[&str] = match kind {
+            "transition" => &["probability", "transitions"],
+            "pauli_leakage" => &["probability", "events"],
+            "independent" => &["first", "second"],
+            _ => {
+                return Err(E::unknown_variant(
+                    kind,
+                    &["transition", "pauli_leakage", "independent"],
+                ));
+            }
+        };
+        for name in object.keys() {
+            if name != "kind" && !fields.contains(&name.as_str()) {
+                return Err(E::unknown_field(name, fields));
+            }
+        }
+        match kind {
+            "transition" => {
+                let probability = hook_number(field("probability")?)?;
+                let transitions = field("transitions")?;
+                let rows = transitions
+                    .as_object()
+                    .ok_or_else(|| E::custom("invalid type: expected a transitions map"))?;
+                let transitions = if rows.values().all(Value::is_number) {
+                    TransitionConfig::Flat(hook_distribution(transitions)?)
+                } else {
+                    TransitionConfig::Rows(
+                        rows.iter()
+                            .map(|(label, row)| Ok((label.clone(), hook_distribution(row)?)))
+                            .collect::<Result<_, E>>()?,
+                    )
+                };
+                Ok(Self::Transition {
+                    probability,
+                    transitions,
+                })
+            }
+            "pauli_leakage" => Ok(Self::PauliLeakage {
+                probability: hook_number(field("probability")?)?,
+                events: hook_distribution(field("events")?)?,
+            }),
+            "independent" => Ok(Self::Independent {
+                first: Box::new(Self::from_value(field("first")?)?),
+                second: Box::new(Self::from_value(field("second")?)?),
+            }),
+            _ => unreachable!("hook kind was validated above"),
+        }
+    }
+
+    fn apply(
+        &self,
+        builder: GeneralNoiseModelBuilder,
+        two: bool,
+        before: bool,
+    ) -> Result<GeneralNoiseModelBuilder> {
+        match self {
+            Self::Transition {
+                probability,
+                transitions,
+            } if !two => {
+                let channel = transitions.single(*probability)?;
+                Ok(if before {
+                    builder.add_p1_transition_channel_before_gate(&channel)
+                } else {
+                    builder.add_p1_transition_channel_after_gate(&channel)
+                })
+            }
+            Self::PauliLeakage {
+                probability,
+                events,
+            } if !two => {
+                let channel = PauliLeakageChannel::new(*probability, events)?;
+                Ok(if before {
+                    builder.add_p1_pauli_leakage_channel_before_gate(&channel)
+                } else {
+                    builder.add_p1_pauli_leakage_channel_after_gate(&channel)
+                })
+            }
+            Self::Transition {
+                probability,
+                transitions,
+            } => {
+                if transitions.arity() == 1 {
+                    let channel = transitions.single(*probability)?;
+                    Ok(if before {
+                        builder.add_p2_transition_channel_before_gate(&channel)
+                    } else {
+                        builder.add_p2_transition_channel_after_gate(&channel)
+                    })
+                } else {
+                    let channel = transitions.joint(*probability)?;
+                    Ok(if before {
+                        builder.add_p2_transition_channel_before_gate(&channel)
+                    } else {
+                        builder.add_p2_transition_channel_after_gate(&channel)
+                    })
+                }
+            }
+            Self::PauliLeakage {
+                probability,
+                events,
+            } => {
+                if events
+                    .keys()
+                    .next()
+                    .is_none_or(|label| label.trim().len() == 1)
+                {
+                    let channel = PauliLeakageChannel::new(*probability, events)?;
+                    Ok(if before {
+                        builder.add_p2_pauli_leakage_channel_before_gate(&channel)
+                    } else {
+                        builder.add_p2_pauli_leakage_channel_after_gate(&channel)
+                    })
+                } else {
+                    let step = P2PauliLeakageStep::joint(TwoQubitPauliLeakageChannel::new(
+                        *probability,
+                        events,
+                    )?);
+                    Ok(if before {
+                        builder.add_p2_pauli_leakage_step_before_gate(&step)
+                    } else {
+                        builder.add_p2_pauli_leakage_step_after_gate(&step)
+                    })
+                }
+            }
+            Self::Independent { first, second } => {
+                if !two {
+                    bail!("independent hook requires a two-qubit site");
+                }
+                match (first.as_ref(), second.as_ref()) {
+                    (
+                        Self::Transition {
+                            probability: p,
+                            transitions: a,
+                        },
+                        Self::Transition {
+                            probability: q,
+                            transitions: b,
+                        },
+                    ) => {
+                        let step = P2TransitionStep::independent(a.single(*p)?, b.single(*q)?);
+                        Ok(if before {
+                            builder.add_p2_transition_step_before_gate(&step)
+                        } else {
+                            builder.add_p2_transition_step_after_gate(&step)
+                        })
+                    }
+                    (
+                        Self::PauliLeakage {
+                            probability: p,
+                            events: a,
+                        },
+                        Self::PauliLeakage {
+                            probability: q,
+                            events: b,
+                        },
+                    ) => {
+                        let step = P2PauliLeakageStep::independent(
+                            PauliLeakageChannel::new(*p, a)?,
+                            PauliLeakageChannel::new(*q, b)?,
+                        );
+                        Ok(if before {
+                            builder.add_p2_pauli_leakage_step_before_gate(&step)
+                        } else {
+                            builder.add_p2_pauli_leakage_step_after_gate(&step)
+                        })
+                    }
+                    _ => {
+                        bail!("independent hook requires two one-qubit channels of the same family")
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -42,6 +304,8 @@ struct GateConfig {
     emission_model: Option<BTreeMap<String, f64>>,
     seepage_probability: Option<f64>,
     scale: Option<f64>,
+    hooks_before: Vec<HookConfig>,
+    hooks_after: Vec<HookConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -57,6 +321,8 @@ struct TwoQubitConfig {
     angle_coefficients: Option<[f64; 4]>,
     angle_power: Option<f64>,
     idle_after_gate: Option<f64>,
+    hooks_before: Vec<HookConfig>,
+    hooks_after: Vec<HookConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -214,6 +480,17 @@ impl Config {
             }
             if let Some(value) = two.idle_after_gate {
                 builder = builder.with_idle_after_2q(value);
+            }
+
+            for (hooks, two, before) in [
+                (&one.hooks_before, false, true),
+                (&one.hooks_after, false, false),
+                (&two.hooks_before, true, true),
+                (&two.hooks_after, true, false),
+            ] {
+                for hook in hooks {
+                    builder = hook.apply(builder, two, before).unwrap_or_else(|error| panic!("{error}"));
+                }
             }
 
             let idle = &self.idle;
@@ -621,13 +898,13 @@ export_error_model_plugin!(crate::GeneralNoiseFactory);
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::f64::consts::PI;
 
     use anyhow::Result;
     use pecos_core::Angle64;
     use pecos_engines::byte_message::GateType;
-    use pecos_engines::prelude::{ByteMessage, EngineStage, NoiseModel};
+    use pecos_engines::prelude::{ByteMessage, EngineStage, NoiseModel, StateTransitionChannel};
     use selene_core::error_model::BatchResult;
     use selene_core::error_model::interface::ErrorModelInterface;
     use selene_core::runtime::{BatchOperation, Operation};
@@ -635,7 +912,7 @@ mod tests {
     use selene_core::time::{Duration, Instant};
     use selene_core::utils::MetricValue;
 
-    use super::{Config, GeneralNoiseErrorModel};
+    use super::{Config, GeneralNoiseErrorModel, HookConfig};
     use crate::simulator::SeleneSimulator;
 
     #[derive(Default)]
@@ -912,6 +1189,253 @@ mod tests {
         assert_eq!(result.u64_results.len(), 1);
         assert_eq!(result.u64_results[0].result_id, 7);
         result.u64_results[0].value
+    }
+
+    fn hook_outcomes(site: &str, hooks: &serde_json::Value, two: bool) -> Vec<u64> {
+        let config = serde_json::json!({
+            if two { "two_qubit" } else { "single_qubit" }: { site: hooks }
+        });
+        let mut model = build_error_model(&config.to_string(), 2);
+        let mut simulator = ZeroSimulator;
+        model.shot_start(0, 41).unwrap();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::Reset { qubit_id: 0 },
+                        Operation::Reset { qubit_id: 1 },
+                    ],
+                    0,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        let gate = if two {
+            Operation::RZZGate {
+                qubit_id_1: 0,
+                qubit_id_2: 1,
+                theta: 0.5,
+            }
+        } else {
+            Operation::RZGate {
+                qubit_id: 0,
+                theta: 0.5,
+            }
+        };
+        let internal = model
+            .handle_operations(runtime_batch(vec![gate], 1, 1), &mut simulator)
+            .unwrap();
+        assert!(internal.bool_results.is_empty());
+        assert!(internal.u64_results.is_empty());
+        let output = model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::MeasureLeaked {
+                            qubit_id: 0,
+                            result_id: 7,
+                        },
+                        Operation::MeasureLeaked {
+                            qubit_id: 1,
+                            result_id: 8,
+                        },
+                    ],
+                    2,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        assert!(output.bool_results.is_empty());
+        assert_eq!(
+            output
+                .u64_results
+                .iter()
+                .map(|item| item.result_id)
+                .collect::<Vec<_>>(),
+            vec![7, 8]
+        );
+        output.u64_results.iter().map(|item| item.value).collect()
+    }
+
+    #[test]
+    fn gate_hooks_execute_in_order_and_route_internal_measurements() {
+        let leak = serde_json::json!({"kind":"pauli_leakage","probability":1.0,"events":{"L":1.0}});
+        let recover = serde_json::json!({"kind":"transition","probability":1.0,"transitions":{"L":{"0":1.0}}});
+        for site in ["hooks_before", "hooks_after"] {
+            for two in [false, true] {
+                let leaked = if two { vec![2, 2] } else { vec![2, 0] };
+                assert_eq!(hook_outcomes(site, &serde_json::json!([leak]), two), leaked);
+                assert_eq!(
+                    hook_outcomes(site, &serde_json::json!([leak, recover]), two),
+                    vec![0, 0]
+                );
+                assert_eq!(
+                    hook_outcomes(site, &serde_json::json!([recover, leak]), two),
+                    leaked
+                );
+            }
+        }
+        let transition_leak = serde_json::json!({"kind":"transition","probability":1.0,"transitions":{"0->L":1.0,"1->L":1.0}});
+        assert_eq!(
+            hook_outcomes("hooks_before", &serde_json::json!([transition_leak]), false),
+            vec![2, 0]
+        );
+    }
+
+    #[test]
+    fn two_qubit_hooks_support_joint_wildcards_and_distinct_legs() {
+        for family in ["transition", "pauli_leakage"] {
+            let (first, second, joint) = if family == "transition" {
+                (
+                    serde_json::json!({"kind":family,"probability":1.0,"transitions":{"0->L":1.0,"1->L":1.0}}),
+                    serde_json::json!({"kind":family,"probability":0.0,"transitions":{"L->0":1.0}}),
+                    serde_json::json!({"kind":family,"probability":1.0,"transitions":{"0*->L*":1.0,"1*->L*":1.0}}),
+                )
+            } else {
+                (
+                    serde_json::json!({"kind":family,"probability":1.0,"events":{"L":1.0}}),
+                    serde_json::json!({"kind":family,"probability":0.0,"events":{"L":1.0}}),
+                    serde_json::json!({"kind":family,"probability":1.0,"events":{"LI":1.0}}),
+                )
+            };
+            for site in ["hooks_before", "hooks_after"] {
+                assert_eq!(
+                    hook_outcomes(
+                        site,
+                        &serde_json::json!([{"kind":"independent","first":first,"second":second}]),
+                        true
+                    ),
+                    vec![2, 0]
+                );
+                assert_eq!(
+                    hook_outcomes(site, &serde_json::json!([joint]), true),
+                    vec![2, 0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hook_configuration_and_validation() {
+        let valid = r#"{"single_qubit":{"hooks_before":[{"kind":"transition","probability":1.0,"transitions":{"L->0":1.0}}]}}"#;
+        let config: Config = serde_json::from_str(valid).unwrap();
+        assert!(config.build_model().is_ok());
+        assert!(
+            serde_json::from_str::<Config>(
+                &valid.replace("\"probability\":1.0", "\"probability\":1.0,\"unknown\":0")
+            )
+            .is_err()
+        );
+        let invalid = valid.replace("L->0", "0->L");
+        let config: Config = serde_json::from_str(&invalid).unwrap();
+        let expected = StateTransitionChannel::from_transitions(
+            1.0,
+            &BTreeMap::from([("0->L".to_string(), 1.0)]),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            config.build_model().err().unwrap().to_string(),
+            format!("invalid general-noise configuration: {expected}")
+        );
+    }
+
+    #[test]
+    fn hook_json_round_trip_and_unknown_fields() {
+        let values = [
+            serde_json::json!({"kind":"transition","probability":0.5,"transitions":{"L->0":1.0}}),
+            serde_json::json!({"kind":"transition","probability":0.5,"transitions":{"L":{"0":1.0}}}),
+            serde_json::json!({"kind":"pauli_leakage","probability":0.5,"events":{"L":1.0}}),
+        ];
+        for value in values {
+            let hook: HookConfig = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(hook).unwrap(), value);
+            let independent =
+                serde_json::json!({"kind":"independent","first":value,"second":value});
+            let hook: HookConfig = serde_json::from_value(independent.clone()).unwrap();
+            assert_eq!(serde_json::to_value(hook).unwrap(), independent);
+            for mut invalid in [value, independent] {
+                invalid["unknown"] = serde_json::json!(true);
+                assert!(serde_json::from_value::<HookConfig>(invalid).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn hook_json_numbers_parse_from_text() {
+        for json in [
+            r#"{"kind":"transition","probability":0.25,"transitions":{"L->0":1}}"#,
+            r#"{"kind":"transition","probability":2.5e-1,"transitions":{"L":{"0":1.0}}}"#,
+            r#"{"kind":"pauli_leakage","probability":0.25,"events":{"L":1}}"#,
+        ] {
+            let hook: HookConfig = serde_json::from_str(json).unwrap();
+            let expected: serde_json::Value = serde_json::from_str(json).unwrap();
+            // Compare numeric values, since arbitrary_precision preserves number spelling.
+            let encoded = serde_json::to_value(hook).unwrap();
+            assert_eq!(encoded["probability"].as_f64(), Some(0.25));
+            assert_eq!(encoded["kind"], expected["kind"]);
+            let independent = serde_json::json!({
+                "kind": "independent", "first": expected, "second": expected
+            });
+            let hook: HookConfig = serde_json::from_str(&independent.to_string()).unwrap();
+            assert!(
+                hook.apply(super::GeneralNoiseModel::builder(), true, false)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn hook_json_rejects_non_numeric_probabilities_and_missing_kind() {
+        for json in [
+            r#"{"kind":"transition","probability":"0.5","transitions":{"L->0":1}}"#,
+            r#"{"kind":"pauli_leakage","probability":false,"events":{"L":1}}"#,
+            r#"{"kind":"pauli_leakage","probability":null,"events":{"L":1}}"#,
+            r#"{"kind":"transition","probability":1,"transitions":{"L->0":"1"}}"#,
+            r#"{"kind":"transition","probability":1,"transitions":{"L":{"0":false}}}"#,
+            r#"{"kind":"pauli_leakage","probability":1,"events":{"L":[]}}"#,
+            r#"{"kind":"transition","probability":1,"transitions":{"L":{"0":1},"0->0":1}}"#,
+            r#"{"probability":1,"events":{"L":1}}"#,
+        ] {
+            assert!(serde_json::from_str::<HookConfig>(json).is_err(), "{json}");
+            let value: serde_json::Value = serde_json::from_str(json).unwrap();
+            for leg in ["first", "second"] {
+                let valid = serde_json::json!({
+                    "kind": "pauli_leakage", "probability": 1, "events": {"L": 1}
+                });
+                let mut independent = serde_json::json!({
+                    "kind": "independent", "first": valid, "second": valid
+                });
+                independent[leg] = value.clone();
+                assert!(
+                    serde_json::from_str::<HookConfig>(&independent.to_string()).is_err(),
+                    "{independent}"
+                );
+            }
+        }
+        let error = serde_json::from_str::<HookConfig>(r#"{"probability":1}"#).unwrap_err();
+        assert!(error.to_string().contains("missing field `kind`"));
+    }
+
+    #[test]
+    fn scaled_hook_probabilities_are_rejected() {
+        for site in ["single_qubit", "two_qubit"] {
+            for timing in ["hooks_before", "hooks_after"] {
+                let hook = serde_json::json!({"kind":"pauli_leakage","probability":0.6,"events":{"L":1.0}});
+                let mut hooks = vec![hook.clone()];
+                if site == "two_qubit" {
+                    hooks
+                        .push(serde_json::json!({"kind":"independent","first":hook,"second":hook}));
+                }
+                for hook in hooks {
+                    let value = serde_json::json!({site:{timing:[hook],"scale":2.0}});
+                    let config: Config = serde_json::from_value(value).unwrap();
+                    assert!(config.build_model().is_err());
+                }
+            }
+        }
     }
 
     #[test]

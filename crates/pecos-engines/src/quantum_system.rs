@@ -391,8 +391,8 @@ impl Engine for QuantumSystem {
             .downcast_mut::<RuntimeGeneralNoise>()
             .expect("checked private compiled model");
         // Legacy inputs share this persistent simulator with later frames.
-        // Automatic growth recreates state, so reject undersized configuration
-        // before either route can mutate the model, simulator, or RNG.
+        // The frame profile requires its full configured capacity before either
+        // route can mutate the model, simulator, or RNG.
         if let Some(sim) = self
             .quantum_engine
             .as_any()

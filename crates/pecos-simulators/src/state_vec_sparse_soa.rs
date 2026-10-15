@@ -163,6 +163,21 @@ impl<R: Rng> SparseStateVecSoA<R> {
         }
     }
 
+    /// Grow to at least `required_qubits`, preserving the state and RNG.
+    ///
+    /// New qubits have indices starting at the old qubit count and are in |0>.
+    /// Qubit k is basis-index bit k, so existing sparse indices stay unchanged;
+    /// the new high bits are implicitly zero without allocating amplitudes.
+    /// Requests at or below the current size do nothing; this never shrinks.
+    pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
+        if required_qubits > self.num_qubits {
+            // Retain deferred frames and their phases on existing qubits.
+            self.frames.resize(required_qubits, CliffordFrame::IDENTITY);
+            self.frame_phases.resize(required_qubits, 0);
+            self.num_qubits = required_qubits;
+        }
+    }
+
     /// Set the amplitude truncation threshold
     #[inline]
     pub fn set_epsilon(&mut self, epsilon: f64) -> &mut Self {

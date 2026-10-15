@@ -20,6 +20,21 @@ def test_simulator_creation() -> None:
     StateVecEngine(2)
 
 
+def test_growth_preserves_state() -> None:
+    engine = StateVecEngine(1)
+    first = ByteMessage.quantum_operations_builder()
+    first.x([0])
+    engine.process(first.build())
+
+    second = ByteMessage.quantum_operations_builder()
+    second.z([2])
+    second.mz([0])
+    measurements = engine.process(second.build()).measurement_results()
+    assert len(measurements) == 1
+    assert measurements[0][0] == 0
+    assert measurements[0][1] == 1
+
+
 def test_bell_state_correlations() -> None:
     # Create a Bell state circuit
     builder = ByteMessage.quantum_operations_builder()

@@ -731,8 +731,10 @@ where
     /// Create a new simulator with a specific seed.
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self;
 
-    /// Create a new simulator with a custom RNG.
-    fn create_with_rng(num_qubits: usize, rng: <Self as RngManageable>::Rng) -> Self;
+    /// Grow in place to at least `required_qubits`, preserving the state and RNG.
+    /// New qubits have consecutive indices after the existing qubits and start in |0>.
+    /// Requests at or below the current size must not shrink or reset the state.
+    fn ensure_qubit_count(&mut self, required_qubits: usize);
 }
 
 impl StateVectorSimulator for StateVec {
@@ -744,8 +746,8 @@ impl StateVectorSimulator for StateVec {
         StateVec::with_seed(num_qubits, seed)
     }
 
-    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
-        StateVec::with_rng(num_qubits, rng)
+    fn ensure_qubit_count(&mut self, required_qubits: usize) {
+        StateVec::ensure_qubit_count(self, required_qubits);
     }
 }
 
@@ -758,8 +760,8 @@ impl StateVectorSimulator for StateVecAoS {
         StateVecAoS::with_seed(num_qubits, seed)
     }
 
-    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
-        StateVecAoS::with_rng(num_qubits, rng)
+    fn ensure_qubit_count(&mut self, required_qubits: usize) {
+        StateVecAoS::ensure_qubit_count(self, required_qubits);
     }
 }
 
@@ -772,8 +774,8 @@ impl StateVectorSimulator for StateVecSoA {
         StateVecSoA::with_seed(num_qubits, seed)
     }
 
-    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
-        StateVecSoA::with_rng(num_qubits, rng)
+    fn ensure_qubit_count(&mut self, required_qubits: usize) {
+        StateVecSoA::ensure_qubit_count(self, required_qubits);
     }
 }
 
@@ -808,7 +810,7 @@ where
         }
     }
 
-    /// Ensure the simulator has the correct number of qubits, recreating if necessary
+    /// Grow the simulator in place if needed, preserving its state and RNG.
     pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
         if self.simulator.num_qubits() < required_qubits {
             debug!(
@@ -816,8 +818,7 @@ where
                 self.simulator.num_qubits(),
                 required_qubits
             );
-            let rng = self.simulator.rng().clone();
-            self.simulator = S::create_with_rng(required_qubits, rng);
+            self.simulator.ensure_qubit_count(required_qubits);
         }
     }
 

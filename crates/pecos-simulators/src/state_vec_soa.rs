@@ -445,6 +445,24 @@ where
         }
     }
 
+    /// Grow to at least `required_qubits`, preserving the state and RNG.
+    ///
+    /// New qubits have indices starting at the old qubit count and are in |0>.
+    /// Qubit k is basis-index bit k, so existing amplitudes keep their indices.
+    /// Requests at or below the current size do nothing; this never shrinks.
+    pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
+        if required_qubits > self.num_qubits {
+            let size = 1 << required_qubits;
+            // Apply deferred gates while the state is still small.
+            self.flush();
+            self.real.resize(size, 0.0);
+            self.imag.resize(size, 0.0);
+            self.pending_gates.resize(required_qubits, None);
+            // two_qubit_unitary resizes its scratch buffers lazily.
+            self.num_qubits = required_qubits;
+        }
+    }
+
     /// Flush pending gates for a specific qubit.
     #[inline]
     fn flush_qubit(&mut self, qubit: usize) {

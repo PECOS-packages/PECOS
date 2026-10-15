@@ -44,6 +44,23 @@ fn run(body: &str, qubits: usize, seed: u64) -> (Vec<bool>, usize) {
 }
 
 #[test]
+fn allocation_after_consumed_measurement_preserves_state() {
+    assert_eq!(
+        run(
+            "%q0 = call i64 @___qalloc()\n\
+             call void @___x(i64 %q0)\n\
+             %m = call i1 @___measure(i64 %q0)\n\
+             %z = zext i1 %m to i64\n\
+             %q1 = call i64 @___qalloc()\n\
+             %m2 = call i1 @___measure(i64 %q0)",
+            1,
+            42,
+        ),
+        (vec![true, true], 2)
+    );
+}
+
+#[test]
 fn literal_addressing() {
     assert_eq!(
         run(

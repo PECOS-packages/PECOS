@@ -2084,8 +2084,8 @@ pub struct DemOutput {
     pub records: SmallVec<[i32; 4]>,
     /// PECOS DEM output kind, when known.
     pub kind: Option<DemOutputKind>,
-    /// Pauli string whose flip is tracked, when this came from a Pauli
-    /// annotation or logical operator builder.
+    /// Single-time Pauli supplied by a tracked-Pauli or logical operator builder.
+    /// Measurement-defined observable annotations leave this `None`.
     pub pauli: Option<PauliString>,
     /// Optional user label.
     pub label: Option<String>,
@@ -2111,7 +2111,7 @@ impl DemOutput {
             id,
             records: SmallVec::new(),
             kind: Some(metadata.kind),
-            pauli: Some(metadata.pauli.clone()),
+            pauli: metadata.pauli.clone(),
             label: metadata.label.clone(),
         }
     }
@@ -2565,9 +2565,11 @@ impl PauliWeights {
 
     /// Look up the weight for a specific `PauliString`.
     ///
-    /// Matches by Pauli type pattern only, ignoring qubit IDs.
-    /// E.g., `X(3) & Z(7)` matches a weight entry `X(0) & Z(1)` because
-    /// both have the pattern [X, Z] (sorted by qubit position).
+    /// Matches by non-identity Pauli type pattern only, ignoring qubit IDs.
+    /// This is used for single-qubit noise, not operand-relative two-qubit labels.
+    /// For two-qubit noise use [`Self::two_qubit_weight_for_on`]: a label `AB`
+    /// means A on the first gate operand and B on the second, regardless of indices.
+    /// For example, a single-qubit query `Z(7)` matches a weight entry `Z(0)`.
     #[must_use]
     pub fn weight_for(&self, pauli: &pecos_core::PauliString) -> f64 {
         let query_pattern = pauli_pattern(pauli);
@@ -2579,6 +2581,8 @@ impl PauliWeights {
 
     /// Look up the effective two-qubit Pauli weight for a specific gate.
     ///
+    /// The query uses operand positions 0 and 1, not absolute circuit qubits.
+    /// For physical qubits use [`Self::two_qubit_weight_for_on`].
     /// Plain entries contribute directly. Replacement entries first convolve with
     /// the Pauli twirl of the omitted gate, so `~II` on `SZZ` contributes half
     /// `II` and half `ZZ`, while `~XX` on `SZZ` contributes half `XX` and half
@@ -2593,10 +2597,26 @@ impl PauliWeights {
         pauli: &pecos_core::PauliString,
         approximation: ReplacementBranchApproximation,
     ) -> f64 {
-        let Ok(query_label) = two_qubit_pauli_label(pauli) else {
+        self.two_qubit_weight_for_on(clifford, pauli, [QubitId(0), QubitId(1)], approximation)
+    }
+
+    /// Looks up a physical Pauli using the gate's ordered operands.
+    ///
+    /// A label `AB` means A on `operands[0]` and B on `operands[1]`.
+    /// Weight entries use local positions 0 and 1. Returns zero if the Pauli
+    /// acts outside the operands or the operands are repeated.
+    #[must_use]
+    pub fn two_qubit_weight_for_on(
+        &self,
+        clifford: CliffordLowering,
+        pauli: &pecos_core::PauliString,
+        operands: [QubitId; 2],
+        approximation: ReplacementBranchApproximation,
+    ) -> f64 {
+        let Ok(query_label) = two_qubit_pauli_label(pauli, operands) else {
             return 0.0;
         };
-        let direct = self.post_gate_two_qubit_weight_for(pauli);
+        let direct = self.post_gate_weight_for_label(&query_label);
 
         if !approximation.consults_omitted_gate_twirl() {
             return direct
@@ -2604,7 +2624,11 @@ impl PauliWeights {
                     .replacement_entries
                     .iter()
                     .filter_map(|(ps, weight)| {
-                        (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+                        (two_qubit_pauli_label(ps, [QubitId(0), QubitId(1)])
+                            .ok()?
+                            .as_str()
+                            == query_label)
+                            .then_some(*weight)
                     })
                     .sum::<f64>();
         }
@@ -2621,13 +2645,21 @@ impl PauliWeights {
     /// Look up only the plain post-gate two-qubit Pauli weight.
     #[must_use]
     pub fn post_gate_two_qubit_weight_for(&self, pauli: &pecos_core::PauliString) -> f64 {
-        let Ok(query_label) = two_qubit_pauli_label(pauli) else {
+        let Ok(query_label) = two_qubit_pauli_label(pauli, [QubitId(0), QubitId(1)]) else {
             return 0.0;
         };
+        self.post_gate_weight_for_label(&query_label)
+    }
+
+    fn post_gate_weight_for_label(&self, query_label: &str) -> f64 {
         self.entries
             .iter()
             .filter_map(|(ps, weight)| {
-                (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+                (two_qubit_pauli_label(ps, [QubitId(0), QubitId(1)])
+                    .ok()?
+                    .as_str()
+                    == query_label)
+                    .then_some(*weight)
             })
             .sum::<f64>()
     }
@@ -2650,7 +2682,7 @@ impl PauliWeights {
         };
         let mut impacts = Vec::new();
         for (ps, replacement_weight) in &self.replacement_entries {
-            let Ok(replacement_label) = two_qubit_pauli_label(ps) else {
+            let Ok(replacement_label) = two_qubit_pauli_label(ps, [QubitId(0), QubitId(1)]) else {
                 continue;
             };
             for (twirl_label, twirl_weight) in &twirl {
@@ -4157,23 +4189,31 @@ fn pauli_pattern(ps: &pecos_core::PauliString) -> Vec<pecos_core::Pauli> {
     ps.paulis().iter().map(|&(p, _)| p).collect()
 }
 
-fn two_qubit_pauli_label(ps: &pecos_core::PauliString) -> Result<String, String> {
-    let mut chars = ['I', 'I'];
-    for &(pauli, qubit) in ps.paulis() {
-        let idx = qubit.index();
-        if idx >= 2 {
-            return Err(format!(
-                "two-qubit Pauli weights only support qubit indices 0 and 1, got {idx}"
-            ));
-        }
-        chars[idx] = match pauli {
+/// Labels a Pauli in gate operand order, including identity on absent operands.
+/// Local weight entries use operands `[0, 1]`; circuit events use physical operands.
+pub(crate) fn two_qubit_pauli_label(
+    ps: &pecos_core::PauliString,
+    operands: [QubitId; 2],
+) -> Result<String, String> {
+    if operands[0] == operands[1] {
+        return Err(format!(
+            "two-qubit Pauli operands must be distinct: {operands:?}"
+        ));
+    }
+    if let Some((_, qubit)) = ps.iter_pairs().find(|(_, q)| !operands.contains(q)) {
+        return Err(format!(
+            "Pauli qubit {qubit} is outside operands {operands:?}"
+        ));
+    }
+    Ok(operands
+        .iter()
+        .map(|q| match ps.get(q.index()) {
             pecos_core::Pauli::I => 'I',
             pecos_core::Pauli::X => 'X',
             pecos_core::Pauli::Y => 'Y',
             pecos_core::Pauli::Z => 'Z',
-        };
-    }
-    Ok(chars.iter().collect())
+        })
+        .collect())
 }
 
 fn multiply_two_qubit_pauli_labels(left: &str, right: &str) -> String {

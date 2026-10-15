@@ -291,7 +291,7 @@ fn dag_update_refuses_duplicate_measurement_ids() {
 
 /// A detector can reference exactly one measurement of a batched gate --
 /// previously inexpressible, because a node id covered the whole batch. The
-/// annotation Pauli must touch only that measurement's qubit.
+/// resolved measured Pauli must touch only that measurement's qubit.
 #[test]
 fn a_detector_on_one_measurement_of_a_batched_gate_touches_only_its_qubit() {
     let mut dag = DagCircuit::new();
@@ -313,8 +313,8 @@ fn a_detector_on_one_measurement_of_a_batched_gate_touches_only_its_qubit() {
     };
     assert_eq!(measurement_ids.as_slice(), &[refs[1].meas_id]);
     assert_eq!(
-        ann.pauli,
-        pecos_core::PauliString::zs(&[1usize]),
+        dag.measured_pauli(measurement_ids[0]).unwrap(),
+        (pecos_core::Pauli::Z, QubitId(1)),
         "Z on qubit 1 only -- not sprayed over the whole batch"
     );
 }
@@ -330,7 +330,6 @@ fn a_reference_to_a_removed_measurement_is_a_removed_error() {
     dag.mz(&[1]);
     dag.remove_gate(ms[0].node);
     dag.add_annotation(pecos_quantum::PauliAnnotation {
-        pauli: pecos_core::PauliString::zs(&[0usize]),
         kind: AnnotationKind::Observable {
             measurement_ids: vec![ms[0].meas_id],
         },
@@ -380,7 +379,7 @@ fn scrambled_annotation_ids_survive_tick_dag_round_trip() {
                 measurement_ids, ..
             }
             | AnnotationKind::Observable { measurement_ids } => measurement_ids,
-            AnnotationKind::TrackedPauli => panic!("unexpected tracked Pauli"),
+            AnnotationKind::TrackedPauli { .. } => panic!("unexpected tracked Pauli"),
         };
         let want: Vec<MeasId> = want.iter().map(|&id| MeasId::from_raw(id)).collect();
         assert_eq!(ids, &want);
@@ -441,4 +440,220 @@ fn sampler_defends_against_duplicate_ids_in_literal_map() {
         panic!("duplicate IDs must not bind to the first record");
     };
     assert!(error.to_string().contains("duplicate stable MeasId 5"));
+}
+
+#[test]
+fn repeated_measurement_qubits_preserve_spacetime_bases() {
+    let mut dag = DagCircuit::new();
+    let first = dag.mz(&[0]);
+    let node = dag.try_add_gate_auto_wire(Gate::mx(&[0usize])).unwrap();
+    let second = dag.meas_refs(node).unwrap();
+    let refs = [second[0], first[0], second[0]];
+    dag.detector(&refs).unwrap();
+    dag.observable(&refs).unwrap();
+    for annotation in dag.annotations() {
+        let ids = match &annotation.kind {
+            AnnotationKind::Detector {
+                measurement_ids, ..
+            }
+            | AnnotationKind::Observable { measurement_ids } => measurement_ids,
+            AnnotationKind::TrackedPauli { .. } => panic!("unexpected tracked Pauli"),
+        };
+        assert_eq!(
+            ids,
+            &[second[0].meas_id, first[0].meas_id, second[0].meas_id]
+        );
+    }
+    assert_eq!(
+        dag.measured_pauli(first[0].meas_id).unwrap(),
+        (pecos_core::Pauli::Z, QubitId(0))
+    );
+    assert_eq!(
+        dag.measured_pauli(second[0].meas_id).unwrap(),
+        (pecos_core::Pauli::X, QubitId(0))
+    );
+
+    let mut ticks = TickCircuit::new();
+    let first = ticks.tick().mz(&[0]);
+    let second = ticks.tick().mx(&[0]);
+    let refs = [second[0], first[0], second[0]];
+    ticks.detector(&refs).unwrap();
+    ticks.observable(&refs).unwrap();
+    for annotation in ticks.annotations() {
+        let ids = match &annotation.kind {
+            AnnotationKind::Detector {
+                measurement_ids, ..
+            }
+            | AnnotationKind::Observable { measurement_ids } => measurement_ids,
+            AnnotationKind::TrackedPauli { .. } => panic!("unexpected tracked Pauli"),
+        };
+        assert_eq!(
+            ids,
+            &[second[0].meas_id, first[0].meas_id, second[0].meas_id]
+        );
+    }
+    assert_eq!(
+        ticks.measured_pauli(first[0].meas_id).unwrap(),
+        (pecos_core::Pauli::Z, QubitId(0))
+    );
+    assert_eq!(
+        ticks.measured_pauli(second[0].meas_id).unwrap(),
+        (pecos_core::Pauli::X, QubitId(0))
+    );
+    let converted = DagCircuit::try_from(&ticks).unwrap();
+    let round_trip = TickCircuit::from(&converted);
+    for id in [first[0].meas_id, second[0].meas_id] {
+        assert_eq!(
+            converted.measured_pauli(id).unwrap(),
+            ticks.measured_pauli(id).unwrap()
+        );
+        assert_eq!(
+            round_trip.measured_pauli(id).unwrap(),
+            ticks.measured_pauli(id).unwrap()
+        );
+    }
+}
+
+#[test]
+fn measured_pauli_queries_read_current_gates_and_reject_unresolved_ids() {
+    use pecos_core::{Pauli, gate_type::GateType};
+    use pecos_quantum::{MeasResolveError, TickMeasResolveError};
+
+    let mut dag = DagCircuit::new();
+    let reference = dag.mz(&[2])[0];
+    dag.update_gate(reference.node, |gate| gate.gate_type = GateType::MX)
+        .unwrap();
+    assert_eq!(
+        dag.measured_pauli(reference.meas_id).unwrap(),
+        (Pauli::X, QubitId(2))
+    );
+    dag.remove_gate(reference.node);
+    assert_eq!(
+        dag.measured_pauli(reference.meas_id),
+        Err(MeasResolveError::Removed(reference.meas_id))
+    );
+    assert_eq!(
+        dag.measured_pauli(MeasId::from_raw(99)),
+        Err(MeasResolveError::Unknown(MeasId::from_raw(99)))
+    );
+
+    let mut ticks = TickCircuit::new();
+    let reference = ticks.tick().mz(&[2])[0];
+    ticks
+        .get_tick_mut(reference.tick)
+        .unwrap()
+        .update_gate_batch(reference.gate_idx, |gate| gate.gate_type = GateType::MX)
+        .unwrap();
+    assert_eq!(
+        ticks.measured_pauli(reference.meas_id).unwrap(),
+        (Pauli::X, QubitId(2))
+    );
+    assert_eq!(
+        ticks.measured_pauli(MeasId::from_raw(99)),
+        Err(TickMeasResolveError::Unknown(MeasId::from_raw(99)))
+    );
+    let duplicate = mz_with_id(3, reference.meas_id.index());
+    ticks.tick().try_add_gate(duplicate).unwrap();
+    assert_eq!(
+        ticks.measured_pauli(reference.meas_id),
+        Err(TickMeasResolveError::Inconsistent(reference.meas_id))
+    );
+
+    let mut leaked = Gate::measure_leaked(&[4usize]);
+    let id = MeasId::from_raw(7);
+    leaked.meas_ids = smallvec::smallvec![id];
+    let node = dag.try_add_gate_auto_wire(leaked.clone()).unwrap();
+    assert_eq!(
+        dag.measured_pauli(id),
+        Err(MeasResolveError::RecordLess { id, node })
+    );
+    let mut ticks = TickCircuit::new();
+    ticks.tick().try_add_gate(leaked).unwrap();
+    assert_eq!(
+        ticks.measured_pauli(id),
+        Err(TickMeasResolveError::RecordLess {
+            id,
+            tick: 0,
+            gate_idx: 0
+        })
+    );
+}
+
+#[test]
+fn tick_batch_measurement_resolution_matches_individual_queries() {
+    use pecos_quantum::TickMeasResolveError;
+
+    let mut circuit = TickCircuit::new();
+    let z = circuit.tick().mz(&[2])[0].meas_id;
+    let x = circuit.tick().mx(&[2])[0].meas_id;
+    let unknown = MeasId::from_raw(99);
+    let ids = [x, z, x];
+    let expected: Result<Vec<_>, _> = ids.iter().map(|&id| circuit.measured_pauli(id)).collect();
+    assert_eq!(circuit.measured_paulis(&ids), expected);
+    assert_eq!(circuit.measured_paulis(&[]).unwrap(), []);
+
+    circuit
+        .tick()
+        .try_add_gate(mz_with_id(3, x.index()))
+        .unwrap();
+    // A duplicate holder for an unrequested identity must not affect valid results.
+    assert_eq!(circuit.measured_paulis(&[z, z]).unwrap().len(), 2);
+    // Report errors by input order, not by the order their holders are scanned.
+    for ids in [[z, unknown, x], [z, x, unknown]] {
+        let expected: Result<Vec<_>, _> =
+            ids.iter().map(|&id| circuit.measured_pauli(id)).collect();
+        assert_eq!(circuit.measured_paulis(&ids), expected);
+    }
+    assert_eq!(
+        circuit.measured_paulis(&[unknown, x]),
+        Err(TickMeasResolveError::Unknown(unknown))
+    );
+    assert_eq!(
+        circuit.measured_paulis(&[x, unknown]),
+        Err(TickMeasResolveError::Inconsistent(x))
+    );
+
+    let leaked_id = MeasId::from_raw(7);
+    let mut leaked = Gate::measure_leaked(&[4usize]);
+    leaked.meas_ids = smallvec::smallvec![leaked_id];
+    circuit.tick().try_add_gate(leaked).unwrap();
+    assert_eq!(
+        circuit.measured_paulis(&[leaked_id]),
+        circuit.measured_pauli(leaked_id).map(|value| vec![value])
+    );
+    circuit
+        .tick()
+        .try_add_gate(mz_with_id(4, leaked_id.index()))
+        .unwrap();
+    assert_eq!(
+        circuit.measured_paulis(&[leaked_id]),
+        Err(TickMeasResolveError::Inconsistent(leaked_id))
+    );
+}
+
+#[test]
+fn dag_batch_resolution_preserves_order_duplicates_and_errors() {
+    use pecos_quantum::MeasResolveError;
+    let mut circuit = DagCircuit::new();
+    let z = circuit.mz(&[0])[0];
+    let node = circuit.try_add_gate_auto_wire(Gate::mx(&[1usize])).unwrap();
+    let x = circuit.meas_refs(node).unwrap()[0];
+    let ids = [x.meas_id, z.meas_id, x.meas_id];
+    let expected: Result<Vec<_>, _> = ids.iter().map(|&id| circuit.measured_pauli(id)).collect();
+    assert_eq!(circuit.measured_paulis(&ids), expected);
+    assert_eq!(circuit.measured_paulis(&[]).unwrap(), []);
+    circuit.detector(&[z]).unwrap();
+    let annotations = circuit.annotations().to_vec();
+    circuit.remove_gate(z.node);
+    assert_eq!(circuit.annotations(), annotations);
+    let unknown = MeasId::from_raw(99);
+    for ids in [[unknown, z.meas_id], [z.meas_id, unknown]] {
+        let expected: Result<Vec<_>, _> =
+            ids.iter().map(|&id| circuit.measured_pauli(id)).collect();
+        assert_eq!(circuit.measured_paulis(&ids), expected);
+    }
+    assert_eq!(
+        circuit.measured_paulis(&[z.meas_id]),
+        Err(MeasResolveError::Removed(z.meas_id))
+    );
 }

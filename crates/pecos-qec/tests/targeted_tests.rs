@@ -273,7 +273,7 @@ fn faults_after_reset_propagate() {
 // DagCircuit annotation methods
 // ============================================================================
 
-/// Verify `detector()` auto-derives Z Pauli from measurement nodes.
+/// Verify detector measurement bases resolve from their measurement nodes.
 #[test]
 fn detector_derives_pauli_from_measurements() {
     let mut dag = DagCircuit::new();
@@ -284,11 +284,23 @@ fn detector_derives_pauli_from_measurements() {
         .expect("refs are from this circuit");
 
     let ann = &dag.annotations()[0];
-    // Pauli should be Z on both measured qubits
-    let paulis = ann.pauli.paulis();
-    assert_eq!(paulis.len(), 2);
-    assert_eq!(paulis[0].0, pecos_core::Pauli::Z);
-    assert_eq!(paulis[1].0, pecos_core::Pauli::Z);
+    let pecos_quantum::AnnotationKind::Detector {
+        measurement_ids, ..
+    } = &ann.kind
+    else {
+        panic!("expected detector")
+    };
+    let paulis: Vec<_> = measurement_ids
+        .iter()
+        .map(|&id| dag.measured_pauli(id).unwrap())
+        .collect();
+    assert_eq!(
+        paulis,
+        vec![
+            (pecos_core::Pauli::Z, pecos_core::QubitId(0)),
+            (pecos_core::Pauli::Z, pecos_core::QubitId(1))
+        ]
+    );
 }
 
 /// Verify `tracked_pauli` normalizes phase to +1.
@@ -305,7 +317,10 @@ fn tracked_pauli_normalizes_phase() {
 
     // After storage, phase should be normalized to +1
     let ann = &dag.annotations()[0];
-    assert_eq!(ann.pauli.get_phase(), pecos_core::QuarterPhase::PlusOne);
+    let pecos_quantum::AnnotationKind::TrackedPauli { pauli } = &ann.kind else {
+        panic!("expected tracked Pauli")
+    };
+    assert_eq!(pauli.get_phase(), pecos_core::QuarterPhase::PlusOne);
 }
 
 /// Verify probability sums to 1.0 with the per-gate noise model.

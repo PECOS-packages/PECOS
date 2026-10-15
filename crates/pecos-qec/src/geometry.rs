@@ -105,8 +105,16 @@ pub struct StabilizerCheck {
 
 impl StabilizerCheck {
     /// Create a new stabilizer check.
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once, including identity entries.
     #[must_use]
     pub fn new(index: usize, paulis: Vec<PauliOp>) -> Self {
+        let duplicates = pecos_core::duplicate_qubits(paulis.iter().map(|p| p.qubit));
+        assert!(
+            duplicates.is_empty(),
+            "stabilizer check has duplicate qubits {duplicates:?}"
+        );
         Self {
             index,
             paulis,
@@ -117,12 +125,18 @@ impl StabilizerCheck {
     }
 
     /// Create an X-type stabilizer check on the given qubits.
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once.
     #[must_use]
     pub fn x_check(index: usize, qubits: &[usize]) -> Self {
         Self::new(index, qubits.iter().map(|&q| PauliOp::x(q)).collect())
     }
 
     /// Create a Z-type stabilizer check on the given qubits.
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once.
     #[must_use]
     pub fn z_check(index: usize, qubits: &[usize]) -> Self {
         Self::new(index, qubits.iter().map(|&q| PauliOp::z(q)).collect())
@@ -134,7 +148,7 @@ impl StabilizerCheck {
     ///
     /// # Errors
     /// Returns an error if the Pauli string length doesn't match the qubit count,
-    /// or if the Pauli string is empty or contains invalid characters.
+    /// or if the Pauli string is empty, contains invalid characters, or repeats a qubit.
     #[allow(clippy::missing_panics_doc)] // Panic unreachable due to empty check
     pub fn from_string(index: usize, pauli_str: &str, qubits: &[usize]) -> Result<Self, String> {
         if pauli_str.is_empty() {
@@ -169,6 +183,9 @@ impl StabilizerCheck {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        if let Some(&qubit) = pecos_core::duplicate_qubits(paulis.iter().map(|p| p.qubit)).first() {
+            return Err(pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string());
+        }
         Ok(Self::new(index, paulis))
     }
 
@@ -232,12 +249,14 @@ impl StabilizerCheck {
     }
 
     /// Convert this check to a [`PauliString`] for use with [`StabilizerCodeSpec`].
+    ///
+    /// # Panics
+    /// Panics if the public entries have been mutated to repeat a qubit, including identities.
     #[must_use]
     pub fn to_pauli_string(&self) -> PauliString {
         let paulis: Vec<(Pauli, QubitId)> = self
             .paulis
             .iter()
-            .filter(|p| p.pauli != Pauli::I)
             .map(|p| (p.pauli, QubitId::new(p.qubit)))
             .collect();
         PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
@@ -367,6 +386,9 @@ impl CheckSchedule {
     }
 
     /// Convert all checks to [`PauliString`] for use with [`StabilizerCodeSpec`].
+    ///
+    /// # Panics
+    /// Panics if a check contains repeated qubits, including identity entries.
     #[must_use]
     pub fn to_pauli_strings(&self) -> Vec<PauliString> {
         self.all_checks()
@@ -395,6 +417,7 @@ pub struct LogicalOperator {
 
 impl LogicalOperator {
     /// Create a logical X operator.
+    /// Repeated qubits are retained; converting this value with `to_pauli_string` panics.
     #[must_use]
     pub fn x(data_qubits: Vec<usize>) -> Self {
         Self {
@@ -405,6 +428,7 @@ impl LogicalOperator {
     }
 
     /// Create a logical Z operator.
+    /// Repeated qubits are retained; converting this value with `to_pauli_string` panics.
     #[must_use]
     pub fn z(data_qubits: Vec<usize>) -> Self {
         Self {
@@ -415,6 +439,9 @@ impl LogicalOperator {
     }
 
     /// Convert to a [`PauliString`].
+    ///
+    /// # Panics
+    /// Panics if `data_qubits` contains a repeated qubit.
     #[must_use]
     pub fn to_pauli_string(&self) -> PauliString {
         let paulis: Vec<(Pauli, QubitId)> = self
@@ -430,6 +457,35 @@ impl LogicalOperator {
 mod tests {
     use super::*;
     use pecos_core::PauliOperator;
+
+    #[test]
+    fn check_constructors_reject_duplicates_including_identity() {
+        for pauli in [Pauli::I, Pauli::X] {
+            assert!(
+                std::panic::catch_unwind(|| StabilizerCheck::new(
+                    0,
+                    vec![PauliOp::new(1, pauli), PauliOp::x(1)],
+                ))
+                .is_err()
+            );
+        }
+        for constructor in [StabilizerCheck::x_check, StabilizerCheck::z_check] {
+            assert!(std::panic::catch_unwind(|| constructor(0, &[1, 1])).is_err());
+        }
+        assert!(StabilizerCheck::from_string(0, "IX", &[1, 1]).is_err());
+        let mut check = StabilizerCheck::x_check(0, &[1]);
+        check.paulis.push(PauliOp::new(1, Pauli::I));
+        assert!(std::panic::catch_unwind(|| check.to_pauli_string()).is_err());
+    }
+
+    #[test]
+    fn fallible_check_constructor_rejects_repeated_qubits() {
+        assert_eq!(
+            StabilizerCheck::from_string(0, "XZ", &[0, 0]).unwrap_err(),
+            "duplicate Pauli entry for qubit 0"
+        );
+        assert!(StabilizerCheck::from_string(0, "I", &[1, 1]).is_err());
+    }
 
     #[test]
     fn test_stabilizer_check_creation() {

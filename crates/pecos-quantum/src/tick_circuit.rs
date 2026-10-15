@@ -1307,6 +1307,45 @@ impl std::fmt::Display for TickAnnotationRefError {
 
 impl std::error::Error for TickAnnotationRefError {}
 
+/// Why a measurement identity cannot be resolved in a tick circuit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TickMeasResolveError {
+    /// No gate holds this identity. Tick circuits do not retain removal tombstones.
+    Unknown(MeasId),
+    /// More than one entry holds this identity, or it has no corresponding qubit.
+    Inconsistent(MeasId),
+    /// The holder produces no measurement record.
+    RecordLess {
+        id: MeasId,
+        tick: usize,
+        gate_idx: usize,
+    },
+}
+
+impl fmt::Display for TickMeasResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown(id) => write!(
+                f,
+                "MeasId({}) does not name a measurement in this circuit",
+                id.index()
+            ),
+            Self::Inconsistent(id) => write!(
+                f,
+                "MeasId({}) has inconsistent measurement holders",
+                id.index()
+            ),
+            Self::RecordLess { id, tick, gate_idx } => write!(
+                f,
+                "MeasId({}) at tick {tick}, batch {gate_idx} consumes no measurement record",
+                id.index()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TickMeasResolveError {}
+
 #[derive(Debug, Clone, Default)]
 pub struct TickCircuit {
     /// The sequence of ticks.
@@ -1567,10 +1606,7 @@ impl TickCircuit {
     pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
         let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
         let gate = batch.as_gate();
-        if !matches!(
-            gate.gate_type,
-            GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
-        ) {
+        if !gate.gate_type.consumes_measurement_record() {
             return None;
         }
         let position = gate.qubits.iter().position(|&q| q == qubit)?;
@@ -1581,6 +1617,81 @@ impl TickCircuit {
             qubit,
             meas_id,
         })
+    }
+
+    /// Resolves a measurement identity to its gate's Pauli basis and qubit.
+    ///
+    /// # Errors
+    /// Rejects unknown identities, duplicate or malformed holders, and record-less gates.
+    pub fn measured_pauli(
+        &self,
+        id: MeasId,
+    ) -> Result<(pecos_core::Pauli, QubitId), TickMeasResolveError> {
+        self.scan_measured_paulis(&[id])
+            .remove(&id)
+            .unwrap_or(Err(TickMeasResolveError::Unknown(id)))
+    }
+
+    /// Resolves measurement identities in input order with one circuit scan.
+    /// Repeated input identities produce repeated results.
+    ///
+    /// # Errors
+    /// Returns the first error in input order, with the same resolution rules as
+    /// [`Self::measured_pauli`]. Unrequested identities do not affect resolution.
+    pub fn measured_paulis(
+        &self,
+        ids: &[MeasId],
+    ) -> Result<Vec<(pecos_core::Pauli, QubitId)>, TickMeasResolveError> {
+        let found = self.scan_measured_paulis(ids);
+        ids.iter()
+            .map(|&id| {
+                found
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or(Err(TickMeasResolveError::Unknown(id)))
+            })
+            .collect()
+    }
+
+    fn scan_measured_paulis(
+        &self,
+        ids: &[MeasId],
+    ) -> BTreeMap<MeasId, Result<(pecos_core::Pauli, QubitId), TickMeasResolveError>> {
+        let requested: BTreeSet<_> = ids.iter().copied().collect();
+        let mut found = BTreeMap::new();
+        if requested.is_empty() {
+            return found;
+        }
+        for (tick, value) in self.ticks.iter().enumerate() {
+            for (gate_idx, batch) in value.iter_gate_batches().enumerate() {
+                let gate = batch.as_gate();
+                for (position, &id) in gate.meas_ids.iter().enumerate() {
+                    if !requested.contains(&id) {
+                        continue;
+                    }
+                    match found.entry(id) {
+                        std::collections::btree_map::Entry::Occupied(mut entry) => {
+                            *entry.get_mut() = Err(TickMeasResolveError::Inconsistent(id));
+                        }
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            let resolved = gate
+                                .gate_type
+                                .measured_pauli()
+                                .ok_or(TickMeasResolveError::RecordLess { id, tick, gate_idx })
+                                .and_then(|pauli| {
+                                    gate.qubits
+                                        .get(position)
+                                        .copied()
+                                        .map(|qubit| (pauli, qubit))
+                                        .ok_or(TickMeasResolveError::Inconsistent(id))
+                                });
+                            entry.insert(resolved);
+                        }
+                    }
+                }
+            }
+        }
+        found
     }
 
     /// Get a tick by index.
@@ -2359,10 +2470,9 @@ impl TickCircuit {
         &mut self,
         measurements: &[TickMeasRef],
     ) -> Result<usize, TickAnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Detector {
                 measurement_ids,
                 coords: Vec::new(),
@@ -2399,10 +2509,9 @@ impl TickCircuit {
         &mut self,
         measurements: &[TickMeasRef],
     ) -> Result<usize, TickAnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         let idx = self.annotations.len();
         self.annotations.push(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Observable { measurement_ids },
             label: None,
         });
@@ -2424,14 +2533,13 @@ impl TickCircuit {
         Ok(idx)
     }
 
-    /// Validate each reference against the batch it names and derive the ids
-    /// and basis-matched Pauli. Validation re-runs the [`Self::meas_ref`] lookup: the
-    /// reference must round-trip to the same id.
-    fn validated_ids_and_pauli(
+    /// Validate each reference against the batch it names and derive the ids.
+    /// Validation re-runs the [`Self::meas_ref`] lookup: the reference must
+    /// round-trip to the same id.
+    fn validated_measurement_ids(
         &self,
         measurements: &[TickMeasRef],
-    ) -> Result<(Vec<MeasId>, pecos_core::PauliString), TickAnnotationRefError> {
-        let mut paulis = Vec::with_capacity(measurements.len());
+    ) -> Result<Vec<MeasId>, TickAnnotationRefError> {
         for m in measurements {
             let held = self
                 .meas_ref(m.tick, m.gate_idx, m.qubit)
@@ -2444,24 +2552,8 @@ impl TickCircuit {
                     meas_id: m.meas_id,
                 });
             }
-            let gate_type = self.ticks[m.tick].gate_batches()[m.gate_idx].gate_type;
-            paulis.push((
-                if gate_type == GateType::MX {
-                    pecos_core::Pauli::X
-                } else {
-                    pecos_core::Pauli::Z
-                },
-                m.qubit,
-            ));
         }
-        let ids = measurements.iter().map(|m| m.meas_id).collect();
-        Ok((
-            ids,
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                paulis,
-            ),
-        ))
+        Ok(measurements.iter().map(|m| m.meas_id).collect())
     }
 
     /// Place a tracked-Pauli annotation.
@@ -2470,8 +2562,7 @@ impl TickCircuit {
         let idx = self.annotations.len();
         self.insert_pauli_meta_tick(&pauli);
         self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::TrackedPauli,
+            kind: AnnotationKind::TrackedPauli { pauli },
             label: None,
         });
         idx
@@ -5057,9 +5148,12 @@ mod tests {
         assert_eq!(tc2.annotations()[2].label.as_deref(), Some("tracked"));
         assert!(matches!(
             tc2.annotations()[2].kind,
-            AnnotationKind::TrackedPauli
+            AnnotationKind::TrackedPauli { .. }
         ));
-        assert_eq!(tc2.annotations()[2].pauli, X(0) & Z(2));
+        let AnnotationKind::TrackedPauli { pauli } = &tc2.annotations()[2].kind else {
+            panic!("expected tracked Pauli")
+        };
+        assert_eq!(pauli, &(X(0) & Z(2)));
     }
 
     #[test]
@@ -5220,8 +5314,11 @@ mod tests {
             }
 
             let track = annotation_by_label(&tc2, &format!("track-{case_idx}"));
-            assert!(matches!(track.kind, AnnotationKind::TrackedPauli));
-            assert_eq!(track.pauli, tracked, "case {case_idx}");
+            assert!(matches!(track.kind, AnnotationKind::TrackedPauli { .. }));
+            let AnnotationKind::TrackedPauli { pauli } = &track.kind else {
+                panic!("expected tracked Pauli")
+            };
+            assert_eq!(pauli, &tracked);
         }
     }
 
@@ -5323,7 +5420,7 @@ mod tests {
         ));
         assert!(matches!(
             tc2.annotations()[2].kind,
-            AnnotationKind::TrackedPauli
+            AnnotationKind::TrackedPauli { .. }
         ));
         assert!(tc2.has_channel_operations());
     }
@@ -5541,9 +5638,12 @@ mod tests {
             ));
             assert!(matches!(
                 tc2.annotations()[2].kind,
-                AnnotationKind::TrackedPauli
+                AnnotationKind::TrackedPauli { .. }
             ));
-            assert_eq!(tc2.annotations()[2].pauli, tracked, "case {case_idx}");
+            let AnnotationKind::TrackedPauli { pauli } = &tc2.annotations()[2].kind else {
+                panic!("expected tracked Pauli")
+            };
+            assert_eq!(pauli, &tracked);
             assert!(tc2.has_channel_operations(), "case {case_idx}");
         }
     }
@@ -6154,7 +6254,7 @@ mod tests {
 
         assert_eq!(tc.num_ticks(), 0);
         assert_eq!(tc.num_measurements(), 0);
-        assert!(tc.annotations().is_empty());
+        assert_eq!(tc.annotations(), []);
 
         let reused_measurement = tc.tick().mz(&[1]);
         assert_eq!(reused_measurement[0].meas_id.index(), 0);
@@ -6917,7 +7017,7 @@ mod tests {
         ));
         assert!(matches!(
             dag.annotations()[2].kind,
-            crate::dag_circuit::AnnotationKind::TrackedPauli
+            crate::dag_circuit::AnnotationKind::TrackedPauli { .. }
         ));
     }
 
@@ -6968,7 +7068,7 @@ mod tests {
         assert_eq!(tc2.annotations().len(), tc1.annotations().len());
         for (a1, a2) in tc1.annotations().iter().zip(tc2.annotations()) {
             assert_eq!(a1.label, a2.label);
-            assert_eq!(a1.pauli, a2.pauli);
+            assert_eq!(a1, a2);
         }
     }
 

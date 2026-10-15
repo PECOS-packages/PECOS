@@ -315,7 +315,7 @@ mod tests {
         // the weight-1 logical Z0 stays invisible to the Z-only searches.
         let mut spec =
             StabilizerCodeSpec::from_stabilizers(3, vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        spec.add_logical_z(Zs([0]));
+        spec.add_logical_z(Zs([0])).unwrap();
         assert_eq!(
             stabilizer_code_distance(&spec, 3).unwrap_err(),
             DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::MismatchedLogicalLists {

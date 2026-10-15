@@ -15,7 +15,7 @@
 //! Validated binary symplectic matrices for Pauli operators.
 
 use crate::{F2Matrix, PauliSequence};
-use pecos_core::{Pauli, PauliString, QuarterPhase, QubitId};
+use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use std::fmt;
 
 /// Errors that can occur when constructing a [`SymplecticMatrix`].
@@ -162,30 +162,22 @@ impl SymplecticMatrix {
         num_qubits: usize,
     ) -> Result<Self, SymplecticMatrixError> {
         for (row, operator) in sequence.iter().enumerate() {
-            if let Some(qubit) = operator
-                .qubits()
-                .into_iter()
-                .find(|&qubit| qubit >= num_qubits)
-            {
-                return Err(SymplecticMatrixError::OperatorExceedsWidth {
+            operator.validate_width(num_qubits).map_err(|error| {
+                SymplecticMatrixError::OperatorExceedsWidth {
                     row,
-                    qubit,
-                    num_qubits,
-                });
-            }
+                    qubit: error.qubit,
+                    num_qubits: error.num_qubits,
+                }
+            })?;
         }
 
-        let inferred_num_qubits = sequence.num_qubits();
-        let inferred = sequence.to_symplectic_matrix();
         let mut matrix = F2Matrix::zeros(sequence.len(), 2 * num_qubits);
-        for row in 0..sequence.len() {
-            for qubit in 0..inferred_num_qubits {
-                matrix.set(row, qubit, inferred.get(row, qubit));
-                matrix.set(
-                    row,
-                    num_qubits + qubit,
-                    inferred.get(row, inferred_num_qubits + qubit),
-                );
+        for (row, operator) in sequence.iter().enumerate() {
+            for qubit in operator.x_positions() {
+                matrix.set(row, qubit, 1);
+            }
+            for qubit in operator.z_positions() {
+                matrix.set(row, num_qubits + qubit, 1);
             }
         }
         Ok(Self { matrix })
@@ -279,6 +271,18 @@ impl SymplecticMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_width_ignores_out_of_range_identity_entries() {
+        let p = PauliString::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            vec![(Pauli::X, QubitId::new(0)), (Pauli::I, QubitId::new(5))],
+        );
+        let matrix =
+            SymplecticMatrix::from_pauli_sequence_ignoring_phase(&PauliSequence::new(vec![p]), 1)
+                .unwrap();
+        assert_eq!(matrix.to_positive_paulis(), vec![PauliString::x(0)]);
+    }
 
     #[test]
     fn pauli_round_trip_ignores_phase_and_preserves_explicit_width() {

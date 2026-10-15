@@ -24,7 +24,6 @@ use std::hash::{Hash, Hasher};
 use crate::prelude::{
     Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
 };
-use pecos_core::{Xs as RustXs, Ys as RustYs, Zs as RustZs};
 use pyo3::prelude::*;
 
 /// Extract an unsigned integer through Python's index protocol, excluding bool.
@@ -63,6 +62,19 @@ fn extract_qubits(qubits: &[Bound<'_, PyAny>]) -> PyResult<Vec<usize>> {
         .enumerate()
         .map(|(index, value)| extract_qubit(value, format_args!("qubits item {index}")))
         .collect()
+}
+
+/// Build `pauli` on each qubit, rejecting invalid indices and repeated qubits.
+fn uniform_pauli_string(pauli: RustPauli, qubits: &[Bound<'_, PyAny>]) -> PyResult<PauliString> {
+    RustPauliString::try_with_phase_and_paulis(
+        QuarterPhase::PlusOne,
+        extract_qubits(qubits)?
+            .into_iter()
+            .map(|q| (pauli, QubitId::new(q)))
+            .collect(),
+    )
+    .map(PauliString::from_rust)
+    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 /// Single-qubit Pauli operator (I, X, Y, Z)
@@ -136,7 +148,7 @@ impl Pauli {
     }
 
     /// String representation
-    fn __str__(&self) -> &'static str {
+    pub(crate) fn __str__(&self) -> &'static str {
         match self.0 {
             RustPauli::I => "I",
             RustPauli::X => "X",
@@ -215,6 +227,8 @@ unsafe impl Sync for PauliString {}
 impl PauliString {
     /// Create a new `PauliString`
     ///
+    /// Raises ValueError if a qubit is listed twice, including identity entries.
+    ///
     /// Args:
     ///     paulis: Either:
     ///         - List of (Pauli, `qubit_index`) tuples for explicit qubit numbering
@@ -245,7 +259,7 @@ impl PauliString {
         };
 
         // Build PauliString from input
-        let mut rust_paulis = if let Some(pauli_input) = paulis {
+        let rust_paulis = if let Some(pauli_input) = paulis {
             use pyo3::types::PyList;
 
             // Try to extract as a list - using cast() per PyO3 0.27 API
@@ -294,20 +308,8 @@ impl PauliString {
             Vec::new()
         };
 
-        rust_paulis.retain(|(pauli, _)| *pauli != RustPauli::I);
-        rust_paulis.sort_by_key(|(_, qubit)| *qubit);
-        for window in rust_paulis.windows(2) {
-            if window[0].1 == window[1].1 {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "multiple non-identity Pauli operators were specified for qubit {}; \
-                     use multiplication (*) if you intend to compose Paulis on the same qubit",
-                    window[0].1.index()
-                )));
-            }
-        }
-
-        // Construct RustPauliString using the new constructor
-        let inner = RustPauliString::with_phase_and_paulis(rust_phase, rust_paulis);
+        let inner = RustPauliString::try_with_phase_and_paulis(rust_phase, rust_paulis)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         Ok(PauliString { inner })
     }
@@ -389,9 +391,12 @@ impl PauliString {
     /// Dense string representation with an explicit phase prefix.
     ///
     /// Example: `+XIZ` for X on qubit 0 and Z on qubit 2.
+    /// Raises `ValueError` if a non-identity qubit index is >= `num_qubits`.
     #[pyo3(signature = (num_qubits=None))]
-    fn to_dense_str(&self, num_qubits: Option<usize>) -> String {
-        self.inner.to_dense_str(num_qubits)
+    fn to_dense_str(&self, num_qubits: Option<usize>) -> PyResult<String> {
+        self.inner
+            .try_to_dense_str(num_qubits)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Sparse string representation with an explicit phase prefix.
@@ -640,21 +645,21 @@ pub fn Z(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
 #[pyfunction]
 #[allow(non_snake_case)]
 pub fn Xs(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
-    Ok(PauliString::from_rust(RustXs(extract_qubits(&qubits)?)))
+    uniform_pauli_string(RustPauli::X, &qubits)
 }
 
 /// Create a multi-qubit Y `PauliString`: `Ys([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
 pub fn Ys(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
-    Ok(PauliString::from_rust(RustYs(extract_qubits(&qubits)?)))
+    uniform_pauli_string(RustPauli::Y, &qubits)
 }
 
 /// Create a multi-qubit Z `PauliString`: `Zs([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
 pub fn Zs(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
-    Ok(PauliString::from_rust(RustZs(extract_qubits(&qubits)?)))
+    uniform_pauli_string(RustPauli::Z, &qubits)
 }
 
 /// Register Pauli types with Python module

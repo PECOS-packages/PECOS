@@ -124,10 +124,10 @@ fn repetition_code_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+            pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
-        println!("  {kind:10} {label:15} {}", ann.pauli);
+        println!("  {kind:10} {label:15} {:?}", ann.kind);
     }
 
     // Build influence map (InfluenceBuilder handles annotations)
@@ -666,10 +666,10 @@ fn code_422_fault_enumeration() {
         let kind = match &ann.kind {
             pecos_quantum::AnnotationKind::Detector { .. } => "detector",
             pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-            pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+            pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
         };
         let label = ann.label.as_deref().unwrap_or("(none)");
-        println!("  {kind:10} {label:15} {}", ann.pauli);
+        println!("  {kind:10} {label:15} {:?}", ann.kind);
     }
 
     // Build influence map

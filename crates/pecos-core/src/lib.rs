@@ -35,6 +35,7 @@ pub mod phase;
 pub mod prelude;
 pub mod qubit_id;
 mod qubit_support;
+pub use qubit_support::duplicate_qubits;
 pub mod rng;
 pub mod sets;
 pub mod signal;
@@ -84,7 +85,7 @@ pub use pauli::pauli_bitmask::{
     PauliBitmaskVec,
 };
 pub use pauli::pauli_sparse::PauliSparse;
-pub use pauli::pauli_string::{ParsePauliStringError, PauliString};
+pub use pauli::pauli_string::{ParsePauliStringError, PauliString, PauliWidthError};
 pub use pauli::{Pauli, PauliOperator};
 pub use phase::Phase;
 pub use rng::choices::Choices;

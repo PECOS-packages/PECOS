@@ -62,8 +62,6 @@ pub struct PauliProp {
     sign: Option<bool>,
     /// Optional tracking of imaginary phase (0 = 1, 1 = i, 2 = -1, 3 = -i)
     img: Option<u8>,
-    /// Maximum qubit index for string representation (optional)
-    num_qubits: Option<usize>,
 }
 
 impl Default for PauliProp {
@@ -87,32 +85,29 @@ impl PauliProp {
             zs: VecSet::new(),
             sign: None,
             img: None,
-            num_qubits: None,
         }
     }
 
     /// Creates a new `PauliProp` simulator with sign tracking enabled.
     ///
-    /// # Arguments
-    /// * `num_qubits` - The total number of qubits (for string representation)
-    ///
     /// # Returns
     /// A new `PauliProp` instance with sign tracking
     #[must_use]
-    pub fn with_sign_tracking(num_qubits: usize) -> Self {
+    pub fn with_sign_tracking() -> Self {
         PauliProp {
             xs: VecSet::new(),
             zs: VecSet::new(),
             sign: Some(false), // Start with +1
             img: Some(0),      // Start with no imaginary component
-            num_qubits: Some(num_qubits),
         }
     }
 }
 
 impl QuantumSimulator for PauliProp {
+    /// Returns the extent of the current support, not a register size.
+    /// Empty trackers return zero; otherwise this is one past the highest tracked qubit.
     fn num_qubits(&self) -> usize {
-        self.num_qubits.unwrap_or(0)
+        self.xs.iter().chain(&self.zs).max().map_or(0, |q| q + 1)
     }
 
     /// Resets the state by clearing all Pauli all tracked X and Z operators.
@@ -268,7 +263,7 @@ impl PauliProp {
     /// use pecos_simulators::PauliProp;
     /// use pecos_core::{VecSet, Set};
     ///
-    /// let mut sim = PauliProp::with_sign_tracking(4);
+    /// let mut sim = PauliProp::with_sign_tracking();
     /// let mut paulis = BTreeMap::new();
     /// let mut x_set = VecSet::new();
     /// x_set.insert(0);
@@ -513,38 +508,62 @@ impl PauliProp {
 
     /// Returns the operator string as a dense representation.
     ///
-    /// Requires `num_qubits` to be set.
+    /// `Some(n)` pads to n qubits; `None` uses the natural dense width.
     ///
     /// # Returns
     /// A string like "IXYZ" representing the Pauli operators on each qubit
+    ///
+    /// # Panics
+    /// Panics if a tracked qubit is outside the requested `num_qubits`.
     #[must_use]
-    pub fn dense_string(&self) -> String {
-        if let Some(n) = self.num_qubits {
-            let mut result = String::with_capacity(n);
-            for i in 0..n {
-                if self.contains_y(i) {
-                    result.push('Y');
-                } else if self.contains_x(i) {
-                    result.push('X');
-                } else if self.contains_z(i) {
-                    result.push('Z');
-                } else {
-                    result.push('I');
-                }
-            }
-            result
-        } else {
-            self.sparse_string()
-        }
+    pub fn dense_string(&self, num_qubits: Option<usize>) -> String {
+        self.try_dense_string(num_qubits)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Returns the dense operator string without phase, using natural width for `None`.
+    ///
+    /// # Errors
+    /// Returns an error if a tracked qubit is outside the requested `num_qubits`.
+    pub fn try_dense_string(
+        &self,
+        num_qubits: Option<usize>,
+    ) -> Result<String, pecos_core::PauliWidthError> {
+        pecos_core::PauliString::from_decomposed(
+            pecos_core::QuarterPhase::PlusOne,
+            self.get_x_only_qubits(),
+            self.get_y_qubits(),
+            self.get_z_only_qubits(),
+        )
+        .try_pauli_str(num_qubits)
     }
 
     /// Returns the full dense Pauli string with sign.
     ///
     /// # Returns
     /// A string like "+IXYZ" or "-iXYZ"
+    ///
+    /// # Panics
+    /// Panics if a tracked qubit is outside the requested `num_qubits`.
     #[must_use]
-    pub fn to_dense_string(&self) -> String {
-        format!("{}{}", self.sign_string(), self.dense_string())
+    pub fn to_dense_string(&self, num_qubits: Option<usize>) -> String {
+        self.try_to_dense_string(num_qubits)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Returns the dense string with sign, using natural width for `None`.
+    ///
+    /// # Errors
+    /// Returns an error if a tracked qubit is outside the requested `num_qubits`.
+    pub fn try_to_dense_string(
+        &self,
+        num_qubits: Option<usize>,
+    ) -> Result<String, pecos_core::PauliWidthError> {
+        Ok(format!(
+            "{}{}",
+            self.sign_string(),
+            self.try_dense_string(num_qubits)?
+        ))
     }
 
     fn set_x_component(&mut self, q: usize, value: bool) {
@@ -1146,7 +1165,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn prop_from_dense(input: &str) -> PauliProp {
-        let mut prop = PauliProp::with_sign_tracking(input.len());
+        let mut prop = PauliProp::with_sign_tracking();
         seed_prop_from_dense(&mut prop, input);
         prop
     }
@@ -1241,7 +1260,11 @@ mod tests {
         for &(input, expected) in table {
             let mut prop = prop_from_dense(input);
             apply(&mut prop);
-            assert_eq!(prop.dense_string(), expected, "{name}: {input}");
+            assert_eq!(
+                prop.dense_string(Some(input.len())),
+                expected,
+                "{name}: {input}"
+            );
         }
     }
 
@@ -1258,7 +1281,7 @@ mod tests {
             let mut prop = prop_from_dense(&input);
             apply(&mut prop);
             assert_eq!(
-                prop.dense_string(),
+                prop.dense_string(Some(input.len())),
                 expected.pauli,
                 "{name}: {input}, oracle sign {}",
                 expected.sign
@@ -1288,7 +1311,7 @@ mod tests {
             let mut prop = prop_from_dense(&input);
             apply(&mut prop, &reversed_pair);
             assert_eq!(
-                prop.dense_string(),
+                prop.dense_string(Some(input.len())),
                 expected.pauli,
                 "{name} reversed pair: {input}, oracle sign {}",
                 expected.sign
@@ -1310,16 +1333,83 @@ mod tests {
             apply(&mut sequential, &pairs[1..2]);
 
             assert_eq!(
-                batched.to_dense_string(),
-                sequential.to_dense_string(),
+                batched.to_dense_string(Some(input.len())),
+                sequential.to_dense_string(Some(input.len())),
                 "{name} batched: {input}"
             );
         }
     }
 
     #[test]
+    fn support_extent_and_natural_dense_width() {
+        for mut prop in [PauliProp::new(), PauliProp::with_sign_tracking()] {
+            assert_eq!(prop.num_qubits(), 0);
+            assert_eq!(prop.dense_string(None), "I");
+            assert_eq!(prop.dense_string(Some(0)), "");
+            prop.track_z(&[5]);
+            assert_eq!(prop.num_qubits(), 6);
+            assert_eq!(prop.dense_string(None), "IIIIIZ");
+            assert_eq!(prop.dense_string(Some(7)), "IIIIIZI");
+            assert_eq!(
+                prop.to_dense_string(None),
+                format!("{}IIIIIZ", prop.sign_string())
+            );
+            assert_eq!(
+                prop.try_dense_string(Some(3)),
+                Err(pecos_core::PauliWidthError {
+                    qubit: 5,
+                    num_qubits: 3
+                })
+            );
+            prop.track_x(&[7]);
+            assert_eq!(prop.num_qubits(), 8);
+            prop.track_x(&[7]);
+            assert_eq!(prop.num_qubits(), 6);
+            prop.reset();
+            assert_eq!(prop.num_qubits(), 0);
+        }
+    }
+
+    #[test]
+    fn fallible_dense_formatting_uses_requested_width() {
+        let mut prop = PauliProp::with_sign_tracking();
+        prop.track_y(&[2]);
+        prop.flip_sign();
+        assert_eq!(prop.try_dense_string(Some(3)).unwrap(), "IIY");
+        assert_eq!(prop.try_to_dense_string(Some(3)).unwrap(), "-IIY");
+        prop.track_z(&[5]);
+        let error = pecos_core::PauliWidthError {
+            qubit: 5,
+            num_qubits: 3,
+        };
+        assert_eq!(prop.try_dense_string(Some(3)), Err(error));
+        assert_eq!(prop.try_to_dense_string(Some(3)), Err(error));
+
+        let mut sparse = PauliProp::new();
+        sparse.track_z(&[5]);
+        assert_eq!(sparse.try_dense_string(None).unwrap(), "IIIIIZ");
+        assert_eq!(sparse.try_to_dense_string(None).unwrap(), "IIIIIZ");
+    }
+
+    #[test]
+    #[should_panic(expected = "qubit 5 is outside num_qubits 3")]
+    fn dense_string_rejects_truncation() {
+        let mut prop = PauliProp::with_sign_tracking();
+        prop.track_z(&[5]);
+        let _ = prop.dense_string(Some(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "qubit 5 is outside num_qubits 3")]
+    fn to_dense_string_rejects_truncation() {
+        let mut prop = PauliProp::with_sign_tracking();
+        prop.track_x(&[5]);
+        let _ = prop.to_dense_string(Some(3));
+    }
+
+    #[test]
     fn test_sign_tracking() {
-        let mut sim = PauliProp::with_sign_tracking(4);
+        let mut sim = PauliProp::with_sign_tracking();
 
         // Initially should be +
         assert_eq!(sim.sign_string(), "+");
@@ -1364,22 +1454,22 @@ mod tests {
 
     #[test]
     fn test_dense_string() {
-        let mut sim = PauliProp::with_sign_tracking(4);
+        let mut sim = PauliProp::with_sign_tracking();
 
         sim.track_x(&[0]);
         sim.track_z(&[2]);
         sim.track_y(&[3]);
 
-        assert_eq!(sim.dense_string(), "XIZY");
-        assert_eq!(sim.to_dense_string(), "+XIZY");
+        assert_eq!(sim.dense_string(Some(4)), "XIZY");
+        assert_eq!(sim.to_dense_string(Some(4)), "+XIZY");
 
         sim.flip_sign();
-        assert_eq!(sim.to_dense_string(), "-XIZY");
+        assert_eq!(sim.to_dense_string(Some(4)), "-XIZY");
     }
 
     #[test]
     fn test_add_paulis() {
-        let mut sim = PauliProp::with_sign_tracking(4);
+        let mut sim = PauliProp::with_sign_tracking();
 
         let mut paulis = BTreeMap::new();
         let mut x_set = VecSet::new();
@@ -1402,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_pauli_composition_with_phase() {
-        let mut sim = PauliProp::with_sign_tracking(2);
+        let mut sim = PauliProp::with_sign_tracking();
 
         // Start with X on qubit 0
         sim.track_x(&[0]);
@@ -1837,7 +1927,7 @@ mod tests {
                     untracked_prop_from_dense(input)
                 };
                 prop.flip_sign();
-                let before = prop.to_dense_string();
+                let before = prop.to_dense_string(Some(input.len()));
                 let before_sign = prop.sign;
                 let before_img = prop.img;
 
@@ -1850,7 +1940,7 @@ mod tests {
                             $name
                         );
                         assert_eq!(
-                            prop.to_dense_string(),
+                            prop.to_dense_string(Some(input.len())),
                             before,
                             "{} frame: {input}, track_sign={track_sign}",
                             $name

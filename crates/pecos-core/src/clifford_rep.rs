@@ -121,6 +121,9 @@ impl CliffordRep {
     ///
     /// If the two representations have different numbers of qubits,
     /// the smaller one is implicitly extended with identity on the extra qubits.
+    ///
+    /// # Panics
+    /// Panics if custom generator images overlap a qubit passed through outside the declared width.
     #[must_use]
     pub fn compose(&self, other: &CliffordRep) -> CliffordRep {
         let n = self.num_qubits.max(other.num_qubits);
@@ -162,6 +165,9 @@ impl CliffordRep {
     /// - `Y_q` = iXZ -> i * `x_images[q]` * `z_images[q]`
     ///
     /// The result is the product of all transformed single-qubit terms.
+    ///
+    /// # Panics
+    /// Panics if custom generator images overlap a qubit passed through outside the declared width.
     #[must_use]
     pub fn apply(&self, pauli: &PauliString) -> PauliString {
         // Start with the input phase
@@ -214,6 +220,9 @@ impl CliffordRep {
     /// let stabilizer = X(0) & Z(1);
     /// let transformed = h.apply_to(&stabilizer).unwrap();
     /// ```
+    ///
+    /// # Panics
+    /// Panics if custom generator images overlap a qubit passed through outside the declared width.
     #[must_use]
     pub fn apply_to(&self, op: &UnitaryRep) -> Option<UnitaryRep> {
         match op {
@@ -893,6 +902,8 @@ impl Mul for CliffordRep {
     type Output = CliffordRep;
 
     /// Composes two Cliffords: `self * rhs` means "apply self, then rhs".
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: CliffordRep) -> CliffordRep {
         self.compose(&rhs)
     }
@@ -901,6 +912,8 @@ impl Mul for CliffordRep {
 impl Mul<&CliffordRep> for CliffordRep {
     type Output = CliffordRep;
 
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: &CliffordRep) -> CliffordRep {
         self.compose(rhs)
     }
@@ -909,6 +922,8 @@ impl Mul<&CliffordRep> for CliffordRep {
 impl Mul<CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: CliffordRep) -> CliffordRep {
         self.compose(&rhs)
     }
@@ -917,6 +932,8 @@ impl Mul<CliffordRep> for &CliffordRep {
 impl Mul<&CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn mul(self, rhs: &CliffordRep) -> CliffordRep {
         self.compose(rhs)
     }
@@ -938,6 +955,8 @@ impl BitAnd for CliffordRep {
     type Output = CliffordRep;
 
     /// Tensor product of two `CliffordReps` acting on disjoint qubits.
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(&self, &rhs);
         // Since compose auto-extends with identity on extra qubits,
@@ -949,6 +968,8 @@ impl BitAnd for CliffordRep {
 impl BitAnd<&CliffordRep> for CliffordRep {
     type Output = CliffordRep;
 
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(&self, rhs);
         self.compose(rhs)
@@ -958,6 +979,8 @@ impl BitAnd<&CliffordRep> for CliffordRep {
 impl BitAnd<CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(self, &rhs);
         self.compose(&rhs)
@@ -967,6 +990,8 @@ impl BitAnd<CliffordRep> for &CliffordRep {
 impl BitAnd<&CliffordRep> for &CliffordRep {
     type Output = CliffordRep;
 
+    /// # Panics
+    /// Panics for overlapping out-of-width custom images, as in [`CliffordRep::compose`].
     fn bitand(self, rhs: &CliffordRep) -> CliffordRep {
         assert_disjoint_clifford_support(self, rhs);
         self.compose(rhs)

@@ -663,13 +663,7 @@ impl<R: SeedableRng + Rng + Debug> crate::StabilizerTableauSimulator for GraphSt
 /// Produces e.g. `"+ZI\n"` or `"-iXY\n"`.
 fn pauli_string_to_tableau_line(ps: &pecos_core::PauliString, n: usize, out: &mut String) {
     use std::fmt::Write;
-    let phase_str = match ps.phase() {
-        pecos_core::QuarterPhase::PlusOne => "+",
-        pecos_core::QuarterPhase::MinusOne => "-",
-        pecos_core::QuarterPhase::PlusI => "+i",
-        pecos_core::QuarterPhase::MinusI => "-i",
-    };
-    writeln!(out, "{}{}", phase_str, ps.pauli_str(Some(n))).unwrap();
+    writeln!(out, "{}", ps.to_dense_str(Some(n))).unwrap();
 }
 
 impl StabilizerSimulator for GraphStateSim<PecosRng> {

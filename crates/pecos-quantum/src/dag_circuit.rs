@@ -645,11 +645,11 @@ impl std::error::Error for AnnotationRefError {}
 
 /// The role of a Pauli annotation in the circuit.
 ///
-/// All three kinds track the same thing -- whether a Pauli string flips due to
-/// faults. The difference is how the answer is read out and what it means.
-#[derive(Debug, Clone)]
+/// Detectors and observables reference measurement outcomes at distinct circuit
+/// points. Tracked Paulis specify a single-time operator at a meta node.
+#[derive(Debug, Clone, PartialEq)]
 pub enum AnnotationKind {
-    /// Stabilizer check: the Pauli should be deterministic (flip = error detected).
+    /// Stabilizer check: the measurement parity should be deterministic.
     /// Stores the identities of the measurements whose XOR is the readout, plus
     /// optional coordinates for visualization/matching.
     ///
@@ -661,28 +661,21 @@ pub enum AnnotationKind {
         measurement_ids: Vec<MeasId>,
         coords: Vec<f64>,
     },
-    /// Logical observable: the Pauli's flip determines a logical outcome.
+    /// Logical observable defined by measurement parity.
     /// Stores the identities of the measurements whose XOR is the readout.
     Observable { measurement_ids: Vec<MeasId> },
     /// Tracked Pauli: no measurement readout.
     /// Position is determined by a `TrackedPauliMeta` node in the DAG.
-    TrackedPauli,
+    TrackedPauli { pauli: pecos_core::PauliString },
 }
 
-/// A unified Pauli annotation: detectors, observables, and tracked Paulis
-/// are all Pauli strings tracked for flipping via backward propagation.
+/// A circuit annotation defining measurement parity or a tracked operator.
 ///
-/// - **Detectors** are stabilizer checks that should be +1 (noiseless).
-///   Their Pauli is the measured Pauli (X for MX, Z otherwise) on the
-///   measured qubits.
-/// - **Observables** are logical operators read out via measurements.
-///   Their Pauli is the measured Pauli on the measured qubits.
-/// - **Tracked Paulis** are arbitrary Pauli strings with no measurement readout.
-///   Their Pauli is user-specified and their position comes from a meta-gate node.
-#[derive(Debug, Clone)]
+/// Detectors and observables store ordered measurement identities, including
+/// duplicates. Their individual bases are resolved from the circuit gates.
+/// Only tracked Paulis carry a single-time Pauli string.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PauliAnnotation {
-    /// The Pauli string being tracked.
-    pub pauli: pecos_core::PauliString,
     /// What role this annotation plays.
     pub kind: AnnotationKind,
     /// Optional label.
@@ -910,7 +903,7 @@ impl DagCircuit {
     /// Resolve a [`MeasId`] to the measurement that holds it.
     ///
     /// A deliberate O(gates) scan rather than a maintained index. Consumers
-    /// that resolve many ids build their own map from one pass over the circuit.
+    /// that resolve many bases can use [`Self::measured_paulis`] for one pass.
     ///
     /// # Errors
     ///
@@ -936,32 +929,52 @@ impl DagCircuit {
     /// Panics if a gate holds more ids than qubits. DAG insertion and update
     /// reject such payloads using [`Gate::validate`]; `Gate` itself has public fields.
     pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
-        // Scan the whole circuit rather than stopping at the first hit, so a
-        // duplicate holder is reported instead of silently winning.
-        let mut found: Option<(usize, usize)> = None;
+        let found = self.scan_measurements(&[id]);
+        self.resolve_measurement(id, found.get(&id))
+    }
+
+    fn scan_measurements(
+        &self,
+        ids: &[MeasId],
+    ) -> BTreeMap<MeasId, Result<(usize, usize), MeasResolveError>> {
+        let requested: BTreeSet<_> = ids.iter().copied().collect();
+        let mut found = BTreeMap::new();
+        if requested.is_empty() {
+            return found;
+        }
         for (node, gate) in self.gates.iter().enumerate() {
             let Some(gate) = gate.as_ref() else { continue };
-            for (position, &held) in gate.meas_ids.iter().enumerate() {
-                if held != id {
-                    continue;
+            for (position, &id) in gate.meas_ids.iter().enumerate() {
+                if requested.contains(&id) {
+                    match found.entry(id) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(Ok((node, position)));
+                        }
+                        std::collections::btree_map::Entry::Occupied(mut entry) => {
+                            *entry.get_mut() = Err(MeasResolveError::Inconsistent(id));
+                        }
+                    }
                 }
-                if found.is_some() {
-                    return Err(MeasResolveError::Inconsistent(id));
-                }
-                found = Some((node, position));
             }
         }
-        let Some((node, position)) = found else {
+        found
+    }
+
+    fn resolve_measurement(
+        &self,
+        id: MeasId,
+        found: Option<&Result<(usize, usize), MeasResolveError>>,
+    ) -> Result<MeasRef, MeasResolveError> {
+        let Some(found) = found else {
             return if self.removed_meas_ids.contains(&id.index()) {
                 Err(MeasResolveError::Removed(id))
             } else if self.used_meas_ids.contains(&id.index()) {
-                // Reserved, never removed, yet no gate holds it. Not a
-                // removal, so not `Removed`.
                 Err(MeasResolveError::Inconsistent(id))
             } else {
                 Err(MeasResolveError::Unknown(id))
             };
         };
+        let (node, position) = found.clone()?;
         if !self.used_meas_ids.contains(&id.index()) || self.removed_meas_ids.contains(&id.index())
         {
             // Held but never reserved, or held despite its measurement having
@@ -981,6 +994,55 @@ impl DagCircuit {
             qubit,
             meas_id: id,
         })
+    }
+
+    /// Resolves a measurement identity to its gate's Pauli basis and qubit.
+    ///
+    /// # Errors
+    /// Returns the same resolution errors as [`Self::find_measurement`].
+    ///
+    /// # Panics
+    /// Panics on malformed internal gates as described by [`Self::find_measurement`].
+    pub fn measured_pauli(
+        &self,
+        id: MeasId,
+    ) -> Result<(pecos_core::Pauli, QubitId), MeasResolveError> {
+        self.measurement_basis(self.find_measurement(id)?)
+    }
+
+    /// Resolves measurement identities in input order with one circuit scan.
+    /// Repeated input identities produce repeated results.
+    ///
+    /// # Errors
+    /// Returns the first error in input order, using [`Self::find_measurement`]'s rules.
+    ///
+    /// # Panics
+    /// Panics on malformed internal gates as described by [`Self::find_measurement`].
+    pub fn measured_paulis(
+        &self,
+        ids: &[MeasId],
+    ) -> Result<Vec<(pecos_core::Pauli, QubitId)>, MeasResolveError> {
+        let found = self.scan_measurements(ids);
+        ids.iter()
+            .map(|&id| self.measurement_basis(self.resolve_measurement(id, found.get(&id))?))
+            .collect()
+    }
+
+    fn measurement_basis(
+        &self,
+        reference: MeasRef,
+    ) -> Result<(pecos_core::Pauli, QubitId), MeasResolveError> {
+        let gate = self.gates[reference.node]
+            .as_ref()
+            .expect("resolved measurement node");
+        let pauli = gate
+            .gate_type
+            .measured_pauli()
+            .ok_or(MeasResolveError::RecordLess {
+                id: reference.meas_id,
+                node: reference.node,
+            })?;
+        Ok((pauli, reference.qubit))
     }
 
     /// Check that `count` ids can still be minted, without minting them.
@@ -2905,9 +2967,8 @@ impl DagCircuit {
     /// Annotate a detector: a set of measurements whose XOR should be
     /// deterministic in the noiseless case.
     ///
-    /// The Pauli string is the Pauli each referenced measurement reads (X for
-    /// MX, Z otherwise) on that measurement's own qubit -- referencing one
-    /// measurement of a batched gate touches only that qubit.
+    /// Stores the ordered measurement identities, including duplicates.
+    /// Resolve each measurement's basis and qubit with [`Self::measured_pauli`].
     ///
     /// Returns the annotation index.
     ///
@@ -2916,9 +2977,8 @@ impl DagCircuit {
     /// Returns [`AnnotationRefError`] if any reference does not name a
     /// measurement this circuit holds.
     pub fn detector(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         Ok(self.push_annotation(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Detector {
                 measurement_ids,
                 coords: Vec::new(),
@@ -2963,8 +3023,8 @@ impl DagCircuit {
     /// Annotate a logical observable: a set of measurements whose XOR
     /// defines whether a logical operator flipped.
     ///
-    /// The Pauli string is the Pauli each referenced measurement reads (X for
-    /// MX, Z otherwise) on that measurement's own qubit.
+    /// Stores ordered measurement identities. Resolve their individual bases
+    /// and qubits explicitly with [`Self::measured_paulis`].
     ///
     /// Returns the annotation index.
     ///
@@ -2973,9 +3033,8 @@ impl DagCircuit {
     /// Returns [`AnnotationRefError`] if any reference does not name a
     /// measurement this circuit holds.
     pub fn observable(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         Ok(self.push_annotation(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Observable { measurement_ids },
             label: None,
         }))
@@ -3029,15 +3088,14 @@ impl DagCircuit {
         idx
     }
 
-    /// Validate each reference against the gate it names and derive the ids
-    /// and basis-matched Pauli. Validation is a direct lookup per reference -- linear only
-    /// in the named gate's batch width, never in the circuit: the gate must
+    /// Validate each reference against the gate it names and derive the ids.
+    /// Validation is a direct lookup per reference -- linear only in the named
+    /// gate's batch width, never in the circuit: the gate must
     /// exist, consume measurement records, and hold the (qubit, id) pair.
-    fn validated_ids_and_pauli(
+    fn validated_measurement_ids(
         &self,
         measurements: &[MeasRef],
-    ) -> Result<(Vec<MeasId>, pecos_core::PauliString), AnnotationRefError> {
-        let mut paulis = Vec::with_capacity(measurements.len());
+    ) -> Result<Vec<MeasId>, AnnotationRefError> {
         for m in measurements {
             let Some(gate) = self.gate(m.node) else {
                 return Err(AnnotationRefError::NoSuchNode { node: m.node });
@@ -3057,23 +3115,8 @@ impl DagCircuit {
                     meas_id: m.meas_id,
                 });
             }
-            paulis.push((
-                if gate.gate_type == GateType::MX {
-                    pecos_core::Pauli::X
-                } else {
-                    pecos_core::Pauli::Z
-                },
-                m.qubit,
-            ));
         }
-        let ids = measurements.iter().map(|m| m.meas_id).collect();
-        Ok((
-            ids,
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                paulis,
-            ),
-        ))
+        Ok(measurements.iter().map(|m| m.meas_id).collect())
     }
 
     /// Place a tracked-Pauli meta-gate at this point in the circuit.
@@ -3105,8 +3148,7 @@ impl DagCircuit {
         let idx = self.annotations.len();
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::TrackedPauli,
+            kind: AnnotationKind::TrackedPauli { pauli },
             label: None,
         });
         idx
@@ -3122,8 +3164,7 @@ impl DagCircuit {
         let idx = self.annotations.len();
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::TrackedPauli,
+            kind: AnnotationKind::TrackedPauli { pauli },
             label: Some(label.to_string()),
         });
         idx
@@ -3145,8 +3186,8 @@ impl DagCircuit {
     /// Add a pre-built annotation (used for conversion from `TickCircuit`).
     pub fn add_annotation(&mut self, ann: PauliAnnotation) {
         // For tracked-Pauli annotations, insert the meta-gate node.
-        if matches!(ann.kind, AnnotationKind::TrackedPauli) {
-            self.insert_pauli_meta_gate(&ann.pauli);
+        if let AnnotationKind::TrackedPauli { pauli } = &ann.kind {
+            self.insert_pauli_meta_gate(pauli);
         }
         self.annotations.push(ann);
     }
@@ -3175,7 +3216,7 @@ impl DagCircuit {
     pub fn tracked_paulis(&self) -> impl Iterator<Item = &PauliAnnotation> {
         self.annotations
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli { .. }))
     }
 
     // ========================================================================

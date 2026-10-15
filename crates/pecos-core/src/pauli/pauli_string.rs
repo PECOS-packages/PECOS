@@ -14,21 +14,35 @@ use crate::{Pauli, PauliBitmap, PauliOperator, PauliSparse, Phase, QuarterPhase,
 use std::fmt;
 use std::str::FromStr;
 
+/// A non-identity Pauli operator lies outside the requested width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PauliWidthError {
+    /// The offending qubit index.
+    pub qubit: usize,
+    /// The requested number of qubits.
+    pub num_qubits: usize,
+}
+
+impl fmt::Display for PauliWidthError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "qubit {} is outside num_qubits {}",
+            self.qubit, self.num_qubits
+        )
+    }
+}
+
+impl std::error::Error for PauliWidthError {}
+
 /// A string of Pauli operators acting on multiple qubits.
 ///
 /// `PauliString` is the primary user-facing type for working with Pauli operators.
-/// It stores individual Pauli operators (I, X, Y, Z) for each qubit along with a
-/// global phase (+1, -1, +i, -i).
-///
-/// # `Hash` and `Eq` caveats
-///
-/// `Hash` and `Eq` compare the internal `(Pauli, QubitId)` pairs in storage order.
-/// Two `PauliString`s that represent the same operator but were constructed with
-/// different qubit ordering may compare as unequal and hash differently.
-/// If you need order-independent equality and hashing (e.g., for a `HashSet`),
-/// use [`PauliSet`] which normalizes to a canonical sorted form.
-///
-/// [`PauliSet`]: https://docs.rs/pecos-quantum/latest/pecos_quantum/struct.PauliSet.html
+/// It stores non-identity Pauli operators (X, Y, Z) sorted by qubit index,
+/// with each qubit appearing at most once, and a global phase (+1, -1, +i, -i).
+/// This canonical storage makes equality and hashing compare operators,
+/// including phase, independently of construction order or explicit identities.
+/// Register width is supplied separately to dense formatting methods.
 ///
 /// # Examples
 ///
@@ -70,10 +84,35 @@ impl PauliString {
     }
 
     /// Creates a `PauliString` with the given phase and paulis.
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once, including identity entries.
     #[inline]
     #[must_use]
     pub fn with_phase_and_paulis(phase: QuarterPhase, paulis: Vec<(Pauli, QubitId)>) -> Self {
-        Self { phase, paulis }
+        Self::try_with_phase_and_paulis(phase, paulis).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Creates a `PauliString` from entries with distinct qubit indices.
+    /// Entries are sorted by qubit index and identities are removed.
+    ///
+    /// # Errors
+    /// Returns [`ParsePauliStringError::DuplicateQubit`] if a qubit occurs more than once.
+    pub fn try_with_phase_and_paulis(
+        phase: QuarterPhase,
+        mut paulis: Vec<(Pauli, QubitId)>,
+    ) -> Result<Self, ParsePauliStringError> {
+        if paulis.len() >= 2 && !paulis.windows(2).all(|pair| pair[0].1 < pair[1].1) {
+            paulis.sort_unstable_by_key(|(_, qubit)| *qubit);
+            if let Some(pair) = paulis.windows(2).find(|pair| pair[0].1 == pair[1].1) {
+                return Err(ParsePauliStringError::DuplicateQubit {
+                    qubit: pair[0].1.index(),
+                });
+            }
+        }
+        // Check duplicates before removing identities so repeated input qubits remain errors.
+        paulis.retain(|(pauli, _)| *pauli != Pauli::I);
+        Ok(Self { phase, paulis })
     }
 
     /// Creates a `PauliString` from a slice of Pauli operators on consecutive qubits.
@@ -142,7 +181,7 @@ impl PauliString {
     pub fn qubitwise_commutes_with(&self, other: &PauliString) -> bool {
         for (p1, q1) in &self.paulis {
             for (p2, q2) in &other.paulis {
-                if q1 == q2 && p1 != p2 && *p1 != Pauli::I && *p2 != Pauli::I {
+                if q1 == q2 && p1 != p2 {
                     return false;
                 }
             }
@@ -171,39 +210,48 @@ impl PauliString {
     /// assert_eq!(p.get(5), Pauli::X);
     /// assert_eq!(p.weight(), 3);
     /// ```
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once.
     #[must_use]
     pub fn xs(qubits: &[usize]) -> Self {
-        Self {
-            phase: QuarterPhase::PlusOne,
-            paulis: qubits
+        Self::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            qubits
                 .iter()
                 .map(|&q| (Pauli::X, QubitId::new(q)))
                 .collect(),
-        }
+        )
     }
 
     /// Creates a multi-qubit Y operator: Y on each of the given qubits.
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once.
     #[must_use]
     pub fn ys(qubits: &[usize]) -> Self {
-        Self {
-            phase: QuarterPhase::PlusOne,
-            paulis: qubits
+        Self::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            qubits
                 .iter()
                 .map(|&q| (Pauli::Y, QubitId::new(q)))
                 .collect(),
-        }
+        )
     }
 
     /// Creates a multi-qubit Z operator: Z on each of the given qubits.
+    ///
+    /// # Panics
+    /// Panics if any qubit occurs more than once.
     #[must_use]
     pub fn zs(qubits: &[usize]) -> Self {
-        Self {
-            phase: QuarterPhase::PlusOne,
-            paulis: qubits
+        Self::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            qubits
                 .iter()
                 .map(|&q| (Pauli::Z, QubitId::new(q)))
                 .collect(),
-        }
+        )
     }
 
     /// Creates a `PauliString` from non-overlapping X, Y, Z qubit sets.
@@ -217,6 +265,9 @@ impl PauliString {
     /// * `x_qubits` - Qubits with pure X operator
     /// * `y_qubits` - Qubits with Y operator
     /// * `z_qubits` - Qubits with pure Z operator
+    ///
+    /// # Panics
+    /// Panics if a qubit is repeated within an input or shared between inputs.
     #[must_use]
     pub fn from_decomposed<I1, I2, I3>(
         phase: QuarterPhase,
@@ -241,10 +292,7 @@ impl PauliString {
             paulis.push((Pauli::Z, QubitId::new(q)));
         }
 
-        // Sort by qubit index for consistent ordering
-        paulis.sort_by_key(|(_, q)| q.index());
-
-        Self { phase, paulis }
+        Self::with_phase_and_paulis(phase, paulis)
     }
 
     /// Returns the phase of this `PauliString`.
@@ -261,7 +309,7 @@ impl PauliString {
         self.phase
     }
 
-    /// Returns a reference to the underlying Pauli operators.
+    /// Returns non-identity Pauli operators in increasing qubit order.
     #[inline]
     #[must_use]
     pub fn paulis(&self) -> &[(Pauli, QubitId)] {
@@ -275,7 +323,7 @@ impl PauliString {
         &self.paulis
     }
 
-    /// Iterates over (Pauli, `QubitId`) pairs.
+    /// Iterates over non-identity (Pauli, `QubitId`) pairs in increasing qubit order.
     #[inline]
     pub fn iter_pairs(&self) -> impl Iterator<Item = (Pauli, QubitId)> + '_ {
         self.paulis.iter().copied()
@@ -373,13 +421,45 @@ impl PauliString {
         (self.phase, x_only, y, z_only)
     }
 
+    /// Checks that all non-identity operators fit within `num_qubits`.
+    ///
+    /// # Errors
+    /// Returns the lowest out-of-range non-identity qubit.
+    pub fn validate_width(&self, num_qubits: usize) -> Result<(), PauliWidthError> {
+        for (pauli, qubit) in &self.paulis {
+            if *pauli != Pauli::I && qubit.index() >= num_qubits {
+                return Err(PauliWidthError {
+                    qubit: qubit.index(),
+                    num_qubits,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Returns a string representation like "XXZI" (without phase).
     ///
     /// If `num_qubits` is provided, pads with 'I' for missing qubits.
-    /// Otherwise, only shows non-identity operators.
+    /// Otherwise, shows qubits through the highest non-identity index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a non-identity operator has a qubit index >= `num_qubits`.
     #[must_use]
     pub fn pauli_str(&self, num_qubits: Option<usize>) -> String {
+        self.try_pauli_str(num_qubits)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Returns a dense string without phase, padded to the requested width.
+    ///
+    /// With `None`, uses the same inferred width as [`Self::pauli_str`].
+    ///
+    /// # Errors
+    /// Returns an error if a non-identity operator is outside the requested width.
+    pub fn try_pauli_str(&self, num_qubits: Option<usize>) -> Result<String, PauliWidthError> {
         if let Some(n) = num_qubits {
+            self.validate_width(n)?;
             let mut chars: Vec<char> = vec!['I'; n];
             for (pauli, qubit) in &self.paulis {
                 if qubit.index() < n {
@@ -391,10 +471,10 @@ impl PauliString {
                     };
                 }
             }
-            chars.into_iter().collect()
+            Ok(chars.into_iter().collect())
         } else {
             if self.paulis.is_empty() {
-                return "I".to_string();
+                return Ok("I".to_string());
             }
             let max_qubit = self
                 .paulis
@@ -402,7 +482,7 @@ impl PauliString {
                 .map(|(_, q)| q.index())
                 .max()
                 .unwrap_or(0);
-            self.pauli_str(Some(max_qubit + 1))
+            self.try_pauli_str(Some(max_qubit + 1))
         }
     }
 
@@ -410,6 +490,10 @@ impl PauliString {
     ///
     /// Every qubit from 0 to the highest non-identity qubit gets a character.
     /// If `num_qubits` is given, pads with `I` to that width.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a non-identity operator has a qubit index >= `num_qubits`.
     ///
     /// # Examples
     ///
@@ -423,13 +507,24 @@ impl PauliString {
     /// ```
     #[must_use]
     pub fn to_dense_str(&self, num_qubits: Option<usize>) -> String {
+        self.try_to_dense_str(num_qubits)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Returns a dense string with phase prefix, padded to the requested width.
+    ///
+    /// With `None`, uses the same inferred width as [`Self::to_dense_str`].
+    ///
+    /// # Errors
+    /// Returns an error if a non-identity operator is outside the requested width.
+    pub fn try_to_dense_str(&self, num_qubits: Option<usize>) -> Result<String, PauliWidthError> {
         let phase_str = match self.phase {
             QuarterPhase::PlusOne => "+",
             QuarterPhase::MinusOne => "-",
             QuarterPhase::PlusI => "+i",
             QuarterPhase::MinusI => "-i",
         };
-        format!("{phase_str}{}", self.pauli_str(num_qubits))
+        Ok(format!("{phase_str}{}", self.try_pauli_str(num_qubits)?))
     }
 
     /// Returns the sparse string representation with phase prefix.
@@ -458,10 +553,7 @@ impl PauliString {
             QuarterPhase::MinusI => "-i",
         };
         let mut parts = Vec::new();
-        let mut sorted_paulis: Vec<_> =
-            self.paulis.iter().filter(|(p, _)| *p != Pauli::I).collect();
-        sorted_paulis.sort_by_key(|(_, q)| q.index());
-        for (pauli, qubit) in &sorted_paulis {
+        for (pauli, qubit) in &self.paulis {
             let c = match pauli {
                 Pauli::X => 'X',
                 Pauli::Y => 'Y',
@@ -755,14 +847,7 @@ impl PauliOperator for PauliString {
 
 impl fmt::Display for PauliString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Format phase
-        let phase_str = match self.phase {
-            QuarterPhase::PlusOne => "+",
-            QuarterPhase::MinusOne => "-",
-            QuarterPhase::PlusI => "+i",
-            QuarterPhase::MinusI => "-i",
-        };
-        write!(f, "{}{}", phase_str, self.pauli_str(None))
+        write!(f, "{}", self.to_dense_str(None))
     }
 }
 
@@ -770,13 +855,19 @@ impl fmt::Display for PauliString {
 
 /// Error type for parsing `PauliString` from a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsePauliStringError {
-    pub message: String,
+pub enum ParsePauliStringError {
+    /// The input is not valid dense or sparse Pauli syntax.
+    InvalidSyntax { message: String },
+    /// More than one entry specifies the same qubit.
+    DuplicateQubit { qubit: usize },
 }
 
 impl fmt::Display for ParsePauliStringError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
+        match self {
+            Self::InvalidSyntax { message } => write!(f, "{message}"),
+            Self::DuplicateQubit { qubit } => write!(f, "duplicate Pauli entry for qubit {qubit}"),
+        }
     }
 }
 
@@ -853,7 +944,7 @@ impl PauliString {
                 'Y' | 'y' => Pauli::Y,
                 'Z' | 'z' => Pauli::Z,
                 c => {
-                    return Err(ParsePauliStringError {
+                    return Err(ParsePauliStringError::InvalidSyntax {
                         message: format!("Invalid Pauli character: '{c}'"),
                     });
                 }
@@ -888,8 +979,8 @@ impl PauliString {
     ///
     /// # Errors
     ///
-    /// Returns an error if a token doesn't start with a valid Pauli letter
-    /// or doesn't have a valid qubit index.
+    /// Returns an error if a token doesn't start with a valid Pauli letter,
+    /// doesn't have a valid qubit index, or repeats a qubit index.
     pub fn from_sparse_str(s: &str) -> Result<Self, ParsePauliStringError> {
         let s = s.trim();
         if s.is_empty() {
@@ -911,16 +1002,19 @@ impl PauliString {
         while i < tokens.len() {
             let token = tokens[i];
             let mut token_chars = token.chars();
-            let pauli_char = token_chars.next().ok_or_else(|| ParsePauliStringError {
-                message: "Empty token".to_string(),
-            })?;
+            let pauli_char =
+                token_chars
+                    .next()
+                    .ok_or_else(|| ParsePauliStringError::InvalidSyntax {
+                        message: "Empty token".to_string(),
+                    })?;
 
             let pauli = match pauli_char {
                 'X' | 'x' => Pauli::X,
                 'Y' | 'y' => Pauli::Y,
                 'Z' | 'z' => Pauli::Z,
                 c => {
-                    return Err(ParsePauliStringError {
+                    return Err(ParsePauliStringError::InvalidSyntax {
                         message: format!("Invalid Pauli character: '{c}'"),
                     });
                 }
@@ -930,25 +1024,28 @@ impl PauliString {
             let qubit: usize = if qubit_str.is_empty() {
                 // Qubit index may be the next token (e.g., "X 0" instead of "X0")
                 i += 1;
-                let next = tokens.get(i).ok_or_else(|| ParsePauliStringError {
-                    message: format!("Missing qubit index after '{pauli_char}'"),
-                })?;
-                next.parse().map_err(|_| ParsePauliStringError {
-                    message: format!("Invalid qubit index: '{next}'"),
-                })?
+                let next = tokens
+                    .get(i)
+                    .ok_or_else(|| ParsePauliStringError::InvalidSyntax {
+                        message: format!("Missing qubit index after '{pauli_char}'"),
+                    })?;
+                next.parse()
+                    .map_err(|_| ParsePauliStringError::InvalidSyntax {
+                        message: format!("Invalid qubit index: '{next}'"),
+                    })?
             } else {
-                qubit_str.parse().map_err(|_| ParsePauliStringError {
-                    message: format!("Invalid qubit index in token: '{token}'"),
-                })?
+                qubit_str
+                    .parse()
+                    .map_err(|_| ParsePauliStringError::InvalidSyntax {
+                        message: format!("Invalid qubit index in token: '{token}'"),
+                    })?
             };
 
             paulis.push((pauli, QubitId::new(qubit)));
             i += 1;
         }
 
-        paulis.sort_by_key(|(_, q)| *q);
-
-        Ok(Self { phase, paulis })
+        Self::try_with_phase_and_paulis(phase, paulis)
     }
 }
 
@@ -1000,6 +1097,132 @@ impl FromStr for PauliString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_storage_gives_operator_equality_and_hashing() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hash = |pauli: &PauliString| {
+            let mut hasher = DefaultHasher::new();
+            pauli.hash(&mut hasher);
+            hasher.finish()
+        };
+        let sorted = PauliString::xs(&[0, 2]);
+        let unsorted = PauliString::xs(&[2, 0]);
+        let with_identity = PauliString::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            vec![
+                (Pauli::X, QubitId(2)),
+                (Pauli::I, QubitId(5)),
+                (Pauli::X, QubitId(0)),
+            ],
+        );
+        for pauli in [&unsorted, &with_identity] {
+            assert_eq!(pauli, &sorted);
+            assert_eq!(hash(pauli), hash(&sorted));
+            assert_eq!(pauli.weight(), 2);
+            assert_eq!(
+                pauli.paulis(),
+                &[(Pauli::X, QubitId(0)), (Pauli::X, QubitId(2))]
+            );
+            assert_eq!(pauli.to_dense_str(None), "+XIX");
+            assert_eq!(pauli.to_dense_str(Some(6)), "+XIXIII");
+        }
+        let identity =
+            PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, vec![(Pauli::I, QubitId(5))]);
+        assert_eq!(identity, PauliString::identity());
+        assert_eq!(hash(&identity), hash(&PauliString::identity()));
+        assert_eq!(identity.weight(), 0);
+        assert_eq!(identity.paulis(), []);
+        assert!(identity.is_identity());
+    }
+
+    #[test]
+    fn checked_entries_accept_unsorted_unique_and_reject_unsorted_duplicates() {
+        let entries = vec![(Pauli::X, QubitId(3)), (Pauli::Z, QubitId(1))];
+        let pauli =
+            PauliString::try_with_phase_and_paulis(QuarterPhase::PlusOne, entries.clone()).unwrap();
+        assert_eq!(
+            pauli.paulis(),
+            &[(Pauli::Z, QubitId(1)), (Pauli::X, QubitId(3))]
+        );
+        let mut repeated = entries;
+        repeated.push((Pauli::Y, QubitId(3)));
+        assert_eq!(
+            PauliString::try_with_phase_and_paulis(QuarterPhase::PlusOne, repeated),
+            Err(ParsePauliStringError::DuplicateQubit { qubit: 3 })
+        );
+    }
+
+    #[test]
+    fn checked_entries_reject_duplicates_including_identity() {
+        for pauli in [Pauli::I, Pauli::X, Pauli::Z] {
+            assert_eq!(
+                PauliString::try_with_phase_and_paulis(
+                    QuarterPhase::PlusOne,
+                    vec![(pauli, QubitId::new(2)), (Pauli::X, QubitId::new(2))],
+                ),
+                Err(ParsePauliStringError::DuplicateQubit { qubit: 2 })
+            );
+        }
+    }
+
+    #[test]
+    fn public_entry_constructors_reject_duplicates() {
+        for constructor in [PauliString::xs, PauliString::ys, PauliString::zs] {
+            assert!(std::panic::catch_unwind(|| constructor(&[1, 1])).is_err());
+        }
+        assert!(
+            std::panic::catch_unwind(|| PauliString::with_phase_and_paulis(
+                QuarterPhase::PlusOne,
+                vec![(Pauli::I, QubitId::new(0)), (Pauli::X, QubitId::new(0))],
+            ))
+            .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| PauliString::from_decomposed(
+                QuarterPhase::PlusOne,
+                [0, 0],
+                [],
+                [],
+            ))
+            .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| PauliString::from_decomposed(
+                QuarterPhase::PlusOne,
+                [0],
+                [0],
+                [],
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sparse_rejects_duplicate_mixed() {
+        assert_eq!(
+            PauliString::from_sparse_str("X0 Z0"),
+            Err(ParsePauliStringError::DuplicateQubit { qubit: 0 })
+        );
+    }
+
+    #[test]
+    fn sparse_rejects_duplicate_same() {
+        assert_eq!(
+            PauliString::from_sparse_str("X0 X0"),
+            Err(ParsePauliStringError::DuplicateQubit { qubit: 0 })
+        );
+    }
+
+    #[test]
+    fn sparse_rejects_duplicate_unsorted() {
+        assert_eq!(
+            PauliString::from_sparse_str("Z1 Z1 X0"),
+            Err(ParsePauliStringError::DuplicateQubit { qubit: 1 })
+        );
+    }
 
     #[test]
     fn test_x_only_qubits() {
@@ -1128,6 +1351,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_fallible_dense_formatting() {
+        let p: PauliString = "-iX0 Z5".parse().unwrap();
+        let error = PauliWidthError {
+            qubit: 5,
+            num_qubits: 3,
+        };
+        assert_eq!(p.validate_width(3), Err(error));
+        assert_eq!(p.try_pauli_str(Some(3)), Err(error));
+        assert_eq!(p.try_to_dense_str(Some(3)), Err(error));
+        assert_eq!(error.to_string(), "qubit 5 is outside num_qubits 3");
+        assert_eq!(p.try_pauli_str(Some(6)).unwrap(), "XIIIIZ");
+        assert_eq!(p.try_to_dense_str(Some(6)).unwrap(), "-iXIIIIZ");
+        assert_eq!(p.try_to_dense_str(None).unwrap(), "-iXIIIIZ");
+
+        let identity = PauliString::with_phase_and_paulis(
+            QuarterPhase::MinusI,
+            vec![(Pauli::I, QubitId::new(5))],
+        );
+        assert_eq!(identity.validate_width(0), Ok(()));
+        assert_eq!(identity.try_pauli_str(Some(0)).unwrap(), "");
+        assert_eq!(identity.try_to_dense_str(Some(0)).unwrap(), "-i");
+    }
+
     // --- pauli_str tests ---
 
     #[test]
@@ -1178,6 +1425,34 @@ mod tests {
         let p = PauliString::identity();
         let s = p.pauli_str(Some(2));
         assert_eq!(s, "II");
+    }
+
+    #[test]
+    #[should_panic(expected = "qubit 5 is outside num_qubits 3")]
+    fn test_pauli_str_rejects_truncation() {
+        let p: PauliString = "X0 Z5".parse().unwrap();
+        let _ = p.pauli_str(Some(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "qubit 5 is outside num_qubits 3")]
+    fn test_to_dense_str_rejects_truncation() {
+        let p: PauliString = "X0 Z5".parse().unwrap();
+        let _ = p.to_dense_str(Some(3));
+    }
+
+    #[test]
+    fn test_dense_str_width_boundaries() {
+        let p: PauliString = "X0 Z5".parse().unwrap();
+        assert_eq!(p.pauli_str(Some(6)), "XIIIIZ");
+        assert_eq!(p.to_dense_str(Some(6)), "+XIIIIZ");
+        assert_eq!(p.to_dense_str(None), "+XIIIIZ");
+        let identity = PauliString::with_phase_and_paulis(
+            QuarterPhase::MinusI,
+            vec![(Pauli::I, QubitId::new(5))],
+        );
+        assert_eq!(identity.pauli_str(Some(0)), "");
+        assert_eq!(identity.to_dense_str(Some(0)), "-i");
     }
 
     // --- to_dense_str / to_sparse_str tests ---
@@ -1507,10 +1782,8 @@ mod tests {
             QuarterPhase::MinusOne,
             vec![(Pauli::I, QubitId::new(0))],
         );
-        assert_eq!(
-            explicit_identity.get_paulis(),
-            &vec![(Pauli::I, QubitId::new(0))]
-        );
+        // Canonical storage drops identity entries.
+        assert!(explicit_identity.get_paulis().is_empty());
         let x = PauliString::x(0);
         assert!(explicit_identity.qubitwise_commutes_with(&x));
         assert!(x.qubitwise_commutes_with(&explicit_identity));

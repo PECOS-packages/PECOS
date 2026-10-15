@@ -218,7 +218,7 @@ impl PyPauliStabilizerGroup {
     // String representations
     // ========================================================================
 
-    /// Dense string representation (one stabilizer per line).
+    /// Dense string representation (one stabilizer per line, with phase prefix, padded to num_qubits).
     fn to_dense_str(&self) -> String {
         self.inner.to_dense_str()
     }

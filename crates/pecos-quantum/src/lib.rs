@@ -88,7 +88,7 @@ pub use fault_sector::parse_fault_sector;
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
     Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,
-    TickMeasureHandle, TickPrepHandle,
+    TickMeasResolveError, TickMeasureHandle, TickPrepHandle,
 };
 
 // Re-export commonly used types from dependencies

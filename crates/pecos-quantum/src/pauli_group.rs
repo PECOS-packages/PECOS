@@ -419,6 +419,8 @@ impl PauliGroup {
     }
 
     /// Returns the dense string representation, one generator per line.
+    ///
+    /// Includes phase prefixes and pads each line to the group width.
     #[must_use]
     pub fn to_dense_str(&self) -> String {
         self.inner.to_dense_str()
@@ -653,6 +655,28 @@ mod tests {
     use pecos_core::pauli::*;
 
     // --- Construction and basic properties ---
+
+    #[test]
+    fn sparse_rejects_duplicate_qubits_in_element() {
+        assert!("Z2\nX0 Z0".parse::<PauliGroup>().is_err());
+    }
+
+    #[test]
+    fn test_imaginary_dense_roundtrip() {
+        let original: PauliGroup = "+iX\n-iIZ".parse().unwrap();
+        assert_eq!(original.to_dense_str(), "+iXI\n-iIZ");
+        let parsed: PauliGroup = original.to_dense_str().parse().unwrap();
+        assert_eq!(parsed.generators(), original.generators());
+    }
+
+    #[test]
+    fn test_signed_dense_roundtrip() {
+        let original: PauliGroup = "-XX\n+ZZ".parse().unwrap();
+        assert_eq!(original.to_dense_str(), "-XX\n+ZZ");
+        assert_eq!(original.to_string(), original.to_dense_str());
+        let parsed: PauliGroup = original.to_dense_str().parse().unwrap();
+        assert_eq!(parsed.generators(), original.generators());
+    }
 
     #[test]
     fn real_phase_generators() {
@@ -937,7 +961,7 @@ mod tests {
     fn display() {
         let group = PauliGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         let s = format!("{group}");
-        assert_eq!(s, "ZZI\nIZZ");
+        assert_eq!(s, "+ZZI\n+IZZ");
     }
 
     #[test]

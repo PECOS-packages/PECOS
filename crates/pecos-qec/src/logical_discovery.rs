@@ -67,6 +67,15 @@ pub struct LogicalDiscoveryResult {
 /// Error that can occur during logical operator discovery.
 #[derive(Debug, Clone)]
 pub enum LogicalDiscoveryError {
+    /// A stabilizer acts outside the data-qubit width.
+    StabilizerExceedsWidth {
+        /// Zero-based stabilizer index.
+        index: usize,
+        qubit: usize,
+        num_qubits: usize,
+    },
+    /// The code specification is invalid.
+    InvalidCodeSpec(crate::StabilizerCodeSpecError),
     /// The stabilizers are not independent (linearly dependent).
     StabilizersNotIndependent,
     /// The stabilizers do not all commute.
@@ -78,6 +87,17 @@ pub enum LogicalDiscoveryError {
 impl std::fmt::Display for LogicalDiscoveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::StabilizerExceedsWidth {
+                index,
+                qubit,
+                num_qubits,
+            } => {
+                write!(
+                    f,
+                    "stabilizer operator {index}: qubit {qubit} is outside num_qubits {num_qubits}"
+                )
+            }
+            Self::InvalidCodeSpec(error) => write!(f, "{error}"),
             Self::StabilizersNotIndependent => {
                 write!(f, "Stabilizers are not independent (linearly dependent)")
             }
@@ -92,6 +112,17 @@ impl std::fmt::Display for LogicalDiscoveryError {
 }
 
 impl std::error::Error for LogicalDiscoveryError {}
+
+impl From<crate::StabilizerCodeSpecError> for LogicalDiscoveryError {
+    fn from(error: crate::StabilizerCodeSpecError) -> Self {
+        match error {
+            crate::StabilizerCodeSpecError::DependentStabilizers { .. } => {
+                Self::StabilizersNotIndependent
+            }
+            error => Self::InvalidCodeSpec(error),
+        }
+    }
+}
 
 /// Discovers logical operators for a stabilizer code using stabilizer simulation.
 ///
@@ -138,11 +169,21 @@ impl std::error::Error for LogicalDiscoveryError {}
 /// ```
 ///
 /// # Errors
-/// Returns `LogicalDiscoveryError` if stabilizers don't commute, have wrong length, or are not independent.
+/// Returns `LogicalDiscoveryError` if stabilizers act outside `num_qubits`, don't commute,
+/// or are not independent.
 pub fn discover_logical_operators(
     num_qubits: usize,
     stabilizers: &[PauliString],
 ) -> Result<LogicalDiscoveryResult, LogicalDiscoveryError> {
+    for (index, stabilizer) in stabilizers.iter().enumerate() {
+        stabilizer.validate_width(num_qubits).map_err(|error| {
+            LogicalDiscoveryError::StabilizerExceedsWidth {
+                index,
+                qubit: error.qubit,
+                num_qubits: error.num_qubits,
+            }
+        })?;
+    }
     let n = num_qubits;
     let m = stabilizers.len();
 
@@ -330,6 +371,24 @@ mod tests {
             QuarterPhase::PlusOne,
             paulis.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+    }
+
+    #[test]
+    fn discovery_rejects_out_of_width_input() {
+        let error =
+            discover_logical_operators(3, &[PauliString::z(0), PauliString::x(5)]).unwrap_err();
+        assert!(matches!(
+            error,
+            LogicalDiscoveryError::StabilizerExceedsWidth {
+                index: 1,
+                qubit: 5,
+                num_qubits: 3
+            }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "stabilizer operator 1: qubit 5 is outside num_qubits 3"
+        );
     }
 
     #[test]

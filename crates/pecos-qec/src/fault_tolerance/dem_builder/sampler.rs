@@ -1328,7 +1328,7 @@ impl<'a> DemSamplerBuilder<'a> {
         let tracked_pauli_labels: Vec<Option<String>> = circuit
             .annotations()
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli { .. }))
             .map(|a| a.label.clone())
             .collect();
         if !tracked_pauli_labels.is_empty() {
@@ -1725,7 +1725,6 @@ mod tests {
         dag.pz(&[0]);
         dag.mz(&[0]);
         dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: pecos_core::PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
                 measurement_ids: vec![pecos_core::MeasId::from_raw(99)],
             },

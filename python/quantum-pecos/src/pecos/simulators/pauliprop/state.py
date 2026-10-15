@@ -62,21 +62,20 @@ class PauliProp(PauliPropagation):
         self.track_sign = track_sign
 
         # Use Rust backend
-        self._backend = PauliPropRs(num_qubits, track_sign=track_sign)
+        self._backend = PauliPropRs(track_sign=track_sign)
 
         self.bindings = self._backend.bindings
         for k, v in alt_symbols.items():
             if v in self.bindings:
                 self.bindings[k] = self.bindings[v]
 
-    def __getstate__(self) -> tuple[PauliPropRs]:
-        """Serialize only the backend; bindings are reconstructed after unpickling."""
-        return (self._backend,)
+    def __getstate__(self) -> tuple[PauliPropRs, int]:
+        """Serialize the backend and circuit width; reconstruct bindings after unpickling."""
+        return (self._backend, self.num_qubits)
 
-    def __setstate__(self, state: tuple[PauliPropRs]) -> None:
+    def __setstate__(self, state: tuple[PauliPropRs, int]) -> None:
         """Restore the backend and reconstruct the dynamic binding surface."""
-        (self._backend,) = state
-        self.num_qubits = self._backend.num_qubits
+        self._backend, self.num_qubits = state
         self.track_sign = self._backend.track_sign
         self.bindings = self._backend.bindings
         for k, v in alt_symbols.items():
@@ -221,7 +220,7 @@ class PauliProp(PauliPropagation):
         Returns:
             String representation with sign and Pauli operators.
         """
-        return self._backend.to_dense_string()
+        return self._backend.to_dense_string(self.num_qubits)
 
     def fault_str_sign(self, *, strip: bool = False) -> str:
         """Get the sign component of the fault string.
@@ -258,7 +257,7 @@ class PauliProp(PauliPropagation):
             String representation of the Pauli operators.
         """
         # Get the dense string and remove the sign part
-        full_str = self._backend.to_dense_string()
+        full_str = self._backend.to_dense_string(self.num_qubits)
         # Remove the sign prefix (+, -, +i, -i)
         if full_str.startswith(("+i", "-i")):
             return full_str[2:]
@@ -273,7 +272,7 @@ class PauliProp(PauliPropagation):
             Complete string representation of the fault state.
         """
         # Use the backend's string representation but format it for compatibility
-        backend_str = self._backend.to_dense_string()
+        backend_str = self._backend.to_dense_string(self.num_qubits)
         # Ensure there's a space after the sign if no 'i'
         if backend_str.startswith("+") and not backend_str.startswith("+i"):
             return "+ " + backend_str[1:]

@@ -1377,7 +1377,6 @@ fn extract_definitions(
             kind,
             measurement_ids,
             label,
-            pauli: None,
         });
     }
     let definitions = resolve_definitions(

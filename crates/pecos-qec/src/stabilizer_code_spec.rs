@@ -29,6 +29,16 @@ pub enum StabilizerCodeSpecError {
     /// An imaginary stabilizer squares to -I and stabilizes no state.
     #[error("Stabilizer {0} has non-real phase; its square is -I (empty code space)")]
     NonRealStabilizerPhase(usize),
+    /// An operator acts outside the code's physical data qubits.
+    #[error("{role} operator {index}: qubit {qubit} is outside num_qubits {num_qubits}")]
+    QubitOutOfBounds {
+        /// Operator list: stabilizer, destabilizer, logical Z, or logical X.
+        role: &'static str,
+        /// Zero-based position in that list.
+        index: usize,
+        qubit: usize,
+        num_qubits: usize,
+    },
 
     /// Two stabilizer generators anticommute.
     #[error("Stabilizer generators {0} and {1} anticommute")]
@@ -242,6 +252,25 @@ impl ColumnIndex {
 }
 
 impl StabilizerCodeSpec {
+    fn validate_operator_width(
+        num_qubits: usize,
+        role: &'static str,
+        start_index: usize,
+        operators: &[PauliString],
+    ) -> Result<()> {
+        for (offset, operator) in operators.iter().enumerate() {
+            operator.validate_width(num_qubits).map_err(|error| {
+                StabilizerCodeSpecError::QubitOutOfBounds {
+                    role,
+                    index: start_index + offset,
+                    qubit: error.qubit,
+                    num_qubits: error.num_qubits,
+                }
+            })?;
+        }
+        Ok(())
+    }
+
     /// Creates a new stabilizer code with the given parameters.
     ///
     /// # Parameters
@@ -252,13 +281,17 @@ impl StabilizerCodeSpec {
     ///
     /// # Errors
     /// Returns an error if the logical X and Z vectors have different lengths,
-    /// or if the stabilizer generators are linearly dependent.
+    /// if the stabilizer generators are linearly dependent, or if an operator
+    /// acts outside `num_qubits`.
     pub fn new(
         num_qubits: usize,
         stabilizers: Vec<PauliString>,
         logical_zs: Vec<PauliString>,
         logical_xs: Vec<PauliString>,
     ) -> Result<Self> {
+        Self::validate_operator_width(num_qubits, "stabilizer", 0, &stabilizers)?;
+        Self::validate_operator_width(num_qubits, "logical Z", 0, &logical_zs)?;
+        Self::validate_operator_width(num_qubits, "logical X", 0, &logical_xs)?;
         if logical_zs.len() != logical_xs.len() {
             return Err(StabilizerCodeSpecError::InvalidCode(
                 "Number of logical X and Z operators must match".to_string(),
@@ -295,7 +328,8 @@ impl StabilizerCodeSpec {
     ///
     /// # Errors
     /// Returns an error if the logical X and Z vectors have different lengths,
-    /// or if the stabilizer generators are linearly dependent.
+    /// if the stabilizer generators are linearly dependent, or if an operator
+    /// acts outside `num_qubits`.
     pub fn with_destabilizers(
         num_qubits: usize,
         stabilizers: Vec<PauliString>,
@@ -304,6 +338,7 @@ impl StabilizerCodeSpec {
         logical_xs: Vec<PauliString>,
     ) -> Result<Self> {
         let mut code = Self::new(num_qubits, stabilizers, logical_zs, logical_xs)?;
+        Self::validate_operator_width(num_qubits, "destabilizer", 0, &destabilizers)?;
         code.destabilizers = destabilizers;
         Ok(code)
     }
@@ -314,7 +349,8 @@ impl StabilizerCodeSpec {
     ///
     /// # Errors
     ///
-    /// Returns an error if the stabilizer generators are linearly dependent.
+    /// Returns an error if the stabilizer generators are linearly dependent
+    /// or act outside `num_qubits`.
     pub fn from_stabilizers(num_qubits: usize, stabilizers: Vec<PauliString>) -> Result<Self> {
         Self::new(num_qubits, stabilizers, Vec::new(), Vec::new())
     }
@@ -414,13 +450,33 @@ impl StabilizerCodeSpec {
     }
 
     /// Adds a logical Z operator.
-    pub fn add_logical_z(&mut self, logical_z: PauliString) {
+    ///
+    /// # Errors
+    /// Returns an error if the operator acts outside `num_qubits`.
+    pub fn add_logical_z(&mut self, logical_z: PauliString) -> Result<()> {
+        Self::validate_operator_width(
+            self.num_qubits,
+            "logical Z",
+            self.logical_zs.len(),
+            std::slice::from_ref(&logical_z),
+        )?;
         self.logical_zs.push(logical_z);
+        Ok(())
     }
 
     /// Adds a logical X operator.
-    pub fn add_logical_x(&mut self, logical_x: PauliString) {
+    ///
+    /// # Errors
+    /// Returns an error if the operator acts outside `num_qubits`.
+    pub fn add_logical_x(&mut self, logical_x: PauliString) -> Result<()> {
+        Self::validate_operator_width(
+            self.num_qubits,
+            "logical X",
+            self.logical_xs.len(),
+            std::slice::from_ref(&logical_x),
+        )?;
         self.logical_xs.push(logical_x);
+        Ok(())
     }
 
     /// Returns the code parameters as a string in [[n, k, d]] notation.
@@ -956,13 +1012,13 @@ impl StabilizerCodeSpec {
     ///
     /// # Errors
     ///
-    /// Returns an error if logical operator discovery fails.
+    /// Returns an error if the code specification is invalid or logical operator discovery fails.
     pub fn from_stabilizer_code(
         code: &crate::StabilizerCode,
     ) -> std::result::Result<Self, crate::LogicalDiscoveryError> {
         let mut spec =
             Self::from_stabilizers(code.num_qubits(), code.group().stabilizers().to_vec())
-                .map_err(|_| crate::LogicalDiscoveryError::StabilizersNotIndependent)?;
+                .map_err(crate::LogicalDiscoveryError::from)?;
         spec.discover_logicals()?;
         Ok(spec)
     }
@@ -1210,7 +1266,8 @@ impl StabilizerCodeSpecBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the number of logical X and Z operators don't match.
+    /// Returns an error if the logical lists differ in length, stabilizers are
+    /// linearly dependent, or an operator acts outside `num_qubits`.
     pub fn build(self) -> Result<StabilizerCodeSpec> {
         StabilizerCodeSpec::new(
             self.num_qubits,
@@ -1262,12 +1319,25 @@ impl StabilizerCodeSpecBuilder {
     /// Returns an error if:
     /// - The stabilizers don't all commute
     /// - The stabilizers are linearly dependent
+    /// - An operator acts outside `num_qubits`
     /// - Discovery fails for any other reason
     pub fn build_with_discovered_logicals(
         self,
     ) -> std::result::Result<StabilizerCodeSpec, crate::LogicalDiscoveryError> {
+        StabilizerCodeSpec::validate_operator_width(
+            self.num_qubits,
+            "logical Z",
+            0,
+            &self.logical_zs,
+        )?;
+        StabilizerCodeSpec::validate_operator_width(
+            self.num_qubits,
+            "logical X",
+            0,
+            &self.logical_xs,
+        )?;
         let mut code = StabilizerCodeSpec::from_stabilizers(self.num_qubits, self.stabilizers)
-            .map_err(|_| crate::LogicalDiscoveryError::StabilizersNotIndependent)?;
+            .map_err(crate::LogicalDiscoveryError::from)?;
         code.discover_logicals()?;
         Ok(code)
     }
@@ -1277,6 +1347,166 @@ impl StabilizerCodeSpecBuilder {
 mod tests {
     use super::*;
     use pecos_core::{Pauli, Zs};
+
+    fn assert_out_of_bounds(role: &'static str, result: Result<StabilizerCodeSpec>) {
+        assert_eq!(
+            result.unwrap_err(),
+            StabilizerCodeSpecError::QubitOutOfBounds {
+                role,
+                index: 0,
+                qubit: 5,
+                num_qubits: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn width_error_identifies_operator_role_and_index() {
+        let error = StabilizerCodeSpec::with_destabilizers(
+            3,
+            vec![],
+            vec![PauliString::x(0), PauliString::z(5)],
+            vec![],
+            vec![],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            StabilizerCodeSpecError::QubitOutOfBounds {
+                role: "destabilizer",
+                index: 1,
+                qubit: 5,
+                num_qubits: 3,
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "destabilizer operator 1: qubit 5 is outside num_qubits 3"
+        );
+    }
+
+    #[test]
+    fn constructors_reject_out_of_width_operators() {
+        let outside = PauliString::z(5);
+        let inside = PauliString::x(0);
+        assert_out_of_bounds(
+            "stabilizer",
+            StabilizerCodeSpec::new(3, vec![outside.clone()], vec![], vec![]),
+        );
+        assert_out_of_bounds(
+            "logical Z",
+            StabilizerCodeSpec::new(3, vec![], vec![outside.clone()], vec![inside.clone()]),
+        );
+        assert_out_of_bounds(
+            "logical X",
+            StabilizerCodeSpec::new(3, vec![], vec![inside], vec![outside.clone()]),
+        );
+        assert_out_of_bounds(
+            "destabilizer",
+            StabilizerCodeSpec::with_destabilizers(
+                3,
+                vec![],
+                vec![outside.clone()],
+                vec![],
+                vec![],
+            ),
+        );
+        assert_out_of_bounds(
+            "stabilizer",
+            StabilizerCodeSpec::from_stabilizers(3, vec![outside]),
+        );
+    }
+
+    #[test]
+    fn appenders_reject_out_of_width_without_mutation() {
+        let mut spec = StabilizerCodeSpec::from_stabilizers(3, vec![]).unwrap();
+        spec.add_logical_z(PauliString::z(2)).unwrap();
+        spec.add_logical_x(PauliString::x(2)).unwrap();
+        for (role, result) in [
+            ("logical Z", spec.add_logical_z(PauliString::z(3))),
+            ("logical X", spec.add_logical_x(PauliString::x(3))),
+        ] {
+            assert_eq!(
+                result.unwrap_err(),
+                StabilizerCodeSpecError::QubitOutOfBounds {
+                    role,
+                    index: 1,
+                    qubit: 3,
+                    num_qubits: 3
+                }
+            );
+        }
+        assert_eq!(spec.logical_zs(), &[PauliString::z(2)]);
+        assert_eq!(spec.logical_xs(), &[PauliString::x(2)]);
+        assert!(spec.to_string().contains("+IIZ"));
+    }
+
+    #[test]
+    fn builders_reject_out_of_width_operators() {
+        for (role, builder) in [
+            (
+                "stabilizer",
+                StabilizerCodeSpec::builder(3).check(PauliString::z(5)),
+            ),
+            (
+                "stabilizer",
+                StabilizerCodeSpec::builder(3).stabilizer_pauli(PauliString::z(5)),
+            ),
+            (
+                "logical Z",
+                StabilizerCodeSpec::builder(3)
+                    .logical_z(PauliString::z(5))
+                    .logical_x(PauliString::x(0)),
+            ),
+            (
+                "logical X",
+                StabilizerCodeSpec::builder(3)
+                    .logical_z_pauli(PauliString::z(0))
+                    .logical_x_pauli(PauliString::x(5)),
+            ),
+        ] {
+            assert_out_of_bounds(role, builder.clone().build());
+            assert_out_of_bounds(role, builder.clone().build_verified());
+            assert!(matches!(
+                builder.build_with_discovered_logicals(),
+                Err(crate::LogicalDiscoveryError::InvalidCodeSpec(
+                    StabilizerCodeSpecError::QubitOutOfBounds {
+                        qubit: 5,
+                        num_qubits: 3,
+                        index: 0,
+                        ..
+                    }
+                ))
+            ));
+        }
+    }
+
+    #[test]
+    fn width_validation_allows_identity_and_exact_boundary() {
+        let identity = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            vec![(Pauli::I, pecos_core::QubitId::new(5))],
+        );
+        let spec = StabilizerCodeSpec::with_destabilizers(
+            3,
+            vec![PauliString::z(2)],
+            vec![identity.clone()],
+            vec![identity.clone()],
+            vec![identity],
+        )
+        .unwrap();
+        assert!(spec.to_string().contains("+IIZ"));
+        assert!(StabilizerCodeSpec::from_stabilizers(0, vec![]).is_ok());
+        assert!(matches!(
+            StabilizerCodeSpec::from_stabilizers(0, vec![PauliString::x(0)]),
+            Err(StabilizerCodeSpecError::QubitOutOfBounds {
+                role: "stabilizer",
+                index: 0,
+                qubit: 0,
+                num_qubits: 0
+            })
+        ));
+    }
 
     /// Helper to create a `PauliString` from a simple specification.
     fn pauli_string(paulis: &[(Pauli, usize)]) -> PauliString {

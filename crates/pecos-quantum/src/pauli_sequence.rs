@@ -1069,21 +1069,25 @@ impl PauliSequence {
     ///
     /// Use this when the system has more qubits than the generators touch
     /// (e.g., a stabilizer code embedded in a larger system).
+    ///
+    /// # Panics
+    /// Panics if a non-identity operator acts outside `num_qubits`.
     #[must_use]
     pub fn centralizer_in(&self, num_qubits: usize) -> Vec<Vec<u8>> {
+        for generator in &self.paulis {
+            generator
+                .validate_width(num_qubits)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
         let n = num_qubits;
         let mut mat = F2Matrix::zeros(self.paulis.len(), 2 * n);
 
         for (row_idx, generator) in self.paulis.iter().enumerate() {
             for q in generator.x_positions() {
-                if q < n {
-                    mat.set(row_idx, q, 1);
-                }
+                mat.set(row_idx, q, 1);
             }
             for q in generator.z_positions() {
-                if q < n {
-                    mat.set(row_idx, n + q, 1);
-                }
+                mat.set(row_idx, n + q, 1);
             }
         }
 
@@ -1132,8 +1136,7 @@ fn symplectic_inner_product(x_a: &[u64], z_a: &[u64], x_b: &[u64], z_b: &[u64]) 
 impl PauliSequence {
     /// Returns the dense string representation, one Pauli per line.
     ///
-    /// Each line uses `pauli_str` padded to `num_qubits`, without phase prefix.
-    /// This is the standard tableau format.
+    /// Each line includes its phase prefix and is padded to `num_qubits`.
     ///
     /// # Examples
     ///
@@ -1141,14 +1144,14 @@ impl PauliSequence {
     /// use pecos_quantum::PauliSequence;
     ///
     /// let seq: PauliSequence = "ZZI\nIZZ".parse().unwrap();
-    /// assert_eq!(seq.to_dense_str(), "ZZI\nIZZ");
+    /// assert_eq!(seq.to_dense_str(), "+ZZI\n+IZZ");
     /// ```
     #[must_use]
     pub fn to_dense_str(&self) -> String {
         let n = self.num_qubits();
         self.paulis
             .iter()
-            .map(|p| p.pauli_str(Some(n)))
+            .map(|p| p.to_dense_str(Some(n)))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1233,6 +1236,45 @@ impl fmt::Display for PauliSequence {
 mod tests {
     use super::*;
     use pecos_core::pauli::*;
+
+    #[test]
+    #[should_panic(expected = "qubit 5 is outside num_qubits 3")]
+    fn centralizer_rejects_out_of_width_support() {
+        let _ = PauliSequence::new(vec![Z(5)]).centralizer_in(3);
+    }
+
+    #[test]
+    fn centralizer_ignores_out_of_width_identity() {
+        let p = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            vec![(pecos_core::Pauli::I, pecos_core::QubitId::new(5))],
+        );
+        assert_eq!(PauliSequence::new(vec![p]).centralizer_in(1).len(), 2);
+    }
+
+    #[test]
+    fn sparse_rejects_duplicate_qubits_in_line() {
+        assert!("Z2\nX0 Z0".parse::<PauliSequence>().is_err());
+    }
+
+    #[test]
+    fn test_dense_phase_only_roundtrip() {
+        let original: PauliSequence = "+I\n-I\n+iI\n-iI".parse().unwrap();
+        assert_eq!(original.to_dense_str(), "+\n-\n+i\n-i");
+        assert_eq!(
+            original.to_dense_str().parse::<PauliSequence>().unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn test_signed_dense_roundtrip() {
+        let original: PauliSequence = "-XX\n+ZZ".parse().unwrap();
+        assert_eq!(original.to_dense_str(), "-XX\n+ZZ");
+        assert_eq!(original.to_string(), original.to_dense_str());
+        let parsed: PauliSequence = original.to_dense_str().parse().unwrap();
+        assert_eq!(parsed.paulis(), original.paulis());
+    }
 
     #[test]
     fn test_new() {
@@ -1414,7 +1456,7 @@ mod tests {
     fn test_display() {
         let gens = PauliSequence::from_strs(&["ZZI", "IZZ"]).unwrap();
         let s = format!("{gens}");
-        assert_eq!(s, "ZZI\nIZZ");
+        assert_eq!(s, "+ZZI\n+IZZ");
     }
 
     #[test]
@@ -1488,7 +1530,7 @@ mod tests {
     #[test]
     fn test_to_dense_str() {
         let seq = PauliSequence::from_strs(&["ZZI", "IZZ"]).unwrap();
-        assert_eq!(seq.to_dense_str(), "ZZI\nIZZ");
+        assert_eq!(seq.to_dense_str(), "+ZZI\n+IZZ");
     }
 
     #[test]
@@ -1499,11 +1541,12 @@ mod tests {
 
     #[test]
     fn test_roundtrip_dense() {
-        let original = PauliSequence::from_strs(&["XZI", "IYZ"]).unwrap();
+        let original = PauliSequence::from_strs(&["-XZI", "+iIYZ", "-iX", "+I"]).unwrap();
         let s = original.to_dense_str();
         let roundtripped: PauliSequence = s.parse().unwrap();
         assert_eq!(roundtripped.len(), original.len());
         assert_eq!(roundtripped.num_qubits(), original.num_qubits());
+        assert_eq!(roundtripped, original);
     }
 
     #[test]

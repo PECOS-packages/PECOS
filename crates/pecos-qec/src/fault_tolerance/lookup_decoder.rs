@@ -71,6 +71,10 @@ impl LookupDecoder {
     /// Uses the standard per-gate circuit noise model: each gate faults with
     /// probability p, and each non-identity Pauli is equally likely (p/3 for
     /// 1-qubit, p/15 for 2-qubit). Idle gates with T1/T2 use biased noise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the influence map repeats a qubit at a gate location.
     #[must_use]
     pub fn build(map: &DagFaultInfluenceMap, noise: &NoiseConfig, max_weight: usize) -> Self {
         let observable_ids = observable_ids(map);
@@ -137,7 +141,19 @@ impl LookupDecoder {
             } else if let Some(weights) = custom_weights {
                 events
                     .iter()
-                    .map(|event| p * weights.weight_for(&event.pauli))
+                    .map(|event| {
+                        let weight = if n_qubits == 2 {
+                            weights.two_qubit_weight_for_on(
+                                loc.clifford,
+                                &event.pauli,
+                                [loc.qubits[0], loc.qubits[1]],
+                                noise.p2_replacement_approximation,
+                            )
+                        } else {
+                            weights.weight_for(&event.pauli)
+                        };
+                        p * weight
+                    })
                     .collect()
             } else {
                 // Event count is a small integer; precision loss is not a concern.

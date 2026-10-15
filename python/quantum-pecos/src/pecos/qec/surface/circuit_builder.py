@@ -3503,7 +3503,9 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         p2: Two-qubit depolarizing error rate
         p2_weights: Optional relative probabilities over the 15 non-identity
             two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
-            1.0; ``p2`` remains the total two-qubit error rate.
+            1.0; ``p2`` remains the total two-qubit error rate. In a label
+            ``"AB"``, ``A`` acts on the gate's first operand and ``B`` on its
+            second, whatever their qubit indices.
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
 
@@ -3995,7 +3997,9 @@ def generate_dem_from_tick_circuit(
         p2: Two-qubit depolarizing error rate
         p2_weights: Optional relative probabilities over the 15 non-identity
             two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
-            1.0; ``p2`` remains the total two-qubit error rate.
+            1.0; ``p2`` remains the total two-qubit error rate. In a label
+            ``"AB"``, ``A`` acts on the gate's first operand and ``B`` on its
+            second, whatever their qubit indices.
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
         p_idle: Optional idle noise rate per explicit idle-gate time unit.

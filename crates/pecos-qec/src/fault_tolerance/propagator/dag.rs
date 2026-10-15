@@ -1093,36 +1093,32 @@ impl DemOutputKind {
 pub struct DemOutputMetadata {
     /// The output role.
     pub kind: DemOutputKind,
-    /// Pauli string whose flip is tracked.
-    ///
-    /// For observables this is the Pauli associated with the measurement-record
-    /// observable. For tracked Paulis this is the unmeasured tracked Pauli
-    /// annotated at a circuit point.
-    pub pauli: PauliString,
+    /// The single-time operator for tracked Paulis; `None` for observables.
+    pub pauli: Option<PauliString>,
     /// Optional user label.
     pub label: Option<String>,
 }
 
 impl DemOutputMetadata {
-    /// Creates DEM output metadata.
+    /// Creates metadata for a tracked Pauli, normalizing its irrelevant phase.
     #[must_use]
-    pub fn new(kind: DemOutputKind, mut pauli: PauliString, label: Option<String>) -> Self {
-        // A tracked Pauli op flip is an anticommutation property; global phase has
-        // no meaning for DEM/sampler output.
+    pub fn tracked_pauli(mut pauli: PauliString) -> Self {
         pauli.set_phase(QuarterPhase::PlusOne);
-        Self { kind, pauli, label }
+        Self {
+            kind: DemOutputKind::TrackedPauli,
+            pauli: Some(pauli),
+            label: None,
+        }
     }
 
-    /// Creates metadata for a tracked Pauli.
+    /// Creates metadata for an observable defined by measurement records.
     #[must_use]
-    pub fn tracked_pauli(pauli: PauliString) -> Self {
-        Self::new(DemOutputKind::TrackedPauli, pauli, None)
-    }
-
-    /// Creates metadata for an observable.
-    #[must_use]
-    pub fn observable(pauli: PauliString) -> Self {
-        Self::new(DemOutputKind::Observable, pauli, None)
+    pub fn observable() -> Self {
+        Self {
+            kind: DemOutputKind::Observable,
+            pauli: None,
+            label: None,
+        }
     }
 
     /// Sets a user-facing op label.
@@ -1256,6 +1252,10 @@ impl GateFaultLocation<'_> {
     /// single-qubit component has a non-trivial effect in the influence
     /// map. E.g., a measurement-before location might only yield X
     /// faults since Z before MZ is invisible.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the influence map repeats an active qubit at this gate location.
     #[must_use]
     pub fn possible_faults(&self) -> Vec<pecos_core::PauliString> {
         let active = self.active_paulis_per_qubit();
@@ -1294,6 +1294,10 @@ impl GateFaultLocation<'_> {
 
     /// All fault events that have non-trivial effects (flip at least one
     /// detector or logical).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the influence map repeats an active qubit at this gate location.
     #[must_use]
     pub fn events(&self) -> Vec<FaultEffect> {
         self.possible_faults()
@@ -1308,6 +1312,9 @@ impl GateFaultLocation<'_> {
     /// Use this for probability-correct enumeration (e.g., ML decoder).
     /// Events with empty detectors and `dem_outputs` are "trivial" faults that
     /// happen with real probability but don't change any observable.
+    ///
+    /// # Panics
+    /// Panics if the public `qubits` field contains repeated qubits.
     #[must_use]
     pub fn all_events(&self) -> Vec<FaultEffect> {
         self.all_physical_paulis()
@@ -1645,6 +1652,10 @@ impl DagFaultInfluenceMap {
     ///     }
     /// });
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the influence map repeats an active qubit at a gate location.
     pub fn for_each_fault_combo(&self, weight: usize, mut f: impl FnMut(&FaultCombo)) {
         let locs = self.gate_fault_locations();
 
@@ -3421,7 +3432,7 @@ mod tests {
         ));
         map.dem_output_metadata = vec![
             DemOutputMetadata::tracked_pauli(pecos_core::PauliString::xs(&[0])),
-            DemOutputMetadata::observable(pecos_core::PauliString::zs(&[0])),
+            DemOutputMetadata::observable(),
             DemOutputMetadata::tracked_pauli(pecos_core::PauliString::zs(&[1])),
         ];
 

@@ -1137,9 +1137,17 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_x(mut slf: PyRefMut<'_, Self>, qubits: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_tracked_x(
+        mut slf: PyRefMut<'_, Self>,
+        qubits: Vec<usize>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        if let Some(&qubit) = pecos_core::duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string(),
+            ));
+        }
         slf.tracked_x_qubits = qubits;
-        slf
+        Ok(slf)
     }
 
     /// Add a Z-string tracked Pauli.
@@ -1151,9 +1159,17 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_z(mut slf: PyRefMut<'_, Self>, qubits: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_tracked_z(
+        mut slf: PyRefMut<'_, Self>,
+        qubits: Vec<usize>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        if let Some(&qubit) = pecos_core::duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string(),
+            ));
+        }
         slf.tracked_z_qubits = qubits;
-        slf
+        Ok(slf)
     }
 
     /// Add a tracked Pauli.
@@ -1183,11 +1199,13 @@ impl PyInfluenceBuilder {
                 Ok((pauli, pecos_core::QubitId::from(*qubit)))
             })
             .collect::<PyResult<_>>()?;
-        slf.tracked_paulis
-            .push(pecos_core::PauliString::with_phase_and_paulis(
+        slf.tracked_paulis.push(
+            pecos_core::PauliString::try_with_phase_and_paulis(
                 pecos_core::QuarterPhase::PlusOne,
                 paulis,
-            ));
+            )
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
         Ok(slf)
     }
 

@@ -94,9 +94,6 @@ impl BitAnd for PauliString {
         let mut paulis: Vec<(Pauli, QubitId)> = self.iter_pairs().collect();
         paulis.extend(rhs.iter_pairs());
 
-        // Sort by qubit for canonical form
-        paulis.sort_by_key(|(_, q)| *q);
-
         PauliString::with_phase_and_paulis(new_phase, paulis)
     }
 }

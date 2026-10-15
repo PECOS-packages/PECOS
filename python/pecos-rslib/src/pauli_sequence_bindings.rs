@@ -166,7 +166,7 @@ impl PyPauliSequence {
     // String representations
     // ========================================================================
 
-    /// Dense string representation (one Pauli per line, padded to num_qubits).
+    /// Dense string representation (one Pauli per line, with phase prefix, padded to num_qubits).
     fn to_dense_str(&self) -> String {
         self.inner.to_dense_str()
     }

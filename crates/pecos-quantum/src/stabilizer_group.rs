@@ -385,6 +385,7 @@ impl PauliStabilizerGroup {
 
     /// Returns the dense string representation, one stabilizer per line.
     ///
+    /// Includes phase prefixes and pads each line to the group width.
     /// Delegates to [`PauliSequence::to_dense_str`].
     #[must_use]
     pub fn to_dense_str(&self) -> String {
@@ -538,6 +539,20 @@ mod tests {
     use pecos_core::{Pauli, PauliOperator};
 
     #[test]
+    fn sparse_rejects_duplicate_qubits_in_element() {
+        assert!("Z2\nX0 Z0".parse::<PauliStabilizerGroup>().is_err());
+    }
+
+    #[test]
+    fn test_signed_dense_roundtrip() {
+        let original: PauliStabilizerGroup = "-XX\n+ZZ".parse().unwrap();
+        assert_eq!(original.to_dense_str(), "-XX\n+ZZ");
+        assert_eq!(original.to_string(), original.to_dense_str());
+        let parsed: PauliStabilizerGroup = original.to_dense_str().parse().unwrap();
+        assert_eq!(parsed.stabilizers(), original.stabilizers());
+    }
+
+    #[test]
     fn test_repetition_code() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         assert_eq!(stab.rank(), 2);
@@ -602,7 +617,7 @@ mod tests {
     fn test_display() {
         let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
         let s = format!("{stab}");
-        assert_eq!(s, "ZZI\nIZZ");
+        assert_eq!(s, "+ZZI\n+IZZ");
     }
 
     #[test]
@@ -643,7 +658,7 @@ mod tests {
     #[test]
     fn test_to_dense_str() {
         let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
-        assert_eq!(stab.to_dense_str(), "ZZI\nIZZ");
+        assert_eq!(stab.to_dense_str(), "+ZZI\n+IZZ");
     }
 
     #[test]
@@ -654,11 +669,12 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let original = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
+        let original = PauliStabilizerGroup::from_strs(&["-ZZI", "+IZZ"]).unwrap();
         let s = original.to_dense_str();
         let roundtripped: PauliStabilizerGroup = s.parse().unwrap();
         assert_eq!(roundtripped.rank(), original.rank());
         assert_eq!(roundtripped.num_qubits(), original.num_qubits());
+        assert_eq!(roundtripped.stabilizers(), original.stabilizers());
     }
 
     // ========================================================================

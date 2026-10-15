@@ -133,6 +133,12 @@ from pecos_rslib import PauliStabilizerGroup
 # Dense notation (one string per line)
 group = PauliStabilizerGroup.from_str("ZZI\nIZZ")
 
+# Dense output preserves each generator's sign.
+signed = PauliStabilizerGroup.from_str("-XX\n+ZZ")
+assert signed.to_dense_str() == "-XX\n+ZZ"
+assert str(signed) == signed.to_dense_str()
+assert PauliStabilizerGroup.from_str(str(signed)).stabilizers() == signed.stabilizers()
+
 # Sparse notation also supported
 group = PauliStabilizerGroup.from_str("Z0 Z1\nZ1 Z2")
 ```

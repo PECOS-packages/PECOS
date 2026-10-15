@@ -1816,10 +1816,7 @@ fn parse_python_pauli_string(text: &str) -> Option<PauliString> {
         paulis.push((p, pecos_core::QubitId(qubit)));
     }
 
-    Some(PauliString::with_phase_and_paulis(
-        pecos_core::QuarterPhase::PlusOne,
-        paulis,
-    ))
+    PauliString::try_with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis).ok()
 }
 
 fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExpr> {
@@ -1842,7 +1839,8 @@ fn channel_expr_from_python_gate(gate: &Bound<'_, PyAny>) -> PyResult<ChannelExp
             };
             paulis.push((pauli, QubitId(qubit)));
         }
-        let pauli_string = PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis);
+        let pauli_string = PauliString::try_with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         ops.push((probability, pecos_core::UnitaryRep::from(pauli_string)));
     }
     Ok(ChannelExpr::MixedUnitary(ops))

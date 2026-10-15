@@ -27,17 +27,16 @@ use std::collections::BTreeMap;
 #[pyclass(name = "PauliProp", module = "pecos_rslib")]
 pub struct PyPauliProp {
     inner: PauliProp,
-    num_qubits: Option<usize>,
     track_sign: bool,
 }
 
 #[cfg(test)]
 crate::simulator_utils::direct_surface_test!(
     direct_surface_matches_predicate,
-    { PyPauliProp::new(Some(2), false) },
+    { PyPauliProp::new(false) },
     ignored_forcing = (
         |seed: u64| {
-            let mut sim = PyPauliProp::new(Some(2), true);
+            let mut sim = PyPauliProp::new(true);
             if seed & 1 != 0 {
                 sim.inner.track_y(&[0]);
             }
@@ -161,33 +160,17 @@ impl PyPauliProp {
     /// Create a new `PauliProp` simulator
     ///
     /// Args:
-    ///     `num_qubits`: Optional number of qubits (for string representation)
     ///     `track_sign`: Whether to track sign and phase
     #[new]
-    #[pyo3(signature = (num_qubits=None, *, track_sign=false))]
-    pub fn new(num_qubits: Option<usize>, track_sign: bool) -> Self {
+    #[pyo3(signature = (*, track_sign=false))]
+    pub fn new(track_sign: bool) -> Self {
         let inner = if track_sign {
-            if let Some(n) = num_qubits {
-                PauliProp::with_sign_tracking(n)
-            } else {
-                // Default to tracking with 0 qubits if not specified
-                PauliProp::with_sign_tracking(0)
-            }
+            PauliProp::with_sign_tracking()
         } else {
             PauliProp::new()
         };
 
-        PyPauliProp {
-            inner,
-            num_qubits,
-            track_sign,
-        }
-    }
-
-    /// Get `num_qubits` (for backwards compatibility)
-    #[getter]
-    pub fn num_qubits(&self) -> Option<usize> {
-        self.num_qubits
+        PyPauliProp { inner, track_sign }
     }
 
     /// Get `track_sign` setting (for backwards compatibility)
@@ -666,8 +649,12 @@ impl PyPauliProp {
     }
 
     /// Get the dense string representation (for `PauliProp`)
-    pub fn dense_string(&self) -> String {
-        self.inner.dense_string()
+    /// Raises `ValueError` if a tracked qubit is outside the requested dense width.
+    #[pyo3(signature = (num_qubits=None))]
+    pub fn dense_string(&self, num_qubits: Option<usize>) -> PyResult<String> {
+        self.inner
+            .try_dense_string(num_qubits)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Get the full Pauli string with sign
@@ -676,8 +663,12 @@ impl PyPauliProp {
     }
 
     /// Get the full dense Pauli string with sign
-    pub fn to_dense_string(&self) -> String {
-        self.inner.to_dense_string()
+    /// Raises `ValueError` if a tracked qubit is outside the requested dense width.
+    #[pyo3(signature = (num_qubits=None))]
+    pub fn to_dense_string(&self, num_qubits: Option<usize>) -> PyResult<String> {
+        self.inner
+            .try_to_dense_string(num_qubits)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     // Clifford gates
@@ -818,7 +809,6 @@ impl PyPauliProp {
                 pyo3::types::PyTuple::new(
                     py,
                     &[
-                        self.num_qubits.into_pyobject(py)?.into_any(),
                         self.track_sign.into_pyobject(py)?.to_owned().into_any(),
                         faults.into_bound(py).into_any(),
                         sign.into_pyobject(py)?.to_owned().into_any(),
@@ -832,13 +822,12 @@ impl PyPauliProp {
 
     #[staticmethod]
     fn _from_pickle(
-        num_qubits: Option<usize>,
         track_sign: bool,
         faults: &Bound<'_, PyDict>,
         sign: bool,
         img: u8,
     ) -> PyResult<Self> {
-        let mut obj = PyPauliProp::new(num_qubits, track_sign);
+        let mut obj = PyPauliProp::new(track_sign);
         obj.add_paulis(faults)?;
         // Restore sign: if stored sign is negative, flip it (default is false/positive)
         if sign {

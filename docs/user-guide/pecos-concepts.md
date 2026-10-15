@@ -139,3 +139,21 @@ For standard surface-code memory experiments:
 Use the lower-level `TickCircuit`, `DagCircuit`, `DemBuilder`, and fault-catalog
 APIs when you are developing new circuit families, new analysis tools, or new
 decoder integrations.
+
+## Inspecting circuit annotations
+
+`DagCircuit.annotations()` and `TickCircuit.annotations()` return stored data
+without resolving measurement references. Dictionaries contain `kind` and
+`label`; tracked Paulis also contain `pauli`, while detector and observable
+entries contain ordered `measurement_ids`, including duplicates. Annotations
+remain inspectable even after a referenced measurement is removed.
+
+Use `circuit.measured_paulis(measurement_ids)` to resolve a batch in one circuit
+scan. It returns ordered `(measurement_id, "X" or "Z", qubit)` tuples, including
+repeated IDs, or raises `ValueError` for the first unresolved ID in input order.
+`circuit.measured_pauli(measurement_id)` resolves one ID to `(basis, qubit)`.
+Tick circuits retain no removal record, so removed IDs report that they do not
+name a measurement. Measurements of the same qubit at different times remain
+distinct: an MZ followed by an MX resolves to Z and X respectively.
+Circuit detector and observable definitions contain measurement references,
+not Pauli operators; those measurement records define their parity.

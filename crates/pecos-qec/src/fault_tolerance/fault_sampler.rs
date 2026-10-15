@@ -1326,11 +1326,13 @@ fn pauli_pair_to_string(p1: PauliType, q1: usize, p2: PauliType, q2: usize) -> P
 fn parse_tracked_pauli_annotations(tc: &TickCircuit) -> Vec<PauliString> {
     tc.annotations()
         .iter()
-        .filter(|ann| matches!(ann.kind, AnnotationKind::TrackedPauli))
-        .map(|ann| {
-            let mut pauli = ann.pauli.clone();
-            pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
-            pauli
+        .filter_map(|ann| match &ann.kind {
+            AnnotationKind::TrackedPauli { pauli } => {
+                let mut pauli = pauli.clone();
+                pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+                Some(pauli)
+            }
+            _ => None,
         })
         .collect()
 }
@@ -3217,7 +3219,7 @@ mod tests {
         assert_eq!(round_tripped.annotations().len(), 1);
         assert!(matches!(
             round_tripped.annotations()[0].kind,
-            AnnotationKind::TrackedPauli
+            AnnotationKind::TrackedPauli { .. }
         ));
 
         let catalog = build_fault_catalog(

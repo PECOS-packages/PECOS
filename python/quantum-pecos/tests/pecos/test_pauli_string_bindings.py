@@ -4,7 +4,7 @@
 
 import numpy as np
 import pytest
-from pecos_rslib import H, Pauli, PauliString, X, Xs, Y, Ys, Z, Zs
+from pecos_rslib import H, Pauli, PauliSequence, PauliStabilizerGroup, PauliString, X, Xs, Y, Ys, Z, Zs
 
 
 def test_pauli_string_from_str_accepts_dense_and_sparse_formats() -> None:
@@ -93,10 +93,11 @@ def test_pauli_string_tuple_constructor_canonicalizes_for_hashing() -> None:
 
 
 def test_pauli_string_tuple_constructor_rejects_duplicate_qubits() -> None:
-    with pytest.raises(ValueError, match="multiple non-identity"):
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
         PauliString([(Pauli.X, 0), (Pauli.Z, 0)])
 
-    assert PauliString([(Pauli.I, 0), (Pauli.X, 0)]) == X(0)
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
+        PauliString([(Pauli.I, 0), (Pauli.X, 0)])
 
 
 def test_pauli_string_tensor_rejects_overlapping_qubits() -> None:
@@ -214,3 +215,58 @@ def test_constructor_helpers_accept_numpy_indices(integer_type: type) -> None:
 def test_constructor_implicit_paulis() -> None:
     """Shape selection retains the implicit-index form."""
     assert PauliString([Pauli.X, Pauli.I, Pauli.Z]) == X(0) * Z(2)
+
+
+@pytest.mark.parametrize("width", [0, 3, 5])
+def test_dense_str_rejects_truncation(width: int) -> None:
+    pauli = PauliString.from_sparse_str("X0 Z5")
+    with pytest.raises(ValueError, match=rf"qubit \d+ is outside num_qubits {width}"):
+        pauli.to_dense_str(width)
+    assert pauli.to_dense_str(6) == "+XIIIIZ"
+
+
+def test_signed_sequence_dense_roundtrip() -> None:
+    original = PauliSequence.from_str("-X\n+iIZ\n-iY\n+I")
+    dense = "-XI\n+iIZ\n-iYI\n+II"
+    assert original.to_dense_str() == dense
+    assert str(original) == dense
+    assert PauliSequence.from_str(dense).paulis() == original.paulis()
+
+
+def test_signed_stabilizer_dense_roundtrip() -> None:
+    original = PauliStabilizerGroup([-(X(0) & X(1)), Z(0) & Z(1)])
+    dense = "-XX\n+ZZ"
+    assert original.to_dense_str() == dense
+    assert str(original) == dense
+    assert PauliStabilizerGroup.from_str(dense).stabilizers() == original.stabilizers()
+
+
+@pytest.mark.parametrize("text", ["X0 Z0", "X0 X0", "Z1 Z1 X0"])
+def test_sparse_parser_rejects_duplicate_qubits(text: str) -> None:
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit"):
+        PauliString.from_sparse_str(text)
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit"):
+        PauliSequence.from_str("Z2\n" + text)
+
+
+def test_multi_qubit_constructors_reject_duplicates() -> None:
+    from pecos_rslib import Xs, Ys, Zs
+
+    for constructor in [Xs, Ys, Zs]:
+        with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 1"):
+            constructor([1, 1])
+
+
+def test_pauli_string_order_and_identities_do_not_affect_keys() -> None:
+    sorted_pauli = Xs([0, 2])
+    unsorted_pauli = Xs([2, 0])
+    with_identity = PauliString([(Pauli.X, 2), (Pauli.I, 5), (Pauli.X, 0)])
+    for pauli in (unsorted_pauli, with_identity):
+        assert pauli == sorted_pauli
+        assert hash(pauli) == hash(sorted_pauli)
+        assert pauli in {sorted_pauli}
+        assert {sorted_pauli: "found"}[pauli] == "found"
+        assert pauli.weight() == 2
+        assert pauli.get_paulis() == [(Pauli.X, 0), (Pauli.X, 2)]
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
+        PauliString([(Pauli.I, 0), (Pauli.X, 0)])

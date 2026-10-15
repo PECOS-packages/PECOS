@@ -8,7 +8,7 @@
 use super::dem_builder::{
     DemBuilderError, parse_detectors_json, parse_observables_json, record_offset_to_absolute_index,
 };
-use pecos_core::{MeasId, PauliString, QubitId};
+use pecos_core::{MeasId, QubitId};
 use pecos_quantum::{AnnotationKind, Attribute, DagCircuit, PauliAnnotation, TickCircuit};
 use std::collections::BTreeMap;
 
@@ -21,7 +21,7 @@ pub enum DefinitionKind {
     Observable,
 }
 
-/// Circuit-independent annotation input; a Pauli string is not required.
+/// Circuit-independent measurement-readout annotation input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnnotationDefinition {
     /// Detector or observable role.
@@ -30,8 +30,6 @@ pub struct AnnotationDefinition {
     pub measurement_ids: Vec<MeasId>,
     /// Optional human-readable name.
     pub label: Option<String>,
-    /// Optional Pauli string supplied by the annotation source.
-    pub pauli: Option<PauliString>,
 }
 
 impl AnnotationDefinition {
@@ -51,13 +49,12 @@ impl AnnotationDefinition {
             AnnotationKind::Observable { measurement_ids } => {
                 (DefinitionKind::Observable, measurement_ids)
             }
-            AnnotationKind::TrackedPauli => return None,
+            AnnotationKind::TrackedPauli { .. } => return None,
         };
         Some(Self {
             kind,
             measurement_ids: measurement_ids.clone(),
             label: annotation.label.clone(),
-            pauli: Some(annotation.pauli.clone()),
         })
     }
 }
@@ -77,7 +74,7 @@ pub struct ResolvedDetector {
     pub measurements: Vec<usize>,
 }
 
-/// Resolved observable; metadata alone does not supply a Pauli string.
+/// Resolved observable defined by measurement emission positions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedObservable {
     /// Declared metadata id or index among annotations of this kind.
@@ -86,8 +83,6 @@ pub struct ResolvedObservable {
     pub reference: Option<u8>,
     /// Optional human-readable name.
     pub label: Option<String>,
-    /// Optional Pauli string supplied by the annotation source.
-    pub pauli: Option<PauliString>,
     /// Absolute emission positions, preserving source order and multiplicity.
     pub measurements: Vec<usize>,
 }
@@ -198,7 +193,6 @@ struct Definition {
     coords: Option<Vec<f64>>,
     label: Option<String>,
     fault_sector: Option<String>,
-    pauli: Option<PauliString>,
 }
 
 type Definitions = BTreeMap<u32, Definition>;
@@ -334,7 +328,6 @@ fn merge(
         }
         definition.coords = definition.coords.take().or(annotation.coords);
         definition.label = definition.label.take().or(annotation.label);
-        definition.pauli = annotation.pauli;
         // Keep the metadata reference: annotations cannot supply a noiseless value.
     }
     Ok(metadata)
@@ -388,7 +381,6 @@ pub fn resolve_definitions(
             reference: None,
             coords: entry.coords.map(Vec::from),
             label: entry.label,
-            pauli: None,
         };
         insert_metadata(&mut detectors, "detector", entry.id, definition)?;
     }
@@ -413,7 +405,6 @@ pub fn resolve_definitions(
             coords: None,
             reference: entry.reference,
             label: entry.label,
-            pauli: None,
         };
         insert_metadata(&mut observables, "observable", entry.id, definition)?;
     }
@@ -443,7 +434,6 @@ pub fn resolve_definitions(
                 coords,
                 reference: None,
                 label: annotation.label.clone(),
-                pauli: annotation.pauli.clone(),
             },
         );
     }
@@ -464,7 +454,6 @@ pub fn resolve_definitions(
                 id,
                 reference: d.reference,
                 label: d.label,
-                pauli: d.pauli,
                 measurements: d.measurements,
             })
             .collect(),

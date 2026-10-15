@@ -1600,22 +1600,58 @@ impl PyDagCircuit {
         tracked_id
     }
 
+    /// Resolve a measurement id to ("X" or "Z", qubit).
+    /// Raises ValueError if the identity cannot be resolved to a measurement record.
+    fn measured_pauli(&self, meas_id: usize) -> PyResult<(String, usize)> {
+        self.inner
+            .measured_pauli(pecos_core::MeasId::from_raw(meas_id))
+            .map(|(pauli, qubit)| {
+                (
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Resolve IDs in one circuit scan to (measurement id, "X" or "Z", qubit).
+    /// Preserves input order and duplicates; raises ValueError for the first unresolved ID.
+    fn measured_paulis(&self, meas_ids: Vec<usize>) -> PyResult<Vec<(usize, String, usize)>> {
+        let ids: Vec<_> = meas_ids
+            .iter()
+            .copied()
+            .map(pecos_core::MeasId::from_raw)
+            .collect();
+        let measured = self
+            .inner
+            .measured_paulis(&ids)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(meas_ids
+            .into_iter()
+            .zip(measured)
+            .map(|(id, (pauli, qubit))| {
+                (
+                    id,
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .collect())
+    }
+
     /// Get all annotations as a list of dicts.
     ///
-    /// Each dict has keys: "pauli" (`PauliString`), "kind" (str), "label" (str or None).
+    /// Each dict has "kind" and "label". Tracked Paulis have "pauli";
+    /// readouts have stored "measurement_ids". This method does not resolve IDs.
     fn annotations(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyList>> {
         let list = pyo3::types::PyList::empty(py);
 
         for ann in self.inner.annotations() {
             let dict = pyo3::types::PyDict::new(py);
-            let ps = crate::pauli_bindings::PauliString {
-                inner: ann.pauli.clone(),
-            };
-            dict.set_item("pauli", ps.into_pyobject(py)?)?;
             let kind_str = match &ann.kind {
                 pecos_quantum::AnnotationKind::Detector { .. } => "detector",
                 pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-                pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+                pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
             };
             dict.set_item("kind", kind_str)?;
             match &ann.kind {
@@ -1626,7 +1662,12 @@ impl PyDagCircuit {
                     let ids: Vec<usize> = measurement_ids.iter().map(|id| id.index()).collect();
                     dict.set_item("measurement_ids", ids)?;
                 }
-                pecos_quantum::AnnotationKind::TrackedPauli => {}
+                pecos_quantum::AnnotationKind::TrackedPauli { pauli } => {
+                    let ps = crate::pauli_bindings::PauliString {
+                        inner: pauli.clone(),
+                    };
+                    dict.set_item("pauli", ps.into_pyobject(py)?)?;
+                }
             }
             dict.set_item("label", &ann.label)?;
             list.append(dict)?;
@@ -2366,7 +2407,6 @@ impl PyTickCircuit {
             entry.set_item("id", observable.id)?;
             entry.set_item("measurements", observable.measurements)?;
             entry.set_item("label", observable.label)?;
-            entry.set_item("pauli", observable.pauli.map(|pauli| pauli.to_string()))?;
             entry.set_item("reference", observable.reference)?;
             observables.append(entry)?;
         }
@@ -3092,7 +3132,7 @@ impl PyTickCircuit {
             .inner
             .annotations()
             .iter()
-            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::TrackedPauli))
+            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::TrackedPauli { .. }))
             .count();
         if let Some(l) = label {
             self.inner.tracked_pauli_labeled(&l, pauli.inner.clone());
@@ -3102,19 +3142,56 @@ impl PyTickCircuit {
         tracked_id
     }
 
-    /// Get all annotations.
+    /// Resolve a measurement id to ("X" or "Z", qubit).
+    /// Raises ValueError if the identity cannot be resolved to a measurement record.
+    fn measured_pauli(&self, meas_id: usize) -> PyResult<(String, usize)> {
+        self.inner
+            .measured_pauli(pecos_core::MeasId::from_raw(meas_id))
+            .map(|(pauli, qubit)| {
+                (
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Resolve IDs in one circuit scan to (measurement id, "X" or "Z", qubit).
+    /// Preserves input order and duplicates; raises ValueError for the first unresolved ID.
+    /// Tick circuits have no removal record: removed IDs report "does not name a measurement".
+    fn measured_paulis(&self, meas_ids: Vec<usize>) -> PyResult<Vec<(usize, String, usize)>> {
+        let ids: Vec<_> = meas_ids
+            .iter()
+            .copied()
+            .map(pecos_core::MeasId::from_raw)
+            .collect();
+        let measured = self
+            .inner
+            .measured_paulis(&ids)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(meas_ids
+            .into_iter()
+            .zip(measured)
+            .map(|(id, (pauli, qubit))| {
+                (
+                    id,
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .collect())
+    }
+
+    /// Get annotations with "kind" and "label", plus "pauli" for tracked Paulis
+    /// or stored "measurement_ids" for readouts. This method does not resolve IDs.
     fn annotations(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyList>> {
         let list = pyo3::types::PyList::empty(py);
         for ann in self.inner.annotations() {
             let dict = pyo3::types::PyDict::new(py);
-            let ps = crate::pauli_bindings::PauliString {
-                inner: ann.pauli.clone(),
-            };
-            dict.set_item("pauli", ps.into_pyobject(py)?)?;
             let kind_str = match &ann.kind {
                 pecos_quantum::AnnotationKind::Detector { .. } => "detector",
                 pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-                pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+                pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
             };
             dict.set_item("kind", kind_str)?;
             match &ann.kind {
@@ -3125,7 +3202,12 @@ impl PyTickCircuit {
                     let ids: Vec<usize> = measurement_ids.iter().map(|id| id.index()).collect();
                     dict.set_item("measurement_ids", ids)?;
                 }
-                pecos_quantum::AnnotationKind::TrackedPauli => {}
+                pecos_quantum::AnnotationKind::TrackedPauli { pauli } => {
+                    let ps = crate::pauli_bindings::PauliString {
+                        inner: pauli.clone(),
+                    };
+                    dict.set_item("pauli", ps.into_pyobject(py)?)?;
+                }
             }
             dict.set_item("label", &ann.label)?;
             list.append(dict)?;

@@ -69,20 +69,7 @@ struct PauliKey {
 
 impl PauliKey {
     fn from_pauli_string(ps: &PauliString) -> Self {
-        let mut ops: Vec<(QubitId, Pauli)> = ps
-            .paulis()
-            .iter()
-            .filter(|(p, _)| *p != Pauli::I)
-            .map(|(p, q)| (*q, *p))
-            .collect();
-        ops.sort_by_key(|(q, _)| *q);
-        let len_before = ops.len();
-        ops.dedup_by_key(|(q, _)| *q);
-        debug_assert_eq!(
-            len_before,
-            ops.len(),
-            "PauliString has duplicate qubit entries; this is a bug in the PauliString constructor"
-        );
+        let ops = ps.paulis().iter().map(|(p, q)| (*q, *p)).collect();
         Self {
             phase: ps.phase(),
             ops,
@@ -416,6 +403,11 @@ impl fmt::Display for PauliSet {
 mod tests {
     use super::*;
     use pecos_core::pauli::*;
+
+    #[test]
+    fn sparse_rejects_duplicate_qubits_in_element() {
+        assert!("{Z2, X0 Z0}".parse::<PauliSet>().is_err());
+    }
 
     #[test]
     fn test_new_empty() {

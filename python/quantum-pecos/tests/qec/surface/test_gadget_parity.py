@@ -186,9 +186,17 @@ def test_standalone_allocation(geometry: str, basis: str) -> None:
     assert len(first_annotations) == len(second_annotations)
     for left, right in zip(first_annotations, second_annotations, strict=True):
         assert {k: v for k, v in left.items() if k != "pauli"} == {k: v for k, v in right.items() if k != "pauli"}
-        assert left["pauli"].get_phase() == right["pauli"].get_phase()
-        assert [(axis, q + 100) for axis, q in left["pauli"].get_paulis()] == right["pauli"].get_paulis()
-        assert [q + 100 for q in left["pauli"].qubits()] == right["pauli"].qubits()
+        if left["kind"] == "tracked_pauli":
+            assert left["pauli"].get_phase() == right["pauli"].get_phase()
+            assert [(axis, q + 100) for axis, q in left["pauli"].get_paulis()] == right["pauli"].get_paulis()
+            assert [q + 100 for q in left["pauli"].qubits()] == right["pauli"].qubits()
+        else:
+            assert "pauli" not in left
+            assert "pauli" not in right
+            left_measured = first.measured_paulis(left["measurement_ids"])
+            right_measured = second.measured_paulis(right["measurement_ids"])
+            shifted_measured = [(mid, axis, q + 100) for mid, axis, q in left_measured]
+            assert shifted_measured == right_measured
     assert first.num_ticks() == second.num_ticks()
     keys = (*META_KEYS, "ancilla_budget")
     assert {k: first.get_meta(k) for k in keys} == {k: second.get_meta(k) for k in keys}

@@ -1208,7 +1208,9 @@ impl FromStr for UnitaryRep {
             // This handles: "X0 Z1", "XYZZ", "-i X2 Z4", "X 0", "Z 3", etc.
             _ => PauliString::from_str(s)
                 .map(UnitaryRep::Pauli)
-                .map_err(|e| ParseUnitaryRepError { message: e.message }),
+                .map_err(|e| ParseUnitaryRepError {
+                    message: e.to_string(),
+                }),
         }
     }
 }
@@ -1749,7 +1751,8 @@ impl UnitaryRep {
     /// - Named Pauli gates (`X`, `Y`, `Z`) → corresponding single-qubit `PauliString`
     /// - Half-turn Pauli rotations → corresponding `PauliString` with phase `-i`
     ///
-    /// Returns `None` if the operator cannot be represented as a `PauliString`.
+    /// Returns `None` if the operator cannot be represented as a `PauliString`,
+    /// including half-turn rotations with repeated operands.
     ///
     /// # Example
     ///
@@ -1810,10 +1813,11 @@ impl UnitaryRep {
                     RotationType::RY | RotationType::RYY => Pauli::Y,
                     RotationType::RZ | RotationType::RZZ => Pauli::Z,
                 };
-                Some(PauliString::with_phase_and_paulis(
+                PauliString::try_with_phase_and_paulis(
                     QuarterPhase::MinusI,
                     qubits.into_iter().map(|q| (pauli, QubitId(q))).collect(),
-                ))
+                )
+                .ok()
             }
 
             Self::Adjoint(inner) => {
@@ -4457,6 +4461,20 @@ impl UnitaryRep {
 mod tests {
     use super::*;
     use crate::{GlobalPhase, Pauli};
+
+    #[test]
+    fn repeated_rotation_operands_are_not_a_pauli_string() {
+        let invalid = UnitaryRep::Gate(
+            Unitary::Rotation {
+                rotation_type: RotationType::RXX,
+                angle: Angle64::HALF_TURN,
+            },
+            smallvec::smallvec![0, 0],
+        );
+        assert_eq!(invalid.clone().try_to_pauli_string(), None);
+        assert_eq!(invalid.clone().try_to_pauli(), None);
+        assert!(!UnitaryRep::Compose(vec![invalid]).is_pauli_equivalent());
+    }
 
     #[test]
     fn phase_identity_and_z_agree_in_both_pauli_views() {

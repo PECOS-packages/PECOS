@@ -1783,7 +1783,7 @@ mod tests {
             vec![(Pauli::I, QubitId::new(0))],
         );
         // Canonical storage drops identity entries.
-        assert!(explicit_identity.get_paulis().is_empty());
+        assert_eq!(explicit_identity.get_paulis(), &Vec::new());
         let x = PauliString::x(0);
         assert!(explicit_identity.qubitwise_commutes_with(&x));
         assert!(x.qubitwise_commutes_with(&explicit_identity));

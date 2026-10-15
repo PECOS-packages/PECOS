@@ -151,7 +151,7 @@ def test_lossy_bridges_rejected(phase: str) -> None:
 
 def test_invalid_edge_inputs() -> None:
     """Validate symbols and circuits while delegating qubit checks to bindings."""
-    with pytest.raises(ValueError, match="multiple"):
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
         to_pauli_string({"X": {np.int64(0)}, "Z": {0}})
     with pytest.raises(ValueError, match="symbol"):
         to_pauli_string({"H": {0}})

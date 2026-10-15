@@ -76,6 +76,8 @@
 #![allow(clippy::too_many_lines)]
 
 mod builder;
+mod config;
+pub use self::config::GeneralNoiseConfig;
 mod default;
 
 pub use self::builder::{GeneralNoiseModelBuilder, PauliWithAngleScaling};
@@ -4405,11 +4407,11 @@ mod tests {
     #[test]
     fn linear_family_rejects_unnormalized_model() {
         let model = BTreeMap::from([("X".to_string(), 1.0), ("Z".to_string(), 1.0)]);
-        let panic = std::panic::catch_unwind(|| {
-            let _ = GeneralNoiseModel::builder().with_p_idle_linear(0.1, &model);
-        });
+        let result = GeneralNoiseModel::builder()
+            .with_p_idle_linear(0.1, &model)
+            .try_build();
         assert!(
-            panic.is_err(),
+            result.is_err(),
             "an unnormalized linear model must be rejected"
         );
     }
@@ -4423,10 +4425,10 @@ mod tests {
         ];
         for (rate, model) in cases {
             assert!(
-                std::panic::catch_unwind(|| {
-                    let _ = GeneralNoiseModel::builder().with_p_idle_sin_squared(rate, &model);
-                })
-                .is_err(),
+                GeneralNoiseModel::builder()
+                    .with_p_idle_sin_squared(rate, &model)
+                    .try_build()
+                    .is_err(),
                 "invalid sine rate/model must be rejected: rate={rate}, model={model:?}"
             );
         }
@@ -4442,10 +4444,10 @@ mod tests {
         ];
         for (rate, model) in cases {
             assert!(
-                std::panic::catch_unwind(|| {
-                    let _ = GeneralNoiseModel::builder().with_p_idle_coherent(rate, &model);
-                })
-                .is_err(),
+                GeneralNoiseModel::builder()
+                    .with_p_idle_coherent(rate, &model)
+                    .try_build()
+                    .is_err(),
                 "invalid coherent rate/model must be rejected: rate={rate}, model={model:?}"
             );
         }

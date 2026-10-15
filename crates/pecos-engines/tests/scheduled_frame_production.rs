@@ -8,7 +8,8 @@ fn system(rate: f64) -> QuantumSystem {
     let mut s = QuantumSystem::new(
         ScheduledIdleZ::new(2, 0.0, 0.0, rate)
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(2)),
     );
     s.set_seed(4);
@@ -201,7 +202,8 @@ fn capacity_and_profile_admission_are_explicit() {
     let mut undersized = QuantumSystem::new(
         ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     undersized
@@ -230,7 +232,8 @@ fn stochastic_profile_keeps_rng_and_whole_idle_across_inputs() {
         let mut s = QuantumSystem::new(
             ScheduledIdleZ::new(2, 0.1, 0.8, 0.3)
                 .unwrap()
-                .into_noise_model(),
+                .into_noise_model()
+                .unwrap(),
             Box::new(StateVecEngine::new(2)),
         );
         s.set_seed(seed);
@@ -277,7 +280,8 @@ fn production_idle_families_have_independent_physical_predictions() {
             let mut s = QuantumSystem::new(
                 ScheduledIdleZ::new(2, linear, sine, 0.0)
                     .unwrap()
-                    .into_noise_model(),
+                    .into_noise_model()
+                    .unwrap(),
                 Box::new(StateVecEngine::new(2)),
             );
             s.set_seed(seed);

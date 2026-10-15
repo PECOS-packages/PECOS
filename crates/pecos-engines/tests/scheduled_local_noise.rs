@@ -101,9 +101,11 @@ fn message(batches: &[TimedBatch], events: bool) -> ByteMessage {
 }
 fn system(profile: ScheduledIdleNoise, events: bool, seed: u64) -> QuantumSystem {
     let noise = if events {
-        ScheduledEventIdleNoise::new(profile, |_| Ok(Box::new(PassThrough))).into_noise_model()
+        ScheduledEventIdleNoise::new(profile, |_| Ok(Box::new(PassThrough)))
+            .into_noise_model()
+            .unwrap()
     } else {
-        profile.into_noise_model()
+        profile.into_noise_model().unwrap()
     };
     let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
     system.set_seed(seed);
@@ -392,8 +394,10 @@ fn normalized_capacity_violation_poison_clone_and_reset() {
                 .with_prep_leak_ratio(ratio)
                 .unwrap();
         let noise = ScheduledEventIdleNoise::new(local, |_| Ok(Box::new(AppendOutsideCapacity)));
-        let mut sim =
-            QuantumSystem::new(noise.into_noise_model(), Box::new(StateVecEngine::new(2)));
+        let mut sim = QuantumSystem::new(
+            noise.into_noise_model().unwrap(),
+            Box::new(StateVecEngine::new(2)),
+        );
         sim.begin_shot(context(0)).unwrap();
         let bad = message(&[batch(0, 0, 0, vec![Gate::mz(&[0])])], true);
         assert!(sim.process(bad).is_err());

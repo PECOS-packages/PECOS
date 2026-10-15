@@ -103,7 +103,8 @@ fn system() -> QuantumSystem {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     )
 }
@@ -204,7 +205,8 @@ fn unsupported_late_event_rejects_before_translation_and_poison_is_latched() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
             Ok(Box::new(Counting(c.clone())))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -237,7 +239,8 @@ fn malformed_wire_rejects_before_factory_and_never_reaches_legacy_consumers() {
             c.fetch_add(1, Ordering::Relaxed);
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -259,7 +262,8 @@ fn malformed_wire_rejects_before_factory_and_never_reaches_legacy_consumers() {
     let mut v3 = QuantumSystem::new(
         ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut v3);
@@ -284,7 +288,8 @@ fn source_capacity_and_identity_reject_before_callbacks() {
             c.fetch_add(1, Ordering::Relaxed);
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -298,12 +303,13 @@ fn metadata_insertion_preserves_seeded_idle_behavior_and_empty_batch_lifecycles(
     for (linear, sine, coherent) in [(0.3, 0.0, 0.0), (0.0, 0.7, 0.0), (0.0, 0.0, 0.4)] {
         let profile = ScheduledIdleZ::new(1, linear, sine, coherent).unwrap();
         let mut old = QuantumSystem::new(
-            profile.clone().into_noise_model(),
+            profile.clone().into_noise_model().unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         let mut new = QuantumSystem::new(
             ScheduledEventIdleZ::new(profile, |_| Ok(Box::<Synthetic>::default()))
-                .into_noise_model(),
+                .into_noise_model()
+                .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         let batches = vec![
@@ -359,7 +365,8 @@ fn callback_panic_cannot_be_recovered_without_whole_host_reset() {
             );
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -390,7 +397,8 @@ fn dropped_measurements_poison_before_quantum_execution() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::new(DropMeasurements))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -405,7 +413,8 @@ fn event_position_relative_to_measurements_is_preserved() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(2)),
     );
     begin(&mut q);
@@ -441,7 +450,8 @@ fn caught_output_rejection_stays_latched() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::new(Swallow))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -463,7 +473,8 @@ fn factory_sessions_receive_distinct_worker_context_and_never_share_state() {
                 Ok(Box::<Synthetic>::default())
             },
         )
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     let mut first = template.clone();
@@ -530,7 +541,8 @@ fn removed_gates_still_reserve_source_timing_across_inputs() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
             Ok(Box::new(DropRz(seen.clone())))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     let mut first = batch(0, vec![gate(Gate::rz(Angle64::ZERO, &[0]))]);
@@ -629,7 +641,8 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), move |_| {
                 Ok(Box::new(Rewrite(replacement.clone())))
             })
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
             Box::new(StateVecEngine::new(2)),
         );
         begin(&mut q);
@@ -678,7 +691,8 @@ fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preser
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
                 Ok(Box::new(Expand(count)))
             })
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         begin(&mut q);

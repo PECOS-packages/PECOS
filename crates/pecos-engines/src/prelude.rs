@@ -37,6 +37,7 @@ pub use crate::noise::{
     ChannelValidationError,
     DepolarizingNoiseModel,
     DepolarizingNoiseModelBuilder,
+    GeneralNoiseConfig,
     GeneralNoiseModelBuilder,
     IntoNoiseModel, // Needed for .noise() method to work smoothly
     NoiseModel,

@@ -99,9 +99,11 @@ fn message(batches: &[TimedBatch], events: bool) -> ByteMessage {
 }
 fn system(profile: ScheduledIdleNoise, events: bool, seed: u64) -> QuantumSystem {
     let noise = if events {
-        ScheduledEventIdleNoise::new(profile, |_| Ok(Box::new(PassThrough))).into_noise_model()
+        ScheduledEventIdleNoise::new(profile, |_| Ok(Box::new(PassThrough)))
+            .into_noise_model()
+            .unwrap()
     } else {
-        profile.into_noise_model()
+        profile.into_noise_model().unwrap()
     };
     let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
     system.set_seed(seed);

@@ -284,7 +284,9 @@ impl RuntimeNoise {
         qubits: usize,
         limits: FrameLimits,
     ) -> Result<Self, PecosError> {
-        inner.validate_configuration().map_err(error)?;
+        inner
+            .validate_configuration()
+            .map_err(|message| error(&message))?;
         if !(1..=16).contains(&qubits)
             || !(1..=128).contains(&limits.records)
             || !(1..=65536).contains(&limits.expanded_operations)
@@ -303,13 +305,13 @@ impl RuntimeNoise {
     }
 }
 impl IntoNoiseModel for RuntimeNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        Box::new(RuntimeGeneralNoise {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
+        Ok(Box::new(RuntimeGeneralNoise {
             inner: self.inner,
             limits: self.limits,
             qubits: self.qubits,
             physical: self.physical,
-        })
+        }))
     }
 }
 

@@ -5305,7 +5305,8 @@ mod scheduled_completion_tests {
         let mut quantum = QuantumSystem::new(
             ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
                 .unwrap()
-                .into_noise_model(),
+                .into_noise_model()
+                .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         quantum
@@ -5412,7 +5413,8 @@ mod scheduled_completion_tests {
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
                 Ok(Box::new(Flip))
             })
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         quantum

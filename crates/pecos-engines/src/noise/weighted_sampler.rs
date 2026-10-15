@@ -47,7 +47,15 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
     /// - If the weighted index distribution cannot be created
     #[must_use]
     pub fn new(weighted_map: &BTreeMap<K, f64>) -> Self {
-        Self::new_with_tolerance(weighted_map, NORMALIZATION_TOLERANCE)
+        Self::try_new(weighted_map).unwrap_or_else(|message| panic!("{message}"))
+    }
+
+    /// Construct a sampler without panicking on invalid weights.
+    ///
+    /// # Errors
+    /// Returns the validation message for empty, invalid, or unnormalized weights.
+    pub fn try_new(weighted_map: &BTreeMap<K, f64>) -> Result<Self, String> {
+        Self::try_new_with_tolerance(weighted_map, NORMALIZATION_TOLERANCE)
     }
 
     /// Create a new weighted sampler with a specific tolerance for weight normalization
@@ -58,21 +66,34 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new_with_tolerance(weighted_map: &BTreeMap<K, f64>, tolerance: f64) -> Self {
+        Self::try_new_with_tolerance(weighted_map, tolerance)
+            .unwrap_or_else(|message| panic!("{message}"))
+    }
+
+    /// Construct a sampler with an explicit normalization tolerance.
+    ///
+    /// # Errors
+    /// Returns the validation message for empty, invalid, or unnormalized weights.
+    pub fn try_new_with_tolerance(
+        weighted_map: &BTreeMap<K, f64>,
+        tolerance: f64,
+    ) -> Result<Self, String> {
         let (normalized_weighted_map, normalized_weights) =
-            Self::validate_and_normalize(weighted_map, tolerance);
+            Self::validate_and_normalize(weighted_map, tolerance)?;
 
         // BTreeMap already provides deterministic ordering of keys
         let keys: Vec<K> = weighted_map.keys().cloned().collect();
 
         // Create the distribution using deterministically ordered weights
-        let distribution = WeightedIndex::new(&normalized_weights)
-            .expect("WeightedSampler: failed to create weighted distribution");
+        let distribution = WeightedIndex::new(&normalized_weights).map_err(|error| {
+            format!("WeightedSampler: failed to create weighted distribution: {error:?}")
+        })?;
 
-        WeightedSampler {
+        Ok(WeightedSampler {
             keys,
             distribution,
             weighted_map: normalized_weighted_map,
-        }
+        })
     }
 
     /// Validates that the weights are positive and approximately sum to 1.0
@@ -80,31 +101,33 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
     fn validate_and_normalize(
         weighted_map: &BTreeMap<K, f64>,
         tolerance: f64,
-    ) -> (BTreeMap<K, f64>, Vec<f64>) {
-        assert!(
-            !weighted_map.is_empty(),
-            "WeightedSampler: weighted_map cannot be empty"
-        );
+    ) -> Result<(BTreeMap<K, f64>, Vec<f64>), String> {
+        if weighted_map.is_empty() {
+            return Err("WeightedSampler: weighted_map cannot be empty".to_string());
+        }
 
         for weight in weighted_map.values() {
-            assert!(
-                weight.is_finite() && *weight >= 0.0,
-                "WeightedSampler: weights must be finite and non-negative, got {weight}"
-            );
+            if !(weight.is_finite() && *weight >= 0.0) {
+                return Err(format!(
+                    "WeightedSampler: weights must be finite and non-negative, got {weight}"
+                ));
+            }
         }
 
         let total_weight: f64 = weighted_map.values().sum();
 
-        assert!(
-            total_weight > 0.0,
-            "WeightedSampler: total weight must be positive, got {total_weight}"
-        );
+        if total_weight <= 0.0 {
+            return Err(format!(
+                "WeightedSampler: total weight must be positive, got {total_weight}"
+            ));
+        }
 
         // Check if weights are within tolerance of 1.0
-        assert!(
-            (total_weight - 1.0).abs() <= tolerance,
-            "WeightedSampler: total weight {total_weight} deviates from 1.0 by more than tolerance {tolerance}"
-        );
+        if tolerance.is_nan() || (total_weight - 1.0).abs() > tolerance {
+            return Err(format!(
+                "WeightedSampler: total weight {total_weight} deviates from 1.0 by more than tolerance {tolerance}"
+            ));
+        }
 
         // Determine if we need to normalize (only normalize if not already very close to 1.0)
         let needs_normalization = (total_weight - 1.0).abs() > FLOAT_EPSILON;
@@ -127,7 +150,7 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
             normalized_map.insert(key.clone(), normalized_value);
         }
 
-        (normalized_map, normalized_weights)
+        Ok((normalized_map, normalized_weights))
     }
 
     /// Sample a key from the distribution
@@ -467,22 +490,32 @@ impl SingleQubitWeightedSampler {
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
-        Self::validate_pauli_leakage_keys(weighted_map);
-
-        Self {
-            sampler: WeightedSampler::new(weighted_map),
-        }
+        Self::try_new(weighted_map).unwrap_or_else(|message| panic!("{message}"))
     }
 
-    fn validate_pauli_leakage_keys(weighted_map: &BTreeMap<String, f64>) {
+    /// Construct a sampler without panicking on invalid keys or weights.
+    ///
+    /// # Errors
+    /// Returns the existing key or distribution validation message.
+    pub fn try_new(weighted_map: &BTreeMap<String, f64>) -> Result<Self, String> {
+        Self::validate_pauli_leakage_keys(weighted_map)?;
+
+        Ok(Self {
+            sampler: WeightedSampler::try_new(weighted_map)?,
+        })
+    }
+
+    fn validate_pauli_leakage_keys(weighted_map: &BTreeMap<String, f64>) -> Result<(), String> {
         const VALID_KEYS: [&str; 4] = ["X", "Y", "Z", "L"];
 
         for key in weighted_map.keys() {
-            assert!(
-                VALID_KEYS.contains(&key.as_str()),
-                "SingleQubitWeightedSampler: invalid key '{key}' - must be one of X, Y, Z, or L"
-            );
+            if !VALID_KEYS.contains(&key.as_str()) {
+                return Err(format!(
+                    "SingleQubitWeightedSampler: invalid key '{key}' - must be one of X, Y, Z, or L"
+                ));
+            }
         }
+        Ok(())
     }
 
     /// Get a reference to the normalized weighted map
@@ -1499,39 +1532,47 @@ impl TwoQubitWeightedSampler {
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
-        Self::validate_two_qubit_keys(weighted_map);
-
-        Self {
-            sampler: WeightedSampler::new(weighted_map),
-        }
+        Self::try_new(weighted_map).unwrap_or_else(|message| panic!("{message}"))
     }
 
-    fn validate_two_qubit_keys(weighted_map: &BTreeMap<String, f64>) {
+    /// Construct a sampler without panicking on invalid keys or weights.
+    ///
+    /// # Errors
+    /// Returns the existing key or distribution validation message.
+    pub fn try_new(weighted_map: &BTreeMap<String, f64>) -> Result<Self, String> {
+        Self::validate_two_qubit_keys(weighted_map)?;
+
+        Ok(Self {
+            sampler: WeightedSampler::try_new(weighted_map)?,
+        })
+    }
+
+    fn validate_two_qubit_keys(weighted_map: &BTreeMap<String, f64>) -> Result<(), String> {
         const VALID_CHARS: [char; 5] = ['X', 'Y', 'Z', 'I', 'L'];
 
         for key in weighted_map.keys() {
             // Key must be exactly 2 characters long
-            assert_eq!(
-                key.len(),
-                2,
-                "TwoQubitWeightedSampler: invalid key '{key}' - must be exactly 2 characters"
-            );
+            if key.len() != 2 {
+                return Err(format!(
+                    "TwoQubitWeightedSampler: invalid key '{key}' - must be exactly 2 characters"
+                ));
+            }
 
             // Check each character is valid
             for c in key.chars() {
-                assert!(
-                    VALID_CHARS.contains(&c),
-                    "TwoQubitWeightedSampler: invalid character '{c}' in key '{key}' - must be one of X, Y, Z, I, or L"
-                );
+                if !VALID_CHARS.contains(&c) {
+                    return Err(format!(
+                        "TwoQubitWeightedSampler: invalid character '{c}' in key '{key}' - must be one of X, Y, Z, I, or L"
+                    ));
+                }
             }
 
             // Special case: "II" is not allowed
-            assert_ne!(
-                key.as_str(),
-                "II",
-                "TwoQubitWeightedSampler: key 'II' is not allowed as it represents no operation"
-            );
+            if key == "II" {
+                return Err("TwoQubitWeightedSampler: key 'II' is not allowed as it represents no operation".to_string());
+            }
         }
+        Ok(())
     }
 
     /// Get a reference to the normalized weighted map
@@ -1829,9 +1870,17 @@ impl CrosstalkWeightedSampler {
     /// - If the total weight of each sampler deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
+        Self::try_new(weighted_map).unwrap_or_else(|message| panic!("{message}"))
+    }
+
+    /// Construct a sampler without panicking on invalid keys or weights.
+    ///
+    /// # Errors
+    /// Returns the existing key or distribution validation message.
+    pub fn try_new(weighted_map: &BTreeMap<String, f64>) -> Result<Self, String> {
         const KEYS_FROM_0: [&str; 3] = ["0->0", "0->1", "0->L"];
         const KEYS_FROM_1: [&str; 3] = ["1->1", "1->0", "1->L"];
-        Self::validate_crosstalk_keys(weighted_map);
+        Self::validate_crosstalk_keys(weighted_map)?;
 
         // Separate the 0->* components from the 1->* components
         let weighted_map_from_0 = KEYS_FROM_0
@@ -1843,21 +1892,23 @@ impl CrosstalkWeightedSampler {
             .filter_map(|key| weighted_map.get(key).map(|&val| (key.to_string(), val)))
             .collect();
 
-        Self {
-            sampler_from_0: WeightedSampler::new(&weighted_map_from_0),
-            sampler_from_1: WeightedSampler::new(&weighted_map_from_1),
-        }
+        Ok(Self {
+            sampler_from_0: WeightedSampler::try_new(&weighted_map_from_0)?,
+            sampler_from_1: WeightedSampler::try_new(&weighted_map_from_1)?,
+        })
     }
 
-    fn validate_crosstalk_keys(weighted_map: &BTreeMap<String, f64>) {
+    fn validate_crosstalk_keys(weighted_map: &BTreeMap<String, f64>) -> Result<(), String> {
         const VALID_KEYS: [&str; 6] = ["0->0", "0->1", "0->L", "1->1", "1->0", "1->L"];
 
         for key in weighted_map.keys() {
-            assert!(
-                VALID_KEYS.contains(&key.as_str()),
-                "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {VALID_KEYS:?}",
-            );
+            if !VALID_KEYS.contains(&key.as_str()) {
+                return Err(format!(
+                    "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {VALID_KEYS:?}"
+                ));
+            }
         }
+        Ok(())
     }
 
     /// Get a reference to the normalized weighted map, for keys 0->* or 1->*

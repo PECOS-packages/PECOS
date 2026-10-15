@@ -40,18 +40,18 @@ def config(parameters: GeneralNoiseParameters) -> dict[str, object]:
 
 def test_default_is_explicitly_noiseless() -> None:
     payload = config(GeneralNoiseParameters())
-    assert payload["preparation"]["probability"] is None
-    assert payload["single_qubit"]["probability"] is None
-    assert payload["two_qubit"]["probability"] is None
+    assert payload["model"]["preparation"]["probability"] is None
+    assert payload["model"]["single_qubit"]["probability"] is None
+    assert payload["model"]["two_qubit"]["probability"] is None
 
 
 def test_uniform_convenience_model() -> None:
     payload = config(GeneralNoiseParameters.uniform(0.001))
-    assert payload["preparation"]["probability"] == 0.001
-    assert payload["measurement"]["p0_to_1"] == 0.001
-    assert payload["measurement"]["p1_to_0"] == 0.001
-    assert payload["single_qubit"]["probability"] == 0.001
-    assert payload["two_qubit"]["probability"] == 0.001
+    assert payload["model"]["preparation"]["probability"] == 0.001
+    assert payload["model"]["measurement"]["p0_to_1"] == 0.001
+    assert payload["model"]["measurement"]["p1_to_0"] == 0.001
+    assert payload["model"]["single_qubit"]["probability"] == 0.001
+    assert payload["model"]["two_qubit"]["probability"] == 0.001
 
 
 def test_exposes_current_pecos_capabilities() -> None:
@@ -67,9 +67,10 @@ def test_exposes_current_pecos_capabilities() -> None:
         .with_local_crosstalk_groups((0, 1), (2, 3))
     )
     payload = config(parameters)
-    assert payload["single_qubit"]["average_infidelity"] == 1e-4
-    assert payload["idle"]["coherent_rate"] == 0.03
-    assert payload["measurement"]["local_groups"] == [[0, 1], [2, 3]]
+    assert payload["model"]["single_qubit"]["average_infidelity"] == 1e-4
+    assert payload["model"]["idle"]["coherent_rate"] == 0.03
+    assert payload["local_groups"] == [[0, 1], [2, 3]]
+    assert "local_groups" not in payload["model"]["measurement"]
 
 
 def test_rejects_ambiguous_infidelity() -> None:
@@ -180,7 +181,7 @@ def test_accepts_crosstalk_transition_model_per_input_state() -> None:
         "1->1": 0.9,
     }
     parameters = GeneralNoiseParameters().with_p_meas_crosstalk_model(model)
-    assert config(parameters)["measurement"]["crosstalk_model"] == model
+    assert config(parameters)["model"]["measurement"]["crosstalk_model"] == model
 
 
 def test_fluent_setters_are_immutable_and_last_infidelity_wins() -> None:
@@ -312,44 +313,69 @@ def test_same_parameters_configure_a_pecos_sim_builder() -> None:
 
     assert returned is not builder
     assert builder.calls == []
-    assert returned.calls == [
-        ("with_scale", (0.5,)),
-        ("with_leakage_scale", (0.6,)),
-        ("with_emission_scale", (0.7,)),
-        ("with_p_prep", (0.01,)),
-        ("with_prep_leak_ratio", (0.2,)),
-        ("with_p_prep_crosstalk", (0.03 * 18.0 / 5.0,)),
-        ("with_prep_scale", (0.4,)),
-        ("with_p_prep_crosstalk_scale", (0.5,)),
-        ("with_average_p1", (0.02,)),
-        ("with_p1_pauli_model", ({"X": 0.25, "Y": 0.25, "Z": 0.5},)),
-        ("with_p1_emission_ratio", (0.1,)),
-        ("with_p1_emission_model", ({"X": 0.4, "L": 0.6},)),
-        ("with_p1_seepage_prob", (0.3,)),
-        ("with_p1_scale", (0.8,)),
-        ("with_p2", (0.04,)),
-        ("with_p2_pauli_model", ({"XI": 0.4, "IZ": 0.6},)),
-        ("with_p2_emission_ratio", (0.2,)),
-        ("with_p2_emission_model", ({"IL": 0.55, "LI": 0.45},)),
-        ("with_p2_seepage_prob", (0.35,)),
-        ("with_p2_scale", (0.9,)),
-        ("with_p2_angle_params", (1.0, 0.2, 1.1, 0.3)),
-        ("with_p2_angle_power", (1.2,)),
-        ("with_idle_after_2q", (2e-6,)),
-        ("with_p_idle_linear", (0.11, {"Z": 1.0})),
-        ("with_p_idle_sin_squared", (0.12, {"X": 0.5, "Z": 0.5})),
-        ("with_p_idle_coherent", (0.13, {"RZ": 1.0})),
-        ("with_idle_scale", (0.75,)),
-        ("with_p_meas_0", (0.06,)),
-        ("with_p_meas_1", (0.07,)),
-        ("with_p_meas_crosstalk_global", (0.08,)),
-        ("with_p_meas_crosstalk_local", (0.09,)),
-        ("with_p_meas_crosstalk_model", ({"0->0": 0.8, "0->L": 0.2, "1->0": 0.1, "1->1": 0.9},)),
-        ("with_meas_scale", (0.6,)),
-        ("with_p_meas_crosstalk_scale", (0.7,)),
-        ("with_noiseless_gate", ("RZ",)),
-        ("with_seed", (17,)),
-    ]
+    assert [name for name, _ in returned.calls] == ["with_config_json", "with_seed"]
+    assert returned.calls[1] == ("with_seed", (17,))
+    assert len(returned.calls[0][1]) == 1
+    encoded = returned.calls[0][1][0]
+    model = json.loads(encoded)
+    assert encoded == json.dumps(model, separators=(",", ":"), sort_keys=True)
+    assert model == {
+        "preparation": {
+            "probability": 0.01,
+            "leakage_ratio": 0.2,
+            "crosstalk_probability": None,
+            "average_crosstalk_probability": 0.03,
+            "scale": 0.4,
+            "crosstalk_scale": 0.5,
+        },
+        "single_qubit": {
+            "probability": None,
+            "average_infidelity": 0.02,
+            "pauli_model": {"X": 0.25, "Y": 0.25, "Z": 0.5},
+            "emission_ratio": 0.1,
+            "emission_model": {"X": 0.4, "L": 0.6},
+            "seepage_probability": 0.3,
+            "scale": 0.8,
+            "hooks_before": [],
+            "hooks_after": [],
+        },
+        "two_qubit": {
+            "probability": 0.04,
+            "average_infidelity": None,
+            "pauli_model": {"XI": 0.4, "IZ": 0.6},
+            "emission_ratio": 0.2,
+            "emission_model": {"IL": 0.55, "LI": 0.45},
+            "seepage_probability": 0.35,
+            "scale": 0.9,
+            "angle_coefficients": [1.0, 0.2, 1.1, 0.3],
+            "angle_power": 1.2,
+            "idle_after_gate": 2e-6,
+            "hooks_before": [],
+            "hooks_after": [],
+        },
+        "idle": {
+            "linear_rate": 0.11,
+            "linear_model": {"Z": 1.0},
+            "sin_squared_rate": 0.12,
+            "sin_squared_model": {"X": 0.5, "Z": 0.5},
+            "coherent_rate": 0.13,
+            "coherent_model": {"RZ": 1.0},
+            "scale": 0.75,
+        },
+        "measurement": {
+            "p0_to_1": 0.06,
+            "p1_to_0": 0.07,
+            "global_crosstalk_probability": 0.08,
+            "local_crosstalk_probability": 0.09,
+            "crosstalk_model": {"0->0": 0.8, "0->L": 0.2, "1->0": 0.1, "1->1": 0.9},
+            "scale": 0.6,
+            "crosstalk_scale": 0.7,
+        },
+        "scaling": {"overall": 0.5, "leakage": 0.6, "emission": 0.7},
+        "noiseless_gates": ["RZ"],
+    }
+    assert model == config(parameters)["model"]
+    assert config(parameters)["local_groups"] == [[0, 1]]
 
 
 def test_pecos_builder_bridge_rejects_negative_seed() -> None:
@@ -491,20 +517,17 @@ def test_selene_hook_bridge_seeded_parity(recover: bool) -> None:
     assert bridged == direct == [expected] * 4
 
 
-def test_recording_builder_receives_real_hook_channels_in_order() -> None:
-    """The bridge constructs native channels and preserves cross-family order."""
-    pecos = pytest.importorskip("pecos")
+def test_recording_builder_receives_hook_json_in_order() -> None:
+    """The bridge serializes full hook data and preserves cross-family order."""
     parameters = (
         GeneralNoiseParameters()
         .add_p1_pauli_leakage_channel_before_gate(PauliLeakageHook(1.0, {"L": 1.0}))
         .add_p1_transition_channel_before_gate(TransitionHook(1.0, {"L": {"0": 1.0}}))
     )
     calls = parameters.apply_to_pecos_builder(RecordingBuilder()).calls
-    assert [name for name, _ in calls] == [
-        "add_p1_pauli_leakage_channel_before_gate",
-        "add_p1_transition_channel_before_gate",
+    assert [name for name, _ in calls] == ["with_config_json"]
+    model = json.loads(calls[0][1][0])
+    assert model["single_qubit"]["hooks_before"] == [
+        {"kind": "pauli_leakage", "probability": 1.0, "events": {"L": 1.0}},
+        {"kind": "transition", "probability": 1.0, "transitions": {"L": {"0": 1.0}}},
     ]
-    assert isinstance(calls[0][1][0], pecos.PauliLeakageChannel)
-    assert isinstance(calls[1][1][0], pecos.StateTransitionChannel)
-    assert calls[0][1][0].events == {"L": 1.0}
-    assert calls[1][1][0].transitions == {"L": {"0": 1.0}}

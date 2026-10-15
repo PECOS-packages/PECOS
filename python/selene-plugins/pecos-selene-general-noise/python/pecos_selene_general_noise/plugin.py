@@ -805,136 +805,14 @@ class GeneralNoiseParameters:
         parity therefore also requires both runtimes to emit equivalent payloads.
         """
         self.validate_effective_probabilities()
-
-        def apply(name: str, *args: object) -> None:
-            nonlocal builder
-            builder = getattr(builder, name)(*args)
-
-        scaling = self.scaling
-        if scaling.overall is not None:
-            apply("with_scale", scaling.overall)
-        if scaling.leakage is not None:
-            apply("with_leakage_scale", scaling.leakage)
-        if scaling.emission is not None:
-            apply("with_emission_scale", scaling.emission)
-
-        preparation = self.preparation
-        if preparation.probability is not None:
-            apply("with_p_prep", preparation.probability)
-        if preparation.leakage_ratio is not None:
-            apply("with_prep_leak_ratio", preparation.leakage_ratio)
-        if preparation.crosstalk_probability is not None:
-            apply("with_p_prep_crosstalk", preparation.crosstalk_probability)
-        if preparation.average_crosstalk_probability is not None:
-            # The Python PECOS builder currently exposes only the process-rate
-            # spelling. This is the same 18/5 conversion used by the Rust builder.
-            apply("with_p_prep_crosstalk", preparation.average_crosstalk_probability * 18.0 / 5.0)
-        if preparation.scale is not None:
-            apply("with_prep_scale", preparation.scale)
-        if preparation.crosstalk_scale is not None:
-            apply("with_p_prep_crosstalk_scale", preparation.crosstalk_scale)
-
-        one = self.single_qubit
-        if one.probability is not None:
-            apply("with_p1", one.probability)
-        if one.average_infidelity is not None:
-            apply("with_average_p1", one.average_infidelity)
-        if one.pauli_model is not None:
-            apply("with_p1_pauli_model", dict(one.pauli_model))
-        if one.emission_ratio is not None:
-            apply("with_p1_emission_ratio", one.emission_ratio)
-        if one.emission_model is not None:
-            apply("with_p1_emission_model", dict(one.emission_model))
-        if one.seepage_probability is not None:
-            apply("with_p1_seepage_prob", one.seepage_probability)
-        if one.scale is not None:
-            apply("with_p1_scale", one.scale)
-
-        two = self.two_qubit
-        if two.probability is not None:
-            apply("with_p2", two.probability)
-        if two.average_infidelity is not None:
-            apply("with_average_p2", two.average_infidelity)
-        if two.pauli_model is not None:
-            apply("with_p2_pauli_model", dict(two.pauli_model))
-        if two.emission_ratio is not None:
-            apply("with_p2_emission_ratio", two.emission_ratio)
-        if two.emission_model is not None:
-            apply("with_p2_emission_model", dict(two.emission_model))
-        if two.seepage_probability is not None:
-            apply("with_p2_seepage_prob", two.seepage_probability)
-        if two.scale is not None:
-            apply("with_p2_scale", two.scale)
-        if two.angle_coefficients is not None:
-            apply("with_p2_angle_params", *two.angle_coefficients)
-        if two.angle_power is not None:
-            apply("with_p2_angle_power", two.angle_power)
-        if two.idle_after_gate is not None:
-            apply("with_idle_after_2q", two.idle_after_gate)
-
-        if any((one.hooks_before, one.hooks_after, two.hooks_before, two.hooks_after)):
-            pecos = import_module("pecos")
-
-            def channel(hook: TransitionHook | PauliLeakageHook) -> object:
-                name = "StateTransitionChannel" if isinstance(hook, TransitionHook) else "PauliLeakageChannel"
-                if hook.arity() == 2:
-                    name = "TwoQubit" + name
-                data = hook.transitions if isinstance(hook, TransitionHook) else hook.events
-                return getattr(pecos, name)(hook.probability, _json_value(data))
-
-            for arity, gate in ((1, one), (2, two)):
-                for timing in ("before", "after"):
-                    for hook in getattr(gate, f"hooks_{timing}"):
-                        family = _hook_family(hook)
-                        step_name = "P2TransitionStep" if family == "transition" else "P2PauliLeakageStep"
-                        suffix = "channel"
-                        if isinstance(hook, IndependentHook):
-                            value = getattr(pecos, step_name).independent(channel(hook.first), channel(hook.second))
-                            suffix = "step"
-                        else:
-                            value = channel(hook)
-                            if arity == 2 and family == "pauli_leakage" and hook.arity() == 2:
-                                value = getattr(pecos, step_name).joint(value)
-                                suffix = "step"
-                        apply(f"add_p{arity}_{family}_{suffix}_{timing}_gate", value)
-
-        idle = self.idle
-        if idle.linear_rate is not None:
-            apply(
-                "with_p_idle_linear",
-                idle.linear_rate,
-                dict(idle.linear_model or {"X": 1 / 3, "Y": 1 / 3, "Z": 1 / 3}),
-            )
-        if idle.sin_squared_rate is not None:
-            apply("with_p_idle_sin_squared", idle.sin_squared_rate, dict(idle.sin_squared_model or {"Z": 1.0}))
-        if idle.coherent_rate is not None:
-            apply("with_p_idle_coherent", idle.coherent_rate, dict(idle.coherent_model or {"RZ": 1.0}))
-        if idle.scale is not None:
-            apply("with_idle_scale", idle.scale)
-
-        measurement = self.measurement
-        if measurement.p0_to_1 is not None:
-            apply("with_p_meas_0", measurement.p0_to_1)
-        if measurement.p1_to_0 is not None:
-            apply("with_p_meas_1", measurement.p1_to_0)
-        if measurement.global_crosstalk_probability is not None:
-            apply("with_p_meas_crosstalk_global", measurement.global_crosstalk_probability)
-        if measurement.local_crosstalk_probability is not None:
-            apply("with_p_meas_crosstalk_local", measurement.local_crosstalk_probability)
-        if measurement.crosstalk_model is not None:
-            apply("with_p_meas_crosstalk_model", dict(measurement.crosstalk_model))
-        if measurement.scale is not None:
-            apply("with_meas_scale", measurement.scale)
-        if measurement.crosstalk_scale is not None:
-            apply("with_p_meas_crosstalk_scale", measurement.crosstalk_scale)
-
-        for gate in self.noiseless_gates:
-            apply("with_noiseless_gate", gate)
+        builder = builder.with_config_json(
+            json.dumps(_model_json_value(self), separators=(",", ":"), sort_keys=True),
+        )
         if seed is not None:
             if seed < 0:
                 message = "seed must be non-negative"
                 raise ValueError(message)
-            apply("with_seed", seed)
+            builder = builder.with_seed(seed)
         return builder
 
     def to_pecos_builder(self, *, seed: int | None = None) -> _PecosGeneralNoiseBuilder:
@@ -968,6 +846,14 @@ class GeneralNoiseParameters:
         return self.to_pecos_builder()
 
 
+def _model_json_value(parameters: GeneralNoiseParameters) -> dict[str, object]:
+    """Return the engine parameters without Selene's local topology."""
+    value = cast("dict[str, object]", _json_value(parameters))
+    measurement = cast("dict[str, object]", value["measurement"])
+    del measurement["local_groups"]
+    return value
+
+
 @dataclass
 class GeneralNoisePlugin(ErrorModel):
     """Thin Selene wrapper around PECOS general-noise parameters."""
@@ -985,7 +871,11 @@ class GeneralNoisePlugin(ErrorModel):
     def get_init_args(self) -> list[str]:
         """Serialize the complete configuration as one versionable JSON argument."""
         self.parameters.validate_effective_probabilities()
-        return [json.dumps(_json_value(self.parameters), separators=(",", ":"), sort_keys=True)]
+        payload = {
+            "model": _model_json_value(self.parameters),
+            "local_groups": [list(group) for group in self.parameters.measurement.local_groups],
+        }
+        return [json.dumps(payload, separators=(",", ":"), sort_keys=True)]
 
     @property
     def library_file(self) -> Path:

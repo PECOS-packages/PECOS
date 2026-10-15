@@ -85,7 +85,7 @@ From the PECOS repository root:
 ```bash
 uv run --package pecos-selene-general-noise --extra test pytest \
   python/selene-plugins/pecos-selene-general-noise/tests
-cargo test -p pecos-selene-general-noise
+cargo test --release -p pecos-selene-general-noise-model
 ```
 
 
@@ -120,21 +120,7 @@ and rows and report configuration errors at plugin initialization.
 
 ## Composing a Rust plugin
 
-Downstream Rust plugins can depend on this crate with `default-features = false`
-and construct `GeneralNoiseErrorModel::from_json(n_qubits, configuration)`.
-The configuration is the JSON argument emitted by Python's
-`GeneralNoisePlugin.get_init_args()`. The returned model implements Selene's
-`ErrorModelInterface`; use the same Selene core revision as this crate.
-
-Disabling the default `plugin-export` feature omits this crate's FFI entry points,
-so the downstream crate can export its own factory without duplicate symbols.
-The standard Python wheel keeps the default feature and its existing behavior.
-
-A downstream adapter owns any runtime-specific interpretation and shot state.
-It must preserve batch boundaries, timing, operation ordering and measurement
-identities when passing normalized batches to the model. Invoke `shot_start`,
-`handle_operations` and `shot_end` in Selene lifecycle order, and discard the
-instance after an execution error. The constructor does not install an adapter,
-acknowledge metadata or enable custom operations: unhandled custom operations
-still fail. Exposing configuration fields alone does not establish runtime
-semantics or noise equivalence.
+The noise model itself lives in the `pecos-selene-general-noise-model` crate
+(`crates/pecos-selene-general-noise-model`); this plugin only exports it to
+Selene. Downstream Rust plugins depend on that crate and export their own
+factory. See its README for the composition contract.

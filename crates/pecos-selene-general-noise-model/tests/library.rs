@@ -1,6 +1,6 @@
 //! Downstream use of the public constructor, including a replacement FFI factory.
 use anyhow::Result;
-use pecos_selene_general_noise::GeneralNoiseErrorModel;
+use pecos_selene_general_noise_model::GeneralNoiseErrorModel;
 use selene_core::error_model::BatchResult;
 use selene_core::error_model::interface::ErrorModelInterface;
 use selene_core::runtime::{BatchOperation, Operation};
@@ -203,12 +203,11 @@ fn constructor_does_not_acknowledge_custom_operations() {
     assert_eq!(simulator.0, [] as [Operation; 0]);
 }
 
-// This consumer supplies its own entry points. Linking it with the dependency's
-// exports would produce duplicate symbols, so this is also a composition check.
-#[cfg(not(feature = "plugin-export"))]
+// This consumer supplies its own entry points, as a downstream plugin would.
+// The model crate must not export any, or linking this test fails with
+// duplicate symbols.
 #[derive(Default)]
 struct ConsumerFactory;
-#[cfg(not(feature = "plugin-export"))]
 impl selene_core::error_model::interface::ErrorModelInterfaceFactory for ConsumerFactory {
     type Interface = GeneralNoiseErrorModel;
     fn init(
@@ -223,5 +222,4 @@ impl selene_core::error_model::interface::ErrorModelInterfaceFactory for Consume
         )?))
     }
 }
-#[cfg(not(feature = "plugin-export"))]
 selene_core::export_error_model_plugin!(crate::ConsumerFactory);

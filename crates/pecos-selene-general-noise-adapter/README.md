@@ -1,4 +1,4 @@
-# pecos-selene-general-noise-model
+# pecos-selene-general-noise-adapter
 
 PECOS general noise as a Selene error model. `GeneralNoiseErrorModel` implements
 Selene's `ErrorModelInterface`; the `pecos-selene-general-noise` plugin exports it
@@ -6,10 +6,12 @@ to Selene, and other Rust plugins can depend on this crate to reuse it.
 
 ## Composing a Rust plugin
 
-Construct the model with `GeneralNoiseErrorModel::from_json(n_qubits, configuration)`.
-The configuration is the JSON argument emitted by Python's
-`GeneralNoisePlugin.get_init_args()`. Use the same Selene core revision as this
-crate.
+Construct the adapter with `GeneralNoiseErrorModel::new(n_qubits, &config, &local_groups)`,
+where `config` is a `pecos_engines::GeneralNoiseConfig`. For the JSON argument emitted
+by Python's `GeneralNoisePlugin.get_init_args()`, use
+`GeneralNoiseErrorModel::from_plugin_json(n_qubits, configuration)`. Its envelope is
+`{"model": {...}, "local_groups": [[0, 1]]}`; local groups default to empty.
+Use the same Selene core revision as this crate.
 
 This crate exports no FFI entry points, so a downstream plugin exports its own
 factory (`export_error_model_plugin!`) without duplicate symbols, including when

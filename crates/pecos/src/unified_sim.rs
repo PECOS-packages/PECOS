@@ -407,6 +407,9 @@ fn map_noise_to_neo(
         return Ok(Some(biased(p_prep, p_meas_0, p_meas_1, p1, p2)));
     }
     if let Some(builder) = noise.downcast_ref::<pecos_engines::noise::GeneralNoiseModelBuilder>() {
+        builder
+            .validate_configuration()
+            .map_err(PecosError::Input)?;
         // The stored p1/p2 are already in standard depolarizing convention
         // (the with_average_* setters convert on the way in), so they map
         // one-to-one onto neo's builder. Angle-dependent two-qubit scaling and

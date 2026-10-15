@@ -1,13 +1,13 @@
 //! Selene error-model plugin exporting PECOS general noise.
 //!
-//! The model lives in `pecos-selene-general-noise-model`; this crate only
+//! The Selene bridge lives in `pecos-selene-general-noise-adapter`; this crate only
 //! provides the FFI factory, so other plugins can reuse the model without
 //! linking a second set of Selene entry points.
 
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use pecos_selene_general_noise_model::GeneralNoiseErrorModel;
+use pecos_selene_general_noise_adapter::GeneralNoiseErrorModel;
 use selene_core::error_model::interface::ErrorModelInterfaceFactory;
 use selene_core::export_error_model_plugin;
 
@@ -28,7 +28,7 @@ impl ErrorModelInterfaceFactory for GeneralNoiseFactory {
                 error_model_args.len().saturating_sub(1)
             );
         }
-        Ok(Box::new(GeneralNoiseErrorModel::from_json(
+        Ok(Box::new(GeneralNoiseErrorModel::from_plugin_json(
             usize::try_from(n_qubits).context("qubit count does not fit usize")?,
             error_model_args[1].as_ref(),
         )?))

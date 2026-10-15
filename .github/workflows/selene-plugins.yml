@@ -70,7 +70,7 @@ jobs:
             python/pecos-rslib/src/engine_builders.rs \
             python/quantum-pecos/src/pecos/_sim.py \
             crates/pecos-engines/src/noise/ \
-            crates/pecos-selene-general-noise-model/ \
+            crates/pecos-selene-general-noise-adapter/ \
             crates/pecos-qis/ \
             .github/workflows/selene-plugins.yml \
             scripts/ci/smoke_selene_wheel.py \
@@ -220,7 +220,7 @@ jobs:
       - name: Test general-noise Rust composition
         if: runner.os == 'Linux'
         run: |
-          cargo test --locked --release -p pecos-selene-general-noise-model --test library
+          cargo test --locked --release -p pecos-selene-general-noise-adapter --test library
 
       - name: Run tests
         if: runner.os == 'Linux'

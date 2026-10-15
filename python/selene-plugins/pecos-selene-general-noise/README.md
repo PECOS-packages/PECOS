@@ -85,7 +85,7 @@ From the PECOS repository root:
 ```bash
 uv run --package pecos-selene-general-noise --extra test pytest \
   python/selene-plugins/pecos-selene-general-noise/tests
-cargo test --release -p pecos-selene-general-noise-model
+cargo test --release -p pecos-selene-general-noise-adapter
 ```
 
 
@@ -120,7 +120,9 @@ and rows and report configuration errors at plugin initialization.
 
 ## Composing a Rust plugin
 
-The noise model itself lives in the `pecos-selene-general-noise-model` crate
-(`crates/pecos-selene-general-noise-model`); this plugin only exports it to
+The reusable Selene bridge lives in the `pecos-selene-general-noise-adapter` crate
+(`crates/pecos-selene-general-noise-adapter`); this plugin only exports it to
 Selene. Downstream Rust plugins depend on that crate and export their own
-factory. See its README for the composition contract.
+factory. The engine-owned `pecos_engines::GeneralNoiseConfig` supplies the model
+parameters; the adapter owns local-crosstalk groups. See its README for the typed
+constructor and JSON envelope used at plugin boundaries.

@@ -264,7 +264,7 @@ def test_coherent_idle_rx_reaches_runtime_deterministically() -> None:
 
 def test_linear_idle_family_rejects_unnormalized_model() -> None:
     """The linear family reuses the normalized weighted-sampler contract."""
-    with pytest.raises(BaseException, match=r"total weight 2.*deviates from 1.0"):
+    with pytest.raises(ValueError, match=r"total weight 2.*deviates from 1.0"):
         general_noise().with_p_idle_linear(0.01, {"X": 1.0, "Z": 1.0})
 
 
@@ -283,7 +283,7 @@ def test_sine_idle_multipliers_are_not_normalized() -> None:
 @pytest.mark.parametrize("model", [{"L": 1.0}, {"A": 1.0}])
 def test_coherent_idle_family_rejects_non_rotation_keys(model: dict[str, float]) -> None:
     """Leakage and unknown generators are rejected instead of being treated as rotations."""
-    with pytest.raises(BaseException, match=r"invalid key.*expected RX, RY, or RZ"):
+    with pytest.raises(ValueError, match=r"invalid key.*expected RX, RY, or RZ"):
         general_noise().with_p_idle_coherent(0.02, model)
 
 

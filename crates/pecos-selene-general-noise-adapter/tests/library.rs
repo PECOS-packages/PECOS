@@ -1,6 +1,7 @@
 //! Downstream use of the public constructor, including a replacement FFI factory.
 use anyhow::Result;
-use pecos_selene_general_noise_model::GeneralNoiseErrorModel;
+use pecos_engines::GeneralNoiseConfig;
+use pecos_selene_general_noise_adapter::GeneralNoiseErrorModel;
 use selene_core::error_model::BatchResult;
 use selene_core::error_model::interface::ErrorModelInterface;
 use selene_core::runtime::{BatchOperation, Operation};
@@ -43,12 +44,12 @@ fn constructor_validates_configuration_and_capacity() {
     for config in [
         "{",
         r#"{"unknown":1}"#,
-        r#"{"preparation":{"probability":2.0}}"#,
-        r#"{"measurement":{"local_groups":[[0,1]]}}"#,
-        r#"{"single_qubit":{"hooks_before":[{"kind":"transition","probability":1.0,"transitions":{"0->L":1.0}}]}}"#,
+        r#"{"model":{"preparation":{"probability":2.0}}}"#,
+        r#"{"model":{"measurement":{}},"local_groups":[[0,1]]}"#,
+        r#"{"model":{"single_qubit":{"hooks_before":[{"kind":"transition","probability":1.0,"transitions":{"0->L":1.0}}]}}}"#,
     ] {
         assert!(
-            GeneralNoiseErrorModel::from_json(1, config).is_err(),
+            GeneralNoiseErrorModel::from_plugin_json(1, config).is_err(),
             "{config}"
         );
     }
@@ -56,9 +57,9 @@ fn constructor_validates_configuration_and_capacity() {
 
 #[test]
 fn library_retains_native_idle_and_measurement_identity() {
-    let mut model = GeneralNoiseErrorModel::from_json(
+    let mut model = GeneralNoiseErrorModel::from_plugin_json(
         1,
-        r#"{"idle":{"linear_rate":2.0,"linear_model":{"X":1.0}}}"#,
+        r#"{"model":{"idle":{"linear_rate":2.0,"linear_model":{"X":1.0}}}}"#,
     )
     .unwrap();
     let mut simulator = RecordingSimulator::default();
@@ -123,7 +124,12 @@ fn library_resumes_measuring_hooks_without_exposing_internal_results() {
                 }]
             }
         });
-        let mut model = GeneralNoiseErrorModel::from_json(1, &configuration.to_string()).unwrap();
+        let mut model = GeneralNoiseErrorModel::new(
+            1,
+            &GeneralNoiseConfig::from_json(&configuration.to_string()).unwrap(),
+            &[],
+        )
+        .unwrap();
         let mut simulator = RecordingSimulator::default();
         model.shot_start(0, 3).unwrap();
         let internal = model
@@ -179,7 +185,7 @@ fn library_resumes_measuring_hooks_without_exposing_internal_results() {
 
 #[test]
 fn constructor_does_not_acknowledge_custom_operations() {
-    let mut model = GeneralNoiseErrorModel::from_json(1, "{}").unwrap();
+    let mut model = GeneralNoiseErrorModel::new(1, &GeneralNoiseConfig::default(), &[]).unwrap();
     let mut simulator = RecordingSimulator::default();
     model.shot_start(0, 3).unwrap();
     let error = model
@@ -204,7 +210,7 @@ fn constructor_does_not_acknowledge_custom_operations() {
 }
 
 // This consumer supplies its own entry points, as a downstream plugin would.
-// The model crate must not export any, or linking this test fails with
+// The adapter crate must not export any, or linking this test fails with
 // duplicate symbols.
 #[derive(Default)]
 struct ConsumerFactory;
@@ -216,7 +222,7 @@ impl selene_core::error_model::interface::ErrorModelInterfaceFactory for Consume
         args: &[impl AsRef<str>],
     ) -> Result<Box<Self::Interface>> {
         anyhow::ensure!(args.len() == 2, "expected one configuration argument");
-        Ok(Box::new(GeneralNoiseErrorModel::from_json(
+        Ok(Box::new(GeneralNoiseErrorModel::from_plugin_json(
             usize::try_from(n_qubits)?,
             args[1].as_ref(),
         )?))

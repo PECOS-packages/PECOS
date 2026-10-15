@@ -40,6 +40,6 @@ path = "hatch_build.py"
 cache-keys = [
     { file = "src/**/*.rs" },
     { file = "Cargo.toml" },
-    { file = "../../../crates/pecos-selene-general-noise-model/src/**/*.rs" },
-    { file = "../../../crates/pecos-selene-general-noise-model/Cargo.toml" },
+    { file = "../../../crates/pecos-selene-general-noise-adapter/src/**/*.rs" },
+    { file = "../../../crates/pecos-selene-general-noise-adapter/Cargo.toml" },
 ]

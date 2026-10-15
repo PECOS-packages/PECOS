@@ -1,5 +1,5 @@
 [package]
-name = "pecos-selene-general-noise-model"
+name = "pecos-selene-general-noise-adapter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

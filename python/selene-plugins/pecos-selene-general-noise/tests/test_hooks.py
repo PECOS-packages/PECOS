@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 from pecos_selene_general_noise import (
@@ -31,7 +30,7 @@ def test_hook_specs_preserve_order_and_freeze_rows() -> None:
         .add_p1_pauli_leakage_channel_before_gate(leak)
         .add_p1_transition_channel_before_gate(recover)
     )
-    hooks = config(parameters)["single_qubit"]["hooks_before"]
+    hooks = config(parameters)["model"]["single_qubit"]["hooks_before"]
     assert [hook["kind"] for hook in hooks] == ["pauli_leakage", "transition"]
     assert hooks[1]["transitions"] == {"L": {"0": 1.0}}
     replaced = parameters.with_p1_pauli_leakage_channels_before_gate((leak,))
@@ -58,31 +57,7 @@ def test_hook_shape_and_effective_probability() -> None:
 
 @pytest.mark.parametrize("family", ["transition", "pauli_leakage"])
 @pytest.mark.parametrize("timing", ["before", "after"])
-def test_bridge_hook_calls(monkeypatch: pytest.MonkeyPatch, family: str, timing: str) -> None:
-    import pecos_selene_general_noise.plugin as plugin
-
-    def constructor(name):
-        return lambda *args: (name, *args)
-
-    fake = SimpleNamespace(
-        **{
-            name: constructor(name)
-            for name in (
-                "StateTransitionChannel",
-                "TwoQubitStateTransitionChannel",
-                "PauliLeakageChannel",
-                "TwoQubitPauliLeakageChannel",
-            )
-        },
-    )
-    for name in ("P2TransitionStep", "P2PauliLeakageStep"):
-        setattr(
-            fake,
-            name,
-            SimpleNamespace(independent=constructor(name + ".independent"), joint=constructor(name + ".joint")),
-        )
-    monkeypatch.setattr(plugin, "import_module", lambda _name: fake)
-
+def test_bridge_hook_json(family: str, timing: str) -> None:
     class RecordingBuilder:
         def __init__(self, calls=()):
             self.calls = calls
@@ -100,15 +75,25 @@ def test_bridge_hook_calls(monkeypatch: pytest.MonkeyPatch, family: str, timing:
     original = RecordingBuilder()
     calls = parameters.apply_to_pecos_builder(original).calls
     assert original.calls == ()
-    assert [name for name, _ in calls] == [
-        f"add_p1_{family}_channel_{timing}_gate",
-        f"add_p1_{other.kind}_channel_{timing}_gate",
-        f"add_p2_{family}_channel_{timing}_gate",
-        f"add_p2_{family}_{'channel' if family == 'transition' else 'step'}_{timing}_gate",
-        f"add_p2_{family}_step_{timing}_gate",
+    assert [name for name, _ in calls] == ["with_config_json"]
+    assert len(calls[0][1]) == 1
+    model = json.loads(calls[0][1][0])
+    data_key = "transitions" if family == "transition" else "events"
+    single_data = {"L->0": 1.0} if family == "transition" else {"L": 1.0}
+    joint_data = {"LL->00": 1.0} if family == "transition" else {"LI": 1.0}
+    expected_single = {"kind": family, "probability": 0.25, data_key: single_data}
+    expected_other = (
+        {"kind": "pauli_leakage", "probability": 0.1, "events": {"X": 1.0}}
+        if family == "transition"
+        else {"kind": "transition", "probability": 0.1, "transitions": {"L->0": 1.0}}
+    )
+    assert model["single_qubit"][f"hooks_{timing}"] == [expected_single, expected_other]
+    assert model["two_qubit"][f"hooks_{timing}"] == [
+        expected_single,
+        {"kind": family, "probability": 0.5, data_key: joint_data},
+        {"kind": "independent", "first": expected_single, "second": expected_single},
     ]
-    assert calls[0][1][0][1:] == (0.25, {"L->0": 1.0} if family == "transition" else {"L": 1.0})
-    assert calls[-1][1][0][0].endswith(".independent")
+    assert model == config(parameters)["model"]
 
 
 @pytest.mark.parametrize("probability", [-0.1, 1.1, float("nan"), float("inf")])
@@ -119,7 +104,7 @@ def test_invalid_hook_probability(probability: float) -> None:
 
 def test_hook_validation_leaves_rows_to_rust() -> None:
     parameters = GeneralNoiseParameters().add_p1_transition_channel_after_gate(TransitionHook(1.0, {"0->L": 1.0}))
-    assert config(parameters)["single_qubit"]["hooks_after"][0]["transitions"] == {"0->L": 1.0}
+    assert config(parameters)["model"]["single_qubit"]["hooks_after"][0]["transitions"] == {"0->L": 1.0}
     with pytest.raises(ValueError, match="family"):
         GeneralNoiseParameters(
             two_qubit=TwoQubitGateNoise(
@@ -146,7 +131,7 @@ def test_hook_json_round_trip(hook) -> None:
         return {"transition": TransitionHook, "pauli_leakage": PauliLeakageHook}[kind](**value)
 
     parameters = GeneralNoiseParameters(two_qubit=TwoQubitGateNoise(hooks_after=(hook,)))
-    encoded = config(parameters)["two_qubit"]["hooks_after"][0]
+    encoded = config(parameters)["model"]["two_qubit"]["hooks_after"][0]
     assert decode(encoded) == hook
     if encoded["kind"] != "independent":
         encoded["unknown"] = True

@@ -139,8 +139,8 @@ class TestDirectBuilder:
 
     def test_builder_chaining_validation(self) -> None:
         """Test that builder methods validate parameters."""
-        # Test validation - Rust panics raise BaseException with "PanicException" in the name
-        with pytest.raises(BaseException, match="Probability must be between 0 and 1"):
+        # Setter validation reports ordinary Python ValueError.
+        with pytest.raises(ValueError, match="Probability must be between 0 and 1"):
             GeneralNoiseModelBuilder().with_p1(1.5)
 
         # Scale validation happens at build time, not when setting the value
@@ -180,3 +180,102 @@ class TestDirectBuilder:
         assert len(results["c"]) == 100
         counts = Counter(results["c"])
         assert 0 in counts or 3 in counts  # Bell state results
+
+
+@pytest.mark.parametrize(
+    ("setter", "args", "message"),
+    [
+        ("with_p1", (1.5,), "Probability must be between 0 and 1"),
+        ("with_leakage_scale", (1.5,), "Probability must be between 0 and 1"),
+        ("with_seepage_prob", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_prep", (1.5,), "Probability must be between 0 and 1"),
+        ("with_prep_leak_ratio", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_prep_crosstalk", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p1_emission_ratio", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p1_seepage_prob", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p2", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p2_emission_ratio", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p2_seepage_prob", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_meas_0", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_meas_1", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_meas", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_meas_crosstalk_global", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_meas_crosstalk_local", (1.5,), "Probability must be between 0 and 1"),
+        ("with_p_meas_crosstalk", (1.5,), "Probability must be between 0 and 1"),
+        ("with_average_p1", (1.0,), "Probability must be between 0 and 1"),
+        ("with_average_p2", (1.0,), "Probability must be between 0 and 1"),
+        (
+            "with_measurement_probability",
+            (0.2, 1.5),
+            "Probability must be between 0 and 1",
+        ),
+        ("with_p_meas_crosstalk_scale", (-1.0,), "must be non-negative"),
+        ("with_p_prep_crosstalk_scale", (-1.0,), "must be non-negative"),
+        ("with_p1_pauli_model", ({"bad": 1.0},), "invalid key"),
+        ("with_p1_emission_model", ({"X": 2.0},), "total weight 2"),
+        ("with_p2_pauli_model", ({"XA": 1.0},), "invalid character"),
+        (
+            "with_p2_emission_model",
+            ({"XI": -1.0},),
+            "weights must be finite and non-negative",
+        ),
+        (
+            "with_p_meas_crosstalk_model",
+            ({"0->1": 1.0},),
+            "weighted_map cannot be empty",
+        ),
+        (
+            "with_p_idle_linear",
+            (-1.0, {"X": 1.0}),
+            "linear idling rate must be non-negative",
+        ),
+        ("with_p_idle_sin_squared", (0.1, {"A": 1.0}), "invalid key"),
+        (
+            "with_p_idle_coherent",
+            (0.1, {"RX": -1.0}),
+            "multiplier.*must be finite and non-negative",
+        ),
+        ("with_p2_angle_power", (0.0,), "must be positive"),
+        ("with_idle_after_2q", (-1.0,), "Duration must be finite and non-negative"),
+    ],
+)
+def test_invalid_setters_raise_value_error_at_call(setter, args, message) -> None:
+    builder = GeneralNoiseModelBuilder()
+    with pytest.raises(ValueError, match=message):
+        getattr(builder, setter)(*args)
+    # A rejected immutable update does not poison the original builder.
+    builder.with_config_json("{}")
+
+
+@pytest.mark.parametrize(
+    ("configuration", "message"),
+    [
+        ("{", "EOF while parsing an object"),
+        ('{"unknown": 1}', "unknown field `unknown`"),
+        (
+            '{"single_qubit": {"probability": 1.5}}',
+            "Probability must be between 0 and 1",
+        ),
+        ('{"measurement": {"local_groups": [[0]]}}', "unknown field `local_groups`"),
+        (
+            '{"preparation": {"average_crosstalk_probability": 0.3, "scale": 0.01}}',
+            "average preparation crosstalk probability must be between 0 and 5/18",
+        ),
+    ],
+)
+def test_config_json_rejects_invalid_input(configuration: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        GeneralNoiseModelBuilder().with_config_json(configuration)
+
+
+def test_config_json_composes_immutably_and_defers_cross_field_validation() -> None:
+    original = GeneralNoiseModelBuilder().with_p_meas(1.0)
+    configured = original.with_config_json('{"measurement": {"p0_to_1": 0.0}}')
+    program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[1]; creg c[1]; measure q -> c;')
+    assert sim(program).noise(original.with_config_json("{}")).run(2).to_dict()["c"] == [1, 1]
+    assert sim(program).noise(configured).run(2).to_dict()["c"] == [0, 0]
+    intermediate = GeneralNoiseModelBuilder().with_p1(0.8).with_config_json('{"scaling": {"overall": 2.0}}')
+    repaired = intermediate.with_p1_scale(0.5)
+    sim(program).noise(repaired).run(1)
+    with pytest.raises(ValueError, match="scaled one-qubit probability"):
+        sim(program).noise(intermediate).run(1)

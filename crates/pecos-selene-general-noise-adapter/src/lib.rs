@@ -2,564 +2,26 @@
 
 mod simulator;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::str::FromStr;
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, anyhow, bail};
 use pecos_core::Angle64;
-use pecos_core::gate_type::GateType;
 use pecos_engines::prelude::*;
 use selene_core::error_model::BatchResult;
 use selene_core::error_model::interface::ErrorModelInterface;
 use selene_core::runtime::{BatchOperation, Operation};
 use selene_core::simulator::SimulatorInterface;
 use selene_core::utils::MetricValue;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
 
 use crate::simulator::SeleneSimulator;
 
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-enum TransitionConfig {
-    Flat(BTreeMap<String, f64>),
-    Rows(BTreeMap<String, BTreeMap<String, f64>>),
-}
-
-impl TransitionConfig {
-    fn arity(&self) -> usize {
-        let label = match self {
-            Self::Flat(rows) => rows
-                .keys()
-                .next()
-                .map(|key| key.split("->").next().unwrap_or(key)),
-            Self::Rows(rows) => rows.keys().next().map(String::as_str),
-        };
-        label.map_or(1, |label| label.trim().len())
-    }
-
-    fn single(&self, probability: f64) -> Result<StateTransitionChannel> {
-        Ok(match self {
-            Self::Flat(rows) => StateTransitionChannel::from_transitions(probability, rows)?,
-            Self::Rows(rows) => StateTransitionChannel::new(probability, rows)?,
-        })
-    }
-
-    fn joint(&self, probability: f64) -> Result<TwoQubitStateTransitionChannel> {
-        Ok(match self {
-            Self::Flat(rows) => {
-                TwoQubitStateTransitionChannel::from_transitions(probability, rows)?
-            }
-            Self::Rows(rows) => TwoQubitStateTransitionChannel::new(probability, rows)?,
-        })
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum HookConfig {
-    Transition {
-        probability: f64,
-        transitions: TransitionConfig,
-    },
-    PauliLeakage {
-        probability: f64,
-        events: BTreeMap<String, f64>,
-    },
-    Independent {
-        first: Box<HookConfig>,
-        second: Box<HookConfig>,
-    },
-}
-
-// Read JSON values directly: serde's buffered enum deserializers cannot read
-// serde_json numbers when workspace feature unification enables arbitrary_precision.
-impl<'de> Deserialize<'de> for HookConfig {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::from_value(&Value::deserialize(deserializer)?)
-    }
-}
-
-fn hook_number<E: serde::de::Error>(value: &Value) -> Result<f64, E> {
-    value
-        .as_f64()
-        .ok_or_else(|| E::custom("invalid type: expected f64"))
-}
-
-fn hook_distribution<E: serde::de::Error>(value: &Value) -> Result<BTreeMap<String, f64>, E> {
-    value
-        .as_object()
-        .ok_or_else(|| E::custom("invalid type: expected a map of probabilities"))?
-        .iter()
-        .map(|(label, value)| Ok((label.clone(), hook_number(value)?)))
-        .collect()
-}
-
-impl HookConfig {
-    fn from_value<E: serde::de::Error>(value: &Value) -> Result<Self, E> {
-        let object = value
-            .as_object()
-            .ok_or_else(|| E::custom("invalid type: expected a hook object"))?;
-        let field = |name| object.get(name).ok_or_else(|| E::missing_field(name));
-        let kind = field("kind")?
-            .as_str()
-            .ok_or_else(|| E::custom("invalid type: expected a string for `kind`"))?;
-        let fields: &[&str] = match kind {
-            "transition" => &["probability", "transitions"],
-            "pauli_leakage" => &["probability", "events"],
-            "independent" => &["first", "second"],
-            _ => {
-                return Err(E::unknown_variant(
-                    kind,
-                    &["transition", "pauli_leakage", "independent"],
-                ));
-            }
-        };
-        for name in object.keys() {
-            if name != "kind" && !fields.contains(&name.as_str()) {
-                return Err(E::unknown_field(name, fields));
-            }
-        }
-        match kind {
-            "transition" => {
-                let probability = hook_number(field("probability")?)?;
-                let transitions = field("transitions")?;
-                let rows = transitions
-                    .as_object()
-                    .ok_or_else(|| E::custom("invalid type: expected a transitions map"))?;
-                let transitions = if rows.values().all(Value::is_number) {
-                    TransitionConfig::Flat(hook_distribution(transitions)?)
-                } else {
-                    TransitionConfig::Rows(
-                        rows.iter()
-                            .map(|(label, row)| Ok((label.clone(), hook_distribution(row)?)))
-                            .collect::<Result<_, E>>()?,
-                    )
-                };
-                Ok(Self::Transition {
-                    probability,
-                    transitions,
-                })
-            }
-            "pauli_leakage" => Ok(Self::PauliLeakage {
-                probability: hook_number(field("probability")?)?,
-                events: hook_distribution(field("events")?)?,
-            }),
-            "independent" => Ok(Self::Independent {
-                first: Box::new(Self::from_value(field("first")?)?),
-                second: Box::new(Self::from_value(field("second")?)?),
-            }),
-            _ => unreachable!("hook kind was validated above"),
-        }
-    }
-
-    fn apply(
-        &self,
-        builder: GeneralNoiseModelBuilder,
-        two: bool,
-        before: bool,
-    ) -> Result<GeneralNoiseModelBuilder> {
-        match self {
-            Self::Transition {
-                probability,
-                transitions,
-            } if !two => {
-                let channel = transitions.single(*probability)?;
-                Ok(if before {
-                    builder.add_p1_transition_channel_before_gate(&channel)
-                } else {
-                    builder.add_p1_transition_channel_after_gate(&channel)
-                })
-            }
-            Self::PauliLeakage {
-                probability,
-                events,
-            } if !two => {
-                let channel = PauliLeakageChannel::new(*probability, events)?;
-                Ok(if before {
-                    builder.add_p1_pauli_leakage_channel_before_gate(&channel)
-                } else {
-                    builder.add_p1_pauli_leakage_channel_after_gate(&channel)
-                })
-            }
-            Self::Transition {
-                probability,
-                transitions,
-            } => {
-                if transitions.arity() == 1 {
-                    let channel = transitions.single(*probability)?;
-                    Ok(if before {
-                        builder.add_p2_transition_channel_before_gate(&channel)
-                    } else {
-                        builder.add_p2_transition_channel_after_gate(&channel)
-                    })
-                } else {
-                    let channel = transitions.joint(*probability)?;
-                    Ok(if before {
-                        builder.add_p2_transition_channel_before_gate(&channel)
-                    } else {
-                        builder.add_p2_transition_channel_after_gate(&channel)
-                    })
-                }
-            }
-            Self::PauliLeakage {
-                probability,
-                events,
-            } => {
-                if events
-                    .keys()
-                    .next()
-                    .is_none_or(|label| label.trim().len() == 1)
-                {
-                    let channel = PauliLeakageChannel::new(*probability, events)?;
-                    Ok(if before {
-                        builder.add_p2_pauli_leakage_channel_before_gate(&channel)
-                    } else {
-                        builder.add_p2_pauli_leakage_channel_after_gate(&channel)
-                    })
-                } else {
-                    let step = P2PauliLeakageStep::joint(TwoQubitPauliLeakageChannel::new(
-                        *probability,
-                        events,
-                    )?);
-                    Ok(if before {
-                        builder.add_p2_pauli_leakage_step_before_gate(&step)
-                    } else {
-                        builder.add_p2_pauli_leakage_step_after_gate(&step)
-                    })
-                }
-            }
-            Self::Independent { first, second } => {
-                if !two {
-                    bail!("independent hook requires a two-qubit site");
-                }
-                match (first.as_ref(), second.as_ref()) {
-                    (
-                        Self::Transition {
-                            probability: p,
-                            transitions: a,
-                        },
-                        Self::Transition {
-                            probability: q,
-                            transitions: b,
-                        },
-                    ) => {
-                        let step = P2TransitionStep::independent(a.single(*p)?, b.single(*q)?);
-                        Ok(if before {
-                            builder.add_p2_transition_step_before_gate(&step)
-                        } else {
-                            builder.add_p2_transition_step_after_gate(&step)
-                        })
-                    }
-                    (
-                        Self::PauliLeakage {
-                            probability: p,
-                            events: a,
-                        },
-                        Self::PauliLeakage {
-                            probability: q,
-                            events: b,
-                        },
-                    ) => {
-                        let step = P2PauliLeakageStep::independent(
-                            PauliLeakageChannel::new(*p, a)?,
-                            PauliLeakageChannel::new(*q, b)?,
-                        );
-                        Ok(if before {
-                            builder.add_p2_pauli_leakage_step_before_gate(&step)
-                        } else {
-                            builder.add_p2_pauli_leakage_step_after_gate(&step)
-                        })
-                    }
-                    _ => {
-                        bail!("independent hook requires two one-qubit channels of the same family")
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct PreparationConfig {
-    probability: Option<f64>,
-    leakage_ratio: Option<f64>,
-    crosstalk_probability: Option<f64>,
-    average_crosstalk_probability: Option<f64>,
-    scale: Option<f64>,
-    crosstalk_scale: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct GateConfig {
-    probability: Option<f64>,
-    average_infidelity: Option<f64>,
-    pauli_model: Option<BTreeMap<String, f64>>,
-    emission_ratio: Option<f64>,
-    emission_model: Option<BTreeMap<String, f64>>,
-    seepage_probability: Option<f64>,
-    scale: Option<f64>,
-    hooks_before: Vec<HookConfig>,
-    hooks_after: Vec<HookConfig>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct TwoQubitConfig {
-    probability: Option<f64>,
-    average_infidelity: Option<f64>,
-    pauli_model: Option<BTreeMap<String, f64>>,
-    emission_ratio: Option<f64>,
-    emission_model: Option<BTreeMap<String, f64>>,
-    seepage_probability: Option<f64>,
-    scale: Option<f64>,
-    angle_coefficients: Option<[f64; 4]>,
-    angle_power: Option<f64>,
-    idle_after_gate: Option<f64>,
-    hooks_before: Vec<HookConfig>,
-    hooks_after: Vec<HookConfig>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct IdleConfig {
-    linear_rate: Option<f64>,
-    linear_model: Option<BTreeMap<String, f64>>,
-    sin_squared_rate: Option<f64>,
-    sin_squared_model: Option<BTreeMap<String, f64>>,
-    coherent_rate: Option<f64>,
-    coherent_model: Option<BTreeMap<String, f64>>,
-    scale: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct MeasurementConfig {
-    p0_to_1: Option<f64>,
-    p1_to_0: Option<f64>,
-    global_crosstalk_probability: Option<f64>,
-    local_crosstalk_probability: Option<f64>,
-    crosstalk_model: Option<BTreeMap<String, f64>>,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PluginConfig {
+    model: GeneralNoiseConfig,
+    #[serde(default)]
     local_groups: Vec<Vec<usize>>,
-    scale: Option<f64>,
-    crosstalk_scale: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct ScalingConfig {
-    overall: Option<f64>,
-    leakage: Option<f64>,
-    emission: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Config {
-    preparation: PreparationConfig,
-    measurement: MeasurementConfig,
-    single_qubit: GateConfig,
-    two_qubit: TwoQubitConfig,
-    idle: IdleConfig,
-    scaling: ScalingConfig,
-    noiseless_gates: Vec<String>,
-}
-
-impl Config {
-    fn build_model(&self) -> Result<Box<dyn NoiseModel>> {
-        catch_unwind(AssertUnwindSafe(|| {
-            let mut builder = GeneralNoiseModel::builder();
-
-            if let Some(value) = self.scaling.overall {
-                builder = builder.with_scale(value);
-            }
-            if let Some(value) = self.scaling.leakage {
-                builder = builder.with_leakage_scale(value);
-            }
-            if let Some(value) = self.scaling.emission {
-                builder = builder.with_emission_scale(value);
-            }
-            for name in &self.noiseless_gates {
-                let gate = GateType::from_str(name)
-                    .unwrap_or_else(|message| panic!("invalid noiseless gate {name:?}: {message}"));
-                builder = builder.with_noiseless_gate(gate);
-            }
-
-            let prep = &self.preparation;
-            assert!(
-                prep.crosstalk_probability.is_none()
-                    || prep.average_crosstalk_probability.is_none(),
-                "preparation accepts crosstalk_probability or average_crosstalk_probability, not both"
-            );
-            if let Some(value) = prep.probability {
-                builder = builder.with_p_prep(value);
-            }
-            if let Some(value) = prep.leakage_ratio {
-                builder = builder.with_prep_leak_ratio(value);
-            }
-            if let Some(value) = prep.crosstalk_probability {
-                builder = builder.with_p_prep_crosstalk(value);
-            }
-            if let Some(value) = prep.average_crosstalk_probability {
-                assert!(
-                    value.is_finite() && (0.0..=5.0 / 18.0).contains(&value),
-                    "average preparation crosstalk probability must be between 0 and 5/18"
-                );
-                builder = builder.with_average_p_prep_crosstalk(value);
-            }
-            if let Some(value) = prep.scale {
-                builder = builder.with_prep_scale(value);
-            }
-            if let Some(value) = prep.crosstalk_scale {
-                builder = builder.with_p_prep_crosstalk_scale(value);
-            }
-
-            let one = &self.single_qubit;
-            assert!(
-                one.probability.is_none() || one.average_infidelity.is_none(),
-                "single_qubit accepts probability or average_infidelity, not both"
-            );
-            if let Some(value) = one.probability {
-                builder = builder.with_p1(value);
-            }
-            if let Some(value) = one.average_infidelity {
-                builder = builder.with_average_p1(value);
-            }
-            if let Some(value) = &one.pauli_model {
-                builder = builder.with_p1_pauli_model(value);
-            }
-            if let Some(value) = one.emission_ratio {
-                builder = builder.with_p1_emission_ratio(value);
-            }
-            if let Some(value) = &one.emission_model {
-                builder = builder.with_p1_emission_model(value);
-            }
-            if let Some(value) = one.seepage_probability {
-                builder = builder.with_p1_seepage_prob(value);
-            }
-            if let Some(value) = one.scale {
-                builder = builder.with_p1_scale(value);
-            }
-
-            let two = &self.two_qubit;
-            assert!(
-                two.probability.is_none() || two.average_infidelity.is_none(),
-                "two_qubit accepts probability or average_infidelity, not both"
-            );
-            if let Some(value) = two.probability {
-                builder = builder.with_p2(value);
-            }
-            if let Some(value) = two.average_infidelity {
-                builder = builder.with_average_p2(value);
-            }
-            if let Some(value) = &two.pauli_model {
-                builder = builder.with_p2_pauli_model(value);
-            }
-            if let Some(value) = two.emission_ratio {
-                builder = builder.with_p2_emission_ratio(value);
-            }
-            if let Some(value) = &two.emission_model {
-                builder = builder.with_p2_emission_model(value);
-            }
-            if let Some(value) = two.seepage_probability {
-                builder = builder.with_p2_seepage_prob(value);
-            }
-            if let Some(value) = two.scale {
-                builder = builder.with_p2_scale(value);
-            }
-            if let Some([a, b, c, d]) = two.angle_coefficients {
-                builder = builder.with_p2_angle_params(a, b, c, d);
-            }
-            if let Some(value) = two.angle_power {
-                builder = builder.with_p2_angle_power(value);
-            }
-            if let Some(value) = two.idle_after_gate {
-                builder = builder.with_idle_after_2q(value);
-            }
-
-            for (hooks, two, before) in [
-                (&one.hooks_before, false, true),
-                (&one.hooks_after, false, false),
-                (&two.hooks_before, true, true),
-                (&two.hooks_after, true, false),
-            ] {
-                for hook in hooks {
-                    builder = hook.apply(builder, two, before).unwrap_or_else(|error| panic!("{error}"));
-                }
-            }
-
-            let idle = &self.idle;
-            if let Some(rate) = idle.linear_rate {
-                let model = idle.linear_model.clone().unwrap_or_else(|| {
-                    BTreeMap::from([
-                        ("X".to_string(), 1.0 / 3.0),
-                        ("Y".to_string(), 1.0 / 3.0),
-                        ("Z".to_string(), 1.0 / 3.0),
-                    ])
-                });
-                builder = builder.with_p_idle_linear(rate, &model);
-            } else if idle.linear_model.is_some() {
-                panic!("idle.linear_model requires idle.linear_rate");
-            }
-            if let Some(rate) = idle.sin_squared_rate {
-                let model = idle
-                    .sin_squared_model
-                    .clone()
-                    .unwrap_or_else(|| BTreeMap::from([("Z".to_string(), 1.0)]));
-                builder = builder.with_p_idle_sin_squared(rate, &model);
-            } else if idle.sin_squared_model.is_some() {
-                panic!("idle.sin_squared_model requires idle.sin_squared_rate");
-            }
-            if let Some(rate) = idle.coherent_rate {
-                let model = idle
-                    .coherent_model
-                    .clone()
-                    .unwrap_or_else(|| BTreeMap::from([("RZ".to_string(), 1.0)]));
-                builder = builder.with_p_idle_coherent(rate, &model);
-            } else if idle.coherent_model.is_some() {
-                panic!("idle.coherent_model requires idle.coherent_rate");
-            }
-            if let Some(value) = idle.scale {
-                builder = builder.with_idle_scale(value);
-            }
-
-            let measurement = &self.measurement;
-            if let Some(value) = measurement.p0_to_1 {
-                builder = builder.with_p_meas_0(value);
-            }
-            if let Some(value) = measurement.p1_to_0 {
-                builder = builder.with_p_meas_1(value);
-            }
-            if let Some(value) = measurement.global_crosstalk_probability {
-                builder = builder.with_p_meas_crosstalk_global(value);
-            }
-            if let Some(value) = measurement.local_crosstalk_probability {
-                builder = builder.with_p_meas_crosstalk_local(value);
-            }
-            if let Some(value) = &measurement.crosstalk_model {
-                builder = builder.with_p_meas_crosstalk_model(value);
-            }
-            if let Some(value) = measurement.scale {
-                builder = builder.with_meas_scale(value);
-            }
-            if let Some(value) = measurement.crosstalk_scale {
-                builder = builder.with_p_meas_crosstalk_scale(value);
-            }
-
-            Box::new(builder.build()) as Box<dyn NoiseModel>
-        }))
-        .map_err(|payload| {
-            let message = payload
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| payload.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown validation failure");
-            anyhow!("invalid general-noise configuration: {message}")
-        })
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -573,7 +35,7 @@ struct MeasurementResult {
     kind: MeasurementKind,
 }
 
-/// Stateful Selene error model backed by PECOS general noise.
+/// Stateful Selene adapter for an engine-owned [`GeneralNoiseConfig`] and local topology.
 ///
 /// This type implements [`ErrorModelInterface`]. The `pecos-selene-general-noise`
 /// plugin exports it to Selene; downstream Rust plugins can wrap it to normalize
@@ -590,23 +52,36 @@ pub struct GeneralNoiseErrorModel {
 }
 
 impl GeneralNoiseErrorModel {
-    /// Construct an instance using the JSON emitted by `GeneralNoiseParameters`.
-    ///
-    /// Configuration validation is identical to the default exported plugin.
-    /// Unknown fields, invalid probabilities and out-of-capacity local groups
-    /// return errors. This constructor does not start a shot or interpret custom
-    /// runtime operations; callers must explicitly normalize those operations.
+    /// Construct from the model and local-group envelope emitted by
+    /// `GeneralNoisePlugin.get_init_args()`.
     ///
     /// # Errors
-    /// Returns an error for malformed or invalid noise configuration.
-    pub fn from_json(n_qubits: usize, configuration: &str) -> Result<Self> {
-        let config: Config = serde_json::from_str(configuration)
+    /// Returns an error for malformed JSON, unknown fields, invalid noise configuration,
+    /// or local groups outside the simulation's capacity.
+    pub fn from_plugin_json(n_qubits: usize, json: &str) -> Result<Self> {
+        let config: PluginConfig = serde_json::from_str(json)
             .context("could not parse PECOS general-noise JSON configuration")?;
-        Self::new(config.build_model()?, n_qubits, &config)
+        Self::new(n_qubits, &config.model, &config.local_groups)
     }
 
-    fn new(model: Box<dyn NoiseModel>, n_qubits: usize, config: &Config) -> Result<Self> {
-        for group in &config.measurement.local_groups {
+    /// Construct from typed engine parameters and Selene local-crosstalk groups.
+    ///
+    /// This does not start a shot or interpret custom runtime operations; callers must
+    /// explicitly normalize those operations and follow the Selene lifecycle.
+    ///
+    /// # Errors
+    /// Returns an error for invalid model parameters or out-of-capacity local groups.
+    pub fn new(
+        n_qubits: usize,
+        config: &GeneralNoiseConfig,
+        local_groups: &[Vec<usize>],
+    ) -> Result<Self> {
+        let model = Box::new(
+            config
+                .build()
+                .context("invalid general-noise configuration")?,
+        );
+        for group in local_groups {
             if let Some(qubit) = group.iter().find(|qubit| **qubit >= n_qubits) {
                 bail!(
                     "local crosstalk group contains qubit {qubit}, but the simulation has {n_qubits} qubits"
@@ -617,9 +92,7 @@ impl GeneralNoiseErrorModel {
             model,
             builder: ByteMessage::quantum_operations_builder(),
             last_operation_end: vec![None; n_qubits],
-            local_groups: config
-                .measurement
-                .local_groups
+            local_groups: local_groups
                 .iter()
                 .map(|group| group.iter().copied().collect())
                 .collect(),
@@ -890,13 +363,13 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::f64::consts::PI;
 
     use anyhow::Result;
     use pecos_core::Angle64;
     use pecos_engines::byte_message::GateType;
-    use pecos_engines::prelude::{ByteMessage, EngineStage, NoiseModel, StateTransitionChannel};
+    use pecos_engines::prelude::{ByteMessage, EngineStage, NoiseModel};
     use selene_core::error_model::BatchResult;
     use selene_core::error_model::interface::ErrorModelInterface;
     use selene_core::runtime::{BatchOperation, Operation};
@@ -904,7 +377,7 @@ mod tests {
     use selene_core::time::{Duration, Instant};
     use selene_core::utils::MetricValue;
 
-    use super::{Config, GeneralNoiseErrorModel, HookConfig};
+    use super::{GeneralNoiseErrorModel, PluginConfig};
     use crate::simulator::SeleneSimulator;
 
     #[derive(Default)]
@@ -1019,8 +492,7 @@ mod tests {
     }
 
     fn build_error_model(config_json: &str, n_qubits: usize) -> GeneralNoiseErrorModel {
-        let config: Config = serde_json::from_str(config_json).unwrap();
-        GeneralNoiseErrorModel::new(config.build_model().unwrap(), n_qubits, &config).unwrap()
+        GeneralNoiseErrorModel::from_plugin_json(n_qubits, config_json).unwrap()
     }
 
     fn process_direct_model(
@@ -1149,9 +621,7 @@ mod tests {
     }
 
     fn leakage_measurement(config_json: &str) -> u64 {
-        let config: Config = serde_json::from_str(config_json).unwrap();
-        let mut error_model =
-            GeneralNoiseErrorModel::new(config.build_model().unwrap(), 1, &config).unwrap();
+        let mut error_model = GeneralNoiseErrorModel::from_plugin_json(1, config_json).unwrap();
         let mut simulator = ZeroSimulator;
         error_model.shot_start(0, 41).unwrap();
         error_model
@@ -1187,7 +657,7 @@ mod tests {
         let config = serde_json::json!({
             if two { "two_qubit" } else { "single_qubit" }: { site: hooks }
         });
-        let mut model = build_error_model(&config.to_string(), 2);
+        let mut model = build_error_model(&serde_json::json!({"model": config}).to_string(), 2);
         let mut simulator = ZeroSimulator;
         model.shot_start(0, 41).unwrap();
         model
@@ -1310,176 +780,12 @@ mod tests {
     }
 
     #[test]
-    fn hook_configuration_and_validation() {
-        let valid = r#"{"single_qubit":{"hooks_before":[{"kind":"transition","probability":1.0,"transitions":{"L->0":1.0}}]}}"#;
-        let config: Config = serde_json::from_str(valid).unwrap();
-        assert!(config.build_model().is_ok());
-        assert!(
-            serde_json::from_str::<Config>(
-                &valid.replace("\"probability\":1.0", "\"probability\":1.0,\"unknown\":0")
-            )
-            .is_err()
-        );
-        let invalid = valid.replace("L->0", "0->L");
-        let config: Config = serde_json::from_str(&invalid).unwrap();
-        let expected = StateTransitionChannel::from_transitions(
-            1.0,
-            &BTreeMap::from([("0->L".to_string(), 1.0)]),
-        )
-        .unwrap_err()
-        .to_string();
-        assert_eq!(
-            config.build_model().err().unwrap().to_string(),
-            format!("invalid general-noise configuration: {expected}")
-        );
-    }
-
-    #[test]
-    fn hook_json_round_trip_and_unknown_fields() {
-        let values = [
-            serde_json::json!({"kind":"transition","probability":0.5,"transitions":{"L->0":1.0}}),
-            serde_json::json!({"kind":"transition","probability":0.5,"transitions":{"L":{"0":1.0}}}),
-            serde_json::json!({"kind":"pauli_leakage","probability":0.5,"events":{"L":1.0}}),
-        ];
-        for value in values {
-            let hook: HookConfig = serde_json::from_value(value.clone()).unwrap();
-            assert_eq!(serde_json::to_value(hook).unwrap(), value);
-            let independent =
-                serde_json::json!({"kind":"independent","first":value,"second":value});
-            let hook: HookConfig = serde_json::from_value(independent.clone()).unwrap();
-            assert_eq!(serde_json::to_value(hook).unwrap(), independent);
-            for mut invalid in [value, independent] {
-                invalid["unknown"] = serde_json::json!(true);
-                assert!(serde_json::from_value::<HookConfig>(invalid).is_err());
-            }
-        }
-    }
-
-    #[test]
-    fn hook_json_numbers_parse_from_text() {
-        for json in [
-            r#"{"kind":"transition","probability":0.25,"transitions":{"L->0":1}}"#,
-            r#"{"kind":"transition","probability":2.5e-1,"transitions":{"L":{"0":1.0}}}"#,
-            r#"{"kind":"pauli_leakage","probability":0.25,"events":{"L":1}}"#,
-        ] {
-            let hook: HookConfig = serde_json::from_str(json).unwrap();
-            let expected: serde_json::Value = serde_json::from_str(json).unwrap();
-            // Compare numeric values, since arbitrary_precision preserves number spelling.
-            let encoded = serde_json::to_value(hook).unwrap();
-            assert_eq!(encoded["probability"].as_f64(), Some(0.25));
-            assert_eq!(encoded["kind"], expected["kind"]);
-            let independent = serde_json::json!({
-                "kind": "independent", "first": expected, "second": expected
-            });
-            let hook: HookConfig = serde_json::from_str(&independent.to_string()).unwrap();
-            assert!(
-                hook.apply(super::GeneralNoiseModel::builder(), true, false)
-                    .is_ok()
-            );
-        }
-    }
-
-    #[test]
-    fn hook_json_rejects_non_numeric_probabilities_and_missing_kind() {
-        for json in [
-            r#"{"kind":"transition","probability":"0.5","transitions":{"L->0":1}}"#,
-            r#"{"kind":"pauli_leakage","probability":false,"events":{"L":1}}"#,
-            r#"{"kind":"pauli_leakage","probability":null,"events":{"L":1}}"#,
-            r#"{"kind":"transition","probability":1,"transitions":{"L->0":"1"}}"#,
-            r#"{"kind":"transition","probability":1,"transitions":{"L":{"0":false}}}"#,
-            r#"{"kind":"pauli_leakage","probability":1,"events":{"L":[]}}"#,
-            r#"{"kind":"transition","probability":1,"transitions":{"L":{"0":1},"0->0":1}}"#,
-            r#"{"probability":1,"events":{"L":1}}"#,
-        ] {
-            assert!(serde_json::from_str::<HookConfig>(json).is_err(), "{json}");
-            let value: serde_json::Value = serde_json::from_str(json).unwrap();
-            for leg in ["first", "second"] {
-                let valid = serde_json::json!({
-                    "kind": "pauli_leakage", "probability": 1, "events": {"L": 1}
-                });
-                let mut independent = serde_json::json!({
-                    "kind": "independent", "first": valid, "second": valid
-                });
-                independent[leg] = value.clone();
-                assert!(
-                    serde_json::from_str::<HookConfig>(&independent.to_string()).is_err(),
-                    "{independent}"
-                );
-            }
-        }
-        let error = serde_json::from_str::<HookConfig>(r#"{"probability":1}"#).unwrap_err();
-        assert!(error.to_string().contains("missing field `kind`"));
-    }
-
-    #[test]
-    fn scaled_hook_probabilities_are_rejected() {
-        for site in ["single_qubit", "two_qubit"] {
-            for timing in ["hooks_before", "hooks_after"] {
-                let hook = serde_json::json!({"kind":"pauli_leakage","probability":0.6,"events":{"L":1.0}});
-                let mut hooks = vec![hook.clone()];
-                if site == "two_qubit" {
-                    hooks
-                        .push(serde_json::json!({"kind":"independent","first":hook,"second":hook}));
-                }
-                for hook in hooks {
-                    let value = serde_json::json!({site:{timing:[hook],"scale":2.0}});
-                    let config: Config = serde_json::from_value(value).unwrap();
-                    assert!(config.build_model().is_err());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn rich_configuration_builds_the_current_pecos_model() {
-        let json = r#"{
-            "preparation":{
-                "probability":0.001,
-                "leakage_ratio":0.2,
-                "average_crosstalk_probability":0.0001
-            },
-            "measurement":{
-                "p0_to_1":0.002,
-                "p1_to_0":0.003,
-                "global_crosstalk_probability":0.0001,
-                "local_crosstalk_probability":0.0002,
-                "crosstalk_model":{
-                    "0->0":0.9,"0->1":0.1,
-                    "1->0":0.2,"1->1":0.8
-                },
-                "local_groups":[[0,1],[2,3]]
-            },
-            "single_qubit":{"average_infidelity":0.0001},
-            "two_qubit":{
-                "average_infidelity":0.001,
-                "angle_coefficients":[1.0,0.0,1.0,0.0],
-                "angle_power":1.0,
-                "idle_after_gate":0.000005
-            },
-            "idle":{
-                "linear_rate":0.01,
-                "sin_squared_rate":0.02,
-                "coherent_rate":0.03
-            },
-            "scaling":{"overall":0.5,"leakage":0.75,"emission":1.25},
-            "noiseless_gates":["RZ"]
-        }"#;
-        let config: Config = serde_json::from_str(json).unwrap();
-        config.build_model().unwrap();
-    }
-
-    #[test]
-    fn unknown_configuration_fields_are_rejected() {
-        let error = serde_json::from_str::<Config>(r#"{"device_profile":"example"}"#)
-            .expect_err("device-specific fields must not enter the generic API");
-        assert!(error.to_string().contains("unknown field"));
-    }
-
-    #[test]
     fn measure_leaked_reports_computational_and_leaked_outcomes() {
-        assert_eq!(leakage_measurement("{}"), 0);
+        assert_eq!(leakage_measurement(r#"{"model":{}}"#), 0);
         assert_eq!(
-            leakage_measurement(r#"{"preparation":{"probability":1.0,"leakage_ratio":1.0}}"#,),
+            leakage_measurement(
+                r#"{"model":{"preparation":{"probability":1.0,"leakage_ratio":1.0}}}"#,
+            ),
             2
         );
     }
@@ -1554,9 +860,9 @@ mod tests {
     #[test]
     fn runtime_timestamps_drive_every_idle_family() {
         let configurations = [
-            r#"{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}"#,
-            r#"{"idle":{"sin_squared_rate":1.5707963267948966,"sin_squared_model":{"X":1.0}}}"#,
-            r#"{"idle":{"coherent_rate":3.141592653589793,"coherent_model":{"RX":1.0}}}"#,
+            r#"{"model":{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}}"#,
+            r#"{"model":{"idle":{"sin_squared_rate":1.5707963267948966,"sin_squared_model":{"X":1.0}}}}"#,
+            r#"{"model":{"idle":{"coherent_rate":3.141592653589793,"coherent_model":{"RX":1.0}}}}"#,
         ];
         for config in configurations {
             let mut error_model = build_error_model(config, 1);
@@ -1592,7 +898,7 @@ mod tests {
     #[test]
     fn runtime_timestamps_accumulate_per_qubit_between_operations() {
         let mut error_model = build_error_model(
-            r#"{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}"#,
+            r#"{"model":{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}}"#,
             1,
         );
         let mut simulator = ClassicalSimulator::with_qubits(1);
@@ -1636,7 +942,7 @@ mod tests {
     #[test]
     fn seeded_randomized_traces_match_direct_general_noise_execution() {
         const N_QUBITS: usize = 3;
-        const CONFIG: &str = r#"{
+        const CONFIG: &str = r#"{"model":{
             "preparation":{"probability":0.17,"leakage_ratio":0.29},
             "measurement":{
                 "p0_to_1":0.11,
@@ -1646,8 +952,7 @@ mod tests {
                 "crosstalk_model":{
                     "0->0":0.7,"0->1":0.2,"0->L":0.1,
                     "1->0":0.15,"1->1":0.75,"1->L":0.1
-                },
-                "local_groups":[[0,1],[1,2]]
+                }
             },
             "single_qubit":{
                 "probability":0.23,
@@ -1671,12 +976,11 @@ mod tests {
                 "coherent_rate":300000.0,
                 "coherent_model":{"RX":0.7,"RZ":0.2}
             }
-        }"#;
+        },"local_groups":[[0,1],[1,2]]}"#;
 
-        let config: Config = serde_json::from_str(CONFIG).unwrap();
-        let mut direct_model = config.build_model().unwrap();
-        let mut adapter =
-            GeneralNoiseErrorModel::new(config.build_model().unwrap(), N_QUBITS, &config).unwrap();
+        let config: PluginConfig = serde_json::from_str(CONFIG).unwrap();
+        let mut direct_model: Box<dyn NoiseModel> = Box::new(config.model.build().unwrap());
+        let mut adapter = GeneralNoiseErrorModel::from_plugin_json(N_QUBITS, CONFIG).unwrap();
         let mut direct_simulator = ClassicalSimulator::with_qubits(N_QUBITS);
         let mut adapter_simulator = ClassicalSimulator::with_qubits(N_QUBITS);
         let local_groups = [BTreeSet::from([0, 1]), BTreeSet::from([1, 2])];
@@ -1830,7 +1134,7 @@ mod tests {
         // is a no-op and its instant only ever advances. A qubit's first operation in a
         // shot therefore has no predecessor within that shot and must not accrue idle
         // time measured from an earlier shot's timestamps.
-        let config = r#"{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}"#;
+        let config = r#"{"model":{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}}"#;
         let batch = || {
             vec![Operation::RXYGate {
                 qubit_id: 0,
@@ -1884,7 +1188,7 @@ mod tests {
         //
         // The oracle is a freshly constructed model with no history running the same
         // shot: whatever the correct emission is, both must produce it identically.
-        let config = r#"{"measurement":{"global_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0}}}"#;
+        let config = r#"{"model":{"measurement":{"global_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0}}}}"#;
         let later_shot = || {
             vec![Operation::Measure {
                 qubit_id: 0,
@@ -1943,8 +1247,8 @@ mod tests {
         // Both reset paths must clear leakage: the ordinary one through the
         // preparation fault handler, and the one that bypasses faults entirely.
         for config in [
-            r#"{"single_qubit":{"probability":1.0,"emission_ratio":1.0,"emission_model":{"L":1.0}},"scaling":{"leakage":1.0}}"#,
-            r#"{"single_qubit":{"probability":1.0,"emission_ratio":1.0,"emission_model":{"L":1.0}},"scaling":{"leakage":1.0},"noiseless_gates":["PZ"]}"#,
+            r#"{"model":{"single_qubit":{"probability":1.0,"emission_ratio":1.0,"emission_model":{"L":1.0}},"scaling":{"leakage":1.0}}}"#,
+            r#"{"model":{"single_qubit":{"probability":1.0,"emission_ratio":1.0,"emission_model":{"L":1.0}},"scaling":{"leakage":1.0},"noiseless_gates":["PZ"]}}"#,
         ] {
             let mut error_model = build_error_model(config, 1);
             let mut simulator = ClassicalSimulator::with_qubits(1);
@@ -2021,7 +1325,7 @@ mod tests {
         // deterministic; truncating the gap to whole seconds would yield 0.0 and emit
         // nothing.
         let mut error_model = build_error_model(
-            r#"{"idle":{"linear_rate":2.0,"linear_model":{"X":1.0}}}"#,
+            r#"{"model":{"idle":{"linear_rate":2.0,"linear_model":{"X":1.0}}}}"#,
             1,
         );
         let mut simulator = ClassicalSimulator::with_qubits(1);
@@ -2056,7 +1360,7 @@ mod tests {
         // Local crosstalk targets the rest of a measured qubit's group, never the
         // measured qubit itself, whose outcome is already governed by readout error.
         let mut error_model = build_error_model(
-            r#"{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0},"local_groups":[[0,1]]}}"#,
+            r#"{"model":{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0}}},"local_groups":[[0,1]]}"#,
             2,
         );
         let mut simulator = ClassicalSimulator::with_qubits(2);
@@ -2117,7 +1421,7 @@ mod tests {
         // MeasureLeaked is a measurement: it disturbs its neighbours exactly as an
         // ordinary measurement does.
         let mut error_model = build_error_model(
-            r#"{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0},"local_groups":[[0,1]]}}"#,
+            r#"{"model":{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0}}},"local_groups":[[0,1]]}"#,
             2,
         );
         let mut simulator = ClassicalSimulator::with_qubits(2);
@@ -2518,7 +1822,7 @@ mod tests {
 
     #[test]
     fn rpp_round_trip_preserves_one_gate_and_both_qubit_times() {
-        let mut model = build_error_model("{}", 3);
+        let mut model = build_error_model(r#"{"model":{}}"#, 3);
         let mut sim = ClassicalSimulator::with_qubits(3);
         model.shot_start(0, 41).unwrap();
         model
@@ -2578,10 +1882,10 @@ mod tests {
         // single-qubit gate. An RPP should produce one XI error and no Z
         // errors from its internal basis changes.
         let mut model = build_error_model(
-            r#"{
+            r#"{"model":{
             "two_qubit":{"probability":1.0,"pauli_model":{"XI":1.0}},
             "single_qubit":{"probability":1.0,"pauli_model":{"Z":1.0}}
-        }"#,
+        }}"#,
             2,
         );
         let mut sim = ClassicalSimulator::with_qubits(2);
@@ -2622,14 +1926,13 @@ mod tests {
 
     #[test]
     fn adapter_rejects_invalid_runtime_contracts() {
-        let config: Config =
-            serde_json::from_str(r#"{"measurement":{"local_groups":[[0,2]]}}"#).unwrap();
-        let error = GeneralNoiseErrorModel::new(config.build_model().unwrap(), 2, &config)
-            .err()
-            .expect("an out-of-bounds local group must fail");
+        let error =
+            GeneralNoiseErrorModel::from_plugin_json(2, r#"{"model":{},"local_groups":[[0,2]]}"#)
+                .err()
+                .expect("an out-of-bounds local group must fail");
         assert!(error.to_string().contains("contains qubit 2"));
 
-        let mut error_model = build_error_model("{}", 1);
+        let mut error_model = build_error_model(r#"{"model":{}}"#, 1);
         let mut simulator = ClassicalSimulator::with_qubits(1);
         error_model.shot_start(0, 41).unwrap();
         error_model
@@ -2658,7 +1961,7 @@ mod tests {
                 .contains("before its previous operation ended")
         );
 
-        let mut error_model = build_error_model("{}", 1);
+        let mut error_model = build_error_model(r#"{"model":{}}"#, 1);
         let error = error_model
             .handle_operations(
                 BatchOperation::error_model(vec![Operation::Reset { qubit_id: 0 }]),
@@ -2681,7 +1984,7 @@ mod tests {
             .expect("an out-of-bounds operation must fail");
         assert!(error.to_string().contains("qubit 1 is out of bounds"));
 
-        let mut error_model = build_error_model("{}", 1);
+        let mut error_model = build_error_model(r#"{"model":{}}"#, 1);
         let error = error_model
             .handle_operations(
                 runtime_batch(
@@ -2700,7 +2003,7 @@ mod tests {
             .expect("an RPP operation on the same qubit twice must fail");
         assert!(error.to_string().contains("requires two distinct qubits"));
 
-        let mut error_model = build_error_model("{}", 1);
+        let mut error_model = build_error_model(r#"{"model":{}}"#, 1);
         let error = error_model
             .handle_operations(
                 runtime_batch(
@@ -2720,5 +2023,51 @@ mod tests {
                 .to_string()
                 .contains("no device-neutral PECOS meaning")
         );
+    }
+    #[test]
+    fn invalid_model_configuration_retains_adapter_context() {
+        let error = GeneralNoiseErrorModel::from_plugin_json(
+            1,
+            r#"{"model":{"single_qubit":{"probability":1.5}}}"#,
+        )
+        .err()
+        .expect("invalid model must fail");
+        assert_eq!(error.to_string(), "invalid general-noise configuration");
+        assert_eq!(
+            error.root_cause().to_string(),
+            "Input error: Probability must be between 0 and 1, got 1.5"
+        );
+    }
+
+    #[test]
+    fn plugin_envelope_is_strict_and_topology_stays_in_adapter() {
+        for json in [
+            "{}",
+            r#"{"model":{},"unknown":1}"#,
+            r#"{"model":{"measurement":{"local_groups":[[0]]}}}"#,
+            r#"{"model":{},"local_groups":[[-1]]}"#,
+            r#"{"model":{},"local_groups":[[2]]}"#,
+        ] {
+            assert!(
+                GeneralNoiseErrorModel::from_plugin_json(2, json).is_err(),
+                "{json}"
+            );
+        }
+        let without_groups =
+            GeneralNoiseErrorModel::from_plugin_json(2, r#"{"model":{}}"#).unwrap();
+        assert_eq!(without_groups.local_groups, [] as [BTreeSet<usize>; 0]);
+        let envelope =
+            r#"{"model":{"preparation":{"probability":0.1}},"local_groups":[[0,1],[1]]}"#;
+        let from_json = GeneralNoiseErrorModel::from_plugin_json(2, envelope).unwrap();
+        let config =
+            pecos_engines::GeneralNoiseConfig::from_json(r#"{"preparation":{"probability":0.1}}"#)
+                .unwrap();
+        let typed = GeneralNoiseErrorModel::new(2, &config, &[vec![0, 1], vec![1]]).unwrap();
+        assert_eq!(from_json.local_groups, typed.local_groups);
+        assert_eq!(
+            typed.local_groups,
+            vec![BTreeSet::from([0, 1]), BTreeSet::from([1])]
+        );
+        assert!(GeneralNoiseErrorModel::new(1, &config, &[vec![1]]).is_err());
     }
 }

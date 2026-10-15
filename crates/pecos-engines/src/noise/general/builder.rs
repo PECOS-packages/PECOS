@@ -1848,8 +1848,8 @@ impl GeneralNoiseModelBuilder {
 }
 
 impl crate::noise::IntoNoiseModel for GeneralNoiseModelBuilder {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(self.build())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(self.try_build()?))
     }
 }
 

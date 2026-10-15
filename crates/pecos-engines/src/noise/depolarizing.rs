@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use super::utils::panic_on_noise_error;
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType};
 use crate::engine_system::{ControlEngine, EngineStage};
@@ -104,15 +105,26 @@ impl DepolarizingNoiseModel {
     }
 
     /// Create a new depolarizing noise model with the given probabilities
+    ///
+    /// # Panics
+    /// Panics if any probability is outside [0, 1], including NaN.
     #[must_use]
     pub fn new(p_prep: f64, p_meas: f64, p1: f64, p2: f64) -> Self {
-        // Validate all probabilities
-        Self::validate_probability(p_prep);
-        Self::validate_probability(p_meas);
-        Self::validate_probability(p1);
-        Self::validate_probability(p2);
+        Self::try_new(p_prep, p_meas, p1, p2).unwrap_or_else(|error| panic_on_noise_error(error))
+    }
 
-        Self {
+    /// Create a noise model with checked probabilities.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` if any probability is outside [0, 1], including NaN.
+    pub fn try_new(p_prep: f64, p_meas: f64, p1: f64, p2: f64) -> Result<Self, PecosError> {
+        // Validate all probabilities
+        Self::try_validate_probability(p_prep)?;
+        Self::try_validate_probability(p_meas)?;
+        Self::try_validate_probability(p1)?;
+        Self::try_validate_probability(p2)?;
+
+        Ok(Self {
             p_prep,
             p_meas,
             p1,
@@ -124,13 +136,24 @@ impl DepolarizingNoiseModel {
             rng: NoiseRng::default(),
             scratch_builder: NoiseUtils::create_quantum_builder(),
             scratch_gates: Vec::new(),
-        }
+        })
     }
 
     /// Create a new noise model with uniform probability for all error types
+    ///
+    /// # Panics
+    /// Panics if any probability is outside [0, 1], including NaN.
     #[must_use]
     pub fn new_uniform(probability: f64) -> Self {
-        Self::new(probability, probability, probability, probability)
+        Self::try_new_uniform(probability).unwrap_or_else(|error| panic_on_noise_error(error))
+    }
+
+    /// Create a uniform noise model with a checked probability.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
+    pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
+        Self::try_new(probability, probability, probability, probability)
     }
 
     /// Create a new builder for the depolarizing noise model
@@ -550,16 +573,48 @@ impl DepolarizingNoiseModelBuilder {
     /// A `DepolarizingNoiseModel` instance
     ///
     /// # Panics
-    /// Panics if any probabilities are not between 0 and 1.
+    /// Panics if any probabilities are not set or are not between 0 and 1.
     #[must_use]
     pub fn build(self) -> DepolarizingNoiseModel {
-        let p_prep = self.p_prep.expect("Preparation probability must be set");
-        let p_meas = self.p_meas.expect("Measurement probability must be set");
-        let p1 = self.p1.expect("Single-qubit probability must be set");
-        let p2 = self.p2.expect("Two-qubit probability must be set");
+        self.try_build()
+            .unwrap_or_else(|error| panic_on_noise_error(error))
+    }
 
-        // Create the noise model
-        let mut noise = DepolarizingNoiseModel::new(p_prep, p_meas, p1, p2);
+    fn configured_probabilities(&self) -> Result<[f64; 4], PecosError> {
+        Ok([
+            self.p_prep.ok_or_else(|| {
+                PecosError::Input("Preparation probability must be set".to_string())
+            })?,
+            self.p_meas.ok_or_else(|| {
+                PecosError::Input("Measurement probability must be set".to_string())
+            })?,
+            self.p1.ok_or_else(|| {
+                PecosError::Input("Single-qubit probability must be set".to_string())
+            })?,
+            self.p2.ok_or_else(|| {
+                PecosError::Input("Two-qubit probability must be set".to_string())
+            })?,
+        ])
+    }
+
+    /// Check required fields and probability ranges without constructing a model.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` for the first missing field or invalid probability.
+    pub fn validate_configuration(&self) -> Result<(), PecosError> {
+        for probability in self.configured_probabilities()? {
+            DepolarizingNoiseModel::try_validate_probability(probability)?;
+        }
+        Ok(())
+    }
+
+    /// Build a model, reporting missing fields and invalid probabilities.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` for the first missing field or invalid probability.
+    pub fn try_build(self) -> Result<DepolarizingNoiseModel, PecosError> {
+        let [p_prep, p_meas, p1, p2] = self.configured_probabilities()?;
+        let mut noise = DepolarizingNoiseModel::try_new(p_prep, p_meas, p1, p2)?;
 
         // Set the seed if provided
         if let Some(seed) = self.seed {
@@ -567,13 +622,13 @@ impl DepolarizingNoiseModelBuilder {
             noise.set_seed(seed);
         }
 
-        noise
+        Ok(noise)
     }
 }
 
 impl crate::noise::IntoNoiseModel for DepolarizingNoiseModelBuilder {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(self.build())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(self.try_build()?))
     }
 }
 

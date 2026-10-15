@@ -2052,11 +2052,28 @@ impl PyGeneralNoiseModelBuilder {
     }
 }
 
+pub(crate) fn noise_configuration_error(error: pecos_core::errors::PecosError) -> PyErr {
+    let message = match error {
+        pecos_core::errors::PecosError::Input(message) => message,
+        error => error.to_string(),
+    };
+    pyo3::exceptions::PyValueError::new_err(message)
+}
+
 /// Python wrapper for `DepolarizingNoiseModelBuilder`
 #[pyclass(name = "DepolarizingNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyDepolarizingNoiseModelBuilder {
     pub(crate) inner: DepolarizingNoiseModelBuilder,
+}
+
+impl PyDepolarizingNoiseModelBuilder {
+    pub(crate) fn validated_inner(&self) -> PyResult<DepolarizingNoiseModelBuilder> {
+        self.inner
+            .validate_configuration()
+            .map_err(noise_configuration_error)?;
+        Ok(self.inner.clone())
+    }
 }
 
 #[pymethods]
@@ -2116,6 +2133,15 @@ impl PyDepolarizingNoiseModelBuilder {
 #[derive(Clone)]
 pub struct PyBiasedDepolarizingNoiseModelBuilder {
     pub(crate) inner: BiasedDepolarizingNoiseModelBuilder,
+}
+
+impl PyBiasedDepolarizingNoiseModelBuilder {
+    pub(crate) fn validated_inner(&self) -> PyResult<BiasedDepolarizingNoiseModelBuilder> {
+        self.inner
+            .validate_configuration()
+            .map_err(noise_configuration_error)?;
+        Ok(self.inner.clone())
+    }
 }
 
 #[pymethods]

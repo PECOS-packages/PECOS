@@ -349,8 +349,8 @@ fn map_noise_to_neo(
     noise: &(dyn std::any::Any + Send),
 ) -> Result<Option<pecos_neo::noise::GeneralNoiseModelBuilder>, PecosError> {
     use pecos_engines::noise::{
-        BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModelBuilder,
-        PassThroughNoiseModelBuilder,
+        BiasedDepolarizingNoiseModel, BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModel,
+        DepolarizingNoiseModelBuilder, PassThroughNoiseModelBuilder,
     };
     use pecos_engines::{BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise};
     use pecos_neo::noise::{AngleScaling, GeneralNoiseModelBuilder};
@@ -386,24 +386,23 @@ fn map_noise_to_neo(
         return Ok(None);
     }
     if let Some(depolarizing) = noise.downcast_ref::<DepolarizingNoise>() {
-        let p = depolarizing.p;
-        return Ok(Some(uniform(p, p, p, p)));
+        let (p_prep, p_meas, p1, p2) =
+            DepolarizingNoiseModel::try_new_uniform(depolarizing.p)?.probabilities();
+        return Ok(Some(uniform(p_prep, p_meas, p1, p2)));
     }
     if let Some(builder) = noise.downcast_ref::<DepolarizingNoiseModelBuilder>() {
-        // Resolve the configured probabilities via the built model; this
-        // enforces the same all-probabilities-set requirement the engines
-        // path would.
-        let (p_prep, p_meas, p1, p2) = builder.clone().build().probabilities();
+        // Resolve probabilities fallibly, reporting missing fields and invalid
+        // values with the same input errors as the engines path.
+        let (p_prep, p_meas, p1, p2) = builder.clone().try_build()?.probabilities();
         return Ok(Some(uniform(p_prep, p_meas, p1, p2)));
     }
     if let Some(biased_noise) = noise.downcast_ref::<BiasedDepolarizingNoise>() {
-        // `BiasedDepolarizingNoise { p }` builds `new_uniform(p)`: every rate is
-        // `p`, with symmetric measurement bias.
-        let p = biased_noise.p;
-        return Ok(Some(biased(p, p, p, p, p)));
+        let (p_prep, p_meas_0, p_meas_1, p1, p2) =
+            BiasedDepolarizingNoiseModel::try_new_uniform(biased_noise.p)?.probabilities();
+        return Ok(Some(biased(p_prep, p_meas_0, p_meas_1, p1, p2)));
     }
     if let Some(builder) = noise.downcast_ref::<BiasedDepolarizingNoiseModelBuilder>() {
-        let (p_prep, p_meas_0, p_meas_1, p1, p2) = builder.clone().build().probabilities();
+        let (p_prep, p_meas_0, p_meas_1, p1, p2) = builder.clone().try_build()?.probabilities();
         return Ok(Some(biased(p_prep, p_meas_0, p_meas_1, p1, p2)));
     }
     if let Some(builder) = noise.downcast_ref::<pecos_engines::noise::GeneralNoiseModelBuilder>() {

@@ -305,13 +305,13 @@ impl RuntimeNoise {
     }
 }
 impl IntoNoiseModel for RuntimeNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        Box::new(RuntimeGeneralNoise {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
+        Ok(Box::new(RuntimeGeneralNoise {
             inner: self.inner,
             limits: self.limits,
             qubits: self.qubits,
             physical: self.physical,
-        })
+        }))
     }
 }
 

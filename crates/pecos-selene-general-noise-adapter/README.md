@@ -24,3 +24,10 @@ identities when passing normalized batches to the model. Invoke `shot_start`,
 instance after an execution error. The constructor does not install an adapter,
 acknowledge metadata or enable custom operations: unhandled custom operations
 still fail.
+
+Operations in a runtime batch may share qubits, including when the batch has a
+positive duration. Each touched qubit accrues idle only before its first operation
+in the batch, measured from its previous batch's end; all touched qubits advance
+to the current batch's end after translation. Overlapping batches on a qubit are
+rejected. A qubit's first operation in a shot accrues no idle; resets retain the
+same idle timing rule as other operations.

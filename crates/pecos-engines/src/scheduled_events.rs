@@ -389,14 +389,14 @@ impl ScheduledEventNoise {
     }
 }
 impl IntoNoiseModel for ScheduledEventNoise {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+    fn into_noise_model(self) -> Result<Box<dyn NoiseModel>, PecosError> {
         let inner = self.profile.build_model();
-        Box::new(ScheduledEventModel {
+        Ok(Box::new(ScheduledEventModel {
             source_timeline: ScheduleTimeline::new(inner.qubits()),
             inner,
             factory: self.factory,
             adapter: None,
-        })
+        }))
     }
 }
 pub(crate) struct ScheduledEventModel {
@@ -590,7 +590,8 @@ mod tests {
                 crate::scheduled_frame::ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(),
                 |_| Ok(Box::new(Expand)),
             )
-            .into_noise_model();
+            .into_noise_model()
+            .unwrap();
             let model = noise
                 .as_any_mut()
                 .downcast_mut::<ScheduledEventModel>()

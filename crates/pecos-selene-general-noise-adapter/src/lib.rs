@@ -110,7 +110,15 @@ impl GeneralNoiseErrorModel {
         Ok(qubit)
     }
 
-    fn add_idle_before(&mut self, qubit: usize, start: u64) -> Result<()> {
+    fn add_idle_before(
+        &mut self,
+        qubit: usize,
+        start: u64,
+        touched: &mut BTreeSet<usize>,
+    ) -> Result<()> {
+        if !touched.insert(qubit) {
+            return Ok(());
+        }
         // A qubit's first operation in a shot has no predecessor within that shot, so
         // there is no gap to model. Selene's runtime clock is monotonic across shots
         // (`SimpleRuntime::shot_start` is a no-op and its instant only advances), so
@@ -209,6 +217,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
 
         let mut expected = Vec::new();
         let mut crosstalk_added = false;
+        let mut touched = BTreeSet::new();
         for operation in operations {
             if !crosstalk_added
                 && matches!(
@@ -231,19 +240,17 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     phi,
                 } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start)?;
+                    self.add_idle_before(qubit, start, &mut touched)?;
                     self.builder.rxy1q(
                         Angle64::from_radians(theta),
                         Angle64::from_radians(phi),
                         &[qubit],
                     );
-                    self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RZGate { qubit_id, theta } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start)?;
+                    self.add_idle_before(qubit, start, &mut touched)?;
                     self.builder.rz(Angle64::from_radians(theta), &[qubit]);
-                    self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RZZGate {
                     qubit_id_1,
@@ -252,21 +259,18 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 } => {
                     let first = self.qubit(qubit_id_1)?;
                     let second = self.qubit(qubit_id_2)?;
-                    self.add_idle_before(first, start)?;
-                    self.add_idle_before(second, start)?;
+                    self.add_idle_before(first, start, &mut touched)?;
+                    self.add_idle_before(second, start, &mut touched)?;
                     self.builder
                         .rzz(Angle64::from_radians(theta), &[(first, second)]);
-                    self.last_operation_end[first] = Some(end);
-                    self.last_operation_end[second] = Some(end);
                 }
                 Operation::Measure {
                     qubit_id,
                     result_id,
                 } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start)?;
+                    self.add_idle_before(qubit, start, &mut touched)?;
                     self.builder.mz(&[qubit]);
-                    self.last_operation_end[qubit] = Some(end);
                     expected.push(MeasurementResult {
                         id: result_id,
                         kind: MeasurementKind::Bool,
@@ -277,9 +281,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     result_id,
                 } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start)?;
+                    self.add_idle_before(qubit, start, &mut touched)?;
                     self.builder.measure_leakages(&[qubit]);
-                    self.last_operation_end[qubit] = Some(end);
                     expected.push(MeasurementResult {
                         id: result_id,
                         kind: MeasurementKind::Leakage,
@@ -287,9 +290,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 }
                 Operation::Reset { qubit_id } => {
                     let qubit = self.qubit(qubit_id)?;
-                    self.add_idle_before(qubit, start)?;
+                    self.add_idle_before(qubit, start, &mut touched)?;
                     self.builder.pz(&[qubit]);
-                    self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RPPGate {
                     qubit_id_1,
@@ -302,15 +304,13 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     if first == second {
                         bail!("RXYXY2Q requires two distinct qubits");
                     }
-                    self.add_idle_before(first, start)?;
-                    self.add_idle_before(second, start)?;
+                    self.add_idle_before(first, start, &mut touched)?;
+                    self.add_idle_before(second, start, &mut touched)?;
                     self.builder.rxyxy2q(
                         Angle64::from_radians(theta),
                         Angle64::from_radians(phi),
                         &[(first, second)],
                     );
-                    self.last_operation_end[first] = Some(end);
-                    self.last_operation_end[second] = Some(end);
                 }
                 Operation::Custom { custom_tag, .. } => {
                     bail!(
@@ -319,6 +319,10 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 }
                 _ => bail!("unsupported Selene runtime operation"),
             }
+        }
+
+        for qubit in touched {
+            self.last_operation_end[qubit] = Some(end);
         }
 
         if self.builder.message_count() == 0 {
@@ -544,15 +548,18 @@ mod tests {
         }
 
         let mut expected = Vec::new();
+        let mut touched = BTreeSet::new();
         for operation in operations {
             let mut idle_before = |qubit: usize| {
+                if !touched.insert(qubit) {
+                    return;
+                }
                 if let Some(previous) = last_operation_end[qubit]
                     && start > previous
                 {
                     let seconds = std::time::Duration::from_nanos(start - previous).as_secs_f64();
                     builder.idle(seconds, &[qubit]);
                 }
-                last_operation_end[qubit] = Some(end);
             };
             match operation {
                 Operation::RXYGate {
@@ -609,6 +616,9 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
+        }
+        for qubit in touched {
+            last_operation_end[qubit] = Some(end);
         }
         (builder.build(), expected)
     }
@@ -1922,6 +1932,157 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn same_qubit_batch_charges_idle_once_and_advances_to_batch_end() {
+        let mut model = build_error_model(
+            r#"{"model":{"idle":{"coherent_rate":1.0,"coherent_model":{"RZ":1.0}}}}"#,
+            1,
+        );
+        let mut simulator = ClassicalSimulator::with_qubits(1);
+        model.shot_start(0, 41).unwrap();
+        model
+            .handle_operations(
+                runtime_batch(vec![Operation::Reset { qubit_id: 0 }], 0, 100_000_000),
+                &mut simulator,
+            )
+            .unwrap();
+        simulator.received.clear();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::RXYGate {
+                            qubit_id: 0,
+                            theta: 0.2,
+                            phi: 0.0,
+                        },
+                        Operation::Measure {
+                            qubit_id: 0,
+                            result_id: 0,
+                        },
+                    ],
+                    350_000_000,
+                    100_000_000,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        let idle_angles = |simulator: &ClassicalSimulator| {
+            simulator
+                .received
+                .iter()
+                .flatten()
+                .filter_map(|operation| {
+                    if let Operation::RZGate { qubit_id: 0, theta } = operation {
+                        Some(*theta)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let angles = idle_angles(&simulator);
+        assert_eq!(angles.len(), 1);
+        assert!((angles[0] - 0.25).abs() < 1e-12);
+        assert_eq!(model.last_operation_end, vec![Some(450_000_000)]);
+        simulator.received.clear();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::Measure {
+                        qubit_id: 0,
+                        result_id: 1,
+                    }],
+                    575_000_000,
+                    100_000_000,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        let angles = idle_angles(&simulator);
+        assert_eq!(angles.len(), 1);
+        assert!((angles[0] - 0.125).abs() < 1e-12);
+    }
+
+    #[test]
+    fn same_qubit_batch_with_rzz_preserves_idle_gaps() {
+        assert_same_qubit_batch_idle(
+            Operation::RZZGate {
+                qubit_id_1: 0,
+                qubit_id_2: 1,
+                theta: 0.3,
+            },
+            &[(0, 0.25), (1, 0.2)],
+            &[Some(450_000_000), Some(450_000_000)],
+        );
+    }
+
+    #[test]
+    fn same_qubit_batch_with_reset_preserves_idle_gap() {
+        assert_same_qubit_batch_idle(
+            Operation::Reset { qubit_id: 0 },
+            &[(0, 0.25)],
+            &[Some(450_000_000), Some(150_000_000)],
+        );
+    }
+
+    fn assert_same_qubit_batch_idle(
+        second: Operation,
+        expected_idle: &[(u64, f64)],
+        expected_ends: &[Option<u64>],
+    ) {
+        let mut model = build_error_model(
+            r#"{"model":{"idle":{"coherent_rate":1.0,"coherent_model":{"RZ":1.0}}}}"#,
+            2,
+        );
+        let mut simulator = ClassicalSimulator::with_qubits(2);
+        model.shot_start(0, 41).unwrap();
+        for (qubit_id, start) in [(0, 0), (1, 50_000_000)] {
+            model
+                .handle_operations(
+                    runtime_batch(vec![Operation::Reset { qubit_id }], start, 100_000_000),
+                    &mut simulator,
+                )
+                .unwrap();
+        }
+        simulator.received.clear();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::RXYGate {
+                            qubit_id: 0,
+                            theta: 0.2,
+                            phi: 0.0,
+                        },
+                        second,
+                    ],
+                    350_000_000,
+                    100_000_000,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        let idle = simulator
+            .received
+            .iter()
+            .flatten()
+            .filter_map(|operation| {
+                if let Operation::RZGate { qubit_id, theta } = operation {
+                    Some((*qubit_id, *theta))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(idle.len(), expected_idle.len());
+        for ((qubit, angle), (expected_qubit, expected_angle)) in idle.iter().zip(expected_idle) {
+            assert_eq!(qubit, expected_qubit);
+            assert!((angle - expected_angle).abs() < 1e-12);
+        }
+        assert_eq!(model.last_operation_end, expected_ends);
     }
 
     #[test]

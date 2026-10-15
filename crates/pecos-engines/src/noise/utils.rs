@@ -20,6 +20,15 @@
 
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder};
+use pecos_core::errors::PecosError;
+
+// Preserve the raw input message for the legacy panicking noise APIs.
+pub(super) fn panic_on_noise_error(error: PecosError) -> ! {
+    match error {
+        PecosError::Input(message) => panic!("{message}"),
+        error => panic!("{error}"),
+    }
+}
 
 /// Helper trait for validating probability values
 pub trait ProbabilityValidator {
@@ -31,10 +40,21 @@ pub trait ProbabilityValidator {
     /// # Panics
     /// Panics if the probability is not between 0.0 and 1.0
     fn validate_probability(probability: f64) {
-        assert!(
-            (0.0..=1.0).contains(&probability),
-            "Probability must be between 0.0 and 1.0"
-        );
+        Self::try_validate_probability(probability)
+            .unwrap_or_else(|error| panic_on_noise_error(error));
+    }
+
+    /// Validate a probability without panicking.
+    ///
+    /// # Errors
+    /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
+    fn try_validate_probability(probability: f64) -> Result<(), PecosError> {
+        if !(0.0..=1.0).contains(&probability) {
+            return Err(PecosError::Input(
+                "Probability must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Validate a named probability

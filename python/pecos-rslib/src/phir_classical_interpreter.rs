@@ -1003,18 +1003,31 @@ fn build_noise_model(
 
     // Try Rust noise model builders first
     if let Ok(builder) = obj.extract::<PyDepolarizingNoiseModelBuilder>() {
-        return Ok(Box::new(builder.inner.build()));
+        return Ok(Box::new(
+            builder
+                .inner
+                .try_build()
+                .map_err(crate::engine_builders::noise_configuration_error)?,
+        ));
     }
     if let Ok(builder) = obj.extract::<PyGeneralNoiseModelBuilder>() {
         return Ok(Box::new(builder.validated_inner()?.build()));
     }
     if let Ok(builder) = obj.extract::<PyBiasedDepolarizingNoiseModelBuilder>() {
-        return Ok(Box::new(builder.inner.build()));
+        return Ok(Box::new(
+            builder
+                .inner
+                .try_build()
+                .map_err(crate::engine_builders::noise_configuration_error)?,
+        ));
     }
 
     // Try float (shorthand for uniform depolarizing)
     if let Ok(p) = obj.extract::<f64>() {
-        return Ok(Box::new(DepolarizingNoiseModel::new_uniform(p)));
+        return Ok(Box::new(
+            DepolarizingNoiseModel::try_new_uniform(p)
+                .map_err(crate::engine_builders::noise_configuration_error)?,
+        ));
     }
 
     // Try Python GenericErrorModel
@@ -1026,7 +1039,10 @@ fn build_noise_model(
             .ok()
             .and_then(|v| v.extract().ok())
             .unwrap_or(0.0);
-        return Ok(Box::new(DepolarizingNoiseModel::new_uniform(p1)));
+        return Ok(Box::new(
+            DepolarizingNoiseModel::try_new_uniform(p1)
+                .map_err(crate::engine_builders::noise_configuration_error)?,
+        ));
     }
 
     // Python NoErrorModel -> PassThrough

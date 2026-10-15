@@ -45,6 +45,7 @@ fn constructor_validates_configuration_and_capacity() {
         r#"{"unknown":1}"#,
         r#"{"preparation":{"probability":2.0}}"#,
         r#"{"measurement":{"local_groups":[[0,1]]}}"#,
+        r#"{"single_qubit":{"hooks_before":[{"kind":"transition","probability":1.0,"transitions":{"0->L":1.0}}]}}"#,
     ] {
         assert!(
             GeneralNoiseErrorModel::from_json(1, config).is_err(),
@@ -105,6 +106,75 @@ fn library_retains_native_idle_and_measurement_identity() {
             .any(|op| matches!(op, Operation::RXYGate { .. }))
     );
     model.shot_end().unwrap();
+}
+
+#[test]
+fn library_resumes_measuring_hooks_without_exposing_internal_results() {
+    for site in ["hooks_before", "hooks_after"] {
+        // Even an identity transition over computational states measures the
+        // qubit. A downstream consumer must finish that continuation before
+        // returning to the runtime, without returning its internal result ID.
+        let configuration = serde_json::json!({
+            "single_qubit": {
+                site: [{
+                    "kind": "transition",
+                    "probability": 1.0,
+                    "transitions": {"0->0": 1.0, "1->1": 1.0}
+                }]
+            }
+        });
+        let mut model = GeneralNoiseErrorModel::from_json(1, &configuration.to_string()).unwrap();
+        let mut simulator = RecordingSimulator::default();
+        model.shot_start(0, 3).unwrap();
+        let internal = model
+            .handle_operations(
+                batch(
+                    vec![Operation::RZGate {
+                        qubit_id: 0,
+                        theta: 0.5,
+                    }],
+                    0,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        assert!(internal.bool_results.is_empty());
+        assert!(internal.u64_results.is_empty());
+        let measurements: Vec<_> = simulator
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| matches!(op, Operation::Measure { .. }).then_some(i))
+            .collect();
+        assert_eq!(measurements.len(), 1, "{site}");
+        let gate = simulator
+            .0
+            .iter()
+            .position(|op| {
+                matches!(op,
+                    Operation::RZGate { theta, .. } if (*theta - 0.5).abs() < 1e-12
+                )
+            })
+            .expect("paused source gate must execute");
+        assert_eq!(measurements[0] < gate, site == "hooks_before", "{site}");
+        let output = model
+            .handle_operations(
+                batch(
+                    vec![Operation::Measure {
+                        qubit_id: 0,
+                        result_id: 101,
+                    }],
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        assert_eq!(output.bool_results.len(), 1);
+        assert_eq!(output.bool_results[0].result_id, 101);
+        assert!(!output.bool_results[0].value);
+        assert!(output.u64_results.is_empty());
+        model.shot_end().unwrap();
+    }
 }
 
 #[test]

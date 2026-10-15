@@ -18,7 +18,9 @@ import copy
 import json
 import math
 
+import pytest
 from pecos.circuits import QuantumCircuit
+from pecos_rslib import QubitConflictError, TickCircuit
 
 
 def test_quantum_circuits() -> None:
@@ -1047,3 +1049,496 @@ def test_u_gate() -> None:
     assert len(results) == 1
     assert results[0][0] == "U"
     assert results[0][2]["angles"] == (0.1, 0.2, 0.3)
+
+
+@pytest.mark.parametrize("operation", ["construct", "append", "update", "insert", "replace", "tick_view"])
+def test_conflicting_gates_raise(operation: str) -> None:
+    """Every insertion entry point rejects different gates sharing a qubit."""
+    gates = {"X": {0}, "Z": {0}}
+    qc = QuantumCircuit([{"X": {0}}])
+
+    def add_conflicting_gate() -> None:
+        if operation == "construct":
+            QuantumCircuit([gates])
+        elif operation == "append":
+            qc.append(gates)
+        elif operation == "update":
+            qc.update({"Z": {0}})
+        elif operation == "insert":
+            qc.insert(0, gates)
+        elif operation == "replace":
+            qc[0] = gates, {}
+        else:
+            qc[0].add("Z", {0})
+
+    with pytest.raises(QubitConflictError):
+        add_conflicting_gate()
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [({"Z": {0}}, {"CX": {(0, 1)}}), ({"CX": {(0, 1)}}, {"CX": {(1, 0)}}), ({"CX": {(0, 1)}}, {"CX": {(1, 2)}})],
+)
+def test_overlapping_gate_locations_raise(first: dict, second: dict) -> None:
+    """Partial overlaps and reversed operands are not identical applications."""
+    qc = QuantumCircuit([first])
+    before = list(qc.items())
+    with pytest.raises(QubitConflictError):
+        qc.update(second)
+    assert list(qc.items()) == before
+
+
+@pytest.mark.parametrize(
+    ("symbol", "locations", "params"),
+    [
+        ("X", {0}, {}),
+        ("CX", {(0, 1)}, {}),
+        ("init |0>", {0}, {}),
+        ("measure Z", {0}, {"forced_outcome": 0}),
+        ("RZ", {0}, {"angle": 0.25}),
+        ("custom", {(0, 1)}, {"angles": (0.2,), "label": "a"}),
+        ("RXXRYYRZZ", {(0, 1)}, {"angles": (0.1, 0.2, 0.3)}),
+    ],
+)
+def test_identical_gate_readdition(symbol: str, locations: set, params: dict) -> None:
+    """Identical gates retain a single application, including custom/composite gates."""
+    qc = QuantumCircuit()
+    qc.append(symbol, locations, **params)
+    before = list(qc.items())
+    qc.update(symbol, locations, **params)
+    assert list(qc.items()) == before
+
+
+@pytest.mark.parametrize(
+    ("symbol", "locations", "first", "second"),
+    [
+        ("RZ", {0}, {"angle": 0.1}, {"angle": 0.2}),
+        ("CRZ", {(0, 1)}, {"angle": 0.1}, {"angle": 0.1 + 2 * math.pi}),
+        ("X", {0}, {"label": "a"}, {"label": "b"}),
+        ("X", {0}, {"flag": True}, {"flag": 1}),
+        ("custom", {0}, {"settings": {"count": 1}}, {"settings": {"count": 1.0}}),
+        ("custom", {0}, {"label": "a"}, {"label": "b"}),
+        ("RXXRYYRZZ", {(0, 1)}, {"angles": (0.1, 0.2, 0.3)}, {"angles": (0.1, 0.4, 0.3)}),
+    ],
+)
+def test_different_gate_parameters_raise(symbol: str, locations: set, first: dict, second: dict) -> None:
+    """Angles and arbitrary metadata are part of gate identity."""
+    qc = QuantumCircuit()
+    qc.append(symbol, locations, **first)
+    before = list(qc.items())
+    with pytest.raises(QubitConflictError):
+        qc.update(symbol, locations, **second)
+    assert list(qc.items()) == before
+
+
+@pytest.mark.parametrize(
+    ("symbol", "locations", "first", "second"),
+    [
+        ("RZ", {0}, {"angles": (0.1,), "angle": 0.2}, {"angles": (0.1,), "angle": 0.3}),
+        ("RZ", {0}, {"angles": (0.1,), "angle": 0.2}, {"angles": (0.1,)}),
+        ("RZ", {0}, {"angles": (0.1,)}, {"angles": (0.1,), "angle": 0.2}),
+        ("RXXRYYRZZ", {(0, 1)}, {"angles": (0.1, 0.2, 0.3, 0.4)}, {"angles": (0.1, 0.2, 0.3, 0.5)}),
+    ],
+)
+def test_indistinguishable_requests_are_idempotent(symbol: str, locations: set, first: dict, second: dict) -> None:
+    """Requests whose native gate and iterated view agree are the same gate.
+
+    The native angle comes from ``angles`` and iteration reports that value for
+    ``angle`` too; a fourth composite angle is not stored. Nothing can tell these
+    pairs apart, so the second request is an identical re-add.
+    """
+    qc = QuantumCircuit()
+    qc.append(symbol, locations, **first)
+    before = list(qc.items())
+    qc.update(symbol, locations, **second)
+    assert list(qc.items()) == before
+
+
+def test_disjoint_gates_and_duplicate_subset() -> None:
+    """A duplicate does not prevent insertion at disjoint locations."""
+    qc = QuantumCircuit([{"X": {0}, "Z": {1}}])
+    qc.update("X", [0, 2])
+    assert list(qc.items()) == [("X", {0, 2}, {}), ("Z", {1}, {})]
+
+
+def test_gate_identity_uses_native_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct native edits and discards are reflected in duplicate detection."""
+    qc = QuantumCircuit()
+    native = TickCircuit()
+    monkeypatch.setattr(qc, "_inner", native)
+    native.tick().x([0])
+    qc.update("X", {0})
+    assert list(qc.items()) == [("X", {0}, {})]
+    qc.discard({0})
+    qc.update("Z", {0})
+    with pytest.raises(QubitConflictError):
+        qc.update("X", {0})
+
+
+def test_identical_params_ignore_dictionary_order() -> None:
+    """JSON object ordering does not change parameter identity."""
+    qc = QuantumCircuit()
+    qc.append("custom", {0}, label="a", settings={"a": 1, "b": 2})
+    before = list(qc.items())
+    qc.update("custom", {0}, settings={"b": 2, "a": 1}, label="a")
+    assert list(qc.items()) == before
+
+
+def test_custom_gate_names_conflict() -> None:
+    """Distinct custom symbols sharing the native Custom type must still conflict."""
+    qc = QuantumCircuit([{"custom_a": {0}}])
+    with pytest.raises(QubitConflictError):
+        qc.update("custom_b", {0})
+
+
+@pytest.mark.parametrize("composite_first", [True, False])
+def test_composite_gate_differs_from_its_carrier(composite_first: bool) -> None:
+    """RXXRYYRZZ is not identical to the RZZ used to store it."""
+    gates = [("RXXRYYRZZ", {"angles": (0.1, 0.2, 0.3)}), ("RZZ", {"angle": 0.1})]
+    if not composite_first:
+        gates.reverse()
+    qc = QuantumCircuit()
+    qc.append(gates[0][0], {(0, 1)}, **gates[0][1])
+    with pytest.raises(QubitConflictError):
+        qc.update(gates[1][0], {(0, 1)}, **gates[1][1])
+
+
+def test_duplicate_locations_in_construction() -> None:
+    """Repeated locations in one gate dictionary are idempotent too."""
+    qc = QuantumCircuit([{"X": [0, 0]}])
+    assert list(qc.items()) == [("X", {0}, {})]
+
+
+@pytest.mark.parametrize("params", [{"angles": (0.2,)}, {"theta": 0.2}])
+def test_readd_gate_from_items(params: dict) -> None:
+    """Reconstructed angle parameters do not turn an identical gate into a conflict."""
+    qc = QuantumCircuit()
+    qc.append("RZ", {0}, **params)
+    symbol, locations, stored_params = next(qc.items())
+    qc.update(symbol, locations, **stored_params)
+    assert list(qc.items()) == [(symbol, locations, stored_params)]
+
+
+def test_gate_identity_uses_current_native_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native metadata edits determine identity rather than the original Python call."""
+    qc = QuantumCircuit()
+    native = TickCircuit()
+    monkeypatch.setattr(qc, "_inner", native)
+    qc.append("X", {0}, label="a")
+    native.set_gate_meta(0, 0, "_params", json.dumps({"label": "b"}))
+    qc.update("X", {0}, label="b")
+    with pytest.raises(QubitConflictError):
+        qc.update("X", {0}, label="a")
+
+
+@pytest.mark.parametrize("occupied", [0, 1])
+def test_partially_identical_broadcast_matches_set_update(occupied: int, circuit_with_native: tuple) -> None:
+    """Both location forms keep identical gates once and insert the free gates."""
+    qc, native = circuit_with_native
+    qc.append({"X": {occupied}})
+    equivalent = QuantumCircuit([{"X": {occupied}}])
+    qc.update("X", {(0, 1)})
+    equivalent.update("X", {0, 1})
+    assert list(qc.items()) == list(equivalent.items()) == [("X", {0, 1}, {})]
+    assert native.get_tick(0).gate_count() == 2
+
+
+def test_identical_broadcast_readdition() -> None:
+    """A fully stored native broadcast remains an idempotent re-add."""
+    qc = QuantumCircuit([{"X": {(0, 1)}}])
+    before = list(qc.items())
+    qc.update("X", {(0, 1)})
+    assert list(qc.items()) == before
+
+
+@pytest.mark.parametrize("symbol", ["RXXRYYRZZ", "rxxryyrzz"])
+def test_composite_metadata_is_part_of_gate_identity(symbol: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """All stored composite angles matter even when the symbol uses lowercase."""
+    qc = QuantumCircuit()
+    native = TickCircuit()
+    monkeypatch.setattr(qc, "_inner", native)
+    qc.append(symbol, {(0, 1)})
+    native.set_gate_meta(0, 0, "_rxxryyrzz_angles", "0.0,0.5,0.0")
+    with pytest.raises(QubitConflictError):
+        qc.update(symbol, {(0, 1)})
+
+
+def test_legacy_parameters_participate_in_gate_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legacy parameters retain supplied values that iteration reconstructs."""
+    qc = QuantumCircuit()
+    native = TickCircuit()
+    monkeypatch.setattr(qc, "_inner", native)
+    native.tick().add_gate("RZ", [0], [0.1]).meta("_custom_params", json.dumps({"angles": [0.1], "angle": 0.2}))
+    before = list(qc.items())
+    qc.update("RZ", {0}, angles=(0.1,), angle=0.2)
+    assert list(qc.items()) == before
+    with pytest.raises(QubitConflictError):
+        qc.update("RZ", {0}, angles=(0.2,))
+
+
+@pytest.fixture
+def circuit_with_native(monkeypatch: pytest.MonkeyPatch) -> tuple:
+    """Expose the native circuit for invariant checks without bypassing the wrapper."""
+    qc = QuantumCircuit()
+    native = TickCircuit()
+    monkeypatch.setattr(qc, "_inner", native)
+    return qc, native
+
+
+def _circuit_snapshot(qc: QuantumCircuit, native: TickCircuit) -> tuple:
+    """Include native fields, raw gate metadata, tick count and signatures."""
+    ticks = []
+    for tick_idx in range(native.num_ticks()):
+        tick = native.get_tick(tick_idx)
+        gates = []
+        for index, gate in enumerate(tick.gate_batches()):
+            attrs = tuple(
+                tick.get_gate_attr(index, key) for key in ("_symbol", "_params", "_custom_params", "_rxxryyrzz_angles")
+            )
+            gates.append((str(gate.gate_type), gate.qubits, gate.angles, gate.params, gate.meas_ids, attrs))
+        ticks.append((gates, tick.get_attr("_symbol"), tick.get_attr("_params")))
+    return ticks, native.next_tick_index(), native.gate_signatures(), list(qc.items())
+
+
+@pytest.mark.parametrize("operation", ["append", "insert", "replace", "update", "tick_view"])
+def test_conflicting_request_leaves_circuit_unchanged(operation: str, circuit_with_native: tuple) -> None:
+    """A late conflict must not publish gates, ticks, metadata or signatures."""
+    qc, native = circuit_with_native
+    qc.append({"H": {5}})
+    before = _circuit_snapshot(qc, native)
+    request = {"new_custom": {2}, "X": {0}, "Z": {0}}
+    operations = {
+        "append": lambda: qc.append(request, label="request"),
+        "insert": lambda: qc.insert(0, (request, {"label": "request"})),
+        "replace": lambda: qc.__setitem__(0, (request, {"label": "request"})),
+        "update": lambda: qc.update(request, label="request"),
+        "tick_view": lambda: qc[0].add(request, label="request"),
+    }
+    with pytest.raises(QubitConflictError):
+        operations[operation]()
+    assert _circuit_snapshot(qc, native) == before
+
+
+def test_failed_construction_does_not_publish_partial_ticks() -> None:
+    """Even earlier valid ticks remain unpublished if construction fails."""
+    qc = QuantumCircuit.__new__(QuantumCircuit)
+    with pytest.raises(QubitConflictError):
+        qc.__init__([{"H": {5}}, {"X": {0}, "Z": {0}}])
+    assert len(qc) == 0
+    assert list(qc.items()) == []
+
+
+@pytest.mark.parametrize("tick_view", [False, True])
+@pytest.mark.parametrize("locations", [{0, 1}, {(0, 1)}])
+def test_conflicting_broadcast_is_atomic(locations: set, tick_view: bool, circuit_with_native: tuple) -> None:
+    """A free prefix must not survive a conflict with the stored Z."""
+    qc, native = circuit_with_native
+    qc.append({"Z": {1}})
+    before = _circuit_snapshot(qc, native)
+    update = qc[0].add if tick_view else qc.update
+    with pytest.raises(QubitConflictError):
+        update("X", locations, label="broadcast")
+    assert _circuit_snapshot(qc, native) == before
+    assert qc.qudits == {1}
+
+
+def test_native_angle_distinguishes_equal_decoded_views(circuit_with_native: tuple) -> None:
+    """Metadata can make the views equal without making native rotations equal."""
+    qc, native = circuit_with_native
+    qc.append("RZ", {0}, angle=0.1)
+    native.set_gate_meta(0, 0, "_params", json.dumps({"angle": 0.2}))
+    before = _circuit_snapshot(qc, native)
+    with pytest.raises(QubitConflictError):
+        qc.update("RZ", {0}, angle=0.2)
+    assert _circuit_snapshot(qc, native) == before
+
+
+@pytest.mark.parametrize("location", [0, (0,), (0, 1, 2)])
+def test_composite_requires_qubit_pair(location: int | tuple, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append({"H": {5}})
+    before = _circuit_snapshot(qc, native)
+    with pytest.raises(ValueError, match="pair"):
+        qc.append("RXXRYYRZZ", {location}, angles=(0.1, 0.2, 0.3))
+    assert _circuit_snapshot(qc, native) == before
+
+
+def test_broadcast_preserves_parameters_on_every_chunk(circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    params = {"var_output": {0: ("a",), 1: ("b",)}}
+    qc.append("measure Z", {(0, 1)}, **params)
+    tick = native.get_tick(0)
+    assert len(tick.gate_batches()) == 2
+    for index in range(2):
+        assert json.loads(tick.get_gate_attr(index, "_params")) == {"var_output": {"0": ["a"], "1": ["b"]}}
+    assert list(qc.items()) == [("measure Z", {0, 1}, params)]
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_native_broadcast_does_not_insert_a_prefix(typed: bool, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append({"Z": {1}})
+    before = _circuit_snapshot(qc, native)
+    handle = native.tick_at(0)
+    add = (lambda: handle.x([0, 1])) if typed else (lambda: handle.add_gate("X", [0, 1]))
+    with pytest.raises(QubitConflictError):
+        add()
+    assert _circuit_snapshot(qc, native) == before
+
+
+def test_native_broadcast_internal_conflict_is_atomic() -> None:
+    native = TickCircuit()
+    handle = native.tick()
+    with pytest.raises(QubitConflictError):
+        handle.add_gate("CX", [0, 1, 2, 1])
+    assert native.get_tick(0).gate_count() == 0
+
+
+def test_duplicate_applications_inside_broadcast_are_idempotent() -> None:
+    qc = QuantumCircuit([{"X": {(0, 1, 0)}}])
+    assert list(qc.items()) == [("X", {0, 1}, {})]
+
+
+def test_native_broadcast_metadata_applies_to_every_chunk() -> None:
+    native = TickCircuit()
+    native.tick().add_gate("measure Z", [0, 1]).meta("_params", json.dumps({"label": "both"}))
+    tick = native.get_tick(0)
+    assert len(tick.gate_batches()) == 2
+    assert [tick.get_gate_attr(index, "_params") for index in range(2)] == [json.dumps({"label": "both"})] * 2
+
+
+@pytest.mark.parametrize("marker_first", [False, True])
+def test_zero_qubit_symbol_does_not_relabel_gate(marker_first: bool, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    gates = {"barrier": {None}, "H": {0}} if marker_first else {"H": {0}, "barrier": {None}}
+    qc.append(gates)
+    assert native.get_tick_meta(0, "_symbol") == "barrier"
+    assert native.get_gate_meta(0, 0, "_symbol") == "H"
+    assert list(qc.items()) == [("H", {0}, {}), ("barrier", set(), {})]
+
+
+def test_native_rejected_custom_gate_does_not_register_signature() -> None:
+    native = TickCircuit()
+    handle = native.tick()
+    handle.h([1])
+    with pytest.raises(QubitConflictError):
+        handle.add_gate("foo", [0, 1])
+    assert native.gate_signatures() == {}
+    assert native.get_tick(0).active_qubits() == [1]
+    handle.add_gate("foo", [0])
+    assert native.gate_signatures() == {"foo": (1, 0)}
+
+
+@pytest.mark.parametrize("tick_view", [False, True])
+@pytest.mark.parametrize("params", [{}, {"settings": {"b": 2, "a": True}}])
+def test_identical_zero_qubit_repeat_is_noop(tick_view: bool, params: dict, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append("barrier", set(), **params)
+    before = _circuit_snapshot(qc, native)
+    update = qc[0].add if tick_view else qc.update
+    reordered = {"settings": {"a": True, "b": 2}} if params else {}
+    update("barrier", {None}, **reordered)
+    assert _circuit_snapshot(qc, native) == before
+
+
+@pytest.mark.parametrize("operation", ["append", "insert", "replace", "update", "tick_view"])
+def test_two_zero_qubit_symbols_in_request_are_atomic(operation: str, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append({"H": {5}})
+    before = _circuit_snapshot(qc, native)
+    request = {"barrier": set(), "new_custom": {2}, "other_marker": {None}}
+    operations = {
+        "append": lambda: qc.append(request),
+        "insert": lambda: qc.insert(0, request),
+        "replace": lambda: qc.__setitem__(0, (request, {})),
+        "update": lambda: qc.update(request),
+        "tick_view": lambda: qc[0].add(request),
+    }
+    with pytest.raises(ValueError, match=r"barrier.*other_marker"):
+        operations[operation]()
+    assert _circuit_snapshot(qc, native) == before
+
+
+def test_conflicting_zero_qubit_construction_is_atomic() -> None:
+    qc = QuantumCircuit.__new__(QuantumCircuit)
+    with pytest.raises(ValueError, match=r"barrier.*other_marker"):
+        qc.__init__([{"H": {5}}, {"barrier": set(), "X": {0}, "other_marker": set()}])
+    assert len(qc) == 0
+    assert list(qc.items()) == []
+
+
+@pytest.mark.parametrize("tick_view", [False, True])
+@pytest.mark.parametrize(
+    ("symbol", "params"),
+    [("other_marker", {"flag": True}), ("barrier", {"flag": 1}), ("barrier", {})],
+)
+def test_zero_qubit_conflict_with_stored_operation_is_atomic(
+    tick_view: bool,
+    symbol: str,
+    params: dict,
+    circuit_with_native: tuple,
+) -> None:
+    qc, native = circuit_with_native
+    qc.append("barrier", set(), flag=True)
+    before = _circuit_snapshot(qc, native)
+    update = qc[0].add if tick_view else qc.update
+    with pytest.raises(ValueError, match=rf"barrier.*{symbol}"):
+        update({"new_custom": {0}, symbol: {None}}, **params)
+    assert _circuit_snapshot(qc, native) == before
+
+
+def test_identical_zero_qubit_repeat_allows_free_physical_gates(circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append("barrier", set(), settings={"b": 2, "a": 1})
+    original = native.get_tick_meta(0, "_params")
+    qc.update({"X": {0}, "barrier": {None}}, settings={"a": 1, "b": 2})
+    assert native.get_tick_meta(0, "_params") == original
+    assert list(qc.items()) == [
+        ("X", {0}, {"settings": {"a": 1, "b": 2}}),
+        ("barrier", set(), {"settings": {"b": 2, "a": 1}}),
+    ]
+
+
+@pytest.mark.parametrize("operation", ["construct", "append", "insert", "replace", "update", "tick_view"])
+def test_identical_zero_qubit_operations_inside_request(operation: str) -> None:
+    class Marker:
+        symbol = "barrier"
+
+    request = {"barrier": set(), Marker(): {None}, "X": {0}}
+    qc = QuantumCircuit([{}])
+    if operation == "construct":
+        qc = QuantumCircuit([request])
+    elif operation == "append":
+        qc.append(request)
+    elif operation == "insert":
+        qc.insert(0, request)
+    elif operation == "replace":
+        qc[0] = (request, {})
+    elif operation == "update":
+        qc.update(request)
+    else:
+        qc[0].add(request)
+    assert list(qc.items()) == [("X", {0}, {}), ("barrier", set(), {})]
+
+
+@pytest.mark.parametrize("physical", [False, True])
+def test_delete_tick_clears_operation_preserves_metadata(physical: bool, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append({"H": {0}, "barrier": {None}} if physical else {"barrier": {None}}, label="old")
+    native.set_tick_meta(0, "phase", "syndrome")
+    del qc[0]
+    assert list(qc.items()) == []
+    assert native.get_tick_meta(0, "_symbol") is None
+    assert native.get_tick_meta(0, "_params") is None
+    assert native.get_tick_meta(0, "phase") == "syndrome"
+    qc.update("other_marker", {None})
+    assert list(qc.items()) == [("other_marker", set(), {})]
+
+
+def test_zero_qubit_params_conflict_reports_values() -> None:
+    qc = QuantumCircuit()
+    qc.append("barrier", {None}, flag=True)
+    with pytest.raises(ValueError, match=r"barrier.*barrier") as error:
+        qc.update("barrier", {None}, flag=1)
+    assert '{"flag": true}' in str(error.value)
+    assert '{"flag": 1}' in str(error.value)

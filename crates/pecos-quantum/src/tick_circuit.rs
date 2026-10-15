@@ -335,6 +335,7 @@ impl From<TickGateError> for CustomGateError {
 #[derive(Debug, Clone, Default)]
 struct TickGateStorage {
     commands: Vec<Gate>,
+    qubit_batches: BTreeMap<QubitId, usize>,
 }
 
 impl TickGateStorage {
@@ -359,15 +360,51 @@ impl TickGateStorage {
     }
 
     fn push(&mut self, gate: Gate) {
+        let idx = self.commands.len();
+        self.qubit_batches
+            .extend(gate.qubits.iter().map(|&q| (q, idx)));
         self.commands.push(gate);
     }
 
     fn set(&mut self, idx: usize, gate: Gate) {
+        for q in &self.commands[idx].qubits {
+            self.qubit_batches.remove(q);
+        }
+        self.qubit_batches
+            .extend(gate.qubits.iter().map(|&q| (q, idx)));
         self.commands[idx] = gate;
     }
 
     fn remove(&mut self, idx: usize) -> Gate {
-        self.commands.remove(idx)
+        let gate = self.commands.remove(idx);
+        for q in &gate.qubits {
+            // A merge may already have moved this qubit to its surviving batch.
+            if self.qubit_batches.get(q) == Some(&idx) {
+                self.qubit_batches.remove(q);
+            }
+        }
+        if idx < self.commands.len() {
+            for batch in self.qubit_batches.values_mut() {
+                if *batch > idx {
+                    *batch -= 1;
+                }
+            }
+        }
+        gate
+    }
+
+    fn retain_batches(&mut self, new_indices: &[Option<usize>]) {
+        let mut indices = new_indices.iter();
+        self.commands
+            .retain(|_| indices.next().is_some_and(Option::is_some));
+        self.qubit_batches.retain(|_, index| {
+            if let Some(new_index) = new_indices[*index] {
+                *index = new_index;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     fn append_batch(&mut self, idx: usize, gate: Gate) {
@@ -375,10 +412,15 @@ impl TickGateStorage {
             self.commands[idx].can_batch_with(&gate),
             "cannot merge incompatible gate batches"
         );
+        self.qubit_batches
+            .extend(gate.qubits.iter().map(|&q| (q, idx)));
         self.commands[idx].append_batch(gate);
     }
 
     fn truncate_payload(&mut self, idx: usize, qubit_len: usize, meas_id_len: usize) {
+        for q in &self.commands[idx].qubits[qubit_len..] {
+            self.qubit_batches.remove(q);
+        }
         self.commands[idx].qubits.truncate(qubit_len);
         self.commands[idx].meas_ids.truncate(meas_id_len);
     }
@@ -961,6 +1003,11 @@ impl Tick {
         self.attrs.insert(key.to_string(), value);
     }
 
+    /// Remove tick-level metadata, returning its previous value if present.
+    pub fn remove_attr(&mut self, key: &str) -> Option<Attribute> {
+        self.attrs.remove(key)
+    }
+
     /// Set multiple tick-level metadata attributes at once.
     pub fn set_attrs(&mut self, attrs: BTreeMap<String, Attribute>) {
         self.attrs.extend(attrs);
@@ -988,21 +1035,22 @@ impl Tick {
 
     /// Get the set of qubits used in this tick.
     ///
-    /// This is computed lazily by iterating through all gates.
+    /// Uses the maintained per-qubit batch index.
     #[must_use]
     pub fn active_qubits(&self) -> BTreeSet<QubitId> {
-        self.gate_batches
-            .iter()
-            .flat_map(|gate| gate.qubits.iter().copied())
-            .collect()
+        self.gate_batches.qubit_batches.keys().copied().collect()
+    }
+
+    /// Look up the stored batch occupying a qubit in O(log n) time.
+    #[must_use]
+    pub fn gate_on_qubit(&self, qubit: QubitId) -> Option<usize> {
+        self.gate_batches.qubit_batches.get(&qubit).copied()
     }
 
     /// Check if a specific qubit is already in use in this tick.
     #[must_use]
     pub fn uses_qubit(&self, qubit: QubitId) -> bool {
-        self.gate_batches
-            .iter()
-            .any(|gate| gate.qubits.contains(&qubit))
+        self.gate_on_qubit(qubit).is_some()
     }
 
     /// Check if any of the given qubits are already in use in this tick.
@@ -1010,10 +1058,9 @@ impl Tick {
     /// Returns the conflicting qubits if any.
     #[must_use]
     pub fn find_conflicts(&self, qubits: &[QubitId]) -> Vec<QubitId> {
-        let active = self.active_qubits();
         qubits
             .iter()
-            .filter(|q| active.contains(q))
+            .filter(|q| self.uses_qubit(**q))
             .copied()
             .collect()
     }
@@ -1053,6 +1100,42 @@ impl Tick {
     /// by another gate in this tick.
     pub fn try_add_gate(&mut self, gate: Gate) -> Result<usize, TickGateError> {
         self.try_add_gate_piece(gate).map(|piece| piece.gate_idx)
+    }
+
+    /// Insert complete gate batches atomically, preserving command boundaries.
+    ///
+    /// Checks every payload and qubit, including overlaps between input batches,
+    /// before inserting anything. Unlike `try_add_gate`, this does not coalesce
+    /// batches, so returned indices remain suitable for per-command metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidGate` for invalid payloads or `QubitConflict` for overlaps.
+    pub fn try_add_gates(&mut self, gates: Vec<Gate>) -> Result<Vec<usize>, TickGateError> {
+        let mut requested = BTreeSet::new();
+        for gate in &gates {
+            gate.validate()
+                .map_err(|message| TickGateError::InvalidGate {
+                    message,
+                    tick_idx: None,
+                })?;
+            let conflicts: Vec<_> = gate
+                .qubits
+                .iter()
+                .copied()
+                .filter(|q| self.uses_qubit(*q) || !requested.insert(*q))
+                .collect();
+            if !conflicts.is_empty() {
+                return Err(TickGateError::QubitConflict(QubitConflictError {
+                    conflicting_qubits: conflicts,
+                    tick_idx: None,
+                }));
+            }
+        }
+        Ok(gates
+            .into_iter()
+            .map(|gate| self.push_gate_unchecked(gate))
+            .collect())
     }
 
     fn try_add_gate_piece(&mut self, gate: Gate) -> Result<GateBatchPiece, TickGateError> {
@@ -1103,17 +1186,10 @@ impl Tick {
                 tick_idx: None,
             })?;
 
-        let mut active = BTreeSet::new();
-        for (idx, existing) in self.gate_batches.iter().enumerate() {
-            if idx == gate_idx {
-                continue;
-            }
-            active.extend(existing.qubits.iter().copied());
-        }
         let conflicts: Vec<QubitId> = gate
             .qubits
             .iter()
-            .filter(|q| active.contains(q))
+            .filter(|q| self.gate_on_qubit(**q).is_some_and(|idx| idx != gate_idx))
             .copied()
             .collect();
         if !conflicts.is_empty() {
@@ -1170,29 +1246,41 @@ impl Tick {
     /// assert_eq!(tick.len(), 1);  // Only X on q1 remains
     /// ```
     pub fn discard(&mut self, qubits: &[QubitId]) -> usize {
-        let qubits_set: BTreeSet<_> = qubits.iter().copied().collect();
-
-        // Find indices of gates to remove (those using any of the specified qubits)
-        let indices_to_remove: Vec<usize> = self
-            .gate_batches
+        let indices: Vec<_> = qubits
             .iter()
-            .enumerate()
-            .filter(|(_, gate)| gate.qubits.iter().any(|q| qubits_set.contains(q)))
-            .map(|(idx, _)| idx)
+            .filter_map(|q| self.gate_on_qubit(*q))
             .collect();
+        self.remove_gates(&indices)
+    }
 
-        let removed_count = indices_to_remove.len();
-
-        if removed_count == 0 {
+    /// Remove batches at the given indices, preserving the order of survivors.
+    ///
+    /// Duplicate and out-of-bounds indices are ignored. Returns the number of
+    /// batches removed. Commands, attributes and the qubit index are compacted
+    /// once, in linear time in the tick size plus the number of supplied indices.
+    pub fn remove_gates(&mut self, indices: &[usize]) -> usize {
+        if indices.is_empty() {
             return 0;
         }
-
-        // Remove gates in reverse order to preserve indices
-        for &idx in indices_to_remove.iter().rev() {
-            let _ = self.remove_gate(idx);
+        let mut new_indices: Vec<_> = (0..self.len()).map(Some).collect();
+        for &index in indices {
+            if let Some(entry) = new_indices.get_mut(index) {
+                *entry = None;
+            }
         }
-
-        removed_count
+        let mut retained = 0;
+        for index in new_indices.iter_mut().flatten() {
+            *index = retained;
+            retained += 1;
+        }
+        let removed = self.gate_batches.len() - retained;
+        if removed != 0 {
+            self.gate_batches.retain_batches(&new_indices);
+            let mut indices = new_indices.iter();
+            self.batch_attrs
+                .retain(|_| indices.next().is_some_and(Option::is_some));
+        }
+        removed
     }
 
     /// Remove a specific gate by index.
@@ -2289,38 +2377,52 @@ impl TickCircuit {
         &self.gate_signatures
     }
 
-    /// Validate a custom gate against its previously established signature,
-    /// or register it if this is the first use.
+    /// Check a custom gate signature without registering a new name.
     ///
     /// # Errors
     ///
-    /// Returns `GateSignatureMismatchError` if the gate has been seen before
-    /// with a different quantum or angle arity.
+    /// Returns `GateSignatureMismatchError` when a registered signature differs.
+    pub fn validate_gate_signature(
+        &self,
+        name: &str,
+        quantum_arity: usize,
+        angle_arity: usize,
+    ) -> Result<(), GateSignatureMismatchError> {
+        if let Some(existing) = self.gate_signatures.get(name)
+            && (existing.quantum_arity != quantum_arity || existing.angle_arity != angle_arity)
+        {
+            return Err(GateSignatureMismatchError {
+                name: name.to_string(),
+                expected_quantum_arity: existing.quantum_arity,
+                actual_quantum_arity: quantum_arity,
+                expected_angle_arity: existing.angle_arity,
+                actual_angle_arity: angle_arity,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate a custom gate signature and register it on first accepted use.
+    ///
+    /// Insertion callers should preflight with `validate_gate_signature` and call
+    /// this only after the gate has been accepted, so failures do not reserve names.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GateSignatureMismatchError` when a registered signature differs.
     pub fn validate_or_register_gate(
         &mut self,
         name: &str,
         quantum_arity: usize,
         angle_arity: usize,
     ) -> Result<(), GateSignatureMismatchError> {
-        if let Some(existing) = self.gate_signatures.get(name) {
-            if existing.quantum_arity != quantum_arity || existing.angle_arity != angle_arity {
-                return Err(GateSignatureMismatchError {
-                    name: name.to_string(),
-                    expected_quantum_arity: existing.quantum_arity,
-                    actual_quantum_arity: quantum_arity,
-                    expected_angle_arity: existing.angle_arity,
-                    actual_angle_arity: angle_arity,
-                });
-            }
-        } else {
-            self.gate_signatures.insert(
-                name.to_string(),
-                GateSignature {
-                    quantum_arity,
-                    angle_arity,
-                },
-            );
-        }
+        self.validate_gate_signature(name, quantum_arity, angle_arity)?;
+        self.gate_signatures
+            .entry(name.to_string())
+            .or_insert(GateSignature {
+                quantum_arity,
+                angle_arity,
+            });
         Ok(())
     }
 
@@ -3681,13 +3783,15 @@ impl<'a> TickHandle<'a> {
         angles: &[Angle64],
     ) -> Result<&mut Self, CustomGateError> {
         self.circuit
-            .validate_or_register_gate(name, qubits.len(), angles.len())?;
+            .validate_gate_signature(name, qubits.len(), angles.len())?;
 
         let qubit_ids: GateQubits = qubits.iter().map(|&q| QubitId::from(q)).collect();
         let gate = Gate::new(GateType::Custom, angles.to_vec(), vec![], qubit_ids);
 
         match self.circuit.ticks[self.tick_idx].try_add_gate_piece(gate) {
             Ok(piece) => {
+                self.circuit
+                    .validate_or_register_gate(name, qubits.len(), angles.len())?;
                 // Auto-store _symbol metadata
                 let piece = self.circuit.ticks[self.tick_idx].set_gate_attr_for_piece(
                     piece,

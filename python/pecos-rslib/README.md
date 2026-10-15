@@ -51,3 +51,23 @@ print(state.outcome_probabilities(0))
 
 Pass `seed=` when a stochastic trajectory or measurement must be reproducible.
 Omitting it uses entropy-derived randomness.
+
+## Tick request insertion
+
+Generic `TickHandle.add_gate` broadcasts preflight every chunk in the Rust tick
+before inserting any. `.meta()` and `.metas()` apply to every batch of that
+insertion. Typed broadcasts validate their complete batch before insertion too.
+
+`TickHandle.gate_on_qubit`, `get_gate`, and `get_gate_attr` inspect an individual
+stored batch without cloning its tick. `TickCircuit.gate_locations` shares the
+generic insertion arity rules with Python request preparation. Prepared Python
+requests preserve native fields, metadata, and custom signatures when committed.
+
+QuantumCircuit reserves one tick-level symbol/parameter pair for a zero-qubit
+operation. Identical repeats (symbol and canonical JSON parameters) are no-ops;
+a different operation raises `ValueError` before the request is committed.
+Identical repeats preserve the original metadata encoding, even when the same
+request also inserts physical gates.
+
+Deleting a QuantumCircuit tick clears its gates and reserved zero-qubit operation
+attributes while retaining unrelated tick metadata, such as a builder phase.

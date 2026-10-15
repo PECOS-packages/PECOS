@@ -179,7 +179,8 @@ class QuantumCircuit(MutableSequence):
 
         Uses the Rust-side ``add_gate`` method which resolves gate names via
         ``GateType::from_str``. Special handling is only needed for composite
-        gates (RXXRYYRZZ) that don't map to a single GateType.
+        gates (RXXRYYRZZ) that don't map to a single GateType. Identical stored
+        gates are idempotent; all other qubit conflicts propagate.
         """
         # Handle logical gate objects that have a .symbol attribute
         if not isinstance(symbol, str):
@@ -205,12 +206,15 @@ class QuantumCircuit(MutableSequence):
         if not loc_list:
             # No qubit operands -- store symbol and params as tick-level metadata
             # (e.g., global barriers or marker gates)
-            tick_handle.meta("_symbol", symbol)
+            if self._has_identical_zero_qubit(tick_handle.index(), symbol, params_json):
+                return
+            self._inner.set_tick_meta(tick_handle.index(), "_symbol", symbol)
             if params_json:
-                tick_handle.meta("_params", params_json)
+                self._inner.set_tick_meta(tick_handle.index(), "_params", params_json)
             return
 
-        # Handle RXXRYYRZZ gate (composite, not a single native GateType)
+        # Composite gates are stored as RZZ plus their full angle metadata.
+        composite_angles = None
         if symbol.upper() in _RXXRYYRZZ_GATES:
             angles = params.get("angles")
             if angles is not None and len(angles) >= 3:
@@ -219,30 +223,96 @@ class QuantumCircuit(MutableSequence):
                 zz_angle = params.get("zz", 0.0)
                 yy_angle = params.get("yy", 0.0)
                 xx_angle = params.get("xx", 0.0)
+            composite_angles = f"{zz_angle},{yy_angle},{xx_angle}"
+        else:
+            angles = self._extract_angles_full(params)
 
-            for loc in loc_list:
-                if isinstance(loc, tuple) and len(loc) == 2:
-                    result = tick_handle.rzz(zz_angle, [(loc[0], loc[1])])
-                    if hasattr(result, "meta"):
-                        result.meta("_symbol", symbol)
-                        result.meta("_rxxryyrzz_angles", f"{zz_angle},{yy_angle},{xx_angle}")
-                        if params_json:
-                            result.meta("_params", params_json)
-            return
-
-        # Extract angles from params
-        angles = self._extract_angles_full(params)
-
-        # Dispatch each location through Rust's add_gate (which resolves
-        # the name via GateType::from_str and falls back to custom_gate)
-        for loc in loc_list:
-            qubits = list(loc) if isinstance(loc, tuple) else [loc]
-            try:
-                result = tick_handle.add_gate(symbol, qubits, angles if angles else None)
-            except QubitConflictError:
-                continue
+        def add_gate(handle: object, qubits: list[int]) -> None:
+            if composite_angles is not None:
+                result = handle.add_gate("RZZ", qubits, [zz_angle])
+                result.meta("_symbol", symbol)
+                result.meta("_rxxryyrzz_angles", composite_angles)
+            else:
+                result = handle.add_gate(symbol, qubits, angles if angles else None)
             if hasattr(result, "meta") and params_json:
                 result.meta("_params", params_json)
+
+        for loc in loc_list:
+            if composite_angles is not None and not (isinstance(loc, tuple) and len(loc) == 2):
+                msg = "RXXRYYRZZ requires a pair of qubits"
+                raise ValueError(msg)
+            qubits = list(loc) if isinstance(loc, tuple) else [loc]
+            chunks = (
+                [qubits]
+                if len(qubits) == 1 or composite_angles is not None
+                else TickCircuit.gate_locations(symbol, qubits)
+            )
+            for chunk in chunks:
+                try:
+                    add_gate(tick_handle, chunk)
+                except QubitConflictError:
+                    candidate = QuantumCircuit()
+                    candidate_handle = candidate._inner.tick()
+                    add_gate(candidate_handle, chunk)
+                    free = self._free_gate_indices(tick_handle, candidate_handle)
+                    self._inner._apply_tick(candidate._inner, tick_handle.index(), "update", free)
+
+    def _gate_identity(self, tick: object, index: int, gate: object) -> tuple:
+        """Compare native fields and the public per-gate view, excluding measurement IDs."""
+        # Overwritten source fields do not distinguish gates when native fields and decoded views agree.
+        symbol, location, params = self._decode_gate(tick, index, gate)
+        params_key = json.dumps(params, sort_keys=True) if params else ""
+        return gate.gate_type, gate.qubits, gate.angles, gate.params, symbol, location, params_key
+
+    def _free_gate_indices(self, target: object, candidate: object) -> list[int]:
+        """Classify a whole request without changing either tick."""
+        free = []
+        stored = {}
+        for index, gate in enumerate(candidate.gate_batches()):
+            occupants = {target.gate_on_qubit(q) for q in gate.qubits}
+            if not occupants or occupants == {None}:
+                free.append(index)
+                continue
+            if len(occupants) == 1 and None not in occupants:
+                stored_index = next(iter(occupants))
+                if stored_index not in stored:
+                    stored[stored_index] = self._gate_identity(target, stored_index, target.get_gate(stored_index))
+                if self._gate_identity(candidate, index, gate) == stored[stored_index]:
+                    continue
+            msg = f"Conflicting gate {self._decode_gate(candidate, index, gate)[0]} on qubits {gate.qubits}"
+            raise QubitConflictError(msg)
+        return free
+
+    def _has_identical_zero_qubit(self, tick: int, symbol: str, params_json: str | None) -> bool:
+        """Check the single tick-level operation slot without changing it."""
+        stored_symbol = self._inner.get_tick_meta(tick, "_symbol")
+        if stored_symbol is None:
+            return False
+        stored_params = self._inner.get_tick_meta(tick, "_params")
+        stored_key = json.dumps(json.loads(stored_params or "{}"), sort_keys=True)
+        requested_key = json.dumps(json.loads(params_json or "{}"), sort_keys=True)
+        if stored_symbol == symbol and stored_key == requested_key:
+            return True
+        msg = f"Stored zero-qubit operation {stored_symbol!r} conflicts with requested {symbol!r}"
+        if stored_symbol == symbol:
+            msg += f": stored params {stored_key}, requested params {requested_key}"
+        raise ValueError(msg)
+
+    def _prepare_tick(self, gate_dict: GateDict, params: JSONDict) -> QuantumCircuit:
+        """Resolve a complete request in isolation, including duplicates within it."""
+        request = QuantumCircuit(gate_registry=self._gate_registry)
+        handle = request._inner.tick()
+        for symbol, locations in gate_dict.items():
+            request._add_gate_to_tick(handle, symbol, locations, **params)
+        return request
+
+    def _update_tick(self, tick: int, request: QuantumCircuit) -> None:
+        target = self._inner.tick_at(tick)
+        symbol = request._inner.get_tick_meta(0, "_symbol")
+        if symbol is not None:
+            self._has_identical_zero_qubit(tick, symbol, request._inner.get_tick_meta(0, "_params"))
+        free = self._free_gate_indices(target, request._inner.tick_at(0))
+        self._inner._apply_tick(request._inner, tick, "update", free)
 
     def append(
         self,
@@ -261,15 +331,8 @@ class QuantumCircuit(MutableSequence):
         # If locations is None then assume symbol is a gate_dict
         gate_dict: GateDict = symbol if locations is None else {symbol: locations}  # type: ignore[assignment]
 
-        tick_handle = self._inner.tick()
-
-        for gate_symbol, gate_locations in gate_dict.items():
-            self._add_gate_to_tick(
-                tick_handle,
-                gate_symbol,
-                gate_locations,
-                **params,
-            )
+        request = self._prepare_tick(gate_dict, params)
+        self._inner._apply_tick(request._inner, 0, "append", [])
 
     def update(
         self,
@@ -293,32 +356,15 @@ class QuantumCircuit(MutableSequence):
         # If locations is None then assume symbol is a gate_dict
         gate_dict: GateDict = symbol if locations is None else {symbol: locations}  # type: ignore[assignment]
 
-        # Get logical and physical tick counts
-        logical_ticks = len(self)  # includes reserved ticks
-        physical_ticks = self._inner.next_tick_index()
-
-        # Handle empty circuit case with negative tick index
-        if logical_ticks == 0 and tick < 0:
-            if emptyappend:
-                # Create a new tick
-                tick_handle = self._inner.tick()
-            else:
-                # Cannot update empty circuit with negative tick without emptyappend
-                return
+        logical_ticks = len(self)
+        if logical_ticks == 0 and tick < 0 and not emptyappend:
+            return
+        request = self._prepare_tick(gate_dict, params)
+        actual_tick = tick if tick >= 0 else logical_ticks + tick
+        if logical_ticks == 0 or actual_tick >= self._inner.next_tick_index():
+            self._inner._apply_tick(request._inner, 0, "append", [])
         else:
-            # Handle negative indices (use logical_ticks for the calculation)
-            actual_tick = tick if tick >= 0 else logical_ticks + tick
-
-            # If we're trying to access a tick that doesn't exist physically yet, create it
-            tick_handle = self._inner.tick() if actual_tick >= physical_ticks else self._inner.tick_at(actual_tick)
-
-        for gate_symbol, gate_locations in gate_dict.items():
-            self._add_gate_to_tick(
-                tick_handle,
-                gate_symbol,
-                gate_locations,
-                **params,
-            )
+            self._update_tick(actual_tick, request)
 
     def discard(self, locations: LocationSet, tick: int = -1) -> None:
         """Discards ``locations`` for tick ``tick``.
@@ -367,6 +413,89 @@ class QuantumCircuit(MutableSequence):
             actual_tick = tick if tick >= 0 else len(self) + tick
             yield from self._iter_tick(actual_tick)
 
+    def _decode_gate(self, tick_obj: object, gate_idx: int, gate: object) -> tuple[str, Location, JSONDict]:
+        """Decode one stored gate into QuantumCircuit's symbol, location and params."""
+        # Check for stored original symbol in metadata
+        stored_symbol = tick_obj.get_gate_attr(gate_idx, "_symbol")
+
+        if stored_symbol is not None:
+            symbol = stored_symbol
+        else:
+            gate_type_str = str(gate.gate_type)
+            # Extract gate type name from "GateType.H" format
+            if "." in gate_type_str:
+                gate_type_str = gate_type_str.rsplit(".", maxsplit=1)[-1]
+            symbol = _GATETYPE_TO_SYMBOL.get(gate_type_str, gate_type_str)
+
+        qubits = list(gate.qubits)
+        if len(qubits) == 1:
+            location: Location = qubits[0]
+        else:
+            location = tuple(qubits)
+
+        # Extract params from gate (angles, etc.)
+        params: JSONDict = {}
+
+        # Check for stored params (general case)
+        stored_params_json = tick_obj.get_gate_attr(gate_idx, "_params")
+        if stored_params_json is not None:
+            try:
+                stored_params = json.loads(stored_params_json)
+                # Convert lists back to tuples for "angles"
+                if "angles" in stored_params and isinstance(
+                    stored_params["angles"],
+                    list,
+                ):
+                    stored_params["angles"] = tuple(stored_params["angles"])
+                # Fix JSON type issues (e.g., var_output keys become strings)
+                stored_params = self._fix_json_meta(stored_params)
+                params.update(stored_params)
+            except json.JSONDecodeError:
+                pass
+
+        # Check for custom gate params (stored as JSON in metadata) - legacy
+        custom_params_json = tick_obj.get_gate_attr(gate_idx, "_custom_params")
+        if custom_params_json is not None:
+            try:
+                custom_params = json.loads(custom_params_json)
+                # Convert lists back to tuples for "angles"
+                if "angles" in custom_params and isinstance(
+                    custom_params["angles"],
+                    list,
+                ):
+                    custom_params["angles"] = tuple(custom_params["angles"])
+                # Fix JSON type issues (e.g., var_output keys become strings)
+                custom_params = self._fix_json_meta(custom_params)
+                params.update(custom_params)
+            except json.JSONDecodeError:
+                pass
+
+        # Check for RXXRYYRZZ special case (stored as RZZ with metadata)
+        if (
+            (rxxryyrzz_angles := tick_obj.get_gate_attr(gate_idx, "_rxxryyrzz_angles")) is not None
+            and stored_symbol is not None
+            and stored_symbol.upper() in _RXXRYYRZZ_GATES
+        ):
+            # Reconstruct RXXRYYRZZ angles from metadata
+            angle_parts = rxxryyrzz_angles.split(",")
+            if len(angle_parts) >= 3:
+                params["angles"] = [float(a) for a in angle_parts[:3]]
+        elif hasattr(gate, "angles"):
+            # The serialized parameters are the source values supplied to
+            # the generic API.  Prefer them to the gate's Angle64 values:
+            # controlled rotations must be halved before reduction, and
+            # that sheet information cannot be reconstructed afterward.
+            angles = self._extract_angles_full(params) or gate.angles
+            if angles:
+                if len(angles) == 1:
+                    # Single angle gates (RX, RY, RZ, RXX, RYY, RZZ)
+                    params["angle"] = angles[0]
+                elif len(angles) in (2, 3):
+                    # Multi-angle simulator dispatch consumes an angles tuple.
+                    params["angles"] = tuple(angles)
+
+        return symbol, location, params
+
     def _iter_tick(
         self,
         tick_idx: int,
@@ -385,82 +514,7 @@ class QuantumCircuit(MutableSequence):
         grouped: dict[tuple[str, str], tuple[set[Location], JSONDict]] = {}
 
         for gate_idx, gate in enumerate(tick_obj.gate_batches()):
-            # Check for stored original symbol in metadata
-            stored_symbol = tick_obj.get_gate_attr(gate_idx, "_symbol")
-
-            if stored_symbol is not None:
-                symbol = stored_symbol
-            else:
-                gate_type_str = str(gate.gate_type)
-                # Extract gate type name from "GateType.H" format
-                if "." in gate_type_str:
-                    gate_type_str = gate_type_str.rsplit(".", maxsplit=1)[-1]
-                symbol = _GATETYPE_TO_SYMBOL.get(gate_type_str, gate_type_str)
-
-            qubits = list(gate.qubits)
-            if len(qubits) == 1:
-                location: Location = qubits[0]
-            else:
-                location = tuple(qubits)
-
-            # Extract params from gate (angles, etc.)
-            params: JSONDict = {}
-
-            # Check for stored params (general case)
-            stored_params_json = tick_obj.get_gate_attr(gate_idx, "_params")
-            if stored_params_json is not None:
-                try:
-                    stored_params = json.loads(stored_params_json)
-                    # Convert lists back to tuples for "angles"
-                    if "angles" in stored_params and isinstance(
-                        stored_params["angles"],
-                        list,
-                    ):
-                        stored_params["angles"] = tuple(stored_params["angles"])
-                    # Fix JSON type issues (e.g., var_output keys become strings)
-                    stored_params = self._fix_json_meta(stored_params)
-                    params.update(stored_params)
-                except json.JSONDecodeError:
-                    pass
-
-            # Check for custom gate params (stored as JSON in metadata) - legacy
-            custom_params_json = tick_obj.get_gate_attr(gate_idx, "_custom_params")
-            if custom_params_json is not None:
-                try:
-                    custom_params = json.loads(custom_params_json)
-                    # Convert lists back to tuples for "angles"
-                    if "angles" in custom_params and isinstance(
-                        custom_params["angles"],
-                        list,
-                    ):
-                        custom_params["angles"] = tuple(custom_params["angles"])
-                    # Fix JSON type issues (e.g., var_output keys become strings)
-                    custom_params = self._fix_json_meta(custom_params)
-                    params.update(custom_params)
-                except json.JSONDecodeError:
-                    pass
-
-            # Check for RXXRYYRZZ special case (stored as RZZ with metadata)
-            if (
-                rxxryyrzz_angles := tick_obj.get_gate_attr(gate_idx, "_rxxryyrzz_angles")
-            ) is not None and stored_symbol in _RXXRYYRZZ_GATES:
-                # Reconstruct RXXRYYRZZ angles from metadata
-                angle_parts = rxxryyrzz_angles.split(",")
-                if len(angle_parts) >= 3:
-                    params["angles"] = [float(a) for a in angle_parts[:3]]
-            elif hasattr(gate, "angles"):
-                # The serialized parameters are the source values supplied to
-                # the generic API.  Prefer them to the gate's Angle64 values:
-                # controlled rotations must be halved before reduction, and
-                # that sheet information cannot be reconstructed afterward.
-                angles = self._extract_angles_full(params) or gate.angles
-                if angles:
-                    if len(angles) == 1:
-                        # Single angle gates (RX, RY, RZ, RXX, RYY, RZZ)
-                        params["angle"] = angles[0]
-                    elif len(angles) in (2, 3):
-                        # Multi-angle simulator dispatch consumes an angles tuple.
-                        params["angles"] = tuple(angles)
+            symbol, location, params = self._decode_gate(tick_obj, gate_idx, gate)
 
             # Create a hashable key from symbol and params
             # Sort params keys for consistent hashing
@@ -474,24 +528,21 @@ class QuantumCircuit(MutableSequence):
                 # Create new group
                 grouped[key] = ({location}, params)
 
-        # Handle ticks with no gates but a tick-level symbol (e.g., global barriers)
-        if not grouped:
-            tick_symbol = tick_obj.get_attr("_symbol")
-            if tick_symbol is not None:
-                tick_params: JSONDict = {}
-                tick_params_json = tick_obj.get_attr("_params")
-                if tick_params_json is not None:
-                    try:
-                        tick_params = json.loads(tick_params_json)
-                        tick_params = self._fix_json_meta(tick_params)
-                    except json.JSONDecodeError:
-                        pass
-                yield tick_symbol, set(), tick_params
-                return
-
-        # Yield grouped results
+        # Yield physical gates and the independent tick-level operation.
         for (symbol, _), (locations, params) in grouped.items():
             yield symbol, locations, params
+
+        tick_symbol = tick_obj.get_attr("_symbol")
+        if tick_symbol is not None:
+            tick_params: JSONDict = {}
+            tick_params_json = tick_obj.get_attr("_params")
+            if tick_params_json is not None:
+                try:
+                    tick_params = json.loads(tick_params_json)
+                    tick_params = self._fix_json_meta(tick_params)
+                except json.JSONDecodeError:
+                    pass
+            yield tick_symbol, set(), tick_params
 
     def iter_ticks(self) -> Iterator[tuple[TickView, int, JSONDict]]:
         """Iterate over circuit time ticks.
@@ -518,15 +569,8 @@ class QuantumCircuit(MutableSequence):
         else:
             gate_dict, params = item, {}
 
-        tick_handle = self._inner.insert_tick(tick)
-
-        for gate_symbol, gate_locations in gate_dict.items():
-            self._add_gate_to_tick(
-                tick_handle,
-                gate_symbol,
-                gate_locations,
-                **params,
-            )
+        request = self._prepare_tick(gate_dict, params)
+        self._inner._apply_tick(request._inner, tick, "insert", [])
 
     def _circuit_setup(self, circuit_setup: CircuitSetup) -> None:
         if isinstance(circuit_setup, int):
@@ -535,8 +579,10 @@ class QuantumCircuit(MutableSequence):
             self._inner.reserve_ticks(circuit_setup)
         else:
             # Build circuit from other description (a shallow copy).
+            request = QuantumCircuit(gate_registry=self._gate_registry)
             for other_tick in circuit_setup:
-                self.append(other_tick)
+                request.append(other_tick)
+            self._inner = request._inner
 
     def to_json_str(self) -> str:
         """Creates a json str representation of the QuantumCircuit listing all the gates.
@@ -649,22 +695,8 @@ class QuantumCircuit(MutableSequence):
         actual_tick = tick if tick >= 0 else len(self) + tick
         gate_dict, params = item
 
-        # Get qubits to discard first
-        tick_obj = self._inner.get_tick(actual_tick)
-        if tick_obj is not None:
-            qubits_to_discard = tick_obj.active_qubits()
-            if qubits_to_discard:
-                self._inner.discard(qubits_to_discard, actual_tick)
-
-        # Add new gates
-        tick_handle = self._inner.tick_at(actual_tick)
-        for gate_symbol, gate_locations in gate_dict.items():
-            self._add_gate_to_tick(
-                tick_handle,
-                gate_symbol,
-                gate_locations,
-                **params,
-            )
+        request = self._prepare_tick(gate_dict, params)
+        self._inner._apply_tick(request._inner, actual_tick, "replace", [])
 
     def __len__(self) -> int:
         """Used to return number of ticks when len() is used on an instance of this class."""
@@ -678,11 +710,7 @@ class QuantumCircuit(MutableSequence):
             tick: The time (tick) index to delete (replace with an empty tick)
         """
         actual_tick = tick if tick >= 0 else len(self) + tick
-        tick_obj = self._inner.get_tick(actual_tick)
-        if tick_obj is not None:
-            qubits_to_discard = tick_obj.active_qubits()
-            if qubits_to_discard:
-                self._inner.discard(qubits_to_discard, actual_tick)
+        self._inner._clear_tick(actual_tick)
 
     def __str__(self) -> str:
         """String returned when a string representation is requested. This occurs during printing."""
@@ -817,14 +845,8 @@ class TickView:
         gate_dict: GateDict = symbol if locations is None else {symbol: locations}  # type: ignore[assignment]
 
         if gate_dict:
-            tick_handle = self._circuit._inner.tick_at(self._tick_idx)
-            for gate_symbol, gate_locations in gate_dict.items():
-                self._circuit._add_gate_to_tick(
-                    tick_handle,
-                    gate_symbol,
-                    gate_locations,
-                    **params,
-                )
+            request = self._circuit._prepare_tick(gate_dict, params)
+            self._circuit._update_tick(self._tick_idx, request)
 
         return self
 

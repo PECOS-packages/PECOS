@@ -554,11 +554,14 @@ impl CircuitPass for SimplifyRotations {
                 }
             }
 
-            // Process decompositions in reverse order to keep indices valid.
-            for &(idx, pauli) in decompositions.iter().rev() {
-                let qubits = tick.gate_batches()[idx].qubits.clone();
-                // Remove the two-qubit gate, add two single-qubit gates.
-                tick.remove_gate(idx);
+            let additions: Vec<_> = decompositions
+                .iter()
+                .rev()
+                .map(|&(idx, pauli)| (tick.gate_batches()[idx].qubits.clone(), pauli))
+                .collect();
+            let indices: Vec<_> = decompositions.iter().map(|&(idx, _)| idx).collect();
+            tick.remove_gates(&indices);
+            for (qubits, pauli) in additions {
                 for pair in qubits.chunks(2) {
                     if pair.len() == 2 {
                         tick.add_gate(Gate::simple(pauli, smallvec::smallvec![pair[0]]));
@@ -649,6 +652,16 @@ impl CircuitPass for SimplifyRotations {
     }
 }
 
+/// Remove sorted (tick, batch) positions with one compaction per affected tick.
+fn remove_tick_gates(circuit: &mut TickCircuit, positions: &[(usize, usize)]) {
+    for group in positions.chunk_by(|a, b| a.0 == b.0) {
+        if let Some(tick) = circuit.get_tick_mut(group[0].0) {
+            let indices: Vec<_> = group.iter().map(|&(_, index)| index).collect();
+            tick.remove_gates(&indices);
+        }
+    }
+}
+
 fn remove_matching_tick_gates(circuit: &mut TickCircuit, predicate: impl Fn(&Gate) -> bool) {
     for tick in circuit.ticks_mut() {
         let to_remove: Vec<usize> = tick
@@ -658,9 +671,7 @@ fn remove_matching_tick_gates(circuit: &mut TickCircuit, predicate: impl Fn(&Gat
             .filter(|(_, gate)| predicate(gate))
             .map(|(index, _)| index)
             .collect();
-        for &index in to_remove.iter().rev() {
-            tick.remove_gate(index);
-        }
+        tick.remove_gates(&to_remove);
     }
 }
 
@@ -748,11 +759,7 @@ impl CircuitPass for CancelInverses {
 
         to_remove.sort_unstable();
         to_remove.dedup();
-        for &(ti, gi) in to_remove.iter().rev() {
-            if let Some(tick) = circuit.get_tick_mut(ti) {
-                tick.remove_gate(gi);
-            }
-        }
+        remove_tick_gates(circuit, &to_remove);
     }
 
     fn apply_dag(&self, circuit: &mut DagCircuit) {
@@ -833,13 +840,9 @@ impl CircuitPass for MergeAdjacentRotations {
             }
         }
 
-        // Remove merged gates in reverse order.
+        // Compact merged gates once per tick.
         to_remove.sort_unstable();
-        for &(ti, gi) in to_remove.iter().rev() {
-            if let Some(tick) = circuit.get_tick_mut(ti) {
-                tick.remove_gate(gi);
-            }
-        }
+        remove_tick_gates(circuit, &to_remove);
     }
 
     fn apply_dag(&self, circuit: &mut DagCircuit) {
@@ -959,18 +962,14 @@ impl CircuitPass for PeepholeOptimize {
             }
         }
 
-        // Remove H gates in reverse order to preserve indices.
+        // Compact removed H gates once per tick.
         let mut remove_list: Vec<(usize, usize)> = to_remove
             .iter()
             .filter(|pos| !replacements.iter().any(|(p, _, _)| p == *pos))
             .copied()
             .collect();
         remove_list.sort_unstable();
-        for &(ti, gi) in remove_list.iter().rev() {
-            if let Some(tick) = circuit.get_tick_mut(ti) {
-                tick.remove_gate(gi);
-            }
-        }
+        remove_tick_gates(circuit, &remove_list);
     }
 
     fn apply_dag(&self, circuit: &mut DagCircuit) {
@@ -1120,14 +1119,10 @@ impl CircuitPass for AbsorbBasisGates {
             }
         }
 
-        // Deduplicate and remove in reverse order to preserve indices.
+        // Deduplicate and compact once per tick.
         to_remove.sort_unstable();
         to_remove.dedup();
-        for &(ti, gi) in to_remove.iter().rev() {
-            if let Some(tick) = circuit.get_tick_mut(ti) {
-                tick.remove_gate(gi);
-            }
-        }
+        remove_tick_gates(circuit, &to_remove);
     }
 
     fn apply_dag(&self, circuit: &mut DagCircuit) {
@@ -1475,11 +1470,7 @@ impl CircuitPass for SimplifySingleQubitCliffordChains {
 
         let mut remove_list: Vec<(usize, usize)> = to_remove.into_iter().collect();
         remove_list.sort_unstable();
-        for &(ti, gi) in remove_list.iter().rev() {
-            if let Some(tick) = circuit.get_tick_mut(ti) {
-                tick.remove_gate(gi);
-            }
-        }
+        remove_tick_gates(circuit, &remove_list);
     }
 
     fn apply_dag(&self, _circuit: &mut DagCircuit) {

@@ -1535,6 +1535,23 @@ def test_delete_tick_clears_operation_preserves_metadata(physical: bool, circuit
     assert list(qc.items()) == [("other_marker", set(), {})]
 
 
+@pytest.mark.parametrize("marker", [False, True])
+def test_replace_tick_replaces_operation_preserves_metadata(marker: bool, circuit_with_native: tuple) -> None:
+    qc, native = circuit_with_native
+    qc.append({"H": {0}, "barrier": {None}}, label="old")
+    native.set_tick_meta(0, "phase", "syndrome")
+    native.set_tick_meta(0, "settings", {"enabled": True})
+    request = {"X": {1}, "new_marker": {None}} if marker else {"X": {1}}
+    qc[0] = (request, {"label": "new"} if marker else {})
+    expected = [("X", {1}, {"label": "new"}), ("new_marker", set(), {"label": "new"})] if marker else [("X", {1}, {})]
+    assert list(qc.items()) == expected
+    assert native.get_tick_meta(0, "_symbol") == ("new_marker" if marker else None)
+    params = native.get_tick_meta(0, "_params")
+    assert (json.loads(params) if params else None) == ({"label": "new"} if marker else None)
+    assert native.get_tick_meta(0, "phase") == "syndrome"
+    assert native.get_tick_meta(0, "settings") == {"enabled": True}
+
+
 def test_zero_qubit_params_conflict_reports_values() -> None:
     qc = QuantumCircuit()
     qc.append("barrier", {None}, flag=True)

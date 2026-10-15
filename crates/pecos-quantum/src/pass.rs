@@ -3017,6 +3017,38 @@ mod tests {
     }
 
     #[test]
+    fn tick_cancel_multiple_batches_per_tick_preserves_survivors() {
+        let mut tc = TickCircuit::new();
+        for gates in [
+            vec![Gate::h(&[0]), Gate::z(&[2]), Gate::x(&[1])],
+            vec![Gate::h(&[0]), Gate::x(&[1]), Gate::y(&[3])],
+        ] {
+            let ti = tc.tick().index();
+            let tick = tc.get_tick_mut(ti).unwrap();
+            let indices = tick.try_add_gates(gates).unwrap();
+            for index in indices {
+                tick.set_gate_attr(index, "label", Attribute::String(format!("{ti}:{index}")));
+            }
+        }
+
+        CancelInverses.apply_tick(&mut tc);
+
+        assert_eq!(tc.num_ticks(), 2);
+        for (ti, gate, label) in [(0, Gate::z(&[2]), "0:1"), (1, Gate::y(&[3]), "1:2")] {
+            let tick = tc.get_tick(ti).unwrap();
+            assert_eq!(tick.gate_batches(), &[gate]);
+            let attrs: Vec<_> = tick
+                .gate_attrs(0)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            assert_eq!(
+                attrs,
+                vec![("label".into(), Attribute::String(label.into()))]
+            );
+        }
+    }
+
+    #[test]
     fn tick_cancel_sx_sxdg() {
         let mut tc = TickCircuit::new();
         tc.tick().sx(&[0]);

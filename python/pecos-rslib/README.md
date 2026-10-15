@@ -71,3 +71,6 @@ request also inserts physical gates.
 
 Deleting a QuantumCircuit tick clears its gates and reserved zero-qubit operation
 attributes while retaining unrelated tick metadata, such as a builder phase.
+
+Replacing a QuantumCircuit tick takes its gates and reserved operation attributes
+from the request, preserving every other attribute of the target tick.

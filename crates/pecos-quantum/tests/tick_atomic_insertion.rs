@@ -140,12 +140,12 @@ fn bulk_removal_index_matches_stored_batches() {
     let mut tick = Tick::new();
     tick.try_add_gates((0..12).map(|q| Gate::h(&[q])).collect())
         .unwrap();
-    for indices in [
-        &[0, 4, 11, 4, 99][..],
-        &[1, 3][..],
-        &[0, 1, 2, 3, 4, 5, 6][..],
+    for (indices, removed) in [
+        (&[0, 4, 11, 4, 99][..], 3),
+        (&[1, 3][..], 2),
+        (&[0, 1, 2, 3, 4, 5, 6][..], 7),
     ] {
-        tick.remove_gates(indices);
+        assert_eq!(tick.remove_gates(indices), removed);
         for q in 0..12 {
             let qubit = QubitId::from(q);
             let expected = tick
@@ -155,5 +155,13 @@ fn bulk_removal_index_matches_stored_batches() {
             assert_eq!(tick.gate_on_qubit(qubit), expected);
         }
     }
+    assert!(tick.is_empty());
+}
+
+#[test]
+fn discard_both_qubits_counts_one_batch() {
+    let mut tick = Tick::new();
+    tick.add_gate(Gate::cx(&[(0, 1)]));
+    assert_eq!(tick.discard(&[QubitId::from(0), QubitId::from(1)]), 1);
     assert!(tick.is_empty());
 }

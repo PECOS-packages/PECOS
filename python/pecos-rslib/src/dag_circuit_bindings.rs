@@ -2460,7 +2460,8 @@ impl PyTickCircuit {
     /// Commit a prepared tick after Python has classified all its batches.
     ///
     /// Updates insert only selected free batches. Other modes publish the complete
-    /// prepared tick. Payload, conflict, bounds and signature checks precede mutation.
+    /// prepared tick; replacement retains unrelated target tick attributes.
+    /// Payload, conflict, bounds and signature checks precede mutation.
     fn _apply_tick(
         &mut self,
         request: &Self,
@@ -2495,7 +2496,13 @@ impl PyTickCircuit {
                 let tick = self.inner.get_tick_mut(index).ok_or_else(|| {
                     pyo3::exceptions::PyIndexError::new_err("tick index out of bounds")
                 })?;
-                *tick = source.clone();
+                let mut replacement = source.clone();
+                for (key, value) in tick.tick_attrs() {
+                    if key != "_symbol" && key != "_params" {
+                        replacement.set_attr(key, value.clone());
+                    }
+                }
+                *tick = replacement;
             }
             "update" => {
                 let gates = gate_indices

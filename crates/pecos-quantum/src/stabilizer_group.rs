@@ -13,7 +13,7 @@
 //! A Pauli stabilizer group: commuting Pauli strings with [`Sign`] phases.
 //!
 //! A [`PauliStabilizerGroup`] wraps [`PauliGroup`] with the additional constraint
-//! that all generators have [`Sign`] phases (`{+1, -1}`).
+//! that all generators have [`Sign`] phases (`{+1, -1}`) and do not generate `-I`.
 //! The commutativity constraint is inherited from [`PauliGroup`].
 //!
 //! [`PauliGroup`]: crate::PauliGroup
@@ -57,6 +57,8 @@ pub enum PauliStabilizerGroupError {
     NonCommuting(usize, usize),
     /// Generator at index i has non-real phase (not +1 or -1).
     NonRealPhase(usize),
+    /// The generators generate -I, so the code space is empty.
+    GeneratesMinusIdentity,
 }
 
 impl fmt::Display for PauliStabilizerGroupError {
@@ -64,6 +66,12 @@ impl fmt::Display for PauliStabilizerGroupError {
         match self {
             Self::NonCommuting(i, j) => {
                 write!(f, "generators {i} and {j} anticommute")
+            }
+            Self::GeneratesMinusIdentity => {
+                write!(
+                    f,
+                    "generators generate -I, which stabilizes no state (empty code space)"
+                )
             }
             Self::NonRealPhase(i) => {
                 write!(
@@ -80,12 +88,12 @@ impl std::error::Error for PauliStabilizerGroupError {}
 /// A Pauli stabilizer group: commuting Pauli generators with [`Sign`] phases.
 ///
 /// This is a validated wrapper around [`PauliGroup`] adding the constraint that
-/// all generators have [`Sign`] phase (`{+1, -1}`). The commutativity constraint
-/// is inherited from [`PauliGroup`].
+/// all generators have [`Sign`] phase (`{+1, -1}`) and do not generate `-I`.
+/// The commutativity constraint is inherited from [`PauliGroup`].
 ///
-/// These are the standard requirements for a stabilizer group in QEC: each
-/// stabilizer must square to `+I` (which requires real phase), and all
-/// stabilizers must commute to define a consistent code space.
+/// Stabilizer generators must commute, have real phases, and not generate `-I`.
+/// Since `-I|psi> = |psi>` forces `psi = 0`, a group containing `-I`
+/// stabilizes no state and has an empty code space.
 ///
 /// [`PauliGroup`]: crate::PauliGroup
 /// [`Sign`]: pecos_core::Sign
@@ -113,25 +121,45 @@ pub struct PauliStabilizerGroup {
 
 impl PauliStabilizerGroup {
     /// Creates a new `PauliStabilizerGroup`, validating that all generators commute
-    /// and have real phases.
+    /// and have real phases, and that the group does not contain `-I`.
     ///
     /// # Errors
     ///
     /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator has phase +i or -i.
+    /// Returns [`PauliStabilizerGroupError::GeneratesMinusIdentity`] if they generate `-I`.
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair of generators anticommute.
     pub fn new(generators: Vec<PauliString>) -> Result<Self, PauliStabilizerGroupError> {
-        // Validate real phases
-        for (i, generator) in generators.iter().enumerate() {
-            match generator.phase() {
-                QuarterPhase::PlusOne | QuarterPhase::MinusOne => {}
-                _ => return Err(PauliStabilizerGroupError::NonRealPhase(i)),
-            }
-        }
+        Self::validate_real_phases(&generators, 0)?;
 
         // PauliGroup::new validates mutual commutativity
         let inner = PauliGroup::new(generators).map_err(|e| match e {
             PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
         })?;
+        Self::from_group_with_real_phases(inner)
+    }
+
+    pub(crate) fn validate_real_phases(
+        generators: &[PauliString],
+        start_index: usize,
+    ) -> Result<(), PauliStabilizerGroupError> {
+        for (index, generator) in generators.iter().enumerate() {
+            if matches!(
+                generator.phase(),
+                QuarterPhase::PlusI | QuarterPhase::MinusI
+            ) {
+                return Err(PauliStabilizerGroupError::NonRealPhase(start_index + index));
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks the remaining stabilizer condition after real phases are validated.
+    pub(crate) fn from_group_with_real_phases(
+        inner: PauliGroup,
+    ) -> Result<Self, PauliStabilizerGroupError> {
+        if inner.contains_minus_identity() {
+            return Err(PauliStabilizerGroupError::GeneratesMinusIdentity);
+        }
         Ok(Self { inner })
     }
 
@@ -140,8 +168,8 @@ impl PauliStabilizerGroup {
     /// # Safety
     ///
     /// The caller must ensure that the generators mutually commute and have
-    /// real phases. This is intended for internal use where the generators
-    /// are known to be valid (e.g., extracted from a simulator tableau).
+    /// real phases, and that their group does not generate `-I`. This is intended
+    /// for internal use with valid generators (e.g., from a simulator tableau).
     #[must_use]
     pub fn from_generators_unchecked(generators: Vec<PauliString>) -> Self {
         Self {
@@ -164,13 +192,14 @@ impl PauliStabilizerGroup {
     /// Creates a `PauliStabilizerGroup` from a [`PauliSet`], row-reducing to
     /// independent generators.
     ///
-    /// This validates commutativity and real phases, then reduces to a minimal
-    /// generating set.
+    /// Validates commutativity, real phases, and absence of `-I`, then reduces
+    /// to a minimal generating set.
     ///
     /// # Errors
     ///
+    /// Returns [`PauliStabilizerGroupError::GeneratesMinusIdentity`] if they generate `-I`.
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair anticommute.
-    /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any reduced generator
+    /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator
     /// has a non-real phase.
     pub fn try_from_set(set: &PauliSet) -> Result<Self, PauliStabilizerGroupError> {
         Self::try_from(set.to_sequence())
@@ -236,6 +265,8 @@ impl PauliStabilizerGroup {
     ///
     /// Each bit in `mask` selects a generator: bit 0 = generator 0, bit 1 = generator 1, etc.
     /// `mask = 0` returns the identity (product of zero generators).
+    /// Different masks can yield the same element for dependent generators.
+    /// Only the first 64 generators can be selected by this mask.
     ///
     /// # Panics
     ///
@@ -263,11 +294,11 @@ impl PauliStabilizerGroup {
     pub fn element(&self, mask: u64) -> PauliString {
         let n = self.num_generators();
         assert!(
-            mask < (1u64 << n),
+            n >= 64 || mask < (1u64 << n),
             "mask {mask} exceeds number of generators ({n})"
         );
         let exponents: Vec<u32> = (0..n)
-            .map(|idx| u32::from(mask & (1u64 << idx) != 0))
+            .map(|idx| u32::from(idx < 64 && mask & (1u64 << idx) != 0))
             .collect();
         self.inner.element(&exponents)
     }
@@ -300,8 +331,8 @@ impl PauliStabilizerGroup {
 
     /// Returns an iterator over all elements of the stabilizer group.
     ///
-    /// For `r` generators, this yields `2^r` elements (every product of a subset
-    /// of generators, including the identity for the empty subset).
+    /// Yields each of the `2^rank` distinct elements exactly once, in the order
+    /// specified by [`PauliGroup::elements`].
     ///
     /// **Warning**: The group size is exponential in the number of generators.
     /// For large groups, prefer [`contains`](Self::contains) or
@@ -309,7 +340,7 @@ impl PauliStabilizerGroup {
     ///
     /// # Panics
     ///
-    /// Panics if the group has more than 30 generators (2^30 > 10^9 elements).
+    /// Panics if the group order exceeds `2^30` (rank greater than 30).
     ///
     /// # Examples
     ///
@@ -340,7 +371,8 @@ impl PauliStabilizerGroup {
         self.inner.commutation_matrix()
     }
 
-    /// Returns the generators in row-reduced form, removing redundant generators.
+    /// Returns independent bodies in row-reduced form.
+    /// Phases of zero-body dependencies are discarded, as in [`PauliSequence::row_reduce`].
     #[must_use]
     pub fn row_reduce(&self) -> PauliSequence {
         self.inner.row_reduce()
@@ -370,8 +402,9 @@ impl PauliStabilizerGroup {
     /// Transforms all generators by a Clifford gate: each `g_i` -> `C g_i C†`.
     ///
     /// Returns a new `PauliStabilizerGroup` with the transformed generators.
-    /// Clifford gates preserve commutation relations and real phases, so the
-    /// result is always a valid stabilizer group.
+    /// Clifford gates preserve commutation relations and real phases. Unitary
+    /// conjugation maps `-I` to `-I`, preserving its absence in both directions,
+    /// so the result is always a valid stabilizer group.
     ///
     /// # Examples
     ///
@@ -401,7 +434,7 @@ impl PauliStabilizerGroup {
         &self,
         clifford: &pecos_core::clifford_rep::CliffordRep,
     ) -> PauliStabilizerGroup {
-        // Clifford conjugation preserves commutation and real phases.
+        // Clifford conjugation also preserves the absence of -I.
         PauliStabilizerGroup {
             inner: self.inner.apply_clifford(clifford),
         }
@@ -414,28 +447,24 @@ impl PauliStabilizerGroup {
     /// Adds a generator to the stabilizer group.
     ///
     /// The new generator must commute with all existing generators and have
-    /// a real phase (+1 or -1).
+    /// a real phase (+1 or -1). The combined group must not generate `-I`.
     ///
     /// # Errors
     ///
     /// Returns an error if the generator has non-real phase or anticommutes
-    /// with any existing generator.
+    /// with any existing generator, or if the combined generators generate `-I`.
+    /// On error, the group is unchanged.
     pub fn add_generator(
         &mut self,
         generator: PauliString,
     ) -> Result<(), PauliStabilizerGroupError> {
-        match generator.phase() {
-            QuarterPhase::PlusOne | QuarterPhase::MinusOne => {}
-            _ => {
-                return Err(PauliStabilizerGroupError::NonRealPhase(
-                    self.num_generators(),
-                ));
-            }
-        }
-
-        self.inner.add_generator(generator).map_err(|e| match e {
+        Self::validate_real_phases(std::slice::from_ref(&generator), self.num_generators())?;
+        let mut candidate = self.inner.clone();
+        candidate.add_generator(generator).map_err(|e| match e {
             PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
-        })
+        })?;
+        *self = Self::from_group_with_real_phases(candidate)?;
+        Ok(())
     }
 
     /// Removes the generator at the given index.
@@ -449,7 +478,8 @@ impl PauliStabilizerGroup {
 
     /// Merges another stabilizer group into this one.
     ///
-    /// All generators from `other` must commute with all generators in `self`.
+    /// All generators from `other` must commute with all generators in `self`,
+    /// and the combined group must not generate `-I`.
     /// The resulting group acts on `max(self.num_qubits(), other.num_qubits())` qubits.
     ///
     /// This is useful for lattice surgery: merging two code blocks by adding
@@ -458,11 +488,16 @@ impl PauliStabilizerGroup {
     /// # Errors
     ///
     /// Returns an error if any generator from `other` anticommutes with a
-    /// generator from `self`.
+    /// generator from `self`, or if the combined generators generate `-I`.
+    /// On error, the group is unchanged.
     pub fn merge(&mut self, other: &PauliStabilizerGroup) -> Result<(), PauliStabilizerGroupError> {
-        self.inner.merge(&other.inner).map_err(|e| match e {
+        let mut candidate = self.inner.clone();
+        candidate.merge(&other.inner).map_err(|e| match e {
             PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
-        })
+        })?;
+        Self::validate_real_phases(other.stabilizers(), self.num_generators())?;
+        *self = Self::from_group_with_real_phases(candidate)?;
+        Ok(())
     }
 }
 
@@ -472,7 +507,7 @@ impl FromStr for PauliStabilizerGroup {
     /// Parses a `PauliStabilizerGroup` from newline-delimited Pauli strings.
     ///
     /// Each line is parsed via [`PauliString::from_str`]. The resulting generators
-    /// are validated for mutual commutativity and real phases.
+    /// are validated for mutual commutativity, real phases, and absence of `-I`.
     ///
     /// # Examples
     ///

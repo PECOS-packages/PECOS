@@ -29,7 +29,7 @@
 //!
 //! - Every [`PauliStabilizerGroup`] is a valid [`PauliGroup`] (via [`From`]).
 //! - A [`PauliGroup`] can be converted to a [`PauliStabilizerGroup`] only if
-//!   all generators have real phases (via [`TryFrom`]).
+//!   all generators have real phases and do not generate `-I` (via [`TryFrom`]).
 //!
 //! [`QuarterPhase`]: pecos_core::QuarterPhase
 //! [`Sign`]: pecos_core::Sign
@@ -52,10 +52,10 @@
 //! assert!(group.contains_minus_identity());
 //! ```
 
-use crate::pauli_sequence::{F2Matrix, PauliSequence};
+use crate::pauli_sequence::{F2Matrix, PauliSequence, ScalarSubgroup};
 use crate::pauli_set::PauliSet;
 use crate::stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
-use pecos_core::{PauliOperator, PauliString, Phase, QuarterPhase};
+use pecos_core::{PauliOperator, PauliString, QuarterPhase};
 use std::fmt;
 use std::str::FromStr;
 
@@ -78,11 +78,11 @@ impl fmt::Display for PauliGroupError {
 
 impl std::error::Error for PauliGroupError {}
 
-/// Returns the order of a Pauli group element.
+/// Returns a period of the powers of a Pauli with this phase.
 ///
-/// Real-phase generators (±1) have order 2: `g^2 = I`.
-/// Imaginary-phase generators (±i) have order 4: `g^4 = I`.
-fn generator_order(phase: QuarterPhase) -> u32 {
+/// Real phases square to I (including +I, whose order is 1).
+/// Imaginary phases have order 4.
+fn phase_period(phase: QuarterPhase) -> u32 {
     match phase {
         QuarterPhase::PlusOne | QuarterPhase::MinusOne => 2,
         QuarterPhase::PlusI | QuarterPhase::MinusI => 4,
@@ -95,7 +95,7 @@ fn generator_order(phase: QuarterPhase) -> u32 {
 /// - All generators mutually commute (abelian)
 ///
 /// Generators may carry any [`QuarterPhase`] phase (`{+1, -1, +i, -i}`).
-/// For the more restrictive stabilizer group (real phases only), see
+/// For stabilizer groups (real phases and no `-I`), see
 /// [`PauliStabilizerGroup`].
 ///
 /// [`QuarterPhase`]: pecos_core::QuarterPhase
@@ -155,9 +155,10 @@ impl PauliGroup {
         }
     }
 
-    /// Creates a `PauliGroup` from a [`PauliSet`], row-reducing to independent generators.
+    /// Creates a `PauliGroup` from a [`PauliSet`], reducing bodies and preserving scalars.
     ///
-    /// This validates commutativity and reduces to a minimal generating set.
+    /// Validates commutativity, row-reduces the bodies, and retains a scalar
+    /// generator when needed to preserve the generated group.
     ///
     /// # Errors
     ///
@@ -216,27 +217,35 @@ impl PauliGroup {
 
     /// Returns the order of the `idx`-th generator.
     ///
-    /// Real-phase generators (±1) have order 2. Imaginary-phase generators (±i)
-    /// have order 4.
+    /// The identity +I has order 1. Other real-phase generators (±1) have
+    /// order 2, and imaginary-phase generators (±i) have order 4.
     ///
     /// # Panics
     ///
     /// Panics if `idx >= num_generators()`.
     #[must_use]
     pub fn generator_order(&self, idx: usize) -> u32 {
-        generator_order(self.inner.paulis()[idx].phase())
+        let generator = &self.inner.paulis()[idx];
+        if generator.is_identity() && generator.phase() == QuarterPhase::PlusOne {
+            1
+        } else {
+            phase_period(generator.phase())
+        }
     }
 
     /// Returns the total number of elements in the group.
     ///
-    /// Each generator contributes a factor equal to its order (2 or 4).
+    /// This is `2^rank * |S|`, where `S` is the scalar subgroup.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the order cannot be represented by `u64`.
     #[must_use]
     pub fn group_order(&self) -> u64 {
-        self.inner
-            .paulis()
-            .iter()
-            .map(|g| u64::from(generator_order(g.phase())))
-            .product()
+        let (reduced, scalars) = self.inner.row_reduce_with_scalars(true);
+        let exponent = reduced.len() + scalars.order().ilog2() as usize;
+        assert!(exponent < 64, "group order does not fit in u64");
+        1u64 << exponent
     }
 
     /// Checks if a Pauli string's body is in the group (ignoring phase).
@@ -249,114 +258,27 @@ impl PauliGroup {
 
     /// Checks if a Pauli string is in the group (including phase).
     ///
-    /// This correctly handles generators with imaginary phases (order 4).
-    /// The GF(2) body decomposition determines which generators contribute
-    /// with odd exponents; generators with imaginary phases can additionally
-    /// contribute a sign flip via their even-exponent powers (`g^2 = -I`).
+    /// The body must be in the GF(2) span and the phase must match any one
+    /// decomposition up to the scalar subgroup. Support outside the group's
+    /// qubit width returns `false`.
     #[must_use]
     pub fn contains_with_phase(&self, pauli: &PauliString) -> bool {
-        let n = self.inner.num_qubits();
-        let k = self.inner.paulis().len();
-
-        // Build augmented matrix [symplectic | identity] to track which generators are used
-        let aug_cols = 2 * n + k;
-        let mut mat = F2Matrix::zeros(k, aug_cols);
-
-        for (row_idx, generator) in self.inner.paulis().iter().enumerate() {
-            for q in generator.x_positions() {
-                if q < n {
-                    mat.set(row_idx, q, 1);
-                }
-            }
-            for q in generator.z_positions() {
-                if q < n {
-                    mat.set(row_idx, n + q, 1);
-                }
-            }
-            mat.set(row_idx, 2 * n + row_idx, 1);
-        }
-
-        let (reduced, pivots) = mat.row_reduce();
-
-        // Build target symplectic vector
-        let mut target = vec![0u8; aug_cols];
-        for q in pauli.x_positions() {
-            if q < n {
-                target[q] = 1;
-            }
-        }
-        for q in pauli.z_positions() {
-            if q < n {
-                target[n + q] = 1;
-            }
-        }
-
-        // Eliminate using reduced rows
-        for (row_idx, &pivot_col) in pivots.iter().enumerate() {
-            if target[pivot_col] == 1 {
-                for (col, t) in target.iter_mut().enumerate() {
-                    *t ^= reduced.get(row_idx, col);
-                }
-            }
-        }
-
-        // Body must be zero
-        if !target[..2 * n].iter().all(|&b| b == 0) {
-            return false;
-        }
-
-        // Compute base phase from the GF(2) decomposition (each used generator once)
-        let mut base_product = PauliString::identity();
-        for (idx, generator) in self.inner.paulis().iter().enumerate() {
-            if target[2 * n + idx] == 1 {
-                base_product = base_product * generator;
-            }
-        }
-
-        let base_phase = base_product.phase();
-        let target_phase = pauli.phase();
-
-        if target_phase == base_phase {
-            return true;
-        }
-
-        // Check if we can reach the target by flipping the sign via imaginary generators.
-        // Each generator with ±i phase has g^2 = -I, contributing a factor of -1.
-        // We can apply any subset of these, so if there's at least one imaginary-phase
-        // generator, we can flip the overall sign.
-        let has_imaginary = self
-            .inner
-            .paulis()
-            .iter()
-            .any(|g| matches!(g.phase(), QuarterPhase::PlusI | QuarterPhase::MinusI));
-
-        if has_imaginary {
-            let neg_base = base_phase.multiply(&QuarterPhase::MinusOne);
-            target_phase == neg_base
-        } else {
-            false
-        }
+        self.inner.contains_with_phase_impl(pauli, true)
     }
 
     /// Returns `true` if `-I` is an element of this group.
     ///
-    /// A group contains `-I` if and only if at least one generator has an
-    /// imaginary phase (`+i` or `-i`), since `(iP)^2 = -I`.
-    ///
-    /// Stabilizer groups never contain `-I` (that is precisely the stabilizer
-    /// condition: every element must square to `+I`).
+    /// Scalars arise from generator squares and zero-body dependencies.
+    /// A stabilizer group excludes `-I`: `-I|psi> = |psi>` forces `psi = 0`,
+    /// so a group containing it stabilizes no state (empty code space).
     #[must_use]
     pub fn contains_minus_identity(&self) -> bool {
-        self.inner
-            .paulis()
-            .iter()
-            .any(|g| matches!(g.phase(), QuarterPhase::PlusI | QuarterPhase::MinusI))
+        self.inner.scalar_subgroup(true).order() > 1
     }
 
     /// Returns `true` if all generators have real phases (`+1` or `-1`).
     ///
-    /// When this returns `true`, the group can be converted to a
-    /// [`PauliStabilizerGroup`] via [`TryFrom`].
+    /// Conversion to a [`PauliStabilizerGroup`] also requires absence of `-I`.
     #[must_use]
     pub fn has_real_phases(&self) -> bool {
         self.inner
@@ -369,6 +291,7 @@ impl PauliGroup {
     ///
     /// Each entry `exponents[i]` is the power of the `i`-th generator.
     /// Real-phase generators are taken mod 2; imaginary-phase generators mod 4.
+    /// Different tuples can yield the same element, even for independent bodies.
     ///
     /// # Panics
     ///
@@ -386,7 +309,7 @@ impl PauliGroup {
 
         let mut result = PauliString::identity();
         for (g, &exp) in gens.iter().zip(exponents) {
-            let order = generator_order(g.phase());
+            let order = phase_period(g.phase());
             let exp = exp % order;
             for _ in 0..exp {
                 result = result * g.clone();
@@ -397,8 +320,12 @@ impl PauliGroup {
 
     /// Returns an iterator over all elements of the group.
     ///
-    /// Each generator of order `o` contributes `o` choices (exponents `0..o`),
-    /// so the total element count is `group_order()`.
+    /// Yields each distinct element exactly once. Select the greedy independent
+    /// subset of original generators in index order, then enumerate powers with
+    /// the first generator varying fastest. Only the first imaginary generator
+    /// has four choices; all others have two. Emit these tuples for each scalar
+    /// coset: `[+1]`, `[+1, -1]`, `[+1, +i]`, or `[+1, +i, -1, -i]`, according
+    /// to which scalars are missing from the tuples.
     ///
     /// **Warning**: The group size can be exponential in the number of generators.
     ///
@@ -406,26 +333,43 @@ impl PauliGroup {
     ///
     /// Panics if the group order exceeds `2^30`.
     pub fn elements(&self) -> impl Iterator<Item = PauliString> + '_ {
-        let orders: Vec<u32> = self
-            .inner
-            .paulis()
-            .iter()
-            .map(|g| generator_order(g.phase()))
-            .collect();
-        let total = self.group_order();
-        assert!(
-            total <= 1 << 30,
-            "elements() would yield {total} items; use contains() for membership testing"
-        );
+        use QuarterPhase::{MinusI, MinusOne, PlusI, PlusOne};
 
-        (0..total).map(move |mut idx| {
-            let mut exponents = Vec::with_capacity(orders.len());
-            for &order in &orders {
-                #[allow(clippy::cast_possible_truncation)] // remainder < order which is u32
-                exponents.push((idx % u64::from(order)) as u32);
-                idx /= u64::from(order);
-            }
-            self.element(&exponents)
+        // Pivot columns of the transpose select the greedy independent subset
+        // of original generators, in their original order.
+        let (_, basis) = self.to_symplectic_matrix().transpose().row_reduce();
+        let scalars = self.inner.scalar_subgroup(true);
+        let first_imaginary = basis.iter().position(|&idx| self.generator_order(idx) == 4);
+        let tuple_exponent = basis.len() + usize::from(first_imaginary.is_some());
+        let exponent = basis.len() + scalars.order().ilog2() as usize;
+        assert!(
+            exponent <= 30,
+            "elements() would yield more than 2^30 items; use contains() for membership testing"
+        );
+        let tuple_count = 1u64 << tuple_exponent;
+        let representatives: &[QuarterPhase] = match (scalars, first_imaginary.is_some()) {
+            (ScalarSubgroup::All, false) => &[PlusOne, PlusI, MinusOne, MinusI],
+            (ScalarSubgroup::All, true) => &[PlusOne, PlusI],
+            (ScalarSubgroup::Signs, false) => &[PlusOne, MinusOne],
+            _ => &[PlusOne],
+        };
+        representatives.iter().flat_map(move |&phase| {
+            let basis = basis.clone();
+            (0..tuple_count).map(move |mut idx| {
+                let mut product = PauliString::from_paulis_with_phase(phase, &[]);
+                for (position, &generator_idx) in basis.iter().enumerate() {
+                    let order = if Some(position) == first_imaginary {
+                        4
+                    } else {
+                        2
+                    };
+                    for _ in 0..idx % order {
+                        product = product * &self.generators()[generator_idx];
+                    }
+                    idx /= order;
+                }
+                product
+            })
         })
     }
 
@@ -461,7 +405,9 @@ impl PauliGroup {
         self.inner.commutation_matrix()
     }
 
-    /// Returns the generators in row-reduced form, removing redundant generators.
+    /// Returns independent bodies in row-reduced form.
+    /// Phases of zero-body dependencies are discarded; this may change the group.
+    /// See [`PauliSequence::row_reduce`].
     #[must_use]
     pub fn row_reduce(&self) -> PauliSequence {
         self.inner.row_reduce()
@@ -488,6 +434,7 @@ impl PauliGroup {
     ///
     /// Clifford conjugation preserves commutativity and maps quarter-turn phases
     /// to quarter-turn phases, so the result is always a valid `PauliGroup`.
+    /// Unitary conjugation maps `-I` to `-I`, preserving membership in both directions.
     #[must_use]
     pub fn apply_clifford(&self, clifford: &pecos_core::clifford_rep::CliffordRep) -> PauliGroup {
         let transformed: Vec<PauliString> = self
@@ -572,7 +519,8 @@ impl TryFrom<PauliSequence> for PauliGroup {
     type Error = PauliGroupError;
 
     /// Converts a [`PauliSequence`] into a [`PauliGroup`] by validating
-    /// commutativity and row-reducing to independent generators.
+    /// commutativity and reducing bodies, retaining a scalar generator when
+    /// necessary to preserve the scalar subgroup.
     ///
     /// # Errors
     ///
@@ -587,7 +535,24 @@ impl TryFrom<PauliSequence> for PauliGroup {
             }
         }
 
-        let reduced = seq.row_reduce();
+        let (mut reduced, scalars) = seq.row_reduce_with_scalars(true);
+        let square_order = if reduced
+            .paulis()
+            .iter()
+            .any(|g| phase_period(g.phase()) == 4)
+        {
+            2
+        } else {
+            1
+        };
+        if square_order < scalars.order() {
+            let phase = if scalars.order() == 4 {
+                QuarterPhase::PlusI
+            } else {
+                QuarterPhase::MinusOne
+            };
+            reduced.push(PauliString::from_paulis_with_phase(phase, &[]));
+        }
         Ok(Self { inner: reduced })
     }
 }
@@ -596,21 +561,16 @@ impl TryFrom<PauliGroup> for PauliStabilizerGroup {
     type Error = PauliStabilizerGroupError;
 
     /// Converts a `PauliGroup` to a `PauliStabilizerGroup` if all generators
-    /// have real phases (`+1` or `-1`).
+    /// have real phases (`+1` or `-1`) and the group does not contain `-I`.
     ///
     /// # Errors
     ///
+    /// Returns [`PauliStabilizerGroupError::GeneratesMinusIdentity`] if they generate `-I`.
     /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator
     /// has phase `+i` or `-i`.
     fn try_from(group: PauliGroup) -> Result<Self, Self::Error> {
-        for (idx, generator) in group.generators().iter().enumerate() {
-            match generator.phase() {
-                QuarterPhase::PlusOne | QuarterPhase::MinusOne => {}
-                _ => return Err(PauliStabilizerGroupError::NonRealPhase(idx)),
-            }
-        }
-
-        Ok(PauliStabilizerGroup { inner: group })
+        Self::validate_real_phases(group.generators(), 0)?;
+        Self::from_group_with_real_phases(group)
     }
 }
 
@@ -618,18 +578,24 @@ impl TryFrom<PauliSequence> for PauliStabilizerGroup {
     type Error = PauliStabilizerGroupError;
 
     /// Converts a [`PauliSequence`] into a [`PauliStabilizerGroup`] by validating
-    /// commutativity and real phases, then row-reducing to independent generators.
+    /// commutativity, real phases, and absence of `-I` before row reduction.
     ///
     /// # Errors
     ///
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair anticommute.
-    /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any reduced generator
+    /// Returns [`PauliStabilizerGroupError::GeneratesMinusIdentity`] if they generate `-I`.
+    /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator
     /// has phase `+i` or `-i`.
     fn try_from(seq: PauliSequence) -> Result<Self, Self::Error> {
-        let group = PauliGroup::try_from(seq).map_err(|e| match e {
+        Self::validate_real_phases(seq.paulis(), 0)?;
+        let group = PauliGroup::new(seq.paulis().to_vec()).map_err(|e| match e {
             PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
         })?;
-        Self::try_from(group)
+        let (reduced, scalars) = group.inner.row_reduce_with_scalars(true);
+        if scalars.order() > 1 {
+            return Err(PauliStabilizerGroupError::GeneratesMinusIdentity);
+        }
+        Ok(Self::from_generators_unchecked(reduced.paulis().to_vec()))
     }
 }
 
@@ -1042,8 +1008,8 @@ mod tests {
         // Both generators have imaginary phase
         let group = PauliGroup::new(vec![i * X(0), i * Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
-        // 4 * 4 = 16 elements
-        assert_eq!(elements.len(), 16);
+        // 2^2 * 2 = 8 elements
+        assert_eq!(elements.len(), 8);
 
         // Every element must be found by contains_with_phase
         for elem in &elements {
@@ -1060,7 +1026,7 @@ mod tests {
         // -i * X(0) and i * Z(1)
         let group = PauliGroup::new(vec![-i * X(0), i * Z(1)]).unwrap();
         let elements: Vec<_> = group.elements().collect();
-        assert_eq!(elements.len(), 16);
+        assert_eq!(elements.len(), 8);
 
         for elem in &elements {
             assert!(

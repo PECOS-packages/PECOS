@@ -249,7 +249,7 @@ fn test_user_guide_quantum_operator_algebra_rust_13() {
     // Commutativity check
     assert!(seq.is_abelian());  // all Z-type, so commute
 
-    // Row reduction to independent generators
+    // Row reduction to independent bodies (dependency phases are discarded)
     let reduced = seq.row_reduce();
     assert_eq!(reduced.len(), 2);
 }
@@ -332,14 +332,14 @@ fn test_user_guide_quantum_operator_algebra_rust_17() {
     use pecos_core::pauli::*;
     use pecos_quantum::{PauliGroup, PauliSequence, PauliSet, PauliStabilizerGroup};
     let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
-    let group: PauliGroup = stab.clone().into();        // drop phase constraint
+    let group: PauliGroup = stab.clone().into();        // drop stabilizer constraints
     let seq: PauliSequence = group.into();               // drop commutativity constraint
     let set: PauliSet = PauliSet::from_iter(vec![Zs([0, 1])]);
 
     // Downward (narrowing) -- validates constraints
     let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
     let group: PauliGroup = seq.try_into().unwrap();     // checks commutativity
-    let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases
+    let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases and absence of -I
 
     // From strings
     let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();

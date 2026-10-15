@@ -18,7 +18,7 @@
 #![allow(clippy::similar_names)]
 
 use crate::parity_check_matrix::ParityCheckMatrix;
-use pecos_core::{PauliOperator, PauliString};
+use pecos_core::{PauliOperator, PauliString, QuarterPhase};
 use pecos_quantum::{PauliSequence, SymplecticMatrix};
 use std::collections::BTreeSet;
 use thiserror::Error;
@@ -26,6 +26,10 @@ use thiserror::Error;
 /// Errors that can occur during stabilizer code verification.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum StabilizerCodeSpecError {
+    /// An imaginary stabilizer squares to -I and stabilizes no state.
+    #[error("Stabilizer {0} has non-real phase; its square is -I (empty code space)")]
+    NonRealStabilizerPhase(usize),
+
     /// Two stabilizer generators anticommute.
     #[error("Stabilizer generators {0} and {1} anticommute")]
     StabilizersAnticommute(usize, usize),
@@ -600,7 +604,7 @@ impl StabilizerCodeSpec {
     /// Performs full verification of the stabilizer code.
     ///
     /// This checks:
-    /// 1. All stabilizers commute with each other
+    /// 1. All stabilizers have real phases and commute with each other
     /// 2. All logical operators commute with all stabilizers
     /// 3. Logical Z operators commute with each other
     /// 4. Logical X operators commute with each other
@@ -612,6 +616,14 @@ impl StabilizerCodeSpec {
     /// # Errors
     /// Returns a [`StabilizerCodeSpecError`] if any verification check fails.
     pub fn verify(&self) -> Result<()> {
+        for (index, stabilizer) in self.stabilizers.iter().enumerate() {
+            if matches!(
+                stabilizer.phase(),
+                QuarterPhase::PlusI | QuarterPhase::MinusI
+            ) {
+                return Err(StabilizerCodeSpecError::NonRealStabilizerPhase(index));
+            }
+        }
         self.verify_stabilizers_commute()?;
         self.verify_logical_zs_commute_with_stabilizers()?;
         self.verify_logical_xs_commute_with_stabilizers()?;

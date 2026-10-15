@@ -31,7 +31,7 @@ from pecos.quantum_info import (
     state_fidelity,
     state_fidelity_with_density_matrix,
 )
-from pecos_rslib import PauliString
+from pecos_rslib import PauliStabilizerGroup, PauliString
 
 
 def assert_close(actual: float, expected: float, tol: float = 1e-12) -> None:
@@ -316,3 +316,24 @@ def test_random_generators_are_seed_reproducible_and_valid() -> None:
     assert two_qubit.is_trace_preserving()
     assert two_qubit.to_superop().num_qubits() == 2
     assert len(two_qubit.to_superop().matrix()) == 16
+
+
+def test_stabilizer_group_rejects_minus_identity() -> None:
+    xx, zz, yy = [PauliString.from_str(s) for s in ("XX", "ZZ", "YY")]
+    message = r"generate -I.*stabilizes no state.*empty code space"
+    with pytest.raises(ValueError, match=message):
+        PauliStabilizerGroup([xx, zz, yy])
+    with pytest.raises(ValueError, match=message):
+        PauliStabilizerGroup.from_str("XX\nZZ\nYY")
+
+    group = PauliStabilizerGroup([xx, zz])
+    with pytest.raises(ValueError, match=message):
+        group.add_generator(yy)
+    assert group.num_generators() == 2
+    assert group.contains_with_phase(xx)
+
+    group = PauliStabilizerGroup([xx])
+    with pytest.raises(ValueError, match=message):
+        group.merge(PauliStabilizerGroup([zz, yy]))
+    assert group.num_generators() == 1
+    assert group.contains_with_phase(xx)

@@ -20,7 +20,7 @@ use crate::pauli_bindings::PauliString;
 
 /// A validated Pauli stabilizer group.
 ///
-/// All generators mutually commute and have real phases (+1 or -1).
+/// All generators mutually commute, have real phases (+1 or -1), and do not generate -I.
 /// Provides algebraic analysis: rank, group membership, element
 /// enumeration, and Clifford conjugation.
 ///
@@ -49,7 +49,7 @@ impl PyPauliStabilizerGroup {
     ///     generators: List of PauliString stabilizer generators
     ///
     /// Raises:
-    ///     ValueError: If generators don't commute or have non-real phases
+    ///     ValueError: If generators don't commute, have non-real phases, or generate -I
     #[new]
     #[pyo3(signature = (generators))]
     fn new(generators: Vec<PauliString>) -> PyResult<Self> {
@@ -69,6 +69,9 @@ impl PyPauliStabilizerGroup {
     ///
     /// Returns:
     ///     PauliStabilizerGroup
+    ///
+    /// Raises:
+    ///     ValueError: If parsing fails, generators anticommute, have non-real phases, or generate -I
     ///
     /// Examples:
     ///     >>> PauliStabilizerGroup.from_str("ZZI\nIZZ")
@@ -131,13 +134,13 @@ impl PyPauliStabilizerGroup {
     /// Add a generator to the stabilizer group.
     ///
     /// The new generator must commute with all existing generators and
-    /// have a real phase (+1 or -1).
+    /// have a real phase (+1 or -1). The combined group must not generate -I.
     ///
     /// Args:
     ///     generator: PauliString to add
     ///
     /// Raises:
-    ///     ValueError: If generator doesn't commute or has non-real phase
+    ///     ValueError: If the generator doesn't commute, has non-real phase, or generates -I with the group
     fn add_generator(&mut self, generator: &PauliString) -> PyResult<()> {
         self.inner
             .add_generator(generator.to_rust())
@@ -163,13 +166,14 @@ impl PyPauliStabilizerGroup {
 
     /// Merge another stabilizer group into this one.
     ///
-    /// All generators from other must commute with all generators in self.
+    /// All generators from other must commute with all generators in self,
+    /// and the combined group must not generate -I.
     ///
     /// Args:
     ///     other: PauliStabilizerGroup to merge
     ///
     /// Raises:
-    ///     ValueError: If any generators anticommute
+    ///     ValueError: If any generators anticommute or the combined group generates -I
     fn merge(&mut self, other: &PyPauliStabilizerGroup) -> PyResult<()> {
         self.inner
             .merge(&other.inner)

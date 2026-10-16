@@ -62,6 +62,10 @@ impl QuantumSystem {
     /// Component state, including RNG streams, is preserved. Shot authorization,
     /// frame poison and host blocking are transient execution state and are discarded.
     /// Recompose with [`Self::new`] to start a fresh execution owner.
+    ///
+    /// The components themselves are returned as they are: if this system ran or
+    /// failed a shot, they still hold that shot's simulator, noise and scheduled-timeline
+    /// state. Call `reset()` on the recomposed owner before running its next shot.
     #[must_use]
     pub fn into_components(self) -> (Box<dyn NoiseModel>, Box<dyn QuantumEngine>) {
         (self.noise_model, self.quantum_engine)

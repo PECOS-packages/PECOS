@@ -95,7 +95,8 @@ impl HybridEngineBuilder {
     /// Set the quantum engine component
     ///
     /// This will be combined with the noise model (if set) to create a quantum system.
-    /// If a quantum system is already set, only this component is replaced.
+    /// If a quantum system was supplied via `with_quantum_system`, only its quantum
+    /// engine is replaced.
     ///
     /// # Arguments
     /// * `engine` - The quantum engine to use
@@ -111,7 +112,8 @@ impl HybridEngineBuilder {
     /// Set a custom noise model
     ///
     /// This will be combined with the quantum engine (if set) to create a quantum system.
-    /// If a quantum system is already set, only this component is replaced.
+    /// If a quantum system was supplied via `with_quantum_system`, only its noise
+    /// model is replaced.
     ///
     /// # Arguments
     /// * `model` - The noise model to use
@@ -151,7 +153,9 @@ impl HybridEngineBuilder {
     /// This can be used when you need precise control over the quantum system configuration.
     /// If quantum engine or noise model are already set, this will replace them.
     /// Retains both components and their RNG state, discarding transient shot state.
-    /// Building composes a fresh execution owner, ready for its first shot.
+    /// Building composes a fresh execution owner, ready for its first shot. The
+    /// components keep any state from a shot they already ran or failed; see
+    /// [`QuantumSystem::into_components`].
     ///
     /// # Arguments
     /// * `system` - The pre-configured quantum system
@@ -252,6 +256,8 @@ impl HybridEngineBuilder {
 
 /// Move an existing engine into a builder, retaining component state and RNGs.
 /// Transient quantum-system shot state is discarded; building creates a fresh owner.
+/// If the engine already ran or failed a shot, call `reset()` on the built engine
+/// before `run_shot()`; see [`QuantumSystem::into_components`].
 /// An explicit `with_seed` overrides those RNG states when built.
 impl From<HybridEngine> for HybridEngineBuilder {
     fn from(engine: HybridEngine) -> Self {

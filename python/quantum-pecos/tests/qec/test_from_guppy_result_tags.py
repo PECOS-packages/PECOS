@@ -1,42 +1,24 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Tests for tag-referenced detectors in ``DetectorErrorModel.from_guppy``.
+"""Guppy tags bind to lowered runtime measurements, including inlined helpers.
 
-Covers:
-
-1. **Correspondence cross-check (load-bearing):** for a scrambled straight-line
-   Guppy program where ``result()`` calls are declared in non-source order, a
-   DEM built via ``result_tags`` (which goes through
-   ``pecos.qec._hugr_result_tags.extract_result_tag_measurements`` to recover the
-   reorder-immune tag -> measurement binding from the compiled HUGR) is
-   **byte-identical** to the DEM built via the equivalent positional
-   ``records``. This is the committed verification of the
-   HUGR-traversal-ordinal == traced-``MeasId``-order property the prior
-   review (proposal 001 item #7) flagged as unproven.
-2. **Runtime-loop guard:** a Guppy program with a runtime loop (the surface
-   code) using ``result_tags`` fails loud with the documented "static N vs
-   traced M" message, instead of silently misbinding.
-3. **Non-Guppy callable rejection:** ``result_tags`` requires a HUGR-compilable
-   input (a ``@guppy``-decorated function or ``GuppyFunctionDefinition`` such
-   as ``make_surface_code`` returns). A plain Python callable cannot be
-   compiled to a HUGR and is rejected fail-loud upfront with a clear
-   ``@guppy`` message, not crashed later inside the HUGR compile step.
-4. **Unknown-tag rejection:** referencing a tag the program never records is
-   an error.
+Asymmetric noise histories make incorrect tag bindings change the DEM string.
 """
 
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
-from guppylang.std.quantum import cx, h, measure, qubit
+from guppylang.std.lang import owned
+from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy_gen import get_num_qubits, make_surface_code
-from pecos.qec import DetectorErrorModel
+from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, rec, result_ref
+from pecos.qec._qis_result_tags import _CertificationError
 
 
 # A scrambled straight-line program: three measurements in source order
 # qa, qb, qc; ``result()`` is called for them in reverse-then-mixed order
-# (c, a, b). The HUGR-side extractor binds tag_a -> [0], tag_b -> [1],
+# (c, a, b). The QIS analyzer binds tag_a -> [0], tag_b -> [1],
 # tag_c -> [2] (ordinals of the measurements the tags actually record, not
 # the order of the result() calls).
 #
@@ -84,22 +66,11 @@ def _from_guppy(detectors_json: str, *, observables_json: str = "[]") -> str:
 # 1. Correspondence: result_tags DEM == positional-records DEM (byte-identical)
 # ---------------------------------------------------------------------------
 
-# Three measurements (a, b, c) in trace order; record offsets are
-# (a -> -3, b -> -2, c -> -1) under the Stim convention. If
-# HUGR-traversal-ordinal == traced-MeasId-order, then result_tags=["tag_X"]
-# resolves to the same record offset as the positional form for tag X.
+# Three measurements (a, b, c) in trace order have record offsets (-3, -2, -1).
 
 
 def test_result_tags_match_positional_records() -> None:
-    """Each tag resolves to the same DEM as the corresponding positional
-    record AND a wrong mapping would produce a different DEM.
-
-    This is the load-bearing cross-check for the HUGR-ordinal == traced-
-    MeasId-order claim (proposal 001 item #7). The asymmetric pre-history
-    on qb (1 X gate) and qc (2 X gates) makes the three measurements
-    DEM-distinguishable, so swapping which tag points to which measurement
-    would yield a different DEM byte-string.
-    """
+    """Each tag matches its positional DEM, with distinguishable noise histories."""
     via_records = {
         -3: _from_guppy('[{"id":0,"records":[-3]}]'),
         -2: _from_guppy('[{"id":0,"records":[-2]}]'),
@@ -145,18 +116,22 @@ def test_result_tags_observables_path_matches_positional() -> None:
 
 
 def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
-    """The surface code uses ``for _ in range(comptime(n))`` rounds; the HUGR
-    has one static measure op per loop body, not per occurrence. The Rust
-    static-vs-traced count guard rejects this case rather than silently
-    misbinding (per-occurrence tag binding requires CFG-interpreter-class
-    machinery)."""
-    with pytest.raises(ValueError, match=r"runtime loops|not supported"):
+    """Measurements in runtime loops cannot be certified from one trace."""
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^Cannot bind result_tags: the program's lowered form could not be certified; "
+            r"use records, rec\[-k\], or meas_ids instead\.$"
+        ),
+    ) as raised:
         DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis="Z"),
             num_qubits=get_num_qubits(3),
             detectors_json='[{"id":0,"result_tags":["any_tag"]}]',
             **_NOISE,
         )
+    assert isinstance(raised.value.__cause__, _CertificationError)
+    assert str(raised.value.__cause__).endswith("is on a CFG cycle")
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +202,65 @@ def test_result_tags_with_malformed_records_fails_loud() -> None:
         _from_guppy('[{"id":0,"records":["bad"],"result_tags":["tag_a"]}]')
     with pytest.raises(ValueError, match=r"records must be a JSON array"):
         _from_guppy('[{"id":0,"records":-3,"result_tags":["tag_a"]}]')
+
+
+@guppy
+def _measure_owned(q: qubit @ owned) -> bool:
+    return measure(q).read()
+
+
+@guppy
+def _inlined_three_measurements() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    q2 = qubit()
+    h(q1)
+    cx(q1, q2)
+    x(q2)
+    x(q2)
+    b = _measure_owned(q1)
+    a = measure(q0).read()
+    c = measure(q2).read()
+    result("a", a)
+    result("b", b)
+    result("c", c)
+
+
+def test_inlined_result_tags_match_positional_records() -> None:
+    def build(field: str, value: str) -> str:
+        return DetectorErrorModel.from_guppy(
+            _inlined_three_measurements,
+            num_qubits=3,
+            detectors_json=f'[{{"id":0,"{field}":[{value}]}}]',
+            seed=0,
+            **_NOISE,
+        ).to_string()
+
+    positional = {offset: build("records", str(offset)) for offset in (-3, -2, -1)}
+    assert len(set(positional.values())) == 3
+    for tag, offset in (("b", -3), ("a", -2), ("c", -1)):
+        assert build("result_tags", f'"{tag}"') == positional[offset], tag
+
+
+def test_inlined_typed_result_refs_match_positional_records() -> None:
+    positional = {
+        offset: build_dem_from_guppy(
+            _inlined_three_measurements,
+            num_qubits=3,
+            detectors=[Detector(rec[offset])],
+            seed=0,
+            **_NOISE,
+        )
+        for offset in (-3, -2, -1)
+    }
+    assert len({build.dem.to_string() for build in positional.values()}) == 3
+    for tag, offset in (("b", -3), ("a", -2), ("c", -1)):
+        tagged = build_dem_from_guppy(
+            _inlined_three_measurements,
+            num_qubits=3,
+            detectors=[Detector(result_ref(tag))],
+            seed=0,
+            **_NOISE,
+        )
+        assert tagged.detectors_json == positional[offset].detectors_json, tag
+        assert tagged.dem.to_string() == positional[offset].dem.to_string(), tag

@@ -229,7 +229,7 @@ class QuantumCircuit(MutableSequence):
                 float_angle = float(angle)
                 if not math.isfinite(float_angle):
                     value = "NaN" if math.isnan(float_angle) else str(float_angle)
-                    msg = f"angle must be finite, got {value} radians"
+                    msg = f"angle must be finite, got {value} radians; check the computation or input that produced it"
                     raise ValueError(msg)
             composite_angles = f"{zz_angle},{yy_angle},{xx_angle}"
         else:

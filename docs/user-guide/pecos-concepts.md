@@ -149,7 +149,7 @@ entries contain ordered `measurement_ids`, including duplicates. Annotations
 remain inspectable even after a referenced measurement is removed.
 
 Use `circuit.measured_paulis(measurement_ids)` to resolve a batch in one circuit
-scan. It returns ordered `(measurement_id, "X" or "Z", qubit)` tuples, including
+scan. It returns `("X" or "Z", qubit)` pairs aligned with the input IDs, including
 repeated IDs, or raises `ValueError` for the first unresolved ID in input order.
 `circuit.measured_pauli(measurement_id)` resolves one ID to `(basis, qubit)`.
 Tick circuits retain no removal record, so removed IDs report that they do not

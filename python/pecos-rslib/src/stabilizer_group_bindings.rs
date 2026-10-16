@@ -190,13 +190,10 @@ impl PyPauliStabilizerGroup {
                 usize::MAX
             ))
         })?;
-        if index >= self.inner.num_generators() {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "index {index} out of range for {} generators",
-                self.inner.num_generators()
-            )));
-        }
-        Ok(PauliString::from_rust(self.inner.remove_generator(index)))
+        self.inner
+            .remove_generator(index)
+            .map(PauliString::from_rust)
+            .map_err(|error| pyo3::exceptions::PyIndexError::new_err(error.to_string()))
     }
 
     /// Merge another stabilizer group into this one.

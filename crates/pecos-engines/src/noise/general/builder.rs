@@ -248,7 +248,9 @@ impl GeneralNoiseModelBuilder {
     /// A `GeneralNoiseModel`
     ///
     /// # Panics
-    /// Panics if the configuration contains invalid probabilities or scale factors.
+    /// Panics if the configuration contains invalid probabilities, scale factors,
+    /// or overflowing idle-rate products at `idle_after_2q`. Use [`Self::try_build`]
+    /// to report invalid caller configuration without panicking.
     #[must_use]
     pub fn build(self) -> GeneralNoiseModel {
         self.validate_configuration()

@@ -8,8 +8,8 @@ fn phase_u_zx_export() {
     let negative = pecos_core::radians!(-0.37);
     assert_eq!(negative.fraction(), 17_360_464_587_495_211_133);
     // The negative magnitude is 1_086_279_486_214_340_483 ticks. Rounding
-    // away from zero gives 1_086_279_486_214_340_484; dividing by two and
-    // reducing yields the pinned half-turn rational below.
+    // to the nearest four ticks gives 1_086_279_486_214_340_484; dividing by four
+    // yields the pinned half-turn rational below.
     for (angle, numerator, denominator) in [
         (Angle64::HALF_TURN, 1, 1),
         (negative, -271_569_871_553_585_121, 1_i64 << 61),

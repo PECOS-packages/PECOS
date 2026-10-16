@@ -285,7 +285,7 @@ impl HighLevelWeight {
 /// this controls how noise is applied.
 ///
 /// A raw weight cannot bypass validation through the public variant:
-/// ```compile_fail
+/// ```compile_fail,E0308
 /// use pecos_neo::extensible::DecompositionNoiseStrategy;
 /// let invalid = DecompositionNoiseStrategy::Blended { high_level_weight: f64::NAN };
 /// ```

@@ -418,8 +418,8 @@ impl PauliString {
     /// # Errors
     /// Returns the lowest out-of-range non-identity qubit.
     pub fn validate_width(&self, num_qubits: usize) -> Result<(), PauliWidthError> {
-        for (pauli, qubit) in &self.paulis {
-            if *pauli != Pauli::I && qubit.index() >= num_qubits {
+        for (_, qubit) in &self.paulis {
+            if qubit.index() >= num_qubits {
                 return Err(PauliWidthError {
                     qubit: qubit.index(),
                     num_qubits,
@@ -539,15 +539,19 @@ impl PauliString {
     /// This is a lightweight version that returns a flat `Vec` (no nalgebra dependency).
     /// For the `DMatrix` version, use `ToMatrix::to_matrix()` from pecos-quantum.
     ///
-    /// # Panics
-    ///
-    /// Panics if `num_qubits > 12` (matrix would be 4096 x 4096 = 16M entries).
-    #[must_use]
-    pub fn to_flat_matrix(&self, num_qubits: usize) -> (Vec<num_complex::Complex64>, usize) {
-        assert!(
-            num_qubits <= 12,
-            "to_matrix supports at most 12 qubits, got {num_qubits}"
-        );
+    /// # Errors
+    /// Rejects widths greater than 12 and support outside the requested width.
+    pub fn to_flat_matrix(
+        &self,
+        num_qubits: usize,
+    ) -> Result<(Vec<num_complex::Complex64>, usize), String> {
+        if num_qubits > 12 {
+            return Err(format!(
+                "matrix width {num_qubits} exceeds the supported limit 12; use at most 12 qubits or a sparse representation"
+            ));
+        }
+        self.validate_width(num_qubits)
+            .map_err(|error| error.to_string())?;
 
         let dim = 1usize << num_qubits;
         let phase = self.phase.to_complex();
@@ -585,7 +589,7 @@ impl PauliString {
             }
         }
 
-        (matrix, dim)
+        Ok((matrix, dim))
     }
 
     /// Tensor product with another `PauliString` on disjoint qubits.
@@ -611,7 +615,9 @@ impl PauliString {
         let my_qubits: std::collections::HashSet<usize> = self.qubits().into_iter().collect();
         for q in other.qubits() {
             if my_qubits.contains(&q) {
-                return Err(format!("qubit {q} appears in both operands"));
+                return Err(format!(
+                    "qubit {q} appears in both operands; use disjoint Pauli support for the tensor product"
+                ));
             }
         }
         Ok(self & other)
@@ -978,7 +984,9 @@ impl PauliString {
                 'Z' | 'z' => Pauli::Z,
                 c => {
                     return Err(ParsePauliStringError::InvalidSyntax {
-                        message: format!("Invalid Pauli character: '{c}'; use I, X, Y, or Z"),
+                        message: format!(
+                            "Invalid Pauli character: '{c}'; use X, Y, or Z; identities are omitted in sparse form"
+                        ),
                     });
                 }
             };
@@ -2135,7 +2143,7 @@ mod tests {
     #[test]
     fn test_to_flat_matrix_identity() {
         let id = PauliString::identity();
-        let (mat, dim) = id.to_flat_matrix(1);
+        let (mat, dim) = id.to_flat_matrix(1).unwrap();
         assert_eq!(dim, 2);
         assert_eq!(
             mat,
@@ -2146,7 +2154,7 @@ mod tests {
     #[test]
     fn test_to_flat_matrix_x() {
         let x = PauliString::x(0);
-        let (mat, dim) = x.to_flat_matrix(1);
+        let (mat, dim) = x.to_flat_matrix(1).unwrap();
         assert_eq!(dim, 2);
         // X = [[0,1],[1,0]]
         assert_eq!(
@@ -2158,7 +2166,7 @@ mod tests {
     #[test]
     fn test_to_flat_matrix_y() {
         let y = PauliString::y(0);
-        let (mat, dim) = y.to_flat_matrix(1);
+        let (mat, dim) = y.to_flat_matrix(1).unwrap();
         assert_eq!(dim, 2);
         // Y = [[0,-i],[i,0]]
         assert_eq!(
@@ -2170,7 +2178,7 @@ mod tests {
     #[test]
     fn test_to_flat_matrix_z() {
         let z = PauliString::z(0);
-        let (mat, dim) = z.to_flat_matrix(1);
+        let (mat, dim) = z.to_flat_matrix(1).unwrap();
         assert_eq!(dim, 2);
         // Z = [[1,0],[0,-1]]
         assert_eq!(
@@ -2183,7 +2191,7 @@ mod tests {
     fn test_to_flat_matrix_xz_tensor_product() {
         // X tensor Z on 2 qubits
         let xz = PauliString::x(0) & PauliString::z(1);
-        let (mat, dim) = xz.to_flat_matrix(2);
+        let (mat, dim) = xz.to_flat_matrix(2).unwrap();
         assert_eq!(dim, 4);
         // X (x) Z = [[0,0,1,0],[0,0,0,-1],[1,0,0,0],[0,-1,0,0]]
         let expected = vec![
@@ -2211,7 +2219,7 @@ mod tests {
     fn test_to_flat_matrix_with_phase() {
         // -X should be -1 times X
         let mx = PauliString::from_paulis_with_phase(QuarterPhase::MinusOne, &[Pauli::X]);
-        let (mat, _) = mx.to_flat_matrix(1);
+        let (mat, _) = mx.to_flat_matrix(1).unwrap();
         assert_eq!(
             mat,
             vec![c(0.0, 0.0), c(-1.0, 0.0), c(-1.0, 0.0), c(0.0, 0.0)]
@@ -2222,7 +2230,7 @@ mod tests {
     fn test_to_flat_matrix_hermitian() {
         // All real-phase Pauli strings are Hermitian: M = M†
         for p in [PauliString::x(0), PauliString::y(0), PauliString::z(0)] {
-            let (mat, dim) = p.to_flat_matrix(1);
+            let (mat, dim) = p.to_flat_matrix(1).unwrap();
             for r in 0..dim {
                 for col in 0..dim {
                     let m_rc = mat[r * dim + col];
@@ -2237,7 +2245,7 @@ mod tests {
     fn test_to_flat_matrix_unitary() {
         // All Pauli matrices square to identity: P^2 = I
         let xz = PauliString::x(0) & PauliString::z(1);
-        let (mat, dim) = xz.to_flat_matrix(2);
+        let (mat, dim) = xz.to_flat_matrix(2).unwrap();
 
         // Compute M*M
         let mut product = vec![c(0.0, 0.0); dim * dim];

@@ -11,7 +11,7 @@
 //! [`atan`](Angle::atan), [`atan2`](Angle::atan2)) wrap the stdlib and convert
 //! back via [`try_from_radians`](Angle::try_from_radians).
 
-use super::{Angle, NonFiniteAngleError};
+use super::{Angle, InverseTrigError, NonFiniteAngleError};
 use num_complex::Complex64;
 use num_traits::{
     Bounded, FromPrimitive, ToPrimitive, Unsigned, WrappingAdd, WrappingNeg, WrappingSub, Zero,
@@ -312,14 +312,20 @@ where
     /// # Errors
     /// Rejects non-finite inputs and values outside the inverse function domain.
     #[inline]
-    pub fn try_asin(value: f64) -> Result<Self, NonFiniteAngleError> {
-        if !(-1.0..=1.0).contains(&value) {
-            return Err(NonFiniteAngleError {
+    pub fn try_asin(value: f64) -> Result<Self, InverseTrigError> {
+        if !value.is_finite() {
+            return Err(InverseTrigError::NonFinite(NonFiniteAngleError {
                 value,
-                unit: "asin input (expected -1..=1)",
+                unit: "asin input",
+            }));
+        }
+        if !(-1.0..=1.0).contains(&value) {
+            return Err(InverseTrigError::OutOfDomain {
+                value,
+                function: "asin",
             });
         }
-        Self::try_from_radians(value.asin())
+        Self::try_from_radians(value.asin()).map_err(InverseTrigError::NonFinite)
     }
 
     /// Returns the angle whose cosine is `value`.
@@ -327,14 +333,20 @@ where
     /// # Errors
     /// Rejects non-finite inputs and values outside the inverse function domain.
     #[inline]
-    pub fn try_acos(value: f64) -> Result<Self, NonFiniteAngleError> {
-        if !(-1.0..=1.0).contains(&value) {
-            return Err(NonFiniteAngleError {
+    pub fn try_acos(value: f64) -> Result<Self, InverseTrigError> {
+        if !value.is_finite() {
+            return Err(InverseTrigError::NonFinite(NonFiniteAngleError {
                 value,
-                unit: "acos input (expected -1..=1)",
+                unit: "acos input",
+            }));
+        }
+        if !(-1.0..=1.0).contains(&value) {
+            return Err(InverseTrigError::OutOfDomain {
+                value,
+                function: "acos",
             });
         }
-        Self::try_from_radians(value.acos())
+        Self::try_from_radians(value.acos()).map_err(InverseTrigError::NonFinite)
     }
 
     /// Returns the angle whose tangent is `value`.

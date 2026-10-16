@@ -245,14 +245,15 @@ where
             1
         };
 
-        // Check for potential overflow in multiplication when has_pi is true
-        if has_pi && (num_val.checked_mul(2).is_none() || den_val.checked_mul(2).is_none()) {
-            return Err(ParseAngleError::Overflow { value: s.clone() });
-        }
-
-        // Convert to angle using appropriate method
+        // Pi fractions wrap exactly before entering the one-turn ratio constructor.
         if has_pi {
-            Ok(Self::from_turn_ratio(num_val, den_val * 2))
+            let denominator = den_val
+                .checked_mul(2)
+                .and_then(i64::checked_abs)
+                .ok_or_else(|| ParseAngleError::Overflow { value: s.clone() })?;
+            let numerator = num_val % denominator;
+            let numerator = if den_val < 0 { -numerator } else { numerator };
+            Ok(Self::from_turn_ratio(numerator, denominator))
         } else {
             let radians = num_val as f64 / den_val as f64;
             Self::try_from_radians(radians).map_err(|error| ParseAngleError::Overflow {
@@ -294,7 +295,7 @@ where
                 .parse::<f64>()
                 .map_err(|_| ParseAngleError::InvalidFormat)?;
             if !value.is_finite() {
-                return Err(ParseAngleError::Overflow {
+                return Err(ParseAngleError::DecimalOverflow {
                     value: s.to_string(),
                 });
             }
@@ -307,7 +308,7 @@ where
                 .parse::<f64>()
                 .map_err(|_| ParseAngleError::InvalidFormat)?;
             if !value.is_finite() {
-                return Err(ParseAngleError::Overflow {
+                return Err(ParseAngleError::DecimalOverflow {
                     value: s.to_string(),
                 });
             }
@@ -508,10 +509,10 @@ mod tests {
 
     #[test]
     fn test_parse_edge_cases() {
-        // Very large numbers
-        assert!(
-            Angle64::from_str_radians(&format!("{}pi", i64::MAX)).is_err(),
-            "failed to deal with large numbers"
+        // An odd integer multiple of pi reduces exactly to a half turn.
+        assert_eq!(
+            Angle64::from_str_radians(&format!("{}pi", i64::MAX)).unwrap(),
+            Angle64::HALF_TURN,
         );
 
         // Negative numbers - Note: -pi/2 gets normalized to 3pi/2

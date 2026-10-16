@@ -460,7 +460,7 @@ fn dynamic_probabilities_and_angle_helpers_validate_before_sampling() {
     for power in [f64::NAN, -1.0, f64::INFINITY] {
         assert!(prob_angle_scaled(0.1, power, nothing()).is_err());
     }
-    assert!(prob_angle_quadratic(0.5, nothing()).is_err());
+    assert!(prob_angle_quadratic(0.5, nothing()).is_ok());
     assert!(prob_angle_quadratic(0.25, nothing()).is_ok());
 }
 
@@ -497,6 +497,11 @@ fn builders_name_invalid_p2_before_angle_scaling() {
 fn per_gate_probability_sum_accepts_roundoff_only() {
     use pecos_neo::GateType;
     use pecos_neo::noise::PerGatePauliChannel;
+    assert!(
+        pecos_neo::noise::PerGatePauliChannel::new()
+            .with_1q_rates(pecos_neo::GateType::H, [0.5, 0.500_000_9, 0.0])
+            .is_err()
+    );
     assert!(
         PerGatePauliChannel::new()
             .with_1q_rates(GateType::H, [0.34, 0.56, 0.10])
@@ -619,4 +624,34 @@ fn redistribution_rejects_target_count_overflow() {
     let error = redistribute_by_weight(&mut workers, usize::MAX, &mut rng).unwrap_err();
     assert!(error.to_string().contains(&usize::MAX.to_string()));
     assert!(error.to_string().contains("Reduce target_per_worker"));
+}
+
+#[test]
+fn local_crosstalk_requires_neighbors() {
+    let error = pecos_neo::noise::composite::CompositeNoiseModelBuilder::new()
+        .with_p_meas_crosstalk(0.0, 0.1)
+        .unwrap()
+        .build()
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("p_meas_crosstalk_local") && error.contains("0.1"),
+        "{error}"
+    );
+    assert!(error.contains("with_p_meas_crosstalk_local_fn"), "{error}");
+}
+
+#[test]
+fn quadratic_rate_error_names_only_the_supplied_rate() {
+    let error = pecos_neo::noise::composite::prelude::prob_quadratic(
+        f64::MAX,
+        pecos_neo::noise::composite::prelude::nothing(),
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("rate_per_time_unit"), "{error}");
+    assert!(!error.contains("factor"), "{error}");
+    assert!(error.contains("Reduce"), "{error}");
 }

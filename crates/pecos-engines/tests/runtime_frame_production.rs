@@ -810,7 +810,7 @@ fn metadata_preserves_consecutive_measurement_sampling() {
 }
 
 #[test]
-fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
+fn frame_rejects_angle_fields_without_unwinding_or_mutation() {
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::radians!(0.5), &[0])])
             .as_bytes()
@@ -823,7 +823,14 @@ fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
             system.process(ByteMessage::new(&bytes))
         }));
         assert!(result.is_ok(), "admission must return an error, not unwind");
-        assert!(result.unwrap().is_err());
+        assert!(
+            result
+                .unwrap()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unsupported frame gate fields")
+        );
         assert_rng_equal(&system, &before);
         assert_eq!(
             system
@@ -1621,7 +1628,7 @@ fn sim_builder_reports_depolarizing_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "Probability probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1634,7 +1641,7 @@ fn sim_builder_reports_biased_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "Probability probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1673,7 +1680,7 @@ fn sim_builder_reports_depolarizing_builder_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0, got NaN; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "Probability p_prep must be between 0.0 and 1.0, got NaN; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1689,6 +1696,6 @@ fn sim_builder_reports_biased_builder_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0, got inf; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "Probability p_prep must be between 0.0 and 1.0, got inf; supply a finite probability in 0.0..=1.0")
     );
 }

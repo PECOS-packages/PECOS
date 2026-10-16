@@ -33,41 +33,17 @@ pub use parse::ParseAngleError;
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign};
 
-/// A rejected floating-point angle or inverse-trig input, with its original value and unit.
+/// A rejected non-finite floating-point value, with its original value and unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NonFiniteAngleError {
     /// The rejected value.
     pub value: f64,
-    /// The input unit ("radians", "turns", or the inverse-trig input/domain).
+    /// The input unit ("radians", "turns", or the inverse-trig input).
     pub unit: &'static str,
 }
 
 impl fmt::Display for NonFiniteAngleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let domain = match self.unit {
-            "asin input (expected -1..=1)" => Some(("asin", "-1..=1")),
-            "acos input (expected -1..=1)" => Some(("acos", "-1..=1")),
-            "atan input" => Some((
-                "atan",
-                "all real values, including infinities, excluding NaN",
-            )),
-            "atan2 y input" => Some((
-                "atan2 y",
-                "all real values, including infinities, excluding NaN",
-            )),
-            "atan2 x input" => Some((
-                "atan2 x",
-                "all real values, including infinities, excluding NaN",
-            )),
-            _ => None,
-        };
-        if let Some((function, domain)) = domain {
-            return write!(
-                f,
-                "{function} input {} is outside the valid domain {domain}; supply a value in that domain",
-                self.value
-            );
-        }
         write!(
             f,
             "angle must be finite, got {} {}; check the computation or input that produced it",
@@ -77,6 +53,29 @@ impl fmt::Display for NonFiniteAngleError {
 }
 
 impl std::error::Error for NonFiniteAngleError {}
+
+/// A rejected inverse-trigonometric input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InverseTrigError {
+    /// NaN or infinity is not accepted by this inverse function.
+    NonFinite(NonFiniteAngleError),
+    /// A finite input is outside the inverse function's domain.
+    OutOfDomain { function: &'static str, value: f64 },
+}
+
+impl fmt::Display for InverseTrigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonFinite(error) => error.fmt(f),
+            Self::OutOfDomain { function, value } => write!(
+                f,
+                "{function} input {value} is outside the valid domain [-1, 1]; supply a value in [-1, 1]"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InverseTrigError {}
 
 /// Alias for `Angle` with an 8-bit unsigned integer.
 #[allow(clippy::module_name_repetitions)]
@@ -2203,7 +2202,7 @@ mod tests {
     }
 
     #[test]
-    fn test_abs_diff_eq_radians_basic() {
+    fn test_abs_diff_eq_angle_tolerance_basic() {
         let a = crate::radians!(1.0);
         let b = crate::radians!(1.0 + 1e-12);
         assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(1e-9).unwrap()));
@@ -2211,7 +2210,7 @@ mod tests {
     }
 
     #[test]
-    fn test_abs_diff_eq_radians_not_close() {
+    fn test_abs_diff_eq_angle_tolerance_not_close() {
         let a = Angle64::ZERO;
         let b = crate::radians!(0.1);
         assert!(!a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(0.01).unwrap()));
@@ -2219,7 +2218,7 @@ mod tests {
     }
 
     #[test]
-    fn test_abs_diff_eq_radians_wraparound() {
+    fn test_abs_diff_eq_angle_tolerance_wraparound() {
         // Small positive vs just below 2pi
         let a = crate::radians!(0.001);
         let b = crate::radians!(TAU - 0.001);
@@ -2320,7 +2319,7 @@ mod tests {
 
         #[test]
         fn test_approx_with_radians_epsilon() {
-            // Demonstrate using epsilon_from_radians with the approx macro
+            // Demonstrate using an angle tolerance with the approx macro
             let a = crate::radians!(1.0);
             let b = crate::radians!(1.0 + 1e-12);
             let eps = Angle64::try_epsilon_from_radians(1e-9).unwrap();

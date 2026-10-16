@@ -155,21 +155,24 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
     Ok(())
 }
 
-/// Absolute roundoff tolerance shared by probability-sum validators.
-const PROBABILITY_SUM_TOLERANCE: f64 = 1e-6;
+/// Tolerance for distributions supplied with approximate normalized weights.
+const DISTRIBUTION_SUM_TOLERANCE: f64 = 1e-6;
 
 /// Validate rates whose total is at most one, allowing roundoff in the sum.
 /// Each individual rate is checked strictly; the remainder is identity probability.
 ///
 /// # Errors
 /// Rejects invalid individual probabilities or a total exceeding one by the
-/// distribution roundoff tolerance, with an at-most-one remedy.
+/// summation roundoff bound, with an at-most-one remedy.
 pub fn validate_probability_sum_at_most_one(rates: &[f64], field: &str) -> ValidationResult<()> {
     for (index, &rate) in rates.iter().enumerate() {
         validate_probability(rate, &format!("{field}[{index}]"))?;
     }
     let total: f64 = rates.iter().sum();
-    if total - 1.0 >= PROBABILITY_SUM_TOLERANCE {
+    // Each addition contributes at most EPSILON relative error. For a total near
+    // one, n * EPSILON bounds accumulated rounding without accepting extra rate.
+    let roundoff = rates.iter().fold(0.0, |bound, _| bound + f64::EPSILON);
+    if total - 1.0 > roundoff {
         return Err(ValidationError::new(
             format!("{field} total"),
             format!("the rates sum to {total}, which exceeds 1.0"),
@@ -187,7 +190,7 @@ pub fn validate_probability_sum_at_most_one(rates: &[f64], field: &str) -> Valid
 pub fn validate_distribution(weights: &[f64], field: &str) -> ValidationResult<()> {
     validate_weights_sum(weights, field)?;
     let total: f64 = weights.iter().sum();
-    if (total - 1.0).abs() >= PROBABILITY_SUM_TOLERANCE {
+    if (total - 1.0).abs() >= DISTRIBUTION_SUM_TOLERANCE {
         return Err(ValidationError::new(field, "weights must sum to 1.0")
             .with_value(&total)
             .with_suggestion("Normalize the weights so their sum is 1.0"));
@@ -270,7 +273,9 @@ pub fn validate_duration(value: f64, field: &str) -> ValidationResult<f64> {
 /// Returns an error for negative, non-finite, or excessively large rates.
 pub fn validate_angle_rate(value: f64, field: &str) -> ValidationResult<f64> {
     validate_rate(value, field)?;
-    validate_bounded(value, MAX_ANGLE_RATE, field)
+    validate_bounded(value, MAX_ANGLE_RATE, field).map_err(|error| {
+        error.with_suggestion(format!("Reduce {field} to at most {MAX_ANGLE_RATE} so multiplication by an idle duration stays finite"))
+    })
 }
 
 /// Validate a rate (non-negative value).

@@ -119,10 +119,10 @@ impl DepolarizingNoiseModel {
     /// Returns `PecosError::Input` if any probability is outside [0, 1], including NaN.
     pub fn try_new(p_prep: f64, p_meas: f64, p1: f64, p2: f64) -> Result<Self, PecosError> {
         // Validate all probabilities
-        Self::try_validate_probability(p_prep)?;
-        Self::try_validate_probability(p_meas)?;
-        Self::try_validate_probability(p1)?;
-        Self::try_validate_probability(p2)?;
+        Self::try_validate_probability(p_prep, "p_prep")?;
+        Self::try_validate_probability(p_meas, "p_meas")?;
+        Self::try_validate_probability(p1, "p1")?;
+        Self::try_validate_probability(p2, "p2")?;
 
         Ok(Self {
             p_prep,
@@ -153,6 +153,7 @@ impl DepolarizingNoiseModel {
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
+        Self::try_validate_probability(probability, "probability")?;
         Self::try_new(probability, probability, probability, probability)
     }
 
@@ -164,10 +165,10 @@ impl DepolarizingNoiseModel {
 
     /// Set all probabilities of error
     pub fn set_probabilities(&mut self, p_prep: f64, p_meas: f64, p1: f64, p2: f64) {
-        Self::validate_probability(p_prep);
-        Self::validate_probability(p_meas);
-        Self::validate_probability(p1);
-        Self::validate_probability(p2);
+        Self::validate_probability(p_prep, "p_prep");
+        Self::validate_probability(p_meas, "p_meas");
+        Self::validate_probability(p1, "p1");
+        Self::validate_probability(p2, "p2");
 
         self.p_prep = p_prep;
         self.p_meas = p_meas;
@@ -183,6 +184,7 @@ impl DepolarizingNoiseModel {
 
     /// Set a uniform probability for all error types
     pub fn set_uniform_probability(&mut self, probability: f64) {
+        Self::validate_probability(probability, "probability");
         self.set_probabilities(probability, probability, probability, probability);
     }
 
@@ -602,8 +604,11 @@ impl DepolarizingNoiseModelBuilder {
     /// # Errors
     /// Returns `PecosError::Input` for the first missing field or invalid probability.
     pub fn validate_configuration(&self) -> Result<(), PecosError> {
-        for probability in self.configured_probabilities()? {
-            DepolarizingNoiseModel::try_validate_probability(probability)?;
+        for (name, probability) in ["p_prep", "p_meas", "p1", "p2"]
+            .into_iter()
+            .zip(self.configured_probabilities()?)
+        {
+            DepolarizingNoiseModel::try_validate_probability(probability, name)?;
         }
         Ok(())
     }
@@ -855,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Probability must be between 0.0 and 1.0")]
+    #[should_panic(expected = "Probability p1 must be between 0.0 and 1.0")]
     fn test_invalid_probability_panics() {
         let mut noise = DepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4);
         noise.set_probabilities(0.1, 0.2, 1.1, 0.4); // Should panic

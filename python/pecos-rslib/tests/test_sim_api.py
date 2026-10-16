@@ -214,3 +214,9 @@ class TestSimAPI:
         # Should get either all 0s or all 1s (GHZ state)
         for val in results["c"]:
             assert val == 0 or val == 31  # 0b00000 or 0b11111
+
+
+def test_conflicting_qubit_counts_are_value_error():
+    program = Qasm.from_string('OPENQASM 2.0; qreg q[1];')
+    with pytest.raises(ValueError, match=r"qubit.*2.*3|qubit.*3.*2"):
+        sim(program).qubits(2).quantum(state_vector().qubits(3)).run(1)

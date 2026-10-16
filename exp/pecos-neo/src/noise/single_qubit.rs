@@ -55,7 +55,7 @@ use smallvec::SmallVec;
 /// See also: `CompositeChannel` for composable, primitive-based noise models.
 ///
 /// Validated inputs are read through accessors and changed through checked setters.
-/// ```compile_fail
+/// ```compile_fail,E0616
 /// use pecos_neo::noise::SingleQubitChannel;
 /// let mut channel = SingleQubitChannel::default();
 /// channel.error_probability = f64::NAN;

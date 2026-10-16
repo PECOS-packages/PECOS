@@ -1603,7 +1603,8 @@ impl PyDagCircuit {
 
     /// Resolve a measurement id to ("X" or "Z", qubit).
     /// Raises ValueError if the identity cannot be resolved to a measurement record.
-    fn measured_pauli(&self, meas_id: usize) -> PyResult<(String, usize)> {
+    fn measured_pauli(&self, meas_id: &Bound<'_, PyAny>) -> PyResult<(String, usize)> {
+        let meas_id = crate::pauli_bindings::extract_usize_index(meas_id, "meas_id")?;
         self.inner
             .measured_pauli(pecos_core::MeasId::from_raw(meas_id))
             .map(|(pauli, qubit)| {
@@ -1615,9 +1616,16 @@ impl PyDagCircuit {
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
-    /// Resolve IDs in one circuit scan to (measurement id, "X" or "Z", qubit).
+    /// Resolve IDs in one circuit scan to ("X" or "Z", qubit), aligned with the input.
     /// Preserves input order and duplicates; raises ValueError for the first unresolved ID.
-    fn measured_paulis(&self, meas_ids: Vec<usize>) -> PyResult<Vec<(usize, String, usize)>> {
+    fn measured_paulis(&self, meas_ids: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<(String, usize)>> {
+        let meas_ids: Vec<_> = meas_ids
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                crate::pauli_bindings::extract_usize_index(value, format_args!("meas_ids[{i}]"))
+            })
+            .collect::<PyResult<_>>()?;
         let ids: Vec<_> = meas_ids
             .iter()
             .copied()
@@ -1627,12 +1635,10 @@ impl PyDagCircuit {
             .inner
             .measured_paulis(&ids)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-        Ok(meas_ids
+        Ok(measured
             .into_iter()
-            .zip(measured)
-            .map(|(id, (pauli, qubit))| {
+            .map(|(pauli, qubit)| {
                 (
-                    id,
                     crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
                     qubit.index(),
                 )
@@ -3282,7 +3288,8 @@ impl PyTickCircuit {
 
     /// Resolve a measurement id to ("X" or "Z", qubit).
     /// Raises ValueError if the identity cannot be resolved to a measurement record.
-    fn measured_pauli(&self, meas_id: usize) -> PyResult<(String, usize)> {
+    fn measured_pauli(&self, meas_id: &Bound<'_, PyAny>) -> PyResult<(String, usize)> {
+        let meas_id = crate::pauli_bindings::extract_usize_index(meas_id, "meas_id")?;
         self.inner
             .measured_pauli(pecos_core::MeasId::from_raw(meas_id))
             .map(|(pauli, qubit)| {
@@ -3294,10 +3301,17 @@ impl PyTickCircuit {
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
-    /// Resolve IDs in one circuit scan to (measurement id, "X" or "Z", qubit).
+    /// Resolve IDs in one circuit scan to ("X" or "Z", qubit), aligned with the input.
     /// Preserves input order and duplicates; raises ValueError for the first unresolved ID.
     /// Tick circuits have no removal record: removed IDs report "does not name a measurement".
-    fn measured_paulis(&self, meas_ids: Vec<usize>) -> PyResult<Vec<(usize, String, usize)>> {
+    fn measured_paulis(&self, meas_ids: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<(String, usize)>> {
+        let meas_ids: Vec<_> = meas_ids
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                crate::pauli_bindings::extract_usize_index(value, format_args!("meas_ids[{i}]"))
+            })
+            .collect::<PyResult<_>>()?;
         let ids: Vec<_> = meas_ids
             .iter()
             .copied()
@@ -3307,12 +3321,10 @@ impl PyTickCircuit {
             .inner
             .measured_paulis(&ids)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-        Ok(meas_ids
+        Ok(measured
             .into_iter()
-            .zip(measured)
-            .map(|(id, (pauli, qubit))| {
+            .map(|(pauli, qubit)| {
                 (
-                    id,
                     crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
                     qubit.index(),
                 )

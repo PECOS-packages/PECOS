@@ -54,11 +54,14 @@ pub(crate) fn extract_unsigned_index(
     })
 }
 
-fn extract_qubit(value: &Bound<'_, PyAny>, label: impl std::fmt::Display) -> PyResult<usize> {
+pub(crate) fn extract_usize_index(
+    value: &Bound<'_, PyAny>,
+    label: impl std::fmt::Display,
+) -> PyResult<usize> {
     let index = extract_unsigned_index(value, &label)?;
     usize::try_from(index).map_err(|_| {
         pyo3::exceptions::PyValueError::new_err(format!(
-            "{label} {index} exceeds the qubit index range; use an index at most {}",
+            "{label} {index} exceeds the platform index range; use an index at most {}",
             usize::MAX
         ))
     })
@@ -68,7 +71,7 @@ fn extract_qubits(qubits: &[Bound<'_, PyAny>]) -> PyResult<Vec<usize>> {
     qubits
         .iter()
         .enumerate()
-        .map(|(index, value)| extract_qubit(value, format_args!("qubits item {index}")))
+        .map(|(index, value)| extract_usize_index(value, format_args!("qubits item {index}")))
         .collect()
 }
 
@@ -290,8 +293,10 @@ impl PauliString {
                         .enumerate()
                         .map(|(index, item)| {
                             let (pauli, qubit): (Pauli, Bound<'_, PyAny>) = item.extract()?;
-                            let qubit =
-                                extract_qubit(&qubit, format_args!("paulis item {index} qubit"))?;
+                            let qubit = extract_usize_index(
+                                &qubit,
+                                format_args!("paulis item {index} qubit"),
+                            )?;
                             Ok((pauli.0, QubitId::new(qubit)))
                         })
                         .collect::<PyResult<Vec<_>>>()?
@@ -381,15 +386,7 @@ impl PauliString {
         // Build sparse representation showing only non-identity operators
         let pauli_str: String = paulis
             .iter()
-            .map(|(p, q)| {
-                let p_char = match p {
-                    RustPauli::I => 'I',
-                    RustPauli::X => 'X',
-                    RustPauli::Y => 'Y',
-                    RustPauli::Z => 'Z',
-                };
-                format!("{}_{}", p_char, q.index())
-            })
+            .map(|(p, q)| format!("{p:?}_{}", q.index()))
             .collect::<Vec<_>>()
             .join(" ");
 
@@ -401,7 +398,10 @@ impl PauliString {
     /// Example: `+XIZ` for X on qubit 0 and Z on qubit 2.
     /// Raises `ValueError` if a non-identity qubit index is >= `num_qubits`.
     #[pyo3(signature = (num_qubits=None))]
-    fn to_dense_str(&self, num_qubits: Option<usize>) -> PyResult<String> {
+    fn to_dense_str(&self, num_qubits: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+        let num_qubits = num_qubits
+            .map(|value| extract_usize_index(value, "num_qubits"))
+            .transpose()?;
         num_qubits
             .map_or_else(
                 || Ok(self.inner.to_dense_str()),
@@ -478,15 +478,25 @@ impl PauliString {
     ///     num_qubits: Number of qubits for the matrix dimension (default: auto)
     #[allow(clippy::doc_markdown)]
     #[pyo3(signature = (num_qubits=None))]
-    fn to_matrix(&self, num_qubits: Option<usize>) -> PyResult<Vec<Vec<(f64, f64)>>> {
-        let n = num_qubits
-            .unwrap_or_else(|| self.inner.qubits().into_iter().max().map_or(1, |m| m + 1));
-        if n > 12 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "to_matrix supports at most 12 qubits",
-            ));
-        }
-        let (flat, dim) = self.inner.to_flat_matrix(n);
+    fn to_matrix(&self, num_qubits: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Vec<(f64, f64)>>> {
+        let num_qubits = num_qubits
+            .map(|value| extract_usize_index(value, "num_qubits"))
+            .transpose()?;
+        let n = match num_qubits {
+            Some(width) => width,
+            None => match self.inner.qubits().into_iter().max() {
+                Some(index) => index.checked_add(1).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "qubit index {index} exceeds the representable matrix width; use a sparse representation or lower qubit indices"
+                    ))
+                })?,
+                None => 1,
+            },
+        };
+        let (flat, dim) = self
+            .inner
+            .to_flat_matrix(n)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         let rows = (0..dim)
             .map(|r| {
                 flat[r * dim..(r + 1) * dim]
@@ -552,38 +562,10 @@ impl PauliString {
 
     /// Tensor product: `PauliString.X(0) & PauliString.Z(1)`
     fn __and__(&self, other: &PauliString) -> PyResult<Self> {
-        let mut lhs_qubits = self.inner.qubits();
-        lhs_qubits.sort_unstable();
-        lhs_qubits.dedup();
-
-        let mut rhs_qubits = other.inner.qubits();
-        rhs_qubits.sort_unstable();
-        rhs_qubits.dedup();
-
-        let mut overlap = Vec::new();
-        let mut lhs_idx = 0;
-        let mut rhs_idx = 0;
-        while lhs_idx < lhs_qubits.len() && rhs_idx < rhs_qubits.len() {
-            match lhs_qubits[lhs_idx].cmp(&rhs_qubits[rhs_idx]) {
-                std::cmp::Ordering::Less => lhs_idx += 1,
-                std::cmp::Ordering::Greater => rhs_idx += 1,
-                std::cmp::Ordering::Equal => {
-                    overlap.push(lhs_qubits[lhs_idx]);
-                    lhs_idx += 1;
-                    rhs_idx += 1;
-                }
-            }
-        }
-
-        if !overlap.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "tensor product requires disjoint Pauli support; overlapping qubits: {overlap:?}"
-            )));
-        }
-
-        Ok(PauliString {
-            inner: self.inner.clone() & other.inner.clone(),
-        })
+        self.inner
+            .tensor(&other.inner)
+            .map(Self::from_rust)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Pauli multiplication: `PauliString.X(0) * PauliString.Y(0)`
@@ -630,7 +612,7 @@ impl PauliString {
 #[allow(non_snake_case)]
 pub fn X(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
     Ok(PauliString {
-        inner: RustPauliString::x(extract_qubit(qubit, "qubit")?),
+        inner: RustPauliString::x(extract_usize_index(qubit, "qubit")?),
     })
 }
 
@@ -639,7 +621,7 @@ pub fn X(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
 #[allow(non_snake_case)]
 pub fn Y(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
     Ok(PauliString {
-        inner: RustPauliString::y(extract_qubit(qubit, "qubit")?),
+        inner: RustPauliString::y(extract_usize_index(qubit, "qubit")?),
     })
 }
 
@@ -648,7 +630,7 @@ pub fn Y(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
 #[allow(non_snake_case)]
 pub fn Z(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
     Ok(PauliString {
-        inner: RustPauliString::z(extract_qubit(qubit, "qubit")?),
+        inner: RustPauliString::z(extract_usize_index(qubit, "qubit")?),
     })
 }
 

@@ -72,10 +72,6 @@ impl LookupDecoder {
     /// probability p, and each non-identity Pauli is equally likely (p/3 for
     /// 1-qubit, p/15 for 2-qubit). Idle gates with T1/T2 use biased noise.
     ///
-    /// # Panics
-    ///
-    /// Panics if the influence map repeats a qubit at a gate location.
-    ///
     /// # Errors
     /// Returns an error if a fault location contains duplicate qubits.
     pub fn build(

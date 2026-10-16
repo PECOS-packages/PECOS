@@ -21,8 +21,6 @@ use std::fmt;
 /// Errors that can occur when constructing a [`SymplecticMatrix`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymplecticMatrixError {
-    /// The requested row count exceeds the allocation limit.
-    RowCountOverflow { num_rows: usize, maximum: usize },
     /// The requested width cannot be represented by matrix columns.
     WidthOverflow { num_qubits: usize },
     /// No rows were supplied, so the matrix width cannot be inferred.
@@ -64,10 +62,6 @@ pub enum SymplecticMatrixError {
 impl fmt::Display for SymplecticMatrixError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RowCountOverflow { num_rows, maximum } => write!(
-                f,
-                "requested {num_rows} matrix rows exceeds supported maximum {maximum}; use at most {maximum} rows"
-            ),
             Self::WidthOverflow { num_qubits } => write!(
                 f,
                 "num_qubits {num_qubits} exceeds the symplectic width limit {}; use at most that many qubits",
@@ -159,18 +153,11 @@ impl SymplecticMatrix {
     }
 
     /// Constructs an all-zero matrix with an explicit number of qubits.
-    ///
-    /// # Errors
-    /// Returns an error if the row count or twice the qubit count exceeds allocation limits.
-    pub fn zeros(num_rows: usize, num_qubits: usize) -> Result<Self, SymplecticMatrixError> {
-        let columns = Self::checked_columns(num_qubits)?;
-        let maximum = isize::MAX as usize / size_of::<Vec<u64>>();
-        if num_rows > maximum {
-            return Err(SymplecticMatrixError::RowCountOverflow { num_rows, maximum });
+    #[must_use]
+    pub fn zeros(num_rows: usize, num_qubits: usize) -> Self {
+        Self {
+            matrix: F2Matrix::zeros(num_rows, num_qubits * 2),
         }
-        Ok(Self {
-            matrix: F2Matrix::zeros(num_rows, columns),
-        })
     }
 
     fn checked_columns(num_qubits: usize) -> Result<usize, SymplecticMatrixError> {
@@ -345,7 +332,7 @@ mod tests {
             SymplecticMatrix::from_dense(Vec::new()).unwrap_err(),
             SymplecticMatrixError::EmptyRows
         );
-        assert_eq!(SymplecticMatrix::zeros(0, 7).unwrap().num_qubits(), 7);
+        assert_eq!(SymplecticMatrix::zeros(0, 7).num_qubits(), 7);
     }
 
     #[test]

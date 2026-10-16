@@ -405,18 +405,21 @@ impl PauliGroup {
     ///
     /// Returns `generators[index] * pauli`.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_generators()`.
-    #[must_use]
-    pub fn multiply_by(&self, index: usize, pauli: &PauliString) -> PauliString {
-        let gens = self.inner.paulis();
-        assert!(
-            index < gens.len(),
-            "index {index} exceeds number of generators ({})",
-            gens.len()
-        );
-        gens[index].clone() * pauli.clone()
+    /// # Errors
+    /// Returns [`PauliGroupError::GeneratorIndex`] for an out-of-range index.
+    pub fn multiply_by(
+        &self,
+        index: usize,
+        pauli: &PauliString,
+    ) -> Result<PauliString, PauliGroupError> {
+        let generator = self
+            .generators()
+            .get(index)
+            .ok_or(PauliGroupError::GeneratorIndex {
+                index,
+                count: self.num_generators(),
+            })?;
+        Ok(generator.clone() * pauli)
     }
 
     /// Returns the binary symplectic matrix representation.
@@ -501,16 +504,16 @@ impl PauliGroup {
 
     /// Removes the generator at the given index.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_generators()`.
-    pub fn remove_generator(&mut self, index: usize) -> PauliString {
-        assert!(
-            index < self.num_generators(),
-            "index {index} out of range for {} generators",
-            self.num_generators()
-        );
-        self.inner.remove(index)
+    /// # Errors
+    /// Returns [`PauliGroupError::GeneratorIndex`] for an out-of-range index.
+    pub fn remove_generator(&mut self, index: usize) -> Result<PauliString, PauliGroupError> {
+        if index >= self.num_generators() {
+            return Err(PauliGroupError::GeneratorIndex {
+                index,
+                count: self.num_generators(),
+            });
+        }
+        Ok(self.inner.remove(index))
     }
 
     /// Merges another group into this one.
@@ -970,7 +973,7 @@ mod tests {
     #[test]
     fn remove_generator() {
         let mut group = PauliGroup::new(vec![Z(0), Z(1)]).unwrap();
-        let removed = group.remove_generator(0);
+        let removed = group.remove_generator(0).unwrap();
         assert_eq!(removed, Z(0));
         assert_eq!(group.num_generators(), 1);
     }
@@ -1041,7 +1044,7 @@ mod tests {
     #[test]
     fn multiply_by() {
         let group = PauliGroup::new(vec![i * X(0), Z(1)]).unwrap();
-        let result = group.multiply_by(0, &PauliString::identity());
+        let result = group.multiply_by(0, &PauliString::identity()).unwrap();
         assert_eq!(result.phase(), QuarterPhase::PlusI);
     }
 

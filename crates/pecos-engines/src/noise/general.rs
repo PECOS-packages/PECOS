@@ -820,17 +820,6 @@ impl GeneralNoiseModel {
         builder: &mut ByteMessageBuilder,
         mut boundaries: Option<&mut Vec<u32>>,
     ) -> Result<(), PecosError> {
-        // Continuations can reach the same idle helper after a two-qubit gate.
-        Self::validate_idle_products(
-            self.idle_after_2q,
-            "idle_after_2q",
-            self.p_idle_linear_rate,
-            self.p_idle_sin_squared_rate,
-            &self.p_idle_sin_squared_model,
-            self.p_idle_coherent_rate,
-            &self.p_idle_coherent_model,
-        )
-        .map_err(PecosError::Input)?;
         let mut err = None;
         while let Some(gate) = gates.next() {
             let measurements_before = self.measured_qubits.len();

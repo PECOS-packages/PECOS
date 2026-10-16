@@ -147,7 +147,6 @@ impl CliffordRep {
     ///
     /// If the two representations have different numbers of qubits,
     /// the smaller one is implicitly extended with identity on the extra qubits.
-    ///
     #[must_use]
     pub fn compose(&self, other: &CliffordRep) -> CliffordRep {
         let n = self.num_qubits.max(other.num_qubits);
@@ -189,7 +188,6 @@ impl CliffordRep {
     /// - `Y_q` = iXZ -> i * `x_images[q]` * `z_images[q]`
     ///
     /// The result is the product of all transformed single-qubit terms.
-    ///
     ///
     /// # Panics
     /// Panics if the internal invariant that generator images fit the Clifford width is broken.
@@ -245,7 +243,6 @@ impl CliffordRep {
     /// let stabilizer = X(0) & Z(1);
     /// let transformed = h.apply_to(&stabilizer).unwrap();
     /// ```
-    ///
     #[must_use]
     pub fn apply_to(&self, op: &UnitaryRep) -> Option<UnitaryRep> {
         match op {

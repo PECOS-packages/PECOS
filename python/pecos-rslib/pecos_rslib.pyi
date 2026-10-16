@@ -2148,7 +2148,7 @@ class DagCircuit:
         """Return (basis, qubit) for a measurement id; raise ValueError if unresolved."""
         ...
 
-    def measured_paulis(self, meas_ids: Sequence[int]) -> list[tuple[int, str, int]]:
+    def measured_paulis(self, meas_ids: Sequence[int]) -> list[tuple[str, int]]:
         """Resolve IDs in order with one scan; raise ValueError for an unresolved ID."""
         ...
 
@@ -2333,7 +2333,7 @@ class TickCircuit:
         """Return (basis, qubit) for a measurement id; raise ValueError if unresolved."""
         ...
 
-    def measured_paulis(self, meas_ids: Sequence[int]) -> list[tuple[int, str, int]]:
+    def measured_paulis(self, meas_ids: Sequence[int]) -> list[tuple[str, int]]:
         """Resolve IDs in order with one scan; raise ValueError for an unresolved ID. Removed IDs report "does not name a measurement"."""
         ...
 

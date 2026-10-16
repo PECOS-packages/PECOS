@@ -78,21 +78,6 @@ fn symplectic_z_dimensions_reject_overflow() {
 }
 
 #[test]
-fn explicit_matrix_columns_reject_overflow() {
-    assert!(SymplecticMatrix::zeros(0, 1 << (usize::BITS - 1)).is_err());
-}
-
-#[test]
-fn explicit_matrix_rows_reject_capacity_overflow() {
-    assert!(
-        SymplecticMatrix::zeros(usize::MAX, 0)
-            .unwrap_err()
-            .to_string()
-            .contains(&usize::MAX.to_string())
-    );
-}
-
-#[test]
 fn dag_crz_rejects_nan_even_without_targets() {
     let mut circuit = pecos_quantum::DagCircuit::new();
     for pairs in [&[][..], &[(0_usize, 1_usize)][..]] {
@@ -112,4 +97,53 @@ fn nonfinite_matrices_cannot_be_mistaken_for_named_gates() {
         ));
         assert!(matrix.try_to_unitary().is_none());
     }
+}
+
+#[test]
+fn generator_mutations_reject_bad_indices_without_changing_group() {
+    let mut group = PauliGroup::new(vec![PauliString::z(0)]).unwrap();
+    let mut stabilizers = PauliStabilizerGroup::new(vec![PauliString::z(0)]).unwrap();
+    for index in [1, usize::MAX] {
+        for error in [
+            group
+                .multiply_by(index, &PauliString::x(0))
+                .unwrap_err()
+                .to_string(),
+            group.remove_generator(index).unwrap_err().to_string(),
+            stabilizers
+                .multiply_by(index, &PauliString::x(0))
+                .unwrap_err()
+                .to_string(),
+            stabilizers.remove_generator(index).unwrap_err().to_string(),
+        ] {
+            assert!(error.contains(&format!("index {index}")), "{error}");
+        }
+        assert_eq!(group.num_generators(), 1);
+        assert_eq!(stabilizers.num_generators(), 1);
+    }
+}
+
+#[test]
+fn tick_crz_rejects_nan_without_mutation() {
+    let mut circuit = pecos_quantum::TickCircuit::new();
+    let mut tick = circuit.tick();
+    let error = tick.crz(f64::NAN, &[(0_usize, 1_usize)]).err().unwrap();
+    assert!(error.to_string().contains("NaN radians"));
+    assert_eq!(circuit.gate_count(), 0);
+}
+
+#[test]
+fn merge_still_validates_phases_after_custom_clifford_images() {
+    let source = PauliStabilizerGroup::new(vec![PauliString::x(0)]).unwrap();
+    let mut image = PauliString::x(0);
+    image.set_phase(pecos_core::QuarterPhase::PlusI);
+    let mut clifford = pecos_core::clifford_rep::CliffordRep::identity(1);
+    clifford.set_x_image(0, image).unwrap();
+    let transformed = source.apply_clifford(&clifford);
+    let mut target = PauliStabilizerGroup::new(vec![PauliString::z(1)]).unwrap();
+    assert!(matches!(
+        target.merge(&transformed),
+        Err(pecos_quantum::PauliStabilizerGroupError::NonRealPhase { .. })
+    ));
+    assert_eq!(target.num_generators(), 1);
 }

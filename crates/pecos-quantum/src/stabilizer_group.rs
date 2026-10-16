@@ -329,10 +329,6 @@ impl PauliStabilizerGroup {
     ///
     /// Returns `generators[index] * pauli`.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_generators()`.
-    ///
     /// # Examples
     ///
     /// ```
@@ -343,12 +339,17 @@ impl PauliStabilizerGroup {
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
     ///
     /// // Multiply Z(0) by generator 0 (ZZI): ZII * ZZI = IZI
-    /// let result = stab.multiply_by(0, &Z(0));
+    /// let result = stab.multiply_by(0, &Z(0)).unwrap();
     /// assert_eq!(result.weight(), 1);
     /// ```
-    #[must_use]
-    pub fn multiply_by(&self, index: usize, pauli: &PauliString) -> PauliString {
-        self.inner.multiply_by(index, pauli)
+    /// # Errors
+    /// Returns a generator-index error when `index` is out of range.
+    pub fn multiply_by(
+        &self,
+        index: usize,
+        pauli: &PauliString,
+    ) -> Result<PauliString, PauliStabilizerGroupError> {
+        self.inner.multiply_by(index, pauli).map_err(Into::into)
     }
 
     /// Returns an iterator over all elements of the stabilizer group.
@@ -493,11 +494,13 @@ impl PauliStabilizerGroup {
 
     /// Removes the generator at the given index.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_generators()`.
-    pub fn remove_generator(&mut self, index: usize) -> PauliString {
-        self.inner.remove_generator(index)
+    /// # Errors
+    /// Returns a generator-index error when `index` is out of range.
+    pub fn remove_generator(
+        &mut self,
+        index: usize,
+    ) -> Result<PauliString, PauliStabilizerGroupError> {
+        self.inner.remove_generator(index).map_err(Into::into)
     }
 
     /// Merges another stabilizer group into this one.
@@ -515,11 +518,12 @@ impl PauliStabilizerGroup {
     /// generator from `self`, or if the combined generators generate `-I`.
     /// On error, the group is unchanged.
     pub fn merge(&mut self, other: &PauliStabilizerGroup) -> Result<(), PauliStabilizerGroupError> {
+        // Custom CliffordRep images are not guaranteed to have real phases.
+        Self::validate_real_phases(other.stabilizers(), self.num_generators())?;
         let mut candidate = self.inner.clone();
         candidate
             .merge(&other.inner)
             .map_err(PauliStabilizerGroupError::from)?;
-        Self::validate_real_phases(other.stabilizers(), self.num_generators())?;
         *self = Self::from_group_with_real_phases(candidate)?;
         Ok(())
     }
@@ -749,7 +753,7 @@ mod tests {
     fn test_multiply_by() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         // generator[0] (ZZI) * Z(0) = IZI
-        let result = stab.multiply_by(0, &Z(0));
+        let result = stab.multiply_by(0, &Z(0)).unwrap();
         assert_eq!(result.get(0), Pauli::I);
         assert_eq!(result.get(1), Pauli::Z);
         assert_eq!(result.weight(), 1);
@@ -759,7 +763,7 @@ mod tests {
     fn test_multiply_by_identity() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         let id = PauliString::identity();
-        let result = stab.multiply_by(0, &id);
+        let result = stab.multiply_by(0, &id).unwrap();
         assert_eq!(result, Zs([0, 1]));
     }
 
@@ -846,7 +850,7 @@ mod tests {
     fn test_multiply_by_non_group_element() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         // Multiply X(0) by generator ZZ: ZZ * X(0) = -Y(0)Z(1) (different from stabilizer)
-        let result = stab.multiply_by(0, &X(0));
+        let result = stab.multiply_by(0, &X(0)).unwrap();
         assert!(!stab.contains(&result));
     }
 
@@ -1008,7 +1012,7 @@ mod tests {
         let mut group = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         assert_eq!(group.num_generators(), 2);
 
-        let removed = group.remove_generator(0);
+        let removed = group.remove_generator(0).unwrap();
         assert_eq!(group.num_generators(), 1);
         assert_eq!(removed.weight(), 2);
     }
@@ -1093,7 +1097,7 @@ mod tests {
         stab.add_generator(Z(1)).unwrap();
         assert_eq!(stab.num_generators(), 2);
 
-        let removed = stab.remove_generator(0);
+        let removed = stab.remove_generator(0).unwrap();
         assert_eq!(removed, Z(0));
         assert_eq!(stab.num_generators(), 1);
 

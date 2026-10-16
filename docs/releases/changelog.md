@@ -147,7 +147,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `annotations()` dicts drop `"pauli"` for detectors and observables, and the
   observable `pauli` field is removed from `circuit_definitions()`. Use
   `measured_pauli(meas_id)` / `measured_paulis(meas_ids)` on `DagCircuit` and
-  `TickCircuit` for each measurement's basis and qubit.
+  `TickCircuit` for each measurement's basis and qubit. The plural method returns
+  `(basis, qubit)` pairs aligned with its input IDs.
 - `PauliProp` no longer has a fixed width; its constructor takes only
   `track_sign`. Pickles of `PauliProp` objects from earlier versions do not load.
 - A qubit listed twice in a Pauli string is rejected by every constructor and
@@ -284,20 +285,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `ParsePauliStringError` is an enum with `DuplicateQubit`;
   `pauli_str(Option<usize>)` / `to_dense_str(Option<usize>)` become `pauli_str()`
   / `to_dense_str()` plus fallible `*_width(n)` forms. Pauli group order,
-  element and centralizer queries, `SymplecticMatrix::zeros`,
+  element and centralizer queries, generator removal and multiplication,
   `StabilizerCode::distance` / `logical_operators` and controlled-rotation
-  lowerings are fallible.
+  lowerings (including `TickHandle::crz`) are fallible.
+  `PauliString::to_flat_matrix` returns `Result`, rejecting unsupported widths
+  and support outside the width.
 - `PauliAnnotation.pauli` is removed (`AnnotationKind::TrackedPauli { pauli }`
   carries a tracked Pauli), and `DemOutputMetadata.pauli` is
   `Option<PauliString>`.
 - pecos-neo probability-, weight-, angle- and rate-valued constructors, setters
   and builders return `ValidationResult` and reject out-of-range or NaN values
   instead of clamping them; `clamp_probability` is removed. `OverRotation`
-  scales the gate's signed principal rotation.
-- Foreign C API: `pecos_circuit_rx`, `pecos_circuit_rz` and `pecos_circuit_rzz`
+  scales the gate's signed principal rotation; angle-dependent probabilities
+  use its signed principal magnitude.
+- Foreign C API: all `pecos_circuit_*` gate appenders
   return `int32_t` (`0` on success, `-1` on invalid input).
-- QuiZX export rounds odd `Angle64` fractions by one tick (ties away from zero);
-  even fractions are exact.
+- `try_asin` / `try_acos` return `InverseTrigError`, distinguishing non-finite
+  input from finite values outside [-1, 1]. Parsing integer multiples of pi
+  wraps exactly, including multiples greater than a full turn.
+- QuiZX export uses a 2^61 half-turn grid to keep simplifier arithmetic in range.
+  Fractions divisible by four are exact; others round by at most two ticks,
+  with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
 

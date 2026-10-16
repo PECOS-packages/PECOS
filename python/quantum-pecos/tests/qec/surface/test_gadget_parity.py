@@ -195,7 +195,7 @@ def test_standalone_allocation(geometry: str, basis: str) -> None:
             assert "pauli" not in right
             left_measured = first.measured_paulis(left["measurement_ids"])
             right_measured = second.measured_paulis(right["measurement_ids"])
-            shifted_measured = [(mid, axis, q + 100) for mid, axis, q in left_measured]
+            shifted_measured = [(axis, q + 100) for axis, q in left_measured]
             assert shifted_measured == right_measured
     assert first.num_ticks() == second.num_ticks()
     keys = (*META_KEYS, "ancilla_budget")

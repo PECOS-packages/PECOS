@@ -72,8 +72,7 @@ def pauli_to_dict(pauli: PauliString) -> dict[str, set[int]]:
         raise ValueError(msg)
     result: dict[str, set[int]] = {}
     for symbol, qubit in pauli.get_paulis():
-        if symbol != Pauli.I:
-            result.setdefault(str(symbol), set()).add(qubit)
+        result.setdefault(str(symbol), set()).add(qubit)
     return result
 
 

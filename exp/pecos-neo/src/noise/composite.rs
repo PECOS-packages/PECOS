@@ -488,7 +488,9 @@ mod tests {
             |gate| {
                 Probability::new({
                     gate.and_then(super::super::context::GateInfo::angle)
-                        .map_or(0.0, |a| a.to_radians() / (2.0 * std::f64::consts::PI))
+                        .map_or(0.0, |a| {
+                            a.to_radians_signed().abs() / (2.0 * std::f64::consts::PI)
+                        })
                 })
                 .unwrap()
             },

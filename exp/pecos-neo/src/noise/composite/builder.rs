@@ -928,12 +928,14 @@ impl CompositeNoiseModelBuilder {
                         .local(neighbor_fn);
                 model = model.add_channel(channel);
             } else {
-                eprintln!(
-                    "Warning: p_meas_crosstalk_local = {} is set but no neighbor function \
-                     was provided via with_p_meas_crosstalk_local_fn(). \
-                     Local crosstalk will be ignored.",
-                    self.p_meas_crosstalk_local
-                );
+                return Err(crate::noise::validation::ValidationError::new(
+                    "p_meas_crosstalk_local",
+                    "local measurement crosstalk requires a neighbor function",
+                )
+                .with_value(&self.p_meas_crosstalk_local)
+                .with_suggestion(
+                    "Set with_p_meas_crosstalk_local_fn() or set p_meas_crosstalk_local to 0",
+                ));
             }
         }
 
@@ -2156,16 +2158,16 @@ mod tests {
     }
 
     #[test]
-    fn test_local_crosstalk_without_fn_is_ignored() {
-        // If local crosstalk probability is set but no neighbor function, it's ignored
-        let model = CompositeNoiseModelBuilder::new()
+    fn test_local_crosstalk_without_fn_is_rejected() {
+        let error = CompositeNoiseModelBuilder::new()
             .with_p_meas_crosstalk(0.001, 0.01)
-            .unwrap() // local is 0.01 but no fn
+            .unwrap()
             .build()
-            .unwrap();
-
-        // Should have only global crosstalk = 1 channel
-        assert_eq!(model.channel_count(), 1);
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("p_meas_crosstalk_local"), "{error}");
+        assert!(error.contains("neighbor"), "{error}");
     }
 
     #[test]
@@ -2353,16 +2355,16 @@ mod tests {
     }
 
     #[test]
-    fn test_local_crosstalk_without_neighbor_fn_warns() {
-        // This should print a warning but still build successfully
-        let model = CompositeNoiseModelBuilder::new()
-            .with_p_meas_crosstalk(0.0, 0.05)
-            .unwrap() // Local rate set but no neighbor fn
+    fn test_local_crosstalk_without_neighbor_fn_errors() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_p_meas_crosstalk(0.0, 0.1)
+            .unwrap()
             .build()
-            .unwrap();
-
-        // No crosstalk channel should be created (only global would be, and that's 0.0)
-        assert_eq!(model.channel_count(), 0);
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("p_meas_crosstalk_local"), "{error}");
+        assert!(error.contains("with_p_meas_crosstalk_local_fn"), "{error}");
     }
 
     // --- Emission Model Tests ---

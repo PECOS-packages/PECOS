@@ -85,7 +85,9 @@ def test_python_phir_guard_matches_rust_message(angle, expected):
 
     with pytest.raises(ValueError, match="angle must be finite") as error:
         PyPHIR.handle_op({"qop": "RZ", "angles": [[angle], "rad"], "args": [["q", 0]]}, PyPHIR())
-    assert str(error.value) == f"angle must be finite, got {expected} radians"
+    assert str(error.value) == (
+        f"angle must be finite, got {expected} radians; check the computation or input that produced it"
+    )
 
 
 @pytest.mark.parametrize(("angle", "expected"), [(math.nan, "NaN"), (math.inf, "inf"), (-math.inf, "-inf")])
@@ -94,4 +96,24 @@ def test_python_composite_guard_matches_rust_message(angle, expected):
 
     with pytest.raises(ValueError, match="angle must be finite") as error:
         QuantumCircuit().append({"RXXRYYRZZ": {(0, 1)}}, angles=(0.0, angle, 0.0))
-    assert str(error.value) == f"angle must be finite, got {expected} radians"
+    assert str(error.value) == (
+        f"angle must be finite, got {expected} radians; check the computation or input that produced it"
+    )
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_nan_rz_append_repro_is_atomic(mixed):
+    from pecos import QuantumCircuit
+
+    circuit = QuantumCircuit()
+    request = {"H": {1}, "RZ": {0}} if mixed else {"RZ": {0}}
+    with pytest.raises(ValueError, match="NaN radians"):
+        circuit.append(request, angles=(float("nan"),))
+    assert len(circuit) == 0
+
+
+@pytest.mark.parametrize("setter", ["p1", "p2", "p_meas", "p_prep"])
+@pytest.mark.parametrize("value", [-0.1, 1.1, math.nan])
+def test_experimental_depolarizing_setters_reject_invalid_probability(setter, value):
+    with pytest.raises(ValueError, match=setter):
+        getattr(experimental.depolarizing(), setter)(value)

@@ -918,6 +918,36 @@ impl ByteMessageBuilder {
         self.msg_count
     }
 
+    /// Check that an append fits the protocol's message-count and byte-size fields.
+    /// `additional_bytes` includes message headers, payloads and alignment padding.
+    ///
+    /// # Errors
+    /// Returns an input error when the requested append exceeds a u32 field or
+    /// the platform slice-size limit. Split such input across smaller batches.
+    pub fn validate_append_capacity(
+        &self,
+        messages: usize,
+        additional_bytes: usize,
+    ) -> Result<(), pecos_core::errors::PecosError> {
+        let count_fits = u32::try_from(messages)
+            .ok()
+            .and_then(|count| self.msg_count.checked_add(count))
+            .is_some();
+        let size_fits = self
+            .buffer
+            .len()
+            .checked_add(additional_bytes)
+            .is_some_and(|size| u32::try_from(size).is_ok() && isize::try_from(size).is_ok());
+        if !count_fits || !size_fits {
+            return Err(pecos_core::errors::PecosError::Input(format!(
+                "cannot append {messages} messages and {additional_bytes} bytes to a batch containing {} messages and {} bytes: protocol u32 or platform slice-size limit exceeded; split the input into smaller batches",
+                self.msg_count,
+                self.buffer.len()
+            )));
+        }
+        Ok(())
+    }
+
     /// Clear the builder and start fresh
     ///
     /// This method completely replaces the builder with a new instance,

@@ -44,8 +44,8 @@ pub mod unitary_rep;
 pub mod value;
 
 pub use angle::{
-    Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto, NonFiniteAngleError,
-    ParseAngleError,
+    Angle, Angle8, Angle16, Angle32, Angle64, Angle128, InverseTrigError, LossyInto,
+    NonFiniteAngleError, ParseAngleError,
 };
 pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;

@@ -173,7 +173,7 @@ pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessa
         }
     }
     w.0[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
-    w.0[4] = 7;
+    w.0[4] = crate::byte_message::protocol::SCHEDULED_EVENT_VERSION;
     w.0[8..12].copy_from_slice(
         &u32::try_from(batches.len())
             .map_err(|_| error("batch count overflow"))?
@@ -206,7 +206,10 @@ impl<'a> Reader<'a> {
 /// Rejects malformed, unknown-version, oversized or ambiguous records.
 pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBatch>, PecosError> {
     let bytes = input.as_bytes();
-    scheduled_frame::validate_scheduled_header(bytes, 7)?;
+    scheduled_frame::validate_scheduled_header(
+        bytes,
+        u32::from(crate::byte_message::protocol::SCHEDULED_EVENT_VERSION),
+    )?;
     let count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
     if count > (bytes.len() - 16) / 80 {
         return Err(error("invalid scheduled event batch count"));

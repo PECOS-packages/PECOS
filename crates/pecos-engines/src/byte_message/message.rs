@@ -184,7 +184,8 @@ impl ByteMessage {
         }
         if batch_header.version != super::protocol::PROTOCOL_VERSION {
             let remedy = match batch_header.version {
-                6 | 7 => {
+                super::protocol::SCHEDULED_FRAME_VERSION
+                | super::protocol::SCHEDULED_EVENT_VERSION => {
                     "scheduled versions 6 and 7 need the scheduled-idle path, not an ordinary batch consumer"
                 }
                 1 | 3 | 4 => {

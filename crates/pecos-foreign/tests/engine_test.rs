@@ -266,6 +266,55 @@ fn rzz_pair_count_overflow_returns_error() {
             pecos_circuit_rzz(circuit, 0.0, pair.as_ptr(), usize::MAX),
             -1
         );
+        assert_eq!(
+            pecos_circuit_rzz(circuit, 0.0, pair.as_ptr(), usize::MAX / 4),
+            -1
+        );
+        assert_eq!(pecos_circuit_cx(circuit, pair.as_ptr(), usize::MAX), -1);
+        assert_eq!(pecos_circuit_cx(circuit, pair.as_ptr(), usize::MAX / 4), -1);
         pecos_circuit_free(circuit);
+    }
+}
+
+#[test]
+fn c_gate_payload_limits_return_errors_atomically() {
+    unsafe {
+        let circuit = pecos_circuit_new();
+        let too_many = [0_usize; 256];
+        for append in [
+            pecos_circuit_h,
+            pecos_circuit_x,
+            pecos_circuit_z,
+            pecos_circuit_sz,
+        ] {
+            assert_eq!(append(circuit, too_many.as_ptr(), too_many.len()), -1);
+            assert_eq!(append(circuit, too_many.as_ptr(), usize::MAX), -1);
+        }
+        let bad = [usize::MAX];
+        assert_eq!(pecos_circuit_mz(circuit, bad.as_ptr(), 1), -1);
+        assert_eq!(pecos_circuit_rx(circuit, 0.0, bad.as_ptr(), 1), -1);
+        assert_eq!(
+            pecos_circuit_rz(circuit, 0.0, too_many.as_ptr(), too_many.len()),
+            -1
+        );
+        let mut ptr = std::ptr::null_mut();
+        let mut len = 0;
+        pecos_circuit_build(circuit, &raw mut ptr, &raw mut len);
+        let message = pecos_engines::ByteMessage::new(std::slice::from_raw_parts(ptr, len));
+        assert_eq!(
+            message.quantum_ops().unwrap(),
+            [] as [pecos_engines::Gate; 0]
+        );
+        pecos_free_bytes(ptr, len);
+        pecos_circuit_free(circuit);
+    }
+}
+
+#[test]
+fn c_engine_rejects_unrepresentable_dense_sizes() {
+    for name in [c"state_vec", c"density_matrix"] {
+        unsafe {
+            assert!(pecos_engine_create(name.as_ptr(), usize::BITS as usize, 1).is_null());
+        }
     }
 }

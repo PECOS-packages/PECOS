@@ -1068,8 +1068,11 @@ impl PySimBuilder {
                     }
 
                     // Build the MonteCarloEngine
-                    let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                    let engine = sim_builder.build().map_err(|e| match e {
+                        pecos_core::errors::PecosError::Input(_) => {
+                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
+                        }
+                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
                     })?;
 
                     Ok(Py::new(
@@ -1101,8 +1104,11 @@ impl PySimBuilder {
 
                     // TODO: Add quantum and noise builder support for PHIR JSON
 
-                    let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                    let engine = sim_builder.build().map_err(|e| match e {
+                        pecos_core::errors::PecosError::Input(_) => {
+                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
+                        }
+                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
                     })?;
 
                     Ok(Py::new(
@@ -1131,8 +1137,11 @@ impl PySimBuilder {
                         sim_builder = sim_builder.qubits(n);
                     }
 
-                    let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                    let engine = sim_builder.build().map_err(|e| match e {
+                        pecos_core::errors::PecosError::Input(_) => {
+                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
+                        }
+                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
                     })?;
 
                     Ok(Py::new(
@@ -1271,8 +1280,11 @@ impl PySimBuilder {
                     }
 
                     // Build the MonteCarloEngine
-                    let engine = sim_builder.build().map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to build simulation: {e}"))
+                    let engine = sim_builder.build().map_err(|e| match e {
+                        pecos_core::errors::PecosError::Input(_) => {
+                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
+                        }
+                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
                     })?;
 
                     // Handle intermediate file saving if requested

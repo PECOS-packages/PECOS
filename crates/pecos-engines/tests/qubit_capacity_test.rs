@@ -142,3 +142,28 @@ state_vector_capacity_tests!(
     soa_state_vector_gate_capacity,
     soa_state_vector_lookahead_capacity
 );
+
+#[test]
+fn coin_toss_rejects_gate_and_measurement_beyond_capacity() {
+    for gate in [pecos_core::Gate::h(&[2]), pecos_core::Gate::mz(&[2])] {
+        let mut engine = pecos_engines::quantum::CoinTossEngine::new(2);
+        assert_capacity_error(engine.process(build_message(|b| {
+            b.add_gate_command(&gate);
+        })));
+    }
+}
+
+#[test]
+fn append_capacity_preflight_rejects_protocol_overflow() {
+    let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
+    for (messages, bytes) in [(usize::MAX, 16), (1, usize::MAX), (1, u32::MAX as usize)] {
+        let error = builder
+            .validate_append_capacity(messages, bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(&messages.to_string()) && error.contains(&bytes.to_string()));
+        assert!(error.contains("smaller batches"));
+    }
+    assert!(builder.validate_append_capacity(1, 16).is_ok());
+}

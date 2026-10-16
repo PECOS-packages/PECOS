@@ -57,14 +57,17 @@ fn inverse_trig_reports_the_original_invalid_input() {
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         for result in [Angle64::try_asin(value), Angle64::try_acos(value)] {
             let error = result.unwrap_err();
-            assert_eq!(error.value.to_bits(), value.to_bits());
+            let pecos_core::InverseTrigError::NonFinite(non_finite) = error else {
+                panic!("non-finite inputs must have a non-finite error");
+            };
+            assert_eq!(non_finite.value.to_bits(), value.to_bits());
             assert!(error.to_string().contains(&value.to_string()));
         }
     }
     for value in [-2.0, 2.0] {
         for result in [Angle64::try_asin(value), Angle64::try_acos(value)] {
             let message = result.unwrap_err().to_string();
-            assert!(message.contains(&value.to_string()) && message.contains("-1..=1"));
+            assert!(message.contains(&value.to_string()) && message.contains("[-1, 1]"));
         }
     }
 }
@@ -137,4 +140,16 @@ fn angle_literal_macros_are_hygienic() {
     assert!(matches!(Err, Shadow::Err));
     assert_eq!(pecos_core::turns!(0.25), pecos_core::Angle64::QUARTER_TURN);
     assert_eq!(pecos_core::radians!(0.0), pecos_core::Angle64::ZERO);
+}
+
+#[test]
+fn dense_pauli_matrix_rejects_excess_width_and_truncation() {
+    let pauli = pecos_core::PauliString::x(5);
+    let error = pauli.to_flat_matrix(1).unwrap_err();
+    assert!(error.contains('5') && error.contains('1'), "{error}");
+    let error = pauli.to_flat_matrix(13).unwrap_err();
+    assert!(error.contains("13") && error.contains("12"), "{error}");
+    let (matrix, dim) = pauli.to_flat_matrix(6).unwrap();
+    assert_eq!(dim, 64);
+    assert_eq!(matrix[1], num_complex::Complex64::new(1.0, 0.0));
 }

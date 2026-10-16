@@ -101,13 +101,13 @@ def test_pauli_string_tuple_constructor_rejects_duplicate_qubits() -> None:
 
 
 def test_pauli_string_tensor_rejects_overlapping_qubits() -> None:
-    with pytest.raises(ValueError, match=r"overlapping qubits: \[0\]"):
+    with pytest.raises(ValueError, match=r"qubit 0 appears in both operands"):
         _ = X(0) & Y(0)
 
-    with pytest.raises(ValueError, match="tensor product requires disjoint Pauli support"):
+    with pytest.raises(ValueError, match="use disjoint Pauli support for the tensor product"):
         _ = X(0) & Z(0)
 
-    with pytest.raises(ValueError, match=r"overlapping qubits: \[2\]"):
+    with pytest.raises(ValueError, match=r"qubit 2 appears in both operands"):
         _ = (X(0) & Y(2)) & Z(2)
 
 

@@ -130,15 +130,15 @@ macro_rules! turn {
 /// ```
 ///
 /// Non-finite values and runtime variables are rejected at compile time:
-/// ```compile_fail
+/// ```compile_fail,E0080
 /// use pecos_core::radians;
 /// let angle = radians!(f64::NAN);
 /// ```
-/// ```compile_fail
+/// ```compile_fail,E0080
 /// use pecos_core::radians;
 /// let angle = radians!(f64::INFINITY);
 /// ```
-/// ```compile_fail
+/// ```compile_fail,E0435
 /// use pecos_core::radians;
 /// let x = 0.3;
 /// let angle = radians!(x);
@@ -162,13 +162,13 @@ macro_rules! radians {
 /// let angle = turns!(0.123);
 /// assert!((angle.to_turns() - 0.123).abs() < 1e-15);
 /// ```
-/// ```compile_fail
+/// ```compile_fail,E0080
 /// let angle = pecos_core::turns!(f64::NAN);
 /// ```
-/// ```compile_fail
+/// ```compile_fail,E0080
 /// let angle = pecos_core::turns!(f64::INFINITY);
 /// ```
-/// ```compile_fail
+/// ```compile_fail,E0435
 /// let x = 0.3;
 /// let angle = pecos_core::turns!(x);
 /// ```

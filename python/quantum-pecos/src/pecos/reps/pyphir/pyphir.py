@@ -151,7 +151,10 @@ class PyPHIR:
                         for angle in angles:
                             if not math.isfinite(angle):
                                 value = "NaN" if math.isnan(angle) else str(angle)
-                                msg = f"angle must be finite, got {value} radians"
+                                msg = (
+                                    f"angle must be finite, got {value} radians; "
+                                    "check the computation or input that produced it"
+                                )
                                 raise ValueError(msg)
                     else:
                         angles = None

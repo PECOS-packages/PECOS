@@ -48,10 +48,11 @@ impl PyCliffordRep {
 
     /// Identity Clifford on n qubits.
     #[staticmethod]
-    fn identity(num_qubits: usize) -> Self {
-        Self {
+    fn identity(num_qubits: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
+        Ok(Self {
             inner: RustCliffordRep::identity(num_qubits),
-        }
+        })
     }
 
     /// Hadamard gate on qubit q.
@@ -379,12 +380,19 @@ impl PyCliffordRep {
     #[allow(clippy::doc_markdown)]
     #[staticmethod]
     #[pyo3(signature = (num_qubits, depth=None))]
-    fn random(num_qubits: usize, depth: Option<usize>) -> PyCliffordRep {
-        let d = depth.unwrap_or(2 * num_qubits);
+    fn random(
+        num_qubits: &Bound<'_, PyAny>,
+        depth: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyCliffordRep> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
+        let d = match depth {
+            Some(depth) => crate::pauli_bindings::extract_usize_index(depth, "depth")?,
+            None => num_qubits.checked_mul(2).ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("num_qubits {num_qubits} overflows the default depth; supply depth explicitly or reduce num_qubits")))?,
+        };
         let mut rng = rand::rng();
-        PyCliffordRep {
+        Ok(PyCliffordRep {
             inner: RustCliffordRep::random(num_qubits, d, &mut rng),
-        }
+        })
     }
 
     // ========================================================================

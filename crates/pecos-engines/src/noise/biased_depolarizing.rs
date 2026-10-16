@@ -103,11 +103,11 @@ impl BiasedDepolarizingNoiseModel {
         p2: f64,
     ) -> Result<Self, PecosError> {
         // Validate all probabilities
-        Self::try_validate_probability(p_prep)?;
-        Self::try_validate_probability(p_meas_0)?;
-        Self::try_validate_probability(p_meas_1)?;
-        Self::try_validate_probability(p1)?;
-        Self::try_validate_probability(p2)?;
+        Self::try_validate_probability(p_prep, "p_prep")?;
+        Self::try_validate_probability(p_meas_0, "p_meas_0")?;
+        Self::try_validate_probability(p_meas_1, "p_meas_1")?;
+        Self::try_validate_probability(p1, "p1")?;
+        Self::try_validate_probability(p2, "p2")?;
 
         Ok(Self {
             p_prep,
@@ -133,6 +133,7 @@ impl BiasedDepolarizingNoiseModel {
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
+        Self::try_validate_probability(probability, "probability")?;
         Self::try_new(
             probability,
             probability,
@@ -157,11 +158,11 @@ impl BiasedDepolarizingNoiseModel {
         p1: f64,
         p2: f64,
     ) {
-        Self::validate_probability(p_prep);
-        Self::validate_probability(p_meas_0);
-        Self::validate_probability(p_meas_1);
-        Self::validate_probability(p1);
-        Self::validate_probability(p2);
+        Self::validate_probability(p_prep, "p_prep");
+        Self::validate_probability(p_meas_0, "p_meas_0");
+        Self::validate_probability(p_meas_1, "p_meas_1");
+        Self::validate_probability(p1, "p1");
+        Self::validate_probability(p2, "p2");
 
         self.p_prep = p_prep;
         self.p_meas_0 = p_meas_0;
@@ -172,6 +173,7 @@ impl BiasedDepolarizingNoiseModel {
 
     /// Set a uniform probability for all error types
     pub fn set_uniform_probability(&mut self, probability: f64) {
+        Self::validate_probability(probability, "probability");
         self.set_probabilities(
             probability,
             probability,
@@ -692,8 +694,11 @@ impl BiasedDepolarizingNoiseModelBuilder {
     /// # Errors
     /// Returns `PecosError::Input` for the first missing field or invalid probability.
     pub fn validate_configuration(&self) -> Result<(), PecosError> {
-        for probability in self.configured_probabilities()? {
-            BiasedDepolarizingNoiseModel::try_validate_probability(probability)?;
+        for (name, probability) in ["p_prep", "p_meas_0", "p_meas_1", "p1", "p2"]
+            .into_iter()
+            .zip(self.configured_probabilities()?)
+        {
+            BiasedDepolarizingNoiseModel::try_validate_probability(probability, name)?;
         }
         Ok(())
     }
@@ -860,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Probability must be between 0.0 and 1.0")]
+    #[should_panic(expected = "Probability p_meas_1 must be between 0.0 and 1.0")]
     fn test_invalid_probability_panics() {
         let mut noise = BiasedDepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4, 0.5);
         noise.set_probabilities(0.1, 0.2, 1.1, 0.4, 0.5); // Should panic

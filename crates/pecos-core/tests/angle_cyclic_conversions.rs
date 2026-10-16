@@ -18,7 +18,7 @@ use pecos_core::{Angle8, Angle16, Angle32, Angle64, Angle128, QubitId};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 #[test]
-fn tiny_negative_radians_wrap_after_rounding() {
+fn tiny_negative_radians_round_magnitude_then_wrap() {
     for (input, distance) in [
         (-1e-15, 2936),
         (-1e-16, 294),
@@ -35,7 +35,7 @@ fn tiny_negative_radians_wrap_after_rounding() {
 }
 
 #[test]
-fn tiny_negative_turns_wrap_after_rounding() {
+fn tiny_negative_turns_round_magnitude_then_wrap() {
     for (input, distance) in [
         (-1e-15, 18_447),
         (-1e-16, 1845),

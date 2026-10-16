@@ -201,8 +201,8 @@ def test_annotation_measured_paulis_preserve_spacetime(circuit_type: str) -> Non
         assert annotation["measurement_ids"] == [1, 0, 1]
         assert "measured_paulis" not in annotation
         ids = annotation["measurement_ids"]
-        expected = [(mid, *circuit.measured_pauli(mid)) for mid in ids]
-        assert circuit.measured_paulis(ids) == expected == [(1, "X", 3), (0, "Z", 3), (1, "X", 3)]
+        expected = [circuit.measured_pauli(mid) for mid in ids]
+        assert circuit.measured_paulis(ids) == expected == [("X", 3), ("Z", 3), ("X", 3)]
     assert circuit.measured_pauli(0) == ("Z", 3)
     assert circuit.measured_pauli(1) == ("X", 3)
     with pytest.raises(ValueError, match="does not name a measurement"):

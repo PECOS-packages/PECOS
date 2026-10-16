@@ -752,8 +752,7 @@ impl<P: Primitive> ProbQuadratic<P> {
     /// Returns an error for non-finite or negative rates, factors, or durations.
     /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
     pub fn new(rate_per_time_unit: f64, inner: P) -> ValidationResult<Self> {
-        validate_rate(rate_per_time_unit, "rate_per_time_unit")?;
-        validate_scaled_angle_rate(rate_per_time_unit, 1.0, "rate_per_time_unit", "factor")?;
+        crate::noise::validation::validate_angle_rate(rate_per_time_unit, "rate_per_time_unit")?;
         Ok(Self {
             rate_per_time_unit,
             coherent_to_incoherent_factor: 1.0,
@@ -794,7 +793,7 @@ impl<P: Primitive> Primitive for ProbQuadratic<P> {
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
         let angle = self.rate_per_time_unit * self.coherent_to_incoherent_factor * duration;
         // sin^2(angle) gives probability of dephasing
-        let probability = angle.sin().powi(2).clamp(0.0, 1.0);
+        let probability = angle.sin().powi(2);
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
@@ -1641,8 +1640,11 @@ pub mod primitives {
     /// Probability scaled by gate angle: p = `base_prob` * |angle/π|^power.
     ///
     /// This models angle-dependent error rates for parameterized gates like
-    /// RZZ, RXX, RYY. The scaling factor is |θ/π|^power, which:
-    /// - Is 0 when angle = 0 (no error for identity-like gates)
+    /// RZZ, RXX, RYY. The angle is the signed principal representative in
+    /// (-π, π]. The scaling factor |θ/π|^power:
+    /// - Is 0 when angle = 0 and power > 0 (no error for identity-like gates)
+    /// - Is 1 for every angle when power = 0
+    /// - Negative powers are rejected: their probability is unbounded near zero.
     /// - Is 1 when angle = π (full error for maximally-entangling gates)
     ///
     /// # Example
@@ -1669,16 +1671,12 @@ pub mod primitives {
     ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
         validate_probability(base_probability, "base_probability")?;
         crate::noise::validation::validate_rate(power, "power")?;
-        validate_probability(
-            base_probability * 2.0_f64.powf(power),
-            "maximum angle-scaled probability",
-        )?;
         Ok(ProbFn::new(
             move |gate: Option<&GateInfo>| {
                 let scale = gate
                     .and_then(crate::noise::context::GateInfo::angle)
                     .map_or(1.0, |a| {
-                        (a.to_radians().abs() / std::f64::consts::PI).powf(power)
+                        (a.to_radians_signed().abs() / std::f64::consts::PI).powf(power)
                     });
                 Probability(base_probability * scale)
             },
@@ -2000,6 +1998,26 @@ mod tests {
     }
 
     #[test]
+    fn angle_scaled_probability_uses_signed_magnitude() {
+        let noise = prob_angle_scaled(0.75, 2.0, inject_z()).unwrap();
+        for angle in [
+            Angle64::new(1),
+            pecos_core::radians!(0.73),
+            Angle64::new((1_u64 << 63) - 1),
+        ] {
+            let mut positive = make_test_context();
+            let mut negative = make_test_context();
+            positive.set_current_gate(GateType::RZ, &[angle], 1);
+            negative.set_current_gate(GateType::RZ, &[-angle], 1);
+            let p = (noise.probability_fn)(positive.current_gate()).get();
+            let n = (noise.probability_fn)(negative.current_gate()).get();
+            assert_eq!(p, n);
+            let expected = 0.75 * (angle.to_radians_signed() / std::f64::consts::PI).powi(2);
+            assert_eq!(p, expected);
+        }
+    }
+
+    #[test]
     fn test_prob_fn_angle_dependent() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -2010,7 +2028,7 @@ mod tests {
             |gate| {
                 Probability::new({
                     gate.and_then(crate::noise::context::GateInfo::angle)
-                        .map_or(0.0, |a| a.to_radians() / std::f64::consts::PI)
+                        .map_or(0.0, |a| a.to_radians_signed().abs() / std::f64::consts::PI)
                 })
                 .unwrap()
             },

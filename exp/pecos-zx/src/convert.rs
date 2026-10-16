@@ -36,12 +36,12 @@ pub enum ConvertError {
 
 /// Convert an `Angle64` (full turns) to a QuiZX `Phase` (half turns, i.e. multiples of pi).
 ///
-/// Export uses a grid with denominator 2^62 in half turns (reduction may lower
-/// the denominator). Even `Angle64` fractions are exact. Every odd fraction is
-/// exactly midway between grid points and moves by exactly one `Angle64` tick
-/// (2^-64 turn), resolving ties away from zero on the signed principal
-/// representative in (-pi, pi]. A half turn is positive; a value rounded to
-/// -pi is normalized by QuiZX to +1 half turn, the same cyclic phase.
+/// Export uses a grid with denominator 2^61 in half turns (reduction may lower
+/// the denominator), leaving headroom for QuiZX's phase addition and normalization.
+/// Fractions divisible by four are exact; others round to the nearest grid point.
+/// The maximum error is two ticks (2^-63 turn). Halfway values round away from
+/// zero on the signed principal representative in (-pi, pi]. A half turn is
+/// positive; QuiZX normalizes a rounded -pi to the equivalent +1 half turn.
 fn angle_to_phase(angle: Angle64) -> Phase {
     let fraction = angle.fraction();
     let negative = fraction > (1_u64 << 63);
@@ -50,10 +50,10 @@ fn angle_to_phase(angle: Angle64) -> Phase {
     } else {
         fraction
     };
-    // A grid point is two ticks. Round the magnitude up at each odd-tick tie.
-    let numerator = i64::try_from(magnitude.div_ceil(2))
-        .expect("the rounded principal half-turn numerator is at most 2^62 and fits i64");
-    Phase::new((if negative { -numerator } else { numerator }, 1_i64 << 62))
+    // A grid point is four ticks. Adding two resolves ties away from zero.
+    let numerator = i64::try_from((magnitude + 2) / 4)
+        .expect("the rounded principal half-turn numerator is at most 2^61 and fits i64");
+    Phase::new((if negative { -numerator } else { numerator }, 1_i64 << 61))
 }
 
 /// Convert the exact rational phase to ticks, rounding once (ties away from zero).
@@ -363,23 +363,27 @@ mod tests {
     }
 
     #[test]
-    fn phase_conversion_rounds_odd_ties_away_from_zero() {
+    fn phase_conversion_rounds_to_safe_grid() {
         let half = 1_u64 << 63;
-        let denominator = 1_i64 << 62;
-        // Independent integer pins: the half-turn numerator is the signed tick
-        // magnitude divided by two, rounded up on odd magnitudes. Rational
-        // reduction is explicit in these pins; QuiZX normalizes -1 to +1.
+        let d = 1_i64 << 61;
+        // Independent integer pins: four ticks per grid point, tie at two ticks.
         for (fraction, numerator, divisor, rounded) in [
-            (1, 1, denominator, 2),
-            (3, 1, denominator / 2, 4),
-            (5, 3, denominator, 6),
-            (u64::MAX, -1, denominator, u64::MAX - 1),
-            (u64::MAX - 2, -1, denominator / 2, u64::MAX - 3),
-            (u64::MAX - 4, -3, denominator, u64::MAX - 5),
+            (1, 0, 1, 0),
+            (2, 1, d, 4),
+            (3, 1, d, 4),
+            (5, 1, d, 4),
+            (6, 1, d / 2, 8),
+            (u64::MAX, 0, 1, 0),
+            (u64::MAX - 1, -1, d, u64::MAX - 3),
+            (u64::MAX - 2, -1, d, u64::MAX - 3),
+            (u64::MAX - 4, -1, d, u64::MAX - 3),
+            (u64::MAX - 5, -1, d / 2, u64::MAX - 7),
             (half - 1, 1, 1, half),
             (half + 1, 1, 1, half),
-            (half - 3, denominator - 1, denominator, half - 2),
-            (half + 3, 1 - denominator, denominator, half + 2),
+            (half - 2, 1, 1, half),
+            (half + 2, 1, 1, half),
+            (half - 3, d - 1, d, half - 4),
+            (half + 3, 1 - d, d, half + 4),
         ] {
             let phase = angle_to_phase(Angle64::new(fraction));
             let rational = phase.to_rational();
@@ -397,19 +401,19 @@ mod tests {
     }
 
     #[test]
-    fn phase_conversion_preserves_even_fractions() {
+    fn phase_conversion_preserves_multiples_of_four() {
         let half = 1_u64 << 63;
-        let denominator = 1_i64 << 62;
+        let denominator = 1_i64 << 61;
         for (fraction, numerator, divisor) in [
             (0, 0, 1),
-            (2, 1, denominator),
-            (6, 3, denominator),
+            (4, 1, denominator),
+            (12, 3, denominator),
             (half / 2, 1, 2),
             (half, 1, 1),
             (half + half / 2, -1, 2),
-            (half - 2, denominator - 1, denominator),
-            (half + 2, 1 - denominator, denominator),
-            (u64::MAX - 1, -1, denominator),
+            (half - 4, denominator - 1, denominator),
+            (half + 4, 1 - denominator, denominator),
+            (u64::MAX - 3, -1, denominator),
         ] {
             let angle = Angle64::new(fraction);
             let phase = angle_to_phase(angle);
@@ -422,8 +426,8 @@ mod tests {
             assert_eq!(phase_to_angle(phase), angle);
         }
         // Exercise every bit position with both signs, including both sides of pi.
-        for bit in 1..64 {
-            for fraction in [1_u64 << bit, (1_u64 << bit) - 2] {
+        for bit in 2..64 {
+            for fraction in [1_u64 << bit, (1_u64 << bit) - 4] {
                 for angle in [Angle64::new(fraction), -Angle64::new(fraction)] {
                     assert_eq!(phase_to_angle(angle_to_phase(angle)), angle);
                 }
@@ -433,7 +437,7 @@ mod tests {
 
     #[test]
     fn phase_conversion_rounds_all_export_paths() {
-        for (fraction, numerator) in [(1, 1), (u64::MAX, -1)] {
+        for (fraction, numerator) in [(2, 1), (u64::MAX - 1, -1)] {
             let angle = Angle64::new(fraction);
             let mut dag = DagCircuit::new();
             dag.u(Angle64::ZERO, Angle64::ZERO, angle, &[0]);
@@ -445,7 +449,7 @@ mod tests {
                 let rational = gate.phase.to_rational();
                 assert_eq!(
                     (*rational.numer(), *rational.denom()),
-                    (numerator, 1_i64 << 62)
+                    (numerator, 1_i64 << 61)
                 );
             }
         }

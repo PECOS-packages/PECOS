@@ -3377,19 +3377,15 @@ impl<'a> TickHandle<'a> {
 
     /// Lower CRZ boundary spelling into native rotations in consecutive ticks.
     ///
-    /// # Panics
-    ///
-    /// Panics if any lowered gate conflicts with an operation already present
-    /// in its destination tick. Use [`Self::try_crz`] for fallible insertion.
+    /// # Errors
+    /// Rejects non-finite angles and conflicting or invalid lowered gates,
+    /// without inserting any gates on failure.
     pub fn crz(
         &mut self,
         theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> &mut Self {
-        match self.try_crz(theta_radians, pairs) {
-            Ok(handle) => handle,
-            Err(err) => panic!("{err}"),
-        }
+    ) -> Result<&mut Self, TickGateError> {
+        self.try_crz(theta_radians, pairs)
     }
 
     /// Try to lower CRZ boundary spelling into consecutive native ticks.
@@ -4193,7 +4189,10 @@ mod tests {
     #[test]
     fn crz_boundary_lowers_into_consecutive_native_ticks() {
         let mut circuit = TickCircuit::new();
-        circuit.tick().crz(std::f64::consts::TAU, &[(0, 1)]);
+        circuit
+            .tick()
+            .crz(std::f64::consts::TAU, &[(0, 1)])
+            .unwrap();
 
         assert_eq!(circuit.num_ticks(), 3);
         assert_eq!(circuit.gate_count(), 3);

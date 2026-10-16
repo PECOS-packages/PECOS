@@ -118,7 +118,7 @@ fn check_qubit_capacity(
             return Err(PecosError::Generic(format!(
                 "quantum op {gate_type:?} targets qubit {} but the simulator holds \
                  {capacity} qubits (dynamic allocation exceeded the configured \
-                 capacity; raise the builder's qubit count)",
+                 capacity; construct the engine or builder with a qubit count greater than the targeted index)",
                 q.0
             )));
         }
@@ -1716,6 +1716,7 @@ impl Engine for CoinTossEngine {
         let mut measurements = Vec::new();
 
         for cmd in &batch {
+            check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
                 // All gates are no-ops for CoinToss - only measurements matter
                 GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {

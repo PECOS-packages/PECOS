@@ -56,6 +56,7 @@ fn fixed_seed_trait_bits() {
         .map(|a| (a.re.to_bits(), a.im.to_bits()))
         .collect();
     assert_eq!(records, [false, false, false, false]);
+    // Pins moved with exact radians! input conversion; the dense oracle above checks the state.
     assert_eq!(
         bits,
         [

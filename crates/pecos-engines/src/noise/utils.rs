@@ -40,8 +40,8 @@ pub trait ProbabilityValidator {
     ///
     /// # Panics
     /// Panics if the probability is not between 0.0 and 1.0
-    fn validate_probability(probability: f64) {
-        Self::try_validate_probability(probability)
+    fn validate_probability(probability: f64, name: &str) {
+        Self::try_validate_probability(probability, name)
             .unwrap_or_else(|error| panic_on_noise_error(error));
     }
 
@@ -49,10 +49,10 @@ pub trait ProbabilityValidator {
     ///
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
-    fn try_validate_probability(probability: f64) -> Result<(), PecosError> {
+    fn try_validate_probability(probability: f64, name: &str) -> Result<(), PecosError> {
         if !(0.0..=1.0).contains(&probability) {
             return Err(PecosError::Input(format!(
-                "Probability must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
+                "Probability {name} must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
             )));
         }
         Ok(())

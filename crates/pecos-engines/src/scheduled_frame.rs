@@ -383,7 +383,12 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         .try_reserve_exact(size)
         .map_err(|_| processing_error("schedule allocation failed"))?;
     bytes.extend_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
-    bytes.extend_from_slice(&[6, 0, 0, 0]);
+    bytes.extend_from_slice(&[
+        crate::byte_message::protocol::SCHEDULED_FRAME_VERSION,
+        0,
+        0,
+        0,
+    ]);
     bytes.extend_from_slice(
         &u32::try_from(batches.len())
             .map_err(|_| error("batch count overflow"))?
@@ -455,7 +460,10 @@ pub(crate) fn validate_scheduled_header(
 
 pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
     let bytes = input.as_bytes();
-    validate_scheduled_header(bytes, 6)?;
+    validate_scheduled_header(
+        bytes,
+        u32::from(crate::byte_message::protocol::SCHEDULED_FRAME_VERSION),
+    )?;
     let count = u32::from_le_bytes(bytes[8..12].try_into().expect("header")) as usize;
     if count > (bytes.len() - 16) / 40 {
         return Err(error("invalid scheduled batch count"));

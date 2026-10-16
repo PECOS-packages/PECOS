@@ -213,6 +213,8 @@ void pecos_foreign_simulator_free(PecosSimulator *sim);
 
 /* -- Engine lifecycle -- */
 typedef struct PecosEngine PecosEngine; /* opaque */
+/* Returns NULL for unknown engine types, unaddressable qubit counts, or
+ * unrepresentable simulator allocations; reduce num_qubits on size errors. */
 PecosEngine *pecos_engine_create(const char *engine_type, size_t num_qubits, uint64_t seed);
 /* Input is a ByteMessage version-5 batch, normally from pecos_circuit_build.
  * Gate payload: 4-byte header, u32 LE qubit indices, leading u64 LE Angle64
@@ -226,20 +228,25 @@ int32_t pecos_engine_reset(PecosEngine *engine);
 void pecos_engine_free(PecosEngine *engine);
 void pecos_free_bytes(uint8_t *ptr, size_t len);
 
-/* -- Circuit builder -- */
+/* -- Circuit builder --
+ * All gate appenders return 0 on success, -1 if the qubit/pair count
+ * exceeds the slice size limit, the batch exceeds its u32 byte/message limits,
+ * a qubit index exceeds UINT32_MAX, or a gate
+ * has more than 255 operands (127 pairs). MZ emits individual gates and
+ * has no 255-operand limit. Rejected calls leave the circuit unchanged. */
 typedef struct PecosCircuitBuilder PecosCircuitBuilder; /* opaque */
 PecosCircuitBuilder *pecos_circuit_new(void);
-void pecos_circuit_h(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
-void pecos_circuit_x(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
-void pecos_circuit_z(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
-void pecos_circuit_sz(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
-void pecos_circuit_cx(PecosCircuitBuilder *c, const size_t *pairs, size_t num_pairs);
+int32_t pecos_circuit_h(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
+int32_t pecos_circuit_x(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
+int32_t pecos_circuit_z(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
+int32_t pecos_circuit_sz(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
+int32_t pecos_circuit_cx(PecosCircuitBuilder *c, const size_t *pairs, size_t num_pairs);
 /* Rotations return 0 on success, -1 for non-finite angles without changing the circuit. */
 int32_t pecos_circuit_rx(PecosCircuitBuilder *c, double theta, const size_t *qubits, size_t n);
 int32_t pecos_circuit_rz(PecosCircuitBuilder *c, double theta, const size_t *qubits, size_t n);
 /* RZZ also returns -1 if 2 * num_pairs exceeds the slice size limit. */
 int32_t pecos_circuit_rzz(PecosCircuitBuilder *c, double theta, const size_t *pairs, size_t num_pairs);
-void pecos_circuit_mz(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
+int32_t pecos_circuit_mz(PecosCircuitBuilder *c, const size_t *qubits, size_t n);
 void pecos_circuit_build(PecosCircuitBuilder *c, uint8_t **output, size_t *output_len);
 void pecos_circuit_reset(PecosCircuitBuilder *c);
 void pecos_circuit_free(PecosCircuitBuilder *c);

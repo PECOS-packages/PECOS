@@ -7,6 +7,7 @@ Composable quantum simulation with event-driven noise modeling.
 The `sim_neo` simulation API is the recommended entry point:
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_neo::command::CommandBuilder;
 
@@ -18,7 +19,7 @@ let circuit = CommandBuilder::new()
 
 // Run 1000 shots with depolarizing noise
 let results = sim_neo(circuit).auto()
-    .depolarizing(0.01)
+    .depolarizing(0.01)?
     .sampling(monte_carlo(1000))
     .seed(42)
     .run();
@@ -26,6 +27,8 @@ let results = sim_neo(circuit).auto()
 for outcome in &results.outcomes {
     println!("{:?}", outcome);
 }
+# Ok(())
+# }
 ```
 
 ## Features

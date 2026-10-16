@@ -12,6 +12,10 @@ pub const BATCH_MAGIC: u32 = 0x50_45_43_53;
 // the same for scheduled batches/events. Version 2 is the runtime envelope.
 // Legacy versions 1 (ordinary) and 3/4 (scheduled) used lossy f64 radians.
 pub const PROTOCOL_VERSION: u8 = 5;
+/// Scheduled frame transport with exact angle fractions.
+pub const SCHEDULED_FRAME_VERSION: u8 = 6;
+/// Scheduled event transport with exact angle fractions.
+pub const SCHEDULED_EVENT_VERSION: u8 = 7;
 
 bitflags! {
     /// Flags that can be set on individual messages

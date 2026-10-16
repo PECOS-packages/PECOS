@@ -2072,7 +2072,7 @@ def resolve_result_tags_for_guppy(
     """Resolve result tags using Python-computed static measurement provenance.
 
     Occurrences contain measurement ordinals or None for unsupported values.
-    Raises ValueError for runtime loops, unknown tags, or invalid metadata.
+    Raises ValueError for measurement-count mismatches, unknown tags, or invalid metadata.
     Returns detector and observable JSON with tags replaced by record offsets.
     """
 

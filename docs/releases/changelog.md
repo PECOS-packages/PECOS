@@ -141,6 +141,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `WindowedLogicalSubgraphDecoder(dem, stab_coords, step, buffer)` now requires
   `step` and `buffer`; they previously defaulted to 8 and 4.
 
+### Python bug fixes
+
+- Fixed Guppy result tags binding to the wrong measurement when HUGR node order
+  differed from runtime order, such as with inlined helpers. Tags now bind from
+  the lowered program that is executed. Errors for uncertifiable `result_tags` /
+  `result_ref` programs have changed text: they previously mentioned runtime loops
+  and now explain how to use positional records or measurement IDs instead.
+
 ### Rust breaking changes
 
 - Seeded samples change for every engine on the shared Monte Carlo loop. Each shot

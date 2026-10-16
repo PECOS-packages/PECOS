@@ -1,4 +1,4 @@
-"""Static HUGR result-tag analysis, using the Rust oracle's Guppy fixtures."""
+"""HUGR loading and control-flow preflight, using the Guppy fixtures."""
 
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -9,12 +9,10 @@ from hugr.build.dfg import Dfg
 from hugr.cli import convert
 from hugr.envelope import EnvelopeConfig, EnvelopeFormat
 from hugr.package import Package
-from pecos.qec import _hugr_result_tags
-from pecos.qec._hugr_result_tags import (
-    extract_result_tag_measurements,
+from pecos.qec import _hugr_preflight
+from pecos.qec._hugr_preflight import (
     has_nontrivial_control_flow,
     load_hugr_from_bytes,
-    measurement_op_count,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "result_tags"
@@ -52,38 +50,12 @@ def test_indirect_call_is_nontrivial_control_flow() -> None:
     assert has_nontrivial_control_flow(hugr)
 
 
-def test_scrambled_binds_each_tag_to_its_measurement() -> None:
-    tags = extract_result_tag_measurements(_load("scrambled"))
-    assert tags == {"tag_a": [0], "tag_b": [1], "tag_c": [2]}
-    assert list(tags) == ["tag_a", "tag_b", "tag_c"]
-
-
-def test_looped_tag_is_single_static_measure_op() -> None:
-    hugr = _load("looped")
-    assert extract_result_tag_measurements(hugr)["synx"] == [0]
-    assert has_nontrivial_control_flow(hugr)
+def test_looped_has_nontrivial_control_flow() -> None:
+    assert has_nontrivial_control_flow(_load("looped"))
 
 
 def test_straight_line_program_has_no_nontrivial_control_flow() -> None:
     assert not has_nontrivial_control_flow(_load("scrambled"))
-
-
-def test_computed_and_constant_tags_are_excluded() -> None:
-    tags = extract_result_tag_measurements(_load("computed"))
-    assert tags["eq"] == [None]
-    assert tags["const"] == [None]
-
-
-def test_array_valued_tag_is_excluded() -> None:
-    assert extract_result_tag_measurements(_load("arr"))["pair"] == [None]
-
-
-@pytest.mark.parametrize(
-    ("name", "count"),
-    [("scrambled", 3), ("looped", 1), ("computed", 2), ("arr", 1), ("funcdecl", 1)],
-)
-def test_measurement_op_count(name: str, count: int) -> None:
-    assert measurement_op_count(_load(name)) == count
 
 
 @pytest.mark.parametrize("data", [b"", b"corrupt HUGR", b"HUGRiHJv\x00\x40{broken json"])
@@ -114,18 +86,16 @@ def test_loader_validates_every_module() -> None:
 
 
 def test_loader_valid_bytes_do_not_print_to_stdout(capfd: pytest.CaptureFixture[str]) -> None:
-    assert measurement_op_count(_load("scrambled")) == 3
+    assert not has_nontrivial_control_flow(_load("scrambled"))
     assert capfd.readouterr().out == ""
 
 
 def test_loader_uses_first_module() -> None:
     package = Package.from_bytes((FIXTURES / "scrambled.hugr").read_bytes())
     package.modules.append(_load("computed"))
-    assert extract_result_tag_measurements(load_hugr_from_bytes(package.to_bytes(EnvelopeConfig()))) == {
-        "tag_a": [0],
-        "tag_b": [1],
-        "tag_c": [2],
-    }
+    loaded = load_hugr_from_bytes(package.to_bytes(EnvelopeConfig()))
+    assert len(loaded) == len(package.modules[0])
+    assert [loaded[node].op for node in loaded] == [package.modules[0][node].op for node in package.modules[0]]
 
 
 @pytest.mark.parametrize("name", ["scrambled", "looped", "computed", "arr", "funcdecl"])
@@ -141,13 +111,22 @@ def test_loader_resolves_extensions_not_embedded_in_envelope(name: str, envelope
         # hugr-py's JSON writer misserializes DataflowBlock outputs in 0.18.3.
         # The native converter preserves these graphs when producing JSON.
         with as_file(files("tket_exts").joinpath("data")) as extension_data:
-            data = convert(data, format="json", extensions=[str(path) for path in extension_data.rglob("*.json")])
+            extension_paths = [str(path) for path in extension_data.rglob("*.json")]
+            data = convert(data, format="json", extensions=extension_paths)
+            # Native JSON conversion renumbers nodes. Convert the embedded
+            # reference too, so operation lists use the same node order.
+            embedded_data = convert(
+                (FIXTURES / f"{name}.hugr").read_bytes(),
+                format="json",
+                extensions=extension_paths,
+            )
+            assert Package.from_bytes(embedded_data).extensions
+            embedded = load_hugr_from_bytes(embedded_data)
     if envelope_format != EnvelopeFormat.S_EXPRESSION:
         assert not Package.from_bytes(data).extensions
     loaded = load_hugr_from_bytes(data)
-    assert measurement_op_count(loaded) == measurement_op_count(embedded)
+    assert [loaded[node].op for node in loaded] == [embedded[node].op for node in embedded]
     assert has_nontrivial_control_flow(loaded) == has_nontrivial_control_flow(embedded)
-    assert extract_result_tag_measurements(loaded) == extract_result_tag_measurements(embedded)
     assert not any(isinstance(loaded[node].op, ops.Custom) for node in loaded)
 
 
@@ -165,6 +144,6 @@ def test_loader_rejects_unknown_extension() -> None:
 
 def test_loader_rejects_unresolved_operation_after_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the Python guard independently of the native validator's rejection."""
-    monkeypatch.setattr(_hugr_result_tags, "validate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_hugr_preflight, "validate", lambda *_args, **_kwargs: None)
     with pytest.raises(ValueError, match=r"^Failed to parse HUGR: unresolved operation unknown\.extension\.missing$"):
         load_hugr_from_bytes(_unresolved_package())

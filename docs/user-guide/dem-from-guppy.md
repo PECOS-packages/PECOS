@@ -70,7 +70,7 @@ def rep_code_round() -> None:
     result("s0", measure(a0).read())
     result("s1", measure(a1).read())
     # Deferred tagging: bind now, tag later -- the tag->measurement
-    # binding follows dataflow, not source order.
+    # binding follows direct measurement reads in the executed lowered QIS.
     m0 = measure(d0).read()
     m1 = measure(d1).read()
     m2 = measure(d2).read()
@@ -121,13 +121,13 @@ same measurements):
 - `"meas_ids": [0, 4]` — stable stamped `MeasId`s, resolved against the
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
-  structurally from the compiled HUGR in Python. The tag→measurement binding follows
-  **dataflow, not syntax**: `m = measure(q).read()` followed later by
-  `result("tag", m)` is fully supported, in any order. Restrictions: the
-  tagged value must be a raw scalar measurement (computed, constant, and
-  array-valued results are rejected), and programs with runtime loops must
-  use `records`/`meas_ids` instead (each loop body has one static measure
-  op in the HUGR, not one per iteration — `result_tags` fails loudly).
+  from the lowered QIS program that is executed. Direct scalar measurement reads
+  are supported; other tagged values remain unresolved. Measurement and print
+  calls must be unconditional on returning paths and off every cycle. Generic
+  branching and loop programs are rejected by the HUGR control-flow check;
+  generator-certified programs bypass that check, but their tags still require
+  lowered-program certification. Use `records`/`meas_ids` when tags cannot be
+  certified.
 
 A practical split: `result_tags` for small straight-line programs,
 `records`/`meas_ids` for round-looped QEC programs.

@@ -1875,23 +1875,23 @@ fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyEr
 
 /// Resolve `result_tags` on detector/observable JSON using the sound,
 /// reorder-immune Guppy `result(tag, ...)` -> measurement binding recovered
-/// from the compiled HUGR.
+/// from the executed lowered QIS program.
 ///
-/// Python supplies the static HUGR analysis. The runtime-loop guard,
+/// Python supplies the static lowered-program analysis. The measurement-count guard,
 /// tag->record resolution, and unknown-tag validation are performed in Rust.
 /// Returns the rewritten `(detectors_json, observables_json)` with
 /// `result_tags` replaced by record offsets.
 ///
 /// Args:
 ///     `detectors_json` / `observables_json`: detector/observable JSON.
-///     `tag_to_ords`: tag occurrences in traversal order, with unsupported
+///     `tag_to_ords`: tag occurrences in lowered execution order, with unsupported
 ///         occurrences represented as None and supported ones as measurement ordinals.
-///     `static_meas_count`: whole-graph static measurement count.
+///     `static_meas_count`: certified lowered-program measurement count.
 ///     `source_meas_ids`: pre-runtime QIS measurement ids in source order.
 ///     `runtime_meas_ids`: stable measurement ids in runtime execution order.
 ///
 /// Raises:
-///     `ValueError`: on the runtime-loop guard, an unknown tag, malformed
+///     `ValueError`: on the measurement-count guard, an unknown tag, malformed
 ///         `result_tags`, or invalid JSON.
 #[pyfunction]
 #[pyo3(name = "resolve_result_tags_for_guppy")]

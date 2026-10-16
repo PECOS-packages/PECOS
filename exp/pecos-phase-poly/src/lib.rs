@@ -59,6 +59,7 @@ pub mod distillation;
 mod measurement;
 mod quadratic;
 pub mod runner;
+pub mod tricycle_ccz;
 pub use measurement::{IncompatibleMeasurement, XMeasurementCase};
 
 #[cfg(test)]

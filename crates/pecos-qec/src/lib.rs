@@ -64,6 +64,7 @@
 //! ```
 
 pub mod bivariate_bicycle;
+pub mod bivariate_tricycle;
 pub mod bounded_enumeration_distance;
 pub mod code_distance;
 pub mod coloration;
@@ -85,6 +86,7 @@ pub mod surface;
 pub use bivariate_bicycle::{
     BbMemoryBasis, BbMonomial, BivariateBicycleCode, BivariateBicycleError, bb_memory_circuit,
 };
+pub use bivariate_tricycle::{BivariateTricycleCode, BivariateTricycleError};
 pub use bounded_enumeration_distance::{
     BoundedEnumerationBackendError, BoundedEnumerationDistance, CpuLevelEnumerationBackend,
     LevelEnumerationBackend, LevelEnumerationInput, LevelEnumerationMinimum,

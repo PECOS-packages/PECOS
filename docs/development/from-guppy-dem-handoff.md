@@ -79,8 +79,7 @@ QIS text used for execution. CFG dominance and cycle checks certify measurement
 and print order across direct calls, independently of LLVM block layout. Only
 direct scalar measurement reads carry provenance; unsupported values preserve
 an unresolved occurrence, and uncertifiable schedules fail closed. The runtime
-measurement count, per-tag print-occurrence counts, and identities are checked
-against the certified program.
+measurement count and identities are checked against the certified program.
 
 This should support calls like:
 

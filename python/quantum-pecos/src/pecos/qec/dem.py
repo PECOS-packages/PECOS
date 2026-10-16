@@ -48,7 +48,6 @@ import hashlib
 import json
 import math
 import warnings
-from collections import Counter
 from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
@@ -71,7 +70,6 @@ from pecos.qec.dem_spec import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
     from typing import Self
 
     from hugr import Hugr
@@ -661,8 +659,8 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     """Cheap gate: does any entry use ``result_tags``? (substring check).
 
     Only decides whether JSON metadata needs tag resolution. Static extraction
-    is performed in Python, which also checks the measurement and tag-occurrence counts;
-    metadata resolution and a second measurement-count guard stay in Rust.
+    is performed in Python; JSON metadata resolution and its measurement-count
+    guard stay in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
@@ -802,34 +800,6 @@ def _check_measurement_count(static_count: int, source_ids: Sequence[int]) -> No
         raise _CertificationError(msg)
 
 
-def _check_result_tag_occurrences(
-    tag_occurrences: Mapping[str, Sequence[int | None]],
-    runtime_occurrences: Mapping[str, int],
-    tags: Iterable[str],
-) -> None:
-    for tag in sorted(set(tags)):
-        certified_count = len(tag_occurrences.get(tag, ()))
-        runtime_count = runtime_occurrences.get(tag, 0)
-        if certified_count != runtime_count:
-            msg = (
-                f"result tag {tag!r} has {certified_count} certified occurrence(s) but "
-                f"the runtime trace contains {runtime_count} occurrence(s)"
-            )
-            raise _CertificationError(msg)
-
-
-def _json_result_tag_names(*documents: str) -> set[str]:
-    """Read tag names; the Rust resolver still validates tag-field shapes."""
-    tags: set[str] = set()
-    for document in documents:
-        entries = json.loads(document) if document.strip() else []
-        if isinstance(entries, list):
-            for entry in entries:
-                if isinstance(entry, dict) and isinstance(entry.get("result_tags"), list):
-                    tags.update(tag for tag in entry["result_tags"] if isinstance(tag, str))
-    return tags
-
-
 def _compiler_certified_result_traces(
     generator_layout: Sequence[Any] | None,
     analysis: _GuppyProgramAnalysis,
@@ -872,7 +842,6 @@ def _compiler_certified_result_traces(
         tag_occurrences, static_measurement_count = analysis.result_tags
         source_measurement_ids = _validated_source_measurement_ids(circuit)
         _check_measurement_count(static_measurement_count, source_measurement_ids)
-        _check_result_tag_occurrences(tag_occurrences, runtime_occurrences, candidate_tags)
     except _CertificationError as error:
         if required_tags:
             msg = _tag_certification_message("result_ref")
@@ -1404,19 +1373,8 @@ class GuppyDemBuilder:
                 "guppy_source_measurement_ids",
             )
             source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
-            # Preserve the raw trace: compiler-certified placeholders are not
-            # independent evidence of how often the executed program printed.
-            runtime_occurrences = Counter(
-                trace["name"] for trace in runtime_result_traces if isinstance(trace.get("name"), str)
-            )
             try:
                 tag_occurrences, static_measurement_count = analysis.result_tags
-                _check_measurement_count(static_measurement_count, source_measurement_ids)
-                _check_result_tag_occurrences(
-                    tag_occurrences,
-                    runtime_occurrences,
-                    _json_result_tag_names(raw_detectors_json, raw_observables_json),
-                )
             except _CertificationError as error:
                 msg = _tag_certification_message("result_tags")
                 raise ValueError(msg) from error

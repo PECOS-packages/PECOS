@@ -84,6 +84,82 @@ p: {PRINT}
 
 
 @pytest.mark.parametrize(
+    "instruction",
+    [f"{PRINT} {PRINT}", f"%a = add i64 1, 2 {PRINT}", f"ret void {PRINT}"],
+    ids=["after-call", "after-add", "after-terminator"],
+)
+@pytest.mark.parametrize("location", ["entry", "dead-block", "callee"])
+def test_call_outside_instruction_opcode(instruction: str, location: str) -> None:
+    body = f"entry:\n{MEASURE}\n{READ}\n{instruction}"
+    if not instruction.startswith("ret"):
+        body += "\nret void"
+    if location == "dead-block":
+        body = "start:\nret void\n" + body
+    ir = (
+        _program("call void @helper()\nret void", f"define void @helper() {{\n{body}\n}}")
+        if location == "callee"
+        else _program(body)
+    )
+    with pytest.raises(_CertificationError, match="call outside instruction opcode"):
+        extract_result_tag_measurements(ir)
+
+
+def test_two_prints_on_one_line_cannot_drop_an_occurrence() -> None:
+    ir = _program(f"""
+entry:
+  {MEASURE}
+  {READ}
+  %g = call i64 @___lazy_measure(i64 1)
+  %w = call i1 @___read_future_bool(i64 %g)
+  {PRINT} call void @print_bool(ptr @tag, i64 11, i1 %w)
+  ret void
+""")
+    with pytest.raises(_CertificationError, match="call outside instruction opcode"):
+        extract_result_tag_measurements(ir)
+
+
+@pytest.mark.parametrize(
+    ("instruction", "terminator"),
+    [
+        (f"{READ} br label %skip", "br"),
+        (f"{READ} ret void", "ret"),
+        ("%a = add i64 1, 2 unreachable", "unreachable"),
+    ],
+    ids=["br-after-call", "ret-after-call", "unreachable-after-add"],
+)
+def test_terminator_outside_instruction_opcode(instruction: str, terminator: str) -> None:
+    # Instructions after a hidden terminator would start an unnamed block, so a
+    # following measurement or print must not be read as unconditional.
+    ir = _program(f"""
+entry:
+  {MEASURE}
+  {instruction}
+  {PRINT}
+  br label %skip
+skip:
+  ret void
+""")
+    with pytest.raises(_CertificationError, match=f"^.*{terminator} outside instruction opcode$"):
+        extract_result_tag_measurements(ir)
+
+
+@pytest.mark.parametrize("marker", ["", "tail ", "musttail ", "notail "])
+def test_call_names_and_strings_are_not_opcodes(marker: str) -> None:
+    ir = _program(
+        f"""
+entry:
+  %call = call i64 @___lazy_measure(i64 0)
+  %call.i = call i1 @___read_future_bool(i64 %call)
+  call void @print_bool(ptr @"call", i64 14, i1 %call.i)
+  {marker}call void @"call helper"(i1 %cond, ptr %fn) "call"="call"
+  ret void
+""",
+        '@"call" = private constant [15 x i8] c"\\0EUSER:BOOL:call"\ndeclare void @"call helper"(i1, ptr)',
+    )
+    assert extract_result_tag_measurements(ir) == ({"call": [0]}, 1)
+
+
+@pytest.mark.parametrize(
     "terminator",
     [
         "ret void",

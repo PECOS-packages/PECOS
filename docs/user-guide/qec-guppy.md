@@ -236,8 +236,8 @@ surface_build = build_dem_from_guppy(
   path. Repeated tags use `occurrence=...`.
 - Generic tags are bound from the lowered QIS program that is executed.
   Measurement and print calls must be unconditional on returning paths and off
-  every cycle. Other tagged values remain unresolved. Runtime measurement and
-  print-occurrence counts are checked against the certified program.
+  every cycle. Other tagged values remain unresolved. The runtime measurement
+  count is checked against the certified program.
 - Aggregate result arrays are not accepted as generic measurement provenance:
   their public element order is not yet part of the compiler identity ABI. Emit
   direct scalar sideband tags when decoder inputs must be reconstructed from

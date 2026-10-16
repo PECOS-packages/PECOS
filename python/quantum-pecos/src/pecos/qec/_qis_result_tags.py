@@ -111,6 +111,20 @@ def _instruction_start(tokens: list[str]) -> int:
     return start
 
 
+def _validate_opcode_position(instruction: str) -> None:
+    """Reject hidden calls and terminators in the reader's one-instruction-per-line subset."""
+    tokens = _tokens(instruction)
+    opcode = _instruction_start(tokens)
+    if tokens[opcode] in {"tail", "musttail", "notail"}:
+        opcode += 1
+    depth = 0
+    for index, lexeme in enumerate(tokens):
+        if (lexeme == "call" or lexeme in _TERMINATORS) and depth == 0 and index != opcode:
+            msg = f"{lexeme} outside instruction opcode"
+            raise _CertificationError(msg)
+        depth += (lexeme in {"(", "[", "{", "<"}) - (lexeme in {")", "]", "}", ">"})
+
+
 def _call(instruction: str) -> _Call | None:
     tokens = _tokens(instruction)
     start = _instruction_start(tokens)
@@ -196,6 +210,8 @@ def _blocks(body: str) -> dict[str, list[str]]:
     # Unsupported terminators are structurally valid here; reachable ones are
     # rejected by _successors when their control flow would need analysis.
     for block, instructions in blocks.items():
+        for instruction in instructions:
+            _validate_opcode_position(instruction)
         for instruction in instructions[:-1]:
             opcode = _opcode(instruction)
             if opcode in _TERMINATORS:

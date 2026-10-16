@@ -1099,48 +1099,86 @@ def _certification_message(reference: str) -> str:
     )
 
 
-@guppy
-def _repeated_tagged_measurements() -> None:
-    result("t", measure(qubit()).read())
-    result("t", measure(qubit()).read())
-
-
-@pytest.mark.parametrize("references", ["typed", "json-detector", "json-observable", "records"])
-@pytest.mark.parametrize("ordinals", [[1], [0, 1, 0]], ids=["missing-print", "extra-print"])
-def test_result_occurrence_count_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
-    references: str,
-    ordinals: list[int],
-) -> None:
-    extractor = Mock(return_value=({"t": ordinals}, 2))
-    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
-
-    def build() -> None:
-        if references.startswith("json"):
-            DetectorErrorModel.from_guppy(
-                _repeated_tagged_measurements,
-                num_qubits=2,
-                detectors_json='[{"id":0,"result_tags":["t"]}]' if references == "json-detector" else "[]",
-                observables_json='[{"id":0,"result_tags":["t"]}]' if references == "json-observable" else "[]",
-            )
-        else:
-            built = build_dem_from_guppy(
-                _repeated_tagged_measurements,
-                num_qubits=2,
-                detectors=[Detector(rec[-1] if references == "records" else result_ref("t"))],
-            )
-            if references == "records":
-                assert built.named_result_binding == "none"
-
-    if references == "records":
-        build()
-    else:
-        reference = "result_ref" if references == "typed" else "result_tags"
-        with pytest.raises(ValueError, match=_certification_message(reference)) as raised:
-            build()
-        assert isinstance(raised.value.__cause__, _CertificationError)
-        assert str(raised.value.__cause__).endswith(
-            f"result tag 't' has {len(ordinals)} certified occurrence(s) "
-            "but the runtime trace contains 2 occurrence(s)",
+def test_json_measurement_count_guard_stays_in_rust(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        _qis_result_tags,
+        "extract_result_tag_measurements",
+        Mock(return_value=({"a": [0], "b": [1]}, 3)),
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^DEM builder parse error: Cannot bind result_tags: "
+            r"the certified lowered program has 3 measurement\(s\) but "
+            r"the traced program emitted 2 measurement\(s\)\.$"
+        ),
+    ) as raised:
+        DetectorErrorModel.from_guppy(
+            _scrambled_tagged_measurements,
+            num_qubits=2,
+            detectors_json='[{"id":0,"result_tags":["a"]}]',
         )
-    extractor.assert_called_once()
+    assert raised.value.__cause__ is None
+
+
+@guppy
+def _measurements_with_partially_traced_integer_tag() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    result("m", measure(q0).read())
+    result("n", 1)
+    result("n", 3)
+    result("k", measure(q1).read())
+
+
+@pytest.mark.parametrize("required", [True, False], ids=["result-ref", "records"])
+def test_integer_prints_preserve_measurement_bindings(*, required: bool) -> None:
+    built = build_dem_from_guppy(
+        _measurements_with_partially_traced_integer_tag,
+        num_qubits=2,
+        detectors=[Detector(result_ref("m") if required else rec[-1])],
+        p_meas=0.1,
+    )
+    assert built.named_result_binding == "compiler_direct_scalar_partial"
+    assert built.evaluate_results({"m": 1, "k": 1}) == ([1], 0)
+    # Distinct values prove that m binds the first measurement, and rec[-1] the last.
+    assert built.evaluate_results({"m": 1, "k": 0}) == ([int(required)], 0)
+
+
+def test_integer_prints_preserve_json_measurement_binding() -> None:
+    def dem(detectors_json: str) -> str:
+        return DetectorErrorModel.from_guppy(
+            _measurements_with_partially_traced_integer_tag,
+            num_qubits=2,
+            detectors_json=detectors_json,
+            p_meas=0.1,
+        ).to_string()
+
+    assert dem('[{"id":0,"result_tags":["m"]}]') == dem('[{"id":0,"records":[-2]}]')
+
+
+@pytest.mark.parametrize("references", ["typed", "json"])
+def test_integer_prints_keep_nonmeasurement_diagnostic(references: str) -> None:
+    if references == "typed":
+        with pytest.raises(
+            ValueError,
+            match=r"^result_ref 'n' occurrence 0 is not a direct scalar measurement result$",
+        ):
+            build_dem_from_guppy(
+                _measurements_with_partially_traced_integer_tag,
+                num_qubits=2,
+                detectors=[Detector(result_ref("n"))],
+            )
+    else:
+        with pytest.raises(
+            ValueError,
+            match=(
+                r'^DEM builder parse error: Detector references result_tag "n", '
+                r"but occurrence 0 is not a direct scalar measurement result$"
+            ),
+        ):
+            DetectorErrorModel.from_guppy(
+                _measurements_with_partially_traced_integer_tag,
+                num_qubits=2,
+                detectors_json='[{"id":0,"result_tags":["n"]}]',
+            )

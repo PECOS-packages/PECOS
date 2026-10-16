@@ -486,7 +486,7 @@ approximation: it invents components that need not be physical mechanisms and
 can decode less accurately even when their observable labels are consistent.
 
 Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
+`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- alternatively, supply a
 decomposed projection (a model written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,

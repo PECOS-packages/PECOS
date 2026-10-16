@@ -512,7 +512,7 @@ The general form of `"mop"`s is:
 The `"duration"` field supports seconds (s), milliseconds (ms), microseconds (us), and nanoseconds (ns) as its units.
 
 Currently, `"mop"`s are more defined by the implementation of the Machine and ErrorModel classes in PECOS. Therefore,
-the `"metadata"` tag is heavily depended upon to supply values that these classes expect. An example of indicating
+the `"metadata"` tag is heavily relied upon to supply values that these classes expect. An example of indicating
 idling and transport include:
 
 ```json5

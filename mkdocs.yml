@@ -60,6 +60,7 @@ nav:
   - Runtime QIS Tracing: user-guide/runtime-qis-tracing.md
   - Runtime Custom Events: user-guide/runtime-custom-events.md
   - Scheduled Idle Simulation: user-guide/scheduled-idle-simulation.md
+  - Scheduled Event Adapters: user-guide/scheduled-event-adapters.md
   - Simulators: user-guide/simulators.md
   - Stabilizer Tensor Networks: user-guide/stabilizer-tensor-networks.md
   - Engine Selection: user-guide/engine-selection.md
@@ -105,6 +106,9 @@ nav:
   - Parallel Blocks: development/parallel-blocks-and-optimization.md
   - Noise Event Replay: development/noise-event-replay.md
   - Just-in-time DEM Slices: development/jit-dem-slices.md
+  - From Guppy DEM Handoff: development/from-guppy-dem-handoff.md
+  - Hosted Operations: development/hosted-operations.md
+  - Measurement Crosstalk DEM: development/measurement-crosstalk-dem.md
 - Experimental:
   - experimental/index.md
   - Composable Noise (pecos-neo): experimental/composable-noise.md

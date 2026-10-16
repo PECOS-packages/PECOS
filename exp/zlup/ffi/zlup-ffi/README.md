@@ -70,7 +70,7 @@ pub extern "C" fn mwpm_free(decoder: *mut MyMwpmDecoder) {
 
 ## Documentation
 
-See the [Zlup Rust Integration Guide](../docs/rust-integration.md) for complete documentation.
+See the [Zlup Rust Integration Guide](../../docs/rust-integration.md) for complete documentation.
 
 ## License
 

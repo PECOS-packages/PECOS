@@ -1,4 +1,4 @@
-# ![PECOS](images/pecos_logo.svg)
+# ![PECOS](../../images/pecos_logo.svg)
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
@@ -53,7 +53,7 @@ PECOS now consists of multiple interconnected components:
 
 ### Quantum Error Correction Decoders
 
-PECOS includes LDPC (Low-Density Parity-Check) quantum error correction decoders as optional components. See [DECODERS.md](DECODERS.md) for detailed information about:
+PECOS includes LDPC (Low-Density Parity-Check) quantum error correction decoders as optional components. See [Decoders Guide](../../docs/user-guide/decoders.md) for detailed information about:
 - LDPC decoder algorithms and variants
 - How to build and use decoders
 - Performance considerations
@@ -128,9 +128,9 @@ pecos = "0.x.x"  # Replace with the latest version
 
   The installer automatically configures PECOS after installation.
 
-  For detailed LLVM installation instructions for all platforms (macOS, Linux, Windows), see the [**Getting Started Guide**](docs/user-guide/getting-started.md#llvm-for-qis-support).
+  For detailed LLVM installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../../docs/user-guide/llvm-setup.md).
 
-  For full development environment setup, see the [**Development Setup Guide**](docs/development/DEVELOPMENT.md).
+  For full development environment setup, see the [**Development Setup Guide**](../../docs/development/DEVELOPMENT.md).
 
   **Building without LLVM:** If you don't need LLVM IR support:
   ```sh
@@ -161,7 +161,7 @@ println(pecos_version())  # Prints PECOS version
 ## Development Setup
 
 If you are interested in editing or developing the code in this project, see this
-[development documentation](docs/development/DEVELOPMENT.md) to get started.
+[development documentation](../../docs/development/DEVELOPMENT.md) to get started.
 
 ## Simulators with special requirements
 
@@ -174,7 +174,7 @@ Certain simulators from `pecos.simulators` require external packages that are no
   - CUDA Toolkit 13 or 12 (system-level installation)
   - Python packages: `cupy-cuda13x`, `cuquantum-python-cu13`, `pytket-cutensornet`
 
-**Installation:** See the comprehensive [CUDA Setup Guide](docs/user-guide/cuda-setup.md) for detailed step-by-step instructions.
+**Installation:** See the comprehensive [CUDA Setup Guide](../../docs/user-guide/cuda-setup.md) for detailed step-by-step instructions.
 
 **Quick install** (after installing CUDA Toolkit):
 ```bash
@@ -241,9 +241,9 @@ You can also use the [Zenodo DOI](https://zenodo.org/records/13700104), which wo
 
 ## License
 
-This project is licensed under the Apache-2.0 License - see the [LICENSE](./LICENSE) and [NOTICE](NOTICE) files for
+This project is licensed under the Apache-2.0 License - see the [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE) files for
 details.
 
 ## Supported by
 
-[![Quantinuum](./images/Quantinuum_(word_trademark).svg)](https://www.quantinuum.com/)
+[![Quantinuum](<../../images/Quantinuum_(word_trademark).svg>)](https://www.quantinuum.com/)

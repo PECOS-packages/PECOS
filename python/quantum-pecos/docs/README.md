@@ -1,6 +1,6 @@
 # Where is the Documentation?
 
-To view the documentation open: [_build/html/index.html](./_build/html/index.html)
+To view the built documentation open `_build/html/index.html` (generated after running `make html`).
 
 ## Building the Docs
 

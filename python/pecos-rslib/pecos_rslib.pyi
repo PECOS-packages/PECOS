@@ -24,6 +24,7 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -2872,7 +2873,9 @@ class qec:
         @property
         def num_detectors(self) -> int | None: ...
         @property
-        def projection(self) -> qec.ProjectionReport | None: ...
+        def projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
         def decode_syndrome(self, syndrome: list[int]) -> decoders.ObservableFlips: ...
 
     class DemBuilder:
@@ -2989,9 +2992,13 @@ class qec:
 
     class DecoderComparisonResult:
         @property
-        def dut_projection(self) -> qec.ProjectionReport | None: ...
+        def dut_projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
         @property
-        def reference_projection(self) -> qec.ProjectionReport | None: ...
+        def reference_projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
         @property
         def counts(self) -> list[list[int]]: ...
         @property
@@ -3046,7 +3053,8 @@ class qec:
 
     class DecodeResult:
         @property
-        def projection(self) -> qec.ProjectionReport | None: ...
+        def projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
         num_shots: int
         num_errors: int
         logical_error_rate: float
@@ -3403,7 +3411,7 @@ class decoders:
 
     @staticmethod
     def pymatching(
-        *, correlated: bool, error_probability: float | None = ..., irreducible: str = "refuse"
+        *, correlated: bool, error_probability: float | None = ..., irreducible: Literal["refuse", "drop"] = "refuse"
     ) -> decoders.DecoderSpec: ...
     @staticmethod
     def tesseract(
@@ -3450,7 +3458,7 @@ class decoders:
     ) -> decoders.DecoderSpec: ...
     @staticmethod
     def fusion_blossom(
-        *, correlated: bool = ..., solver: str = ..., irreducible: str = "refuse"
+        *, correlated: bool = ..., solver: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
     ) -> decoders.DecoderSpec: ...
     @staticmethod
     def relay_bp(
@@ -3472,9 +3480,11 @@ class decoders:
         *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
     ) -> decoders.DecoderSpec: ...
     @staticmethod
-    def pecos_uf(*, preset: str = ..., irreducible: str = "refuse") -> decoders.DecoderSpec: ...
+    def pecos_uf(*, preset: str = ..., irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
-    def belief_matching(*, mode: str = ..., irreducible: str = "refuse") -> decoders.DecoderSpec: ...
+    def belief_matching(
+        *, mode: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def windowed(
         *,
@@ -3519,9 +3529,9 @@ class decoders:
     @staticmethod
     def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
     @staticmethod
-    def k_mwpm(*, k: int = ..., irreducible: str = "refuse") -> decoders.DecoderSpec: ...
+    def k_mwpm(*, k: int = ..., irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
-    def astar(*, irreducible: str = "refuse") -> decoders.DecoderSpec: ...
+    def astar(*, irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
     def astar_full() -> decoders.DecoderSpec: ...
     @staticmethod
@@ -3530,7 +3540,7 @@ class decoders:
     def belief_find() -> decoders.DecoderSpec: ...
     @staticmethod
     def perturbed_fb_corr(
-        *, k: int = ..., sigma: float = ..., seed: int = ..., irreducible: str = "refuse"
+        *, k: int = ..., sigma: float = ..., seed: int = ..., irreducible: Literal["refuse", "drop"] = "refuse"
     ) -> decoders.DecoderSpec: ...
 
     class BpResult:

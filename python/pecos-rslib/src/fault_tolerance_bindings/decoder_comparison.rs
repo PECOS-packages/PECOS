@@ -140,8 +140,12 @@ impl HeadlineProportion {
 )]
 #[derive(Clone, Debug)]
 pub(super) struct PyDecoderComparisonResult {
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     #[pyo3(get)]
     pub(super) dut_projection: Option<super::PyProjectionReport>,
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     #[pyo3(get)]
     pub(super) reference_projection: Option<super::PyProjectionReport>,
     counts: DecoderComparisonCounts,

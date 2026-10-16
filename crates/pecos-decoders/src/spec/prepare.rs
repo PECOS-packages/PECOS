@@ -99,8 +99,14 @@ pub(super) fn prepare_model_in_context(
     PROJECTION_INPUTS.lock().unwrap().push(structured.clone());
     let projected = project_graphlike(structured, policy).map_err(|error| {
         let mut message = format!("{}: {error}", context.decoder_names(spec));
-        if matches!(error, GraphlikeProjectionError::Irreducible { .. }) {
-            let _ = write!(message, ". {} Dropping removes those faults from the decoder's model; alternatively use a hyperedge-capable decoder such as bp_osd or tesseract.", context.drop_remedy(spec));
+        match error {
+            GraphlikeProjectionError::Irreducible { .. } => {
+                let _ = write!(message, ". {} Dropping removes those faults from the decoder's model; alternatively use a hyperedge-capable decoder such as bp_osd or tesseract.", context.drop_remedy(spec));
+            }
+            GraphlikeProjectionError::SearchBudget { .. } | GraphlikeProjectionError::OverlapOnly { .. } => {
+                message.push_str(". irreducible=drop does not apply to this effect; use a hyperedge-capable decoder such as bp_osd or tesseract.");
+            }
+            _ => {}
         }
         DecoderError::InvalidConfiguration(message)
     })?;

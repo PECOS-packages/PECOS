@@ -1,7 +1,6 @@
 //! Immutable Python projection diagnostics and DEM input conversion.
 
-use super::{PyDetectorErrorModel, RustDetectorErrorModel, decoder_build_error_to_py};
-use pecos_decoder_core::DecoderError;
+use super::{PyDetectorErrorModel, decoder_build_error_to_py};
 use pecos_decoder_core::graphlike_projection::ProjectionReport;
 use pecos_decoder_core::window::StructuredDem;
 use pecos_decoders::batch::{DecoderFactory, PreparedModel};
@@ -84,30 +83,6 @@ impl PyProjectionReport {
     }
 }
 
-/// Parse exactly the text used for corpus identity, then overlay object-only labels.
-pub(super) fn structured_object_model(
-    text: &str,
-    dem: &RustDetectorErrorModel,
-) -> Result<StructuredDem, DecoderError> {
-    let mut structured = StructuredDem::from_dem_str(text)?;
-    structured.detector_fault_sectors = vec![None; structured.num_detectors];
-    for detector in &dem.detectors {
-        if let Some(sector) = &detector.fault_sector {
-            let slot = structured
-                .detector_fault_sectors
-                .get_mut(detector.id as usize)
-                .ok_or_else(|| {
-                    DecoderError::InvalidConfiguration(format!(
-                        "labelled detector D{} is outside the standard DEM text's detector count {}",
-                        detector.id, structured.num_detectors
-                    ))
-                })?;
-            *slot = Some(sector.clone());
-        }
-    }
-    Ok(structured)
-}
-
 pub(super) enum DemInput {
     Text(String),
     Object {
@@ -122,9 +97,12 @@ impl DemInput {
             return Ok(Self::Text(dem.extract()?));
         }
         if let Ok(dem) = dem.extract::<PyRef<'_, PyDetectorErrorModel>>() {
+            // Both immutable calls render the same deterministic standard text.
             let text = dem.inner.to_string();
-            let structured =
-                structured_object_model(&text, &dem.inner).map_err(decoder_build_error_to_py)?;
+            let structured = dem
+                .inner
+                .to_structured_decoder_dem()
+                .map_err(decoder_build_error_to_py)?;
             return Ok(Self::Object { text, structured });
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
@@ -146,39 +124,5 @@ impl DemInput {
             Self::Text(text) => spec.decode_model(text),
             Self::Object { structured, .. } => spec.decode_structured_model(structured),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pecos_qec::fault_tolerance::dem_builder::DetectorDef;
-
-    // Contract: text owns dimensions, probabilities and mechanism order; objects add labels only.
-    #[test]
-    fn object_overlay_preserves_parsed_model() {
-        let mut dem = RustDetectorErrorModel::new();
-        let mut detector = DetectorDef::new(2);
-        detector.fault_sector = Some("X".into());
-        dem.detectors.push(detector);
-        let text = "error(0.012346) D2 L0\nerror(0.023457) D0 D1\ndetector D3\n";
-        let mut expected = StructuredDem::from_dem_str(text).unwrap();
-        expected.detector_fault_sectors = vec![None, None, Some("X".into()), None];
-        assert_eq!(structured_object_model(text, &dem).unwrap(), expected);
-    }
-
-    // Contract: labels cannot silently grow the dimensions certified by corpus identity.
-    #[test]
-    fn object_overlay_rejects_label_outside_text_dimensions() {
-        let mut dem = RustDetectorErrorModel::new();
-        let mut detector = DetectorDef::new(2);
-        detector.fault_sector = Some("X".into());
-        dem.detectors.push(detector);
-        let error = structured_object_model("error(0.1) D0", &dem).unwrap_err();
-        assert!(
-            error.to_string().contains(
-                "labelled detector D2 is outside the standard DEM text's detector count 1"
-            )
-        );
     }
 }

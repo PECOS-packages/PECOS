@@ -27,6 +27,8 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedModel {
     pub model: DecodeModel,
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     pub projection: Option<ProjectionReport>,
 }
 
@@ -140,7 +142,8 @@ impl DecodeOptions {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct DecodeResult {
-    /// Projection performed once before worker construction, if needed.
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     pub projection: Option<ProjectionReport>,
     /// Number of decoded shots.
     pub num_shots: usize,

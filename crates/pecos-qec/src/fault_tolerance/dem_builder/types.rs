@@ -5389,74 +5389,32 @@ impl DetectorErrorModel {
         &self.contributions
     }
 
-    /// Convert this PECOS model into the structured decoder input boundary.
+    /// Parse this model's standard DEM text and overlay opaque fault-sector labels by ID.
     ///
-    /// This uses the same equal-effect grouping and XOR probability combination
-    /// as [`Self::to_mechanisms`] and the default [`Display`] representation.
-    /// Detector coordinates and opaque fault-sector labels are copied by detector ID.
-    /// Tracked-Pauli outputs are rejected because matching decoders only consume
-    /// standard DEM observables.
+    /// Dimensions, coordinates, mechanism order, and probabilities are exactly those
+    /// of [`Self::to_string`], including its probability formatting (issue #1260).
+    /// Tracked-Pauli outputs are omitted by the standard text representation.
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) when
-    /// tracked-Pauli targets are present, model dimensions are inconsistent, or a
-    /// detector's fault-sector label is empty.
+    /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) if the
+    /// standard DEM text cannot be parsed or a detector's fault-sector label is empty.
     pub fn to_structured_decoder_dem(
         &self,
     ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
     {
-        use pecos_decoder_core::errors::DecoderError;
-        use pecos_decoder_core::window::{
-            StructuredDem, StructuredDemComponent, StructuredDemError,
-        };
-
-        if !self.tracked_paulis.is_empty()
-            || self.contributions.iter().any(|contribution| {
-                let kind = contribution.component_kind();
-                kind.components()
-                    .iter()
-                    .any(|component| !component.tracked_paulis.is_empty())
-            })
-        {
-            return Err(DecoderError::InvalidConfiguration(
-                "structured matching-decoder DEMs do not support PECOS tracked-Pauli outputs"
-                    .into(),
-            ));
-        }
-
-        let num_detectors = self.num_detectors();
-        let mut detector_coords = vec![None; num_detectors];
-        let mut detector_fault_sectors = vec![None; num_detectors];
+        let parsed = pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
+        let mut detector_fault_sectors = parsed.detector_fault_sectors;
         for detector in &self.detectors {
-            let index = detector.id as usize;
-            let Some(slot) = detector_coords.get_mut(index) else {
-                return Err(DecoderError::InvalidConfiguration(format!(
-                    "detector D{} is outside the model's detector dimension {num_detectors}",
-                    detector.id
-                )));
-            };
-            *slot = detector.coords.map(|coords| coords.to_vec());
-            detector_fault_sectors[index].clone_from(&detector.fault_sector);
+            // The index is in bounds because to_string declares every detector definition.
+            detector_fault_sectors[detector.id as usize].clone_from(&detector.fault_sector);
         }
-
-        let (mechanisms, _) = self.to_mechanisms();
-        let errors = mechanisms
-            .iter()
-            .map(|(probability, detectors, observables)| StructuredDemError {
-                probability: *probability,
-                components: vec![StructuredDemComponent {
-                    detectors: detectors.clone(),
-                    observables: observables.clone(),
-                }],
-            })
-            .collect();
-        StructuredDem::try_new(
-            errors,
-            detector_coords,
+        pecos_decoder_core::window::StructuredDem::try_new(
+            parsed.errors,
+            parsed.detector_coords,
             detector_fault_sectors,
-            num_detectors,
-            self.num_observables(),
+            parsed.num_detectors,
+            parsed.num_observables,
         )
     }
 
@@ -9591,6 +9549,28 @@ mod tests {
             dem.to_structured_decoder_dem().unwrap_err().to_string(),
             "Invalid configuration: detector D3 fault_sector is empty"
         );
+    }
+
+    #[test]
+    fn structured_decoder_handoff_matches_standard_text_with_sparse_ids() {
+        let mut dem = DetectorErrorModel::new();
+        let mut detector = DetectorDef::new(7);
+        detector.fault_sector = Some("X".into());
+        dem.add_detector(detector);
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_paulis([7], [2], [4]),
+            0.012_345_678_9,
+        );
+        dem.tracked_paulis.push(DemOutput::new(4));
+        let mut expected =
+            pecos_decoder_core::window::StructuredDem::from_dem_str(&dem.to_string()).unwrap();
+        assert_ne!(
+            expected.errors[0].probability.to_bits(),
+            0.012_345_678_9_f64.to_bits()
+        );
+        expected.detector_fault_sectors[7] = Some("X".into());
+        assert_eq!(expected.num_detectors, 8);
+        assert_eq!(dem.to_structured_decoder_dem().unwrap(), expected);
     }
 
     #[test]

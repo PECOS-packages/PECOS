@@ -1663,6 +1663,8 @@ pub struct PyStructuredDemDecoder {
     /// Prepared model in standard DEM text, for inspecting the chosen components.
     #[pyo3(get)]
     dem: String,
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     #[pyo3(get)]
     projection: Option<PyProjectionReport>,
     inner: Box<dyn pecos_decoders::ObservableDecoder>,
@@ -2515,7 +2517,9 @@ impl PyDetectorErrorModel {
                 "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
             ));
         };
-        let model = projection::structured_object_model(&self.inner.to_string(), &self.inner)
+        let model = self
+            .inner
+            .to_structured_decoder_dem()
             .map_err(decoder_build_error_to_py)?;
         let num_observables = model.num_observables;
         let prepared = spec

@@ -192,7 +192,9 @@ class StructuredDemDecoder:
     @property
     def dem(self) -> str: ...
     @property
-    def projection(self) -> ProjectionReport | None: ...
+    def projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
+
     @property
     def num_detectors(self) -> int | None: ...
     def decode_syndrome(self, syndrome: list[int]) -> decoders.ObservableFlips: ...
@@ -473,9 +475,13 @@ class ProjectionReport:
 
 class DecoderComparisonResult:
     @property
-    def dut_projection(self) -> ProjectionReport | None: ...
+    def dut_projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
+
     @property
-    def reference_projection(self) -> ProjectionReport | None: ...
+    def reference_projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
+
     @property
     def counts(self) -> list[list[int]]: ...
     @property
@@ -599,7 +605,8 @@ class DecodeStats:
 
 class DecodeResult:
     @property
-    def projection(self) -> ProjectionReport | None: ...
+    def projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
     num_shots: int
     num_errors: int
     logical_error_rate: float

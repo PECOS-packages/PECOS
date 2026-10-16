@@ -149,6 +149,9 @@ that cannot be decomposed. `pymatching(correlated=True, irreducible="drop")`
 (or `"pymatching:irreducible=drop"`) explicitly removes those faults from the
 decoder's model, without changing sampling. Hyperedge-capable alternatives
 include `bp_osd()`, `tesseract()`, Frontier, and BP-Trellis.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 
 A supplied `^` decomposition is still used verbatim if each component touches at
 most two detectors. Mixing supplied decompositions and raw hyperedges is rejected.

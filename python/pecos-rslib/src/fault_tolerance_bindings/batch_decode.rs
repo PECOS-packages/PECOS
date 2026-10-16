@@ -9,6 +9,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 pub(super) struct BatchExecutionOutput {
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     pub(super) projection: Option<pecos_decoder_core::graphlike_projection::ProjectionReport>,
     pub(super) num_errors: usize,
     pub(super) predictions: Option<Vec<ObsMask>>,
@@ -47,6 +49,8 @@ impl BatchExecutionError {
 /// Result of decoding and scoring one `SampleBatch`.
 #[pyclass(name = "DecodeResult", module = "pecos_rslib.qec", skip_from_py_object)]
 pub struct PyDecodeResult {
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
     #[pyo3(get)]
     projection: Option<PyProjectionReport>,
     #[pyo3(get)]

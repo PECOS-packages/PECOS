@@ -2339,6 +2339,20 @@ mod projection_tests {
                 "{actual}"
             );
             assert!(actual.contains(&expected), "{actual}: {expected}");
+            for spec in [DecoderSpec::parse("astar").unwrap(), with_drop("astar")] {
+                let error = spec
+                    .build(&DecodeModel::SingleDem(text.into()))
+                    .err()
+                    .unwrap()
+                    .to_string();
+                for remedy in [
+                    "irreducible=drop does not apply to this effect",
+                    "bp_osd",
+                    "tesseract",
+                ] {
+                    assert!(error.contains(remedy), "{error}");
+                }
+            }
         }
         let mut invalid = StructuredDem::from_dem_str(RAW).unwrap();
         invalid.errors[0].probability = f64::NAN;
@@ -2353,7 +2367,33 @@ mod projection_tests {
         );
     }
 
+    #[cfg(all(feature = "uf", feature = "ldpc"))]
+    #[test]
+    fn perturbed_mixed_ensemble_preserves_zero_hyperedges() {
+        let spec = DecoderSpec::Perturbed(PerturbedConfig {
+            k: 3,
+            inner: Box::new(DecoderSpec::parse("ensemble:astar,bp_osd").unwrap()),
+            ..Default::default()
+        });
+        assert_eq!(spec.irreducible_policy(), None);
+        let text = IRREDUCIBLE.replace("error(0.1)", "error(0)");
+        for model in [
+            DecodeModel::SingleDem(text.clone()),
+            DecodeModel::StructuredDem(StructuredDem::from_dem_str(&text).unwrap()),
+        ] {
+            let mut decoder = spec.build(&model).unwrap();
+            for bits in 0..8 {
+                let syndrome: Vec<_> = (0..3).map(|bit| u8::from(bits & (1 << bit) != 0)).collect();
+                assert_eq!(
+                    decoder.decode_obs(&syndrome).unwrap(),
+                    pecos_decoder_core::obs_mask::ObsMask::new()
+                );
+            }
+        }
+    }
+
     // contract: sector-sensitive choices survive Ensemble and probability perturbation.
+    #[cfg(feature = "uf")]
     #[test]
     fn composites_preserve_sector_choices() {
         let mut model = StructuredDem::from_dem_str("error(0.01) D0 D1 L0\nerror(0.01) D2 D3\nerror(0.4) D0 D2 L0\nerror(0.4) D1 D3\nerror(0.123456789) D3 D1 D0 D2 L0\nerror(0.001) D0\nerror(0.001) D1\nerror(0.001) D2\nerror(0.001) D3").unwrap();
@@ -2374,11 +2414,15 @@ mod projection_tests {
             without_sectors.errors[4].components
         );
         let leaf = DecoderSpec::parse("astar").unwrap();
-        for composite in ["ensemble:astar", "perturbed:k=3,sigma=1.5,inner=astar"] {
+        for (composite, expected_count) in [
+            ("ensemble:astar", 1),
+            ("perturbed:k=3,sigma=1.5,inner=astar", 3),
+        ] {
             LEAF_MODELS.with(|models| models.borrow_mut().clear());
             let spec = DecoderSpec::parse(composite).unwrap();
             let actual = built(&spec, &DecodeModel::StructuredDem(model.clone()));
             let members = LEAF_MODELS.with(|models| models.borrow().clone());
+            assert_eq!(members.len(), expected_count, "{composite}");
             for member in members {
                 let DecodeModel::StructuredDem(member) = member else {
                     panic!("lost structured transport")

@@ -177,10 +177,14 @@ print(f"detectors: {dem.num_detectors}, mechanisms: {dem.to_string().count('erro
 Pass the DEM object to built-in decoder specs. BP+OSD and PECOS's built-in
 Tesseract consume raw hyperedges; graph specs such as PyMatching project them
 during preparation, retaining the object's fault-sector labels. Results expose
-`.projection` (`None` if no projection was needed). Irreducible faults raise by
+`.projection` (`None` when no projection was needed or when a composition
+without a shared policy projects inside its members, with no shared report). Irreducible faults raise by
 default; `pymatching(correlated=True, irreducible="drop")` explicitly removes them from the decoder
 model and reports their input indices in `.projection.dropped_indices`. This
 does not change the model used for sampling.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 
 Explicit text renderers remain available for exports to external tools such as
 Stim or external Tesseract, which cannot consume PECOS objects. The following

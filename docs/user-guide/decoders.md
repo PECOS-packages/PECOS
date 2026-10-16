@@ -470,8 +470,9 @@ standalone faults in the model, preserving probabilities and observable effects.
 A DetectorErrorModel object decodes its standard text plus its `fault_sector` labels.
 Those labels guide the choice of graphlike components.
 Use `batch.decode(dem, spec)` or `dem.build_decoder(spec)` to preserve them.
-Both results expose `.projection`; graphlike inputs return `None`. Text input
-has no fault-sector labels.
+Both results expose `.projection`. It is `None` when no projection was needed or
+when a composition without a shared policy projects inside its members and has
+no shared report. Text input has no fault-sector labels.
 
 The default `irreducible="refuse"` rejects faults that cannot be decomposed and
 reports their count and input indices. To remove those faults from the decoder's
@@ -480,6 +481,9 @@ string `"pymatching:irreducible=drop"`. Sampling still uses the original model.
 Shots that fire a dropped fault can make some graph decoders fail on detectors
 left without edges ([#1266](https://github.com/PECOS-packages/PECOS/issues/1266)).
 Alternatively, use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()`.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 
 Supplied `^` decompositions remain supported and are used verbatim when every
 component touches at most two detectors. Mixing them with raw hyperedges is an

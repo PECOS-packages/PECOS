@@ -101,6 +101,9 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
 }
 
 fn parse_graph_options(name: &str, mut params: &str) -> Result<DecoderSpec, DecoderError> {
+    if name == "pecos_uf" && params.split(',').skip(1).any(|part| !part.contains('=')) {
+        return invalid("pecos_uf preset must come first, before key=value parameters");
+    }
     let mut spec = parse(name)?;
     if name == "pecos_uf" && !params.is_empty() && !params.split(',').next().unwrap().contains('=')
     {
@@ -652,6 +655,14 @@ mod tests {
     }
 
     #[test]
+    fn graph_options_reject_misplaced_presets() {
+        let error = parse("pecos_uf:irreducible=drop,fast")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("preset must come first"), "{error}");
+    }
+
+    #[test]
     fn empty_parameter_suffix_uses_family_defaults() {
         for (with_suffix, bare) in [
             ("k_mwpm:", "k_mwpm"),
@@ -659,6 +670,10 @@ mod tests {
             ("mwpf:", "mwpf"),
             ("perturbed:", "perturbed"),
             ("beamsearch:", "beamsearch"),
+            ("pymatching:", "pymatching"),
+            ("pecos_uf:", "pecos_uf"),
+            ("astar:", "astar"),
+            ("fusion_blossom:", "fusion_blossom"),
         ] {
             assert_eq!(parse(with_suffix).unwrap(), parse(bare).unwrap());
         }

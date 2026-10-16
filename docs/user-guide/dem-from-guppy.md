@@ -748,10 +748,15 @@ For direct construction with a graph spec, use `dem.build_decoder("pymatching")`
 as in the [surface-memory example](#surface-code-memory-dem). Graph specs project
 the raw model themselves and preserve fault-sector labels from the object.
 Both the built decoder and batch results expose `.projection`, with counts and
-input indices of any omitted faults; graphlike input gives `None`. Irreducible
+input indices of any omitted faults. `None` means no projection was needed or a
+composition without a shared policy projected inside its members, with no shared
+report. Irreducible
 faults raise by default. Opt into `pymatching(correlated=True, irreducible="drop")` (legacy string
 `"pymatching:irreducible=drop"`) only when removing those faults from the decoder
 model is intended. Sampling continues to use the original model.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 PECOS's built-in Tesseract and BP-OSD specs accept the raw object directly.
 The direct backend `from_dem` constructors above remain text-only.
 

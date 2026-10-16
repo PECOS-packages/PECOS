@@ -23,11 +23,13 @@ from pecos.qec import (
     DetectorErrorModel,
     Observable,
     _hugr_result_tags,
+    _qis_result_tags,
     build_dem_from_guppy,
     rec,
     result_ref,
     surface_memory_dem_spec,
 )
+from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem import _generator_certified_result_traces
 from pecos.qec.dem_spec import GuppyDemBuild, RecordRef, ResultRef, _resolve_dem_specs
 from pecos_rslib.quantum import TickCircuit
@@ -85,16 +87,16 @@ def _measurement_without_named_results() -> None:
     _ = measure(q).read()
 
 
-def _unexpected_hugr_analysis(*_args: object) -> None:
-    msg = "Unused HUGR analysis must remain lazy"
+def _unexpected_program_analysis(*_args: object) -> None:
+    msg = "Unused program analysis must remain lazy"
     raise AssertionError(msg)
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, wrapped: bool) -> None:
     """Regression: packet A must not parse or analyze generator-certified builds."""
-    for name in ("load_hugr_from_bytes", "extract_result_tag_measurements", "measurement_op_count"):
-        monkeypatch.setattr(_hugr_result_tags, name, _unexpected_hugr_analysis)
+    monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", _unexpected_program_analysis)
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
     program = make_surface_code(3, 1, "Z")
     detectors, observables = surface_memory_dem_spec(3, 1, "Z")
     build = build_dem_from_guppy(
@@ -109,14 +111,12 @@ def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, 
 
 
 @pytest.mark.parametrize("references", ["typed", "json"])
-def test_tagged_build_loads_and_extracts_hugr_once(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
+def test_tagged_build_loads_hugr_and_analyzes_qis_once(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
     """Regression: packet A shares lazy analysis across preflight and tag consumers."""
     loader = Mock(wraps=_hugr_result_tags.load_hugr_from_bytes)
-    extractor = Mock(wraps=_hugr_result_tags.extract_result_tag_measurements)
-    counter = Mock(wraps=_hugr_result_tags.measurement_op_count)
+    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
     monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", loader)
-    monkeypatch.setattr(_hugr_result_tags, "extract_result_tag_measurements", extractor)
-    monkeypatch.setattr(_hugr_result_tags, "measurement_op_count", counter)
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
     if references == "typed":
         dem = build_dem_from_guppy(
             _scrambled_tagged_measurements,
@@ -132,15 +132,14 @@ def test_tagged_build_loads_and_extracts_hugr_once(monkeypatch: pytest.MonkeyPat
             p_meas=0.1,
         )
     assert dem.num_detectors == 1
-    assert loader.call_count == extractor.call_count == counter.call_count == 1
+    assert loader.call_count == extractor.call_count == 1
 
 
 def test_build_without_candidate_tags_skips_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: packet A must preserve the no-candidate-tags early return."""
     loader = Mock(wraps=_hugr_result_tags.load_hugr_from_bytes)
     monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", loader)
-    monkeypatch.setattr(_hugr_result_tags, "extract_result_tag_measurements", _unexpected_hugr_analysis)
-    monkeypatch.setattr(_hugr_result_tags, "measurement_op_count", _unexpected_hugr_analysis)
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
     build = build_dem_from_guppy(
         _measurement_without_named_results,
         num_qubits=1,
@@ -984,3 +983,93 @@ def test_schema_fingerprint_binds_runtime_order_and_named_results() -> None:
 
     assert baseline.schema_fingerprint != reordered_schema.schema_fingerprint
     assert baseline.schema_fingerprint != renamed_schema.schema_fingerprint
+
+
+@pytest.mark.parametrize("certified", [False, True])
+def test_build_compiles_once_and_traces_analyzed_text(monkeypatch: pytest.MonkeyPatch, *, certified: bool) -> None:
+    from pecos import tracing
+    from pecos_rslib import hugr_lowering
+
+    compiler = Mock(wraps=hugr_lowering.compile_hugr_to_qis)
+    wrapper = Mock(wraps=pecos.Qis)
+    tracer = Mock(wraps=tracing.trace_program_to_tick_circuit)
+    extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compiler)
+    monkeypatch.setattr(pecos.programs, "Qis", wrapper)
+    monkeypatch.setattr(tracing, "trace_program_to_tick_circuit", tracer)
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+    build_dem_from_guppy(
+        make_surface_code(3, 1, "Z") if certified else _scrambled_tagged_measurements,
+        num_qubits=get_num_qubits(3) if certified else 2,
+        detectors=[Detector(rec[-1])],
+        p_meas=0.1,
+    )
+    assert compiler.call_count == tracer.call_count == wrapper.call_count == 1
+    traced_program = tracer.call_args.args[0]
+    assert isinstance(traced_program, pecos.Qis)
+    if certified:
+        extractor.assert_not_called()
+    else:
+        extractor.assert_called_once_with(wrapper.call_args.args[0])
+        assert extractor.call_args.args[0] is wrapper.call_args.args[0]
+
+
+@pytest.mark.parametrize("references", ["typed", "json", "records"])
+def test_qis_certification_failure_policy(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
+    extractor = Mock(side_effect=_CertificationError("test unsupported CFG"))
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+
+    def build() -> None:
+        if references == "json":
+            DetectorErrorModel.from_guppy(
+                _scrambled_tagged_measurements,
+                num_qubits=2,
+                detectors_json='[{"id":0,"result_tags":["a"]}]',
+            )
+        else:
+            build_dem_from_guppy(
+                _scrambled_tagged_measurements,
+                num_qubits=2,
+                detectors=[Detector(rec[-1] if references == "records" else result_ref("a"))],
+            )
+
+    if references == "records":
+        build()
+    else:
+        with pytest.raises(ValueError, match=r"Cannot certify measurement order.*test unsupported CFG"):
+            build()
+    extractor.assert_called_once()
+
+
+def test_unrelated_analysis_value_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", Mock(side_effect=ValueError("unrelated")))
+    with pytest.raises(ValueError, match=r"^unrelated$"):
+        build_dem_from_guppy(_scrambled_tagged_measurements, num_qubits=2, detectors=[Detector(rec[-1])])
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_certified_measurement_count_mismatch(monkeypatch: pytest.MonkeyPatch, *, required: bool) -> None:
+    monkeypatch.setattr(
+        _qis_result_tags,
+        "extract_result_tag_measurements",
+        Mock(return_value=({"a": [0], "b": [1]}, 3)),
+    )
+
+    def build() -> None:
+        build_dem_from_guppy(
+            _scrambled_tagged_measurements,
+            num_qubits=2,
+            detectors=[Detector(result_ref("a") if required else rec[-1])],
+        )
+
+    if required:
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"^Cannot bind result_ref\(\.\.\.\): the certified lowered program has 3 measurement\(s\) "
+                r"but the traced program emitted 2 measurement\(s\)$"
+            ),
+        ):
+            build()
+    else:
+        build()

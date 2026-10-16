@@ -3418,19 +3418,18 @@ fn circuit_with_omitted_two_qubit_gate(
 /// Resolve `result_tags` on detector/observable JSON into record offsets.
 ///
 /// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
-/// ordinal binding recovered structurally by Python from the compiled HUGR.
+/// ordinal binding recovered structurally by Python from the executed lowered QIS program.
 /// Each referenced tag's ordinals are mapped through `source_meas_ids` to stable runtime measurement
 /// identities. `result_tags` is an alternative to `records`/`meas_ids` (not
 /// additive): any co-present form must resolve to the same measurements.
 ///
 /// Fail-loud (returns `Err`), never silently misbinds:
-/// - **Loop guard**: if `static_meas_count != source_meas_ids.len()` the program
-///   has un-unrolled runtime loops (the HUGR has one static measure op per
-///   loop body), so per-occurrence tag binding is not statically available.
+/// - **Count guard**: if `static_meas_count != source_meas_ids.len()` the trace
+///   disagrees with the certified lowered program, so per-occurrence tag binding is unavailable.
 /// - An unknown tag, malformed `result_tags`, or invalid JSON is an error.
 ///
 /// # Errors
-/// Returns [`DemBuilderError::ParseError`] on the loop guard, an unknown tag,
+/// Returns [`DemBuilderError::ParseError`] on the count guard, an unknown tag,
 /// malformed `result_tags`, or invalid JSON.
 pub fn resolve_result_tags(
     detectors_json: &str,
@@ -3442,11 +3441,9 @@ pub fn resolve_result_tags(
 ) -> Result<(String, String), DemBuilderError> {
     if static_meas_count != source_meas_ids.len() {
         return Err(DemBuilderError::ParseError(format!(
-            "result_tags (tag-referenced detectors) is not supported for Guppy \
-             programs with runtime loops: the HUGR has {static_meas_count} \
-             static measurement op(s) but the traced program emits \
-             {} measurement(s). Per-occurrence tag binding is \
-             not statically available; use positional records.",
+            "Cannot bind result_tags: the certified lowered program has \
+             {static_meas_count} measurement(s) but the traced program emitted \
+             {} measurement(s).",
             source_meas_ids.len()
         )));
     }
@@ -4493,6 +4490,30 @@ mod tests {
         let detector = &parse_detectors_json(&detectors).unwrap()[0];
         assert_eq!(detector.fault_sector, Some("Z".to_string()));
         assert_eq!(detector.meas_ids, vec![17]);
+    }
+
+    #[test]
+    fn resolve_result_tags_rejects_measurement_count_mismatch() {
+        let tags = std::collections::BTreeMap::from([("syndrome".into(), vec![Some(0)])]);
+        for static_count in [0, 2] {
+            let error = resolve_result_tags(
+                r#"[{"id":0,"result_tags":["syndrome"]}]"#,
+                "[]",
+                &tags,
+                static_count,
+                &[17],
+                &[17],
+            )
+            .unwrap_err();
+            let expected = format!(
+                "Cannot bind result_tags: the certified lowered program has \
+                 {static_count} measurement(s) but the traced program emitted 1 measurement(s)."
+            );
+            assert!(
+                matches!(error, DemBuilderError::ParseError(ref message) if *message == expected),
+                "{error}"
+            );
+        }
     }
 
     #[test]

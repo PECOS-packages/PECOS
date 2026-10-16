@@ -74,10 +74,12 @@ also recompute the public digest (or monkeypatch the checker), and no
 in-process scheme changes that. The trust statement is "this layout was
 computed for exactly this program", nothing more.
 
-The remaining generic scalar trust boundary is cross-pipeline measurement
-ordinal agreement: HUGR traversal ordinals and source-QIS measurement emission
-are regression-tested to agree for supported straight-line programs, but do not
-yet share an explicit compiler origin-ID ABI.
+Generic scalar tags now derive their measurement ordinals from the exact lowered
+QIS text used for execution. CFG dominance and cycle checks certify measurement
+and print order across direct calls, independently of LLVM block layout. Only
+direct scalar measurement reads carry provenance; unsupported values preserve
+an unresolved occurrence, and uncertifiable schedules fail closed. The runtime
+measurement count and identities are still checked against the certified order.
 
 This should support calls like:
 

@@ -55,6 +55,7 @@ fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
+        .args(["--qubits", "2"])
         .arg("--jit")
         .arg(&test_file)
         .arg("-s")

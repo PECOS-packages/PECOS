@@ -1,4 +1,4 @@
-//! Python batch normalization for the existing checked Rust v4 controller.
+//! Python batch normalization for the existing checked Rust v7 controller.
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
@@ -153,7 +153,7 @@ impl ScheduledBatchAdapter for PythonAdapter {
     }
 }
 
-/// Checked v4 idle-Z profile with a trusted Python factory.
+/// Checked v7 idle-Z profile with a trusted Python factory.
 #[pyclass(name = "ScheduledEventIdleZ", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleZ {
@@ -176,7 +176,7 @@ pub fn scheduled_event_idle_z(
         inner: event_profile(profile.into(), adapter_factory, py)?,
     })
 }
-/// Checked v4 local idle-noise profile with a trusted Python factory.
+/// Checked v7 local idle-noise profile with a trusted Python factory.
 #[pyclass(name = "ScheduledEventIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleNoise {

@@ -1,4 +1,4 @@
-"""Python v4 factories through the production QIS/native/Monte Carlo route."""
+"""Python v7 factories through the production QIS/native/Monte Carlo route."""
 
 import math
 import subprocess

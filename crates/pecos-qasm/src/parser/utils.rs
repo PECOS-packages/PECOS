@@ -178,7 +178,13 @@ fn lower_native_gate(
     let arity = gate_type.quantum_arity();
     match (arity, qubits.len()) {
         (1, n) if n > 1 => {}
-        (2, n) if n > 2 && n.is_multiple_of(2) => {}
+        (2, n) if n > 2 => {
+            if !n.is_multiple_of(2) {
+                return Err(invalid_operation(format!(
+                    "Two-qubit gate '{name}' applied to {n} qubits (must be even number); supply complete qubit pairs"
+                )));
+            }
+        }
         (expected, actual) if expected != actual => {
             return Err(wrong_qubit_count(name, expected, actual));
         }

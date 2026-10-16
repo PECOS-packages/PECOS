@@ -76,8 +76,8 @@ are not a process-RSS limit. Native extraction still has no aggregate output cap
 and adapters must bound their own retained state. The host retains only bounded
 per-qubit timing and shot/ordinal state after processing.
 
-V3 angle conversion is reused; arbitrary floating-point encodings are not preserved
-bitwise. Normalization does not add another angle serialization round trip.
+Nested v6 angle words are exact little-endian u64 Angle64 fractions; all 64 bits
+are preserved. Normalization does not add another angle serialization round trip.
 
 ## Python factory
 

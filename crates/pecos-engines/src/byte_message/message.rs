@@ -175,12 +175,26 @@ impl ByteMessage {
         let batch_header =
             *bytemuck::from_bytes::<BatchHeader>(&self.as_bytes()[0..size_of::<BatchHeader>()]);
 
-        if !batch_header.is_valid() {
+        if batch_header.magic != super::protocol::BATCH_MAGIC {
             return Err(PecosError::Input(format!(
-                "Invalid batch header: magic {:#x}, version {}; use magic {:#x} and ByteMessage version {} with u64 angle fractions; rebuild legacy f64-angle batches",
+                "Invalid batch magic {:#x}; use a ByteMessage builder with magic {:#x}",
                 batch_header.magic,
+                super::protocol::BATCH_MAGIC
+            )));
+        }
+        if batch_header.version != super::protocol::PROTOCOL_VERSION {
+            let remedy = match batch_header.version {
+                6 | 7 => {
+                    "scheduled versions 6 and 7 need the scheduled-idle path, not an ordinary batch consumer"
+                }
+                1 | 3 | 4 => {
+                    "rebuild legacy f64-angle batches with the current encoder for the ordinary or scheduled path"
+                }
+                _ => "encode an ordinary batch with the current ByteMessage builder",
+            };
+            return Err(PecosError::Input(format!(
+                "Invalid ordinary batch version {}; expected version {}; {remedy}",
                 batch_header.version,
-                super::protocol::BATCH_MAGIC,
                 super::protocol::PROTOCOL_VERSION
             )));
         }
@@ -732,13 +746,13 @@ mod tests {
         bytes[0] = 0;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid batch header: magic 0x50454300, version 5; use magic 0x50454353 and ByteMessage version 5 with u64 angle fractions; rebuild legacy f64-angle batches",
+            "Invalid batch magic 0x50454300; use a ByteMessage builder with magic 0x50454353",
         );
         bytes = ByteMessage::create_empty().into_bytes();
         bytes[4] = 255;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid batch header: magic 0x50454353, version 255; use magic 0x50454353 and ByteMessage version 5 with u64 angle fractions; rebuild legacy f64-angle batches",
+            "Invalid ordinary batch version 255; expected version 5; encode an ordinary batch with the current ByteMessage builder",
         );
     }
 

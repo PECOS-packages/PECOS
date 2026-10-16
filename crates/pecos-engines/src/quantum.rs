@@ -724,14 +724,6 @@ where
 
     /// Create a new simulator with a specific seed.
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self;
-
-    /// Grow in place to at least `required_qubits`, preserving the state and RNG.
-    /// New qubits have consecutive indices after the existing qubits and start in |0>.
-    /// Requests at or below the current size must not shrink or reset the state.
-    ///
-    /// # Errors
-    /// Returns an error if the requested count exceeds the simulator capacity.
-    fn ensure_qubit_count(&mut self, required_qubits: usize) -> Result<(), PecosError>;
 }
 
 impl StateVectorSimulator for StateVec {
@@ -741,10 +733,6 @@ impl StateVectorSimulator for StateVec {
 
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
         StateVec::with_seed(num_qubits, seed)
-    }
-
-    fn ensure_qubit_count(&mut self, required_qubits: usize) -> Result<(), PecosError> {
-        StateVec::ensure_qubit_count(self, required_qubits)
     }
 }
 
@@ -756,10 +744,6 @@ impl StateVectorSimulator for StateVecAoS {
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
         StateVecAoS::with_seed(num_qubits, seed)
     }
-
-    fn ensure_qubit_count(&mut self, required_qubits: usize) -> Result<(), PecosError> {
-        StateVecAoS::ensure_qubit_count(self, required_qubits)
-    }
 }
 
 impl StateVectorSimulator for StateVecSoA {
@@ -769,10 +753,6 @@ impl StateVectorSimulator for StateVecSoA {
 
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
         StateVecSoA::with_seed(num_qubits, seed)
-    }
-
-    fn ensure_qubit_count(&mut self, required_qubits: usize) -> Result<(), PecosError> {
-        StateVecSoA::ensure_qubit_count(self, required_qubits)
     }
 }
 
@@ -805,22 +785,6 @@ where
         Self {
             simulator: S::create_with_seed(num_qubits, seed),
         }
-    }
-
-    /// Grow the simulator in place if needed, preserving its state and RNG.
-    ///
-    /// # Errors
-    /// Returns an error if the requested count exceeds the simulator capacity.
-    pub fn ensure_qubit_count(&mut self, required_qubits: usize) -> Result<(), PecosError> {
-        if self.simulator.num_qubits() < required_qubits {
-            debug!(
-                "StateVectorEngine: Expanding simulator (was {} qubits, now {} qubits)",
-                self.simulator.num_qubits(),
-                required_qubits
-            );
-            self.simulator.ensure_qubit_count(required_qubits)?;
-        }
-        Ok(())
     }
 
     /// Return the state-vector simulator owned by this engine.
@@ -876,18 +840,6 @@ where
         // Parse commands from the message
         let batch = message.quantum_ops()?;
 
-        // Calculate required number of qubits from operations and ensure simulator has correct size
-        if !batch.is_empty() {
-            let max_qubit_index = batch
-                .iter()
-                .flat_map(|cmd| cmd.qubits.iter())
-                .map(|q| usize::from(*q))
-                .max()
-                .unwrap_or(0);
-            let required_qubits = max_qubit_index + 1;
-            self.ensure_qubit_count(required_qubits)?;
-        }
-
         let mut measurements: Vec<usize> = Vec::new();
 
         // Use indexed iteration so we can batch consecutive MZ commands into
@@ -896,6 +848,7 @@ where
         while cmd_idx < batch.len() {
             let cmd = &batch[cmd_idx];
             validate_dispatch_gate(cmd)?;
+            check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
                 GateType::X => {
                     debug!("Processing X gate on qubits {:?}", cmd.qubits);
@@ -1210,6 +1163,11 @@ where
                     {
                         cmd_idx += 1;
                         validate_dispatch_gate(&batch[cmd_idx])?;
+                        check_qubit_capacity(
+                            batch[cmd_idx].gate_type,
+                            &batch[cmd_idx].qubits,
+                            self.simulator.num_qubits(),
+                        )?;
                         mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                     }
 

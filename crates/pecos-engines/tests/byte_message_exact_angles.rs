@@ -85,7 +85,14 @@ fn custom_non_angle_parameters_are_rejected_before_encoding() {
     );
     let error = gate.validate().unwrap_err();
     assert!(error.contains("1.25"), "{error}");
-    assert!(error.contains("remove"), "{error}");
+    assert!(
+        error.contains("Custom ByteMessage payload holds only Angle64 fractions"),
+        "{error}"
+    );
+    assert!(
+        error.contains("remove the entire Custom parameter payload or use a supported concrete gate type that accepts these parameters"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -101,4 +108,21 @@ fn custom_invalid_payload_cannot_reach_the_wire() {
         builder.add_gate_command(&gate);
     });
     assert!(result.is_err());
+}
+
+#[test]
+fn scheduled_messages_require_the_scheduled_path() {
+    for version in [6_u32, 7] {
+        let mut bytes = vec![0; 16];
+        bytes[..4]
+            .copy_from_slice(&pecos_engines::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
+        bytes[4..8].copy_from_slice(&version.to_le_bytes());
+        bytes[12..16].copy_from_slice(&16_u32.to_le_bytes());
+        let error = ByteMessage::new(&bytes)
+            .quantum_ops()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("scheduled-idle path"), "{error}");
+        assert!(!error.contains("legacy"), "{error}");
+    }
 }

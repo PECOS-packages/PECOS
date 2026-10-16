@@ -238,6 +238,20 @@ impl Angle<u64> {
         }))
     }
 
+    /// Scale the signed principal representative in `(-0.5, 0.5]` turns.
+    /// A half turn is positive. Multiplication is exact before rounding once to
+    /// the nearest tick (ties away from zero), then wrapping modulo one turn.
+    ///
+    /// # Errors
+    /// Rejects non-finite scale factors.
+    pub fn try_scale_signed(self, factor: f64) -> Result<Self, NonFiniteAngleError> {
+        if self.uses_negative_signed_representative() {
+            Ok(-(-self).try_scale(factor)?)
+        } else {
+            self.try_scale(factor)
+        }
+    }
+
     /// Const-evaluable counterpart of [`Self::try_from_radians`], with identical
     /// signed remainder, rounding, and integer wrapping.
     ///

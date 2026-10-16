@@ -206,20 +206,7 @@ impl<'a> Reader<'a> {
 /// Rejects malformed, unknown-version, oversized or ambiguous records.
 pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBatch>, PecosError> {
     let bytes = input.as_bytes();
-    if let Some(version) = bytes.get(4..8)
-        && version != [7, 0, 0, 0]
-    {
-        return Err(error(&format!(
-            "scheduled version bytes {version:?} are unsupported; rebuild the message with version 7, which stores angles as exact u64 fractions"
-        )));
-    }
-    if bytes.len() < 16
-        || bytes.len() > MAX_SCHEDULE_BYTES
-        || bytes[..4] != crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes()
-        || u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize != bytes.len()
-    {
-        return Err(error("invalid scheduled event header/version/length"));
-    }
+    scheduled_frame::validate_scheduled_header(bytes, 7)?;
     let count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
     if count > (bytes.len() - 16) / 80 {
         return Err(error("invalid scheduled event batch count"));

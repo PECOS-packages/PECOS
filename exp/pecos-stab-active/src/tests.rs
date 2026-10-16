@@ -63,7 +63,7 @@ fn apply_dense(matrix: &[(usize, Complex64)], vector: &[Complex64]) -> Vec<Compl
 
 // Independent H1 oracle: no simulator methods or decomposition/basis-change
 // helpers are used. The random seed only selects a nonorthogonal projector input.
-fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
+pub(super) fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
     let n = sim.structure.tableau().num_qubits();
     let mut rng = PecosRng::seed_from_u64(937);
     let mut phi: Vec<_> = (0..1 << n)
@@ -192,6 +192,9 @@ fn unitary<S: ArbitraryRotationGateable>(
         10 if q != r => {
             sim.rzz(theta, &pairs);
         }
+        11 => {
+            sim.ry(theta, &qubits);
+        }
         _ => {
             sim.h(&qubits);
         }
@@ -201,7 +204,13 @@ fn unitary<S: ArbitraryRotationGateable>(
 // Evolve the plain dense reference with small physical gate matrices computed
 // by StateVec. Keeping a plain vector permits forced dense projection without
 // depending on a measurement or state-loading API in StateVec.
-fn reference_unitary(state: &mut [Complex64], gate: usize, q: usize, r: usize, angle: Angle64) {
+pub(super) fn reference_unitary(
+    state: &mut [Complex64],
+    gate: usize,
+    q: usize,
+    r: usize,
+    angle: Angle64,
+) {
     let two = matches!(gate, 6 | 7 | 10) && q != r;
     let width = if two { 2 } else { 1 };
     let columns: Vec<_> = (0..1 << width)

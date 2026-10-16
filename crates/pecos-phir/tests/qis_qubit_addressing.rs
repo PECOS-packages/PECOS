@@ -14,6 +14,14 @@ fn module(body: &str) -> Module {
 }
 
 fn run(body: &str, qubits: usize, seed: u64) -> (Vec<bool>, usize) {
+    try_run(body, qubits, seed).unwrap()
+}
+
+fn try_run(
+    body: &str,
+    qubits: usize,
+    seed: u64,
+) -> Result<(Vec<bool>, usize), pecos_core::errors::PecosError> {
     // Bound simulator size before running regressions against SSA-id addressing.
     let mut engine = PhirEngine::new(module(body)).unwrap();
     engine.generate_commands().unwrap();
@@ -25,7 +33,7 @@ fn run(body: &str, qubits: usize, seed: u64) -> (Vec<bool>, usize) {
         .with_classical_engine(Box::new(engine))
         .with_quantum_engine(Box::new(StateVecEngine::with_seed(qubits, seed)))
         .build();
-    hybrid.run_shot().unwrap();
+    hybrid.run_shot()?;
     let engine = hybrid
         .controller()
         .as_any()
@@ -40,24 +48,23 @@ fn run(body: &str, qubits: usize, seed: u64) -> (Vec<bool>, usize) {
             ref value => panic!("expected measurement Bool, got {value:?}"),
         })
         .collect();
-    (outcomes, engine.processor.get_qubit_count())
+    Ok((outcomes, engine.processor.get_qubit_count()))
 }
 
 #[test]
 fn allocation_after_consumed_measurement_preserves_state() {
-    assert_eq!(
-        run(
-            "%q0 = call i64 @___qalloc()\n\
-             call void @___x(i64 %q0)\n\
-             %m = call i1 @___measure(i64 %q0)\n\
-             %z = zext i1 %m to i64\n\
-             %q1 = call i64 @___qalloc()\n\
-             %m2 = call i1 @___measure(i64 %q0)",
-            1,
-            42,
-        ),
-        (vec![true, true], 2)
+    let body = "%q0 = call i64 @___qalloc()\n\
+        call void @___x(i64 %q0)\n\
+        %m = call i1 @___measure(i64 %q0)\n\
+        %z = zext i1 %m to i64\n\
+        %q1 = call i64 @___qalloc()\n\
+        %m2 = call i1 @___measure(i64 %q0)";
+    let error = try_run(body, 1, 42).unwrap_err().to_string();
+    assert!(
+        error.contains("1 qubits") && error.contains("qubit 1"),
+        "{error}"
     );
+    assert_eq!(run(body, 2, 42), (vec![true, true], 2));
 }
 
 #[test]

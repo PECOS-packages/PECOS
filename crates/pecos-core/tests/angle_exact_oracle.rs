@@ -130,3 +130,28 @@ fn signed_float_output_converts_the_integer_magnitude() {
     }
     assert_eq!(pecos_core::radians!(-0.73).to_radians_signed(), -0.73);
 }
+
+#[test]
+fn signed_scaling_preserves_tiny_symmetry_and_positive_half_turn() {
+    use pecos_core::Angle64;
+    for ticks in [1, 2, 3, 42, (1_u64 << 63) - 1] {
+        let angle = Angle64::new(ticks);
+        for factor in [0.5, 0.01, -0.5, 2.0] {
+            assert_eq!(
+                (-angle).try_scale_signed(factor).unwrap(),
+                -angle.try_scale_signed(factor).unwrap()
+            );
+        }
+    }
+    assert_eq!(
+        Angle64::new(3).try_scale_signed(0.5).unwrap(),
+        Angle64::new(2)
+    );
+    assert_eq!(
+        Angle64::HALF_TURN.try_scale_signed(0.5).unwrap(),
+        Angle64::QUARTER_TURN
+    );
+    for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(Angle64::new(u64::MAX).try_scale_signed(factor).is_err());
+    }
+}

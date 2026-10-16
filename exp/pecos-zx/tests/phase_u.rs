@@ -5,23 +5,15 @@ use quizx::tensor::ToTensor;
 
 #[test]
 fn phase_u_zx_export() {
-    // -0.37 radians has odd fraction 17360464587495211133, which Rational64
-    // cannot represent exactly in half turns. Check rejection, then exercise
-    // tensor conversion at the adjacent representable fraction (one tick less).
-    let mut unrepresentable = DagCircuit::new();
-    unrepresentable.u(
-        Angle64::ZERO,
-        Angle64::ZERO,
-        pecos_core::radians!(-0.37),
-        &[0],
-    );
-    assert!(
-        dag_to_zx_circuit(&unrepresentable)
-            .unwrap_err()
-            .to_string()
-            .contains("17360464587495211133")
-    );
-    for angle in [Angle64::HALF_TURN, Angle64::new(17_360_464_587_495_211_132)] {
+    let negative = pecos_core::radians!(-0.37);
+    assert_eq!(negative.fraction(), 17_360_464_587_495_211_133);
+    // The negative magnitude is 1_086_279_486_214_340_483 ticks. Rounding
+    // away from zero gives 1_086_279_486_214_340_484; dividing by two and
+    // reducing yields the pinned half-turn rational below.
+    for (angle, numerator, denominator) in [
+        (Angle64::HALF_TURN, 1, 1),
+        (negative, -271_569_871_553_585_121, 1_i64 << 61),
+    ] {
         let mut dag = DagCircuit::new();
         dag.u(Angle64::ZERO, Angle64::ZERO, angle, &[0, 1]);
         let circuit = dag_to_zx_circuit(&dag).unwrap();
@@ -32,6 +24,13 @@ fn phase_u_zx_export() {
                 .iter()
                 .all(|gate| gate.t == quizx::gate::GType::ZPhase)
         );
+        for gate in &circuit.gates {
+            let rational = gate.phase.to_rational();
+            assert_eq!(
+                (*rational.numer(), *rational.denom()),
+                (numerator, denominator)
+            );
+        }
         let graph = dag_to_zx(&dag).unwrap();
         for tensor in [circuit.to_tensor64(), graph.to_tensor64()] {
             for (index, actual) in tensor.iter().enumerate() {

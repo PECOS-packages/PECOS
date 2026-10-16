@@ -19,9 +19,7 @@
 //! dispatch), and INCLUDING commands consumed by the MZ-batching lookahead,
 //! which bypasses the top-of-loop check.
 //!
-//! (`StateVecEngine` is NOT covered: it has its own dispatch loop that
-//! auto-grows the simulator instead of rejecting -- pre-existing behavior
-//! for static-circuit flows whose qubit count is inferred as 0.)
+//! All three state-vector layouts use the same fixed-capacity contract.
 
 use pecos_engines::Engine;
 use pecos_engines::byte_message::ByteMessageBuilder;
@@ -109,3 +107,38 @@ fn in_range_commands_still_process() {
     assert_eq!(outcomes.len(), 2);
     assert_eq!(outcomes[0], outcomes[1], "Bell pair outcomes must agree");
 }
+
+macro_rules! state_vector_capacity_tests {
+    ($layout:ty, $gate:ident, $lookahead:ident) => {
+        #[test]
+        fn $gate() {
+            let mut engine = pecos_engines::quantum::StateVectorEngine::<$layout>::new(2);
+            assert_capacity_error(engine.process(build_message(|b| {
+                b.h(&[2]);
+            })));
+        }
+        #[test]
+        fn $lookahead() {
+            let mut engine = pecos_engines::quantum::StateVectorEngine::<$layout>::new(2);
+            assert_capacity_error(engine.process(build_message(|b| {
+                b.mz(&[0]);
+                b.mz(&[2]);
+            })));
+        }
+    };
+}
+state_vector_capacity_tests!(
+    pecos_simulators::StateVec,
+    sparse_state_vector_gate_capacity,
+    sparse_state_vector_lookahead_capacity
+);
+state_vector_capacity_tests!(
+    pecos_simulators::StateVecAoS,
+    aos_state_vector_gate_capacity,
+    aos_state_vector_lookahead_capacity
+);
+state_vector_capacity_tests!(
+    pecos_simulators::StateVecSoA,
+    soa_state_vector_gate_capacity,
+    soa_state_vector_lookahead_capacity
+);

@@ -218,6 +218,7 @@ fn test_builder_ron_roundtrip_execute() {
         .from_ron(&ron_string)
         .expect("deserialize")
         .to_sim()
+        .qubits(1)
         .quantum(StateVectorEngineBuilder::default())
         .run(10);
 
@@ -297,6 +298,7 @@ fn test_builder_to_sim_run() {
 
     let result = builder
         .to_sim()
+        .qubits(1)
         .quantum(StateVectorEngineBuilder::default())
         .run(10);
     assert!(
@@ -316,6 +318,7 @@ fn test_builder_to_sim_run_bell() {
 
     let result = builder
         .to_sim()
+        .qubits(2)
         .quantum(StateVectorEngineBuilder::default())
         .run(100);
     assert!(
@@ -335,6 +338,7 @@ fn test_builder_to_sim_with_seed() {
 
     let result = builder
         .to_sim()
+        .qubits(1)
         .quantum(StateVectorEngineBuilder::default())
         .seed(42)
         .run(10);
@@ -353,6 +357,7 @@ fn test_builder_to_sim_build_then_run() {
 
     let mut sim = builder
         .to_sim()
+        .qubits(1)
         .quantum(StateVectorEngineBuilder::default())
         .build()
         .expect("should build sim");
@@ -363,4 +368,32 @@ fn test_builder_to_sim_build_then_run() {
         result.err()
     );
     assert_eq!(result.unwrap().shots.len(), 5);
+}
+
+#[test]
+fn dynamic_program_requires_configured_quantum_capacity() {
+    let program = || {
+        phir_engine()
+            .from_qis_llvm_ir(SINGLE_H_QIS_IR)
+            .unwrap()
+            .to_sim()
+    };
+    for builder in [
+        program(),
+        program().quantum(StateVectorEngineBuilder::default()),
+    ] {
+        let error = builder
+            .build()
+            .err()
+            .expect("unknown capacity must fail")
+            .to_string();
+        assert!(
+            error.contains("0 qubits") && error.contains(".qubits(n)"),
+            "{error}"
+        );
+    }
+    program()
+        .quantum(StateVectorEngineBuilder::default().qubits(1))
+        .run(1)
+        .unwrap();
 }

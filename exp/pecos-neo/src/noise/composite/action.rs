@@ -1426,6 +1426,7 @@ pub struct OverRotation {
 
 impl OverRotation {
     /// Create an over-rotation error.
+    /// Scales the signed principal rotation in (-pi, pi]; a half turn is positive.
     ///
     /// - `fraction > 0`: over-rotation (gate rotates too much)
     /// - `fraction < 0`: under-rotation (gate rotates too little)
@@ -1462,7 +1463,7 @@ impl GateAction for OverRotation {
             .and_then(super::super::context::GateInfo::angle)
             .unwrap_or(pecos_core::Angle64::ZERO);
 
-        let error_angle = base_angle.to_radians() * self.fraction;
+        let error_angle = base_angle.to_radians_signed() * self.fraction;
 
         if error_angle.abs() < 1e-10 {
             return CompositeResponse::None;
@@ -1473,7 +1474,7 @@ impl GateAction for OverRotation {
             qubits: smallvec![qubit],
             payload: GatePayload::Angles(smallvec![
                 base_angle
-                    .try_scale(self.fraction)
+                    .try_scale_signed(self.fraction)
                     .expect("OverRotation constructors validate that the scale factor is finite")
             ]),
         };
@@ -2932,6 +2933,40 @@ mod tests {
         assert!(
             (leak_rate - 0.25).abs() < 0.05,
             "Expected ~25% leakage, got {leak_rate}"
+        );
+    }
+
+    #[test]
+    fn over_rotation_scales_signed_angles_symmetrically() {
+        use pecos_core::Angle64;
+        let apply = |angle| {
+            let mut ctx = make_test_context();
+            ctx.set_current_gate(GateType::RZ, &[angle], 1);
+            OverRotation::rz(0.01)
+                .unwrap()
+                .apply(QubitId(0), &mut ctx, &mut PecosRng::seed_from_u64(42))
+                .collect_gates()
+        };
+        for angle in [
+            pecos_core::radians!(0.73),
+            pecos_core::radians!(0.001),
+            pecos_core::radians!(0.000_001),
+            Angle64::new((1 << 63) - 1),
+        ] {
+            let positive = apply(angle);
+            let negative = apply(-angle);
+            assert_eq!(positive.len(), 1);
+            assert_eq!(negative.len(), 1);
+            assert_eq!(negative[0].angles()[0], -positive[0].angles()[0]);
+        }
+        // Both signs of a tiny rotation must take the same magnitude-based skip.
+        let tiny = pecos_core::radians!(0.000_000_000_000_001);
+        assert_eq!(apply(tiny), Vec::<GateCommand>::new());
+        assert_eq!(apply(-tiny), Vec::<GateCommand>::new());
+        // The self-inverse half turn uses +pi; half of binary64 0.01 is exact.
+        assert_eq!(
+            apply(Angle64::HALF_TURN)[0].angles()[0],
+            pecos_core::turns!(0.005)
         );
     }
 

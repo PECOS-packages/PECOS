@@ -420,22 +420,42 @@ fn word(bytes: &[u8], offset: usize) -> u64 {
             .expect("bounded record"),
     )
 }
-pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
-    let bytes = input.as_bytes();
-    if let Some(version) = bytes.get(4..8)
-        && version != [6, 0, 0, 0]
-    {
+/// Validate the common scheduled header before interpreting version-specific records.
+pub(crate) fn validate_scheduled_header(
+    bytes: &[u8],
+    expected_version: u32,
+) -> Result<(), PecosError> {
+    if bytes.len() < 16 {
         return Err(error(&format!(
-            "scheduled version bytes {version:?} are unsupported; rebuild the message with version 6, which stores angles as exact u64 fractions"
+            "scheduled message length {} is below the 16-byte header minimum; supply a complete scheduled message",
+            bytes.len()
         )));
     }
-    if bytes.len() < 16
-        || bytes.len() > MAX_SCHEDULE_BYTES
-        || bytes[..4] != crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes()
-        || u32::from_le_bytes(bytes[12..16].try_into().expect("header")) as usize != bytes.len()
-    {
-        return Err(error("invalid scheduled header/version/length"));
+    let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if magic != crate::byte_message::protocol::BATCH_MAGIC {
+        return Err(error(&format!(
+            "scheduled magic {magic:#x} is invalid; encode the input with the scheduled message builder"
+        )));
     }
+    let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    if version != expected_version {
+        return Err(error(&format!(
+            "scheduled version {version} is unsupported; rebuild the message with version {expected_version}, which stores angles as exact u64 fractions"
+        )));
+    }
+    let declared = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    if bytes.len() > MAX_SCHEDULE_BYTES || declared != bytes.len() {
+        return Err(error(&format!(
+            "scheduled message length {} disagrees with declared length {declared} or exceeds limit {MAX_SCHEDULE_BYTES}; encode a complete message within the limit",
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
+    let bytes = input.as_bytes();
+    validate_scheduled_header(bytes, 6)?;
     let count = u32::from_le_bytes(bytes[8..12].try_into().expect("header")) as usize;
     if count > (bytes.len() - 16) / 40 {
         return Err(error("invalid scheduled batch count"));
@@ -766,5 +786,41 @@ mod local_gate_contract {
             GateType::X | GateType::Y | GateType::Z
         ));
         assert_eq!(gates[1].qubits, gates[0].qubits);
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_headers_check_length_and_magic_before_version() {
+        for version in [6_u32, 7] {
+            let decode = |bytes: &[u8]| -> Result<(), PecosError> {
+                let input = ByteMessage::new(bytes);
+                if version == 6 {
+                    super::decode(&input).map(|_| ())
+                } else {
+                    crate::scheduled_events::decode_event_batches(&input).map(|_| ())
+                }
+            };
+            for bytes in [vec![], vec![0xff; 8]] {
+                let error = decode(&bytes).unwrap_err().to_string();
+                assert!(error.contains("length") && error.contains("16"), "{error}");
+            }
+            let error = decode(&[0xff; 16]).unwrap_err().to_string();
+            assert!(error.contains("magic"), "{error}");
+            let mut bytes = vec![0; 16];
+            bytes[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
+            bytes[4..8].copy_from_slice(&(version - 3).to_le_bytes());
+            bytes[12..16].copy_from_slice(&16_u32.to_le_bytes());
+            let error = decode(&bytes).unwrap_err().to_string();
+            assert!(
+                error.contains("version") && error.contains(&format!("version {version}")),
+                "{error}"
+            );
+            bytes[4..8].copy_from_slice(&version.to_le_bytes());
+            decode(&bytes).unwrap();
+        }
     }
 }

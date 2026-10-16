@@ -382,6 +382,10 @@ impl std::str::FromStr for SimulatorType {
 #[cfg(feature = "runtime")]
 #[derive(Args, Clone)]
 struct RunArgs {
+    /// Fixed simulator capacity (required for QIS programs with runtime allocation)
+    #[arg(long)]
+    qubits: Option<usize>,
+
     /// Path to the quantum program (LLVM IR, PHIR-JSON, or QASM)
     program: String,
 
@@ -532,6 +536,13 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
     let program_type = detect_program_type(&program_path)?;
     debug!("Detected program type: {program_type:?}");
 
+    if program_type == ProgramType::QIS && args.qubits.is_none() {
+        return Err(PecosError::Input(format!(
+            "QIS program {:?} has no configured qubit capacity; pass --qubits N to bound runtime allocation",
+            args.program
+        )));
+    }
+
     // Set up the engine builder
     let classical_engine_builder = setup_cli_engine_builder(&program_path, args.jit)?;
 
@@ -540,19 +551,10 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
         .classical(classical_engine_builder)
         .workers(args.workers);
 
-    // For QIS programs, we need to detect the number of qubits from the quantum circuit
-    // We'll do this by temporarily building the engine to inspect it
-    let num_qubits = if program_type == ProgramType::QIS {
-        // Build a test simulation to detect qubits from the quantum circuit itself
-        // Use a minimal test run to let the simulation auto-detect the required qubits
-        debug!("Auto-detecting qubit count for QIS program...");
-
-        // For QIS programs, we'll set a reasonable default and let the quantum engine
-        // auto-expand as needed. The bell circuit uses qubits 0 and 1, so we need at least 2.
-        Some(2) // Known requirement for bell.ll
-    } else {
-        None
-    };
+    let num_qubits = args.qubits;
+    if let Some(qubits) = num_qubits {
+        builder = builder.qubits(qubits);
+    }
 
     if let Some(seed) = args.seed {
         builder = builder.seed(seed);

@@ -1299,7 +1299,7 @@ impl Gate {
     pub fn validate(&self) -> Result<(), String> {
         if self.gate_type == GateType::Custom && !self.params.is_empty() {
             return Err(format!(
-                "Custom gate has non-angle parameters {:?}; remove these parameters and supply only angles, because the Custom payload contains only angle fractions",
+                "Custom gate has non-angle parameters {:?}; non-angle parameters cannot be encoded because the Custom ByteMessage payload holds only Angle64 fractions; remove the entire Custom parameter payload or use a supported concrete gate type that accepts these parameters",
                 self.params
             ));
         }

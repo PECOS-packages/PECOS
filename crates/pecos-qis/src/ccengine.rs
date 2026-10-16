@@ -806,7 +806,7 @@ impl QisEngine {
                 && self.num_physical_slots >= limit
             {
                 return Err(PecosError::Generic(format!(
-                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}"
+                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}; raise .qubits(n) to cover all runtime allocations"
                 )));
             }
             self.num_physical_slots
@@ -2226,6 +2226,10 @@ impl Engine for QisEngine {
 }
 
 impl ClassicalEngine for QisEngine {
+    fn has_dynamic_qubit_count(&self) -> bool {
+        self.num_qubits_hint.is_none()
+    }
+
     fn num_qubits(&self) -> usize {
         // The trait contract asks for the number of simulator slots required,
         // not the count of live program handles: freed handles shrink
@@ -4037,6 +4041,16 @@ mod tests {
     }
 
     #[test]
+    fn qubit_count_is_dynamic_until_a_hint_is_set() {
+        let mut engine: Box<dyn pecos_engines::ClassicalControlEngine> =
+            Box::new(QisEngine::with_runtime(Box::new(DummyRuntime::default())));
+        assert!(engine.has_dynamic_qubit_count());
+        engine.set_num_qubits_hint(2);
+        assert!(!engine.has_dynamic_qubit_count());
+        assert_eq!(engine.num_qubits(), 2);
+    }
+
+    #[test]
     fn test_num_qubits_hint_is_physical_capacity_for_sparse_handles() {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         engine.set_num_qubits_hint(98);
@@ -4882,7 +4896,7 @@ mod scheduled_completion_tests {
         Feedback,
         Padding,
         FeedbackThenPadding,
-        OversizedV4,
+        OversizedV7,
     }
 
     #[derive(Clone, Default)]
@@ -4949,14 +4963,14 @@ mod scheduled_completion_tests {
                     "drain after shot completion".into(),
                 ));
             }
-            if matches!(self.output, TerminalOutput::OversizedV4) {
+            if matches!(self.output, TerminalOutput::OversizedV7) {
                 use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
                 use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
                 if self.stage != 0 {
                     return Ok(vec![]);
                 }
                 self.stage = 1;
-                // One byte over V4's limit, but below the collection lower bound.
+                // One byte over V7's limit, but below the collection lower bound.
                 let tail = MAX_SCHEDULE_BYTES + 1 - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
                 return Ok((0..256)
                     .map(|index| ScheduledBatch {
@@ -5052,10 +5066,10 @@ mod scheduled_completion_tests {
         }
     }
     #[test]
-    fn oversized_v4_drain_fails_at_encode_and_latches() {
+    fn oversized_v7_drain_fails_at_encode_and_latches() {
         use crate::scheduled_transport::EventBudget;
         let mut runtime = FeedbackTail {
-            output: TerminalOutput::OversizedV4,
+            output: TerminalOutput::OversizedV7,
             ..Default::default()
         };
         let batches = runtime.drain_pending_scheduled_operations().unwrap();
@@ -5070,7 +5084,7 @@ mod scheduled_completion_tests {
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
         engine.scheduled_transport = ScheduledTransport::V7;
         let Err(error) = engine.drain_terminal_commands() else {
-            panic!("oversized V4 encoding must fail");
+            panic!("oversized V7 encoding must fail");
         };
         let error = error.to_string();
         assert!(

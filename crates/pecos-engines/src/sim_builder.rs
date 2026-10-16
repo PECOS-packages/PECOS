@@ -44,6 +44,7 @@ trait BoxedClassicalEngineBuilder: Send {
 /// Trait for building boxed quantum engines
 trait BoxedQuantumEngineBuilder: Send {
     fn build_boxed(self: Box<Self>) -> Result<Box<dyn crate::quantum::QuantumEngine>, PecosError>;
+    fn num_qubits(&self) -> Option<usize>;
     fn set_qubits_if_needed(&mut self, num_qubits: usize);
 }
 
@@ -80,6 +81,10 @@ where
         mut self: Box<Self>,
     ) -> Result<Box<dyn crate::quantum::QuantumEngine>, PecosError> {
         self.builder.build()
+    }
+
+    fn num_qubits(&self) -> Option<usize> {
+        self.builder.num_qubits()
     }
 
     fn set_qubits_if_needed(&mut self, num_qubits: usize) {
@@ -274,47 +279,28 @@ impl SimBuilder {
             }
         };
 
-        // Determine number of qubits
-        let num_qubits = self
-            .explicit_num_qubits
-            .or_else(|| Some(classical_engine.num_qubits()))
-            .ok_or_else(|| {
-                PecosError::Input(
-                    "Number of qubits not specified and cannot be inferred from engine".to_string(),
-                )
-            })?;
-
-        // Forward a qubit-count hint only when it is meaningful. An explicit
-        // count is the caller's choice and is always forwarded, even 0. But an
-        // inferred 0 from a dynamic classical engine means "unknown", not "zero
-        // qubits"; forwarding it would freeze dynamic allocation at 0.
-        match self.explicit_num_qubits {
-            Some(explicit) => classical_engine.set_num_qubits_hint(explicit),
-            None if num_qubits > 0 => classical_engine.set_num_qubits_hint(num_qubits),
-            None => {}
+        let configured_qubits = self.explicit_num_qubits.or_else(|| {
+            self.quantum_builder
+                .as_ref()
+                .and_then(|builder| builder.num_qubits())
+        });
+        let num_qubits = configured_qubits.unwrap_or_else(|| classical_engine.num_qubits());
+        if configured_qubits.is_none()
+            && num_qubits == 0
+            && classical_engine.has_dynamic_qubit_count()
+        {
+            return Err(PecosError::Input(
+                "A dynamic classical engine reports 0 qubits before execution, which is not a known capacity; specify .qubits(n) on the simulation or quantum builder to accommodate runtime allocations".to_string(),
+            ));
+        }
+        if configured_qubits.is_some() || num_qubits > 0 {
+            classical_engine.set_num_qubits_hint(num_qubits);
         }
 
-        // Build quantum engine (require explicit qubit specification)
         let quantum_engine = if let Some(mut builder) = self.quantum_builder {
-            // Set qubits on the quantum engine builder if explicitly specified
             builder.set_qubits_if_needed(num_qubits);
             builder.build_boxed()?
         } else {
-            // Default: fixed-size sparse stabilizer. Dynamic classical engines
-            // may report 0 before execution, but the default quantum engine
-            // cannot grow to fit runtime qalloc operations.
-            if self.explicit_num_qubits.is_none()
-                && num_qubits == 0
-                && classical_engine.has_dynamic_qubit_count()
-            {
-                return Err(PecosError::Input(
-                    "A dynamic classical engine reports 0 qubits before execution, but the \
-                     default quantum engine is fixed-size and cannot grow to fit qubits \
-                     allocated at runtime. Specify .qubits(n) or provide a quantum engine \
-                     via .quantum()."
-                        .to_string(),
-                ));
-            }
             Box::new(SparseStabEngine::new(num_qubits))
         };
 

@@ -17,6 +17,14 @@
 //! This crate provides ZX calculus capabilities for analyzing quantum circuits,
 //! built on top of [QuiZX](https://github.com/zxcalc/quizx).
 //!
+//! `Angle64` export uses half-turn rational phases on a denominator-2^62 grid
+//! (reduction may lower the denominator). Even `Angle64` fractions are exact.
+//! Every odd fraction is exactly a tie and rounds by exactly one `Angle64` tick
+//! (2^-64 turn), away from zero on the signed principal representative in
+//! (-pi, pi]. The half turn is positive; QuiZX normalizes a rounded -pi to the
+//! equivalent +1 half-turn phase. The reverse conversion also resolves ties
+//! away from zero.
+//!
 //! # Modules
 //!
 //! - [`graph`] -- ZX graph helpers and metadata

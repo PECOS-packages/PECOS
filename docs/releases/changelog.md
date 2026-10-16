@@ -47,6 +47,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- Removed `pecos.execute_llvm`; use `pecos_rslib.hugr_lowering.compile_hugr_to_qis`
+  for lowering and `pecos.sim` for execution.
+- Removed `pecos.compilation_pipeline.compile_guppy_to_llvm`; compose
+  `compile_guppy_to_hugr` with `compile_hugr_to_qis` instead.
+- Removed `pecos.engines.compile_hugr_to_qis`; use
+  `pecos_rslib.hugr_lowering.compile_hugr_to_qis` instead.
+- Removed `pecos.engines.get_compilation_backends`; use `compile_hugr_to_qis`
+  directly to compile with the required compiler.
+- Removed `pecos.get_guppy_backends`; use `pecos.sim` directly to run programs.
+- Removed the HUGR converters from `pecos.circuit_converters`: `hugr_to_dag`,
+  `guppy_to_dag`, `dag_to_gate_sequence`, `UnsupportedHugrStructureError`,
+  `hugr_to_ast` and `guppy_to_ast`. For a DAG, use the QIS trace route
+  `trace_program_to_tick_circuit(...).to_dag_circuit()`; to run a program, use
+  `pecos.sim`. SLR AST conversion is unchanged.
+- Guppy compilation (`compile_guppy_to_hugr`, `pecos.Guppy`, `pecos.sim`) accepts
+  only `@guppy` function definitions (`guppylang.defs.GuppyFunctionDefinition`) and
+  raises `ValueError` for anything else. Objects returned by `with_opt_level(...)`
+  or `with_minimal_opt()` are no longer accepted.
+- Removed `pecos.protocols.GuppyCallable`; annotate Guppy definitions with
+  `guppylang.defs.GuppyFunctionDefinition` and use `compile_guppy_to_hugr` or `pecos.sim`.
+
 - Seeded samples change for every engine on the shared Monte Carlo loop (including
   QIS/Guppy, QASM and PHIR). A seed now determines each shot from its global index,
   independently of the worker count and random draws in earlier shots.

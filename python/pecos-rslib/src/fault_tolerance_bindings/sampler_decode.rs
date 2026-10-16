@@ -422,14 +422,16 @@ fn native_batch(
 
 pub(super) fn execute(
     sampler: &DemSampler,
-    dem: &str,
+    dem: &super::DemInput,
     spec: &DecoderSpec,
     plan: &ExecutionPlan,
     num_shots: usize,
     seed: u64,
     options: DecodeOptions,
 ) -> Result<BatchExecutionOutput, BatchExecutionError> {
-    let model = spec.decode_model(dem);
+    // The prepared model is used only for decoding; sampling uses the existing sampler.
+    let prepared = dem.prepare(spec).map_err(BatchExecutionError::Build)?;
+    let model = prepared.model;
     // The wall clock deliberately starts immediately before decoder
     // construction, and therefore includes preflight, sampling, decoding, and
     // scoring while excluding the later conversion into Python objects.
@@ -474,6 +476,7 @@ pub(super) fn execute(
         }
     };
     Ok(BatchExecutionOutput {
+        projection: prepared.projection,
         num_errors: scored.mismatches,
         predictions: options.predictions.then_some(scored.predictions),
         per_shot_seconds: options.timing.then_some(scored.per_shot_seconds),

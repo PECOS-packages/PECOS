@@ -142,30 +142,19 @@ so it is not a bound on the probability the answer is missing.
 
 ## Decoding a hyperedge model with a matching decoder
 
-Matching-style decoders build a graph whose edges carry at most two detectors,
-so PECOS rejects a hyperedge model rather than dropping the mechanisms it cannot
-represent:
+Graph decoder specs now project raw hyperedges using disjoint components from
+standalone faults in the same model. They preserve retained fault probabilities
+and observable effects. The default `irreducible="refuse"` reports any faults
+that cannot be decomposed. `pymatching(correlated=True, irreducible="drop")`
+(or `"pymatching:irreducible=drop"`) explicitly removes those faults from the
+decoder's model, without changing sampling. Hyperedge-capable alternatives
+include `bp_osd()`, `tesseract()`, Frontier, and BP-Trellis.
 
-```
-Invalid configuration: fusion_blossom needs a graphlike model, but this DEM has
-113 mechanism(s) touching three or more detectors. Decoding it here would
-silently ignore them. Pass a decomposed model
-(DetectorErrorModel.to_string_terminal_graphlike_decomposed() or
-to_string_source_graphlike_decomposed()), or use a decoder that accepts
-hyperedges such as bp_osd or tesseract.
-```
+A supplied `^` decomposition is still used verbatim if each component touches at
+most two detectors. Mixing supplied decompositions and raw hyperedges is rejected.
+Hybrid belief matching retains its separate full/decomposed input contract.
 
-For graph matchers, prefer `DetectorErrorModel.to_string_source_graphlike_decomposed()`
-and check for residual hyperedges. It uses source provenance to choose components.
-The terminal projection mentioned in the diagnostic is a coordinate-based
-approximation: it invents components that need not be physical mechanisms and
-can decode less accurately even when their observable labels are consistent.
-
-There are two ways forward. The production option is a decoder that represents
-hyperedges directly — `bp_osd()` or `tesseract()` from `pecos.decoders`, or the
-Frontier and BP-Trellis decoders above.
-
-The experimental option is to build a genuinely decomposed model.
+Circuit provenance offers another way to supply a decomposed model.
 `coherent_dem_decomposed` traces a `TickCircuit` and uses Pauli provenance to
 split each hyperedge into its X and Z components, fitting the probabilities to
 Heisenberg-exact marginals. It needs a circuit whose detectors are defined --

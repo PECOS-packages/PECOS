@@ -8,7 +8,7 @@ fn project(
     dem: &StructuredDem,
     policy: IrreduciblePolicy,
 ) -> Result<GraphlikeProjection, GraphlikeProjectionError> {
-    project_graphlike(dem, &vec![None; dem.num_detectors], policy)
+    project_graphlike(dem, policy)
 }
 
 fn parts(text: &str) -> Vec<StructuredDemComponent> {
@@ -27,38 +27,74 @@ error(0.123456789) D3 D1 D0 D2";
 // contract: cross preference precedes weight; all emitted pairs are counted.
 #[test]
 fn cross_preference_beats_weight() {
-    use DetectorFamily::{X, Z};
-    let dem = parse(TWO_CHOICES);
-    let families = [Some(X), Some(X), Some(Z), Some(Z)];
-    let result = project_graphlike(&dem, &families, IrreduciblePolicy::Refuse).unwrap();
+    let mut dem = parse(TWO_CHOICES);
+    dem.detector_fault_sectors = vec![
+        Some("XX".into()),
+        Some("XX".into()),
+        Some("YY".into()),
+        Some("YY".into()),
+    ];
+    let result = project_graphlike(&dem, IrreduciblePolicy::Refuse).unwrap();
     assert_eq!(result.model.errors[4].components, parts("D0 D1 ^ D2 D3"));
-    assert_eq!(result.report.cross_family_components, 2);
+    assert_eq!(result.report.cross_sector_components, 2);
 }
 
-// contract: Mixed and undeclared never penalize pairs, in either position.
+// contract: only unequal known labels are cross; unset and boundaries never count.
 #[test]
-fn mixed_and_undeclared_are_not_cross() {
-    use DetectorFamily::{Mixed, X, Z};
-    for left in [None, Some(X), Some(Z), Some(Mixed)] {
-        for right in [None, Some(X), Some(Z), Some(Mixed)] {
-            let families = [left, right];
-            let expected = matches!((left, right), (Some(X), Some(Z)) | (Some(Z), Some(X)));
-            assert_eq!(is_cross(&[0, 1], &families), expected);
-            assert_eq!(is_cross(&[1, 0], &families), expected);
+fn unset_and_boundaries_are_not_cross() {
+    for left in [None, Some("XX"), Some("YY"), Some("ZZ")] {
+        for right in [None, Some("XX"), Some("YY"), Some("ZZ")] {
+            let sectors = [left.map(str::to_owned), right.map(str::to_owned)];
+            let expected = left.is_some() && right.is_some() && left != right;
+            assert_eq!(is_cross(&[0, 1], &sectors), expected);
+            assert_eq!(is_cross(&[1, 0], &sectors), expected);
+            assert!(!is_cross(&[0], &sectors));
+            assert!(!is_cross(&[1], &sectors));
+            assert!(!is_cross(&[], &sectors));
         }
     }
-    // The neutral-family split has worse weight; only the cross preference wins.
-    let dem = parse(
+    // The split through the unset detector has worse weight; cross preference wins.
+    let mut dem = parse(
         "error(0.4) D0 D1\nerror(0.4) D2\nerror(0.01) D0 D2\nerror(0.01) D1\nerror(0.1) D0 D1 D2",
     );
-    for neutral in [Some(Mixed), None] {
-        let result = project_graphlike(
-            &dem,
-            &[Some(X), Some(Z), neutral],
-            IrreduciblePolicy::Refuse,
-        )
-        .unwrap();
-        assert_eq!(result.model.errors[4].components, parts("D0 D2 ^ D1"));
+    dem.detector_fault_sectors = vec![Some("XX".into()), Some("YY".into()), None];
+    let result = project_graphlike(&dem, IrreduciblePolicy::Refuse).unwrap();
+    assert_eq!(result.model.errors[4].components, parts("D0 D2 ^ D1"));
+}
+
+// contract: three opaque sectors prefer equal labels regardless of their spelling.
+#[test]
+fn opaque_sector_equality_controls_cross_preference() {
+    for labels in [["XX", "YY", "ZZ"], ["ZZ", "XX", "YY"], ["x", "X", " "]] {
+        let mut dem = parse(
+            "error(0.01) D0 D1\nerror(0.01) D2 D3\nerror(0.01) D4 D5\n\
+             error(0.4) D0 D2\nerror(0.4) D1 D4\nerror(0.4) D3 D5\n\
+             error(0.2) D0 D1 D2 D3 D4 D5",
+        );
+        dem.detector_fault_sectors = labels
+            .into_iter()
+            .flat_map(|label| [Some(label.to_owned()), Some(label.to_owned())])
+            .collect();
+        let result = project(&dem, IrreduciblePolicy::Refuse).unwrap();
+        assert_eq!(
+            result.model.errors[6].components,
+            parts("D0 D1 ^ D2 D3 ^ D4 D5")
+        );
+        assert_eq!(result.report.cross_sector_components, 3);
+        assert_eq!(result.report.distinct_sectors, 3);
+        assert_eq!(result.report.unlabelled_detectors, 0);
+    }
+}
+
+// contract: even an unused detector with an empty label invalidates the public model.
+#[test]
+fn empty_sector_is_a_distinct_projection_error() {
+    let mut dem = parse("error(0.1) D0\ndetector D3");
+    dem.detector_fault_sectors[3] = Some(String::new());
+    for policy in [IrreduciblePolicy::Drop, IrreduciblePolicy::Refuse] {
+        let error = project(&dem, policy).unwrap_err();
+        assert_eq!(error, GraphlikeProjectionError::EmptySector { detector: 3 });
+        assert_eq!(error.to_string(), "detector D3 fault_sector is empty");
     }
 }
 
@@ -188,7 +224,7 @@ fn passthrough_exactly_as_written() {
     for (a, b) in dem.errors.iter().zip(&result.model.errors) {
         assert_eq!(a.probability.to_bits(), b.probability.to_bits());
     }
-    assert_eq!(result.report.undeclared_detectors, 6);
+    assert_eq!(result.report.unlabelled_detectors, 6);
 }
 
 // contract: duplicates are rejected in both namespaces, with the offending index.
@@ -214,7 +250,7 @@ fn repeated_targets_rejected() {
     );
 }
 
-// contract: direct public-field models receive bounds checks before indexing families.
+// contract: direct public-field models receive bounds checks before indexing sectors.
 #[test]
 fn out_of_range_targets_rejected() {
     let mut dem = parse("error(0.1) D0 L0\ndetector D2");
@@ -241,17 +277,21 @@ fn out_of_range_targets_rejected() {
 
 // contract: dimensions include gaps and declarations, not just referenced targets.
 #[test]
-fn dimensions_and_family_length() {
+fn dimensions_and_sector_length() {
     let dem = parse("error(0.1) D7\ndetector D10");
     assert_eq!(dem.num_detectors, 11);
-    assert_eq!(
-        project_graphlike(&dem, &[None; 8], IrreduciblePolicy::Drop).unwrap_err(),
-        GraphlikeProjectionError::FamiliesLength {
-            expected: 11,
-            actual: 8
-        }
-    );
     assert_eq!(project(&dem, IrreduciblePolicy::Drop).unwrap().model, dem);
+    for length in [8, 12] {
+        let mut malformed = dem.clone();
+        malformed.detector_fault_sectors.resize(length, None);
+        assert_eq!(
+            project_graphlike(&malformed, IrreduciblePolicy::Drop).unwrap_err(),
+            GraphlikeProjectionError::SectorsLength {
+                expected: 11,
+                actual: length,
+            }
+        );
+    }
     assert_eq!(
         project(&parse(""), IrreduciblePolicy::Refuse)
             .unwrap()
@@ -260,7 +300,7 @@ fn dimensions_and_family_length() {
     );
 }
 
-// contract: exactly one component and strictly interior finite probabilities.
+// contract: exactly one component and finite probabilities in [0, 1).
 #[test]
 fn component_count_and_probabilities() {
     let mut dem = parse("error(0.1) D0 ^ D1");
@@ -280,16 +320,7 @@ fn component_count_and_probabilities() {
         }
     );
     dem.errors[0].components = parts("D0");
-    for p in [
-        0.0,
-        -0.0,
-        1.0,
-        f64::NAN,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        -0.1,
-        1.1,
-    ] {
+    for p in [1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.1] {
         dem.errors[0].probability = p;
         let GraphlikeProjectionError::InvalidProbability {
             error_index,
@@ -390,23 +421,23 @@ fn immediate_error_precedence() {
             project(&dem, policy),
             Err(GraphlikeProjectionError::OverlapOnly { error_index: 4, .. })
         ));
-        let dem = parse("error(0.1) D0 D1 D2\nerror(0) D0");
+        let dem = parse("error(0.1) D0 D1 D2\nerror(1) D0");
         assert!(matches!(
             project(&dem, policy),
             Err(GraphlikeProjectionError::InvalidProbability { error_index: 1, .. })
         ));
         // Every malformed line takes precedence over earlier reduction failures.
-        let dem = parse(&format!("{OVERLAP}\nerror(0) D0"));
+        let dem = parse(&format!("{OVERLAP}\nerror(1) D0"));
         assert!(matches!(
             project(&dem, policy),
             Err(GraphlikeProjectionError::InvalidProbability { error_index: 4, .. })
         ));
-        let dem = parse(&format!("{}\nerror(0) D0", budget_line()));
+        let dem = parse(&format!("{}\nerror(1) D0", budget_line()));
         assert!(matches!(
             project(&dem, policy),
             Err(GraphlikeProjectionError::InvalidProbability { error_index: 1, .. })
         ));
-        let dem = parse(&format!("error(0) D0\n{OVERLAP}"));
+        let dem = parse(&format!("error(1) D0\n{OVERLAP}"));
         assert!(matches!(
             project(&dem, policy),
             Err(GraphlikeProjectionError::InvalidProbability { error_index: 0, .. })
@@ -436,23 +467,36 @@ fn irreducible_refuse_and_drop() {
 // contract: label conflicts are counted per detector set, never rejected; all report counters.
 #[test]
 fn diagnostics_and_report_counts() {
-    use DetectorFamily::{Mixed, X, Z};
-    let dem = parse(
+    let mut dem = parse(
         "error(0.1) D0 D1\nerror(0.2) D0 D1 L0\nerror(0.3) D1 D0 L0\nerror(0.1) D2 L0\nerror(0.2) D2 L1\nerror(0.3) D2 L2\nerror(0.1) D0 D1 D2\nerror(0.2) D0 D1 D2\nerror(0.1) D3 D4 D5\ndetector(2,3,4) D6",
     );
-    let families = [Some(X), Some(Z), Some(Mixed), None, None, None, Some(Mixed)];
-    let result = project_graphlike(&dem, &families, IrreduciblePolicy::Drop).unwrap();
+    dem.detector_fault_sectors = vec![
+        Some("XX".into()),
+        Some("YY".into()),
+        Some("ZZ".into()),
+        None,
+        None,
+        None,
+        Some("ZZ".into()),
+    ];
+    let result = project_graphlike(&dem, IrreduciblePolicy::Drop).unwrap();
     assert_eq!(
         result.report,
         ProjectionReport {
             input_hyperedges: 3,
             projected: 2,
             dropped_indices: vec![8],
-            cross_family_components: 5,
+            zero_probability_omitted: vec![],
+            cross_sector_components: 5,
             label_conflicts: 2,
-            undeclared_detectors: 3,
-            mixed_detectors: 2,
+            unlabelled_detectors: 3,
+            distinct_sectors: 3,
         }
+    );
+    // contract: projection retains every declaration, including unused detectors.
+    assert_eq!(
+        result.model.detector_fault_sectors,
+        dem.detector_fault_sectors
     );
     assert_eq!(result.model.detector_coords, dem.detector_coords);
     assert_eq!(result.model.num_detectors, dem.num_detectors);
@@ -577,7 +621,7 @@ fn silent_mechanism_cannot_supply_missing_labels() {
 #[test]
 fn later_malformed_lines_precede_reduction() {
     for prefix in [OVERLAP.to_owned(), budget_line()] {
-        let mut base = parse(&format!("{prefix}\nerror(0.1) D0 L0\nerror(0) D0"));
+        let mut base = parse(&format!("{prefix}\nerror(0.1) D0 L0\nerror(1) D0"));
         let index = base.errors.len() - 2;
         let valid = base.errors[index].clone();
         let mut cases = Vec::new();
@@ -591,12 +635,12 @@ fn later_malformed_lines_precede_reduction() {
             },
         ));
         let mut error = valid.clone();
-        error.probability = 0.0;
+        error.probability = 1.0;
         cases.push((
             error,
             GraphlikeProjectionError::InvalidProbability {
                 error_index: index,
-                probability: 0.0,
+                probability: 1.0,
             },
         ));
         let mut error = valid.clone();
@@ -649,7 +693,6 @@ fn later_malformed_lines_precede_reduction() {
 // contract: negative future weights disable weight pruning, and lower cross always precedes weight.
 #[test]
 fn pruning_preserves_negative_weights_and_lower_cross() {
-    use DetectorFamily::{X, Z};
     let dem = parse(
         "error(0.9) D0\nerror(0.1) D1 D2\nerror(0.01) D0 D1\nerror(0.999) D2\nerror(0.1) D0 D1 D2",
     );
@@ -661,15 +704,16 @@ fn pruning_preserves_negative_weights_and_lower_cross() {
             .components,
         parts("D0 D1 ^ D2")
     );
-    let dem = parse(
+    let mut dem = parse(
         "error(0.4) D0 D1\nerror(0.4) D2 D3\nerror(0.01) D0 D2\nerror(0.01) D1 D3\nerror(0.1) D0 D1 D2 D3",
     );
-    let result = project_graphlike(
-        &dem,
-        &[Some(X), Some(Z), Some(X), Some(Z)],
-        IrreduciblePolicy::Refuse,
-    )
-    .unwrap();
+    dem.detector_fault_sectors = vec![
+        Some("XX".into()),
+        Some("YY".into()),
+        Some("XX".into()),
+        Some("YY".into()),
+    ];
+    let result = project_graphlike(&dem, IrreduciblePolicy::Refuse).unwrap();
     assert_eq!(result.model.errors[4].components, parts("D0 D2 ^ D1 D3"));
 }
 
@@ -686,7 +730,7 @@ fn pruning_never_discards_equality() {
         .map(|(i, e)| validate(&dem, i, e).unwrap())
         .collect();
     let standalone = standalone_mechanisms(&dem, &effects);
-    let blocks = local_blocks(&effects[4].0, &standalone, &[None; 4]);
+    let blocks = local_blocks(&effects[4].0, &standalone, &[const { None }; 4]);
     let mut best = Some(Candidate {
         cross: 0,
         weight: 0.0,
@@ -769,11 +813,7 @@ impl UnprunedReference {
     }
 }
 
-fn reference_choice(
-    dem: &StructuredDem,
-    families: &[Option<DetectorFamily>],
-) -> Option<Vec<Effect>> {
-    use DetectorFamily::{X, Z};
+fn reference_choice(dem: &StructuredDem, sectors: &[Option<String>]) -> Option<Vec<Effect>> {
     let (target, standalones) = dem.errors.split_last().unwrap();
     let mut components: Vec<_> = standalones
         .iter()
@@ -794,10 +834,10 @@ fn reference_choice(
         let cross = detectors.len() == 2
             && matches!(
                 (
-                    families[detectors[0] as usize],
-                    families[detectors[1] as usize]
+                    &sectors[detectors[0] as usize],
+                    &sectors[detectors[1] as usize]
                 ),
-                (Some(X), Some(Z)) | (Some(Z), Some(X))
+                (Some(left), Some(right)) if left != right
             );
         reference.blocks[detectors[0] as usize].push(ReferenceBlock {
             detectors: detectors.iter().fold(0, |mask, id| mask | (1 << id)),
@@ -831,7 +871,7 @@ fn reference_choice(
 
 fn check_search_against_reference(
     dem: &StructuredDem,
-    families: &[Option<DetectorFamily>],
+    sectors: &[Option<String>],
     case: usize,
 ) -> bool {
     let effects: Vec<_> = dem
@@ -842,12 +882,12 @@ fn check_search_against_reference(
         .collect();
     let standalone = standalone_mechanisms(dem, &effects);
     let target = effects.last().unwrap();
-    let blocks = local_blocks(&target.0, &standalone, families);
-    let expected = reference_choice(dem, families);
+    let blocks = local_blocks(&target.0, &standalone, sectors);
+    let expected = reference_choice(dem, sectors);
     assert_eq!(
         choose(target, &blocks),
         expected,
-        "case {case}, families {families:?}, model {dem:?}"
+        "case {case}, sectors {sectors:?}, model {dem:?}"
     );
     expected.is_some()
 }
@@ -865,6 +905,7 @@ impl FixedRng {
 
 fn dense_model(
     num_detectors: u32,
+    detector_fault_sectors: Vec<Option<String>>,
     mut mechanisms: impl FnMut() -> Vec<(f64, Vec<u32>)>,
     observables: Vec<u32>,
 ) -> StructuredDem {
@@ -896,16 +937,16 @@ fn dense_model(
     StructuredDem {
         errors,
         detector_coords: vec![None; num_detectors as usize],
+        detector_fault_sectors,
         num_detectors: num_detectors as usize,
         num_observables: 2,
     }
 }
 
 // contract: seeded differential coverage includes exact ties, negative weights,
-// all family declarations, random target parity, and every size from 4 through 8.
+// all sector declarations, random target parity, and every size from 4 through 8.
 #[test]
 fn randomized_dense_search_matches_unpruned_reference() {
-    use DetectorFamily::{Mixed, X, Z};
     let mut rng = FixedRng(0x9e37_79b9);
     let mut nonnegative = 0;
     let mut negative = 0;
@@ -919,8 +960,8 @@ fn randomized_dense_search_matches_unpruned_reference() {
             2 => &[0.1, 0.1, 0.5, 0.8, 0.9],
             _ => &[0.6, 0.6, 0.8, 0.9],
         };
-        let families: Vec<_> = (0..size)
-            .map(|_| [Some(X), Some(Z), Some(Mixed), None][rng.below(4)])
+        let sectors: Vec<_> = (0..size)
+            .map(|_| [Some("XX"), Some("YY"), Some("ZZ"), None][rng.below(4)].map(str::to_owned))
             .collect();
         let target = rng.below(4);
         let observables = (0..2).filter(|id| target & (1 << id) != 0).collect();
@@ -928,6 +969,7 @@ fn randomized_dense_search_matches_unpruned_reference() {
         let shared_label = (case % 16 == 0).then(|| 1 << rng.below(3));
         let dem = dense_model(
             u32::try_from(size).unwrap(),
+            sectors.clone(),
             || {
                 let labels = shared_label.unwrap_or_else(|| 1 + rng.below(7));
                 (0..3)
@@ -949,7 +991,7 @@ fn randomized_dense_search_matches_unpruned_reference() {
         } else {
             negative += 1;
         }
-        if check_search_against_reference(&dem, &families, case) {
+        if check_search_against_reference(&dem, &sectors, case) {
             found += 1;
         } else {
             absent += 1;
@@ -964,10 +1006,15 @@ fn randomized_dense_search_matches_unpruned_reference() {
 fn dense_eight_detector_search_matches_unpruned_reference() {
     let dem = dense_model(
         8,
+        vec![None; 8],
         || vec![(0.1, vec![]), (0.1, vec![0]), (0.1, vec![1])],
         vec![],
     );
-    assert!(check_search_against_reference(&dem, &[None; 8], 0));
+    assert!(check_search_against_reference(
+        &dem,
+        &[const { None }; 8],
+        0
+    ));
     let result = project(&dem, IrreduciblePolicy::Refuse).unwrap();
     assert_eq!(
         result.model.errors.last().unwrap().components,
@@ -992,5 +1039,145 @@ fn incremental_parity_handles_wide_and_sparse_labels() {
             dem.errors[0].components[0].clone(),
             dem.errors[1].components[0].clone()
         ]
+    );
+}
+
+// contract: both zero signs are omitted exactly at any support size, before reduction handling.
+#[test]
+fn zero_probability_errors_are_omitted_exactly() {
+    for zero in [0.0, -0.0] {
+        let mut dem = parse(&format!(
+            "error(0.2) D0 L0\nerror(0) L0\nerror(0) D0\nerror(0) D0 D1\n\
+             error(0) D0 D1 D2\n{}\nerror(0.3) D1 D2\nerror(0.4) D0 D1 D2 L0",
+            budget_line(),
+        ));
+        // Include a detector-silent, target-free line, valid for projection's raw input.
+        dem.errors[1].components[0].observables.clear();
+        for error in &mut dem.errors[1..6] {
+            error.probability = zero;
+        }
+        for policy in [IrreduciblePolicy::Drop, IrreduciblePolicy::Refuse] {
+            let result = project(&dem, policy).unwrap();
+            assert_eq!(result.report.zero_probability_omitted, [1, 2, 3, 4, 5]);
+            assert_eq!(result.report.dropped_indices, [] as [usize; 0]);
+            assert_eq!(result.report.input_hyperedges, 1);
+            assert_eq!(result.report.projected, 1);
+            let mut expected = dem.clone();
+            expected.errors = vec![
+                dem.errors[0].clone(),
+                dem.errors[6].clone(),
+                StructuredDemError {
+                    probability: 0.4,
+                    components: parts("D0 L0 ^ D1 D2"),
+                },
+            ];
+            assert_eq!(result.model, expected);
+        }
+        let mut overlap = parse(OVERLAP);
+        overlap.errors[3].probability = zero;
+        let result = project(&overlap, IrreduciblePolicy::Refuse).unwrap();
+        assert_eq!(result.report.zero_probability_omitted, [3]);
+        assert_eq!(result.report.input_hyperedges, 0);
+        assert_eq!(result.model.errors, overlap.errors[..3]);
+    }
+}
+
+// contract: zero-probability standalones supply neither catalogue blocks nor label conflicts.
+#[test]
+fn zero_probability_standalones_do_not_enter_catalogue() {
+    let dem = parse("error(0) D0 L0\nerror(0.2) D1 D2\nerror(0) D1 D2 L0\nerror(0.3) D0 D1 D2 L0");
+    let result = project(&dem, IrreduciblePolicy::Drop).unwrap();
+    assert_eq!(result.report.zero_probability_omitted, [0, 2]);
+    assert_eq!(result.report.dropped_indices, [3]);
+    assert_eq!(result.report.label_conflicts, 0);
+    assert_eq!(result.report.input_hyperedges, 1);
+    assert_eq!(result.model.errors, [dem.errors[1].clone()]);
+    assert_eq!(
+        project(&dem, IrreduciblePolicy::Refuse).unwrap_err(),
+        GraphlikeProjectionError::Irreducible {
+            count: 1,
+            first_indices: vec![3]
+        }
+    );
+}
+
+// contract: zero omissions still undergo every structural validation before reduction starts.
+#[test]
+fn zero_probability_lines_are_fully_validated() {
+    use GraphlikeProjectionError as E;
+    let mut dem = parse(&format!("{}\nerror(0) D0 L0", budget_line()));
+    let index = dem.errors.len() - 1;
+    let original = dem.errors[index].clone();
+    for (components, expected) in [
+        (
+            vec![],
+            E::ComponentCount {
+                error_index: index,
+                count: 0,
+            },
+        ),
+        (
+            parts("D0 ^ D1"),
+            E::ComponentCount {
+                error_index: index,
+                count: 2,
+            },
+        ),
+        (
+            parts("D99"),
+            E::DetectorOutOfRange {
+                error_index: index,
+                detector: 99,
+                num_detectors: dem.num_detectors,
+            },
+        ),
+        (
+            parts("D0 L99"),
+            E::ObservableOutOfRange {
+                error_index: index,
+                observable: 99,
+                num_observables: 1,
+            },
+        ),
+        (
+            vec![StructuredDemComponent {
+                detectors: vec![0, 0],
+                observables: vec![],
+            }],
+            E::RepeatedDetector {
+                error_index: index,
+                detector: 0,
+            },
+        ),
+        (
+            vec![StructuredDemComponent {
+                detectors: vec![0],
+                observables: vec![0, 0],
+            }],
+            E::RepeatedObservable {
+                error_index: index,
+                observable: 0,
+            },
+        ),
+    ] {
+        for zero in [0.0, -0.0] {
+            dem.errors[index] = StructuredDemError {
+                probability: zero,
+                components: components.clone(),
+            };
+            for policy in [IrreduciblePolicy::Drop, IrreduciblePolicy::Refuse] {
+                assert_eq!(project(&dem, policy).unwrap_err(), expected);
+            }
+        }
+    }
+    dem.errors[index] = original;
+    dem.errors[0].probability = 0.0;
+    dem.errors[index].probability = 1.0;
+    assert_eq!(
+        project(&dem, IrreduciblePolicy::Refuse).unwrap_err(),
+        E::InvalidProbability {
+            error_index: index,
+            probability: 1.0
+        }
     );
 }

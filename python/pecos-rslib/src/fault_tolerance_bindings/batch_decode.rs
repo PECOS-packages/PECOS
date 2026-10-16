@@ -1,6 +1,6 @@
 //! Execution core and Python result for `SampleBatch.decode`.
 
-use super::{PyDecodeStats, decoder_build_error_to_py};
+use super::{PyDecodeStats, PyProjectionReport, decoder_build_error_to_py};
 use crate::batch_decoder_spec::DecoderBuildError;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoders::batch::ExecutionPlan;
@@ -9,6 +9,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 pub(super) struct BatchExecutionOutput {
+    pub(super) projection: Option<pecos_decoder_core::graphlike_projection::ProjectionReport>,
     pub(super) num_errors: usize,
     pub(super) predictions: Option<Vec<ObsMask>>,
     pub(super) per_shot_seconds: Option<Vec<f64>>,
@@ -47,6 +48,8 @@ impl BatchExecutionError {
 #[pyclass(name = "DecodeResult", module = "pecos_rslib.qec", skip_from_py_object)]
 pub struct PyDecodeResult {
     #[pyo3(get)]
+    projection: Option<PyProjectionReport>,
+    #[pyo3(get)]
     num_shots: usize,
     #[pyo3(get)]
     num_errors: usize,
@@ -75,6 +78,7 @@ impl PyDecodeResult {
                 reproducibility_warnings: result.reproducibility_warnings,
             },
             BatchExecutionOutput {
+                projection: result.projection,
                 num_errors: result.num_errors,
                 predictions: result.predictions,
                 per_shot_seconds: result.per_shot_seconds,
@@ -129,6 +133,7 @@ impl PyDecodeResult {
             })
             .transpose()?;
         Ok(Self {
+            projection: output.projection.map(Into::into),
             num_shots,
             num_errors: output.num_errors,
             logical_error_rate,

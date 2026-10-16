@@ -5393,13 +5393,15 @@ impl DetectorErrorModel {
     ///
     /// This uses the same equal-effect grouping and XOR probability combination
     /// as [`Self::to_mechanisms`] and the default [`Display`] representation.
+    /// Detector coordinates and opaque fault-sector labels are copied by detector ID.
     /// Tracked-Pauli outputs are rejected because matching decoders only consume
     /// standard DEM observables.
     ///
     /// # Errors
     ///
     /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) when
-    /// tracked-Pauli targets are present or model dimensions are inconsistent.
+    /// tracked-Pauli targets are present, model dimensions are inconsistent, or a
+    /// detector's fault-sector label is empty.
     pub fn to_structured_decoder_dem(
         &self,
     ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
@@ -5425,6 +5427,7 @@ impl DetectorErrorModel {
 
         let num_detectors = self.num_detectors();
         let mut detector_coords = vec![None; num_detectors];
+        let mut detector_fault_sectors = vec![None; num_detectors];
         for detector in &self.detectors {
             let index = detector.id as usize;
             let Some(slot) = detector_coords.get_mut(index) else {
@@ -5434,6 +5437,7 @@ impl DetectorErrorModel {
                 )));
             };
             *slot = detector.coords.map(|coords| coords.to_vec());
+            detector_fault_sectors[index].clone_from(&detector.fault_sector);
         }
 
         let (mechanisms, _) = self.to_mechanisms();
@@ -5450,6 +5454,7 @@ impl DetectorErrorModel {
         StructuredDem::try_new(
             errors,
             detector_coords,
+            detector_fault_sectors,
             num_detectors,
             self.num_observables(),
         )
@@ -9560,6 +9565,34 @@ mod tests {
         assert!((summary.y_decomposed_probability - 0.02).abs() < 1e-12);
     }
 
+    // contract: definitions supply opaque labels by ID; unset labels stay unknown.
+    #[test]
+    fn structured_decoder_handoff_preserves_fault_sectors_by_id() {
+        let mut dem = DetectorErrorModel::new();
+        for (id, sector) in [(3, Some("ZZ")), (0, Some("XX")), (2, None), (1, Some("YY"))] {
+            let mut detector = DetectorDef::new(id).with_coords([1.0, 2.0, f64::from(id)]);
+            detector.fault_sector = sector.map(str::to_owned);
+            dem.add_detector(detector);
+        }
+        let structured = dem.to_structured_decoder_dem().unwrap();
+        assert_eq!(
+            structured.detector_fault_sectors,
+            vec![
+                Some("XX".into()),
+                Some("YY".into()),
+                None,
+                Some("ZZ".into())
+            ]
+        );
+        assert_eq!(structured.detector_coords[3], Some(vec![1.0, 2.0, 3.0]));
+
+        dem.detectors[0].fault_sector = Some(String::new());
+        assert_eq!(
+            dem.to_structured_decoder_dem().unwrap_err().to_string(),
+            "Invalid configuration: detector D3 fault_sector is empty"
+        );
+    }
+
     #[test]
     fn structured_decoder_handoff_matches_grouped_render_semantics() {
         let mut dem = DetectorErrorModel::new();
@@ -9573,6 +9606,7 @@ mod tests {
         let structured = dem.to_structured_decoder_dem().unwrap();
 
         assert_eq!(structured.num_detectors, 2);
+        assert_eq!(structured.detector_fault_sectors, vec![None; 2]);
         assert_eq!(structured.num_observables, 1);
         assert_eq!(structured.detector_coords[0], Some(vec![1.0, 2.0, 3.0]));
         assert_eq!(structured.errors[0].components.len(), 1);

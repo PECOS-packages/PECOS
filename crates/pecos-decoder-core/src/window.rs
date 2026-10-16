@@ -86,7 +86,7 @@ impl StructuredDemError {
     }
 }
 
-/// A flattened DEM retaining component structure and detector coordinates.
+/// A flattened DEM retaining component structure, detector coordinates, and sectors.
 /// Preserves written targets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructuredDem {
@@ -94,6 +94,10 @@ pub struct StructuredDem {
     pub errors: Vec<StructuredDemError>,
     /// Detector coordinates indexed by detector ID.
     pub detector_coords: Vec<Option<Vec<f64>>>,
+    /// Opaque fault-sector labels indexed by detector ID; length is `num_detectors`.
+    /// `None` means unknown/unset. Labels must be non-empty and are compared only
+    /// for equality. These labels are not represented in DEM text.
+    pub detector_fault_sectors: Vec<Option<String>>,
     /// Number of detectors, including declared but unreferenced detectors.
     pub num_detectors: usize,
     /// Number of observables, including declared but unflipped observables.
@@ -179,6 +183,7 @@ impl StructuredDem {
         Ok(Self {
             errors,
             detector_coords,
+            detector_fault_sectors: vec![None; num_detectors],
             num_detectors,
             num_observables,
         })
@@ -189,10 +194,11 @@ impl StructuredDem {
     /// # Errors
     ///
     /// Returns [`DecoderError`] if dimensions, targets, probabilities, or
-    /// coordinates are inconsistent.
+    /// coordinates or sector label counts are inconsistent, or a sector label is empty.
     pub fn try_new(
         errors: Vec<StructuredDemError>,
         detector_coords: Vec<Option<Vec<f64>>>,
+        detector_fault_sectors: Vec<Option<String>>,
         num_detectors: usize,
         num_observables: usize,
     ) -> Result<Self, DecoderError> {
@@ -201,6 +207,7 @@ impl StructuredDem {
                 "detector coordinate count does not match detector count",
             ));
         }
+        validate_fault_sectors(&detector_fault_sectors, num_detectors)?;
         if detector_coords
             .iter()
             .flatten()
@@ -234,6 +241,7 @@ impl StructuredDem {
         Ok(Self {
             errors,
             detector_coords,
+            detector_fault_sectors,
             num_detectors,
             num_observables,
         })
@@ -273,7 +281,8 @@ impl StructuredDem {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError`] for invalid bounds or a crossing error at a hard boundary.
+    /// Returns [`DecoderError`] for invalid bounds, inconsistent sector label
+    /// counts, empty sector labels, or a crossing error at a hard boundary.
     pub fn window_by_time(
         &self,
         start: f64,
@@ -283,6 +292,7 @@ impl StructuredDem {
         if !start.is_finite() || !end.is_finite() || start >= end {
             return Err(invalid("DEM window bounds must be finite and increasing"));
         }
+        validate_fault_sectors(&self.detector_fault_sectors, self.num_detectors)?;
         let times = self.detector_times();
         let mut global_to_local = vec![None; self.num_detectors];
         let mut local_to_global = Vec::new();
@@ -352,9 +362,14 @@ impl StructuredDem {
             .iter()
             .map(|&global| self.detector_coords[global as usize].clone())
             .collect();
+        let detector_fault_sectors = local_to_global
+            .iter()
+            .map(|&global| self.detector_fault_sectors[global as usize].clone())
+            .collect();
         let model = Self::try_new(
             errors,
             detector_coords,
+            detector_fault_sectors,
             local_to_global.len(),
             self.num_observables,
         )?;
@@ -392,6 +407,26 @@ impl StructuredDem {
     }
 }
 
+fn validate_fault_sectors(
+    sectors: &[Option<String>],
+    num_detectors: usize,
+) -> Result<(), DecoderError> {
+    if sectors.len() != num_detectors {
+        return Err(invalid(format!(
+            "detector sector declaration count {} does not match detector count {num_detectors}",
+            sectors.len()
+        )));
+    }
+    for (detector, sector) in sectors.iter().enumerate() {
+        if sector.as_ref().is_some_and(String::is_empty) {
+            return Err(invalid(format!(
+                "detector D{detector} fault_sector is empty"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn invalid(message: impl Into<String>) -> DecoderError {
     DecoderError::InvalidConfiguration(message.into())
 }
@@ -408,6 +443,117 @@ detector(5, 0, 1) D1\n\
 detector(6, 0, 2) D2\n\
 detector(7, 0, 3) D3\n\
 logical_observable L2\n";
+
+    // contract: text has no sectors, including sparse and declaration-only detector IDs.
+    #[test]
+    fn text_parsing_leaves_all_sectors_undeclared() {
+        for (text, count) in [
+            ("", 0),
+            ("error(0.1) D3", 4),
+            ("detector D5", 6),
+            ("error(0.1) D3\ndetector(1,2,3) D7", 8),
+        ] {
+            let model = StructuredDem::from_dem_str(text).unwrap();
+            assert_eq!(model.num_detectors, count);
+            assert_eq!(model.detector_fault_sectors, vec![None; count]);
+        }
+    }
+
+    // contract: construction and both window boundaries reject short and oversized sectors.
+    #[test]
+    fn sector_counts_are_checked_at_construction_and_window_boundaries() {
+        for count in [1, 3] {
+            let mut model = StructuredDem::from_dem_str(
+                "error(0.1) D0\nerror(0.2) D1\ndetector(0,0,0) D0\ndetector(0,0,1) D1",
+            )
+            .unwrap();
+            model.detector_fault_sectors.resize(count, Some("X".into()));
+            let expected = format!(
+                "detector sector declaration count {count} does not match detector count 2"
+            );
+            for error in [
+                StructuredDem::try_new(
+                    model.errors.clone(),
+                    model.detector_coords.clone(),
+                    model.detector_fault_sectors.clone(),
+                    2,
+                    0,
+                )
+                .unwrap_err(),
+                model
+                    .window_by_time(0.0, 2.0, DemBoundaryKind::Soft)
+                    .unwrap_err(),
+                model.commit_window(0..2, 0..1).unwrap_err(),
+            ] {
+                let DecoderError::InvalidConfiguration(message) = error else {
+                    panic!("wrong error: {error}");
+                };
+                assert_eq!(message, expected);
+            }
+        }
+    }
+
+    // contract: construction and both windows reject empty labels, even outside the window.
+    #[test]
+    fn empty_sectors_are_rejected_at_construction_and_window_boundaries() {
+        let mut model =
+            StructuredDem::from_dem_str("error(0.1) D0\ndetector(0,0,0) D0\ndetector(0,0,1) D1")
+                .unwrap();
+        model.detector_fault_sectors[1] = Some(String::new());
+        for error in [
+            StructuredDem::try_new(
+                model.errors.clone(),
+                model.detector_coords.clone(),
+                model.detector_fault_sectors.clone(),
+                2,
+                0,
+            )
+            .unwrap_err(),
+            model
+                .window_by_time(0.0, 1.0, DemBoundaryKind::Soft)
+                .unwrap_err(),
+            model.commit_window(0..1, 0..1).unwrap_err(),
+        ] {
+            let DecoderError::InvalidConfiguration(message) = error else {
+                panic!("wrong error: {error}");
+            };
+            assert_eq!(message, "detector D1 fault_sector is empty");
+        }
+    }
+
+    // contract: both windows remap every label through their local-to-global IDs.
+    #[test]
+    fn windows_remap_detector_fault_sectors() {
+        let mut model = StructuredDem::from_dem_str(
+            "error(0.1) D0\nerror(0.1) D1\nerror(0.1) D2\nerror(0.1) D3\n\
+             detector(0,0,1) D0\ndetector(0,0,0) D1\ndetector(0,0,1) D2\ndetector(0,0,1) D3",
+        )
+        .unwrap();
+        model.detector_fault_sectors = vec![
+            Some("XX".into()),
+            Some("YY".into()),
+            Some("ZZ".into()),
+            None,
+        ];
+        let window = model
+            .window_by_time(1.0, 2.0, DemBoundaryKind::Soft)
+            .unwrap();
+        let commit = model.commit_window(1..2, 1..2).unwrap();
+        for (local, mapping) in [
+            (&window.model, &window.local_to_global),
+            (&commit.model, &commit.local_to_global_detector),
+        ] {
+            assert_eq!(mapping, &[0, 2, 3]);
+            assert_eq!(
+                local.detector_fault_sectors,
+                mapping
+                    .iter()
+                    .map(|&id| model.detector_fault_sectors[id as usize].clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(local.detector_fault_sectors.len(), local.num_detectors);
+        }
+    }
 
     #[test]
     fn soft_window_preserves_components_hyperedges_outputs_and_coordinates() {
@@ -488,13 +634,20 @@ logical_observable L2\n";
                 .unwrap_err()
                 .to_string();
             let coords = vec![Some(vec![0.0, 0.0, 0.0]); 2];
-            let rejected =
-                StructuredDem::try_new(vec![error.clone()], coords.clone(), 2, 1).unwrap_err();
+            let rejected = StructuredDem::try_new(
+                vec![error.clone()],
+                coords.clone(),
+                vec![Some("X".into()); 2],
+                2,
+                1,
+            )
+            .unwrap_err();
             assert!(matches!(rejected, DecoderError::InvalidDemSyntax(_)));
             assert_eq!(rejected.to_string(), expected);
             let model = StructuredDem {
                 errors: vec![error],
                 detector_coords: coords,
+                detector_fault_sectors: vec![Some("X".into()); 2],
                 num_detectors: 2,
                 num_observables: 1,
             };

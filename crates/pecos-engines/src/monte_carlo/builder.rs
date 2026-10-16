@@ -105,14 +105,11 @@ impl MonteCarloEngineBuilder {
             // Create a new clone of the builder with the update applied
             (Some(update_builder(builder)), None)
         } else if let Some(engine) = hybrid_engine {
-            // If we have an existing hybrid engine, create a new builder from it
-            let classical_engine = engine.classical_engine.clone();
-
-            // Create a builder with the classical engine from the existing hybrid engine
-            let new_builder = HybridEngineBuilder::new().with_classical_engine(classical_engine);
-
-            // Apply the update and store the result
-            (Some(update_builder(new_builder)), None)
+            // Move all components and their state into the builder before replacing one.
+            (
+                Some(update_builder(HybridEngineBuilder::from(engine))),
+                None,
+            )
         } else {
             // If no engine exists, create a new builder and apply the update
             (Some(update_builder(HybridEngineBuilder::new())), None)
@@ -128,19 +125,7 @@ impl MonteCarloEngineBuilder {
     /// The builder for method chaining
     #[must_use]
     pub fn with_classical_engine(mut self, engine: Box<dyn ClassicalControlEngine>) -> Self {
-        let hybrid_engine_clone = self.hybrid_engine.clone();
-
-        let update_fn = move |builder: HybridEngineBuilder| {
-            if let Some(engine_ref) = hybrid_engine_clone {
-                // If we're converting from a hybrid engine, preserve the quantum system
-                builder
-                    .with_classical_engine(engine)
-                    .with_quantum_system(engine_ref.quantum_system.clone())
-            } else {
-                // Otherwise just add the engine
-                builder.with_classical_engine(engine)
-            }
-        };
+        let update_fn = move |builder: HybridEngineBuilder| builder.with_classical_engine(engine);
 
         let (builder, engine) = Self::update_hybrid_builder_with(
             self.hybrid_engine,
@@ -183,36 +168,9 @@ impl MonteCarloEngineBuilder {
     ///
     /// # Returns
     /// The builder for method chaining
-    ///
-    /// # Errors
-    /// Returns an error when rebuilding a hybrid engine whose dynamic capacity is
-    /// unknown (zero). Set `with_num_qubits` before replacing its noise model.
-    pub fn with_noise_model(mut self, model: Box<dyn NoiseModel>) -> Result<Self, PecosError> {
-        let replacement = self
-            .hybrid_engine
-            .as_ref()
-            .map(|engine| {
-                crate::classical::resolve_qubit_count(
-                    engine.classical_engine.as_ref(),
-                    self.explicit_num_qubits,
-                    "call MonteCarloEngineBuilder::with_num_qubits(n) before with_noise_model",
-                )
-                .map(|count| (engine.classical_engine.clone(), count))
-            })
-            .transpose()?;
-
-        let update_fn = move |builder: HybridEngineBuilder| {
-            if let Some((classical_engine, num_qubits)) = replacement {
-                // Rebuild only after resolving the replacement simulator's fixed capacity.
-                builder
-                    .with_classical_engine(classical_engine)
-                    .with_quantum_engine(Box::new(crate::quantum::StateVecEngine::new(num_qubits)))
-                    .with_noise_model(model)
-            } else {
-                // Otherwise just add the noise model
-                builder.with_noise_model(model)
-            }
-        };
+    #[must_use]
+    pub fn with_noise_model(mut self, model: Box<dyn NoiseModel>) -> Self {
+        let update_fn = move |builder: HybridEngineBuilder| builder.with_noise_model(model);
 
         let (builder, engine) = Self::update_hybrid_builder_with(
             self.hybrid_engine,
@@ -222,7 +180,7 @@ impl MonteCarloEngineBuilder {
 
         self.hybrid_engine_builder = builder;
         self.hybrid_engine = engine;
-        Ok(self)
+        self
     }
 
     /// Set depolarizing noise with the given probability
@@ -237,12 +195,13 @@ impl MonteCarloEngineBuilder {
     /// The builder for method chaining
     ///
     /// # Errors
-    /// Returns an error for a non-finite probability or one outside `0.0..=1.0`,
-    /// or an unknown dynamic capacity when replacing a hybrid engine.
+    /// Returns an error for a non-finite probability or one outside `0.0..=1.0`.
     pub fn with_depolarizing_noise(self, probability: f64) -> Result<Self, PecosError> {
-        self.with_noise_model(Box::new(DepolarizingNoiseModel::try_new_uniform(
-            probability,
-        )?))
+        Ok(
+            self.with_noise_model(Box::new(DepolarizingNoiseModel::try_new_uniform(
+                probability,
+            )?)),
+        )
     }
 
     /// Set the quantum system
@@ -320,7 +279,8 @@ impl MonteCarloEngineBuilder {
     /// Set the fixed number of qubits and the classical runtime allocation hint.
     ///
     /// Replacing the quantum engine/system or the entire hybrid engine supersedes
-    /// this count. Call this before replacing a dynamic hybrid engine's noise.
+    /// this count. This replaces the quantum engine with `StateVecEngine::new(num_qubits)`
+    /// and keeps the existing noise model and classical engine.
     ///
     /// # Arguments
     /// * `num_qubits` - The number of qubits

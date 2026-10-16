@@ -2645,7 +2645,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[derive(Clone, Default)]
-    struct DummyRuntime {
+    pub(super) struct DummyRuntime {
         state: ClassicalState,
         delivered: Arc<Mutex<Vec<(usize, bool)>>>,
     }

@@ -117,7 +117,6 @@ fn monte_carlo_static_capacity_paths_work() {
     let mut engine = MonteCarloEngine::builder()
         .with_hybrid_engine(hybrid)
         .with_noise_model(Box::new(PassThroughNoiseModel::new()))
-        .unwrap()
         .build();
     assert_eq!(engine.run(1).unwrap().len(), 1);
 }

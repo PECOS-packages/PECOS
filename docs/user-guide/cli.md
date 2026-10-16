@@ -42,7 +42,7 @@ pecos run <PROGRAM> [OPTIONS]
 
 - `.qasm` - OpenQASM 2.0 circuits
 - `.phir.json` or `.json` - PHIR/JSON programs
-- `.ll` - QIS programs in LLVM IR format (requires `--features llvm` and `--qubits N` for every QIS program)
+- `.ll` - QIS programs in LLVM IR format (requires `--features runtime` and `--qubits N` for every QIS program)
 
 **Options:**
 

@@ -450,20 +450,6 @@ fn monte_carlo_run_rejects_unknown_dynamic_capacity() {
 }
 
 #[test]
-fn monte_carlo_noise_replacement_rejects_unknown_dynamic_capacity() {
-    let hybrid = pecos_engines::hybrid::HybridEngineBuilder::new()
-        .with_classical_engine(dynamic_controller())
-        .with_quantum_engine(Box::new(pecos_engines::quantum::StateVecEngine::new(1)))
-        .build();
-    assert_unknown_capacity(
-        pecos_engines::MonteCarloEngine::builder()
-            .with_hybrid_engine(hybrid)
-            .with_noise_model(Box::new(pecos_engines::noise::PassThroughNoiseModel::new())),
-        "with_num_qubits(n) before with_noise_model",
-    );
-}
-
-#[test]
 fn monte_carlo_dynamic_capacity_can_be_configured_explicitly() {
     use pecos_engines::{MonteCarloEngine, noise::PassThroughNoiseModel};
     let results = MonteCarloEngine::run_with_noise_model_and_max_qubits(
@@ -486,7 +472,6 @@ fn monte_carlo_dynamic_capacity_can_be_configured_explicitly() {
             .with_hybrid_engine(hybrid)
             .with_num_qubits(1)
             .with_noise_model(Box::new(PassThroughNoiseModel::new()))
-            .unwrap()
             .with_seed(42);
         let mut engine = if seeded {
             builder.build_with_seed()
@@ -529,4 +514,32 @@ fn simulation_and_quantum_builder_counts_must_agree() {
         .run(1)
         .unwrap();
     assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn monte_carlo_noise_replacement_keeps_dynamic_engine_capacity() {
+    use pecos_engines::{
+        MonteCarloEngine, StateVecEngine, hybrid::HybridEngineBuilder, noise::PassThroughNoiseModel,
+    };
+    let hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(dynamic_controller())
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    let mut engine = MonteCarloEngine::builder()
+        .with_hybrid_engine(hybrid)
+        .with_noise_model(Box::new(PassThroughNoiseModel::new()))
+        .build();
+    assert_eq!(
+        engine
+            .hybrid_engine_template
+            .quantum_system
+            .quantum_engine()
+            .as_any()
+            .downcast_ref::<StateVecEngine>()
+            .unwrap()
+            .simulator()
+            .num_qubits(),
+        2
+    );
+    assert_eq!(engine.run(1).unwrap().len(), 1);
 }

@@ -2020,3 +2020,74 @@ fn soft_rz_large_scheduled_gate_only_tail_completes() {
         assert!(engine.get_results().is_ok());
     }
 }
+
+fn allocation_hint_controller() -> Box<QisEngine> {
+    let mut engine = QisEngine::new(
+        Box::new(crate::QisHeliosInterface::new()),
+        Box::new(super::tests::DummyRuntime::default()),
+    );
+    // Use the existing direct-lowering runtime fixture: Selene validates capacity
+    // earlier, while this test observes QisEngine's own physical-slot limit.
+    // Two runtime allocations, but quantum commands only address qubit 0.
+    // Without hint forwarding the shot succeeds with capacity 1, so an ordinary
+    // simulator capacity error cannot satisfy these tests.
+    let source = program("", true, false);
+    engine.set_dynamic_config(Box::new(crate::helios_interface_builder()), &source);
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    Box::new(engine)
+}
+
+fn assert_allocation_hint_error(result: Result<pecos_engines::shot_results::ShotVec, PecosError>) {
+    let error = result
+        .expect_err("the second runtime allocation must exceed the forwarded hint")
+        .to_string();
+    assert!(
+        error.contains("more than the configured 1 physical qubit slots"),
+        "{error}"
+    );
+    assert!(error.contains("--qubits N"), "{error}");
+}
+
+#[test]
+fn monte_carlo_max_qubits_forwards_allocation_hint() {
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_allocation_hint_error(
+        pecos_engines::MonteCarloEngine::run_with_noise_model_and_max_qubits(
+            allocation_hint_controller(),
+            Box::new(pecos_engines::noise::PassThroughNoiseModel::new()),
+            1,
+            1,
+            1,
+            Some(42),
+        ),
+    );
+}
+
+#[test]
+fn monte_carlo_build_forwards_allocation_hint() {
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut engine = pecos_engines::MonteCarloEngine::builder()
+        .with_classical_engine(allocation_hint_controller())
+        .with_num_qubits(1)
+        .build();
+    assert_allocation_hint_error(engine.run(1));
+}
+
+#[test]
+fn monte_carlo_build_with_seed_forwards_allocation_hint() {
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut engine = pecos_engines::MonteCarloEngine::builder()
+        .with_classical_engine(allocation_hint_controller())
+        .with_num_qubits(1)
+        .with_seed(42)
+        .build_with_seed();
+    assert_allocation_hint_error(engine.run(1));
+}

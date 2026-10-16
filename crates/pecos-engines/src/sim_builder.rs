@@ -279,20 +279,23 @@ impl SimBuilder {
             }
         };
 
-        let configured_qubits = self.explicit_num_qubits.or_else(|| {
-            self.quantum_builder
-                .as_ref()
-                .and_then(|builder| builder.num_qubits())
-        });
-        let num_qubits = configured_qubits.unwrap_or_else(|| classical_engine.num_qubits());
-        if configured_qubits.is_none()
-            && num_qubits == 0
-            && classical_engine.has_dynamic_qubit_count()
+        let quantum_qubits = self
+            .quantum_builder
+            .as_ref()
+            .and_then(|builder| builder.num_qubits());
+        if let (Some(simulation), Some(quantum)) = (self.explicit_num_qubits, quantum_qubits)
+            && simulation != quantum
         {
-            return Err(PecosError::Input(
-                "A dynamic classical engine reports 0 qubits before execution, which is not a known capacity; specify .qubits(n) on the simulation or quantum builder to accommodate runtime allocations".to_string(),
-            ));
+            return Err(PecosError::Input(format!(
+                "Simulation count .qubits({simulation}) differs from quantum builder count {quantum}; set only one count or make both counts equal"
+            )));
         }
+        let configured_qubits = self.explicit_num_qubits.or(quantum_qubits);
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            configured_qubits,
+            "specify .qubits(n) on the simulation or on the quantum builder",
+        )?;
         if configured_qubits.is_some() || num_qubits > 0 {
             classical_engine.set_num_qubits_hint(num_qubits);
         }

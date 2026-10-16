@@ -806,7 +806,7 @@ impl QisEngine {
                 && self.num_physical_slots >= limit
             {
                 return Err(PecosError::Generic(format!(
-                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}; raise .qubits(n) to cover all runtime allocations"
+                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}; raise the simulator capacity with .qubits(n) in Rust/Python or --qubits N on the CLI to cover all runtime allocations"
                 )));
             }
             self.num_physical_slots
@@ -4831,6 +4831,14 @@ mod tests {
             err.to_string().contains("more than the configured 1"),
             "unexpected error: {err}"
         );
+        for text in [
+            "program qubit 105",
+            "simulator capacity",
+            ".qubits(n)",
+            "--qubits N",
+        ] {
+            assert!(err.to_string().contains(text), "unexpected error: {err}");
+        }
     }
 }
 

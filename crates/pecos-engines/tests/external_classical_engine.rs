@@ -21,7 +21,8 @@ fn malformed_circuit_returns_input_error() {
     let mut engine = MonteCarloEngine::new_with_depolarizing_noise(
         Box::new(ExternalClassicalEngine::new_with_circuit(circuit)),
         0.0,
-    );
+    )
+    .unwrap();
 
     let err = engine.run_with_workers(1, 1).unwrap_err();
     assert!(matches!(
@@ -37,7 +38,8 @@ fn valid_empty_circuits_still_complete_successfully() {
         ExternalClassicalEngine::new_with_circuit(ByteMessage::create_empty()),
         ExternalClassicalEngine::new_with_circuit(ByteMessage::new(&[])),
     ] {
-        let mut engine = MonteCarloEngine::new_with_depolarizing_noise(Box::new(controller), 0.0);
+        let mut engine =
+            MonteCarloEngine::new_with_depolarizing_noise(Box::new(controller), 0.0).unwrap();
         let results = engine.run_with_workers(4, 2).unwrap();
         assert_eq!(results.len(), 4);
         for shot in results.shots {
@@ -54,8 +56,9 @@ fn hybrid_reset_clears_all_measurement_fields_and_retains_circuit() {
         .mz(&[0, 1])
         .build();
     let controller = ExternalClassicalEngine::new_with_circuit(circuit);
-    let mut hybrid =
-        MonteCarloEngine::new_with_defaults(Box::new(controller)).hybrid_engine_template;
+    let mut hybrid = MonteCarloEngine::new_with_defaults(Box::new(controller))
+        .unwrap()
+        .hybrid_engine_template;
 
     let measured = hybrid.run_shot().unwrap();
     assert_eq!(measured.data.len(), 2);
@@ -74,4 +77,71 @@ fn hybrid_reset_clears_all_measurement_fields_and_retains_circuit() {
 
     // Reset also retains the configured circuit for the next shot.
     assert_eq!(hybrid.run_shot().unwrap(), measured);
+}
+
+#[test]
+fn monte_carlo_static_capacity_paths_work() {
+    use pecos_engines::noise::PassThroughNoiseModel;
+    let controller = || Box::new(ExternalClassicalEngine::new());
+    assert_eq!(
+        MonteCarloEngine::new_with_defaults(controller())
+            .unwrap()
+            .run(1)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        MonteCarloEngine::new_with_depolarizing_noise(controller(), 0.1)
+            .unwrap()
+            .run(1)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        MonteCarloEngine::run_with_noise_model(
+            controller(),
+            Box::new(PassThroughNoiseModel::new()),
+            1,
+            1,
+            Some(42)
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+    let hybrid = MonteCarloEngine::new_with_defaults(controller())
+        .unwrap()
+        .hybrid_engine_template;
+    let mut engine = MonteCarloEngine::builder()
+        .with_hybrid_engine(hybrid)
+        .with_noise_model(Box::new(PassThroughNoiseModel::new()))
+        .unwrap()
+        .build();
+    assert_eq!(engine.run(1).unwrap().len(), 1);
+}
+
+#[test]
+fn monte_carlo_depolarizing_returns_probability_errors() {
+    for p in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+        let error = MonteCarloEngine::new_with_depolarizing_noise(
+            Box::new(ExternalClassicalEngine::new()),
+            p,
+        )
+        .err()
+        .expect("invalid probability must return an error")
+        .to_string();
+        let builder_error = MonteCarloEngine::builder()
+            .with_depolarizing_noise(p)
+            .err()
+            .expect("invalid builder probability must return an error")
+            .to_string();
+        assert_eq!(error, builder_error);
+        assert!(error.contains(&p.to_string()), "{error}");
+        assert!(
+            error.contains("supply a finite probability in 0.0..=1.0"),
+            "{error}"
+        );
+    }
 }

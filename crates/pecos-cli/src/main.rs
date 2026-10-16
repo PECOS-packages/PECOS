@@ -382,7 +382,7 @@ impl std::str::FromStr for SimulatorType {
 #[cfg(feature = "runtime")]
 #[derive(Args, Clone)]
 struct RunArgs {
-    /// Fixed simulator capacity (required for QIS programs with runtime allocation)
+    /// Fixed simulator capacity (required for every QIS program)
     #[arg(long)]
     qubits: Option<usize>,
 

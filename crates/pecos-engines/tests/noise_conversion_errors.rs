@@ -11,7 +11,9 @@ fn assert_input<T>(result: Result<T, PecosError>, expected: &str) {
 #[test]
 fn fallible_constructors_check_every_probability() {
     for invalid in [-0.1, 1.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let expected = "Probability must be between 0.0 and 1.0";
+        let expected = &format!(
+            "Probability must be between 0.0 and 1.0, got {invalid}; supply a finite probability in 0.0..=1.0"
+        );
         assert_input(DepolarizingNoiseModel::try_new_uniform(invalid), expected);
         assert_input(
             BiasedDepolarizingNoiseModel::try_new_uniform(invalid),

@@ -51,9 +51,9 @@ pub trait ProbabilityValidator {
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     fn try_validate_probability(probability: f64) -> Result<(), PecosError> {
         if !(0.0..=1.0).contains(&probability) {
-            return Err(PecosError::Input(
-                "Probability must be between 0.0 and 1.0".to_string(),
-            ));
+            return Err(PecosError::Input(format!(
+                "Probability must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
+            )));
         }
         Ok(())
     }

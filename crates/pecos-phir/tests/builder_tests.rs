@@ -388,7 +388,7 @@ fn dynamic_program_requires_configured_quantum_capacity() {
             .expect("unknown capacity must fail")
             .to_string();
         assert!(
-            error.contains("0 qubits") && error.contains(".qubits(n)"),
+            error.contains("0 qubits") && error.contains(".qubits(n) on the simulation"),
             "{error}"
         );
     }
@@ -396,4 +396,137 @@ fn dynamic_program_requires_configured_quantum_capacity() {
         .quantum(StateVectorEngineBuilder::default().qubits(1))
         .run(1)
         .unwrap();
+}
+
+fn dynamic_controller() -> Box<dyn pecos_engines::ClassicalControlEngine> {
+    Box::new(
+        phir_engine()
+            .from_qis_llvm_ir(SINGLE_H_QIS_IR)
+            .unwrap()
+            .build()
+            .unwrap(),
+    )
+}
+
+fn assert_unknown_capacity<T>(result: Result<T, pecos_core::errors::PecosError>, remedy: &str) {
+    let error = result
+        .err()
+        .expect("unknown dynamic capacity must fail before execution")
+        .to_string();
+    for text in ["dynamic", "0 qubits", remedy] {
+        assert!(error.contains(text), "{error}");
+    }
+}
+
+#[test]
+fn monte_carlo_defaults_reject_unknown_dynamic_capacity() {
+    assert_unknown_capacity(
+        pecos_engines::MonteCarloEngine::new_with_defaults(dynamic_controller()),
+        "MonteCarloEngineBuilder::with_num_qubits(n)",
+    );
+}
+
+#[test]
+fn monte_carlo_depolarizing_rejects_unknown_dynamic_capacity() {
+    assert_unknown_capacity(
+        pecos_engines::MonteCarloEngine::new_with_depolarizing_noise(dynamic_controller(), 0.1),
+        "MonteCarloEngineBuilder::with_num_qubits(n)",
+    );
+}
+
+#[test]
+fn monte_carlo_run_rejects_unknown_dynamic_capacity() {
+    // Zero shots ensures rejection happens before execution, not at the first gate.
+    assert_unknown_capacity(
+        pecos_engines::MonteCarloEngine::run_with_noise_model(
+            dynamic_controller(),
+            Box::new(pecos_engines::noise::PassThroughNoiseModel::new()),
+            0,
+            1,
+            Some(42),
+        ),
+        "run_with_noise_model_and_max_qubits",
+    );
+}
+
+#[test]
+fn monte_carlo_noise_replacement_rejects_unknown_dynamic_capacity() {
+    let hybrid = pecos_engines::hybrid::HybridEngineBuilder::new()
+        .with_classical_engine(dynamic_controller())
+        .with_quantum_engine(Box::new(pecos_engines::quantum::StateVecEngine::new(1)))
+        .build();
+    assert_unknown_capacity(
+        pecos_engines::MonteCarloEngine::builder()
+            .with_hybrid_engine(hybrid)
+            .with_noise_model(Box::new(pecos_engines::noise::PassThroughNoiseModel::new())),
+        "with_num_qubits(n) before with_noise_model",
+    );
+}
+
+#[test]
+fn monte_carlo_dynamic_capacity_can_be_configured_explicitly() {
+    use pecos_engines::{MonteCarloEngine, noise::PassThroughNoiseModel};
+    let results = MonteCarloEngine::run_with_noise_model_and_max_qubits(
+        dynamic_controller(),
+        Box::new(PassThroughNoiseModel::new()),
+        1,
+        1,
+        1,
+        Some(42),
+    )
+    .unwrap();
+    assert_eq!(results.len(), 1);
+    for seeded in [true, false] {
+        let hybrid = pecos_engines::hybrid::HybridEngineBuilder::new()
+            .with_classical_engine(dynamic_controller())
+            .with_quantum_engine(Box::new(pecos_engines::quantum::StateVecEngine::new(1)))
+            .build();
+        let builder = MonteCarloEngine::builder();
+        let builder = builder
+            .with_hybrid_engine(hybrid)
+            .with_num_qubits(1)
+            .with_noise_model(Box::new(PassThroughNoiseModel::new()))
+            .unwrap()
+            .with_seed(42);
+        let mut engine = if seeded {
+            builder.build_with_seed()
+        } else {
+            builder.build()
+        };
+        assert_eq!(engine.run(1).unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn simulation_and_quantum_builder_counts_must_agree() {
+    for (simulation, quantum) in [(1, 2), (2, 1), (0, 1)] {
+        let error = phir_engine()
+            .from_qis_llvm_ir(SINGLE_H_QIS_IR)
+            .unwrap()
+            .to_sim()
+            .qubits(simulation)
+            .quantum(StateVectorEngineBuilder::default().qubits(quantum))
+            .build()
+            .err()
+            .expect("mismatched counts must fail at build")
+            .to_string();
+        assert!(error.contains(&format!(".qubits({simulation})")), "{error}");
+        assert!(
+            error.contains(&format!("quantum builder count {quantum}")),
+            "{error}"
+        );
+        assert!(
+            error.contains("set only one count or make both counts equal"),
+            "{error}"
+        );
+    }
+    let results = phir_engine()
+        .from_qis_llvm_ir(SINGLE_H_QIS_IR)
+        .unwrap()
+        .to_sim()
+        .qubits(1)
+        .quantum(StateVectorEngineBuilder::default().qubits(1))
+        .run(1)
+        .unwrap();
+    assert_eq!(results.len(), 1);
 }

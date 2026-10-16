@@ -1406,8 +1406,8 @@ impl GateAction for CoherentRotation {
 /// Over-rotation error: adds a fraction of the gate's angle as extra rotation.
 ///
 /// Models systematic calibration errors where gates rotate slightly more
-/// or less than intended. The error angle is computed as:
-/// `error_angle = gate_angle * over_rotation_fraction`
+/// or less than intended. The error angle is the gate's signed principal rotation
+/// in (-pi, pi] multiplied by `over_rotation_fraction`; a half turn is +pi.
 ///
 /// # Example
 ///
@@ -1426,7 +1426,7 @@ pub struct OverRotation {
 
 impl OverRotation {
     /// Create an over-rotation error.
-    /// Scales the signed principal rotation in (-pi, pi]; a half turn is positive.
+    /// Uses the signed principal convention documented on [`OverRotation`].
     ///
     /// - `fraction > 0`: over-rotation (gate rotates too much)
     /// - `fraction < 0`: under-rotation (gate rotates too little)

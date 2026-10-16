@@ -29,10 +29,10 @@ let circuit = CommandBuilder::new()
 // Run with importance sampling
 let results = sim_neo(circuit).auto()
     .sampling(importance_sampling(10000)
-        .with_p1(0.001)      // Single-qubit error rate
-        .with_p2(0.01)       // Two-qubit error rate
-        .with_p_meas(0.001)  // Measurement error rate
-        .with_boost(10.0))   // Boost factor
+        .with_p1(0.001)?      // Single-qubit error rate
+        .with_p2(0.01)?       // Two-qubit error rate
+        .with_p_meas(0.001)?  // Measurement error rate
+        .with_boost(10.0)?)   // Boost factor
     .seed(42)
     .run();
 
@@ -50,8 +50,8 @@ For uniform error rates, use the `with_uniform_error()` method:
 ```rust
 let results = sim_neo(circuit).auto()
     .sampling(importance_sampling(10000)
-        .with_uniform_error(0.001)  // Same rate for all gate types
-        .with_boost(10.0))
+        .with_uniform_error(0.001)?  // Same rate for all gate types
+        .with_boost(10.0)?)
     .run();
 ```
 
@@ -107,7 +107,7 @@ OutcomeBiasConfig::new()
     .with_target_qubits(vec![QubitId(0), QubitId(1)])
 
     // Boost factor for rare events (multiplies effective bias)
-    .with_boost(2.0)
+    .with_boost(2.0)?
 ```
 
 ### ImportanceSampledShot
@@ -190,8 +190,8 @@ Importance sampling can be combined with noise models:
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001).unwrap()
-    .with_p2(0.01).unwrap()
+    .with_p1(0.001)?
+    .with_p2(0.01)?
     .build().unwrap();
 
 let runner = ImportanceSamplingRunner::new(SparseStab::new(num_qubits))
@@ -233,8 +233,7 @@ use pecos_neo::sampling::importance::ImportanceSamplingChannel;
 // Wrap a channel to track importance weights
 let wrapped = ImportanceSamplingChannel::new(
     original_channel,
-    ImportanceConfig::new()
-        .with_boost(2.0),
+    ImportanceConfig::with_boost(0.001, 2.0)?,
 );
 ```
 

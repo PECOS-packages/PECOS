@@ -642,22 +642,41 @@ impl GeneralNoiseModel {
 
     // Reject durations whose scaled idle calculations could become non-finite.
     pub(crate) fn validate_frame_idle(&self, duration: f64) -> Result<(), PecosError> {
-        let linear = self.p_idle_linear_rate * duration;
-        let stochastic = self
-            .p_idle_sin_squared_model
-            .values()
-            .all(|m| (self.p_idle_sin_squared_rate * m * duration).is_finite());
-        for multiplier in self.p_idle_coherent_model.values() {
-            Angle64::try_from_radians(Self::coherent_rotation_angle(
-                self.p_idle_coherent_rate,
-                *multiplier,
-                duration,
-            ))?;
+        Self::validate_idle_products(
+            duration,
+            self.p_idle_linear_rate,
+            self.p_idle_sin_squared_rate,
+            &self.p_idle_sin_squared_model,
+            self.p_idle_coherent_rate,
+            &self.p_idle_coherent_model,
+        )
+        .map_err(PecosError::Input)
+    }
+
+    // Shared by fixed-duration builder validation and variable-duration execution.
+    fn validate_idle_products(
+        duration: f64,
+        linear_rate: f64,
+        sine_rate: f64,
+        sine_model: &BTreeMap<String, f64>,
+        coherent_rate: f64,
+        coherent_model: &BTreeMap<String, f64>,
+    ) -> Result<(), String> {
+        let check = |family: &str, rate: f64, axis: &str, multiplier: f64| {
+            let product = rate * multiplier * duration;
+            if !product.is_finite() {
+                return Err(format!(
+                    "{family} scaled rate {rate} * {axis} multiplier {multiplier} * idle duration (idle_after_2q at build) {duration} produces {product}; reduce the rate, multiplier, idle duration, or scale factors to keep the product finite"
+                ));
+            }
+            Ok(())
+        };
+        check("p_idle_linear", linear_rate, "total", 1.0)?;
+        for (axis, multiplier) in sine_model {
+            check("p_idle_sin_squared", sine_rate, axis, *multiplier)?;
         }
-        if !linear.is_finite() || !stochastic {
-            return Err(PecosError::Input(
-                "idle arithmetic exceeds runtime profile".into(),
-            ));
+        for (axis, multiplier) in coherent_model {
+            check("p_idle_coherent", coherent_rate, axis, *multiplier)?;
         }
         Ok(())
     }
@@ -2314,6 +2333,57 @@ mod tests {
     use crate::byte_message::ByteMessageBuilder;
     use crate::byte_message::GateType;
     use pecos_core::Angle64;
+
+    #[test]
+    fn build_rejects_overflowing_linear_after_two_qubit_idle() {
+        let error = GeneralNoiseModel::builder()
+            .with_p_idle_linear(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
+            .with_idle_after_2q(1e10)
+            .try_build()
+            .unwrap_err();
+        let variable_model = GeneralNoiseModel::builder()
+            .with_p_idle_linear(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
+            .try_build()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            variable_model
+                .validate_frame_idle(1e10)
+                .unwrap_err()
+                .to_string()
+        );
+        let message = error.to_string();
+        assert!(message.contains("p_idle_linear"), "{message}");
+        assert!(message.contains("idle_after_2q"), "{message}");
+        assert!(message.contains("inf"), "{message}");
+        assert!(message.contains("reduce"), "{message}");
+    }
+
+    #[test]
+    fn build_rejects_overflowing_sine_after_two_qubit_idle() {
+        let multipliers = BTreeMap::from([("X".to_string(), 1.0)]);
+        let error = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(1e300, &multipliers)
+            .with_idle_after_2q(1e10)
+            .try_build()
+            .unwrap_err();
+        let variable_model = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
+            .try_build()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            variable_model
+                .validate_frame_idle(1e10)
+                .unwrap_err()
+                .to_string()
+        );
+        let message = error.to_string();
+        assert!(message.contains("p_idle_sin_squared"), "{message}");
+        assert!(message.contains("idle_after_2q"), "{message}");
+        assert!(message.contains("inf"), "{message}");
+        assert!(message.contains("reduce"), "{message}");
+    }
 
     #[test]
     fn build_rejects_overflowing_after_two_qubit_idle() {

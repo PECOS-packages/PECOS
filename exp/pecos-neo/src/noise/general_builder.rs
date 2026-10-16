@@ -18,6 +18,7 @@
 //! # Example
 //!
 //! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::noise::GeneralNoiseModelBuilder;
 //!
 //! let noise = GeneralNoiseModelBuilder::new()
@@ -26,7 +27,8 @@
 //!     .with_p_meas(0.02, 0.03)
 //!     .with_p_prep(0.005)
 //!     .build()?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Composability
@@ -67,6 +69,7 @@ use std::collections::BTreeMap;
 /// require the `composite-noise` feature:
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::GeneralNoiseModelBuilder;
 /// use pecos_neo::noise::TwoQubitChannel;
 ///
@@ -74,8 +77,9 @@ use std::collections::BTreeMap;
 ///     .with_p1(0.001)                    // Traditional 1Q channel
 ///     .with_p_meas(0.02, 0.03)           // Traditional measurement channel
 ///     .with_channel(TwoQubitChannel::depolarizing(0.01)?)
-///     .build();
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// [`with_channel`]: Self::with_channel
@@ -206,14 +210,16 @@ impl GeneralNoiseModelBuilder {
     /// # Example
     ///
     /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
     /// use pecos_neo::noise::TwoQubitChannel;
     ///
     /// let model = GeneralNoiseModelBuilder::new()
     ///     .with_p1(0.001)  // Traditional single-qubit noise
     ///     .with_channel(TwoQubitChannel::depolarizing(0.01)?)
-    ///     .build();
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_channel(mut self, channel: impl super::NoiseChannel + 'static) -> Self {
@@ -588,13 +594,16 @@ impl GeneralNoiseModelBuilder {
     ///
     /// # Example
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::GeneralNoiseModelBuilder;
     /// use pecos_core::TimeScale;
     ///
     /// let noise = GeneralNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
     ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1=50us, T2=30us
-    ///     .build();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_time_scale(mut self, scale: TimeScale) -> Self {
@@ -716,7 +725,7 @@ impl GeneralNoiseModelBuilder {
             || self
                 .p_meas_crosstalk_transitions
                 .as_ref()
-                .is_some_and(|t| t.from_0_leak > 0.0 || t.from_1_leak > 0.0)
+                .is_some_and(|t| t.zero_leak > 0.0 || t.one_leak > 0.0)
             || self
                 .p_idle_sin_squared
                 .as_ref()
@@ -733,6 +742,7 @@ impl GeneralNoiseModelBuilder {
     /// # Errors
     /// Returns an error for invalid noise parameters.
     pub fn build(self) -> ValidationResult<ComposableNoiseModel> {
+        self.p2_angle_scaling.validate_for_probability(self.p2)?;
         crate::noise::validation::validate_probability(self.p_prep, "p_prep")?;
         crate::noise::validation::validate_probability(
             self.p_prep_leak_ratio,
@@ -891,6 +901,7 @@ impl GeneralNoiseModelBuilder {
 /// # Example
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::general_noise;
 ///
 /// let noise = general_noise()
@@ -898,7 +909,9 @@ impl GeneralNoiseModelBuilder {
 ///     .with_p2(0.01)
 ///     .with_p_meas(0.02, 0.03)
 ///     .with_p_prep(0.005)
-///     .build();
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub fn general_noise() -> GeneralNoiseModelBuilder {

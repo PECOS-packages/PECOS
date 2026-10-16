@@ -41,10 +41,10 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone)]
 pub struct MeasurementChannel {
     /// Probability of flipping a 0 measurement to 1.
-    pub p_meas_0_to_1: f64,
+    p_meas_0_to_1: f64,
 
     /// Probability of flipping a 1 measurement to 0.
-    pub p_meas_1_to_0: f64,
+    p_meas_1_to_0: f64,
 
     // Precomputed probability thresholds for fast sampling
     threshold_0_to_1: u64,
@@ -63,6 +63,18 @@ impl Default for MeasurementChannel {
 }
 
 impl MeasurementChannel {
+    /// Return the configured `p_meas_0_to_1`.
+    #[must_use]
+    pub fn p_meas_0_to_1(&self) -> f64 {
+        self.p_meas_0_to_1
+    }
+
+    /// Return the configured `p_meas_1_to_0`.
+    #[must_use]
+    pub fn p_meas_1_to_0(&self) -> f64 {
+        self.p_meas_1_to_0
+    }
+
     /// Create a symmetric measurement error channel.
     ///
     /// # Errors
@@ -244,12 +256,18 @@ impl NoiseChannel for MeasurementChannel {
 #[derive(Debug, Clone)]
 pub struct MeasurementStateFlipChannel {
     /// Probability of an X flip before each measurement.
-    pub p: f64,
+    p: f64,
     /// Precomputed probability threshold for fast sampling.
     threshold: u64,
 }
 
 impl MeasurementStateFlipChannel {
+    /// Return the configured `p`.
+    #[must_use]
+    pub fn p(&self) -> f64 {
+        self.p
+    }
+
     /// Create a state-flip measurement error channel.
     ///
     /// # Errors

@@ -28,6 +28,7 @@
 //! This builder lets you work at whatever level of abstraction you need:
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Simple: just set error rates
@@ -40,8 +41,9 @@
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)  // Simple base rates
 //!     .with_channel(LeakageChannel::new())  // Add custom channel
-//!     .build();
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//!     .build()?;
+//! # Ok(())
+//! # }
 //! ```
 
 #[cfg(feature = "composite-noise")]
@@ -80,23 +82,28 @@ use pecos_core::TimeScale;
 /// ## Simple depolarizing noise
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::prelude::*;
 ///
 /// let model = NoiseModelBuilder::new()
 ///     .with_depolarizing(0.001, 0.01)  // p1=0.001, p2=0.01
-///     .build();
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## Adding existing channels
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::prelude::*;
 ///
 /// let custom = SingleQubitChannel::depolarizing(0.001)?;
 /// let model = NoiseModelBuilder::new()
 ///     .with_channel(custom)
 ///     .build()?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok(())
+/// # }
 /// ```
 #[allow(clippy::struct_excessive_bools)]
 pub struct NoiseModelBuilder {
@@ -426,6 +433,7 @@ impl NoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let model = NoiseModelBuilder::new()
@@ -434,7 +442,8 @@ impl NoiseModelBuilder {
     ///         prob(0.001, when_leaked(seep(), pauli()))?,
     ///     ])
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[cfg(feature = "composite-noise")]
@@ -486,6 +495,7 @@ impl NoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let model = NoiseModelBuilder::new()
@@ -496,7 +506,8 @@ impl NoiseModelBuilder {
     ///         ])
     ///     )
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[cfg(feature = "composite-noise")]
@@ -519,6 +530,7 @@ impl NoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let leakage = LeakageChannel::new();
@@ -526,7 +538,8 @@ impl NoiseModelBuilder {
     ///     .with_depolarizing(0.001, 0.01)
     ///     .with_channel(leakage)
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_channel<C: NoiseChannel + 'static>(mut self, channel: C) -> Self {
@@ -550,6 +563,7 @@ impl NoiseModelBuilder {
     /// # Errors
     /// Returns an error for invalid noise parameters.
     pub fn build(self) -> ValidationResult<ComposableNoiseModel> {
+        self.p2_angle_scaling.validate_for_probability(self.p2)?;
         crate::noise::validation::validate_probability(self.p_prep, "p_prep")?;
         crate::noise::validation::validate_probability(
             self.p_prep_leak_ratio,

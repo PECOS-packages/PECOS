@@ -308,12 +308,24 @@ pub fn filter_range_by_probability(
 #[derive(Debug, Clone, Copy)]
 pub struct ProbabilityThreshold {
     /// The u64 threshold value.
-    pub threshold: u64,
+    threshold: u64,
     /// The original probability.
-    pub probability: f64,
+    probability: f64,
 }
 
 impl ProbabilityThreshold {
+    /// Return the precomputed threshold.
+    #[must_use]
+    pub fn threshold(&self) -> u64 {
+        self.threshold
+    }
+
+    /// Return the validated probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
     /// Create a new probability threshold.
     ///
     /// # Errors

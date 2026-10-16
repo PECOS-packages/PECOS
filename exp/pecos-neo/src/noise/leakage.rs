@@ -54,7 +54,7 @@ pub struct LeakageChannel {
     /// Scale leakage events to depolarizing events.
     ///
     /// 0.0 = all leakage becomes depolarizing, 1.0 = all leakage remains leakage.
-    pub leakage_scale: f64,
+    leakage_scale: f64,
 }
 
 impl Default for LeakageChannel {
@@ -64,6 +64,12 @@ impl Default for LeakageChannel {
 }
 
 impl LeakageChannel {
+    /// Return the configured `leakage_scale`.
+    #[must_use]
+    pub fn leakage_scale(&self) -> f64 {
+        self.leakage_scale
+    }
+
     /// Create a leakage channel with full leakage (no scaling).
     #[must_use]
     pub fn new() -> Self {

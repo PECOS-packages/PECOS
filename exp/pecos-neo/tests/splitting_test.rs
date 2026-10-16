@@ -102,7 +102,7 @@ fn test_resample_by_weight_preserves_total_weight() {
 
     // Resample to 10 entities
     let mut rng = PecosRng::seed_from_u64(42);
-    let count = world.resample_by_weight(10, &mut rng);
+    let count = world.resample_by_weight(10, &mut rng).unwrap();
 
     assert_eq!(count, 10);
 
@@ -133,7 +133,7 @@ fn test_resample_by_weight_respects_probabilities() {
         world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(7.0);
 
         let mut rng = PecosRng::seed_from_u64(trial + 1000);
-        world.resample_by_weight(1, &mut rng);
+        world.resample_by_weight(1, &mut rng).unwrap();
 
         // Count which entity survived
         let active = world.active_entities();
@@ -267,7 +267,7 @@ fn test_redistribution_at_sync_points() {
 
     // Simulate a sync point with redistribution
     let mut rng = PecosRng::seed_from_u64(123);
-    let stats = redistribute_by_weight(&mut workers, 5, &mut rng);
+    let stats = redistribute_by_weight(&mut workers, 5, &mut rng).unwrap();
 
     // Weight should be preserved
     assert!(
@@ -428,7 +428,7 @@ fn test_subset_simulation_workflow() {
         }
 
         // Redistribute survivors to restore population
-        let stats = redistribute_by_weight(&mut workers, entities_per_worker, &mut rng);
+        let stats = redistribute_by_weight(&mut workers, entities_per_worker, &mut rng).unwrap();
 
         // Update damage map for new entities (inherit from source)
         // For simplicity in this test, we assign the average damage to new entities
@@ -515,7 +515,7 @@ fn test_redistribution_exact_weight_preservation() {
     // Perform multiple redistributions
     let mut rng = PecosRng::seed_from_u64(999);
     for _ in 0..5 {
-        let stats = redistribute_by_weight(&mut workers, 10, &mut rng);
+        let stats = redistribute_by_weight(&mut workers, 10, &mut rng).unwrap();
         assert!(
             stats.weight_preserved(1e-10),
             "Weight not preserved: {} -> {}",
@@ -556,7 +556,7 @@ fn test_redistribution_extreme_weights() {
     let weight_before: f64 = workers.iter().map(|w| w.world.total_weight()).sum();
 
     let mut rng = PecosRng::seed_from_u64(12345);
-    let stats = redistribute_by_weight(&mut workers, 5, &mut rng);
+    let stats = redistribute_by_weight(&mut workers, 5, &mut rng).unwrap();
 
     // Weight should be preserved
     assert!(
@@ -594,7 +594,7 @@ fn test_resampling_statistical_correctness() {
         world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(6.0);
 
         let mut rng = PecosRng::seed_from_u64(trial + 5000);
-        world.resample_by_weight(1, &mut rng);
+        world.resample_by_weight(1, &mut rng).unwrap();
 
         // Count which entity survived
         let active = world.active_entities();
@@ -749,14 +749,14 @@ fn test_resampling_edge_cases() {
     // Test with empty world
     let mut world: World<SparseStab> = World::new(42);
     let mut rng = PecosRng::seed_from_u64(123);
-    let count = world.resample_by_weight(10, &mut rng);
+    let count = world.resample_by_weight(10, &mut rng).unwrap();
     assert_eq!(count, 0, "Empty world should return 0");
 
     // Test resampling to 0 entities
     let e = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
     assert!(world.is_alive(e));
 
-    let count = world.resample_by_weight(0, &mut rng);
+    let count = world.resample_by_weight(0, &mut rng).unwrap();
     assert_eq!(count, 0, "Resampling to 0 should return 0");
 }
 
@@ -784,11 +784,11 @@ fn test_redistribution_determinism() {
     // Run redistribution with same seed twice
     let mut workers1 = create_workers();
     let mut rng1 = PecosRng::seed_from_u64(999);
-    let stats1 = redistribute_by_weight(&mut workers1, 5, &mut rng1);
+    let stats1 = redistribute_by_weight(&mut workers1, 5, &mut rng1).unwrap();
 
     let mut workers2 = create_workers();
     let mut rng2 = PecosRng::seed_from_u64(999);
-    let stats2 = redistribute_by_weight(&mut workers2, 5, &mut rng2);
+    let stats2 = redistribute_by_weight(&mut workers2, 5, &mut rng2).unwrap();
 
     // Results should be identical
     assert_eq!(stats1.entities_after, stats2.entities_after);
@@ -1034,6 +1034,7 @@ fn test_bernoulli_subset_validation() {
         50,   // 50 steps
         10.0, // Failure if damage >= 10
     )
+    .unwrap()
     .with_config(
         SubsetConfig::new()
             .with_samples_per_level(5000)

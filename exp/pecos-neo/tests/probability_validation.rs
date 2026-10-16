@@ -283,3 +283,200 @@ fn scale_setters_and_plugins_validate_before_sampling() {
         assert!(GeneralNoiseModelBuilder::new().with_p1(p).build().is_err());
     }
 }
+
+#[test]
+fn category_and_gate_probabilities_reject_invalid_inputs() {
+    use pecos_neo::command::GateType;
+    use pecos_neo::extensible::{GateCategory, GateId};
+    use pecos_neo::noise::{
+        CategoryBasedChannel, GateDependentChannel, GateIdDependentChannel, GateIdNoiseConfig,
+        GateNoiseConfig, PauliWeights,
+    };
+    for p in [f64::NAN, -0.1, 1.1, f64::INFINITY] {
+        assert!(
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::Idle, p)
+                .is_err()
+        );
+        assert!(
+            CategoryBasedChannel::new()
+                .with_category_weights(GateCategory::Idle, p, PauliWeights::uniform())
+                .is_err()
+        );
+        assert!(CategoryBasedChannel::new().with_default(p).is_err());
+        assert!(GateNoiseConfig::new(p).is_err());
+        assert!(
+            GateDependentChannel::new()
+                .with_gate_error(GateType::H, p)
+                .is_err()
+        );
+        assert!(GateDependentChannel::new().with_default(p).is_err());
+        assert!(GateIdNoiseConfig::new(p).is_err());
+        assert!(
+            GateIdDependentChannel::new()
+                .with_gate_error(GateId(0), p)
+                .is_err()
+        );
+        assert!(
+            GateIdDependentChannel::new()
+                .with_gate_type_error(GateType::H, p)
+                .is_err()
+        );
+        assert!(GateIdDependentChannel::new().with_default(p).is_err());
+    }
+}
+
+#[test]
+fn extensible_probability_setters_reject_before_mutation() {
+    use pecos_neo::extensible::{
+        GateCategory, GateDefinitions, GateIdNoiseConfig, GateNoiseParams, gates,
+    };
+    for p in [f64::NAN, -0.1, 1.1] {
+        assert!(GateNoiseParams::with_error(p).is_err());
+        assert!(GateIdNoiseConfig::new().with_global_default(p).is_err());
+        assert!(
+            GateIdNoiseConfig::new()
+                .with_category_default(GateCategory::Idle, p)
+                .is_err()
+        );
+        assert!(GateIdNoiseConfig::new().with_typical_rates(p, 0.0).is_err());
+        assert!(GateIdNoiseConfig::new().with_typical_rates(0.0, p).is_err());
+        let mut config = GateIdNoiseConfig::new();
+        config.set_gate_error(gates::H, 0.25).unwrap();
+        assert!(config.set_gate_error(gates::H, p).is_err());
+        assert!((config.get_error_probability(gates::H, None) - 0.25).abs() < f64::EPSILON);
+        let mut defs = GateDefinitions::new();
+        defs.set_noise_error(gates::H, 0.25).unwrap();
+        assert!(defs.set_noise_error(gates::H, p).is_err());
+        assert!((defs.error_probability(gates::H) - 0.25).abs() < f64::EPSILON);
+    }
+}
+
+#[test]
+fn importance_and_subset_probabilities_reject_invalid_inputs() {
+    use pecos_neo::sampling::subset::{
+        BernoulliSubsetSimulation, ProperSubsetSimulation, SubsetConfig,
+    };
+    use pecos_neo::sampling::{ImportanceConfig, ImportanceSamplingNoise};
+    use pecos_neo::tool::importance_sampling;
+    for p in [f64::NAN, -0.1, 1.1] {
+        assert!(ImportanceConfig::new(p, 0.5).is_err());
+        assert!(ImportanceConfig::new(0.5, p).is_err());
+        assert!(ImportanceConfig::with_boost(p, 10.0).is_err());
+        assert!(
+            ImportanceSamplingNoise::new()
+                .with_single_qubit(p, 1.0)
+                .is_err()
+        );
+        assert!(
+            ImportanceSamplingNoise::new()
+                .with_two_qubit(p, 1.0)
+                .is_err()
+        );
+        assert!(
+            ImportanceSamplingNoise::new()
+                .with_measurement(p, 1.0)
+                .is_err()
+        );
+        assert!(importance_sampling(1).with_p1(p).is_err());
+        assert!(importance_sampling(1).with_p2(p).is_err());
+        assert!(importance_sampling(1).with_p_meas(p).is_err());
+        assert!(importance_sampling(1).with_uniform_error(p).is_err());
+        assert!(BernoulliSubsetSimulation::new(p, 10, 1.0).is_err());
+        assert!(ProperSubsetSimulation::new(p, 1.0, 1.0, 10, SubsetConfig::default()).is_err());
+    }
+    for boost in [f64::NAN, -1.0, f64::INFINITY] {
+        assert!(ImportanceConfig::with_boost(0.1, boost).is_err());
+        assert!(importance_sampling(1).with_boost(boost).is_err());
+    }
+}
+
+#[test]
+fn per_gate_vectors_and_angle_extrema_are_validated() {
+    use pecos_neo::command::GateType;
+    use pecos_neo::noise::{AngleScaling, PerGatePauliChannel, TwoQubitChannel};
+    for p in [f64::NAN, -0.1, 1.1] {
+        assert!(PerGatePauliChannel::new().with_base(p, 0.0).is_err());
+        assert!(PerGatePauliChannel::new().with_base(0.0, p).is_err());
+        assert!(PerGatePauliChannel::new().with_meas_init(p, 0.0).is_err());
+        assert!(PerGatePauliChannel::new().with_meas_init(0.0, p).is_err());
+        assert!(
+            PerGatePauliChannel::new()
+                .with_1q_rates(GateType::H, [p, 0.0, 0.0])
+                .is_err()
+        );
+    }
+    assert!(
+        PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [0.4; 3])
+            .is_err()
+    );
+    // Endpoints are zero, but 8*t - 8*t^2 peaks at 2 in the interior.
+    assert!(
+        TwoQubitChannel::depolarizing(1.0)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::polynomial(0.0, 8.0, -8.0, 2.0))
+            .is_err()
+    );
+    // Signed coefficients are allowed when the entire curve stays in range.
+    assert!(
+        TwoQubitChannel::depolarizing(1.0)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::polynomial(0.0, 4.0, -4.0, 2.0))
+            .is_ok()
+    );
+    assert!(
+        TwoQubitChannel::depolarizing(0.1)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::polynomial(f64::NAN, 0.0, 0.0, 1.0))
+            .is_err()
+    );
+}
+
+#[test]
+fn leakage_plugin_and_read_accessors_preserve_validation() {
+    use pecos_neo::noise::plugins::LeakagePlugin;
+    use pecos_neo::noise::{MeasurementChannel, SingleQubitChannel};
+    for p in [f64::NAN, -0.1, 1.1] {
+        assert!(LeakagePlugin::with_scale(p).is_err());
+    }
+    let channel = SingleQubitChannel::depolarizing(0.25).unwrap();
+    assert!((channel.error_probability() - 0.25).abs() < f64::EPSILON);
+    assert!(channel.clone().with_scale(5.0).is_err());
+    assert!((channel.error_probability() - 0.25).abs() < f64::EPSILON);
+    let measurement = MeasurementChannel::asymmetric(0.25, 0.5).unwrap();
+    assert!((measurement.p_meas_0_to_1() - 0.25).abs() < f64::EPSILON);
+    assert!((measurement.p_meas_1_to_0() - 0.5).abs() < f64::EPSILON);
+}
+
+#[test]
+fn dynamic_probabilities_and_angle_helpers_validate_before_sampling() {
+    for p in [f64::NAN, -0.1, 1.1] {
+        assert!(Probability::new(p).is_err());
+        assert!(prob_angle_scaled(p, 1.0, nothing()).is_err());
+        assert!(prob_angle_linear(p, nothing()).is_err());
+        assert!(prob_angle_quadratic(p, nothing()).is_err());
+    }
+    for power in [f64::NAN, -1.0, f64::INFINITY] {
+        assert!(prob_angle_scaled(0.1, power, nothing()).is_err());
+    }
+    assert!(prob_angle_quadratic(0.5, nothing()).is_err());
+    assert!(prob_angle_quadratic(0.25, nothing()).is_ok());
+}
+
+#[test]
+fn resampling_rejects_invalid_weights_before_mutating_entities() {
+    use pecos_neo::ecs::World;
+    use pecos_neo::sampling::SampleWeight;
+    use pecos_simulators::SparseStab;
+    for log_weight in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut world: World<SparseStab> = World::new(42);
+        let entity = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+        world.weights.get_mut(entity).unwrap().weight = SampleWeight::from_log(log_weight);
+        let mut rng = pecos_random::PecosRng::seed_from_u64(42);
+        let error = world.resample_by_weight(2, &mut rng).unwrap_err();
+        assert!(error.to_string().contains("entity sampling weights"));
+        assert!(world.is_alive(entity));
+        assert_eq!(world.active_entities(), vec![entity]);
+    }
+}

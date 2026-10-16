@@ -26,6 +26,7 @@
 //! # Example
 //!
 //! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::extensible::*;
 //!
 //! // Build gate definitions with the builder pattern
@@ -36,7 +37,7 @@
 //!         .with_quantum_arity(2)
 //!         .with_category(GateCategory::TwoQubitUnitary))
 //!     // Set noise for the custom gate
-//!     .with_noise("MySWAP", 0.02)
+//!     .with_noise("MySWAP", 0.02)?
 //!     .build()
 //!     .unwrap();
 //!
@@ -44,11 +45,14 @@
 //! let my_swap = defs.id_by_name("MySWAP").unwrap();
 //! assert_eq!(defs.quantum_arity(my_swap), Some(2));
 //! assert_eq!(defs.error_probability(my_swap), 0.02);
+//! # Ok(())
+//! # }
 //! ```
 
 use super::noise_integration::GateNoiseParams;
 use super::{DecompEntry, GateCategory, GateId, GateSpec, GateSupportSet, gates};
 use crate::command::GateType;
+use crate::noise::validation::{ValidationResult, validate_probability};
 
 fn core_angle_arity(gate_type: GateType) -> u8 {
     u8::try_from(gate_type.angle_arity()).expect("core gate angle arity fits in u8")
@@ -289,8 +293,12 @@ impl GateDefinitions {
     }
 
     /// Set noise error probability for a gate.
-    pub fn set_noise_error(&mut self, id: GateId, error_probability: f64) {
-        self.set_noise(id, GateNoiseParams::with_error(error_probability));
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn set_noise_error(&mut self, id: GateId, error_probability: f64) -> ValidationResult<()> {
+        self.set_noise(id, GateNoiseParams::with_error(error_probability)?);
+        Ok(())
     }
 
     /// Set category-based noise default.
@@ -599,38 +607,54 @@ impl GateDefinitionsBuilder {
     }
 
     /// Set noise for a gate by name.
-    #[must_use]
-    pub fn with_noise(mut self, gate_name: &str, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_noise(mut self, gate_name: &str, error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
         if let Some(id) = self.defs.id_by_name(gate_name) {
-            self.defs.set_noise_error(id, error_probability);
+            self.defs.set_noise_error(id, error_probability)?;
         } else {
             self.errors
                 .push(format!("Unknown gate for noise: {gate_name}"));
         }
-        self
+        Ok(self)
     }
 
     /// Set noise for a gate by ID.
-    #[must_use]
-    pub fn with_noise_id(mut self, id: GateId, error_probability: f64) -> Self {
-        self.defs.set_noise_error(id, error_probability);
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_noise_id(mut self, id: GateId, error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
+        self.defs.set_noise_error(id, error_probability)?;
+        Ok(self)
     }
 
     /// Set category-based noise default.
-    #[must_use]
-    pub fn with_category_noise(mut self, category: GateCategory, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_category_noise(
+        mut self,
+        category: GateCategory,
+        error_probability: f64,
+    ) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
         self.defs
-            .set_category_noise(category, GateNoiseParams::with_error(error_probability));
-        self
+            .set_category_noise(category, GateNoiseParams::with_error(error_probability)?);
+        Ok(self)
     }
 
     /// Set global noise default.
-    #[must_use]
-    pub fn with_global_noise(mut self, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_global_noise(mut self, error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
         self.defs
-            .set_global_noise(GateNoiseParams::with_error(error_probability));
-        self
+            .set_global_noise(GateNoiseParams::with_error(error_probability)?);
+        Ok(self)
     }
 
     /// Build the definitions, returning errors if any.
@@ -787,12 +811,12 @@ mod tests {
         let mut defs = GateDefinitions::new();
 
         // Set up noise at all three levels
-        defs.set_global_noise(GateNoiseParams::with_error(0.1));
+        defs.set_global_noise(GateNoiseParams::with_error(0.1).unwrap());
         defs.set_category_noise(
             GateCategory::SingleQubitUnitary,
-            GateNoiseParams::with_error(0.01),
+            GateNoiseParams::with_error(0.01).unwrap(),
         );
-        defs.set_noise_error(gates::H, 0.001);
+        defs.set_noise_error(gates::H, 0.001).unwrap();
 
         // H has per-gate config
         assert_eq!(defs.error_probability(gates::H), 0.001);
@@ -814,7 +838,9 @@ mod tests {
                     .with_category(GateCategory::SingleQubitUnitary),
             )
             .with_noise("CustomGate", 0.005)
+            .unwrap()
             .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)
+            .unwrap()
             .build()
             .unwrap();
 
@@ -827,6 +853,7 @@ mod tests {
     fn test_builder_error() {
         let result = GateDefinitions::builder()
             .with_noise("NonExistentGate", 0.01)
+            .unwrap()
             .build();
 
         assert!(result.is_err());

@@ -18,6 +18,7 @@
 //! # Example
 //!
 //! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::noise::{CategoryBasedChannel, ComposableNoiseModel};
 //! use pecos_neo::extensible::{GateCategory, GateDefinitions};
 //!
@@ -26,14 +27,16 @@
 //! let noise = ComposableNoiseModel::new()
 //!     .with_gate_definitions(gates)
 //!     .add_channel(CategoryBasedChannel::new()
-//!         .with_category(GateCategory::SingleQubitUnitary, 0.001)
-//!         .with_category(GateCategory::TwoQubitUnitary, 0.01));
+//!         .with_category(GateCategory::SingleQubitUnitary, 0.001)?
+//!         .with_category(GateCategory::TwoQubitUnitary, 0.01)?);
+//! # Ok(())
+//! # }
 //! ```
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
 use crate::command::GateCommand;
 use crate::extensible::GateCategory;
-use crate::noise::validation::ValidationResult;
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -56,12 +59,15 @@ struct CategoryConfig {
 /// # Example
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// # use pecos_neo::noise::CategoryBasedChannel;
 /// # use pecos_neo::extensible::GateCategory;
 /// let channel = CategoryBasedChannel::new()
-///     .with_category(GateCategory::SingleQubitUnitary, 0.001)
-///     .with_category(GateCategory::TwoQubitUnitary, 0.01)
-///     .with_category(GateCategory::Measurement, 0.005);
+///     .with_category(GateCategory::SingleQubitUnitary, 0.001)?
+///     .with_category(GateCategory::TwoQubitUnitary, 0.01)?
+///     .with_category(GateCategory::Measurement, 0.005)?;
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct CategoryBasedChannel {
@@ -79,13 +85,20 @@ impl CategoryBasedChannel {
     }
 
     /// Set error probability for a category.
-    #[must_use]
-    pub fn with_category(mut self, category: GateCategory, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_category(
+        mut self,
+        category: GateCategory,
+        error_probability: f64,
+    ) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
         self.category_configs[category_to_index(category)] = Some(CategoryConfig {
             error_probability,
             pauli_weights: PauliWeights::uniform(),
         });
-        self
+        Ok(self)
     }
 
     /// Set error probability and Pauli weights for a category.
@@ -98,6 +111,7 @@ impl CategoryBasedChannel {
         error_probability: f64,
         pauli_weights: PauliWeights,
     ) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
         pauli_weights.validate()?;
         self.category_configs[category_to_index(category)] = Some(CategoryConfig {
             error_probability,
@@ -107,10 +121,13 @@ impl CategoryBasedChannel {
     }
 
     /// Set default error probability for unconfigured categories.
-    #[must_use]
-    pub fn with_default(mut self, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_default(mut self, error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
         self.default_error = Some(error_probability);
-        self
+        Ok(self)
     }
 
     /// Get config for a category.
@@ -234,7 +251,9 @@ mod tests {
     fn test_category_channel_single_qubit() {
         let channel = CategoryBasedChannel::new()
             .with_category(GateCategory::SingleQubitUnitary, 1.0)
-            .with_category(GateCategory::TwoQubitUnitary, 0.0);
+            .unwrap()
+            .with_category(GateCategory::TwoQubitUnitary, 0.0)
+            .unwrap();
 
         let gates_def = GateDefinitions::new();
         let mut ctx = NoiseContext::new();
@@ -260,7 +279,9 @@ mod tests {
     fn test_category_channel_two_qubit() {
         let channel = CategoryBasedChannel::new()
             .with_category(GateCategory::SingleQubitUnitary, 0.0)
-            .with_category(GateCategory::TwoQubitUnitary, 1.0);
+            .unwrap()
+            .with_category(GateCategory::TwoQubitUnitary, 1.0)
+            .unwrap();
 
         let gates_def = GateDefinitions::new();
         let mut ctx = NoiseContext::new();
@@ -293,7 +314,9 @@ mod tests {
                 .with_category(GateCategory::TwoQubitUnitary),
         );
 
-        let channel = CategoryBasedChannel::new().with_category(GateCategory::TwoQubitUnitary, 1.0);
+        let channel = CategoryBasedChannel::new()
+            .with_category(GateCategory::TwoQubitUnitary, 1.0)
+            .unwrap();
 
         let mut ctx = NoiseContext::new();
         ctx.set_gate_definitions(gates_def);
@@ -316,8 +339,9 @@ mod tests {
 
     #[test]
     fn test_category_channel_no_definitions() {
-        let channel =
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 1.0);
+        let channel = CategoryBasedChannel::new()
+            .with_category(GateCategory::SingleQubitUnitary, 1.0)
+            .unwrap();
 
         // No gate definitions set
         let mut ctx = NoiseContext::new();

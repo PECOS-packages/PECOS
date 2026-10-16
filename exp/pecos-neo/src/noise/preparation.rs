@@ -27,10 +27,10 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone)]
 pub struct PreparationChannel {
     /// Probability of preparation error.
-    pub error_probability: f64,
+    error_probability: f64,
 
     /// Probability that a preparation error causes leakage.
-    pub leakage_ratio: f64,
+    leakage_ratio: f64,
 
     // Precomputed probability thresholds for fast sampling
     error_threshold: u64,
@@ -49,6 +49,18 @@ impl Default for PreparationChannel {
 }
 
 impl PreparationChannel {
+    /// Return the configured `error_probability`.
+    #[must_use]
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `leakage_ratio`.
+    #[must_use]
+    pub fn leakage_ratio(&self) -> f64 {
+        self.leakage_ratio
+    }
+
     /// Create a preparation error channel.
     ///
     /// # Errors

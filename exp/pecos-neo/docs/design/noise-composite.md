@@ -189,6 +189,9 @@ SingleQubitGate
 
 ### Two-Qubit Gate Noise
 
+In the sketches below, `p2_angle_rate` and `p2_angle_error_rate` return a validated
+`Probability`; `prob_fn` callbacks cannot return unchecked floating-point values.
+
 Similar to single-qubit, with additions:
 - Angle-dependent probability: `prob_fn(|gate| p2_angle_rate(gate.angle()))`
 - Skip if ANY qubit leaked
@@ -313,20 +316,20 @@ let idle_noise = seq([
     // Linear (T1-like): prob scales with duration
     per_qubit(
         skip_if(leaked),
-        prob_fn(|gate| p_linear * gate.duration(),
+        prob_linear(p_linear,
             sample_pauli(t1_weights)
-        )
+        )?
     ),
 
     // Quadratic (T2-like): prob scales with duration^2
     per_qubit(
         skip_if(leaked),
-        prob_fn(|gate| p_quad * gate.duration().powi(2),
+        prob_quadratic(p_quad,
             when(coherent_mode,
                 inject(RZ(angle)),
                 dephase()
             )
-        )
+        )?
     ),
 ]);
 ```

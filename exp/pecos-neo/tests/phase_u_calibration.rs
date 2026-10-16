@@ -8,14 +8,26 @@ use pecos_random::PecosRng;
 #[test]
 fn phase_u_scheduled_calibration_precedes_inherited_exemption_in_all_channels() {
     let channels: Vec<Box<dyn NoiseChannel>> = vec![
-        Box::new(GateDependentChannel::new().with_gate_error(GateType::U, 1.0)),
-        Box::new(GateIdDependentChannel::new().with_gate_type_error(GateType::U, 1.0)),
-        Box::new(PerGatePauliChannel::new().with_1q_rates(GateType::U, [1.0, 0.0, 0.0])),
-        Box::new(PerGatePauliChannel::new().with_1q_rates_for_qubit(
-            GateType::U,
-            QubitId(0),
-            [1.0, 0.0, 0.0],
-        )),
+        Box::new(
+            GateDependentChannel::new()
+                .with_gate_error(GateType::U, 1.0)
+                .unwrap(),
+        ),
+        Box::new(
+            GateIdDependentChannel::new()
+                .with_gate_type_error(GateType::U, 1.0)
+                .unwrap(),
+        ),
+        Box::new(
+            PerGatePauliChannel::new()
+                .with_1q_rates(GateType::U, [1.0, 0.0, 0.0])
+                .unwrap(),
+        ),
+        Box::new(
+            PerGatePauliChannel::new()
+                .with_1q_rates_for_qubit(GateType::U, QubitId(0), [1.0, 0.0, 0.0])
+                .unwrap(),
+        ),
     ];
     let qubits = [QubitId(0)];
     let angles = [Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN];

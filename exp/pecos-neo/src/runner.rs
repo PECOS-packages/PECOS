@@ -3047,11 +3047,15 @@ mod tests {
 
         let gates = GateDefinitions::builder()
             .with_category_noise(GateCategory::SingleQubitUnitary, 0.0)
+            .unwrap()
             .with_category_noise(GateCategory::TwoQubitUnitary, 0.0)
+            .unwrap()
             .build_or_panic();
 
         let noise = ComposableNoiseModel::new().add_channel(
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0)
+                .unwrap(),
         );
 
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
@@ -3078,7 +3082,9 @@ mod tests {
         );
 
         let noise = ComposableNoiseModel::new().add_channel(
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0)
+                .unwrap(),
         );
 
         let runner = CircuitRunner::<SparseStab>::with_definitions(gates).with_noise(noise);

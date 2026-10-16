@@ -1598,9 +1598,7 @@ let two_qubit_noise = CompositeChannel::new("tq_depol", prob(0.01, two_qubit_pau
 
 // Define noise for parameterized gates with angle-dependent probability
 let angle_noise = CompositeChannel::new("angle_dep",
-    prob_fn(|gate| gate.angles.first().map(|a| a.abs()).unwrap_or(0.0) * 0.01,
-        depolarize()
-    ))
+    prob_angle_linear(0.01, two_qubit_pauli())?)
     .with_filter(CompositeEventFilter::ParameterizedGate);
 
 // User registers a custom 2-qubit parameterized gate

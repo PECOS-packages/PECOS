@@ -142,17 +142,18 @@
 //! For angle-dependent or gate-type-dependent error rates:
 //!
 //! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::noise::composite::prelude::*;
 //!
 //! // Angle-dependent two-qubit noise
+//! let low = Probability::new(0.01)?;
+//! let high = Probability::new(0.02)?;
 //! let tq_noise = prob_fn(
-//!     |gate| {
-//!         gate.and_then(|g| g.angle())
-//!             .map(|a| 0.01 * a.to_radians().abs())
-//!             .unwrap_or(0.01)
-//!     },
+//!     move |gate| if gate.is_some_and(|g| g.angle().is_some()) { high } else { low },
 //!     pauli(),
 //! );
+//! # Ok(())
+//! # }
 //! ```
 
 mod action;
@@ -196,6 +197,7 @@ pub mod prelude {
         CompositeCrosstalkChannel, CompositeEventFilter,
     };
     pub use super::condition::conditions::*;
+    pub use super::primitive::Probability;
     pub use super::primitive::primitives::*;
     pub use super::{
         BoxSample, BoxSeq, CompositeResponse, GateAction, OutcomeIs, Pauli, PauliWeights,
@@ -484,8 +486,11 @@ mod tests {
         // Half turn (pi) -> 50%, quarter turn (pi/2) -> 25%
         let angle_dependent_noise = prob_fn(
             |gate| {
-                gate.and_then(super::super::context::GateInfo::angle)
-                    .map_or(0.0, |a| a.to_radians() / (2.0 * std::f64::consts::PI))
+                Probability::new({
+                    gate.and_then(super::super::context::GateInfo::angle)
+                        .map_or(0.0, |a| a.to_radians() / (2.0 * std::f64::consts::PI))
+                })
+                .unwrap()
             },
             pauli(),
         );
@@ -587,7 +592,10 @@ mod tests {
         // - H gates get 1% error
         // Using 100% and 0% for deterministic testing
         let gate_dependent_noise = prob_fn(
-            |gate| gate.map_or(0.0, |g| if g.is_two_qubit() { 1.0 } else { 0.0 }),
+            |gate| {
+                Probability::new(gate.map_or(0.0, |g| if g.is_two_qubit() { 1.0 } else { 0.0 }))
+                    .unwrap()
+            },
             pauli(),
         );
 

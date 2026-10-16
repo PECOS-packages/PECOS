@@ -66,10 +66,10 @@ impl DepolarizingPlugin {
 
 impl NoisePlugin for DepolarizingPlugin {
     fn build(&self, config: &mut NoiseModelConfig) {
-        if self.single_qubit.error_probability > 0.0 {
+        if self.single_qubit.error_probability() > 0.0 {
             config.add_channel(self.single_qubit.clone());
         }
-        if self.two_qubit.error_probability > 0.0 {
+        if self.two_qubit.error_probability() > 0.0 {
             config.add_channel(self.two_qubit.clone());
         }
     }

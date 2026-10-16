@@ -4781,39 +4781,45 @@ impl PerGateTypeNoise {
     /// gate/prep/measurement faults and cannot carry duration-dependent idle
     /// models without changing the simulated physics.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if this model carries dedicated idle noise or any
+    /// Returns an error if this model carries invalid probabilities, dedicated idle noise, or any
     /// `GateType::Idle` rates -- idle noise cannot be represented in the
     /// returned Pauli channel.
     #[cfg(feature = "neo")]
-    #[must_use]
-    pub fn to_neo_channel(&self) -> pecos_neo::noise::PerGatePauliChannel {
-        assert!(
-            !self.base.uses_dedicated_idle_noise()
-                && !self.rates_1q.contains_key(&GateType::Idle)
-                && !self
-                    .rates_1q_per_qubit
-                    .keys()
-                    .any(|(gate, _)| *gate == GateType::Idle),
-            "PerGateTypeNoise::to_neo_channel cannot carry idle noise; compose an idle channel separately"
-        );
+    pub fn to_neo_channel(
+        &self,
+    ) -> pecos_neo::noise::validation::ValidationResult<pecos_neo::noise::PerGatePauliChannel> {
+        if self.base.uses_dedicated_idle_noise()
+            || self.rates_1q.contains_key(&GateType::Idle)
+            || self
+                .rates_1q_per_qubit
+                .keys()
+                .any(|(gate, _)| *gate == GateType::Idle)
+        {
+            return Err(pecos_neo::noise::validation::ValidationError::new(
+                "idle noise",
+                "PerGateTypeNoise::to_neo_channel cannot carry idle noise",
+            )
+            .with_value(&"configured idle rates")
+            .with_suggestion("Compose an idle channel separately"));
+        }
 
         let mut channel = pecos_neo::noise::PerGatePauliChannel::new()
-            .with_base(self.base.p1, self.base.p2)
-            .with_meas_init(self.p_meas, self.p_init);
+            .with_base(self.base.p1, self.base.p2)?
+            .with_meas_init(self.p_meas, self.p_init)?;
 
         for (&gate, &total) in &self.base.p1_gate_rates {
             if self.rates_1q.contains_key(&gate) {
                 continue;
             }
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3]);
+            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3])?;
         }
         for (&gate, &rates) in &self.rates_1q {
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates);
+            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates)?;
         }
         for (&(gate, qubit), &rates) in &self.rates_1q_per_qubit {
-            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates);
+            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates)?;
         }
 
         for (&gate, &total) in &self.base.p2_gate_rates {
@@ -4823,10 +4829,10 @@ impl PerGateTypeNoise {
             channel = channel.with_2q_rates(
                 core_gate_to_neo(gate),
                 qec_2q_rates_to_neo([total / 15.0; 15]),
-            );
+            )?;
         }
         for (&gate, &rates) in &self.rates_2q {
-            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates));
+            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates))?;
         }
         for (&(gate, first, second), &rates) in &self.rates_2q_per_qubits {
             channel = channel.with_2q_rates_for_qubits(
@@ -4834,17 +4840,17 @@ impl PerGateTypeNoise {
                 first,
                 second,
                 qec_2q_rates_to_neo(rates),
-            );
+            )?;
         }
 
         for (&qubit, &p) in &self.measurement_rates {
-            channel = channel.with_meas_rate_for_qubit(qubit, p);
+            channel = channel.with_meas_rate_for_qubit(qubit, p)?;
         }
         for (&qubit, &p) in &self.init_rates {
-            channel = channel.with_init_rate_for_qubit(qubit, p);
+            channel = channel.with_init_rate_for_qubit(qubit, p)?;
         }
 
-        channel
+        Ok(channel)
     }
 }
 

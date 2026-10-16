@@ -53,31 +53,38 @@ use smallvec::SmallVec;
 /// This matches the structure of `GeneralNoiseModel`'s single-qubit noise.
 ///
 /// See also: `CompositeChannel` for composable, primitive-based noise models.
+///
+/// Validated inputs are read through accessors and changed through checked setters.
+/// ```compile_fail
+/// use pecos_neo::noise::SingleQubitChannel;
+/// let mut channel = SingleQubitChannel::default();
+/// channel.error_probability = f64::NAN;
+/// ```
 #[derive(Debug, Clone)]
 pub struct SingleQubitChannel {
     /// Probability of any error occurring (total error rate).
-    pub error_probability: f64,
+    error_probability: f64,
 
     /// Distribution of Pauli errors when a Pauli error occurs.
-    pub pauli_weights: PauliWeights,
+    pauli_weights: PauliWeights,
 
     /// Fraction of errors that are emission errors (vs Pauli errors).
     ///
     /// When an error occurs:
     /// - With probability `emission_ratio`, it's an emission error
     /// - Otherwise, it's a Pauli error from `pauli_weights`
-    pub emission_ratio: f64,
+    emission_ratio: f64,
 
     /// Distribution of emission errors (Pauli gates and/or leakage).
     ///
     /// When an emission error occurs on a non-leaked qubit, sample from this
     /// distribution to determine whether to apply a Pauli error or cause leakage.
-    pub emission_weights: SingleQubitEmissionWeights,
+    emission_weights: SingleQubitEmissionWeights,
 
     /// Probability of seepage when an emission error occurs on a leaked qubit.
     ///
     /// Seepage returns a leaked qubit to the computational subspace.
-    pub seepage_probability: f64,
+    seepage_probability: f64,
 
     // Precomputed probability thresholds for fast sampling (avoids f64 conversion)
     error_threshold: u64,
@@ -101,6 +108,36 @@ impl Default for SingleQubitChannel {
 }
 
 impl SingleQubitChannel {
+    /// Return the configured `error_probability`.
+    #[must_use]
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> &PauliWeights {
+        &self.pauli_weights
+    }
+
+    /// Return the configured `emission_ratio`.
+    #[must_use]
+    pub fn emission_ratio(&self) -> f64 {
+        self.emission_ratio
+    }
+
+    /// Return the configured `emission_weights`.
+    #[must_use]
+    pub fn emission_weights(&self) -> &SingleQubitEmissionWeights {
+        &self.emission_weights
+    }
+
+    /// Return the configured `seepage_probability`.
+    #[must_use]
+    pub fn seepage_probability(&self) -> f64 {
+        self.seepage_probability
+    }
+
     /// Create a new channel with all parameters specified.
     ///
     /// Precomputes probability thresholds for faster sampling.

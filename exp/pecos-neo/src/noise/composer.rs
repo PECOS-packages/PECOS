@@ -179,7 +179,7 @@ impl ComposableNoiseModel {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let gates = GateDefinitions::builder()
     ///     .define_gate("MyGate", GateSpec::new("MyGate").with_quantum_arity(2))
-    ///     .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)
+    ///     .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)?
     ///     .build()?;
     ///
     /// let noise = ComposableNoiseModel::new()
@@ -1152,7 +1152,7 @@ mod tests {
         // of whether the inner channel produces a response.
         let wrapper = ImportanceSamplingChannel::new(
             OptimizedEmptyChannel,
-            ImportanceConfig::with_boost(0.02, 10.0),
+            ImportanceConfig::with_boost(0.02, 10.0).unwrap(),
         );
         let mut bucketed = ComposableNoiseModel::new()
             .add_channel(wrapper.clone())
@@ -1215,18 +1215,28 @@ mod tests {
         builder
             .build()
             .unwrap()
-            .add_channel(CategoryBasedChannel::new().with_default(0.2))
-            .add_channel(GateDependentChannel::new().with_gate_error(GateType::H, 0.2))
-            .add_channel(GateIdDependentChannel::new().with_gate_type_error(GateType::CX, 0.2))
+            .add_channel(CategoryBasedChannel::new().with_default(0.2).unwrap())
+            .add_channel(
+                GateDependentChannel::new()
+                    .with_gate_error(GateType::H, 0.2)
+                    .unwrap(),
+            )
+            .add_channel(
+                GateIdDependentChannel::new()
+                    .with_gate_type_error(GateType::CX, 0.2)
+                    .unwrap(),
+            )
             .add_channel(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap())
             .add_channel(
                 PerGatePauliChannel::new()
                     .with_base(0.2, 0.2)
-                    .with_meas_init(0.2, 0.2),
+                    .unwrap()
+                    .with_meas_init(0.2, 0.2)
+                    .unwrap(),
             )
             .add_channel(ImportanceSamplingChannel::new(
                 SingleQubitChannel::depolarizing(0.2).unwrap(),
-                ImportanceConfig::with_boost(0.02, 10.0),
+                ImportanceConfig::with_boost(0.02, 10.0).unwrap(),
             ))
             .add_channel(
                 CompositeChannel::new("composite", pauli())

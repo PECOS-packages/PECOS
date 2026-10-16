@@ -27,6 +27,7 @@ use super::component::{
 use super::entity::EntityId;
 use super::resource::Resources;
 use crate::noise::NoiseContext;
+use crate::noise::validation::{ValidationResult, validate_weights_sum};
 use crate::sampling::SampleWeight;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_random::PecosRng;
@@ -469,8 +470,15 @@ impl<S: CliffordGateable> World<S> {
     /// 3. Adjusts weights to maintain unbiased estimation
     ///
     /// Returns the number of entities after resampling.
+    ///
+    /// # Errors
+    /// Rejects non-finite weights or a non-positive/non-finite total before sampling.
     #[allow(clippy::cast_precision_loss)] // weight calculation
-    pub fn resample_by_weight(&mut self, target_count: usize, rng: &mut PecosRng) -> usize
+    pub fn resample_by_weight(
+        &mut self,
+        target_count: usize,
+        rng: &mut PecosRng,
+    ) -> ValidationResult<usize>
     where
         S: Clone,
     {
@@ -478,7 +486,7 @@ impl<S: CliffordGateable> World<S> {
 
         let active: Vec<EntityId> = self.active_entities();
         if active.is_empty() || target_count == 0 {
-            return 0;
+            return Ok(0);
         }
 
         // Collect weights and compute cumulative distribution
@@ -488,9 +496,7 @@ impl<S: CliffordGateable> World<S> {
             .collect();
 
         let total_weight: f64 = weights.iter().sum();
-        if total_weight <= 0.0 {
-            return 0;
-        }
+        validate_weights_sum(&weights, "entity sampling weights")?;
 
         // Build cumulative distribution function
         let mut cdf = Vec::with_capacity(weights.len());
@@ -520,7 +526,7 @@ impl<S: CliffordGateable> World<S> {
         // Reweight: each surviving entity gets weight = total_weight / target_count
         // Note: We must get the NEW active list since apply_split_decisions creates clones
         let new_weight =
-            crate::sampling::SampleWeight::from_linear(total_weight / target_count as f64);
+            crate::sampling::SampleWeight::from_log(total_weight.ln() - (target_count as f64).ln());
         let current_active = self.active_entities();
         for entity in &current_active {
             if let Some(weight_comp) = self.weights.get_mut(*entity) {
@@ -528,7 +534,7 @@ impl<S: CliffordGateable> World<S> {
             }
         }
 
-        current_active.len()
+        Ok(current_active.len())
     }
 }
 

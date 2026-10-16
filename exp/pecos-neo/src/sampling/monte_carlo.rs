@@ -464,6 +464,7 @@ mod tests {
             || {
                 ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
                     .with_single_qubit_boost(0.001, 10.0)
+                    .unwrap()
             },
             |outcomes| {
                 if outcomes.get_bit(QubitId(0)).unwrap_or(false) {

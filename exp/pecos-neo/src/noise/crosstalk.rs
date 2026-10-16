@@ -56,10 +56,10 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone)]
 pub struct CrosstalkChannel {
     /// Probability of crosstalk error per local (neighbor) qubit.
-    pub local_rate: f64,
+    local_rate: f64,
 
     /// Probability of crosstalk error per global (non-neighbor) qubit.
-    pub global_rate: f64,
+    global_rate: f64,
 
     /// Function to determine which qubits are neighbors of the gated qubits.
     /// If None, all non-gated qubits are treated as global.
@@ -68,14 +68,14 @@ pub struct CrosstalkChannel {
     /// Probability that a crosstalk error causes leakage (simple model).
     ///
     /// Used when `transitions` is None. Ignored when using transition model.
-    pub leakage_probability: f64,
+    leakage_probability: f64,
 
     /// State-dependent transition probabilities for measurement crosstalk.
     ///
     /// When set, crosstalk during measurements uses this model which
     /// accounts for the target qubit's current state. When None, uses
     /// simple random Pauli + leakage model.
-    pub transitions: Option<CrosstalkTransitions>,
+    transitions: Option<CrosstalkTransitions>,
 }
 
 /// Function type for determining neighbor qubits.
@@ -106,6 +106,30 @@ impl Default for CrosstalkChannel {
 }
 
 impl CrosstalkChannel {
+    /// Return the configured `local_rate`.
+    #[must_use]
+    pub fn local_rate(&self) -> f64 {
+        self.local_rate
+    }
+
+    /// Return the configured `global_rate`.
+    #[must_use]
+    pub fn global_rate(&self) -> f64 {
+        self.global_rate
+    }
+
+    /// Return the configured `leakage_probability`.
+    #[must_use]
+    pub fn leakage_probability(&self) -> f64 {
+        self.leakage_probability
+    }
+
+    /// Return the configured `transitions`.
+    #[must_use]
+    pub fn transitions(&self) -> &Option<CrosstalkTransitions> {
+        &self.transitions
+    }
+
     /// Create a new crosstalk channel with default (zero) rates.
     #[must_use]
     pub fn new() -> Self {

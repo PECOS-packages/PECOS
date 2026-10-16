@@ -27,20 +27,24 @@
 //! ## Example
 //!
 //! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::sampling::{ImportanceConfig, ImportanceSamplingNoise};
 //!
 //! // Create importance sampling noise with boosted error rates
 //! let mut importance_noise = ImportanceSamplingNoise::new()
-//!     .with_single_qubit(0.001, 10.0)   // True: 0.001, proposal: 0.01
-//!     .with_two_qubit(0.01, 5.0);       // True: 0.01, proposal: 0.05
+//!     .with_single_qubit(0.001, 10.0)?   // True: 0.001, proposal: 0.01
+//!     .with_two_qubit(0.01, 5.0)?;       // True: 0.01, proposal: 0.05
 //!
 //! // Run shot, get weight
 //! // ... execute circuit with importance_noise ...
 //! let weight = importance_noise.weight();
+//! # Ok(())
+//! # }
 //! ```
 
 use super::weight::SampleWeight;
 use crate::command::GateType;
+use crate::noise::validation::{ValidationResult, validate_probability, validate_rate};
 use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -49,13 +53,25 @@ use rand::RngExt;
 #[derive(Debug, Clone)]
 pub struct ImportanceConfig {
     /// Error probability under the true (target) distribution.
-    pub p_true: f64,
+    pub(crate) p_true: f64,
     /// Error probability under the proposal distribution.
     /// Should be higher than `p_true` to oversample errors.
-    pub p_proposal: f64,
+    pub(crate) p_proposal: f64,
 }
 
 impl ImportanceConfig {
+    /// Return the configured `p_true`.
+    #[must_use]
+    pub fn p_true(&self) -> f64 {
+        self.p_true
+    }
+
+    /// Return the configured `p_proposal`.
+    #[must_use]
+    pub fn p_proposal(&self) -> f64 {
+        self.p_proposal
+    }
+
     /// Create a new importance sampling configuration.
     ///
     /// # Arguments
@@ -64,22 +80,34 @@ impl ImportanceConfig {
     ///
     /// # Example
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::sampling::ImportanceConfig;
     ///
     /// // True error rate 0.001, boost by 10x for proposal
-    /// let config = ImportanceConfig::with_boost(0.001, 10.0);
-    /// assert!((config.p_proposal - 0.01).abs() < 1e-10);
+    /// let config = ImportanceConfig::with_boost(0.001, 10.0)?;
+    /// assert!((config.p_proposal() - 0.01).abs() < 1e-10);
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn with_boost(p_true: f64, boost_factor: f64) -> Self {
-        let p_proposal = (p_true * boost_factor).min(0.5); // Cap at 50%
-        Self { p_true, p_proposal }
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_boost(p_true: f64, boost_factor: f64) -> ValidationResult<Self> {
+        validate_probability(p_true, "p_true")?;
+        validate_rate(boost_factor, "boost_factor")?;
+        let boosted = validate_rate(p_true * boost_factor, "p_true * boost_factor")?;
+        // Preserve the documented proposal cap after validating caller inputs.
+        Self::new(p_true, boosted.min(0.5))
     }
 
     /// Create configuration with explicit probabilities.
-    #[must_use]
-    pub fn new(p_true: f64, p_proposal: f64) -> Self {
-        Self { p_true, p_proposal }
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn new(p_true: f64, p_proposal: f64) -> ValidationResult<Self> {
+        validate_probability(p_true, "p_true")?;
+        validate_probability(p_proposal, "p_proposal")?;
+        Ok(Self { p_true, p_proposal })
     }
 
     /// Compute the weight contribution for an error occurring.
@@ -217,24 +245,30 @@ impl ImportanceSamplingNoise {
     }
 
     /// Add single-qubit error importance sampling.
-    #[must_use]
-    pub fn with_single_qubit(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.single_qubit = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_single_qubit(mut self, p_true: f64, boost_factor: f64) -> ValidationResult<Self> {
+        self.single_qubit = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Add two-qubit error importance sampling.
-    #[must_use]
-    pub fn with_two_qubit(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.two_qubit = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_two_qubit(mut self, p_true: f64, boost_factor: f64) -> ValidationResult<Self> {
+        self.two_qubit = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Add measurement error importance sampling.
-    #[must_use]
-    pub fn with_measurement(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.measurement = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_measurement(mut self, p_true: f64, boost_factor: f64) -> ValidationResult<Self> {
+        self.measurement = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Get the current accumulated weight.
@@ -326,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_importance_config_boost() {
-        let config = ImportanceConfig::with_boost(0.001, 10.0);
+        let config = ImportanceConfig::with_boost(0.001, 10.0).unwrap();
         assert!((config.p_true - 0.001).abs() < 1e-10);
         assert!((config.p_proposal - 0.01).abs() < 1e-10);
     }
@@ -334,7 +368,7 @@ mod tests {
     #[test]
     fn test_importance_config_capped() {
         // Very high boost should be capped at 50%
-        let config = ImportanceConfig::with_boost(0.1, 100.0);
+        let config = ImportanceConfig::with_boost(0.1, 100.0).unwrap();
         assert!((config.p_proposal - 0.5).abs() < 1e-10);
     }
 
@@ -342,7 +376,9 @@ mod tests {
     fn test_importance_sampling_noise() {
         let noise = ImportanceSamplingNoise::new()
             .with_single_qubit(0.001, 10.0)
-            .with_two_qubit(0.01, 5.0);
+            .unwrap()
+            .with_two_qubit(0.01, 5.0)
+            .unwrap();
 
         assert!(noise.single_qubit.is_some());
         assert!(noise.two_qubit.is_some());
@@ -354,7 +390,9 @@ mod tests {
 
     #[test]
     fn test_weight_accumulation() {
-        let mut noise = ImportanceSamplingNoise::new().with_single_qubit(0.001, 10.0);
+        let mut noise = ImportanceSamplingNoise::new()
+            .with_single_qubit(0.001, 10.0)
+            .unwrap();
 
         let mut rng = PecosRng::seed_from_u64(42);
 
@@ -379,7 +417,7 @@ mod tests {
         // Simulate importance sampling for a rare event
         // True rate: 0.001, Proposal rate: 0.1
 
-        let config = ImportanceConfig::new(0.001, 0.1);
+        let config = ImportanceConfig::new(0.001, 0.1).unwrap();
         let mut stats = WeightedStatistics::new();
         let mut rng = PecosRng::seed_from_u64(12345);
 

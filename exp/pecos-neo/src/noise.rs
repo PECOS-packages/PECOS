@@ -846,11 +846,11 @@ pub trait NoiseChannel: Send + Sync {
 #[derive(Debug, Clone, Copy)]
 pub struct PauliWeights {
     /// Weight for X errors.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y errors.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z errors.
-    pub z: f64,
+    pub(crate) z: f64,
 }
 
 impl Default for PauliWeights {
@@ -860,6 +860,24 @@ impl Default for PauliWeights {
 }
 
 impl PauliWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
     /// Distribution containing only Z errors.
     #[must_use]
     pub fn z_only() -> Self {
@@ -880,7 +898,7 @@ impl PauliWeights {
         }
     }
 
-    /// Validate this distribution, including values assigned through public fields.
+    /// Validate this distribution before use by a noise channel.
     ///
     /// # Errors
     /// Rejects invalid weights or a total other than one.
@@ -977,7 +995,7 @@ pub const TWO_QUBIT_PAULIS: [(GateType, GateType); 15] = [
 #[derive(Debug, Clone)]
 pub struct TwoQubitPauliWeights {
     /// Weights for each of the 15 two-qubit Pauli operators.
-    pub weights: [f64; 15],
+    pub(crate) weights: [f64; 15],
 }
 
 impl Default for TwoQubitPauliWeights {
@@ -987,7 +1005,13 @@ impl Default for TwoQubitPauliWeights {
 }
 
 impl TwoQubitPauliWeights {
-    /// Validate this distribution, including values assigned through public fields.
+    /// Return the validated `weights` weight.
+    #[must_use]
+    pub fn weights(&self) -> [f64; 15] {
+        self.weights
+    }
+
+    /// Validate this distribution before use by a noise channel.
     ///
     /// # Errors
     /// Rejects invalid weights or a total other than one.
@@ -1074,13 +1098,13 @@ pub enum SingleQubitEmissionResult {
 #[derive(Debug, Clone, Copy)]
 pub struct SingleQubitEmissionWeights {
     /// Weight for X errors.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y errors.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z errors.
-    pub z: f64,
+    pub(crate) z: f64,
     /// Weight for leakage.
-    pub leak: f64,
+    pub(crate) leak: f64,
 }
 
 impl Default for SingleQubitEmissionWeights {
@@ -1090,7 +1114,31 @@ impl Default for SingleQubitEmissionWeights {
 }
 
 impl SingleQubitEmissionWeights {
-    /// Validate this distribution, including values assigned through public fields.
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
+    /// Return the validated `leak` weight.
+    #[must_use]
+    pub fn leak(&self) -> f64 {
+        self.leak
+    }
+
+    /// Validate this distribution before use by a noise channel.
     ///
     /// # Errors
     /// Rejects invalid weights or a total other than one.
@@ -1227,7 +1275,7 @@ pub const TWO_QUBIT_EMISSION_OPS: [(char, char); 24] = [
 #[derive(Debug, Clone)]
 pub struct TwoQubitEmissionWeights {
     /// Weights for each of the 24 two-qubit emission operators.
-    pub weights: [f64; 24],
+    pub(crate) weights: [f64; 24],
 }
 
 impl Default for TwoQubitEmissionWeights {
@@ -1237,7 +1285,13 @@ impl Default for TwoQubitEmissionWeights {
 }
 
 impl TwoQubitEmissionWeights {
-    /// Validate this distribution, including values assigned through public fields.
+    /// Return the validated `weights` weight.
+    #[must_use]
+    pub fn weights(&self) -> [f64; 24] {
+        self.weights
+    }
+
+    /// Validate this distribution before use by a noise channel.
     ///
     /// # Errors
     /// Rejects invalid weights or a total other than one.
@@ -1350,17 +1404,17 @@ pub enum CrosstalkResult {
 #[derive(Debug, Clone, Copy)]
 pub struct CrosstalkTransitions {
     /// Probability of staying at 0 when starting at 0.
-    pub from_0_stay: f64,
+    pub(crate) zero_stay: f64,
     /// Probability of flipping to 1 when starting at 0.
-    pub from_0_flip: f64,
+    pub(crate) zero_flip: f64,
     /// Probability of leaking when starting at 0.
-    pub from_0_leak: f64,
+    pub(crate) zero_leak: f64,
     /// Probability of staying at 1 when starting at 1.
-    pub from_1_stay: f64,
+    pub(crate) one_stay: f64,
     /// Probability of flipping to 0 when starting at 1.
-    pub from_1_flip: f64,
+    pub(crate) one_flip: f64,
     /// Probability of leaking when starting at 1.
-    pub from_1_leak: f64,
+    pub(crate) one_leak: f64,
 }
 
 impl Default for CrosstalkTransitions {
@@ -1370,17 +1424,53 @@ impl Default for CrosstalkTransitions {
 }
 
 impl CrosstalkTransitions {
-    /// Validate this distribution, including values assigned through public fields.
+    /// Return the validated `from_0_stay` weight.
+    #[must_use]
+    pub fn from_0_stay(&self) -> f64 {
+        self.zero_stay
+    }
+
+    /// Return the validated `from_0_flip` weight.
+    #[must_use]
+    pub fn from_0_flip(&self) -> f64 {
+        self.zero_flip
+    }
+
+    /// Return the validated `from_0_leak` weight.
+    #[must_use]
+    pub fn from_0_leak(&self) -> f64 {
+        self.zero_leak
+    }
+
+    /// Return the validated `from_1_stay` weight.
+    #[must_use]
+    pub fn from_1_stay(&self) -> f64 {
+        self.one_stay
+    }
+
+    /// Return the validated `from_1_flip` weight.
+    #[must_use]
+    pub fn from_1_flip(&self) -> f64 {
+        self.one_flip
+    }
+
+    /// Return the validated `from_1_leak` weight.
+    #[must_use]
+    pub fn from_1_leak(&self) -> f64 {
+        self.one_leak
+    }
+
+    /// Validate this distribution before use by a noise channel.
     ///
     /// # Errors
     /// Rejects invalid weights or a total other than one.
     pub fn validate(&self) -> ValidationResult<()> {
         validate_distribution(
-            &[self.from_0_stay, self.from_0_flip, self.from_0_leak],
+            &[self.zero_stay, self.zero_flip, self.zero_leak],
             "CrosstalkTransitions from 0",
         )?;
         validate_distribution(
-            &[self.from_1_stay, self.from_1_flip, self.from_1_leak],
+            &[self.one_stay, self.one_flip, self.one_leak],
             "CrosstalkTransitions from 1",
         )?;
         Ok(())
@@ -1390,12 +1480,12 @@ impl CrosstalkTransitions {
     #[must_use]
     pub fn flip_only() -> Self {
         Self {
-            from_0_stay: 0.5,
-            from_0_flip: 0.5,
-            from_0_leak: 0.0,
-            from_1_stay: 0.5,
-            from_1_flip: 0.5,
-            from_1_leak: 0.0,
+            zero_stay: 0.5,
+            zero_flip: 0.5,
+            zero_leak: 0.0,
+            one_stay: 0.5,
+            one_flip: 0.5,
+            one_leak: 0.0,
         }
     }
 
@@ -1405,12 +1495,12 @@ impl CrosstalkTransitions {
     #[must_use]
     pub fn symmetric_with_leakage() -> Self {
         Self {
-            from_0_stay: 1.0 / 3.0,
-            from_0_flip: 1.0 / 3.0,
-            from_0_leak: 1.0 / 3.0,
-            from_1_stay: 1.0 / 3.0,
-            from_1_flip: 1.0 / 3.0,
-            from_1_leak: 1.0 / 3.0,
+            zero_stay: 1.0 / 3.0,
+            zero_flip: 1.0 / 3.0,
+            zero_leak: 1.0 / 3.0,
+            one_stay: 1.0 / 3.0,
+            one_flip: 1.0 / 3.0,
+            one_leak: 1.0 / 3.0,
         }
     }
 
@@ -1435,12 +1525,12 @@ impl CrosstalkTransitions {
             "CrosstalkTransitions from 1",
         )?;
         Ok(Self {
-            from_0_stay,
-            from_0_flip,
-            from_0_leak,
-            from_1_stay,
-            from_1_flip,
-            from_1_leak,
+            zero_stay: from_0_stay,
+            zero_flip: from_0_flip,
+            zero_leak: from_0_leak,
+            one_stay: from_1_stay,
+            one_flip: from_1_flip,
+            one_leak: from_1_leak,
         })
     }
 
@@ -1453,18 +1543,18 @@ impl CrosstalkTransitions {
     pub fn sample(&self, current_state: bool, r: f64) -> CrosstalkResult {
         if current_state {
             // Starting from 1
-            if r < self.from_1_stay {
+            if r < self.one_stay {
                 CrosstalkResult::NoChange
-            } else if r < self.from_1_stay + self.from_1_flip {
+            } else if r < self.one_stay + self.one_flip {
                 CrosstalkResult::Flip
             } else {
                 CrosstalkResult::Leak
             }
         } else {
             // Starting from 0
-            if r < self.from_0_stay {
+            if r < self.zero_stay {
                 CrosstalkResult::NoChange
-            } else if r < self.from_0_stay + self.from_0_flip {
+            } else if r < self.zero_stay + self.zero_flip {
                 CrosstalkResult::Flip
             } else {
                 CrosstalkResult::Leak

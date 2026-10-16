@@ -311,7 +311,11 @@ fn bench_entity_operations(c: &mut Criterion) {
                 let mut rng = PecosRng::seed_from_u64(i);
 
                 let start = std::time::Instant::now();
-                black_box(world.resample_by_weight(100, &mut rng));
+                black_box(
+                    world
+                        .resample_by_weight(100, &mut rng)
+                        .expect("benchmark entities have fixed finite positive weights"),
+                );
                 total += start.elapsed();
             }
             total
@@ -348,11 +352,10 @@ fn bench_redistribution(c: &mut Criterion) {
                     let mut rng = PecosRng::seed_from_u64(i);
 
                     let start = std::time::Instant::now();
-                    black_box(redistribute_by_weight(
-                        &mut workers,
-                        entities_per_worker,
-                        &mut rng,
-                    ));
+                    black_box(
+                        redistribute_by_weight(&mut workers, entities_per_worker, &mut rng)
+                            .expect("benchmark entities have fixed finite positive weights"),
+                    );
                     total += start.elapsed();
                 }
                 total
@@ -546,7 +549,10 @@ fn bench_memory_usage(c: &mut Criterion) {
                 let mut rng = PecosRng::seed_from_u64(i);
 
                 let start = std::time::Instant::now();
-                black_box(redistribute_by_weight(&mut workers, 100, &mut rng));
+                black_box(
+                    redistribute_by_weight(&mut workers, 100, &mut rng)
+                        .expect("benchmark entities have fixed finite positive weights"),
+                );
                 total += start.elapsed();
             }
             total

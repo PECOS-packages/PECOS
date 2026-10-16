@@ -645,6 +645,7 @@ fn test_importance_sampling_matches_standard_monte_carlo() {
     for seed in 0..num_shots {
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed as u64))
             .with_single_qubit_boost(p_error, boost)
+            .unwrap()
             .with_seed(seed as u64);
         let result = runner.run_shot(&commands);
 
@@ -726,6 +727,7 @@ fn test_importance_sampling_rare_events() {
     for seed in 0..num_shots {
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed as u64))
             .with_single_qubit_boost(p_error, boost)
+            .unwrap()
             .with_seed(seed as u64);
         let result = runner.run_shot(&commands);
 
@@ -807,6 +809,7 @@ fn test_importance_sampling_variance_reduction() {
             let mut runner =
                 ImportanceSamplingRunner::new(SparseStab::with_seed(1, (base_seed + shot) as u64))
                     .with_single_qubit_boost(p_error, boost)
+                    .unwrap()
                     .with_seed((base_seed + shot) as u64);
             let result = runner.run_shot(&commands);
 

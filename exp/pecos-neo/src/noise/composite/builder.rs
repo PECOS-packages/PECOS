@@ -63,6 +63,7 @@ use pecos_core::TimeScale;
 /// You can mix composite channels with traditional channels using [`with_channel`]:
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 /// use pecos_neo::noise::MeasurementChannel;
 ///
@@ -71,7 +72,8 @@ use pecos_core::TimeScale;
 ///     .with_p2(0.01)?                               // Flow 2Q channel
 ///     .with_channel(MeasurementChannel::symmetric(0.02)?)  // Traditional channel
 ///     .build()?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// [`with_channel`]: Self::with_channel
@@ -241,6 +243,7 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::SingleQubitEmissionWeights;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
@@ -252,7 +255,8 @@ impl CompositeNoiseModelBuilder {
     ///     .with_p1_emission_ratio(0.5)?  // 50% of errors are emission
     ///     .with_p1_emission_model(emission)?
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -324,6 +328,7 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::TwoQubitPauliWeights;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
@@ -332,7 +337,8 @@ impl CompositeNoiseModelBuilder {
     ///     .with_p2(0.01)?
     ///     .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.5)?)?
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -355,6 +361,7 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::TwoQubitEmissionWeights;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
@@ -364,7 +371,8 @@ impl CompositeNoiseModelBuilder {
     ///     .with_p2_emission_ratio(0.5)?
     ///     .with_p2_emission_model(TwoQubitEmissionWeights::uniform_with_leakage())?
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -547,6 +555,7 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::CrosstalkTransitions;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
@@ -560,7 +569,8 @@ impl CompositeNoiseModelBuilder {
     ///     .with_p_crosstalk(0.01)?
     ///     .with_p_meas_crosstalk_model(transitions)?
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -825,6 +835,7 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_neo::noise::MeasurementChannel;
     ///
@@ -832,7 +843,8 @@ impl CompositeNoiseModelBuilder {
     ///     .with_p1(0.001)?  // Flow single-qubit noise
     ///     .with_channel(MeasurementChannel::symmetric(0.02)?)  // Traditional channel
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_channel(mut self, channel: impl crate::noise::NoiseChannel + 'static) -> Self {
@@ -849,6 +861,9 @@ impl CompositeNoiseModelBuilder {
     /// # Errors
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn build(self) -> ValidationResult<ComposableNoiseModel> {
+        if let Some(scaling) = self.p2_angle_scaling {
+            scaling.validate_for_probability(self.p2)?;
+        }
         let mut model = ComposableNoiseModel::new();
 
         // Set time scale if configured
@@ -1242,6 +1257,7 @@ impl CompositeNoiseModelBuilder {
         E: crate::noise::composite::Primitive + 'static,
     {
         let base_p2 = self.p2;
+        scaling.validate_for_probability(base_p2)?;
         let seepage = self.p2_seepage;
 
         // Different code paths based on whether we have leakage/seepage
@@ -1249,8 +1265,10 @@ impl CompositeNoiseModelBuilder {
             // With leakage/seepage: use complex inner structure
             seq![prob_fn(
                 move |gate| {
-                    gate.and_then(crate::noise::GateInfo::angle)
-                        .map_or(base_p2, |angle| base_p2 * scaling.scale(angle))
+                    Probability(
+                        gate.and_then(crate::noise::GateInfo::angle)
+                            .map_or(base_p2, |angle| base_p2 * scaling.scale(angle)),
+                    )
                 },
                 when_leaked(
                     prob(seepage, seep())?,
@@ -1268,8 +1286,10 @@ impl CompositeNoiseModelBuilder {
             // Simple depolarizing with angle scaling
             seq![prob_fn(
                 move |gate| {
-                    gate.and_then(crate::noise::GateInfo::angle)
-                        .map_or(base_p2, |angle| base_p2 * scaling.scale(angle))
+                    Probability(
+                        gate.and_then(crate::noise::GateInfo::angle)
+                            .map_or(base_p2, |angle| base_p2 * scaling.scale(angle)),
+                    )
                 },
                 pauli_action,
             ),]

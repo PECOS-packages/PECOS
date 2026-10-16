@@ -90,7 +90,9 @@ fn seeded_importance_outcomes_and_weights_match_exactly_across_workers_and_reuse
             .sampling(
                 importance_sampling(12)
                     .with_uniform_error(0.01)
+                    .unwrap()
                     .with_boost(10.0)
+                    .unwrap()
                     .workers(workers),
             )
             .build()

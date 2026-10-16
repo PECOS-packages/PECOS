@@ -110,6 +110,7 @@
 use crate::command::{CommandQueue, GateCommand};
 use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
+use crate::noise::validation::ValidationResult;
 use crate::outcome::{MeasurementOutcomes, RegisterMap};
 use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgram};
 use crate::runner::{EventHandlers, GateOverrides};
@@ -744,18 +745,21 @@ impl Default for SimConfig {
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
 /// use pecos_neo::prelude::*;
 ///
 /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit).auto()
 ///     .sampling(importance_sampling(10000)
-///         .with_p1(0.001)
-///         .with_p2(0.01)
-///         .with_p_meas(0.001)
-///         .with_boost(10.0))
+///         .with_p1(0.001)?
+///         .with_p2(0.01)?
+///         .with_p_meas(0.001)?
+///         .with_boost(10.0)?)
 ///     .build()
 ///     .run().expect("simulation should succeed");
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct ImportanceSamplingBuilder {
@@ -807,43 +811,60 @@ impl ImportanceSamplingBuilder {
     }
 
     /// Set the single-qubit gate error rate.
-    #[must_use]
-    pub fn with_p1(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_p1(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p1 = p;
-        self
+        Ok(self)
     }
 
     /// Set the two-qubit gate error rate.
-    #[must_use]
-    pub fn with_p2(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_p2(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p2 = p;
-        self
+        Ok(self)
     }
 
     /// Set the measurement error rate.
-    #[must_use]
-    pub fn with_p_meas(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_p_meas(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p_meas = p;
-        self
+        Ok(self)
     }
 
     /// Set all error rates to the same value.
-    #[must_use]
-    pub fn with_uniform_error(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_uniform_error(mut self, p: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(p, self.boost)?;
         self.p1 = p;
         self.p2 = p;
         self.p_meas = p;
-        self
+        Ok(self)
     }
 
     /// Set the boost factor for the proposal distribution.
     ///
     /// The proposal distribution samples errors at rate `p * boost`,
     /// capped at 50%.
-    #[must_use]
-    pub fn with_boost(mut self, boost: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_boost(mut self, boost: f64) -> ValidationResult<Self> {
+        crate::sampling::ImportanceConfig::with_boost(self.p1, boost)?;
+        crate::sampling::ImportanceConfig::with_boost(self.p2, boost)?;
+        crate::sampling::ImportanceConfig::with_boost(self.p_meas, boost)?;
         self.boost = boost;
-        self
+        Ok(self)
     }
 
     /// Build the sampling strategy.
@@ -897,15 +918,16 @@ impl From<ImportanceSamplingBuilder> for Sampling {
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::tool::{sim_neo, importance_sampling};
 /// use pecos_neo::prelude::*;
 ///
 /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let results = sim_neo(circuit).auto()
 ///     .sampling(importance_sampling(10000)
-///         .with_p1(0.001)
-///         .with_p2(0.01)
-///         .with_boost(10.0))
+///         .with_p1(0.001)?
+///         .with_p2(0.01)?
+///         .with_boost(10.0)?)
 ///     .build()
 ///     .run()
 ///     .expect("simulation should succeed");
@@ -917,6 +939,8 @@ impl From<ImportanceSamplingBuilder> for Sampling {
 /// }) {
 ///     println!("Estimated error rate: {:.2e}", rate);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub fn importance_sampling(shots: usize) -> ImportanceSamplingBuilder {
@@ -977,6 +1001,7 @@ impl From<PathEnumerationBuilder> for Sampling {
 /// # Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::tool::{path_enumeration, sim_neo, sparse_stab};
 /// use pecos_neo::prelude::*;
 ///
@@ -1001,6 +1026,8 @@ impl From<PathEnumerationBuilder> for Sampling {
 /// {
 ///     println!("p = {:.3}: {:?}", weight.weight(), outcome);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub fn path_enumeration(max_measurements: usize) -> PathEnumerationBuilder {
@@ -3249,8 +3276,11 @@ fn build_importance_runner(
 ) -> ImportanceSamplingRunner<SparseStab> {
     ImportanceSamplingRunner::new(SparseStab::new(num_qubits))
         .with_single_qubit_boost(is_config.p1(), is_config.boost())
+        .expect("ImportanceSamplingBuilder setters validate each probability and boosted product; defaults are finite valid constants")
         .with_two_qubit_boost(is_config.p2(), is_config.boost())
+        .expect("ImportanceSamplingBuilder setters validate each probability and boosted product; defaults are finite valid constants")
         .with_measurement_boost(is_config.p_meas(), is_config.boost())
+        .expect("ImportanceSamplingBuilder setters validate each probability and boosted product; defaults are finite valid constants")
 }
 
 /// Seed an importance sampling runner for a specific global shot index.
@@ -4921,7 +4951,7 @@ mod tests {
 
         let results = sim_neo(circuit)
             .auto()
-            .sampling(importance_sampling(35).with_uniform_error(0.01))
+            .sampling(importance_sampling(35).with_uniform_error(0.01).unwrap())
             .seed(3)
             .run()
             .expect("simulation should succeed");
@@ -4946,7 +4976,9 @@ mod tests {
                 .sampling(
                     importance_sampling(60)
                         .with_uniform_error(0.01)
+                        .unwrap()
                         .with_boost(10.0)
+                        .unwrap()
                         .workers(workers),
                 )
                 .seed(42)
@@ -4994,7 +5026,12 @@ mod tests {
         let run = || {
             sim_neo(circuit.clone())
                 .auto()
-                .sampling(importance_sampling(30).with_uniform_error(0.01).workers(3))
+                .sampling(
+                    importance_sampling(30)
+                        .with_uniform_error(0.01)
+                        .unwrap()
+                        .workers(3),
+                )
                 .seed(5)
                 .run()
                 .expect("simulation should succeed")
@@ -6117,9 +6154,13 @@ mod tests {
             .sampling(
                 importance_sampling(100)
                     .with_p1(0.01)
+                    .unwrap()
                     .with_p2(0.02)
+                    .unwrap()
                     .with_p_meas(0.01)
-                    .with_boost(5.0),
+                    .unwrap()
+                    .with_boost(5.0)
+                    .unwrap(),
             )
             .seed(42)
             .run()
@@ -6147,6 +6188,7 @@ mod tests {
                 .sampling(
                     importance_sampling(4)
                         .with_uniform_error(0.0)
+                        .unwrap()
                         .workers(workers),
                 )
                 .seed(42)
@@ -6209,7 +6251,9 @@ mod tests {
             .sampling(
                 importance_sampling(50)
                     .with_uniform_error(0.01)
-                    .with_boost(10.0),
+                    .unwrap()
+                    .with_boost(10.0)
+                    .unwrap(),
             )
             .seed(123)
             .run()
@@ -6237,7 +6281,9 @@ mod tests {
             .sampling(
                 importance_sampling(2000)
                     .with_uniform_error(0.001)
-                    .with_boost(100.0), // Very aggressive boost
+                    .unwrap()
+                    .with_boost(100.0)
+                    .unwrap(), // Very aggressive boost
             )
             .seed(42)
             .run()
@@ -6270,7 +6316,9 @@ mod tests {
 
         let is_builder = importance_sampling(20)
             .with_uniform_error(0.01)
-            .with_boost(10.0);
+            .unwrap()
+            .with_boost(10.0)
+            .unwrap();
 
         let results1 = sim_neo(circuit.clone())
             .auto()
@@ -6330,9 +6378,13 @@ mod tests {
             .sampling(
                 importance_sampling(100)
                     .with_p1(0.001)
+                    .unwrap()
                     .with_p2(0.01)
+                    .unwrap()
                     .with_p_meas(0.001)
-                    .with_boost(10.0),
+                    .unwrap()
+                    .with_boost(10.0)
+                    .unwrap(),
             )
             .seed(42)
             .run()
@@ -6354,7 +6406,9 @@ mod tests {
             .sampling(
                 importance_sampling(500)
                     .with_uniform_error(0.01)
-                    .with_boost(10.0),
+                    .unwrap()
+                    .with_boost(10.0)
+                    .unwrap(),
             )
             .seed(42)
             .run()

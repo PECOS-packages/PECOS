@@ -32,6 +32,7 @@
 //! ## Example
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::sampling::ImportanceSamplingRunner;
 //! use pecos_neo::sampling::weight::WeightedStatistics;
 //! use pecos_neo::prelude::*;
@@ -41,8 +42,8 @@
 //!
 //! // True error rate: 0.001, boost by 10x for proposal
 //! let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-//!     .with_single_qubit_boost(0.001, 10.0)
-//!     .with_two_qubit_boost(0.01, 5.0)
+//!     .with_single_qubit_boost(0.001, 10.0)?
+//!     .with_two_qubit_boost(0.01, 5.0)?
 //!     .with_seed(42);
 //!
 //! let mut stats = WeightedStatistics::new();
@@ -54,6 +55,8 @@
 //! }
 //!
 //! println!("Estimated logical error rate: {}", stats.mean());
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType};
@@ -93,10 +96,16 @@ use rand_core::SeedableRng;
 pub struct OutcomeBiasConfig {
     /// Probability of choosing outcome 1 in the proposal distribution.
     /// 0.5 = no bias (true distribution), 1.0 = always 1, 0.0 = always 0.
-    pub p_one_proposal: f64,
+    p_one_proposal: f64,
 }
 
 impl OutcomeBiasConfig {
+    /// Return the configured `p_one_proposal`.
+    #[must_use]
+    pub fn p_one_proposal(&self) -> f64 {
+        self.p_one_proposal
+    }
+
     /// Create a config that biases toward outcome 1.
     ///
     /// # Arguments
@@ -295,24 +304,42 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// # Arguments
     /// * `p_true` - True error probability
     /// * `boost_factor` - How much to multiply the error rate for the proposal
-    #[must_use]
-    pub fn with_single_qubit_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.single_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_single_qubit_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.single_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure importance sampling for two-qubit gates.
-    #[must_use]
-    pub fn with_two_qubit_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.two_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_two_qubit_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.two_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure importance sampling for measurement errors.
-    #[must_use]
-    pub fn with_measurement_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.measurement_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_measurement_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.measurement_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure biasing of measurement outcomes for branch exploration.
@@ -1251,6 +1278,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_single_qubit_boost(0.001, 10.0)
+            .unwrap()
             .with_seed(42);
 
         let result = runner.run_shot(&commands);
@@ -1401,6 +1429,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 12345))
             .with_single_qubit_boost(true_rate, boost)
+            .unwrap()
             .with_seed(12345);
 
         let mut stats = WeightedStatistics::new();
@@ -1434,6 +1463,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42))
             .with_two_qubit_boost(0.01, 5.0)
+            .unwrap()
             .with_seed(42);
 
         let result = runner.run_shot(&commands);
@@ -1446,6 +1476,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_measurement_boost(0.001, 100.0)
+            .unwrap()
             .with_seed(42);
 
         // Run many shots to see measurement flips

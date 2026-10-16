@@ -176,7 +176,9 @@ pub fn validate_distribution(weights: &[f64], field: &str) -> ValidationResult<(
 /// Returns an error naming the parameter and its non-finite value.
 pub fn validate_finite(value: f64, field: &str) -> ValidationResult<f64> {
     if !value.is_finite() {
-        return Err(ValidationError::new(field, "must be finite").with_value(&value));
+        return Err(ValidationError::new(field, "must be finite")
+            .with_value(&value)
+            .with_suggestion("Use a finite value and check the computation that produced it"));
     }
     Ok(value)
 }

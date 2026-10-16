@@ -22,6 +22,7 @@
 //! ## Usage
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig, redistribute_by_weight};
 //! use pecos_simulators::SparseStab;
 //! use pecos_random::PecosRng;
@@ -31,6 +32,7 @@
 //! let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 //! let mut rng = PecosRng::seed_from_u64(42);
 //! let target_per_worker = 10;
+//! let mut redistribution_error = None;
 //!
 //! coordinator.run_with_sync::<_, _, _, ()>(
 //!     || SparseStab::new(1),
@@ -38,14 +40,20 @@
 //!     |_world, _step| {},
 //!     |workers, _step| {
 //!         // Redistribute entities based on weights
-//!         redistribute_by_weight(workers, target_per_worker, &mut rng);
+//!         if redistribution_error.is_none() {
+//!             redistribution_error = redistribute_by_weight(workers, target_per_worker, &mut rng).err();
+//!         }
 //!     },
 //! );
+//! if let Some(error) = redistribution_error { return Err(error.into()); }
+//! # Ok(())
+//! # }
 //! ```
 
 use super::coordinator::WorkerState;
 use super::entity::EntityId;
 use super::world::EntityTransfer;
+use crate::noise::validation::{ValidationResult, validate_weights_sum};
 use crate::sampling::SampleWeight;
 use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
@@ -114,15 +122,18 @@ pub fn total_weight<S: CliffordGateable>(workers: &[WorkerState<S>]) -> f64 {
 /// - Total weight is preserved
 ///
 /// Returns statistics about the redistribution.
+///
+/// # Errors
+/// Rejects non-finite weights or a non-positive/non-finite total before sampling.
 #[allow(clippy::cast_precision_loss)] // statistical weight calculation
 pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
     workers: &mut [WorkerState<S>],
     target_per_worker: usize,
     rng: &mut PecosRng,
-) -> RedistributionStats {
+) -> ValidationResult<RedistributionStats> {
     let num_workers = workers.len();
     if num_workers == 0 || target_per_worker == 0 {
-        return RedistributionStats::default();
+        return Ok(RedistributionStats::default());
     }
 
     let total_target = target_per_worker * num_workers;
@@ -130,7 +141,7 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
     // Collect all entities and weights
     let entity_info = collect_weights(workers);
     if entity_info.is_empty() {
-        return RedistributionStats::default();
+        return Ok(RedistributionStats::default());
     }
 
     let entities_before = entity_info.len();
@@ -138,9 +149,10 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
 
     // Build CDF for weighted sampling
     let total_w: f64 = entity_info.iter().map(|(_, _, w)| w).sum();
-    if total_w <= 0.0 {
-        return RedistributionStats::default();
-    }
+    validate_weights_sum(
+        &entity_info.iter().map(|(_, _, w)| *w).collect::<Vec<_>>(),
+        "entity sampling weights",
+    )?;
 
     let mut cdf = Vec::with_capacity(entity_info.len());
     let mut cumsum = 0.0;
@@ -182,7 +194,7 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
 
     // Distribute extracted entities across workers
     // Each entity gets weight = total_weight / total_entities
-    let new_weight = SampleWeight::from_linear(weight_before / total_target as f64);
+    let new_weight = SampleWeight::from_log(weight_before.ln() - (total_target as f64).ln());
 
     let mut worker_idx = 0;
     let mut entities_in_current_worker = 0;
@@ -214,13 +226,13 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
         .sum();
     let weight_after = total_weight(workers);
 
-    RedistributionStats {
+    Ok(RedistributionStats {
         entities_before,
         entities_after,
         transfers: transfer_count,
         weight_before,
         weight_after,
-    }
+    })
 }
 
 /// Balance entity counts across workers without resampling.
@@ -341,7 +353,7 @@ mod tests {
         }
 
         let mut rng = PecosRng::seed_from_u64(42);
-        let stats = redistribute_by_weight(&mut workers, 5, &mut rng);
+        let stats = redistribute_by_weight(&mut workers, 5, &mut rng).unwrap();
 
         // Weight should be preserved
         assert!(

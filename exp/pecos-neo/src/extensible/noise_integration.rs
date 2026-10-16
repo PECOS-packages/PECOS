@@ -13,12 +13,12 @@ use crate::noise::validation::{ValidationResult, validate_probability};
 #[derive(Clone, Debug)]
 pub struct GateNoiseParams {
     /// Error probability per qubit.
-    pub error_probability: f64,
+    pub(crate) error_probability: f64,
     /// Optional gate duration (for idle noise calculations).
-    pub duration_ns: Option<f64>,
+    pub(crate) duration_ns: Option<f64>,
     /// Pauli weights for depolarizing noise [px, py, pz].
     /// If None, uniform depolarizing is used.
-    pub pauli_weights: Option<[f64; 3]>,
+    pub(crate) pauli_weights: Option<[f64; 3]>,
 }
 
 impl Default for GateNoiseParams {
@@ -32,13 +32,34 @@ impl Default for GateNoiseParams {
 }
 
 impl GateNoiseParams {
-    /// Create noise parameters with a given error probability.
+    /// Return the configured `error_probability`.
     #[must_use]
-    pub fn with_error(error_probability: f64) -> Self {
-        Self {
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `duration_ns`.
+    #[must_use]
+    pub fn duration_ns(&self) -> Option<f64> {
+        self.duration_ns
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> Option<[f64; 3]> {
+        self.pauli_weights
+    }
+
+    /// Create noise parameters with a given error probability.
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_error(error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
+        Ok(Self {
             error_probability,
             ..Default::default()
-        }
+        })
     }
 
     /// Set the gate duration.
@@ -123,18 +144,26 @@ impl GateIdNoiseConfig {
     }
 
     /// Set the global default error probability.
-    #[must_use]
-    pub fn with_global_default(mut self, error_probability: f64) -> Self {
-        self.global_default = Some(GateNoiseParams::with_error(error_probability));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_global_default(mut self, error_probability: f64) -> ValidationResult<Self> {
+        self.global_default = Some(GateNoiseParams::with_error(error_probability)?);
+        Ok(self)
     }
 
     /// Set the default for a gate category.
-    #[must_use]
-    pub fn with_category_default(mut self, category: GateCategory, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_category_default(
+        mut self,
+        category: GateCategory,
+        error_probability: f64,
+    ) -> ValidationResult<Self> {
         self.category_defaults[category_to_index(category)] =
-            Some(GateNoiseParams::with_error(error_probability));
-        self
+            Some(GateNoiseParams::with_error(error_probability)?);
+        Ok(self)
     }
 
     /// Set noise parameters for a specific gate.
@@ -147,8 +176,12 @@ impl GateIdNoiseConfig {
     }
 
     /// Set error probability for a specific gate.
-    pub fn set_gate_error(&mut self, gate: GateId, error_probability: f64) {
-        self.set_gate(gate, GateNoiseParams::with_error(error_probability));
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn set_gate_error(&mut self, gate: GateId, error_probability: f64) -> ValidationResult<()> {
+        self.set_gate(gate, GateNoiseParams::with_error(error_probability)?);
+        Ok(())
     }
 
     /// Get noise parameters for a gate.
@@ -189,8 +222,12 @@ impl GateIdNoiseConfig {
     }
 
     /// Set typical error rates for single and two-qubit gates.
-    #[must_use]
-    pub fn with_typical_rates(mut self, p1: f64, p2: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_typical_rates(mut self, p1: f64, p2: f64) -> ValidationResult<Self> {
+        validate_probability(p1, "p1")?;
+        validate_probability(p2, "p2")?;
         // Single-qubit gates
         for &gate in &[
             gates::I,
@@ -210,15 +247,15 @@ impl GateIdNoiseConfig {
             gates::RY,
             gates::RZ,
         ] {
-            self.set_gate_error(gate, p1);
+            self.set_gate_error(gate, p1)?;
         }
 
         // Two-qubit gates
         for &gate in &[gates::CX, gates::CY, gates::CZ, gates::SWAP, gates::ISWAP] {
-            self.set_gate_error(gate, p2);
+            self.set_gate_error(gate, p2)?;
         }
 
-        self
+        Ok(self)
     }
 }
 
@@ -319,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_gate_noise_params_with_error() {
-        let params = GateNoiseParams::with_error(0.01);
+        let params = GateNoiseParams::with_error(0.01).unwrap();
         assert!(!params.is_noiseless());
         assert_eq!(params.error_probability, 0.01);
     }
@@ -327,6 +364,7 @@ mod tests {
     #[test]
     fn test_gate_noise_params_builder() {
         let params = GateNoiseParams::with_error(0.01)
+            .unwrap()
             .with_duration(100.0)
             .unwrap()
             .with_pauli_weights(0.5, 0.3, 0.2)
@@ -346,7 +384,7 @@ mod tests {
     #[test]
     fn test_gate_id_noise_config_per_gate() {
         let mut config = GateIdNoiseConfig::new();
-        config.set_gate_error(gates::H, 0.001);
+        config.set_gate_error(gates::H, 0.001).unwrap();
 
         let params = config.get(gates::H, None).unwrap();
         assert_eq!(params.error_probability, 0.001);
@@ -357,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_gate_id_noise_config_global_default() {
-        let config = GateIdNoiseConfig::new().with_global_default(0.01);
+        let config = GateIdNoiseConfig::new().with_global_default(0.01).unwrap();
 
         // All gates should use global default
         let params = config.get(gates::H, None).unwrap();
@@ -371,7 +409,9 @@ mod tests {
     fn test_gate_id_noise_config_category_default() {
         let config = GateIdNoiseConfig::new()
             .with_category_default(GateCategory::SingleQubitUnitary, 0.001)
-            .with_category_default(GateCategory::TwoQubitUnitary, 0.01);
+            .unwrap()
+            .with_category_default(GateCategory::TwoQubitUnitary, 0.01)
+            .unwrap();
 
         // Need GateSpec to use category lookup
         let single_qubit_spec = GateSpec::new("H")
@@ -393,10 +433,12 @@ mod tests {
     fn test_gate_id_noise_config_priority() {
         let mut config = GateIdNoiseConfig::new()
             .with_global_default(0.1)
-            .with_category_default(GateCategory::SingleQubitUnitary, 0.01);
+            .unwrap()
+            .with_category_default(GateCategory::SingleQubitUnitary, 0.01)
+            .unwrap();
 
         // Per-gate should override category and global
-        config.set_gate_error(gates::H, 0.001);
+        config.set_gate_error(gates::H, 0.001).unwrap();
 
         let single_qubit_spec = GateSpec::new("H")
             .with_quantum_arity(1)
@@ -417,7 +459,9 @@ mod tests {
 
     #[test]
     fn test_gate_id_noise_config_typical_rates() {
-        let config = GateIdNoiseConfig::new().with_typical_rates(0.001, 0.01);
+        let config = GateIdNoiseConfig::new()
+            .with_typical_rates(0.001, 0.01)
+            .unwrap();
 
         assert_eq!(config.get_error_probability(gates::H, None), 0.001);
         assert_eq!(config.get_error_probability(gates::X, None), 0.001);
@@ -471,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_noiseless_gate() {
-        let mut config = GateIdNoiseConfig::new().with_global_default(0.01);
+        let mut config = GateIdNoiseConfig::new().with_global_default(0.01).unwrap();
         config.set_noiseless(gates::I);
 
         // I should be noiseless

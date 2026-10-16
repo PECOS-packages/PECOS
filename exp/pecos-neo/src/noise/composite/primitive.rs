@@ -513,6 +513,26 @@ impl<P: Primitive> Primitive for Prob<P> {
     }
 }
 
+/// A finite probability in [0, 1], suitable for dynamic probability callbacks.
+#[derive(Debug, Clone, Copy)]
+pub struct Probability(pub(super) f64);
+
+impl Probability {
+    /// Validate a caller-supplied probability.
+    ///
+    /// # Errors
+    /// Rejects NaN or values outside [0, 1], naming the value and remedy.
+    pub fn new(value: f64) -> ValidationResult<Self> {
+        Ok(Self(validate_probability(value, "probability")?))
+    }
+
+    /// Return the validated probability.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
+    }
+}
+
 /// Dynamic probability gate: compute probability from gate context.
 ///
 /// This primitive allows angle-dependent or gate-type-dependent error rates.
@@ -522,22 +542,22 @@ impl<P: Primitive> Primitive for Prob<P> {
 /// # Example
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Angle-dependent two-qubit noise
+/// let low = Probability::new(0.01)?;
+/// let high = Probability::new(0.02)?;
 /// let tq_noise = prob_fn(
-///     |gate| {
-///         // Higher error rate for larger rotation angles
-///         gate.and_then(|g| g.angle())
-///             .map(|a| 0.01 * a.to_radians().abs())
-///             .unwrap_or(0.01)
-///     },
+///     move |gate| if gate.is_some_and(|g| g.angle().is_some()) { high } else { low },
 ///     pauli(),
 /// );
+/// # Ok(())
+/// # }
 /// ```
 pub struct ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync,
     P: Primitive,
 {
     probability_fn: F,
@@ -546,7 +566,7 @@ where
 
 impl<F, P> Clone for ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync + Clone,
     P: Primitive + Clone,
 {
     fn clone(&self) -> Self {
@@ -559,7 +579,7 @@ where
 
 impl<F, P> ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync,
     P: Primitive,
 {
     /// Create a new dynamic probability gate.
@@ -578,7 +598,7 @@ where
 
 impl<F, P> Primitive for ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone + 'static,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync + Clone + 'static,
     P: Primitive,
 {
     fn apply(
@@ -587,7 +607,7 @@ where
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> CompositeResponse {
-        let probability = (self.probability_fn)(ctx.current_gate()).clamp(0.0, 1.0);
+        let probability = (self.probability_fn)(ctx.current_gate()).get();
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
@@ -1370,13 +1390,13 @@ impl Primitive for BoxSample {
 /// Convenience functions for creating primitives.
 pub mod primitives {
     use super::{
-        Condition, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf,
-        TwoStage, When,
+        Condition, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Probability, Sample, Seq,
+        SkipIf, TwoStage, When,
     };
     use crate::noise::GateInfo;
     use crate::noise::composite::action::Nothing;
     use crate::noise::composite::condition::{Always, GateTypeIs, Leaked, NotLeaked, OutcomeIs};
-    use crate::noise::validation::ValidationResult;
+    use crate::noise::validation::{ValidationResult, validate_probability};
 
     /// Probability gate.
     ///
@@ -1394,22 +1414,23 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Angle-dependent error: p = 0.01 * |angle|
+    /// let low = Probability::new(0.01)?;
+    /// let high = Probability::new(0.02)?;
     /// let noise = prob_fn(
-    ///     |gate| {
-    ///         gate.and_then(|g| g.angle())
-    ///             .map(|a| 0.01 * a.to_radians().abs())
-    ///             .unwrap_or(0.01)
-    ///     },
+    ///     move |gate| if gate.is_some_and(|g| g.angle().is_some()) { high } else { low },
     ///     pauli(),
     /// );
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn prob_fn<F, P>(probability_fn: F, inner: P) -> ProbFn<F, P>
     where
-        F: Fn(Option<&GateInfo>) -> f64 + Send + Sync,
+        F: Fn(Option<&GateInfo>) -> Probability + Send + Sync,
         P: Primitive,
     {
         ProbFn::new(probability_fn, inner)
@@ -1627,52 +1648,67 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Linear angle scaling: p = 0.01 * |angle/π|
-    /// let noise = prob_angle_scaled(0.01, 1.0, pauli());
+    /// let noise = prob_angle_scaled(0.01, 1.0, pauli())?;
     ///
     /// // Quadratic angle scaling: p = 0.01 * |angle/π|^2
-    /// let noise = prob_angle_scaled(0.01, 2.0, pauli());
+    /// let noise = prob_angle_scaled(0.01, 2.0, pauli())?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
+    ///
+    /// # Errors
+    /// Rejects invalid probabilities, powers, or a probability exceeding one at any angle.
     pub fn prob_angle_scaled<P: Primitive>(
         base_probability: f64,
         power: f64,
         inner: P,
-    ) -> ProbFn<impl Fn(Option<&GateInfo>) -> f64 + Send + Sync, P> {
-        ProbFn::new(
+    ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
+        validate_probability(base_probability, "base_probability")?;
+        crate::noise::validation::validate_rate(power, "power")?;
+        validate_probability(
+            base_probability * 2.0_f64.powf(power),
+            "maximum angle-scaled probability",
+        )?;
+        Ok(ProbFn::new(
             move |gate: Option<&GateInfo>| {
                 let scale = gate
                     .and_then(crate::noise::context::GateInfo::angle)
                     .map_or(1.0, |a| {
                         (a.to_radians().abs() / std::f64::consts::PI).powf(power)
                     });
-                (base_probability * scale).min(1.0)
+                Probability(base_probability * scale)
             },
             inner,
-        )
+        ))
     }
 
     /// Probability with linear angle scaling: p = `base_prob` * |angle/π|.
     ///
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 1.0, inner)`.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Rejects invalid probabilities, powers, or a probability exceeding one at any angle.
     pub fn prob_angle_linear<P: Primitive>(
         base_probability: f64,
         inner: P,
-    ) -> ProbFn<impl Fn(Option<&GateInfo>) -> f64 + Send + Sync, P> {
+    ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
         prob_angle_scaled(base_probability, 1.0, inner)
     }
 
     /// Probability with quadratic angle scaling: p = `base_prob` * |angle/π|^2.
     ///
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 2.0, inner)`.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Rejects invalid probabilities, powers, or a probability exceeding one at any angle.
     pub fn prob_angle_quadratic<P: Primitive>(
         base_probability: f64,
         inner: P,
-    ) -> ProbFn<impl Fn(Option<&GateInfo>) -> f64 + Send + Sync, P> {
+    ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
         prob_angle_scaled(base_probability, 2.0, inner)
     }
 
@@ -1933,13 +1969,16 @@ mod tests {
         // CX gets 100% error, H gets 0% error
         let noise = prob_fn(
             |gate| {
-                gate.map_or(0.0, |g| {
-                    if g.gate_type == GateType::CX {
-                        1.0
-                    } else {
-                        0.0
-                    }
+                Probability::new({
+                    gate.map_or(0.0, |g| {
+                        if g.gate_type == GateType::CX {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    })
                 })
+                .unwrap()
             },
             inject_x(),
         );
@@ -1969,8 +2008,11 @@ mod tests {
         // So half turn (pi) = 100% error, quarter turn (pi/2) = 50% error
         let noise = prob_fn(
             |gate| {
-                gate.and_then(crate::noise::context::GateInfo::angle)
-                    .map_or(0.0, |a| a.to_radians() / std::f64::consts::PI)
+                Probability::new({
+                    gate.and_then(crate::noise::context::GateInfo::angle)
+                        .map_or(0.0, |a| a.to_radians() / std::f64::consts::PI)
+                })
+                .unwrap()
             },
             inject_z(),
         );
@@ -2015,9 +2057,7 @@ mod tests {
 
         // Default to 50% when no gate context
         let noise = prob_fn(
-            |gate| {
-                if gate.is_some() { 1.0 } else { 0.5 }
-            },
+            |gate| Probability::new(if gate.is_some() { 1.0 } else { 0.5 }).unwrap(),
             inject_x(),
         );
 

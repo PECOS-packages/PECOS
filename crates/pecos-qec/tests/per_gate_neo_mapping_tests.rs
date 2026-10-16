@@ -33,7 +33,7 @@ const SHOTS: usize = 20_000;
 /// Rate of outcome-1 on one qubit over `SHOTS` runs of a circuit.
 #[allow(clippy::cast_precision_loss)]
 fn one_rate(noise: &PerGateTypeNoise, commands: &CommandQueue, qubit: usize) -> f64 {
-    let model = ComposableNoiseModel::new().add_channel(noise.to_neo_channel());
+    let model = ComposableNoiseModel::new().add_channel(noise.to_neo_channel().unwrap());
     let mut state = SparseStab::new(2);
     let mut runner = CircuitRunner::<SparseStab>::new()
         .with_noise(model)
@@ -216,7 +216,6 @@ fn base_noise_back_fills_unlisted_gates() {
 }
 
 #[test]
-#[should_panic(expected = "cannot carry idle noise")]
 fn idle_configuration_is_rejected_not_dropped() {
     // NoiseConfig::uniform sets p_idle = p, and the DEM built from this
     // config includes idle contributions; silently dropping them in the
@@ -225,15 +224,26 @@ fn idle_configuration_is_rejected_not_dropped() {
         p_idle: 0.001,
         ..NoiseConfig::uniform(0.0)
     });
-    let _ = noise.to_neo_channel();
+    assert!(
+        noise
+            .to_neo_channel()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot carry idle noise")
+    );
 }
 
 #[test]
-#[should_panic(expected = "cannot carry idle noise")]
 fn idle_gate_entries_are_rejected_not_dropped() {
     let noise = PerGateTypeNoise::from_base_noise(NoiseConfig::uniform(0.0))
         .with_1q_rates(GateType::Idle, [0.001, 0.0, 0.0]);
-    let _ = noise.to_neo_channel();
+    assert!(
+        noise
+            .to_neo_channel()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot carry idle noise")
+    );
 }
 
 #[test]
@@ -247,10 +257,14 @@ fn default_noise_config_carries_realistic_base_rates_without_idle_panic() {
     // base/meas/init rates EXACTLY — bit-identical to the neo channel built
     // by hand with those values (a mishandling that dropped or rescaled the
     // defaults would diverge).
-    let from_default = PerGateTypeNoise::from_base_noise(NoiseConfig::default()).to_neo_channel();
+    let from_default = PerGateTypeNoise::from_base_noise(NoiseConfig::default())
+        .to_neo_channel()
+        .unwrap();
     let by_hand = PerGatePauliChannel::new()
         .with_base(0.01, 0.01)
-        .with_meas_init(0.01, 0.01);
+        .unwrap()
+        .with_meas_init(0.01, 0.01)
+        .unwrap();
 
     let commands = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 

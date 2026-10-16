@@ -50,7 +50,7 @@ TwoQubitChannel::depolarizing(0.01)?
 
 // With angle scaling (for parameterized gates like RZZ)
 TwoQubitChannel::depolarizing(0.01)?
-    .with_angle_scaling(AngleScaling::linear())
+    .with_angle_scaling(AngleScaling::linear())?
 ```
 
 Angle scaling options: `constant()`, `linear()`, `quadratic()`,
@@ -120,9 +120,9 @@ Different error rates for different gate types:
 
 ```rust
 GateDependentChannel::new()
-    .with_gate_error(GateType::H, 0.0005)
-    .with_gate_error(GateType::CX, 0.005)
-    .with_default(0.001)
+    .with_gate_error(GateType::H, 0.0005)?
+    .with_gate_error(GateType::CX, 0.005)?
+    .with_default(0.001)?
 ```
 
 ### CategoryBasedChannel
@@ -131,8 +131,8 @@ Error rates by gate category (single-qubit, two-qubit, etc.):
 
 ```rust
 CategoryBasedChannel::new()
-    .with_category(GateCategory::SingleQubit, 0.001)
-    .with_category(GateCategory::TwoQubit, 0.01)
+    .with_category(GateCategory::SingleQubit, 0.001)?
+    .with_category(GateCategory::TwoQubit, 0.01)?
 ```
 
 ## Signal-Reactive Channels

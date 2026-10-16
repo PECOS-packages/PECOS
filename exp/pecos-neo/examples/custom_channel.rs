@@ -571,13 +571,13 @@ fn example_builtin_gate_dependent() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a gate-dependent channel with different error rates per gate
     let gate_noise = GateDependentChannel::new()
-        .with_gate_error(GateType::H, 0.20) // 20% error on H gates
-        .with_gate_error(GateType::SZ, 0.02) // 2% error on SZ gates
+        .with_gate_error(GateType::H, 0.20)? // 20% error on H gates
+        .with_gate_error(GateType::SZ, 0.02)? // 2% error on SZ gates
         .with_gate(
             GateType::CX,
-            GateNoiseConfig::new(0.10).with_pauli_weights(PauliWeights::z_biased(0.8)?)?,
+            GateNoiseConfig::new(0.10)?.with_pauli_weights(PauliWeights::z_biased(0.8)?)?,
         ) // 10% Z-biased error on CX
-        .with_default(0.05); // 5% default for unlisted gates
+        .with_default(0.05)?; // 5% default for unlisted gates
 
     // Test H gate (high error rate)
     let h_commands = CommandBuilder::new()

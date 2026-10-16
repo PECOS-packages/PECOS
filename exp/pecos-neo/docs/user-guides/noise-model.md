@@ -15,7 +15,7 @@ let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)                                // State tracking (prep, meas, leakage)
     .add_channel(SingleQubitChannel::depolarizing(0.001)?)
     .add_channel(TwoQubitChannel::depolarizing(0.01)?
-        .with_angle_scaling(AngleScaling::linear()))
+        .with_angle_scaling(AngleScaling::linear())?)
     .add_channel(MeasurementChannel::asymmetric(0.02, 0.03)?)
     .add_channel(IdleChannel::linear(0.0001)?
         .with_linear_depolarizing());

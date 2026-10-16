@@ -199,11 +199,11 @@ impl GateAction for Inject {
 #[derive(Debug, Clone, Copy)]
 pub struct PauliWeights {
     /// Weight for X error.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y error.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z error.
-    pub z: f64,
+    pub(crate) z: f64,
 }
 
 impl Default for PauliWeights {
@@ -213,6 +213,24 @@ impl Default for PauliWeights {
 }
 
 impl PauliWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
     /// Uniform weights (1/3 each).
     #[must_use]
     pub fn uniform() -> Self {

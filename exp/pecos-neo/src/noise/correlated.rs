@@ -51,15 +51,15 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone)]
 pub struct CorrelatedNoiseChannel {
     /// Base error probability (before correlation effects).
-    pub base_error_probability: f64,
+    base_error_probability: f64,
     /// Correlation factor: how much errors on one qubit affect others.
     /// Range: [0.0, 1.0] where 0.0 = independent, 1.0 = fully correlated.
-    pub correlation: f64,
+    correlation: f64,
     /// Pauli weight distribution for errors.
-    pub pauli_weights: PauliWeights,
+    pauli_weights: PauliWeights,
     /// Whether to apply correlated errors to single-qubit gates.
     /// When true, multiple consecutive 1Q gates can have correlated errors.
-    pub single_qubit_correlation: bool,
+    single_qubit_correlation: bool,
 }
 
 impl Default for CorrelatedNoiseChannel {
@@ -74,6 +74,30 @@ impl Default for CorrelatedNoiseChannel {
 }
 
 impl CorrelatedNoiseChannel {
+    /// Return the configured `base_error_probability`.
+    #[must_use]
+    pub fn base_error_probability(&self) -> f64 {
+        self.base_error_probability
+    }
+
+    /// Return the configured `correlation`.
+    #[must_use]
+    pub fn correlation(&self) -> f64 {
+        self.correlation
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> &PauliWeights {
+        &self.pauli_weights
+    }
+
+    /// Return the configured `single_qubit_correlation`.
+    #[must_use]
+    pub fn single_qubit_correlation(&self) -> bool {
+        self.single_qubit_correlation
+    }
+
     /// Create a new correlated noise channel.
     ///
     /// # Arguments

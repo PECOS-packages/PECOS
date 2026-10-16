@@ -1511,15 +1511,18 @@ impl GeneralNoiseModelBuilder {
             .p_idle_coherent
             .as_ref()
             .map_or(&default.p_idle_coherent_model, |(_, model)| model);
-        for (axis, multiplier) in coherent_model {
-            let angle =
-                GeneralNoiseModel::coherent_rotation_angle(coherent_rate, *multiplier, duration);
-            if !angle.is_finite() {
-                return Err(format!(
-                    "p_idle_coherent scaled rate {coherent_rate} * {axis} multiplier {multiplier} * idle_after_2q {duration} produces {angle}; reduce the rate, multiplier, idle duration, or scale factors to keep the angle finite"
-                ));
-            }
-        }
+        let sine_model = self
+            .p_idle_sin_squared
+            .as_ref()
+            .map_or(&default.p_idle_sin_squared_model, |(_, model)| model);
+        GeneralNoiseModel::validate_idle_products(
+            duration,
+            linear_rate,
+            sine_rate,
+            sine_model,
+            coherent_rate,
+            coherent_model,
+        )?;
         Ok(())
     }
 

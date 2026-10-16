@@ -948,8 +948,11 @@ mod tests {
         assert!((p2 - 0.5).abs() < f64::EPSILON);
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // RZ fractions use exact significand-ratio rounding, independently checked
+    // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
-    fn field_name_setters_match_pre_removal_alias_bytes() {
+    fn field_name_setters_match_captured_alias_gate_sequence() {
         let mut noise = DepolarizingNoiseModel::builder()
             .with_p_prep(0.0)
             .with_p_meas(0.0)
@@ -968,7 +971,7 @@ mod tests {
         assert_eq!(
             output.as_bytes(),
             [
-                83, 67, 69, 80, 1, 0, 0, 0, 4, 0, 0, 0, 84, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1,
+                83, 67, 69, 80, 5, 0, 0, 0, 4, 0, 0, 0, 84, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1,
                 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12,
                 0, 0, 0, 50, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
                 1, 0, 0, 0,

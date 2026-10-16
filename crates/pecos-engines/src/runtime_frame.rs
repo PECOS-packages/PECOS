@@ -332,7 +332,7 @@ impl RuntimeGeneralNoise {
     }
 
     pub(crate) fn preflight_legacy(&self, input: &ByteMessage) -> Result<(), PecosError> {
-        // Restrict opt-in v1 inputs too: the retained model must never acquire
+        // Restrict opt-in gate batches too: the retained model must never acquire
         // out-of-range bookkeeping that invalidates a later expansion bound.
         let bytes = input.as_bytes();
         if !(16..=MAX_FRAME_BYTES).contains(&bytes.len()) {

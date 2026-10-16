@@ -214,6 +214,12 @@ void pecos_foreign_simulator_free(PecosSimulator *sim);
 /* -- Engine lifecycle -- */
 typedef struct PecosEngine PecosEngine; /* opaque */
 PecosEngine *pecos_engine_create(const char *engine_type, size_t num_qubits, uint64_t seed);
+/* Input is a ByteMessage version-5 batch, normally from pecos_circuit_build.
+ * Gate payload: 4-byte header, u32 LE qubit indices, leading u64 LE Angle64
+ * fractions (fraction / 2^64 turns), then non-angle f64 LE parameters.
+ * Gate type determines angle count; Custom treats every word as an angle.
+ * Version-1 f64-radian batches are rejected; rebuild them, do not relabel bytes.
+ * The circuit-building rotation API below still accepts finite f64 radians. */
 int32_t pecos_engine_process(PecosEngine *engine, const uint8_t *input, size_t input_len,
                              uint8_t **output, size_t *output_len);
 int32_t pecos_engine_reset(PecosEngine *engine);

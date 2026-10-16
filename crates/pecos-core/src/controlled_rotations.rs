@@ -511,7 +511,7 @@ mod tests {
     fn crz_just_above_negative_pi_keeps_two_gates() {
         let theta = (-PI).next_up();
         let (half, needs_z) = reduced_half_and_wrap_parity(theta).unwrap();
-        assert_eq!(half, -Angle64::new(4_611_686_018_427_387_392));
+        assert_eq!(half, -Angle64::new(4_611_686_018_427_387_252));
         assert!(!needs_z);
         let gates = lower_crz(theta, QubitId(0), QubitId(1)).unwrap();
         assert_eq!(gates.len(), 2);
@@ -522,7 +522,7 @@ mod tests {
                     Angle64::try_from_radians(-theta / 2.0).unwrap(),
                     &[(QubitId(0), QubitId(1))]
                 ),
-                Gate::rz(-Angle64::new(4_611_686_018_427_387_392), &[QubitId(1)]),
+                Gate::rz(-Angle64::new(4_611_686_018_427_387_252), &[QubitId(1)]),
             ]
         );
     }
@@ -601,13 +601,14 @@ mod tests {
     fn bounded_reduction_pins_large_inputs_and_a_sheet_counterexample() {
         // Pin outputs of the bounded f64 implementation, not ideal real-angle
         // answers. These two inputs have odd reference parity, but their reduced
-        // f64 angles still lose accuracy.
+        // f64 angles still lose accuracy. Fractions below are independently rounded
+        // exact significand ratios of the reduced f64 half and f64 TAU.
         for (theta, rzz, rz) in [
-            (1e20, 15_664_121_865_801_653_248, 2_782_622_207_907_898_368),
+            (1e20, 15_664_121_865_801_653_476, 2_782_622_207_907_898_140),
             (
                 18_014_398_509_482_004.0,
-                3_526_899_157_453_711_360,
-                14_919_844_916_255_840_256,
+                3_526_899_157_453_711_253,
+                14_919_844_916_255_840_363,
             ),
         ] {
             let gates = lower_crz(theta, QubitId(0), QubitId(1)).unwrap();

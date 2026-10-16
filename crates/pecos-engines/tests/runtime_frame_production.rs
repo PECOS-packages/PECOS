@@ -1015,15 +1015,19 @@ fn failed_host_readmission_requires_whole_host_reset() {
 }
 
 #[test]
-fn shared_parser_rejects_nonfinite_angles_without_panicking() {
-    for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::radians!(0.5), &[0])])
+fn shared_parser_preserves_all_angle_bit_patterns() {
+    for fraction in [
+        f64::NAN.to_bits(),
+        f64::INFINITY.to_bits(),
+        f64::NEG_INFINITY.to_bits(),
+    ] {
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::Angle64::ZERO, &[0])])
             .as_bytes()
             .to_vec();
         let end = bytes.len();
-        bytes[end - 8..].copy_from_slice(&angle.to_le_bytes());
-        let result = std::panic::catch_unwind(|| ByteMessage::new(&bytes).quantum_ops());
-        assert!(matches!(result, Ok(Err(PecosError::Input(_)))));
+        bytes[end - 8..].copy_from_slice(&fraction.to_le_bytes());
+        let gates = ByteMessage::new(&bytes).quantum_ops().unwrap();
+        assert_eq!(gates[1].angles[0].fraction(), fraction);
     }
 }
 

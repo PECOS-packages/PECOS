@@ -137,9 +137,9 @@ fn radians_round_trip_across_wrap_point() {
     for (input, expected) in [
         (-TAU.next_up(), -Angle64::new(2608)),
         (-TAU, Angle64::ZERO),
-        (-TAU.next_down(), Angle64::new(2048)),
+        (-TAU.next_down(), Angle64::new(2608)),
         (0.0, Angle64::ZERO),
-        (TAU.next_down(), -Angle64::new(2048)),
+        (TAU.next_down(), -Angle64::new(2608)),
         (TAU, Angle64::ZERO),
         (TAU.next_up(), Angle64::new(2608)),
     ] {
@@ -229,13 +229,13 @@ fn constructors_handle_subnormals_negative_zero_and_largest_finite_inputs() {
     check!(Angle32, 396_914_332, 3_898_052_964);
     check!(
         Angle64,
-        1_704_734_075_010_201_088,
-        16_742_009_998_699_350_528
+        1_704_734_075_010_201_102,
+        16_742_009_998_699_350_514
     );
     check!(
         Angle128,
-        31_446_793_195_445_161_152_375_904_822_475_358_208,
-        308_835_573_725_493_302_310_998_702_609_292_853_248
+        31_446_793_195_445_161_409_785_512_896_274_356_550,
+        308_835_573_725_493_302_053_589_094_535_493_854_906
     );
 }
 
@@ -641,9 +641,9 @@ fn integer_reduction_handles_wide_boundaries() {
 }
 
 #[test]
-fn signed_remainder_radians_have_bounded_symmetric_error() {
+fn signed_remainder_radians_are_correctly_rounded() {
     for (magnitude, expected_new_error, expected_old_errors) in
-        [(100.0_f64, 562, [562, 50]), (1e6, 36, [36, 36])]
+        [(100.0_f64, 0, [562, 50]), (1e6, 0, [36, 36])]
     {
         let mut new_errors = Vec::new();
         let mut old_errors = Vec::new();
@@ -681,11 +681,11 @@ fn signed_remainder_radians_have_bounded_symmetric_error() {
             old_errors.push(error(old));
         }
         assert_eq!(new_errors[0], new_errors[1]);
-        // The old unsigned reduction happens to be closer at -100 (50 vs 562
-        // rounded ticks). Per-input non-regression conflicts with the prescribed
-        // signed-remainder/f64-division algorithm; the worst error over both signs
-        // does not regress, and no division error grows with removed turns.
-        assert!(new_errors.iter().max() <= old_errors.iter().max());
+        // Exact rational rounding improves or matches each input separately,
+        // including negative inputs where the old unsigned reduction was closer.
+        for (new, old) in new_errors.iter().zip(&old_errors) {
+            assert!(new <= old);
+        }
     }
 }
 

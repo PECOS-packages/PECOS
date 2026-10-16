@@ -290,7 +290,23 @@ pecos_engine_reset(engine);
 pecos_engine_free(engine);
 ```
 
-The v1 `ByteMessage` readers reject malformed framing and batches containing the
+Gate batches use `ByteMessage` version **5**. The 16-byte batch header contains
+little-endian magic `0x50454353`, version byte 5, flags and reserved bytes, then
+u32 message count and total byte length. Each message has an eight-byte header
+(type byte, flags byte, two reserved bytes, u32 payload length), followed by its
+payload and padding to a four-byte boundary. Each Gate payload starts with four bytes
+(gate type, qubit count, has-parameters flag, reserved), followed by u32 qubit
+indices. Leading angle words are **little-endian u64 `Angle64` fractions**:
+`fraction / 2^64` turns. Remaining non-angle parameters are little-endian f64.
+The gate type determines the number of angle words; Custom treats every word
+as an angle. The C circuit-building rotation functions still accept finite f64
+radians, convert them once to `Angle64`, and serialize the exact fraction.
+
+Version 1 encoded angles as f64 radians and is rejected. Rebuild saved batches
+and external producers for version 5; changing only the version byte is incorrect.
+Versions 2–4 retain their separate runtime/scheduled envelope formats.
+
+The v5 `ByteMessage` readers reject malformed framing and batches containing the
 wrong message type. Gate processing accepts only Gate messages; outcome parsing
 accepts only Outcome messages with exactly four payload bytes. The length passed
 with a batch must equal the batch header's `total_size`, so pass the exact message

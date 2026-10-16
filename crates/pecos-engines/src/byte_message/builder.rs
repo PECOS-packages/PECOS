@@ -187,7 +187,8 @@ impl ByteMessageBuilder {
         );
         let payload_size = size_of::<GateHeader>()
             + num_qubits * size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -206,7 +207,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -242,7 +243,8 @@ impl ByteMessageBuilder {
     ) -> &mut Self {
         let payload_size = size_of::<GateHeader>()
             + size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -259,7 +261,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -280,7 +282,8 @@ impl ByteMessageBuilder {
     ) -> &mut Self {
         let payload_size = size_of::<GateHeader>()
             + 2 * size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -299,7 +302,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {

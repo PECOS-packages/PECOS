@@ -50,6 +50,22 @@ const TABLE: [Row; COUNT] = {
 };
 
 const EDGES: &[f64] = &[
+    0.0,
+    -0.0,
+    f64::from_bits(1),
+    -f64::from_bits(1),
+    f64::MIN_POSITIVE.next_down(),
+    -f64::MIN_POSITIVE.next_down(),
+    f64::MIN_POSITIVE,
+    -f64::MIN_POSITIVE,
+    f64::MAX,
+    -f64::MAX,
+    (2.0 * std::f64::consts::TAU).next_down(),
+    -(2.0 * std::f64::consts::TAU).next_up(),
+    (1e100 * std::f64::consts::TAU).next_up(),
+    -(1e300 * std::f64::consts::TAU).next_down(),
+    std::f64::consts::TAU * 2.710_505_431_213_761e-20,
+    -std::f64::consts::TAU * 2.710_505_431_213_761e-20,
     100.0,
     -100.0,
     1e6,

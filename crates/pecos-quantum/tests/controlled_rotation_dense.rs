@@ -85,6 +85,25 @@ fn dense_reduced_lowering_matches_raw_half_at_800_angles() {
     assert!(worst < 1e-12);
 }
 
+// Independent integer oracle for these small, positive, normal f64 inputs.
+// Form the entire exact theta * 2^63 / TAU ratio in u128 and round once;
+// production instead divides two carried base-2^64 digits after halving.
+fn exact_small_half(theta: f64) -> Angle64 {
+    let parts = |value: f64| {
+        let bits = value.to_bits();
+        (
+            u128::from((bits & ((1_u64 << 52) - 1)) | (1_u64 << 52)),
+            i32::try_from((bits >> 52) & 0x7ff).unwrap(),
+        )
+    };
+    let (n, ne) = parts(theta);
+    let (d, de) = parts(TAU);
+    let shift = ne - de + 63;
+    let numerator = n << u32::try_from(shift.max(0)).unwrap();
+    let denominator = d << u32::try_from((-shift).max(0)).unwrap();
+    Angle64::new(u64::try_from((numerator + denominator / 2) / denominator).unwrap())
+}
+
 #[test]
 fn crz_fixed_point_legs_are_exact_negatives_and_match_dense_reference() {
     use num_complex::Complex64;
@@ -98,7 +117,7 @@ fn crz_fixed_point_legs_are_exact_negatives_and_match_dense_reference() {
         angles.extend([theta, -theta]);
         let positive = lower_crz(theta, QubitId(1), QubitId(0)).unwrap();
         let negative = lower_crz(-theta, QubitId(1), QubitId(0)).unwrap();
-        let half = Angle64::try_from_radians(theta / 2.0).unwrap();
+        let half = exact_small_half(theta);
         assert_eq!(positive[1].angles[0], half);
         assert_eq!(negative[1].angles[0], -half);
     }

@@ -136,36 +136,64 @@ pub struct Angle<T: Unsigned + Copy> {
 /// Convert a finite floating-point value to fraction bits. Keep this one
 /// implementation const-evaluable so literals and runtime constructors agree.
 const fn float_fraction(value: f64, units_per_turn: f64, fraction_bits: u64) -> u128 {
-    let modulus = f64::from_bits((1023 + fraction_bits) << 52);
-    // The signed remainder is exact relative to the supplied f64 period and
-    // never adds a full turn to a negative value. Reduce before division so
-    // division rounding depends on one turn, not the original input magnitude.
-    let scaled = ((value % units_per_turn) / units_per_turn) * modulus;
-    let rounded = scaled.round(); // nearest integer, half-way ties away from zero
-    let representation = rounded.to_bits();
-    let exponent = (representation >> 52) & 0x7ff;
-    if exponent < 1023 {
-        return 0; // rounded magnitude is zero
+    let remainder = value % units_per_turn;
+    let (numerator, exponent) = float_significand(remainder);
+    if numerator == 0 {
+        return 0; // includes both signs of zero
     }
-    if exponent == 1023 + 128 {
-        return 0; // Angle128's reduced value rounded to exactly one full turn
-    }
-    // Decode the already-rounded integer directly. Unlike a float-to-int cast,
-    // this is const-evaluable without saturating a boundary value. The range
-    // of the signed remainder guarantees a magnitude below 2^128 here.
-    let significand = ((representation & ((1_u64 << 52) - 1)) | (1_u64 << 52)) as u128;
-    let integer_exponent = exponent - 1023;
-    let magnitude = if integer_exponent >= 52 {
-        significand << (integer_exponent - 52)
+    let (denominator, period_exponent) = float_significand(units_per_turn);
+    let scaled_exponent = exponent + fraction_bits;
+    let magnitude = if scaled_exponent < period_exponent {
+        // Significands have at most 53 bits and the period has exactly 53.
+        // A right shift of two or more puts the quotient strictly below 1/2.
+        // For a one-bit shift, n/(2*d) rounds to one exactly when n >= d.
+        if period_exponent - scaled_exponent == 1 && numerator >= denominator {
+            1
+        } else {
+            0
+        }
     } else {
-        significand >> (52 - integer_exponent)
+        // Exact division of n * 2^shift by d in base-2^64 digits. Since d is
+        // at most 53 bits, each remainder shifted by <=64 fits in u128. The
+        // reduced input bounds shift by 128, so at most two steps are needed.
+        let mut shift = scaled_exponent - period_exponent;
+        let mut quotient = numerator / denominator;
+        let mut residual = numerator % denominator;
+        while shift > 0 {
+            let step = if shift > 64 { 64 } else { shift };
+            let dividend = residual << step;
+            quotient = (quotient << step) | (dividend / denominator);
+            residual = dividend % denominator;
+            shift -= step;
+        }
+        // Round once, nearest with ties away from zero. At width128 a rounded
+        // full turn wraps here; smaller widths wrap in the final mask below.
+        if residual * 2 >= denominator {
+            quotient.wrapping_add(1)
+        } else {
+            quotient
+        }
     };
-    let signed_bits = if rounded < 0.0 {
+    let signed = if remainder.is_sign_negative() {
         magnitude.wrapping_neg()
     } else {
         magnitude
     };
-    signed_bits & (u128::MAX >> (128 - fraction_bits))
+    signed & (u128::MAX >> (128 - fraction_bits))
+}
+
+// Return the unsigned significand and biased exponent, with subnormals sharing
+// exponent 1 and no implicit leading bit. A common exponent offset cancels in
+// the ratio, so the exact quotient needs no signed exponent conversions.
+const fn float_significand(value: f64) -> (u128, u64) {
+    let representation = value.to_bits();
+    let exponent = (representation >> 52) & 0x7ff;
+    let fraction = representation & ((1_u64 << 52) - 1);
+    if exponent == 0 {
+        (fraction as u128, 1)
+    } else {
+        ((fraction | (1_u64 << 52)) as u128, exponent)
+    }
 }
 
 impl Angle<u64> {
@@ -360,15 +388,16 @@ where
 
     /// Creates an angle from radians.
     ///
-    /// First take the signed remainder modulo the f64 `TAU`, then divide by
-    /// `TAU`, scale by 2^bits, and round once to the nearest fraction unit
+    /// First take the signed remainder modulo the f64 `TAU`, then compute its
+    /// ratio to `TAU` times 2^bits exactly from integer significands and exponents.
+    /// Round once to the nearest fraction unit
     /// (ties away from zero). Wrap the signed rounded integer modulo 2^bits.
     /// This preserves tiny negative fractions and positive/negative symmetry.
     /// Rounding to a full turn wraps to zero, including at 128 bits.
     ///
-    /// The remainder is exact relative to the f64 period; division has ordinary
-    /// f64 rounding error bounded by the reduced value, independent of the number
-    /// of removed turns. This does not promise exact real-π argument reduction:
+    /// The error relative to this exact rational is at most half a fraction
+    /// unit, for every finite input and every supported width. This does not
+    /// promise exact real-π argument reduction:
     /// at large magnitudes, the f64 period's difference from real 2π still matters.
     ///
     /// # Errors
@@ -629,7 +658,8 @@ where
         if denominator < 0 {
             numerator = numerator.checked_neg().unwrap_or_else(|| invalid());
             denominator = denominator.checked_neg().unwrap_or_else(|| invalid());
-        } else if numerator.unsigned_abs() == denominator.unsigned_abs() {
+        }
+        if numerator.unsigned_abs() == denominator.unsigned_abs() {
             return Self {
                 fraction: T::zero(), // 0 turns
             };
@@ -674,11 +704,18 @@ where
             .unwrap_or_else(|| invalid())
             / abs_denominator;
 
+        if fraction > scaling_factor {
+            invalid();
+        }
+        // A rounded full turn is zero, including tiny negative ratios which
+        // round to zero magnitude before their sign is applied.
+        fraction %= scaling_factor;
         // Apply the sign of the numerator.
         if numerator < 0 {
             fraction = scaling_factor
                 .checked_sub(fraction)
-                .unwrap_or_else(|| invalid());
+                .unwrap_or_else(|| invalid())
+                % scaling_factor;
         }
 
         Self {

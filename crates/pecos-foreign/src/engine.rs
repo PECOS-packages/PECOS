@@ -131,7 +131,9 @@ pub unsafe extern "C" fn pecos_engine_create(
 
 /// Process a circuit (`ByteMessage`) through an engine.
 ///
-/// Takes raw bytes of a built circuit, runs it, and returns measurement outcomes.
+/// Takes version-5 bytes from `pecos_circuit_build`, runs the circuit, and returns outcomes.
+/// Gate angles are little-endian u64 fractions; non-angle parameters remain f64.
+/// Legacy version-1 f64-angle batches are rejected and must be rebuilt.
 ///
 /// # Arguments
 /// - `engine`: engine handle

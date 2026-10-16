@@ -344,7 +344,10 @@ fn bench_redistribution(c: &mut Criterion) {
                             for j in 0..entities_per_worker {
                                 let e = worker.world.spawn_with_simulator(SparseStab::new(1));
                                 worker.world.weights.get_mut(e).unwrap().weight =
-                                    pecos_neo::sampling::SampleWeight::from_linear((j + 1) as f64);
+                                    pecos_neo::sampling::SampleWeight::from_linear((j + 1) as f64)
+                                        .expect(
+                                            "benchmark index plus one is a finite positive weight",
+                                        );
                             }
                             worker
                         })

@@ -1517,6 +1517,7 @@ impl GeneralNoiseModelBuilder {
             .map_or(&default.p_idle_sin_squared_model, |(_, model)| model);
         GeneralNoiseModel::validate_idle_products(
             duration,
+            "idle_after_2q",
             linear_rate,
             sine_rate,
             sine_model,

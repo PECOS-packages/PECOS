@@ -132,19 +132,22 @@ pub struct ImportanceSampledShot {
 Tracks importance weights in log-space for numerical stability:
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use pecos_neo::sampling::SampleWeight;
 
 // Create weight
-let w = SampleWeight::from_linear(0.5);
+let w = SampleWeight::from_linear(0.5)?;
 
 // Combine weights (multiply)
-let combined = w1.combine(w2);
+let combined = w.combine(&SampleWeight::one());
 
 // Get linear weight
 let linear = w.weight();
 
 // Get log weight
 let log_w = w.log_weight();
+# Ok(())
+# }
 ```
 
 ## Use Cases

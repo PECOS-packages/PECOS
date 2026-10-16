@@ -394,13 +394,16 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_neo::noise::two_qubit::AngleScaling;
     ///
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p2(0.01).unwrap()
+    ///     .with_p2(0.01)?
     ///     .with_p2_angle_scaling(AngleScaling::linear())  // Error ~ |theta/pi|
-    ///     .build().unwrap();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_p2_angle_scaling(mut self, scaling: AngleScaling) -> Self {

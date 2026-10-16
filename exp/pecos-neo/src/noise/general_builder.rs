@@ -742,7 +742,6 @@ impl GeneralNoiseModelBuilder {
     /// # Errors
     /// Returns an error for invalid noise parameters.
     pub fn build(self) -> ValidationResult<ComposableNoiseModel> {
-        self.p2_angle_scaling.validate_for_probability(self.p2)?;
         crate::noise::validation::validate_probability(self.p_prep, "p_prep")?;
         crate::noise::validation::validate_probability(
             self.p_prep_leak_ratio,
@@ -756,6 +755,7 @@ impl GeneralNoiseModelBuilder {
         )?;
         crate::noise::validation::validate_probability(self.p1_seepage_prob, "p1_seepage_prob")?;
         crate::noise::validation::validate_probability(self.p2, "p2")?;
+        self.p2_angle_scaling.validate_for_probability(self.p2)?;
         crate::noise::validation::validate_probability(
             self.p2_emission_ratio,
             "p2_emission_ratio",

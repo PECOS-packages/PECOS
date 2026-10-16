@@ -480,3 +480,140 @@ fn resampling_rejects_invalid_weights_before_mutating_entities() {
         assert_eq!(world.active_entities(), vec![entity]);
     }
 }
+
+#[test]
+fn builders_name_invalid_p2_before_angle_scaling() {
+    use pecos_neo::noise::{GeneralNoiseModelBuilder, NoiseModelBuilder};
+    for p in [2.0, -0.1, f64::NAN] {
+        rejects(NoiseModelBuilder::new().with_p2(p).build().err(), "p2");
+        rejects(
+            GeneralNoiseModelBuilder::new().with_p2(p).build().err(),
+            "p2",
+        );
+    }
+}
+
+#[test]
+fn per_gate_probability_sum_accepts_roundoff_only() {
+    use pecos_neo::GateType;
+    use pecos_neo::noise::PerGatePauliChannel;
+    assert!(
+        PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [0.34, 0.56, 0.10])
+            .is_ok()
+    );
+    assert!(
+        PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [0.34, 0.56, 0.11])
+            .is_err()
+    );
+    assert!(
+        PerGatePauliChannel::new()
+            .with_1q_rates(GateType::H, [1.0 + f64::EPSILON, 0.0, 0.0])
+            .is_err()
+    );
+}
+
+#[test]
+fn resampling_normalizes_extreme_log_weights() {
+    use pecos_neo::ecs::{WorkerState, World, redistribute_by_weight};
+    use pecos_neo::sampling::SampleWeight;
+    use pecos_simulators::SparseStab;
+    for offset in [-1000.0, 0.0, 1000.0] {
+        let mut world: World<SparseStab> = World::new(42);
+        for relative in [0.0, 2.0_f64.ln()] {
+            let entity = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
+            world.weights.get_mut(entity).unwrap().weight =
+                SampleWeight::from_log(offset + relative);
+        }
+        let mut rng = pecos_random::PecosRng::seed_from_u64(42);
+        assert_eq!(world.resample_by_weight(6, &mut rng).unwrap(), 6);
+        for entity in world.active_entities() {
+            let actual = world.weights.get(entity).unwrap().weight.log_weight();
+            assert!((actual - (offset + 0.5_f64.ln())).abs() < 1e-12, "{actual}");
+        }
+        let mut workers = vec![WorkerState::new(0, 42)];
+        for entity in world.active_entities() {
+            workers[0]
+                .world
+                .import_entity(world.extract_entity(entity).unwrap());
+        }
+        // Both implementations must preserve total log weight at every finite scale.
+        let mut rng = pecos_random::PecosRng::seed_from_u64(42);
+        let stats = redistribute_by_weight(&mut workers, 6, &mut rng).unwrap();
+        assert_eq!(stats.entities_after, 6);
+        for entity in workers[0].world.active_entities() {
+            let actual = workers[0]
+                .world
+                .weights
+                .get(entity)
+                .unwrap()
+                .weight
+                .log_weight();
+            assert!((actual - (offset + 0.5_f64.ln())).abs() < 1e-12, "{actual}");
+        }
+        let mut rng = pecos_random::PecosRng::seed_from_u64(42);
+        assert_eq!(workers[0].world.resample_by_weight(3, &mut rng).unwrap(), 3);
+        for entity in workers[0].world.active_entities() {
+            let actual = workers[0]
+                .world
+                .weights
+                .get(entity)
+                .unwrap()
+                .weight
+                .log_weight();
+            assert!((actual - offset).abs() < 1e-12, "{actual}");
+        }
+    }
+}
+
+#[test]
+fn linear_weight_input_does_not_panic() {
+    use pecos_neo::sampling::SampleWeight;
+    for weight in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let error = SampleWeight::from_linear(weight).unwrap_err();
+        assert!(error.to_string().contains(&weight.to_string()));
+        assert!(
+            error
+                .to_string()
+                .contains("finite weight greater than zero")
+        );
+    }
+    for weight in [f64::from_bits(1), 0.5, 1.0, f64::MAX] {
+        assert!(SampleWeight::from_linear(weight).is_ok());
+    }
+}
+
+#[test]
+fn blended_weight_type_preserves_strategy_semantics() {
+    use pecos_neo::extensible::HighLevelWeight;
+    for value in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+        rejects(HighLevelWeight::new(value).err(), "high_level_weight");
+    }
+    for value in [0.0, 0.5, 1.0] {
+        let weight = HighLevelWeight::new(value).unwrap();
+        assert!((weight.get() - value).abs() < f64::EPSILON);
+        let direct = DecompositionNoiseStrategy::Blended {
+            high_level_weight: weight,
+        };
+        let constructed = DecompositionNoiseStrategy::blended(value).unwrap();
+        assert_eq!(direct, constructed);
+        assert!(
+            (direct.effective_error(0.4, &[0.1, 0.2]) - ((1.0 - value) * 0.28 + value * 0.4)).abs()
+                < 1e-15
+        );
+        assert_ne!(direct, DecompositionNoiseStrategy::HighLevel);
+    }
+}
+
+#[test]
+fn redistribution_rejects_target_count_overflow() {
+    use pecos_neo::ecs::{WorkerState, redistribute_by_weight};
+    use pecos_simulators::SparseStab;
+    let mut workers: Vec<WorkerState<SparseStab>> =
+        vec![WorkerState::new(0, 42), WorkerState::new(1, 42)];
+    let mut rng = pecos_random::PecosRng::seed_from_u64(42);
+    let error = redistribute_by_weight(&mut workers, usize::MAX, &mut rng).unwrap_err();
+    assert!(error.to_string().contains(&usize::MAX.to_string()));
+    assert!(error.to_string().contains("Reduce target_per_worker"));
+}

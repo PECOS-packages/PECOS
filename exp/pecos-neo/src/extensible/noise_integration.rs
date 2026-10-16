@@ -259,10 +259,36 @@ impl GateIdNoiseConfig {
     }
 }
 
+/// Validated fraction of high-level noise in a blended decomposition strategy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighLevelWeight(f64);
+
+impl HighLevelWeight {
+    /// Validate a high-level noise fraction.
+    ///
+    /// # Errors
+    /// Rejects non-finite values and values outside [0, 1].
+    pub fn new(weight: f64) -> ValidationResult<Self> {
+        Ok(Self(validate_probability(weight, "high_level_weight")?))
+    }
+
+    /// Read the validated fraction.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
+    }
+}
+
 /// Strategy for applying noise when gates are decomposed.
 ///
 /// When a high-level gate (like SWAP) is decomposed into native gates (CX, CX, CX),
 /// this controls how noise is applied.
+///
+/// A raw weight cannot bypass validation through the public variant:
+/// ```compile_fail
+/// use pecos_neo::extensible::DecompositionNoiseStrategy;
+/// let invalid = DecompositionNoiseStrategy::Blended { high_level_weight: f64::NAN };
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub enum DecompositionNoiseStrategy {
     /// Apply noise to each gate in the decomposition.
@@ -283,7 +309,7 @@ pub enum DecompositionNoiseStrategy {
     /// Applies `(1 - weight) * sum(per_gate_errors) + weight * high_level_error`.
     Blended {
         /// Weight for high-level error (0.0 = per-gate only, 1.0 = high-level only).
-        high_level_weight: f64,
+        high_level_weight: HighLevelWeight,
     },
 }
 
@@ -298,7 +324,7 @@ impl PartialEq for DecompositionNoiseStrategy {
                 Self::Blended {
                     high_level_weight: w2,
                 },
-            ) => (w1 - w2).abs() < f64::EPSILON,
+            ) => (w1.get() - w2.get()).abs() < f64::EPSILON,
             _ => false,
         }
     }
@@ -311,7 +337,7 @@ impl DecompositionNoiseStrategy {
     /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn blended(high_level_weight: f64) -> ValidationResult<Self> {
         Ok(Self::Blended {
-            high_level_weight: validate_probability(high_level_weight, "high_level_weight")?,
+            high_level_weight: HighLevelWeight::new(high_level_weight)?,
         })
     }
 
@@ -331,6 +357,7 @@ impl DecompositionNoiseStrategy {
             }
             Self::HighLevel => high_level_error,
             Self::Blended { high_level_weight } => {
+                let high_level_weight = high_level_weight.get();
                 let per_gate_error: f64 = {
                     let success_prob: f64 = decomposed_errors.iter().map(|&p| 1.0 - p).product();
                     1.0 - success_prob

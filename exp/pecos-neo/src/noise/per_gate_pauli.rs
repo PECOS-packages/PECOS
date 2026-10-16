@@ -63,7 +63,11 @@ fn validate_probability_vector(rates: &[f64], what: &str) -> ValidationResult<()
     for (index, &rate) in rates.iter().enumerate() {
         validate_probability(rate, &format!("{what}[{index}]"))?;
     }
-    validate_probability(rates.iter().sum(), &format!("{what} total"))?;
+    // The remaining probability belongs to the identity. For totals slightly
+    // above one, reuse the distribution validator's roundoff tolerance.
+    if rates.iter().sum::<f64>() > 1.0 {
+        super::validation::validate_distribution(rates, &format!("{what} total"))?;
+    }
     Ok(())
 }
 

@@ -93,9 +93,9 @@ fn test_resample_by_weight_preserves_total_weight() {
     let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, 42));
 
     // Set weights: e1=1.0, e2=2.0, e3=3.0, total=6.0
-    world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0);
-    world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(2.0);
-    world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(3.0);
+    world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0).unwrap();
+    world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(2.0).unwrap();
+    world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(3.0).unwrap();
 
     let total_before = world.total_weight();
     assert!((total_before - 6.0).abs() < 1e-10);
@@ -128,9 +128,9 @@ fn test_resample_by_weight_respects_probabilities() {
         let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, trial));
 
         // Weights: e1=1, e2=2, e3=7 (e3 should be selected ~70% of time)
-        world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0);
-        world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(2.0);
-        world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(7.0);
+        world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0).unwrap();
+        world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(2.0).unwrap();
+        world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(7.0).unwrap();
 
         let mut rng = PecosRng::seed_from_u64(trial + 1000);
         world.resample_by_weight(1, &mut rng).unwrap();
@@ -187,7 +187,7 @@ fn test_split_decision_constructors() {
     let split = SplitDecision::split(
         pecos_neo::ecs::EntityId(3),
         4,
-        SampleWeight::from_linear(0.25),
+        SampleWeight::from_linear(0.25).unwrap(),
     );
     assert_eq!(split.copies, 4);
     assert!((split.new_weight.weight() - 0.25).abs() < 1e-10);
@@ -222,7 +222,7 @@ fn test_entity_transfer() {
 
     // Create entity in world1 with specific weight
     let e1 = world1.spawn_with_simulator(SparseStab::with_seed(1, 42));
-    world1.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(5.0);
+    world1.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(5.0).unwrap();
 
     assert_eq!(world1.active_entities().len(), 1);
     assert_eq!(world2.active_entities().len(), 0);
@@ -255,7 +255,7 @@ fn test_redistribution_at_sync_points() {
                     .world
                     .spawn_with_simulator(SparseStab::with_seed(1, 42));
                 worker.world.weights.get_mut(e).unwrap().weight =
-                    SampleWeight::from_linear(f64::from(i + 1));
+                    SampleWeight::from_linear(f64::from(i + 1)).unwrap();
             }
             worker
         })
@@ -504,7 +504,7 @@ fn test_redistribution_exact_weight_preservation() {
                     .spawn_with_simulator(SparseStab::with_seed(1, 100 + id as u64));
                 // Set varying weights
                 worker.world.weights.get_mut(e).unwrap().weight =
-                    SampleWeight::from_linear(0.1 * f64::from(i + 1));
+                    SampleWeight::from_linear(0.1 * f64::from(i + 1)).unwrap();
             }
             worker
         })
@@ -544,13 +544,15 @@ fn test_redistribution_extreme_weights() {
     let e1 = workers[0]
         .world
         .spawn_with_simulator(SparseStab::with_seed(1, 42));
-    workers[0].world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(100.0);
+    workers[0].world.weights.get_mut(e1).unwrap().weight =
+        SampleWeight::from_linear(100.0).unwrap();
 
     for _ in 0..9 {
         let e = workers[0]
             .world
             .spawn_with_simulator(SparseStab::with_seed(1, 42));
-        workers[0].world.weights.get_mut(e).unwrap().weight = SampleWeight::from_linear(0.001);
+        workers[0].world.weights.get_mut(e).unwrap().weight =
+            SampleWeight::from_linear(0.001).unwrap();
     }
 
     let weight_before: f64 = workers.iter().map(|w| w.world.total_weight()).sum();
@@ -589,9 +591,9 @@ fn test_resampling_statistical_correctness() {
         let e3 = world.spawn_with_simulator(SparseStab::with_seed(1, 1000 + trial));
 
         // Weights: 1, 3, 6 (proportions: 0.1, 0.3, 0.6)
-        world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0);
-        world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(3.0);
-        world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(6.0);
+        world.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(1.0).unwrap();
+        world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(3.0).unwrap();
+        world.weights.get_mut(e3).unwrap().weight = SampleWeight::from_linear(6.0).unwrap();
 
         let mut rng = PecosRng::seed_from_u64(trial + 5000);
         world.resample_by_weight(1, &mut rng).unwrap();
@@ -661,7 +663,7 @@ fn test_entity_state_preservation_through_transfer() {
     }
 
     // Set a non-default weight
-    world1.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(3.5);
+    world1.weights.get_mut(e1).unwrap().weight = SampleWeight::from_linear(3.5).unwrap();
 
     // Extract and import into another world
     let transfer = world1.extract_entity(e1).expect("Should extract");
@@ -774,7 +776,7 @@ fn test_redistribution_determinism() {
                         .world
                         .spawn_with_simulator(SparseStab::with_seed(1, 42));
                     worker.world.weights.get_mut(e).unwrap().weight =
-                        SampleWeight::from_linear(f64::from(i + 1));
+                        SampleWeight::from_linear(f64::from(i + 1)).unwrap();
                 }
                 worker
             })

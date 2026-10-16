@@ -27,8 +27,9 @@ use super::component::{
 use super::entity::EntityId;
 use super::resource::Resources;
 use crate::noise::NoiseContext;
-use crate::noise::validation::{ValidationResult, validate_weights_sum};
+use crate::noise::validation::ValidationResult;
 use crate::sampling::SampleWeight;
+use crate::sampling::weight::ResamplingWeights;
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
@@ -472,7 +473,8 @@ impl<S: CliffordGateable> World<S> {
     /// Returns the number of entities after resampling.
     ///
     /// # Errors
-    /// Rejects non-finite weights or a non-positive/non-finite total before sampling.
+    /// Rejects NaN/positive-infinity log weights or an all-zero total before sampling.
+    /// Finite log weights are normalized without overflow or underflow of their scale.
     #[allow(clippy::cast_precision_loss)] // weight calculation
     pub fn resample_by_weight(
         &mut self,
@@ -489,29 +491,18 @@ impl<S: CliffordGateable> World<S> {
             return Ok(0);
         }
 
-        // Collect weights and compute cumulative distribution
-        let weights: Vec<f64> = active
+        let log_weights: Vec<f64> = active
             .iter()
-            .map(|&e| self.weights.get(e).map_or(1.0, |w| w.weight.weight()))
+            .map(|&e| self.weights.get(e).map_or(0.0, |w| w.weight.log_weight()))
             .collect();
-
-        let total_weight: f64 = weights.iter().sum();
-        validate_weights_sum(&weights, "entity sampling weights")?;
-
-        // Build cumulative distribution function
-        let mut cdf = Vec::with_capacity(weights.len());
-        let mut cumsum = 0.0;
-        for w in &weights {
-            cumsum += w / total_weight;
-            cdf.push(cumsum);
-        }
+        let normalized = ResamplingWeights::from_log_weights(&log_weights)?;
 
         // Sample target_count entities with replacement using inverse CDF
         let mut selection_counts = vec![0usize; active.len()];
         for _ in 0..target_count {
             let u: f64 = rng.random();
-            // Binary search for the first index where cdf[idx] >= u
-            let idx = cdf.partition_point(|&x| x < u).min(cdf.len() - 1);
+            // Skip zero-probability entries even when the RNG returns zero.
+            let idx = normalized.cdf.partition_point(|&x| x <= u);
             selection_counts[idx] += 1;
         }
 
@@ -525,8 +516,7 @@ impl<S: CliffordGateable> World<S> {
 
         // Reweight: each surviving entity gets weight = total_weight / target_count
         // Note: We must get the NEW active list since apply_split_decisions creates clones
-        let new_weight =
-            crate::sampling::SampleWeight::from_log(total_weight.ln() - (target_count as f64).ln());
+        let new_weight = normalized.equal_weight(target_count as f64);
         let current_active = self.active_entities();
         for entity in &current_active {
             if let Some(weight_comp) = self.weights.get_mut(*entity) {
@@ -695,7 +685,7 @@ mod tests {
         let e2 = world.spawn_with_simulator(SparseStab::with_seed(2, 42));
 
         // Set e2 to very low weight
-        world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(0.001);
+        world.weights.get_mut(e2).unwrap().weight = SampleWeight::from_linear(0.001).unwrap();
 
         let pruned = world.prune_by_weight(0.01);
         assert_eq!(pruned, 1);

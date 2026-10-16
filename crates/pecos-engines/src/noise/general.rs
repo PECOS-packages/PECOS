@@ -644,6 +644,7 @@ impl GeneralNoiseModel {
     pub(crate) fn validate_frame_idle(&self, duration: f64) -> Result<(), PecosError> {
         Self::validate_idle_products(
             duration,
+            "idle gate duration",
             self.p_idle_linear_rate,
             self.p_idle_sin_squared_rate,
             &self.p_idle_sin_squared_model,
@@ -656,6 +657,7 @@ impl GeneralNoiseModel {
     // Shared by fixed-duration builder validation and variable-duration execution.
     fn validate_idle_products(
         duration: f64,
+        duration_source: &str,
         linear_rate: f64,
         sine_rate: f64,
         sine_model: &BTreeMap<String, f64>,
@@ -666,7 +668,7 @@ impl GeneralNoiseModel {
             let product = rate * multiplier * duration;
             if !product.is_finite() {
                 return Err(format!(
-                    "{family} scaled rate {rate} * {axis} multiplier {multiplier} * idle duration (idle_after_2q at build) {duration} produces {product}; reduce the rate, multiplier, idle duration, or scale factors to keep the product finite"
+                    "{family} scaled rate {rate} * {axis} multiplier {multiplier} * {duration_source} {duration} produces {product}; reduce the rate, multiplier, idle duration, or scale factors to keep the product finite"
                 ));
             }
             Ok(())
@@ -819,7 +821,16 @@ impl GeneralNoiseModel {
         mut boundaries: Option<&mut Vec<u32>>,
     ) -> Result<(), PecosError> {
         // Continuations can reach the same idle helper after a two-qubit gate.
-        self.validate_frame_idle(self.idle_after_2q)?;
+        Self::validate_idle_products(
+            self.idle_after_2q,
+            "idle_after_2q",
+            self.p_idle_linear_rate,
+            self.p_idle_sin_squared_rate,
+            &self.p_idle_sin_squared_model,
+            self.p_idle_coherent_rate,
+            &self.p_idle_coherent_model,
+        )
+        .map_err(PecosError::Input)?;
         let mut err = None;
         while let Some(gate) = gates.next() {
             let measurements_before = self.measured_qubits.len();
@@ -2345,12 +2356,23 @@ mod tests {
             .with_p_idle_linear(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
             .try_build()
             .unwrap();
+        let runtime_message = variable_model
+            .validate_frame_idle(1e10)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            runtime_message.contains("idle gate duration"),
+            "{runtime_message}"
+        );
+        assert!(
+            !runtime_message.contains("idle_after_2q"),
+            "{runtime_message}"
+        );
         assert_eq!(
-            error.to_string(),
-            variable_model
-                .validate_frame_idle(1e10)
-                .unwrap_err()
+            error
                 .to_string()
+                .replace("idle_after_2q", "idle gate duration"),
+            runtime_message
         );
         let message = error.to_string();
         assert!(message.contains("p_idle_linear"), "{message}");
@@ -2371,12 +2393,23 @@ mod tests {
             .with_p_idle_sin_squared(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
             .try_build()
             .unwrap();
+        let runtime_message = variable_model
+            .validate_frame_idle(1e10)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            runtime_message.contains("idle gate duration"),
+            "{runtime_message}"
+        );
+        assert!(
+            !runtime_message.contains("idle_after_2q"),
+            "{runtime_message}"
+        );
         assert_eq!(
-            error.to_string(),
-            variable_model
-                .validate_frame_idle(1e10)
-                .unwrap_err()
+            error
                 .to_string()
+                .replace("idle_after_2q", "idle gate duration"),
+            runtime_message
         );
         let message = error.to_string();
         assert!(message.contains("p_idle_sin_squared"), "{message}");

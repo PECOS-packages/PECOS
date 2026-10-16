@@ -198,7 +198,11 @@ impl GariModel {
 /// Build the canonical detector-basis mask for an XZ memory experiment.
 ///
 /// Round one and final readout emit only the initialization-basis family;
-/// intermediate rounds emit X detectors followed by Z detectors.
+/// intermediate rounds emit X detectors followed by Z detectors. This helper
+/// describes only that canonical layout. PECOS CSS memory circuits interleave
+/// X and Z detectors per check; PECOS-built DEMs carry their mask through the
+/// detector fault sectors (`DetectorErrorModel::detector_bases` in
+/// `pecos-qec`).
 ///
 /// # Panics
 ///

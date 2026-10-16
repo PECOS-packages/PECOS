@@ -311,3 +311,10 @@ def test_with_p_meas_actually_configures_measurement_noise() -> None:
 
     measurements = results["outcome"]
     assert all(m == 1 for m in measurements), "p_meas=1.0 should flip every |0> measurement"
+
+
+def test_build_rejects_overflowing_after_two_qubit_coherent_idle() -> None:
+    """Fixed idle duration products are rejected before quantum execution."""
+    noise = general_noise().with_p_idle_coherent(1e300, {"RZ": 1.0}).with_idle_after_2q(1e10)
+    with pytest.raises(ValueError, match=r"idle_after_2q.*inf.*reduce"):
+        _run_after_2q_noise(noise, 1)

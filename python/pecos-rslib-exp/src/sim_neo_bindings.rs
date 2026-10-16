@@ -247,35 +247,43 @@ impl PyNoiseModelBuilder {
     }
 
     /// Single-qubit depolarizing rate (X/Y/Z each with p/3 after unitary 1q gates).
-    fn p1(&self, p: f64) -> Self {
-        Self {
+    fn p1(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p1")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p1: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Two-qubit depolarizing rate (15 Paulis each with p/15 after unitary 2q gates).
-    fn p2(&self, p: f64) -> Self {
-        Self {
+    fn p2(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p2")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p2: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Measurement bit-flip rate (symmetric, after MZ).
-    fn p_meas(&self, p: f64) -> Self {
-        Self {
+    fn p_meas(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p_meas")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p_meas: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Preparation error rate (X flip after PZ/QAlloc).
-    fn p_prep(&self, p: f64) -> Self {
-        Self {
+    fn p_prep(&self, p: f64) -> PyResult<Self> {
+        pecos_neo::noise::validation::validate_probability(p, "p_prep")
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             p_prep: p,
             ..self.clone()
-        }
+        })
     }
 
     /// Coherent idle RZ angle (radians) applied to both qubits after each CX.
@@ -290,7 +298,7 @@ impl PyNoiseModelBuilder {
 }
 
 impl PyNoiseModelBuilder {
-    fn build_noise(&self) -> Option<ComposableNoiseModel> {
+    fn build_noise(&self) -> PyResult<Option<ComposableNoiseModel>> {
         let has_noise = self.p1 > 0.0
             || self.p2 > 0.0
             || self.p_meas > 0.0
@@ -298,21 +306,33 @@ impl PyNoiseModelBuilder {
             || self.idle_rz_angle > 0.0;
 
         if !has_noise {
-            return None;
+            return Ok(None);
         }
 
         let mut noise = ComposableNoiseModel::new();
         if self.p1 > 0.0 {
-            noise = noise.add_channel(SingleQubitChannel::depolarizing(self.p1));
+            noise = noise.add_channel(
+                SingleQubitChannel::depolarizing(self.p1)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.p2 > 0.0 {
-            noise = noise.add_channel(TwoQubitChannel::depolarizing(self.p2));
+            noise = noise.add_channel(
+                TwoQubitChannel::depolarizing(self.p2)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.p_meas > 0.0 {
-            noise = noise.add_channel(MeasurementChannel::symmetric(self.p_meas));
+            noise = noise.add_channel(
+                MeasurementChannel::symmetric(self.p_meas)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.p_prep > 0.0 {
-            noise = noise.add_channel(PreparationChannel::new(self.p_prep));
+            noise = noise.add_channel(
+                PreparationChannel::new(self.p_prep)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         if self.idle_rz_angle > 0.0 {
             noise = noise.add_channel(crate::coherent_idle_channel::CoherentIdleChannel::new(
@@ -320,7 +340,7 @@ impl PyNoiseModelBuilder {
                     .expect("idle_rz validated the stored angle as finite"),
             ));
         }
-        Some(noise)
+        Ok(Some(noise))
     }
 }
 
@@ -919,7 +939,9 @@ impl PySimNeoBuilder {
         let noise = self
             .noise_config
             .as_ref()
-            .and_then(PyNoiseModelBuilder::build_noise);
+            .map(PyNoiseModelBuilder::build_noise)
+            .transpose()?
+            .flatten();
 
         let mut builder = sim_neo(self.commands.clone())
             .sampling(pecos_neo::tool::monte_carlo(shots).workers(workers));
@@ -1058,7 +1080,9 @@ impl PySimNeoBuilder {
         let noise = self
             .noise_config
             .as_ref()
-            .and_then(PyNoiseModelBuilder::build_noise);
+            .map(PyNoiseModelBuilder::build_noise)
+            .transpose()?
+            .flatten();
 
         let num_qubits = self
             .commands

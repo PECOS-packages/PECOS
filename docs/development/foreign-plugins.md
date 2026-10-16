@@ -247,7 +247,8 @@ Foreign code can create and run PECOS quantum engines via the C ABI:
 | `pecos_circuit_mz` | Z measurement | qubits |
 
 The three rotation functions return `0` on success and `-1` for a non-finite
-angle. Rejected calls leave the circuit builder unchanged.
+angle. `pecos_circuit_rzz` also returns `-1` if twice the pair count exceeds
+the slice size limit. Rejected calls leave the circuit builder unchanged.
 
 ### C Example
 

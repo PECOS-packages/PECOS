@@ -176,7 +176,7 @@ impl CircuitBuilder {
             .ok_or_else(|| BuildError::UnknownGate(name.to_string()))?;
 
         // Validate signature matches spec
-        let spec = self.registry.get(gate_id).unwrap();
+        let spec = self.registry.get(gate_id)?;
         if qubits.len() != spec.quantum_arity as usize {
             return Err(BuildError::WrongQubitCount {
                 gate: name.to_string(),
@@ -1155,7 +1155,7 @@ impl GateCanonicalizer {
 }
 
 // Usage: SZ → RZ(π/2)
-let (rz, angle) = canonicalizer.expand(gates::SZ).unwrap();
+let (rz, angle) = canonicalizer.expand(gates::SZ)?;
 assert_eq!(rz, gates::RZ);
 assert_eq!(angle.to_turns(), 0.25);
 ```
@@ -1417,7 +1417,7 @@ impl Tool {
             noise_model: builder.noise_model,
             adaptor: builder.adaptor,
             gate_registry: builder.gate_registry,
-            program: builder.program.unwrap(),  // Validated to exist
+            program: builder.program?,  // Validated to exist
         }
     }
 

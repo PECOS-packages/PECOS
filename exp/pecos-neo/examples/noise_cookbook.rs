@@ -53,7 +53,7 @@ fn recipe_quick_start() -> Result<(), Box<dyn std::error::Error>> {
     // Method 1: One-liner with pre-built pattern
     let error_rate = run_with_noise(
         &commands,
-        || Ok(depolarizing_with_measurement(0.01, 0.05, 0.02)),
+        || depolarizing_with_measurement(0.01, 0.05, 0.02),
         1000,
     )?;
     println!(
@@ -65,10 +65,10 @@ fn recipe_quick_start() -> Result<(), Box<dyn std::error::Error>> {
     let error_rate = run_with_noise(
         &commands,
         || {
-            Ok(NoiseModelBuilder::new()
+            NoiseModelBuilder::new()
                 .with_depolarizing(0.01, 0.05)
                 .with_measurement_error(0.02)
-                .build())
+                .build()
         },
         1000,
     )?;
@@ -89,7 +89,7 @@ fn recipe_sim_neo_integration() -> Result<(), Box<dyn std::error::Error>> {
     // Method 1: Pass pre-built pattern directly to .noise()
     let results = sim_neo(circuit.clone())
         .auto()
-        .noise(depolarizing_with_measurement(0.01, 0.05, 0.02))
+        .noise(depolarizing_with_measurement(0.01, 0.05, 0.02)?)
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
@@ -103,10 +103,10 @@ fn recipe_sim_neo_integration() -> Result<(), Box<dyn std::error::Error>> {
         / 1000.0;
     println!("  Pre-built pattern: {:.1}% error rate", error_rate * 100.0);
 
-    // Method 2: Use the convenience .depolarizing() method
+    // Method 2: Use the convenience .depolarizing()? method
     let results = sim_neo(circuit.clone())
         .auto()
-        .depolarizing(0.01)
+        .depolarizing(0.01)?
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
@@ -119,7 +119,7 @@ fn recipe_sim_neo_integration() -> Result<(), Box<dyn std::error::Error>> {
         .count() as f64
         / 1000.0;
     println!(
-        "  .depolarizing() convenience: {:.1}% error rate",
+        "  .depolarizing()? convenience: {:.1}% error rate",
         error_rate * 100.0
     );
 
@@ -130,7 +130,7 @@ fn recipe_sim_neo_integration() -> Result<(), Box<dyn std::error::Error>> {
             NoiseModelBuilder::new()
                 .with_depolarizing(0.01, 0.05)
                 .with_measurement_error(0.02)
-                .build(),
+                .build()?,
         )
         .sampling(monte_carlo(1000))
         .seed(42)
@@ -150,9 +150,9 @@ fn recipe_sim_neo_integration() -> Result<(), Box<dyn std::error::Error>> {
         .auto()
         .noise(realistic_device_noise(
             &DeviceNoiseParams::new()
-                .with_p1(0.001)
-                .with_p2(0.01)
-                .with_measurement_error(0.02),
+                .with_p1(0.001)?
+                .with_p2(0.01)?
+                .with_measurement_error(0.02)?,
         )?)
         .sampling(monte_carlo(500))
         .build();
@@ -189,14 +189,14 @@ fn recipe_measurement_noise() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     // Symmetric measurement error (same rate for 0->1 and 1->0)
-    let error_rate = run_with_noise(&commands, || Ok(measurement_only(0.05, 0.05)), 1000)?;
+    let error_rate = run_with_noise(&commands, || measurement_only(0.05, 0.05), 1000)?;
     println!(
         "  Symmetric (5%/5%): {:.1}% flipped to 1",
         error_rate * 100.0
     );
 
     // Asymmetric: easier to flip 0->1 than 1->0
-    let error_rate = run_with_noise(&commands, || Ok(measurement_only(0.10, 0.02)), 1000)?;
+    let error_rate = run_with_noise(&commands, || measurement_only(0.10, 0.02), 1000)?;
     println!(
         "  Asymmetric (10%/2%): {:.1}% flipped to 1",
         error_rate * 100.0
@@ -210,9 +210,9 @@ fn recipe_measurement_noise() -> Result<(), Box<dyn std::error::Error>> {
                 on_zero(prob(0.10, flip_outcome())?), // 10% flip when measuring 0
                 on_one(prob(0.02, flip_outcome())?),  // 2% flip when measuring 1
             ];
-            Ok(NoiseModelBuilder::new()
+            NoiseModelBuilder::new()
                 .with_measurement_noise(meas_noise)
-                .build())
+                .build()
         },
         1000,
     )?;
@@ -260,14 +260,14 @@ fn recipe_leakage_model() -> Result<(), Box<dyn std::error::Error>> {
                         sample![
                             (0.1, leak()),  // 10% of faults cause leakage
                             (0.9, pauli()), // 90% are Pauli errors
-                        ]
+                        ]?
                     )
                 )?,
             ];
 
-            Ok(NoiseModelBuilder::new()
+            NoiseModelBuilder::new()
                 .with_single_qubit_noise(sq_noise)
-                .build())
+                .build()
         },
         1000,
     )?;
@@ -306,13 +306,13 @@ fn recipe_custom_composite() -> Result<(), Box<dyn std::error::Error>> {
                         (0.5, inject_z()), // 50% Z errors (dephasing)
                         (0.3, inject_x()), // 30% X errors (bit flip)
                         (0.2, inject_y()), // 20% Y errors
-                    ]
+                    ]?
                 )?,
             ];
 
-            Ok(NoiseModelBuilder::new()
+            NoiseModelBuilder::new()
                 .with_two_qubit_noise(tq_noise)
-                .build())
+                .build()
         },
         1000,
     )?;
@@ -412,10 +412,10 @@ fn recipe_realistic_device() -> Result<(), Box<dyn std::error::Error>> {
         || {
             realistic_device_noise(
                 &DeviceNoiseParams::new()
-                    .with_p1(0.001) // 0.1% single-qubit gate error
-                    .with_p2(0.01) // 1% two-qubit gate error
-                    .with_measurement_error(0.02) // 2% readout error
-                    .with_prep_error(0.001), // 0.1% preparation error
+                    .with_p1(0.001)? // 0.1% single-qubit gate error
+                    .with_p2(0.01)? // 1% two-qubit gate error
+                    .with_measurement_error(0.02)? // 2% readout error
+                    .with_prep_error(0.001)?, // 0.1% preparation error
             )
         },
         1000,

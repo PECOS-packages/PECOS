@@ -55,13 +55,7 @@ fn clifford_image_width_rejected_before_application() {
 fn inverse_trig_reports_the_original_invalid_input() {
     use pecos_core::Angle64;
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        for result in [
-            Angle64::try_asin(value),
-            Angle64::try_acos(value),
-            Angle64::try_atan(value),
-            Angle64::try_atan2(value, 1.0),
-            Angle64::try_atan2(1.0, value),
-        ] {
+        for result in [Angle64::try_asin(value), Angle64::try_acos(value)] {
             let error = result.unwrap_err();
             assert_eq!(error.value.to_bits(), value.to_bits());
             assert!(error.to_string().contains(&value.to_string()));
@@ -95,4 +89,52 @@ fn controlled_lowerings_reject_nan_instead_of_panicking() {
             );
         }
     }
+}
+
+#[test]
+fn inverse_tangent_accepts_infinities_and_rejects_nan() {
+    use pecos_core::Angle64;
+    for value in [f64::NEG_INFINITY, f64::INFINITY] {
+        assert_eq!(
+            Angle64::try_atan(value).unwrap(),
+            Angle64::try_from_radians(value.atan()).unwrap()
+        );
+        for other in [f64::NEG_INFINITY, -1.0, 0.0, 1.0, f64::INFINITY] {
+            assert_eq!(
+                Angle64::try_atan2(value, other).unwrap(),
+                Angle64::try_from_radians(value.atan2(other)).unwrap()
+            );
+            assert_eq!(
+                Angle64::try_atan2(other, value).unwrap(),
+                Angle64::try_from_radians(other.atan2(value)).unwrap()
+            );
+        }
+    }
+    assert!(Angle64::try_atan(f64::NAN).is_err());
+    assert!(Angle64::try_atan2(f64::NAN, 1.0).is_err());
+    assert!(Angle64::try_atan2(1.0, f64::NAN).is_err());
+}
+
+#[test]
+fn decimal_overflow_has_decimal_remediation() {
+    let input = format!("1{}.0pi", "0".repeat(308));
+    let error = pecos_core::Angle64::from_str_radians(&input)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(&input), "{error}");
+    assert!(error.contains("finite decimal"), "{error}");
+    assert!(!error.contains("numerator"), "{error}");
+}
+
+#[test]
+fn angle_literal_macros_are_hygienic() {
+    enum Shadow {
+        Ok,
+        Err,
+    }
+    use Shadow::{Err, Ok};
+    assert!(matches!(Ok, Shadow::Ok));
+    assert!(matches!(Err, Shadow::Err));
+    assert_eq!(pecos_core::turns!(0.25), pecos_core::Angle64::QUARTER_TURN);
+    assert_eq!(pecos_core::radians!(0.0), pecos_core::Angle64::ZERO);
 }

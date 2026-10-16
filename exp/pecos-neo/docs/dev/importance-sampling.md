@@ -75,8 +75,8 @@ let bias_config = OutcomeBiasConfig::new()
 
 // Create runner with biased sampling
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001).unwrap()
-    .build().unwrap();
+    .with_p1(0.001)?
+    .build()?;
 
 let mut runner = ImportanceSamplingRunner::new(SparseStab::new(num_qubits))
     .with_noise(noise)

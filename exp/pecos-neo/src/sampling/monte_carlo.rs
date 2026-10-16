@@ -434,8 +434,8 @@ mod tests {
             &commands,
             &config,
             || {
-                let noise =
-                    ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
+                let noise = ComposableNoiseModel::new()
+                    .add_channel(SingleQubitChannel::depolarizing(0.0).unwrap());
                 (
                     CircuitRunner::new().with_noise(noise),
                     SparseStab::with_seed(1, 42),

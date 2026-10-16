@@ -340,10 +340,10 @@ where
     /// Returns the angle whose tangent is `value`.
     ///
     /// # Errors
-    /// Rejects non-finite inputs and values outside the inverse function domain.
+    /// Rejects NaN inputs or results; infinite inputs are valid.
     #[inline]
     pub fn try_atan(value: f64) -> Result<Self, NonFiniteAngleError> {
-        if !value.is_finite() {
+        if value.is_nan() {
             return Err(NonFiniteAngleError {
                 value,
                 unit: "atan input",
@@ -356,11 +356,11 @@ where
     /// the quadrant.
     ///
     /// # Errors
-    /// Rejects non-finite inputs and values outside the inverse function domain.
+    /// Rejects NaN inputs or results; infinite inputs are valid.
     #[inline]
     pub fn try_atan2(y: f64, x: f64) -> Result<Self, NonFiniteAngleError> {
         for (value, unit) in [(y, "atan2 y input"), (x, "atan2 x input")] {
-            if !value.is_finite() {
+            if value.is_nan() {
                 return Err(NonFiniteAngleError { value, unit });
             }
         }

@@ -421,7 +421,7 @@ fn test_noisy_execution_statistics() {
     let mut ones_count = 0;
     for seed in 0..num_shots {
         let noise = ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(high_noise_rate));
+            .add_channel(SingleQubitChannel::depolarizing(high_noise_rate).unwrap());
         let mut program = StaticProgram::new(commands.clone(), 1);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, seed as u64))
             .with_noise(noise)

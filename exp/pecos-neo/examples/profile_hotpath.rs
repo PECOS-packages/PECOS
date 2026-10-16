@@ -21,7 +21,7 @@ use pecos_neo::prelude::{
 use pecos_simulators::SparseStab;
 use std::hint::black_box;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let iterations = 100_000;
 
     // Build commands once
@@ -39,8 +39,8 @@ fn main() {
     for _ in 0..iterations {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(SingleQubitChannel::depolarizing(0.001))
-            .add_channel(TwoQubitChannel::depolarizing(0.001));
+            .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+            .add_channel(TwoQubitChannel::depolarizing(0.001)?);
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
@@ -51,4 +51,5 @@ fn main() {
     }
 
     println!("Done!");
+    Ok(())
 }

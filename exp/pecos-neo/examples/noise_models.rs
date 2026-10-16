@@ -28,19 +28,20 @@ use pecos_neo::prelude::*;
 use pecos_simulators::SparseStab;
 use std::collections::HashMap;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== pecos-neo Noise Model Examples ===\n");
 
-    example_depolarizing_noise();
-    example_asymmetric_measurement();
-    example_multi_channel();
-    example_builder_api();
-    example_idle_noise();
-    example_z_biased_noise();
+    example_depolarizing_noise()?;
+    example_asymmetric_measurement()?;
+    example_multi_channel()?;
+    example_builder_api()?;
+    example_idle_noise()?;
+    example_z_biased_noise()?;
+    Ok(())
 }
 
 /// Simple depolarizing noise on single-qubit gates
-fn example_depolarizing_noise() {
+fn example_depolarizing_noise() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Depolarizing Noise ---");
 
     // Circuit: |0⟩ → X → measure (should give |1⟩)
@@ -50,7 +51,7 @@ fn example_depolarizing_noise() {
     for error_rate in [0.0, 0.05, 0.10, 0.20] {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(SingleQubitChannel::depolarizing(error_rate));
+            .add_channel(SingleQubitChannel::depolarizing(error_rate)?);
 
         let mut state = SparseStab::new(1);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -77,10 +78,11 @@ fn example_depolarizing_noise() {
         );
     }
     println!();
+    Ok(())
 }
 
 /// Asymmetric measurement errors (different 0→1 and 1→0 rates)
-fn example_asymmetric_measurement() {
+fn example_asymmetric_measurement() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Asymmetric Measurement Errors ---");
 
     // Test measurement of |0⟩
@@ -98,7 +100,7 @@ fn example_asymmetric_measurement() {
     // Measure |0⟩ state
     let noise_0 = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0));
+        .add_channel(MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0)?);
 
     let mut state = SparseStab::new(1);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -117,7 +119,7 @@ fn example_asymmetric_measurement() {
     // Measure |1⟩ state
     let noise_1 = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0));
+        .add_channel(MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0)?);
 
     let mut state = SparseStab::new(1);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -147,10 +149,11 @@ fn example_asymmetric_measurement() {
         f64::from(flips_1) / f64::from(shots) * 100.0
     );
     println!();
+    Ok(())
 }
 
 /// Multiple noise channels combined
-fn example_multi_channel() {
+fn example_multi_channel() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Multi-Channel Noise ---");
 
     // Bell state circuit
@@ -166,10 +169,10 @@ fn example_multi_channel() {
     // Combine multiple noise sources
     let noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(PreparationChannel::new(0.02)) // 2% prep error
-        .add_channel(SingleQubitChannel::depolarizing(0.01)) // 1% 1Q error
-        .add_channel(TwoQubitChannel::depolarizing(0.05)) // 5% 2Q error
-        .add_channel(MeasurementChannel::symmetric(0.02)); // 2% meas error
+        .add_channel(PreparationChannel::new(0.02)?) // 2% prep error
+        .add_channel(SingleQubitChannel::depolarizing(0.01)?) // 1% 1Q error
+        .add_channel(TwoQubitChannel::depolarizing(0.05)?) // 5% 2Q error
+        .add_channel(MeasurementChannel::symmetric(0.02)?); // 2% meas error
 
     let mut state = SparseStab::new(2);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -200,10 +203,11 @@ fn example_multi_channel() {
         anti_correlated as f64 / f64::from(shots) * 100.0
     );
     println!();
+    Ok(())
 }
 
 /// Using the `GeneralNoiseModelBuilder` for familiar API
-fn example_builder_api() {
+fn example_builder_api() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- GeneralNoiseModelBuilder API ---");
 
     // Bell state circuit
@@ -222,7 +226,7 @@ fn example_builder_api() {
         .with_p1(0.005) // 0.5% single-qubit error
         .with_p2(0.02) // 2% two-qubit error
         .with_p_meas(0.01, 0.01) // 1% symmetric measurement error
-        .build();
+        .build()?;
 
     let mut state = SparseStab::new(2);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -250,10 +254,11 @@ fn example_builder_api() {
         );
     }
     println!();
+    Ok(())
 }
 
 /// Idle noise with T1/T2 using `TimeScale`
-fn example_idle_noise() {
+fn example_idle_noise() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Idle Noise (T1/T2 Decoherence) ---");
 
     // Circuit: prep |+⟩, idle, then H to detect Pauli-twirled Y/Z errors, measure
@@ -272,7 +277,7 @@ fn example_idle_noise() {
         .with_time_scale(TimeScale::NANOSECONDS)
         .with_idle_t1_t2(10e-6, 5e-6)
         .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds") // T1=10us, T2=5us
-        .build();
+        .build()?;
 
     let mut state = SparseStab::new(1);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -298,10 +303,11 @@ fn example_idle_noise() {
     );
     println!("  (First-order total-T2 coherence error expected: ~10%)");
     println!();
+    Ok(())
 }
 
 /// Z-biased noise (common in superconducting qubits)
-fn example_z_biased_noise() {
+fn example_z_biased_noise() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Z-Biased Noise ---");
 
     // Circuit: H to create superposition, then gate, then H+measure
@@ -320,7 +326,7 @@ fn example_z_biased_noise() {
     // Uniform depolarizing
     let uniform_noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(0.10));
+        .add_channel(SingleQubitChannel::depolarizing(0.10)?);
 
     let mut state = SparseStab::new(1);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -340,7 +346,7 @@ fn example_z_biased_noise() {
 
     // Z-biased (90% Z, 5% X, 5% Y)
     let z_biased_channel =
-        SingleQubitChannel::depolarizing(0.10).with_pauli_weights(PauliWeights::z_biased(0.9));
+        SingleQubitChannel::depolarizing(0.10)?.with_pauli_weights(PauliWeights::z_biased(0.9)?)?;
 
     let z_biased_noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
@@ -371,4 +377,5 @@ fn example_z_biased_noise() {
     );
     println!("  (Z-biased has higher detectable error rate in X basis)");
     println!();
+    Ok(())
 }

@@ -89,14 +89,14 @@ fn bench_no_noise(num_qubits: usize, shots: usize) -> f64 {
     per_gate_ns
 }
 
-fn bench_with_noise(num_qubits: usize, shots: usize) -> f64 {
+fn bench_with_noise(num_qubits: usize, shots: usize) -> Result<f64, Box<dyn std::error::Error>> {
     let commands = build_circuit(num_qubits);
     let num_gates = commands.len();
 
     let noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(0.001))
-        .add_channel(TwoQubitChannel::depolarizing(0.01));
+        .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+        .add_channel(TwoQubitChannel::depolarizing(0.01)?);
 
     let mut state = SparseStab::new(num_qubits);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -123,10 +123,10 @@ fn bench_with_noise(num_qubits: usize, shots: usize) -> f64 {
         "  with-noise:  {num_qubits:>5} qubits, {num_gates:>6} gates, {shots:>6} shots | \
          {per_shot:>10.1?}/shot, {per_gate_ns:>8.1} ns/gate"
     );
-    per_gate_ns
+    Ok(per_gate_ns)
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== pecos-neo Scaling Profile ===\n");
 
     let configs: &[(usize, usize)] = &[
@@ -144,7 +144,7 @@ fn main() {
     let mut results = Vec::new();
     for &(num_qubits, shots) in configs {
         let no_noise = bench_no_noise(num_qubits, shots);
-        let with_noise = bench_with_noise(num_qubits, shots);
+        let with_noise = bench_with_noise(num_qubits, shots)?;
         let overhead = with_noise - no_noise;
         let overhead_pct = (overhead / no_noise) * 100.0;
         println!("  => noise overhead: {overhead:.1} ns/gate ({overhead_pct:.0}%)\n");
@@ -180,4 +180,5 @@ fn main() {
             oh2 / oh1
         );
     }
+    Ok(())
 }

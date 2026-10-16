@@ -6,6 +6,7 @@
 //! - Integration helpers for the existing noise system
 
 use super::{GateCategory, GateId, GateSpec, gates};
+use crate::noise::validation::validate_distribution;
 use crate::noise::validation::{ValidationResult, validate_probability};
 
 /// Noise configuration for a specific gate.
@@ -56,10 +57,18 @@ impl GateNoiseParams {
     }
 
     /// Set custom Pauli weights.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, px: f64, py: f64, pz: f64) -> Self {
+    ///
+    /// # Errors
+    /// Rejects invalid Pauli weights or a sum other than one.
+    pub fn with_pauli_weights(
+        mut self,
+        px: f64,
+        py: f64,
+        pz: f64,
+    ) -> crate::noise::validation::ValidationResult<Self> {
+        validate_distribution(&[px, py, pz], "pauli_weights")?;
         self.pauli_weights = Some([px, py, pz]);
-        self
+        Ok(self)
     }
 
     /// Check if this is noiseless.
@@ -320,7 +329,8 @@ mod tests {
         let params = GateNoiseParams::with_error(0.01)
             .with_duration(100.0)
             .unwrap()
-            .with_pauli_weights(0.5, 0.3, 0.2);
+            .with_pauli_weights(0.5, 0.3, 0.2)
+            .unwrap();
 
         assert_eq!(params.error_probability, 0.01);
         assert_eq!(params.duration_ns, Some(100.0));

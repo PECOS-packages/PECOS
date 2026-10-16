@@ -36,6 +36,8 @@ pub enum ParseAngleError {
     DivisionByZero,
     /// Angle value exceeds the representable range
     Overflow { value: String },
+    /// Decimal input or its conversion to radians is non-finite.
+    DecimalOverflow { value: String },
 }
 
 impl std::fmt::Display for ParseAngleError {
@@ -43,6 +45,10 @@ impl std::fmt::Display for ParseAngleError {
         match self {
             Self::InvalidFormat => write!(f, "invalid angle format"),
             Self::DivisionByZero => write!(f, "division by zero"),
+            Self::DecimalOverflow { value } => write!(
+                f,
+                "decimal angle {value} is not finite; use a finite decimal value small enough that conversion to radians remains finite"
+            ),
             Self::Overflow { value } => write!(
                 f,
                 "angle {value} is too large to represent; use a finite angle with smaller numerator and denominator"
@@ -195,7 +201,7 @@ where
         // Handle decimal numbers (with or without pi)
         if s.contains('.') {
             return Self::try_from_radians(Self::parse_decimal(&s)?).map_err(|error| {
-                ParseAngleError::Overflow {
+                ParseAngleError::DecimalOverflow {
                     value: format!("{} {} (input {s:?})", error.value, error.unit),
                 }
             });

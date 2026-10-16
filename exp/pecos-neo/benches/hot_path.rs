@@ -34,9 +34,18 @@ use std::hint::black_box;
 /// Helper to create a noise model (since it doesn't implement Clone)
 fn make_noise_model() -> ComposableNoiseModel {
     ComposableNoiseModel::new()
-        .add_channel(SingleQubitChannel::depolarizing(0.001))
-        .add_channel(TwoQubitChannel::depolarizing(0.01))
-        .add_channel(MeasurementChannel::symmetric(0.01))
+        .add_channel(
+            SingleQubitChannel::depolarizing(0.001)
+                .expect("benchmark noise parameters are fixed valid probabilities and weights"),
+        )
+        .add_channel(
+            TwoQubitChannel::depolarizing(0.01)
+                .expect("benchmark noise parameters are fixed valid probabilities and weights"),
+        )
+        .add_channel(
+            MeasurementChannel::symmetric(0.01)
+                .expect("benchmark noise parameters are fixed valid probabilities and weights"),
+        )
 }
 
 // --- Noise Channel Benchmarks ---
@@ -684,7 +693,10 @@ fn bench_monte_carlo_comparison(c: &mut Criterion) {
                     let noise = GeneralNoiseModelBuilder::new()
                         .with_p1(0.001)
                         .with_p2(0.01)
-                        .build();
+                        .build()
+                        .expect(
+                            "benchmark noise parameters are fixed valid probabilities and weights",
+                        );
                     (CircuitRunner::new().with_noise(noise), SparseStab::new(2))
                 },
                 |outcomes| {
@@ -817,7 +829,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
         let mut noise = GeneralNoiseModelBuilder::new()
             .with_p1(p1)
             .with_p2(p2)
-            .build();
+            .build()
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0)];
 
@@ -858,7 +871,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
         let mut noise = GeneralNoiseModelBuilder::new()
             .with_p1(p1)
             .with_p2(p2)
-            .build();
+            .build()
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         let mut rng = PecosRng::seed_from_u64(42);
         let qubits = vec![QubitId(0), QubitId(1)];
 
@@ -900,7 +914,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
         let noise = GeneralNoiseModelBuilder::new()
             .with_p1(p1)
             .with_p2(p2)
-            .build();
+            .build()
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         let mut state = SparseStab::new(2);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -932,7 +947,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
         let noise = GeneralNoiseModelBuilder::new()
             .with_p1(p1)
             .with_p2(p2)
-            .build();
+            .build()
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         let mut state = SparseStab::new(20);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -968,7 +984,8 @@ fn bench_composite_vs_channel_noise(c: &mut Criterion) {
             .with_p2(p2)
             .with_p2_emission_ratio(0.1)
             .with_p2_seepage(0.05)
-            .build();
+            .build()
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         let mut state = SparseStab::new(20);
         let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
         b.iter(|| {
@@ -1050,13 +1067,15 @@ fn bench_batch_filtering(c: &mut Criterion) {
     // Compare with RngProbabilityExt optimized version
     group.bench_function("rng_ext_filter_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.001, &rng);
+        let threshold = ProbabilityThreshold::new(0.001, &rng)
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         b.iter(|| black_box(filter_by_probability_fast(1_000_000, &threshold, &mut rng)));
     });
 
     group.bench_function("rng_ext_noise_1q_1M_p0.001", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.001, &rng);
+        let threshold = ProbabilityThreshold::new(0.001, &rng)
+            .expect("benchmark noise parameters are fixed valid probabilities and weights");
         b.iter(|| black_box(sample_noise_1q_batch(1_000_000, &threshold, &mut rng)));
     });
 

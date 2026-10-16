@@ -2628,7 +2628,8 @@ mod tests {
     fn test_with_noise() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0).unwrap());
 
         let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2820,7 +2821,8 @@ mod tests {
             .with_p_idle_quadratic(std::f64::consts::PI)
             .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
@@ -2851,7 +2853,8 @@ mod tests {
                     .unwrap()
                     .with_coherent_idle(1.0)
                     .unwrap()
-                    .build(),
+                    .build()
+                    .unwrap(),
             ),
             (
                 "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
@@ -2903,7 +2906,8 @@ mod tests {
             .with_p_idle_quadratic(std::f64::consts::PI)
             .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let mut state = StateVec::with_seed(1, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations()

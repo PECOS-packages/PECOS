@@ -33,6 +33,7 @@
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
 use crate::command::GateCommand;
 use crate::extensible::GateCategory;
+use crate::noise::validation::ValidationResult;
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -88,18 +89,21 @@ impl CategoryBasedChannel {
     }
 
     /// Set error probability and Pauli weights for a category.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
     pub fn with_category_weights(
         mut self,
         category: GateCategory,
         error_probability: f64,
         pauli_weights: PauliWeights,
-    ) -> Self {
+    ) -> ValidationResult<Self> {
+        pauli_weights.validate()?;
         self.category_configs[category_to_index(category)] = Some(CategoryConfig {
             error_probability,
             pauli_weights,
         });
-        self
+        Ok(self)
     }
 
     /// Set default error probability for unconfigured categories.

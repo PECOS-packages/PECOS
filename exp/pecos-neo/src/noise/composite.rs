@@ -103,18 +103,19 @@
 //!
 //! let model = CompositeNoiseModelBuilder::new()
 //!     // Angle-dependent two-qubit noise
-//!     .with_p2(0.01).unwrap()
+//!     .with_p2(0.01)?
 //!     .with_p2_angle_scaling(AngleScaling::linear())
 //!
 //!     // Leakage scaling (0.5 = half become leakage, half depolarizing)
-//!     .with_p1_emission_ratio(0.1).unwrap()
-//!     .with_leakage_scale(0.5).unwrap()
+//!     .with_p1_emission_ratio(0.1)?
+//!     .with_leakage_scale(0.5)?
 //!
 //!     // Custom Pauli weights for idle noise (Z-only for pure dephasing)
-//!     .with_p_idle_linear(0.001).unwrap()
-//!     .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0))
+//!     .with_p_idle_linear(0.001)?
+//!     .with_p_idle_linear_weights(PauliWeights::z_only())?
 //!
-//!     .build().unwrap();
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Idle Noise (T1/T2)
@@ -236,7 +237,8 @@ mod tests {
                     sample![
                         (emission_ratio, leak()), // Simplified: emission -> leak
                         (1.0 - emission_ratio, pauli()),
-                    ],
+                    ]
+                    .unwrap(),
                 ),
             )
             .unwrap(),
@@ -364,7 +366,7 @@ mod tests {
         let flow_channel = CompositeChannelBuilder::single_qubit("flow_sq", gate_noise);
 
         // Traditional measurement noise channel
-        let meas_channel = MeasurementChannel::symmetric(0.0); // No measurement noise
+        let meas_channel = MeasurementChannel::symmetric(0.0).unwrap(); // No measurement noise
 
         // Combine both types of channels
         let noise = ComposableNoiseModel::new()
@@ -666,7 +668,8 @@ mod tests {
                 0.0,
                 crate::noise::SingleQubitEmissionWeights::uniform(),
                 0.0,
-            );
+            )
+            .unwrap();
             let traditional_noise = ComposableNoiseModel::new().add_channel(traditional_channel);
 
             let mut state_trad = SparseStab::with_seed(1, seed);
@@ -728,7 +731,7 @@ mod tests {
 
         for seed in 0..shots {
             // Traditional channel (recreate each iteration)
-            let traditional_channel = MeasurementChannel::symmetric(p_meas);
+            let traditional_channel = MeasurementChannel::symmetric(p_meas).unwrap();
             let traditional_noise = ComposableNoiseModel::new().add_channel(traditional_channel);
 
             let mut state_trad = SparseStab::with_seed(1, seed);
@@ -808,7 +811,8 @@ mod tests {
             let traditional_model = GeneralNoiseModelBuilder::new()
                 .with_p1(p1)
                 .with_p_meas_symmetric(p_meas)
-                .build();
+                .build()
+                .unwrap();
 
             let mut state_trad = SparseStab::with_seed(1, seed);
             let mut runner_trad = CircuitRunner::<SparseStab>::new()
@@ -1266,7 +1270,8 @@ mod tests {
             0.0,
             crate::noise::SingleQubitEmissionWeights::default(),
             0.0,
-        );
+        )
+        .unwrap();
 
         // Wrap it in a composite primitive and use within a decision tree
         let flow_noise = seq![skip_if_leaked(), channel_action(traditional_channel),];
@@ -1315,7 +1320,8 @@ mod tests {
             0.0,
             crate::noise::SingleQubitEmissionWeights::default(),
             0.0,
-        );
+        )
+        .unwrap();
 
         // Use channel_action in a conditional: only apply when not leaked
         let noise = when_leaked(
@@ -1385,7 +1391,7 @@ mod tests {
             skip_if_leaked(),
             prob(
                 0.01,
-                when_leaked(seep(), sample![(0.25, leak()), (0.75, pauli()),],)
+                when_leaked(seep(), sample![(0.25, leak()), (0.75, pauli()),].unwrap(),)
             )
             .unwrap(),
         ];

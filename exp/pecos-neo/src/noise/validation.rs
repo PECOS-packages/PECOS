@@ -112,16 +112,18 @@ pub fn validate_probability(p: f64, field: &str) -> ValidationResult<f64> {
     Ok(p)
 }
 
-/// Validate that weights are non-negative.
+/// Validate that weights are finite and non-negative.
 ///
 /// # Errors
 ///
-/// Returns an error if any weight is negative or NaN.
+/// Returns an error if any weight is negative or non-finite.
 pub fn validate_weights(weights: &[f64], field: &str) -> ValidationResult<()> {
     for (i, &w) in weights.iter().enumerate() {
-        if w.is_nan() {
+        if !w.is_finite() {
             return Err(
-                ValidationError::new(field, format!("weight[{i}] cannot be NaN")).with_value(&w),
+                ValidationError::new(field, format!("weight[{i}] must be finite"))
+                    .with_value(&w)
+                    .with_suggestion("Use finite non-negative weights"),
             );
         }
         if w < 0.0 {
@@ -135,20 +137,35 @@ pub fn validate_weights(weights: &[f64], field: &str) -> ValidationResult<()> {
     Ok(())
 }
 
-/// Validate that weights sum to a positive value.
+/// Validate finite, non-negative weights whose sum is finite and positive.
 ///
 /// # Errors
 ///
-/// Returns an error if the sum is zero or negative.
+/// Returns an error for invalid weights, an empty or zero total, or sum overflow.
 pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()> {
     validate_weights(weights, field)?;
     let sum: f64 = weights.iter().sum();
-    if sum <= 0.0 {
+    if !sum.is_finite() || sum <= 0.0 {
         return Err(
-            ValidationError::new(field, "weights must sum to a positive value")
+            ValidationError::new(field, "weights must sum to a finite positive value")
                 .with_value(&sum)
-                .with_suggestion("Ensure at least one weight is positive"),
+                .with_suggestion("Ensure at least one weight is positive and reduce weights if their sum overflows"),
         );
+    }
+    Ok(())
+}
+
+/// Validate probabilities forming a normalized discrete distribution.
+///
+/// # Errors
+/// Rejects non-finite or negative weights and totals differing from one.
+pub fn validate_distribution(weights: &[f64], field: &str) -> ValidationResult<()> {
+    validate_weights_sum(weights, field)?;
+    let total: f64 = weights.iter().sum();
+    if (total - 1.0).abs() >= 1e-6 {
+        return Err(ValidationError::new(field, "weights must sum to 1.0")
+            .with_value(&total)
+            .with_suggestion("Normalize the weights so their sum is 1.0"));
     }
     Ok(())
 }

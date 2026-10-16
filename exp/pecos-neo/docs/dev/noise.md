@@ -34,19 +34,19 @@ let noise = CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Base error probability
-    .with_p1(0.001).unwrap()
+    .with_p1(0.001)?
 
     // Of errors, what fraction are emission (vs Pauli)
-    .with_p1_emission_ratio(0.1).unwrap()
+    .with_p1_emission_ratio(0.1)?
 
     // Seepage probability (leaked qubit returns to computational space)
-    .with_p1_seepage(0.05).unwrap()
+    .with_p1_seepage(0.05)?
 
     // Custom Pauli weights (default: uniform X, Y, Z)
-    .with_p1_pauli_weights(PauliWeights::new(0.25, 0.25, 0.50))  // More Z errors
+    .with_p1_pauli_weights(PauliWeights::new(0.25, 0.25, 0.50))?  // More Z errors
 
     // Custom emission model
-    .with_p1_emission_model(SingleQubitEmissionWeights { ... })
+    .with_p1_emission_model(SingleQubitEmissionWeights { ... })?
 ```
 
 #### Two-Qubit Gates
@@ -54,23 +54,23 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Base error probability
-    .with_p2(0.01).unwrap()
+    .with_p2(0.01)?
 
     // Emission vs Pauli ratio
-    .with_p2_emission_ratio(0.1).unwrap()
+    .with_p2_emission_ratio(0.1)?
 
     // Seepage for leaked qubits
-    .with_p2_seepage(0.05).unwrap()
+    .with_p2_seepage(0.05)?
 
     // Angle-dependent scaling (for RZZ, etc.)
     .with_p2_angle_scaling(AngleScaling::Quadratic)
 
     // Apply configured idle noise for one time unit after each two-qubit gate
-    .with_p_idle_linear(0.001).unwrap()
-    .with_idle_after_2q(1.0).unwrap()
+    .with_p_idle_linear(0.001)?
+    .with_idle_after_2q(1.0)?
 
     // Custom two-qubit Pauli model
-    .with_p2_pauli_model(TwoQubitPauliWeights { ... })
+    .with_p2_pauli_model(TwoQubitPauliWeights { ... })?
 ```
 
 #### Preparation
@@ -159,9 +159,9 @@ let circuit = CommandBuilder::new()
 
 // Build noise model
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001).unwrap()
-    .with_p2(0.01).unwrap()
-    .build().unwrap();
+    .with_p1(0.001)?
+    .with_p2(0.01)?
+    .build()?;
 
 // Run with noise
 let mut state = SparseStab::new(2);
@@ -170,8 +170,8 @@ let mut runner = CircuitRunner::<SparseStab>::new()
     .with_seed(42);
 
 let outcomes = runner.apply_circuit(&mut state, &circuit)?;
-println!("Qubit 0: {}", outcomes.get_bit(QubitId(0)).unwrap());
-println!("Qubit 1: {}", outcomes.get_bit(QubitId(1)).unwrap());
+println!("Qubit 0: {}", outcomes.get_bit(QubitId(0))?);
+println!("Qubit 1: {}", outcomes.get_bit(QubitId(1))?);
 ```
 
 ## Custom Noise with Primitives
@@ -246,7 +246,7 @@ nothing()
 
 // Pauli errors
 pauli()                    // Uniform X, Y, Z
-pauli_weighted(0.3, 0.3, 0.4)  // Custom weights
+pauli_weighted(0.3, 0.3, 0.4)?  // Custom weights
 depolarize()               // Same as uniform pauli
 dephase()                  // Z error only
 
@@ -386,11 +386,11 @@ use pecos_neo::noise::plugins::CorePlugin;
 
 let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)  // State tracking
-    .add_channel(SingleQubitChannel::depolarizing(0.001))
-    .add_channel(TwoQubitChannel::depolarizing(0.01)
+    .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+    .add_channel(TwoQubitChannel::depolarizing(0.01)?
         .with_angle_scaling(AngleScaling::linear()))
-    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03))
-    .add_channel(IdleChannel::linear(0.0001).unwrap()
+    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03)?)
+    .add_channel(IdleChannel::linear(0.0001)?
         .with_linear_depolarizing());
 ```
 
@@ -405,11 +405,11 @@ use pecos_neo::noise::*;
 let noise = GeneralNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
-    .build()
+    .build()?
     // Add custom channels
     .add_channel(CrosstalkChannel::new()
-        .with_global_rate(0.001)
-        .with_transitions(CrosstalkTransitions::symmetric_with_leakage()));
+        .with_global_rate(0.001)?
+        .with_transitions(CrosstalkTransitions::symmetric_with_leakage())?);
 ```
 
 ### Custom Channels
@@ -506,7 +506,7 @@ use pecos_neo::noise::plugins::*;
 let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)                           // State tracking
     .add_plugin(LeakagePlugin::new())                 // Leakage handling
-    .add_plugin(DepolarizingPlugin::new(0.01, 0.02)); // Simple depolarizing
+    .add_plugin(DepolarizingPlugin::new(0.01, 0.02)?); // Simple depolarizing
 ```
 
 ## Key Types Reference
@@ -520,10 +520,10 @@ Control error distributions:
 PauliWeights::uniform()  // 1/3 X, 1/3 Y, 1/3 Z
 
 // Z-biased (dephasing)
-PauliWeights::z_biased(0.9)  // 90% Z, 5% X, 5% Y
+PauliWeights::z_biased(0.9)?  // 90% Z, 5% X, 5% Y
 
 // Custom
-PauliWeights::custom(0.1, 0.2, 0.7)  // 10% X, 20% Y, 70% Z
+PauliWeights::custom(0.1, 0.2, 0.7)?  // 10% X, 20% Y, 70% Z
 ```
 
 ### Emission Weights
@@ -583,5 +583,5 @@ CrosstalkTransitions::symmetric_with_leakage()
 CrosstalkTransitions::custom(
     from_0_stay, from_0_flip, from_0_leak,
     from_1_stay, from_1_flip, from_1_leak,
-)
+)?
 ```

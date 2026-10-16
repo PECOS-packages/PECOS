@@ -161,7 +161,10 @@ impl GeometricSampler {
         if self.probability >= 1.0 {
             return Some(start);
         }
-        let u: f64 = rng.random();
+        self.event_from_uniform(start, end, rng.random())
+    }
+
+    fn event_from_uniform(&self, start: usize, end: usize, u: f64) -> Option<usize> {
         let skip = if u > 0.0 {
             // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
@@ -169,7 +172,7 @@ impl GeometricSampler {
                 (u.ln() / self.log_1_minus_p).floor() as usize
             }
         } else {
-            0
+            return None;
         };
 
         let pos = start.checked_add(skip)?;
@@ -312,12 +315,15 @@ pub struct ProbabilityThreshold {
 
 impl ProbabilityThreshold {
     /// Create a new probability threshold.
-    #[must_use]
-    pub fn new(probability: f64, rng: &PecosRng) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(probability: f64, rng: &PecosRng) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
+        Ok(Self {
             threshold: rng.probability_threshold(probability),
             probability,
-        }
+        })
     }
 }
 
@@ -398,6 +404,13 @@ pub fn geometric(probability: f64) -> ValidationResult<GeometricSampler> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_uniform_draw_has_no_geometric_event() {
+        let sampler = GeometricSampler::new(0.5).unwrap();
+        assert_eq!(sampler.event_from_uniform(0, 10, 0.0), None);
+        assert_eq!(sampler.event_from_uniform(5, 10, 0.5), Some(6));
+    }
 
     #[test]
     fn geometric_sampler_handles_boundaries_and_tiny_probabilities() {
@@ -513,7 +526,7 @@ mod tests {
     #[test]
     fn test_probability_threshold() {
         let rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.001, &rng);
+        let threshold = ProbabilityThreshold::new(0.001, &rng).unwrap();
 
         assert!((threshold.probability - 0.001).abs() < 1e-10);
         assert!(threshold.threshold > 0);
@@ -522,7 +535,7 @@ mod tests {
     #[test]
     fn test_filter_by_probability_fast() {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.01, &rng);
+        let threshold = ProbabilityThreshold::new(0.01, &rng).unwrap();
 
         let result = filter_by_probability_fast(10000, &threshold, &mut rng);
 
@@ -537,7 +550,7 @@ mod tests {
     #[test]
     fn test_sample_noise_1q_batch() {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.01, &rng);
+        let threshold = ProbabilityThreshold::new(0.01, &rng).unwrap();
 
         let result = sample_noise_1q_batch(10000, &threshold, &mut rng);
 
@@ -550,7 +563,7 @@ mod tests {
     #[test]
     fn test_sample_noise_2q_batch() {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.01, &rng);
+        let threshold = ProbabilityThreshold::new(0.01, &rng).unwrap();
 
         let result = sample_noise_2q_batch(10000, &threshold, &mut rng);
 

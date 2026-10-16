@@ -322,7 +322,7 @@ impl PauliStabilizerGroup {
         let exponents: Vec<u32> = (0..n)
             .map(|idx| u32::from(idx < 64 && mask & (1u64 << idx) != 0))
             .collect();
-        Ok(self.inner.element(&exponents))
+        self.inner.element(&exponents).map_err(Into::into)
     }
 
     /// Multiplies a Pauli string by the generator at the given index.
@@ -1044,13 +1044,13 @@ mod tests {
         let group = stab.as_group();
 
         // mask 0b01 = generator 0 only
-        assert_eq!(stab.element(0b01).unwrap(), group.element(&[1, 0]));
+        assert_eq!(stab.element(0b01).unwrap(), group.element(&[1, 0]).unwrap());
         // mask 0b10 = generator 1 only
-        assert_eq!(stab.element(0b10).unwrap(), group.element(&[0, 1]));
+        assert_eq!(stab.element(0b10).unwrap(), group.element(&[0, 1]).unwrap());
         // mask 0b11 = both generators
-        assert_eq!(stab.element(0b11).unwrap(), group.element(&[1, 1]));
+        assert_eq!(stab.element(0b11).unwrap(), group.element(&[1, 1]).unwrap());
         // mask 0b00 = identity
-        assert_eq!(stab.element(0b00).unwrap(), group.element(&[0, 0]));
+        assert_eq!(stab.element(0b00).unwrap(), group.element(&[0, 0]).unwrap());
     }
 
     #[test]

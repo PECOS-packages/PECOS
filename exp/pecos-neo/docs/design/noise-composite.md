@@ -682,13 +682,13 @@ fn test_sq_noise_expression() {
         SkipIf::new(Leaked),
         Prob::new(p1,
             When::new(Leaked,
-                Prob::new(p_seep, Seep).unwrap(),
+                Prob::new(p_seep, Seep)?,
                 Sample::new(vec![
                     (emission_ratio, EmissionNoise::new(...)),
                     (1.0 - emission_ratio, Pauli::uniform()),
-                ])
+                ])?
             )
-        ).unwrap(),
+        )?,
     ]);
 
     // Verify statistical distribution

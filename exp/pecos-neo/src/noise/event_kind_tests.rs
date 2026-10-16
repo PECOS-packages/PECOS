@@ -146,22 +146,25 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
     let gates = EventKinds::of(BeforeGate).with(AfterGate);
     let after_gate = EventKinds::of(AfterGate);
     let channels: Vec<(Box<dyn NoiseChannel>, EventKinds)> = vec![
-        (Box::new(SingleQubitChannel::depolarizing(0.2)), gates),
-        (Box::new(TwoQubitChannel::depolarizing(0.2)), gates),
+        (
+            Box::new(SingleQubitChannel::depolarizing(0.2).unwrap()),
+            gates,
+        ),
+        (Box::new(TwoQubitChannel::depolarizing(0.2).unwrap()), gates),
         (
             Box::new(LeakageChannel::new()),
             gates.with(BeforeMeasurement),
         ),
         (
-            Box::new(MeasurementChannel::symmetric(0.2)),
+            Box::new(MeasurementChannel::symmetric(0.2).unwrap()),
             EventKinds::of(AfterMeasurement),
         ),
         (
-            Box::new(MeasurementStateFlipChannel::new(0.2)),
+            Box::new(MeasurementStateFlipChannel::new(0.2).unwrap()),
             EventKinds::of(BeforeMeasurement),
         ),
         (
-            Box::new(PreparationChannel::new(0.2)),
+            Box::new(PreparationChannel::new(0.2).unwrap()),
             EventKinds::of(AfterPreparation),
         ),
         (
@@ -174,7 +177,7 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
             EventKinds::of(IdleTime).with(AfterGate),
         ),
         (
-            Box::new(CrosstalkChannel::global_only(0.2)),
+            Box::new(CrosstalkChannel::global_only(0.2).unwrap()),
             after_gate.with(AfterPreparation).with(AfterMeasurement),
         ),
         (
@@ -208,7 +211,7 @@ fn builtin_channel_kind_declarations_have_positive_witnesses() {
 
     // The wrapper conservatively declares ALL: its default try_apply consults
     // responds_to, not the inner channel's potentially optimized try_apply.
-    let inner = SingleQubitChannel::depolarizing(0.2);
+    let inner = SingleQubitChannel::depolarizing(0.2).unwrap();
     let wrapper =
         ImportanceSamplingChannel::new(inner.clone(), ImportanceConfig::with_boost(0.02, 10.0));
     assert_eq!(wrapper.event_kinds(), EventKinds::ALL);

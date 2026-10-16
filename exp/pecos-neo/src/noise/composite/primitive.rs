@@ -17,6 +17,7 @@
 
 use crate::noise::validation::{
     ValidationResult, validate_probability, validate_rate, validate_scaled_angle_rate,
+    validate_weights_sum,
 };
 use std::fmt::Write as _;
 
@@ -895,8 +896,14 @@ impl<P: Primitive> Sample<P> {
     /// Create a new weighted sample primitive.
     ///
     /// Weights are normalized to sum to 1.0.
-    #[must_use]
-    pub fn new(branches: Vec<(f64, P)>) -> Self {
+    ///
+    /// # Errors
+    /// Rejects non-finite or negative weights and a non-finite or non-positive total.
+    pub fn new(branches: Vec<(f64, P)>) -> ValidationResult<Self> {
+        validate_weights_sum(
+            &branches.iter().map(|(w, _)| *w).collect::<Vec<_>>(),
+            "sample weights",
+        )?;
         let total: f64 = branches.iter().map(|(w, _)| w).sum();
         let normalized: Vec<f64> = branches.iter().map(|(w, _)| w / total).collect();
 
@@ -907,10 +914,10 @@ impl<P: Primitive> Sample<P> {
             cumulative.push(sum);
         }
 
-        Self {
+        Ok(Self {
             branches,
             cumulative_weights: cumulative,
-        }
+        })
     }
 }
 
@@ -970,12 +977,14 @@ impl<P: Primitive> Primitive for Sample<P> {
     }
 
     fn clone_box(&self) -> Box<dyn Primitive> {
-        Box::new(BoxSample::new(
-            self.branches
+        Box::new(BoxSample {
+            branches: self
+                .branches
                 .iter()
                 .map(|(w, p)| (*w, p.clone_box()))
                 .collect(),
-        ))
+            cumulative_weights: self.cumulative_weights.clone(),
+        })
     }
 
     fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
@@ -1228,7 +1237,8 @@ macro_rules! seq {
 /// let noise = sample![
 ///     (0.25, leak()),
 ///     (0.75, pauli()),
-/// ];
+/// ]?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[macro_export]
 macro_rules! sample {
@@ -1265,8 +1275,14 @@ impl BoxSample {
     /// Create a new boxed weighted sample primitive.
     ///
     /// Weights are normalized to sum to 1.0.
-    #[must_use]
-    pub fn new(branches: Vec<(f64, Box<dyn Primitive>)>) -> Self {
+    ///
+    /// # Errors
+    /// Rejects non-finite or negative weights and a non-finite or non-positive total.
+    pub fn new(branches: Vec<(f64, Box<dyn Primitive>)>) -> ValidationResult<Self> {
+        validate_weights_sum(
+            &branches.iter().map(|(w, _)| *w).collect::<Vec<_>>(),
+            "sample weights",
+        )?;
         let total: f64 = branches.iter().map(|(w, _)| w).sum();
         let normalized: Vec<f64> = branches.iter().map(|(w, _)| w / total).collect();
 
@@ -1277,10 +1293,10 @@ impl BoxSample {
             cumulative.push(sum);
         }
 
-        Self {
+        Ok(Self {
             branches,
             cumulative_weights: cumulative,
-        }
+        })
     }
 }
 
@@ -1514,8 +1530,10 @@ pub mod primitives {
     /// Weighted sample (homogeneous types).
     ///
     /// For heterogeneous types, use the `sample!` macro.
-    #[must_use]
-    pub fn sample_uniform<P: Primitive>(branches: Vec<(f64, P)>) -> Sample<P> {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn sample_uniform<P: Primitive>(branches: Vec<(f64, P)>) -> ValidationResult<Sample<P>> {
         Sample::new(branches)
     }
 
@@ -1815,7 +1833,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // 70% inject X, 30% inject Z (homogeneous - both Inject type)
-        let prim = sample_uniform(vec![(0.7, inject_x()), (0.3, inject_z())]);
+        let prim = sample_uniform(vec![(0.7, inject_x()), (0.3, inject_z())]).unwrap();
 
         let mut x_count = 0;
         let mut z_count = 0;

@@ -94,10 +94,13 @@ impl CorrelatedNoiseChannel {
     }
 
     /// Set custom Pauli weights for the error distribution.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Enable correlation for single-qubit gates.
@@ -117,8 +120,7 @@ impl CorrelatedNoiseChannel {
         base_error_probability: f64,
         correlation: f64,
     ) -> ValidationResult<Self> {
-        Ok(Self::new(base_error_probability, correlation)?
-            .with_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0)))
+        Self::new(base_error_probability, correlation)?.with_pauli_weights(PauliWeights::z_only())
     }
 
     /// Calculate the conditional error probability given whether a correlated qubit had an error.

@@ -16,6 +16,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
@@ -49,21 +50,27 @@ impl Default for PreparationChannel {
 
 impl PreparationChannel {
     /// Create a preparation error channel.
-    #[must_use]
-    pub fn new(p: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             error_threshold: PecosRng::probability_threshold(p),
             ..Default::default()
-        }
+        })
     }
 
     /// Set the leakage ratio.
-    #[must_use]
-    pub fn with_leakage(mut self, ratio: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(mut self, ratio: f64) -> ValidationResult<Self> {
+        validate_probability(ratio, "ratio")?;
         self.leakage_ratio = ratio;
         self.leakage_threshold = PecosRng::probability_threshold(ratio);
-        self
+        Ok(self)
     }
 }
 
@@ -135,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_preparation_error() {
-        let channel = PreparationChannel::new(1.0); // Always error
+        let channel = PreparationChannel::new(1.0).unwrap(); // Always error
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };
@@ -164,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_preparation_marks_prepared() {
-        let channel = PreparationChannel::new(0.0); // No error
+        let channel = PreparationChannel::new(0.0).unwrap(); // No error
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };
@@ -182,7 +189,10 @@ mod tests {
 
     #[test]
     fn test_preparation_with_leakage() {
-        let channel = PreparationChannel::new(1.0).with_leakage(1.0); // Always leak
+        let channel = PreparationChannel::new(1.0)
+            .unwrap()
+            .with_leakage(1.0)
+            .unwrap(); // Always leak
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };

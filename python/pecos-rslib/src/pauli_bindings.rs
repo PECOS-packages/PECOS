@@ -32,22 +32,24 @@ pub(crate) fn extract_unsigned_index(
     label: impl std::fmt::Display,
 ) -> PyResult<u64> {
     use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
-    let supplied = value.repr()?.to_string();
-    let type_name = value.get_type().name()?.to_string();
     if value.is_instance_of::<pyo3::types::PyBool>() {
+        let supplied = value.repr()?.to_string();
         return Err(PyTypeError::new_err(format!(
             "{label} must be an integer, got bool {supplied}; supply an integer instead"
         )));
     }
-    value.extract::<u64>().map_err(|err| {
+    value.extract::<u64>().or_else(|err| {
         if err.is_instance_of::<PyOverflowError>(value.py()) {
-            PyValueError::new_err(format!(
+            let supplied = value.repr()?.to_string();
+            Err(PyValueError::new_err(format!(
                 "{label} must be a nonnegative unsigned 64-bit integer, got {supplied}; use a value from 0 through 18446744073709551615"
-            ))
+            )))
         } else if err.is_instance_of::<PyTypeError>(value.py()) {
-            PyTypeError::new_err(format!("{label} must be an integer, got {type_name} {supplied}; supply an integer"))
+            let supplied = value.repr()?.to_string();
+            let type_name = value.get_type().name()?.to_string();
+            Err(PyTypeError::new_err(format!("{label} must be an integer, got {type_name} {supplied}; supply an integer")))
         } else {
-            err
+            Err(err)
         }
     })
 }

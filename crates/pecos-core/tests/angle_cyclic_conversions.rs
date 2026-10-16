@@ -448,7 +448,7 @@ fn decimal_pi_overflow_is_an_error() {
     let text = format!("{}{}.0pi", "1", "0".repeat(308));
     assert!(matches!(
         Angle64::from_str_radians(&text),
-        Err(pecos_core::ParseAngleError::Overflow { .. })
+        Err(pecos_core::ParseAngleError::DecimalOverflow { .. })
     ));
 }
 

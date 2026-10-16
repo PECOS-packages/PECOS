@@ -31,12 +31,12 @@ combination of these.
 Pauli errors after single-qubit gates:
 
 ```rust
-SingleQubitChannel::depolarizing(0.001)
+SingleQubitChannel::depolarizing(0.001)?
 
 // With more control
-SingleQubitChannel::depolarizing(0.001)
-    .with_pauli_weights(PauliWeights::z_biased(0.9))   // 90% Z errors
-    .with_emission(0.1, 0.05)                           // 10% emission, 5% leakage
+SingleQubitChannel::depolarizing(0.001)?
+    .with_pauli_weights(PauliWeights::z_biased(0.9)?)?   // 90% Z errors
+    .with_emission(0.1, 0.05)?                           // 10% emission, 5% leakage
 ```
 
 Other constructors: `dephasing(p)`, `bit_flip(p)`.
@@ -46,10 +46,10 @@ Other constructors: `dephasing(p)`, `bit_flip(p)`.
 Pauli errors after two-qubit gates:
 
 ```rust
-TwoQubitChannel::depolarizing(0.01)
+TwoQubitChannel::depolarizing(0.01)?
 
 // With angle scaling (for parameterized gates like RZZ)
-TwoQubitChannel::depolarizing(0.01)
+TwoQubitChannel::depolarizing(0.01)?
     .with_angle_scaling(AngleScaling::linear())
 ```
 
@@ -61,8 +61,8 @@ Angle scaling options: `constant()`, `linear()`, `quadratic()`,
 Readout errors -- flips measurement outcomes with given probabilities.
 
 ```rust
-MeasurementChannel::symmetric(0.02)              // Same rate both directions
-MeasurementChannel::asymmetric(0.02, 0.03)       // P(0->1), P(1->0)
+MeasurementChannel::symmetric(0.02)?              // Same rate both directions
+MeasurementChannel::asymmetric(0.02, 0.03)?       // P(0->1), P(1->0)
 ```
 
 ### PreparationChannel
@@ -70,8 +70,8 @@ MeasurementChannel::asymmetric(0.02, 0.03)       // P(0->1), P(1->0)
 Errors during state preparation -- bit flips or leakage.
 
 ```rust
-PreparationChannel::new(0.001)
-    .with_leakage(0.1)    // 10% of prep errors cause leakage
+PreparationChannel::new(0.001)?
+    .with_leakage(0.1)?    // 10% of prep errors cause leakage
 ```
 
 ### IdleChannel
@@ -100,8 +100,8 @@ Errors on bystander qubits when gates or measurements happen nearby.
 
 ```rust
 CrosstalkChannel::new()
-    .with_global_rate(0.001)       // Affects all other qubits
-    .with_local_rate(0.01)         // Affects nearby qubits
+    .with_global_rate(0.001)?       // Affects all other qubits
+    .with_local_rate(0.01)?         // Affects nearby qubits
 ```
 
 ### LeakageChannel
@@ -111,7 +111,7 @@ processes before other channels.
 
 ```rust
 LeakageChannel::new()
-    .with_scale(1.0)
+    .with_scale(1.0)?
 ```
 
 ### GateDependentChannel

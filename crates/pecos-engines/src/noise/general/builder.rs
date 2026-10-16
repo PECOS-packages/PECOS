@@ -1489,25 +1489,36 @@ impl GeneralNoiseModelBuilder {
         let linear_rate = self
             .p_idle_linear_rate
             .unwrap_or(default.p_idle_linear_rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         let sine_rate = self
             .p_idle_sin_squared
             .as_ref()
             .map_or(default.p_idle_sin_squared_rate, |(rate, _)| *rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         let coherent_rate = self
             .p_idle_coherent
             .as_ref()
             .map_or(default.p_idle_coherent_rate, |(rate, _)| *rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         if ![linear_rate, sine_rate, coherent_rate]
             .into_iter()
             .all(finite_non_negative)
         {
             return Err("scaled idle rates must be finite and non-negative".to_string());
+        }
+        let duration = self.idle_after_2q.unwrap_or(default.idle_after_2q);
+        let coherent_model = self
+            .p_idle_coherent
+            .as_ref()
+            .map_or(&default.p_idle_coherent_model, |(_, model)| model);
+        for (axis, multiplier) in coherent_model {
+            let angle =
+                GeneralNoiseModel::coherent_rotation_angle(coherent_rate, *multiplier, duration);
+            if !angle.is_finite() {
+                return Err(format!(
+                    "p_idle_coherent scaled rate {coherent_rate} * {axis} multiplier {multiplier} * idle_after_2q {duration} produces {angle}; reduce the rate, multiplier, idle duration, or scale factors to keep the angle finite"
+                ));
+            }
         }
         Ok(())
     }

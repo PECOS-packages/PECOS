@@ -1303,13 +1303,13 @@ impl GeneralNoiseModel {
 
             match axis {
                 "RX" => {
-                    builder.rx(Angle64::try_from_radians(angle).expect("validate_frame_idle checked every coherent rate times multiplier times duration as finite"), &affected);
+                    builder.rx(Angle64::try_from_radians(angle).expect("build-time validation checks fixed idle_after_2q products; validate_frame_idle checks variable durations"), &affected);
                 }
                 "RY" => {
-                    builder.ry(Angle64::try_from_radians(angle).expect("validate_frame_idle checked every coherent rate times multiplier times duration as finite"), &affected);
+                    builder.ry(Angle64::try_from_radians(angle).expect("build-time validation checks fixed idle_after_2q products; validate_frame_idle checks variable durations"), &affected);
                 }
                 "RZ" => {
-                    builder.rz(Angle64::try_from_radians(angle).expect("validate_frame_idle checked every coherent rate times multiplier times duration as finite"), &affected);
+                    builder.rz(Angle64::try_from_radians(angle).expect("build-time validation checks fixed idle_after_2q products; validate_frame_idle checks variable durations"), &affected);
                 }
                 _ => unreachable!("coherent-family model was validated by the builder"),
             }
@@ -2316,21 +2316,17 @@ mod tests {
     use pecos_core::Angle64;
 
     #[test]
-    fn gate_sequence_validates_after_two_qubit_idle_before_mutation() {
+    fn build_rejects_overflowing_after_two_qubit_idle() {
         let coherent = BTreeMap::from([("RZ".to_string(), 1.0)]);
-        let mut model = GeneralNoiseModel::builder()
+        let error = GeneralNoiseModel::builder()
             .with_p_idle_coherent(1e300, &coherent)
             .with_idle_after_2q(1e10)
-            .build();
-        let mut output = ByteMessage::quantum_operations_builder();
-        output.h(&[7]);
-        let expected = output.clone().build();
-        let error = model
-            .apply_gate_sequence(vec![Gate::h(&[0])].into_iter(), &mut output, None)
+            .try_build()
             .unwrap_err();
-        assert!(matches!(error, PecosError::Input(_)));
-        assert!(error.to_string().contains("inf radians"));
-        assert_eq!(output.build().as_bytes(), expected.as_bytes());
+        let message = error.to_string();
+        assert!(message.contains("idle_after_2q"), "{message}");
+        assert!(message.contains("inf"), "{message}");
+        assert!(message.contains("reduce"), "{message}");
     }
 
     fn assert_float_eq(actual: f64, expected: f64) {

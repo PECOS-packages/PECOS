@@ -22,6 +22,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -76,10 +77,13 @@ impl LeakageChannel {
     }
 
     /// Set the leakage scale factor.
-    #[must_use]
-    pub fn with_scale(mut self, scale: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        validate_probability(scale, "scale")?;
         self.leakage_scale = scale;
-        self
+        Ok(self)
     }
 }
 

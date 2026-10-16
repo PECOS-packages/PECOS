@@ -39,10 +39,11 @@
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // One-liner for basic depolarizing
-//! let model = depolarizing_only(0.001, 0.01);
+//! let model = depolarizing_only(0.001, 0.01)?;
 //!
 //! // Add measurement errors
-//! let model = depolarizing_with_measurement(0.001, 0.01, 0.02);
+//! let model = depolarizing_with_measurement(0.001, 0.01, 0.02)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Asymmetric Measurement
@@ -51,7 +52,8 @@
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Different error rates for 0->1 vs 1->0
-//! let model = measurement_only(0.01, 0.05);  // 1% and 5%
+//! let model = measurement_only(0.01, 0.05)?;  // 1% and 5%
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Spatial Noise
@@ -75,7 +77,7 @@ use super::composite::prelude::*;
 #[cfg(feature = "composite-noise")]
 use super::topology::{chain_neighbors, grid_neighbors};
 #[cfg(feature = "composite-noise")]
-use super::validation::validate_rate;
+use super::validation::{validate_probability, validate_rate};
 use crate::noise::validation::ValidationResult;
 
 // ============================================================================
@@ -95,10 +97,13 @@ use crate::noise::validation::ValidationResult;
 ///
 /// ```
 /// # use pecos_neo::noise::prelude::*;
-/// let model = depolarizing_only(0.001, 0.01);
+/// let model = depolarizing_only(0.001, 0.01)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[must_use]
-pub fn depolarizing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
+///
+/// # Errors
+/// Returns an error for invalid probabilities, weights, or noise configuration.
+pub fn depolarizing_only(p1: f64, p2: f64) -> ValidationResult<ComposableNoiseModel> {
     NoiseModelBuilder::new().with_depolarizing(p1, p2).build()
 }
 
@@ -114,10 +119,17 @@ pub fn depolarizing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
 ///
 /// ```
 /// # use pecos_neo::noise::prelude::*;
-/// let model = depolarizing_with_measurement(0.001, 0.01, 0.02);
+/// let model = depolarizing_with_measurement(0.001, 0.01, 0.02)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[must_use]
-pub fn depolarizing_with_measurement(p1: f64, p2: f64, p_meas: f64) -> ComposableNoiseModel {
+///
+/// # Errors
+/// Returns an error for invalid probabilities, weights, or noise configuration.
+pub fn depolarizing_with_measurement(
+    p1: f64,
+    p2: f64,
+    p_meas: f64,
+) -> ValidationResult<ComposableNoiseModel> {
     NoiseModelBuilder::new()
         .with_depolarizing(p1, p2)
         .with_measurement_error(p_meas)
@@ -138,13 +150,16 @@ pub fn depolarizing_with_measurement(p1: f64, p2: f64, p_meas: f64) -> Composabl
 /// ```
 /// # use pecos_neo::noise::prelude::*;
 /// // Symmetric measurement error
-/// let model = measurement_only(0.02, 0.02);
+/// let model = measurement_only(0.02, 0.02)?;
 ///
 /// // Asymmetric measurement error
-/// let model = measurement_only(0.01, 0.03);
+/// let model = measurement_only(0.01, 0.03)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[must_use]
-pub fn measurement_only(p01: f64, p10: f64) -> ComposableNoiseModel {
+///
+/// # Errors
+/// Returns an error for invalid probabilities, weights, or noise configuration.
+pub fn measurement_only(p01: f64, p10: f64) -> ValidationResult<ComposableNoiseModel> {
     NoiseModelBuilder::new()
         .with_measurement_error_asymmetric(p01, p10)
         .build()
@@ -213,6 +228,10 @@ pub fn with_leakage(
     emission_ratio: f64,
     seepage_rate: f64,
 ) -> ValidationResult<ComposableNoiseModel> {
+    validate_probability(p1, "p1")?;
+    validate_probability(p2, "p2")?;
+    validate_probability(emission_ratio, "emission_ratio")?;
+    validate_probability(seepage_rate, "seepage_rate")?;
     let pauli_ratio = 1.0 - emission_ratio;
 
     // Single-qubit noise with leakage
@@ -222,7 +241,7 @@ pub fn with_leakage(
             p1,
             when_leaked(
                 prob(seepage_rate, seep())?,
-                sample![(emission_ratio, leak()), (pauli_ratio, pauli())],
+                sample![(emission_ratio, leak()), (pauli_ratio, pauli())]?,
             ),
         )?,
     ];
@@ -235,7 +254,7 @@ pub fn with_leakage(
             p2,
             when_leaked(
                 prob(seepage_rate, seep())?,
-                sample![(emission_ratio, leak()), (pauli_ratio, pauli())],
+                sample![(emission_ratio, leak()), (pauli_ratio, pauli())]?,
             ),
         )?,
     ];
@@ -393,54 +412,76 @@ impl DeviceNoiseParams {
     }
 
     /// Set single-qubit gate error probability.
-    #[must_use]
-    pub fn with_p1(mut self, p1: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p1(mut self, p1: f64) -> ValidationResult<Self> {
+        validate_probability(p1, "p1")?;
         self.p1 = p1;
-        self
+        Ok(self)
     }
 
     /// Set two-qubit gate error probability.
-    #[must_use]
-    pub fn with_p2(mut self, p2: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p2(mut self, p2: f64) -> ValidationResult<Self> {
+        validate_probability(p2, "p2")?;
         self.p2 = p2;
-        self
+        Ok(self)
     }
 
     /// Set symmetric measurement error probability.
-    #[must_use]
-    pub fn with_measurement_error(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_measurement_error(mut self, p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
         self.p_meas_01 = p;
         self.p_meas_10 = p;
-        self
+        Ok(self)
     }
 
     /// Set asymmetric measurement error probabilities.
-    #[must_use]
-    pub fn with_asymmetric_measurement(mut self, p01: f64, p10: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_asymmetric_measurement(mut self, p01: f64, p10: f64) -> ValidationResult<Self> {
+        validate_probability(p01, "p01")?;
+        validate_probability(p10, "p10")?;
         self.p_meas_01 = p01;
         self.p_meas_10 = p10;
-        self
+        Ok(self)
     }
 
     /// Set preparation error probability.
-    #[must_use]
-    pub fn with_prep_error(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_prep_error(mut self, p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
         self.p_prep = p;
-        self
+        Ok(self)
     }
 
     /// Set leakage rate (fraction of errors that cause leakage).
-    #[must_use]
-    pub fn with_leakage(mut self, rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(mut self, rate: f64) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
         self.leakage_rate = rate;
-        self
+        Ok(self)
     }
 
     /// Set seepage rate (probability of returning from leaked state).
-    #[must_use]
-    pub fn with_seepage(mut self, rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_seepage(mut self, rate: f64) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
         self.seepage_rate = rate;
-        self
+        Ok(self)
     }
 
     /// Set T1 relaxation rate (per time unit).
@@ -476,12 +517,13 @@ impl DeviceNoiseParams {
 /// # use pecos_neo::noise::prelude::*;
 /// let model = realistic_device_noise(
 ///     &DeviceNoiseParams::new()
-///         .with_p1(0.001)
-///         .with_p2(0.01)
-///         .with_measurement_error(0.02)
-///         .with_t1(0.0001).unwrap()
-///         .with_t2(0.0005).unwrap()
-/// ).unwrap();
+///         .with_p1(0.001)?
+///         .with_p2(0.01)?
+///         .with_measurement_error(0.02)?
+///         .with_t1(0.0001)?
+///         .with_t2(0.0005)?
+/// )?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
@@ -490,6 +532,13 @@ impl DeviceNoiseParams {
 pub fn realistic_device_noise(
     params: &DeviceNoiseParams,
 ) -> ValidationResult<ComposableNoiseModel> {
+    validate_probability(params.p1, "p1")?;
+    validate_probability(params.p2, "p2")?;
+    validate_probability(params.p_meas_01, "p_meas_01")?;
+    validate_probability(params.p_meas_10, "p_meas_10")?;
+    validate_probability(params.p_prep, "p_prep")?;
+    validate_probability(params.leakage_rate, "leakage_rate")?;
+    validate_probability(params.seepage_rate, "seepage_rate")?;
     validate_rate(params.t1_rate, "t1_rate")?;
     validate_rate(params.t2_rate, "t2_rate")?;
     let mut builder = NoiseModelBuilder::new();
@@ -505,7 +554,7 @@ pub fn realistic_device_noise(
                 params.p1,
                 when_leaked(
                     prob(params.seepage_rate, seep())?,
-                    sample![(params.leakage_rate, leak()), (pauli_ratio, pauli()),],
+                    sample![(params.leakage_rate, leak()), (pauli_ratio, pauli()),]?,
                 ),
             )?,
         ];
@@ -525,7 +574,7 @@ pub fn realistic_device_noise(
         builder = builder.with_preparation_error(params.p_prep);
     }
 
-    let mut model = builder.build();
+    let mut model = builder.build()?;
 
     // Add idle noise if rates are set
     if params.t1_rate > 0.0 {
@@ -583,7 +632,7 @@ pub fn surface_code_noise(
     let mut model = NoiseModelBuilder::new()
         .with_depolarizing(p1, p2)
         .with_measurement_error(p_meas)
-        .build();
+        .build()?;
 
     if with_crosstalk {
         // Add global measurement crosstalk for surface code
@@ -610,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_only() {
-        let model = depolarizing_only(0.5, 0.5);
+        let model = depolarizing_only(0.5, 0.5).unwrap();
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
         let mut state = SparseStab::with_seed(1, 42);
@@ -630,7 +679,7 @@ mod tests {
         let mut errors = 0;
         for seed in 0..100 {
             // Recreate model for each iteration since ComposableNoiseModel doesn't Clone
-            let model = depolarizing_with_measurement(0.0, 0.0, 0.5);
+            let model = depolarizing_with_measurement(0.0, 0.0, 0.5).unwrap();
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
@@ -706,8 +755,11 @@ mod tests {
     fn test_realistic_device_noise() {
         let params = DeviceNoiseParams::new()
             .with_p1(0.001)
+            .unwrap()
             .with_p2(0.01)
-            .with_measurement_error(0.02);
+            .unwrap()
+            .with_measurement_error(0.02)
+            .unwrap();
 
         let model = realistic_device_noise(&params).unwrap();
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
@@ -743,11 +795,17 @@ mod tests {
     fn test_device_params_builder() {
         let params = DeviceNoiseParams::new()
             .with_p1(0.001)
+            .unwrap()
             .with_p2(0.01)
+            .unwrap()
             .with_asymmetric_measurement(0.01, 0.03)
+            .unwrap()
             .with_prep_error(0.005)
+            .unwrap()
             .with_leakage(0.1)
+            .unwrap()
             .with_seepage(0.5)
+            .unwrap()
             .with_t1(0.0001)
             .unwrap()
             .with_t2(0.0005)

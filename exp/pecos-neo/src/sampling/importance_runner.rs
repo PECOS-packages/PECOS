@@ -1303,7 +1303,8 @@ mod tests {
             .with_p_idle_quadratic(0.25)
             .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_noise(noise);

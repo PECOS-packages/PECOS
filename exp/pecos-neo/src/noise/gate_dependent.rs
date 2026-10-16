@@ -18,6 +18,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::ValidationResult;
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -43,10 +44,13 @@ impl GateNoiseConfig {
     }
 
     /// Set custom Pauli weights.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 }
 
@@ -300,7 +304,9 @@ mod tests {
     fn test_gate_dependent_custom_pauli_weights() {
         let channel = GateDependentChannel::new().with_gate(
             GateType::H,
-            GateNoiseConfig::new(1.0).with_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0)),
+            GateNoiseConfig::new(1.0)
+                .with_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0).unwrap())
+                .unwrap(),
         );
 
         let qubits = [QubitId(0)];

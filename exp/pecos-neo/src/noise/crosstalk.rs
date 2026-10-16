@@ -34,14 +34,16 @@
 //!
 //! // Create a crosstalk channel with different local and global rates
 //! let crosstalk = CrosstalkChannel::new()
-//!     .with_local_rate(0.01)    // 1% chance per local qubit
+//!     .with_local_rate(0.01)?    // 1% chance per local qubit
 //!     .with_global_rate(0.001); // 0.1% chance per global qubit
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use super::{
     CrosstalkResult, CrosstalkTransitions, NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse,
 };
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -111,17 +113,23 @@ impl CrosstalkChannel {
     }
 
     /// Set the local crosstalk rate (affects neighbor qubits).
-    #[must_use]
-    pub fn with_local_rate(mut self, rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_local_rate(mut self, rate: f64) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
         self.local_rate = rate;
-        self
+        Ok(self)
     }
 
     /// Set the global crosstalk rate (affects non-neighbor qubits).
-    #[must_use]
-    pub fn with_global_rate(mut self, rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_global_rate(mut self, rate: f64) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
         self.global_rate = rate;
-        self
+        Ok(self)
     }
 
     /// Set the function that determines neighbor qubits.
@@ -137,10 +145,13 @@ impl CrosstalkChannel {
     ///
     /// This is used with the simple crosstalk model. For state-dependent
     /// transitions (including state-dependent leakage), use `with_transitions`.
-    #[must_use]
-    pub fn with_leakage(mut self, probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(mut self, probability: f64) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
         self.leakage_probability = probability;
-        self
+        Ok(self)
     }
 
     /// Set state-dependent transition probabilities for measurement crosstalk.
@@ -152,19 +163,25 @@ impl CrosstalkChannel {
     /// - Leak out of computational subspace
     ///
     /// When this is set, the simple `leakage_probability` is ignored.
-    #[must_use]
-    pub fn with_transitions(mut self, transitions: CrosstalkTransitions) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_transitions(mut self, transitions: CrosstalkTransitions) -> ValidationResult<Self> {
+        transitions.validate()?;
         self.transitions = Some(transitions);
-        self
+        Ok(self)
     }
 
     /// Create a simple crosstalk channel with uniform global rate.
-    #[must_use]
-    pub fn global_only(rate: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn global_only(rate: f64) -> ValidationResult<Self> {
+        validate_probability(rate, "rate")?;
+        Ok(Self {
             global_rate: rate,
             ..Default::default()
-        }
+        })
     }
 
     /// Get the neighbor qubits for a set of gated qubits.
@@ -323,8 +340,11 @@ mod tests {
     fn test_crosstalk_channel_creation() {
         let channel = CrosstalkChannel::new()
             .with_local_rate(0.01)
+            .unwrap()
             .with_global_rate(0.001)
-            .with_leakage(0.1);
+            .unwrap()
+            .with_leakage(0.1)
+            .unwrap();
 
         assert!((channel.local_rate - 0.01).abs() < 1e-10);
         assert!((channel.global_rate - 0.001).abs() < 1e-10);
@@ -333,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_crosstalk_global_only() {
-        let channel = CrosstalkChannel::global_only(0.1);
+        let channel = CrosstalkChannel::global_only(0.1).unwrap();
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };
@@ -362,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_no_crosstalk_on_inactive_qubits() {
-        let channel = CrosstalkChannel::global_only(1.0); // 100% rate
+        let channel = CrosstalkChannel::global_only(1.0).unwrap(); // 100% rate
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };
@@ -395,8 +415,10 @@ mod tests {
         }
 
         let channel = CrosstalkChannel::new()
-            .with_local_rate(1.0) // Always hit local
-            .with_global_rate(0.0) // Never hit global
+            .with_local_rate(1.0)
+            .unwrap() // Always hit local
+            .with_global_rate(0.0)
+            .unwrap() // Never hit global
             .with_neighbor_function(neighbors);
 
         let qubits = [QubitId(5)];
@@ -429,11 +451,14 @@ mod tests {
         let transitions = CrosstalkTransitions::custom(
             0.0, 1.0, 0.0, // from 0: always flip
             0.0, 1.0, 0.0, // from 1: always flip
-        );
+        )
+        .unwrap();
 
         let channel = CrosstalkChannel::new()
             .with_global_rate(1.0)
-            .with_transitions(transitions);
+            .unwrap()
+            .with_transitions(transitions)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };
@@ -461,11 +486,14 @@ mod tests {
         let transitions = CrosstalkTransitions::custom(
             0.0, 0.0, 1.0, // from 0: always leak
             0.0, 0.0, 1.0, // from 1: always leak
-        );
+        )
+        .unwrap();
 
         let channel = CrosstalkChannel::new()
             .with_global_rate(1.0)
-            .with_transitions(transitions);
+            .unwrap()
+            .with_transitions(transitions)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterPreparation { qubits: &qubits };

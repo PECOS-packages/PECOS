@@ -36,6 +36,7 @@ fn builder(classical: bool) -> SimNeoBuilder {
     builder
         .quantum(sparse_stab())
         .depolarizing(0.07)
+        .unwrap()
         .seed(12345)
 }
 

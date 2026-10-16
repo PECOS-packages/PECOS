@@ -36,6 +36,7 @@ use super::{
     TwoQubitPauliWeights,
 };
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability, validate_rate};
 use pecos_core::Angle64;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -307,7 +308,9 @@ impl TwoQubitChannel {
     /// Create a new channel with all parameters specified.
     ///
     /// Precomputes probability thresholds for faster sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
     pub fn new(
         error_probability: f64,
         angle_scaling: AngleScaling,
@@ -315,8 +318,13 @@ impl TwoQubitChannel {
         emission_ratio: f64,
         emission_weights: TwoQubitEmissionWeights,
         seepage_probability: f64,
-    ) -> Self {
-        Self {
+    ) -> ValidationResult<Self> {
+        pauli_weights.validate()?;
+        emission_weights.validate()?;
+        validate_probability(error_probability, "error_probability")?;
+        validate_probability(emission_ratio, "emission_ratio")?;
+        validate_probability(seepage_probability, "seepage_probability")?;
+        Ok(Self {
             error_probability,
             angle_scaling,
             pauli_weights,
@@ -325,16 +333,19 @@ impl TwoQubitChannel {
             seepage_probability,
             seepage_threshold: PecosRng::probability_threshold(seepage_probability),
             emission_threshold: PecosRng::probability_threshold(emission_ratio),
-        }
+        })
     }
 
     /// Create a depolarizing noise channel.
-    #[must_use]
-    pub fn depolarizing(p: f64) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn depolarizing(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             ..Default::default()
-        }
+        })
     }
 
     /// Set angle-dependent scaling.
@@ -348,47 +359,68 @@ impl TwoQubitChannel {
     ///
     /// This is a convenience method that configures emission weights
     /// to include leakage with the specified probability on both qubits.
-    #[must_use]
-    pub fn with_leakage(mut self, ratio: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(mut self, ratio: f64) -> ValidationResult<Self> {
+        validate_probability(ratio, "ratio")?;
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         // Use uniform with leakage distribution
         self.emission_weights = TwoQubitEmissionWeights::uniform_with_leakage();
-        self
+        Ok(self)
     }
 
     /// Set the emission error ratio with custom emission weights.
-    #[must_use]
-    pub fn with_emission_weights(mut self, ratio: f64, weights: TwoQubitEmissionWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_emission_weights(
+        mut self,
+        ratio: f64,
+        weights: TwoQubitEmissionWeights,
+    ) -> ValidationResult<Self> {
+        weights.validate()?;
+        validate_probability(ratio, "ratio")?;
         self.emission_ratio = ratio;
         self.emission_threshold = PecosRng::probability_threshold(ratio);
         self.emission_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set the seepage probability.
-    #[must_use]
-    pub fn with_seepage(mut self, p: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_seepage(mut self, p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
         self.seepage_probability = p;
         self.seepage_threshold = PecosRng::probability_threshold(p);
-        self
+        Ok(self)
     }
 
     /// Set the Pauli error distribution.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: TwoQubitPauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: TwoQubitPauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Scale the error probability by a factor.
     ///
     /// This multiplies the current error probability by `scale`.
     /// Useful for globally adjusting noise levels.
-    #[must_use]
-    pub fn with_scale(mut self, scale: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        validate_rate(scale, "scale")?;
+        validate_probability(self.error_probability * scale, "error_probability * scale")?;
         self.error_probability *= scale;
-        self
+        Ok(self)
     }
 
     /// Get the effective error probability for a gate, considering angle scaling.
@@ -673,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_batched_two_qubit_faults() {
-        let channel = TwoQubitChannel::depolarizing(0.5);
+        let channel = TwoQubitChannel::depolarizing(0.5).unwrap();
         let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
         let trailing = [QubitId(4), QubitId(5)];
         for seed in 0..32 {
@@ -719,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_channel() {
-        let channel = TwoQubitChannel::depolarizing(1.0);
+        let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -742,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_no_error_on_single_qubit_gate() {
-        let channel = TwoQubitChannel::depolarizing(1.0);
+        let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -758,7 +790,7 @@ mod tests {
 
     #[test]
     fn zero_error_probability_keeps_both_dispatch_guards() {
-        let channel = TwoQubitChannel::depolarizing(0.0);
+        let channel = TwoQubitChannel::depolarizing(0.0).unwrap();
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,
@@ -781,10 +813,13 @@ mod tests {
         let mut weights = [0.0; 15];
         weights[14] = 1.0;
         let two_qubit = TwoQubitChannel::depolarizing(0.5)
-            .with_pauli_weights(TwoQubitPauliWeights::custom(weights));
+            .unwrap()
+            .with_pauli_weights(TwoQubitPauliWeights::custom(weights).unwrap())
+            .unwrap();
         let idle = IdleChannel::linear(1.0)
             .unwrap()
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
             .with_idle_after_2q(1.0)
             .unwrap();
         let qubits = [QubitId(0), QubitId(1)];
@@ -835,7 +870,9 @@ mod tests {
 
     #[test]
     fn test_angle_dependent_probability() {
-        let channel = TwoQubitChannel::depolarizing(0.1).with_angle_scaling(AngleScaling::linear());
+        let channel = TwoQubitChannel::depolarizing(0.1)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::linear());
 
         // For RZZ with angle pi, scaling = 1.0 (normalized)
         let p = channel.effective_probability(GateType::RZZ, &[Angle64::HALF_TURN]);
@@ -848,7 +885,9 @@ mod tests {
 
     #[test]
     fn rxyxy2q_noise_scaling_uses_theta() {
-        let channel = TwoQubitChannel::depolarizing(0.1).with_angle_scaling(AngleScaling::linear());
+        let channel = TwoQubitChannel::depolarizing(0.1)
+            .unwrap()
+            .with_angle_scaling(AngleScaling::linear());
         for phi in [Angle64::ZERO, Angle64::HALF_TURN] {
             let p = channel.effective_probability(GateType::RXYXY2Q, &[Angle64::QUARTER_TURN, phi]);
             assert!((p - 0.05).abs() < 1e-10);
@@ -934,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_skip_gate_for_leaked_qubit() {
-        let channel = TwoQubitChannel::depolarizing(1.0);
+        let channel = TwoQubitChannel::depolarizing(1.0).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -960,7 +999,9 @@ mod tests {
         let mut weights = [0.0; 15];
         weights[14] = 1.0; // ZZ only
         let channel = TwoQubitChannel::depolarizing(1.0)
-            .with_pauli_weights(TwoQubitPauliWeights::custom(weights));
+            .unwrap()
+            .with_pauli_weights(TwoQubitPauliWeights::custom(weights).unwrap())
+            .unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];

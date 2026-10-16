@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     example_gate_specific_noise();
     example_correlated_noise()?;
     example_context_aware_noise();
-    example_builtin_gate_dependent();
+    example_builtin_gate_dependent()?;
     example_builtin_correlated()?;
     Ok(())
 }
@@ -562,7 +562,7 @@ fn example_context_aware_noise() {
 // --- Example 5: Built-in GateDependentChannel ---
 
 /// Demonstrate the built-in `GateDependentChannel` for gate-specific error rates.
-fn example_builtin_gate_dependent() {
+fn example_builtin_gate_dependent() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::{GateDependentChannel, GateNoiseConfig};
 
     println!("--- Built-in GateDependentChannel ---");
@@ -575,7 +575,7 @@ fn example_builtin_gate_dependent() {
         .with_gate_error(GateType::SZ, 0.02) // 2% error on SZ gates
         .with_gate(
             GateType::CX,
-            GateNoiseConfig::new(0.10).with_pauli_weights(PauliWeights::z_biased(0.8)),
+            GateNoiseConfig::new(0.10).with_pauli_weights(PauliWeights::z_biased(0.8)?)?,
         ) // 10% Z-biased error on CX
         .with_default(0.05); // 5% default for unlisted gates
 
@@ -642,6 +642,7 @@ fn example_builtin_gate_dependent() {
     );
     println!("  (Built-in channel provides same functionality with cleaner API)");
     println!();
+    Ok(())
 }
 
 // --- Example 6: Built-in CorrelatedNoiseChannel ---

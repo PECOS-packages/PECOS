@@ -227,7 +227,7 @@ fn test_monte_carlo_with_depolarizing_noise() {
         &commands,
         &config,
         || {
-            let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
+            let neo_noise = GeneralNoiseModelBuilder::new().with_p1(p1).build().unwrap();
             (
                 CircuitRunner::new().with_noise(neo_noise),
                 SparseStab::with_seed(1, 42),
@@ -306,7 +306,8 @@ fn test_monte_carlo_measurement_errors() {
         || {
             let neo_noise = GeneralNoiseModelBuilder::new()
                 .with_p_meas(p_meas, p_meas)
-                .build();
+                .build()
+                .unwrap();
             (
                 CircuitRunner::new().with_noise(neo_noise),
                 SparseStab::with_seed(1, 42),
@@ -448,7 +449,7 @@ fn test_monte_carlo_two_qubit_noise() {
         &commands,
         &config,
         || {
-            let neo_noise = GeneralNoiseModelBuilder::new().with_p2(p2).build();
+            let neo_noise = GeneralNoiseModelBuilder::new().with_p2(p2).build().unwrap();
             (
                 CircuitRunner::new().with_noise(neo_noise),
                 SparseStab::with_seed(2, 42),
@@ -620,7 +621,10 @@ fn test_importance_sampling_matches_standard_monte_carlo() {
     // Estimate error rate by counting bit flips
     let mut standard_ones = 0;
     for seed in 0..num_shots {
-        let noise = GeneralNoiseModelBuilder::new().with_p1(p_error).build();
+        let noise = GeneralNoiseModelBuilder::new()
+            .with_p1(p_error)
+            .build()
+            .unwrap();
         let mut state = SparseStab::with_seed(1, seed as u64);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
@@ -700,7 +704,10 @@ fn test_importance_sampling_rare_events() {
     // ========== Standard Monte Carlo ==========
     let mut standard_ones = 0;
     for seed in 0..num_shots {
-        let noise = GeneralNoiseModelBuilder::new().with_p1(p_error).build();
+        let noise = GeneralNoiseModelBuilder::new()
+            .with_p1(p_error)
+            .build()
+            .unwrap();
         let mut state = SparseStab::with_seed(1, seed as u64);
         let mut runner = CircuitRunner::<SparseStab>::new()
             .with_noise(noise)
@@ -773,7 +780,10 @@ fn test_importance_sampling_variance_reduction() {
         let base_seed = trial * shots_per_trial;
         let mut ones = 0;
         for shot in 0..shots_per_trial {
-            let noise = GeneralNoiseModelBuilder::new().with_p1(p_error).build();
+            let noise = GeneralNoiseModelBuilder::new()
+                .with_p1(p_error)
+                .build()
+                .unwrap();
             let mut state = SparseStab::with_seed(1, (base_seed + shot) as u64);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(noise)

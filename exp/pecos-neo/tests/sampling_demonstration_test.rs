@@ -201,8 +201,8 @@ fn demo_importance_sampling_boosted_errors() {
         .with_single_qubit_boost(p_true, boost)
         .with_seed(42);
 
-    let noise =
-        ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_proposal));
+    let noise = ComposableNoiseModel::new()
+        .add_channel(SingleQubitChannel::depolarizing(p_proposal).unwrap());
     runner = runner.with_noise(noise);
 
     let num_shots = 1000;
@@ -249,7 +249,8 @@ fn demo_variance_comparison() {
         let mut mc_state = SparseStab::with_seed(1, trial as u64);
         let mut mc_runner = CircuitRunner::<SparseStab>::new()
             .with_noise(
-                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_true)),
+                ComposableNoiseModel::new()
+                    .add_channel(SingleQubitChannel::depolarizing(p_true).unwrap()),
             )
             .with_seed(trial as u64);
 
@@ -270,7 +271,7 @@ fn demo_variance_comparison() {
                 .with_single_qubit_boost(p_true, boost)
                 .with_noise(
                     ComposableNoiseModel::new()
-                        .add_channel(SingleQubitChannel::depolarizing(p_proposal)),
+                        .add_channel(SingleQubitChannel::depolarizing(p_proposal).unwrap()),
                 )
                 .with_seed(1000 + trial as u64);
 

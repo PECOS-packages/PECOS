@@ -94,6 +94,26 @@ assert_eq!(half + half, zero);  // wraps around
 let radians: f64 = quarter.to_radians();
 ```
 
+### Constructing Angles
+
+Use named constants or `from_turn_ratio` for exact fractions of a turn. For
+floating-point literals, `radians!` and `turns!` check finiteness at compile time;
+`radians!(f64::NAN)` and a runtime variable inside either macro do not compile.
+For runtime values, use the fallible constructors and propagate errors with `?`.
+
+```rust
+use pecos_core::{Angle64, NonFiniteAngleError, radians, turns};
+
+let half = Angle64::HALF_TURN;
+let eighth = Angle64::from_turn_ratio(1, 8);
+let literal_radians = radians!(0.37);
+let literal_turns = turns!(0.125);
+
+fn runtime_angles(radians: f64, turns: f64) -> Result<(Angle64, Angle64), NonFiniteAngleError> {
+    Ok((Angle64::try_from_radians(radians)?, Angle64::try_from_turns(turns)?))
+}
+```
+
 ### Angle Macros
 
 Two macros provide compile-time exact angle construction:

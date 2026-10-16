@@ -44,11 +44,28 @@ pub struct NonFiniteAngleError {
 
 impl fmt::Display for NonFiniteAngleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.value.is_finite() {
+        let domain = match self.unit {
+            "asin input (expected -1..=1)" => Some(("asin", "-1..=1")),
+            "acos input (expected -1..=1)" => Some(("acos", "-1..=1")),
+            "atan input" => Some((
+                "atan",
+                "all real values, including infinities, excluding NaN",
+            )),
+            "atan2 y input" => Some((
+                "atan2 y",
+                "all real values, including infinities, excluding NaN",
+            )),
+            "atan2 x input" => Some((
+                "atan2 x",
+                "all real values, including infinities, excluding NaN",
+            )),
+            _ => None,
+        };
+        if let Some((function, domain)) = domain {
             return write!(
                 f,
-                "invalid angle input {} {}; use a value in the indicated domain",
-                self.value, self.unit
+                "{function} input {} is outside the valid domain {domain}; supply a value in that domain",
+                self.value
             );
         }
         write!(

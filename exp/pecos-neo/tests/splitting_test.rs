@@ -834,7 +834,7 @@ fn test_quantum_circuit_subset_simulation() {
 
     // Noise model factory (creates fresh noise model each time)
     fn make_noise(p: f64) -> ComposableNoiseModel {
-        ComposableNoiseModel::new().add_channel(SingleQubitChannel::bit_flip(p))
+        ComposableNoiseModel::new().add_channel(SingleQubitChannel::bit_flip(p).unwrap())
     }
 
     // Syndrome extraction circuit for simple error detection

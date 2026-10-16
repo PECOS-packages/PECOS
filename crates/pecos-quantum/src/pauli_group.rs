@@ -62,6 +62,8 @@ use std::str::FromStr;
 /// Errors that can occur when constructing a [`PauliGroup`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PauliGroupError {
+    /// The exponent tuple must have one entry per generator.
+    ExponentCount { expected: usize, actual: usize },
     /// Requested generator does not exist.
     GeneratorIndex { index: usize, count: usize },
     /// The base-two order exceeds the operation's limit.
@@ -73,6 +75,10 @@ pub enum PauliGroupError {
 impl fmt::Display for PauliGroupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ExponentCount { expected, actual } => write!(
+                f,
+                "expected {expected} exponents, got {actual}; supply one exponent per generator"
+            ),
             Self::GeneratorIndex { index, count } => write!(
                 f,
                 "generator index {index} is outside {count} generators; use an index less than {count}"
@@ -315,19 +321,16 @@ impl PauliGroup {
     /// Real-phase generators are taken mod 2; imaginary-phase generators mod 4.
     /// Different tuples can yield the same element, even for independent bodies.
     ///
-    /// # Panics
-    ///
-    /// Panics if `exponents.len() != num_generators()`.
-    #[must_use]
-    pub fn element(&self, exponents: &[u32]) -> PauliString {
+    /// # Errors
+    /// Returns an error if the exponent count differs from the number of generators.
+    pub fn element(&self, exponents: &[u32]) -> Result<PauliString, PauliGroupError> {
         let gens = self.inner.paulis();
-        assert_eq!(
-            exponents.len(),
-            gens.len(),
-            "expected {} exponents, got {}",
-            gens.len(),
-            exponents.len()
-        );
+        if exponents.len() != gens.len() {
+            return Err(PauliGroupError::ExponentCount {
+                expected: gens.len(),
+                actual: exponents.len(),
+            });
+        }
 
         let mut result = PauliString::identity();
         for (g, &exp) in gens.iter().zip(exponents) {
@@ -337,7 +340,7 @@ impl PauliGroup {
                 result = result * g.clone();
             }
         }
-        result
+        Ok(result)
     }
 
     /// Returns an iterator over all elements of the group.
@@ -836,10 +839,10 @@ mod tests {
     #[test]
     fn element_by_exponents() {
         let group = PauliGroup::new(vec![i * X(0)]).unwrap();
-        let e0 = group.element(&[0]);
-        let e1 = group.element(&[1]);
-        let e2 = group.element(&[2]);
-        let e3 = group.element(&[3]);
+        let e0 = group.element(&[0]).unwrap();
+        let e1 = group.element(&[1]).unwrap();
+        let e2 = group.element(&[2]).unwrap();
+        let e3 = group.element(&[3]).unwrap();
 
         assert!(e0.is_identity());
         assert_eq!(e1.phase(), QuarterPhase::PlusI);
@@ -852,9 +855,9 @@ mod tests {
     fn element_exponents_wrap() {
         let group = PauliGroup::new(vec![i * X(0)]).unwrap();
         // exponent 4 wraps to 0 (identity)
-        assert_eq!(group.element(&[4]), group.element(&[0]));
+        assert_eq!(group.element(&[4]).unwrap(), group.element(&[0]).unwrap());
         // exponent 5 wraps to 1
-        assert_eq!(group.element(&[5]), group.element(&[1]));
+        assert_eq!(group.element(&[5]).unwrap(), group.element(&[1]).unwrap());
     }
 
     // --- contains / contains_with_phase ---
@@ -1128,13 +1131,18 @@ mod tests {
         }
     }
 
-    // --- element() panic conditions ---
+    // --- element() argument validation ---
 
     #[test]
-    #[should_panic(expected = "expected 1 exponents, got 2")]
-    fn element_wrong_exponent_count_panics() {
+    fn element_wrong_exponent_count_returns_error() {
         let group = PauliGroup::new(vec![X(0)]).unwrap();
-        let _ = group.element(&[0, 1]);
+        assert_eq!(
+            group.element(&[0, 1]).unwrap_err(),
+            PauliGroupError::ExponentCount {
+                expected: 1,
+                actual: 2
+            }
+        );
     }
 
     // --- String representations ---

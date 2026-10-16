@@ -126,7 +126,7 @@ impl Default for IdleChannel {
     fn default() -> Self {
         Self {
             linear_rate: 0.0,
-            linear_weights: PauliWeights::custom(0.0, 0.0, 1.0), // Z-only by default
+            linear_weights: PauliWeights::z_only(), // Z-only by default
             sin_squared_rate: 0.0,
             sin_squared_model: BTreeMap::new(),
             quadratic_rate: 0.0,
@@ -197,7 +197,7 @@ impl IdleChannel {
                 rate_x / linear_rate,
                 rate_y / linear_rate,
                 rate_z / linear_rate,
-            ),
+            )?,
             quadratic_rate: 0.0,
             ..Default::default()
         })
@@ -291,10 +291,13 @@ impl IdleChannel {
     /// Set the linear noise Pauli weights.
     ///
     /// By default, linear noise is Z-only. Use this to set a custom distribution.
-    #[must_use]
-    pub fn with_linear_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_linear_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.linear_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set linear noise to uniform depolarizing (X, Y, Z with equal probability).
@@ -744,7 +747,8 @@ mod tests {
         let convenience = IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap();
         let hand_written = IdleChannel::linear(2.166_666_666_666_666_7e-5)
             .unwrap()
-            .with_linear_weights(PauliWeights::custom(3.0 / 13.0, 3.0 / 13.0, 7.0 / 13.0));
+            .with_linear_weights(PauliWeights::custom(3.0 / 13.0, 3.0 / 13.0, 7.0 / 13.0).unwrap())
+            .unwrap();
 
         assert_same_configuration(&convenience, &hand_written);
     }
@@ -754,7 +758,8 @@ mod tests {
         // X-biased linear noise
         let channel = IdleChannel::linear(1.0)
             .unwrap()
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0));
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let duration = TimeUnits::new(1);
@@ -1025,7 +1030,8 @@ mod tests {
     fn linear_weights_are_honored_at_after_2q_sites() {
         let channel = IdleChannel::linear(1.0)
             .unwrap()
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
             .with_idle_after_2q(1.0)
             .unwrap();
         let qubits = [QubitId(0), QubitId(1)];
@@ -1042,7 +1048,8 @@ mod tests {
     fn batched_after_2q_idles_every_distinct_operand() {
         let channel = IdleChannel::linear(1.0)
             .unwrap()
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
             .with_idle_after_2q(1.0)
             .unwrap();
         let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(1)];

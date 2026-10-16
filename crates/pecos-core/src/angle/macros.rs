@@ -148,8 +148,8 @@ macro_rules! radians {
     ($expr:expr) => {
         const {
             match $crate::Angle64::const_try_from_radians($expr) {
-                Ok(angle) => angle,
-                Err(_) => panic!("angle literal must be finite"),
+                ::core::result::Result::Ok(angle) => angle,
+                ::core::result::Result::Err(_) => ::core::panic!("angle literal must be finite"),
             }
         }
     };
@@ -177,8 +177,8 @@ macro_rules! turns {
     ($expr:expr) => {
         const {
             match $crate::Angle64::const_try_from_turns($expr) {
-                Ok(angle) => angle,
-                Err(_) => panic!("angle literal must be finite"),
+                ::core::result::Result::Ok(angle) => angle,
+                ::core::result::Result::Err(_) => ::core::panic!("angle literal must be finite"),
             }
         }
     };

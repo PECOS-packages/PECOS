@@ -377,7 +377,7 @@ def test_stabilizer_element_bindings() -> None:
         with pytest.raises(ValueError, match="mask"):
             group.element(mask)
     large = PauliStabilizerGroup([PauliString.Z(q) for q in range(31)])
-    with pytest.raises(ValueError, match="rank"):
+    with pytest.raises(ValueError, match="supported limit"):
         large.elements()
     assert large.element(1) == PauliString.Z(0)
     redundant = PauliStabilizerGroup([PauliString.Z(0)] * 65)

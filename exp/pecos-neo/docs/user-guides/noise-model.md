@@ -13,11 +13,11 @@ use pecos_neo::noise::plugins::CorePlugin;
 
 let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)                                // State tracking (prep, meas, leakage)
-    .add_channel(SingleQubitChannel::depolarizing(0.001))
-    .add_channel(TwoQubitChannel::depolarizing(0.01)
+    .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+    .add_channel(TwoQubitChannel::depolarizing(0.01)?
         .with_angle_scaling(AngleScaling::linear()))
-    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03))
-    .add_channel(IdleChannel::linear(0.0001).unwrap()
+    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03)?)
+    .add_channel(IdleChannel::linear(0.0001)?
         .with_linear_depolarizing());
 ```
 
@@ -48,10 +48,10 @@ with a builder for the basics, then add custom channels on top:
 let noise = GeneralNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
-    .build()
+    .build()?
     .add_channel(CrosstalkChannel::new()
-        .with_global_rate(0.001)
-        .with_transitions(CrosstalkTransitions::symmetric_with_leakage()));
+        .with_global_rate(0.001)?
+        .with_transitions(CrosstalkTransitions::symmetric_with_leakage())?);
 ```
 
 This is useful when the builder covers most of what you need but you want one
@@ -67,7 +67,7 @@ package your own noise logic for reuse:
 let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)                            // State tracking
     .add_plugin(LeakagePlugin::new())                  // Leakage handling
-    .add_plugin(DepolarizingPlugin::new(0.01, 0.02));  // Simple depolarizing
+    .add_plugin(DepolarizingPlugin::new(0.01, 0.02)?);  // Simple depolarizing
 ```
 
 ## Running It

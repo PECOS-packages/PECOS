@@ -19,7 +19,7 @@ use super::response::CompositeResponse;
 use crate::command::{GateCommand, GatePayload, GateType};
 use crate::noise::validation::{
     MAX_ANGLE_FRACTION, MAX_ANGLE_RATE, ValidationResult, validate_bounded, validate_finite,
-    validate_probability,
+    validate_probability, validate_weights_sum,
 };
 use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
@@ -217,16 +217,19 @@ impl PauliWeights {
     #[must_use]
     pub fn uniform() -> Self {
         Self {
-            x: 1.0,
-            y: 1.0,
-            z: 1.0,
+            x: 1.0 / 3.0,
+            y: 1.0 / 3.0,
+            z: 1.0 / 3.0,
         }
     }
 
     /// Custom weights.
-    #[must_use]
-    pub fn custom(x: f64, y: f64, z: f64) -> Self {
-        Self { x, y, z }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn custom(x: f64, y: f64, z: f64) -> ValidationResult<Self> {
+        validate_weights_sum(&[x, y, z], "PauliWeights")?;
+        Ok(Self { x, y, z })
     }
 
     /// Z-only (dephasing).
@@ -240,17 +243,17 @@ impl PauliWeights {
     }
 
     /// Normalize weights to sum to 1.
-    #[must_use]
-    pub fn normalized(&self) -> Self {
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a non-finite or non-positive total.
+    pub fn normalized(&self) -> ValidationResult<Self> {
+        validate_weights_sum(&[self.x, self.y, self.z], "PauliWeights")?;
         let total = self.x + self.y + self.z;
-        if total <= 0.0 {
-            return Self::uniform();
-        }
-        Self {
+        Ok(Self {
             x: self.x / total,
             y: self.y / total,
             z: self.z / total,
-        }
+        })
     }
 }
 
@@ -262,23 +265,29 @@ pub struct Pauli {
 
 impl Pauli {
     /// Create a Pauli action with specified weights.
-    #[must_use]
-    pub fn new(weights: PauliWeights) -> Self {
-        Self {
-            weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            weights: weights.normalized()?,
+        })
     }
 
     /// Uniform depolarizing (equal X, Y, Z probability).
     #[must_use]
     pub fn uniform() -> Self {
-        Self::new(PauliWeights::uniform())
+        Self {
+            weights: PauliWeights::uniform(),
+        }
     }
 
     /// Z-only (dephasing).
     #[must_use]
     pub fn dephasing() -> Self {
-        Self::new(PauliWeights::z_only())
+        Self {
+            weights: PauliWeights::z_only(),
+        }
     }
 }
 
@@ -335,11 +344,13 @@ impl Seep {
     }
 
     /// Create a seep action with custom Pauli weights.
-    #[must_use]
-    pub fn with_weights(weights: PauliWeights) -> Self {
-        Self {
-            pauli_weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            pauli_weights: weights.normalized()?,
+        })
     }
 }
 
@@ -362,7 +373,7 @@ impl GateAction for Seep {
 
         // Scale to remaining 75%
         let r_scaled = (r - 0.25) / 0.75;
-        let weights = self.pauli_weights.normalized();
+        let weights = self.pauli_weights;
 
         let gate_type = if r_scaled < weights.x {
             GateType::X
@@ -414,17 +425,23 @@ impl TwoQubitPauli {
     }
 
     /// Create with custom weights.
-    #[must_use]
-    pub fn with_weights(weights: crate::noise::TwoQubitPauliWeights) -> Self {
-        Self { weights }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: crate::noise::TwoQubitPauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
+        Ok(Self { weights })
     }
 
     /// Create with ZZ-biased weights.
-    #[must_use]
-    pub fn zz_biased(zz_weight: f64) -> Self {
-        Self {
-            weights: crate::noise::TwoQubitPauliWeights::zz_biased(zz_weight),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn zz_biased(zz_weight: f64) -> ValidationResult<Self> {
+        validate_probability(zz_weight, "zz_weight")?;
+        Ok(Self {
+            weights: crate::noise::TwoQubitPauliWeights::zz_biased(zz_weight)?,
+        })
     }
 }
 
@@ -508,9 +525,14 @@ impl Emission {
     }
 
     /// Create with custom weights.
-    #[must_use]
-    pub fn with_weights(weights: crate::noise::SingleQubitEmissionWeights) -> Self {
-        Self { weights }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(
+        weights: crate::noise::SingleQubitEmissionWeights,
+    ) -> ValidationResult<Self> {
+        weights.validate()?;
+        Ok(Self { weights })
     }
 
     /// Create with Pauli-only weights (no leakage).
@@ -524,14 +546,17 @@ impl Emission {
     /// Create with leakage probability.
     ///
     /// Remaining probability is split equally among X, Y, Z.
-    #[must_use]
-    pub fn with_leakage(leak_prob: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(leak_prob: f64) -> ValidationResult<Self> {
+        validate_probability(leak_prob, "leak_prob")?;
         let pauli_prob = (1.0 - leak_prob) / 3.0;
-        Self {
+        Ok(Self {
             weights: crate::noise::SingleQubitEmissionWeights::custom(
                 pauli_prob, pauli_prob, pauli_prob, leak_prob,
-            ),
-        }
+            )?,
+        })
     }
 }
 
@@ -601,9 +626,12 @@ impl TwoQubitEmission {
     }
 
     /// Create with custom weights.
-    #[must_use]
-    pub fn with_weights(weights: crate::noise::TwoQubitEmissionWeights) -> Self {
-        Self { weights }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: crate::noise::TwoQubitEmissionWeights) -> ValidationResult<Self> {
+        weights.validate()?;
+        Ok(Self { weights })
     }
 }
 
@@ -807,11 +835,13 @@ impl TwoQubitEmissionWithPartnerDepolarize {
     }
 
     /// Create with custom partner depolarizing weights.
-    #[must_use]
-    pub fn with_partner_weights(weights: PauliWeights) -> Self {
-        Self {
-            partner_pauli_weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_partner_weights(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            partner_pauli_weights: weights.normalized()?,
+        })
     }
 
     /// Sample a random Pauli gate type based on weights.
@@ -907,10 +937,12 @@ impl IndependentEmissionWithPartnerDepolarize {
     }
 
     /// Create with custom partner depolarizing weights.
-    #[must_use]
-    pub fn with_partner_weights(mut self, weights: PauliWeights) -> Self {
-        self.partner_pauli_weights = weights.normalized();
-        self
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_partner_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        self.partner_pauli_weights = weights.normalized()?;
+        Ok(self)
     }
 
     fn sample_pauli(&self, rng: &mut PecosRng) -> GateType {
@@ -1029,11 +1061,13 @@ impl PartnerDepolarize {
     }
 
     /// Create with custom Pauli weights.
-    #[must_use]
-    pub fn with_weights(weights: PauliWeights) -> Self {
-        Self {
-            weights: weights.normalized(),
-        }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_weights(weights: PauliWeights) -> ValidationResult<Self> {
+        Ok(Self {
+            weights: weights.normalized()?,
+        })
     }
 }
 
@@ -1773,9 +1807,12 @@ pub struct CrosstalkAction {
 
 impl CrosstalkAction {
     /// Create with the given transition model.
-    #[must_use]
-    pub fn new(transitions: crate::noise::CrosstalkTransitions) -> Self {
-        Self { transitions }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(transitions: crate::noise::CrosstalkTransitions) -> ValidationResult<Self> {
+        transitions.validate()?;
+        Ok(Self { transitions })
     }
 
     /// Create with flip-only transitions (50% stay, 50% flip, no leakage).
@@ -1919,20 +1956,25 @@ pub struct RandomOutcome {
 
 impl RandomOutcome {
     /// Create an action that randomizes the outcome.
-    #[must_use]
-    pub fn new(prob_one: f64) -> Self {
-        Self { prob_one }
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(prob_one: f64) -> ValidationResult<Self> {
+        validate_probability(prob_one, "prob_one")?;
+        Ok(Self { prob_one })
     }
 
     /// Random with 50/50 probability (unbiased).
     #[must_use]
     pub fn uniform() -> Self {
-        Self::new(0.5)
+        Self { prob_one: 0.5 }
     }
 
     /// Biased towards 1 (models leaked qubits returning 1 more often).
-    #[must_use]
-    pub fn biased_one(bias: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn biased_one(bias: f64) -> ValidationResult<Self> {
         Self::new(bias)
     }
 }
@@ -2052,9 +2094,11 @@ pub mod actions {
     }
 
     /// Random Pauli with custom weights.
-    #[must_use]
-    pub fn pauli_weighted(x: f64, y: f64, z: f64) -> Pauli {
-        Pauli::new(PauliWeights::custom(x, y, z))
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn pauli_weighted(x: f64, y: f64, z: f64) -> ValidationResult<Pauli> {
+        Pauli::new(PauliWeights::custom(x, y, z)?)
     }
 
     /// Dephasing (Z only).
@@ -2106,8 +2150,10 @@ pub mod actions {
     /// Randomize the measurement outcome with bias towards 1.
     ///
     /// This models leaked qubits which may return 1 more often.
-    #[must_use]
-    pub fn random_outcome_biased(prob_one: f64) -> RandomOutcome {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn random_outcome_biased(prob_one: f64) -> ValidationResult<RandomOutcome> {
         RandomOutcome::new(prob_one)
     }
 
@@ -2139,10 +2185,12 @@ pub mod actions {
     }
 
     /// State-dependent crosstalk action with custom transitions.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
     pub fn crosstalk_transitions(
         transitions: crate::noise::CrosstalkTransitions,
-    ) -> CrosstalkAction {
+    ) -> ValidationResult<CrosstalkAction> {
         CrosstalkAction::new(transitions)
     }
 
@@ -2157,14 +2205,20 @@ pub mod actions {
     }
 
     /// Correlated two-qubit Pauli with custom weights.
-    #[must_use]
-    pub fn two_qubit_pauli_weighted(weights: crate::noise::TwoQubitPauliWeights) -> TwoQubitPauli {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn two_qubit_pauli_weighted(
+        weights: crate::noise::TwoQubitPauliWeights,
+    ) -> ValidationResult<TwoQubitPauli> {
         TwoQubitPauli::with_weights(weights)
     }
 
     /// Correlated two-qubit Pauli biased towards ZZ errors.
-    #[must_use]
-    pub fn two_qubit_pauli_zz_biased(zz_weight: f64) -> TwoQubitPauli {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn two_qubit_pauli_zz_biased(zz_weight: f64) -> ValidationResult<TwoQubitPauli> {
         TwoQubitPauli::zz_biased(zz_weight)
     }
 
@@ -2181,10 +2235,12 @@ pub mod actions {
     }
 
     /// Correlated two-qubit emission with custom weights.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
     pub fn two_qubit_emission_weighted(
         weights: crate::noise::TwoQubitEmissionWeights,
-    ) -> TwoQubitEmission {
+    ) -> ValidationResult<TwoQubitEmission> {
         TwoQubitEmission::with_weights(weights)
     }
 
@@ -2199,14 +2255,20 @@ pub mod actions {
     /// Emission error with specified leakage probability.
     ///
     /// Remaining probability is split equally among X, Y, Z.
-    #[must_use]
-    pub fn emission_with_leakage(leak_prob: f64) -> Emission {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn emission_with_leakage(leak_prob: f64) -> ValidationResult<Emission> {
         Emission::with_leakage(leak_prob)
     }
 
     /// Emission error with custom weights.
-    #[must_use]
-    pub fn emission_weighted(weights: crate::noise::SingleQubitEmissionWeights) -> Emission {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn emission_weighted(
+        weights: crate::noise::SingleQubitEmissionWeights,
+    ) -> ValidationResult<Emission> {
         Emission::with_weights(weights)
     }
 
@@ -2265,9 +2327,15 @@ pub mod actions {
     }
 
     /// Apply depolarizing noise to the partner qubit with custom weights.
-    #[must_use]
-    pub fn partner_depolarize_weighted(x: f64, y: f64, z: f64) -> PartnerDepolarize {
-        PartnerDepolarize::with_weights(PauliWeights::custom(x, y, z))
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn partner_depolarize_weighted(
+        x: f64,
+        y: f64,
+        z: f64,
+    ) -> ValidationResult<PartnerDepolarize> {
+        PartnerDepolarize::with_weights(PauliWeights::custom(x, y, z)?)
     }
 
     // --- Two-Qubit Emission with Partner Depolarize ---
@@ -2437,8 +2505,9 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))).unwrap(),
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
     /// ];
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Limitations
@@ -2610,8 +2679,9 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0))).unwrap(),
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
     /// ];
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use]
     pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ChannelAdapter {
@@ -2826,7 +2896,7 @@ mod tests {
     fn test_emission_with_leakage() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = Emission::with_leakage(0.25); // 25% leakage
+        let action = Emission::with_leakage(0.25).unwrap(); // 25% leakage
 
         let mut leak_count = 0;
 
@@ -2972,9 +3042,10 @@ mod tests {
         // Create asymmetric transitions:
         // From 0: 100% flip
         // From 1: 100% stay
-        let action = CrosstalkAction::new(crate::noise::CrosstalkTransitions::custom(
-            0.0, 1.0, 0.0, 1.0, 0.0, 0.0,
-        ));
+        let action = CrosstalkAction::new(
+            crate::noise::CrosstalkTransitions::custom(0.0, 1.0, 0.0, 1.0, 0.0, 0.0).unwrap(),
+        )
+        .unwrap();
 
         // Set outcome to 0 -> should always flip (X gate)
         ctx.set_current_outcome(false);
@@ -3022,7 +3093,7 @@ mod tests {
     fn test_random_outcome_biased() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
-        let action = RandomOutcome::biased_one(0.8); // 80% towards 1
+        let action = RandomOutcome::biased_one(0.8).unwrap(); // 80% towards 1
 
         let mut ones = 0;
 

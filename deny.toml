@@ -2,6 +2,16 @@
 yanked = "deny"
 unmaintained = "none"
 unsound = "none"
+ignore = [
+    # Every zip release before 9.0 is yanked. relay-bp 0.2.2 (the latest) reads
+    # and writes .npz files through ndarray-npy 0.9, which requires zip ^2, and
+    # no newer ndarray-npy or relay-bp release moves to zip 9. Relay-BP is an
+    # opt-in feature (`relay-bp` on pecos-decoders and pecos), so default builds
+    # and downstream users do not depend on it; pecos-rslib enables it for the
+    # Python RelayBpDecoder and builds from Cargo.lock. Remove this entry when
+    # relay-bp releases on a non-yanked zip.
+    { crate = "zip@2.4.2", reason = "only reachable through the opt-in relay-bp feature; no non-yanked zip ^2 exists" },
+]
 
 [bans]
 multiple-versions = "allow"

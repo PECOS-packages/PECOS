@@ -56,10 +56,10 @@ terminal flush fails closed), and the runtime's `shot_end` finalization hook
 with its error propagated and latched. A plugin that only detects an invalid
 final schedule at shot end therefore fails the shot rather than receiving a
 certified trace. Named shot conversion accepts compiler-certified direct
-scalar `result()` dataflow and trusted built-in generator layouts whose digest
-binds both the HUGR and layout. Aggregate arrays and transformed booleans
-must not be treated as generic measurement identity until the compiler exposes
-an explicit element-level provenance ABI.
+scalar `result()` provenance from the executed lowered QIS and trusted built-in
+generator layouts whose digest binds both the HUGR and layout. Aggregate arrays
+and transformed booleans must not be treated as generic measurement identity
+until the compiler exposes an explicit element-level provenance ABI.
 
 Generic Guppy branching and looping control flow is rejected. One sampled
 runtime branch cannot certify a static DEM; built-in surface generators
@@ -79,7 +79,8 @@ QIS text used for execution. CFG dominance and cycle checks certify measurement
 and print order across direct calls, independently of LLVM block layout. Only
 direct scalar measurement reads carry provenance; unsupported values preserve
 an unresolved occurrence, and uncertifiable schedules fail closed. The runtime
-measurement count and identities are still checked against the certified order.
+measurement count, per-tag print-occurrence counts, and identities are checked
+against the certified program.
 
 This should support calls like:
 

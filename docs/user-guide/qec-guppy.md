@@ -185,8 +185,8 @@ tesseract_errors = batch.decode(
 
 `rec[-k]` is deliberately **not** interpreted against the runtime's final gate
 order. PECOS first resolves it to the canonical Guppy result ID, then follows
-that identity through runtime lowering. `result_ref(...)` follows the compiled
-HUGR dataflow from `result()` back to its raw scalar measurement and resolves to
+that identity through runtime lowering. `result_ref(...)` binds direct scalar
+measurement reads from the lowered QIS program that is executed and resolves to
 the same `MeasId` representation. A runtime can therefore reorder measurements
 without changing detector meaning.
 
@@ -234,10 +234,10 @@ surface_build = build_dem_from_guppy(
   rejected because one trace cannot certify all quantum-operation paths.
 - Scalar `result(tag, measure(q).read())` provenance is the certified generic tag
   path. Repeated tags use `occurrence=...`.
-- Generic scalar binding currently relies on the committed-test invariant that
-  Guppy HUGR measurement traversal and source QIS measurement emission use the
-  same ordinal order. A future compiler origin-ID ABI should replace this
-  cross-pipeline invariant directly.
+- Generic tags are bound from the lowered QIS program that is executed.
+  Measurement and print calls must be unconditional on returning paths and off
+  every cycle. Other tagged values remain unresolved. Runtime measurement and
+  print-occurrence counts are checked against the certified program.
 - Aggregate result arrays are not accepted as generic measurement provenance:
   their public element order is not yet part of the compiler identity ABI. Emit
   direct scalar sideband tags when decoder inputs must be reconstructed from

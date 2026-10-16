@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 from unittest.mock import Mock
 
 import pecos
@@ -22,7 +23,7 @@ from pecos.qec import (
     Detector,
     DetectorErrorModel,
     Observable,
-    _hugr_result_tags,
+    _hugr_preflight,
     _qis_result_tags,
     build_dem_from_guppy,
     rec,
@@ -95,7 +96,7 @@ def _unexpected_program_analysis(*_args: object) -> None:
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, wrapped: bool) -> None:
     """Regression: packet A must not parse or analyze generator-certified builds."""
-    monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", _unexpected_program_analysis)
+    monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", _unexpected_program_analysis)
     monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
     program = make_surface_code(3, 1, "Z")
     detectors, observables = surface_memory_dem_spec(3, 1, "Z")
@@ -113,9 +114,9 @@ def test_certified_build_does_not_load_hugr(monkeypatch: pytest.MonkeyPatch, *, 
 @pytest.mark.parametrize("references", ["typed", "json"])
 def test_tagged_build_loads_hugr_and_analyzes_qis_once(monkeypatch: pytest.MonkeyPatch, references: str) -> None:
     """Regression: packet A shares lazy analysis across preflight and tag consumers."""
-    loader = Mock(wraps=_hugr_result_tags.load_hugr_from_bytes)
+    loader = Mock(wraps=_hugr_preflight.load_hugr_from_bytes)
     extractor = Mock(wraps=_qis_result_tags.extract_result_tag_measurements)
-    monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", loader)
+    monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", loader)
     monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
     if references == "typed":
         dem = build_dem_from_guppy(
@@ -137,8 +138,8 @@ def test_tagged_build_loads_hugr_and_analyzes_qis_once(monkeypatch: pytest.Monke
 
 def test_build_without_candidate_tags_skips_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: packet A must preserve the no-candidate-tags early return."""
-    loader = Mock(wraps=_hugr_result_tags.load_hugr_from_bytes)
-    monkeypatch.setattr(_hugr_result_tags, "load_hugr_from_bytes", loader)
+    loader = Mock(wraps=_hugr_preflight.load_hugr_from_bytes)
+    monkeypatch.setattr(_hugr_preflight, "load_hugr_from_bytes", loader)
     monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", _unexpected_program_analysis)
     build = build_dem_from_guppy(
         _measurement_without_named_results,
@@ -1036,8 +1037,11 @@ def test_qis_certification_failure_policy(monkeypatch: pytest.MonkeyPatch, refer
     if references == "records":
         build()
     else:
-        with pytest.raises(ValueError, match=r"Cannot certify measurement order.*test unsupported CFG"):
+        reference = "result_tags" if references == "json" else "result_ref"
+        with pytest.raises(ValueError, match=_certification_message(reference)) as raised:
             build()
+        assert isinstance(raised.value.__cause__, _CertificationError)
+        assert str(raised.value.__cause__).endswith("test unsupported CFG")
     extractor.assert_called_once()
 
 
@@ -1045,6 +1049,14 @@ def test_unrelated_analysis_value_error_propagates(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", Mock(side_effect=ValueError("unrelated")))
     with pytest.raises(ValueError, match=r"^unrelated$"):
         build_dem_from_guppy(_scrambled_tagged_measurements, num_qubits=2, detectors=[Detector(rec[-1])])
+
+
+@pytest.mark.parametrize("ir", ["define void @qmain(", "define void @qmain() {\n%f =\nret void\n}"])
+def test_parser_failure_without_required_tags_skips_certification(monkeypatch: pytest.MonkeyPatch, ir: str) -> None:
+    extract = _qis_result_tags.extract_result_tag_measurements
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", lambda _qis: extract(ir))
+    built = build_dem_from_guppy(_scrambled_tagged_measurements, num_qubits=2, detectors=[Detector(rec[-1])])
+    assert built.named_result_binding == "none"
 
 
 @pytest.mark.parametrize("required", [False, True])
@@ -1065,11 +1077,70 @@ def test_certified_measurement_count_mismatch(monkeypatch: pytest.MonkeyPatch, *
     if required:
         with pytest.raises(
             ValueError,
-            match=(
-                r"^Cannot bind result_ref\(\.\.\.\): the certified lowered program has 3 measurement\(s\) "
-                r"but the traced program emitted 2 measurement\(s\)$"
-            ),
-        ):
+            match=_certification_message("result_ref"),
+        ) as raised:
             build()
+        assert isinstance(raised.value.__cause__, _CertificationError)
+        assert str(raised.value.__cause__).endswith(
+            "the certified lowered program has 3 measurement(s) but the traced program emitted 2 measurement(s)",
+        )
     else:
         build()
+
+
+def _certification_message(reference: str) -> str:
+    return (
+        "^"
+        + re.escape(
+            f"Cannot bind {reference}: the program's lowered form could not be certified; "
+            "use records, rec[-k], or meas_ids instead.",
+        )
+        + "$"
+    )
+
+
+@guppy
+def _repeated_tagged_measurements() -> None:
+    result("t", measure(qubit()).read())
+    result("t", measure(qubit()).read())
+
+
+@pytest.mark.parametrize("references", ["typed", "json-detector", "json-observable", "records"])
+@pytest.mark.parametrize("ordinals", [[1], [0, 1, 0]], ids=["missing-print", "extra-print"])
+def test_result_occurrence_count_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    references: str,
+    ordinals: list[int],
+) -> None:
+    extractor = Mock(return_value=({"t": ordinals}, 2))
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+
+    def build() -> None:
+        if references.startswith("json"):
+            DetectorErrorModel.from_guppy(
+                _repeated_tagged_measurements,
+                num_qubits=2,
+                detectors_json='[{"id":0,"result_tags":["t"]}]' if references == "json-detector" else "[]",
+                observables_json='[{"id":0,"result_tags":["t"]}]' if references == "json-observable" else "[]",
+            )
+        else:
+            built = build_dem_from_guppy(
+                _repeated_tagged_measurements,
+                num_qubits=2,
+                detectors=[Detector(rec[-1] if references == "records" else result_ref("t"))],
+            )
+            if references == "records":
+                assert built.named_result_binding == "none"
+
+    if references == "records":
+        build()
+    else:
+        reference = "result_ref" if references == "typed" else "result_tags"
+        with pytest.raises(ValueError, match=_certification_message(reference)) as raised:
+            build()
+        assert isinstance(raised.value.__cause__, _CertificationError)
+        assert str(raised.value.__cause__).endswith(
+            f"result tag 't' has {len(ordinals)} certified occurrence(s) "
+            "but the runtime trace contains 2 occurrence(s)",
+        )
+    extractor.assert_called_once()

@@ -3,6 +3,10 @@
 from pathlib import Path
 
 import pytest
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit
+from pecos.compilation_pipeline import compile_guppy_to_hugr
 from pecos.qec._qis_result_tags import _CertificationError, extract_result_tag_measurements
 from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
@@ -11,6 +15,16 @@ TAG = '@tag = private constant [12 x i8] c"\\0BUSER:BOOL:t"'
 MEASURE = "%f = call i64 @___lazy_measure(i64 0)"
 READ = "%v = call i1 @___read_future_bool(i64 %f)"
 PRINT = "call void @print_bool(ptr @tag, i64 11, i1 %v)"
+
+
+@guppy
+def _backslash_tag() -> None:
+    result("back\\slash", measure(qubit()).read())
+
+
+def test_compiled_backslash_tag() -> None:
+    qis = compile_hugr_to_qis(compile_guppy_to_hugr(_backslash_tag))
+    assert extract_result_tag_measurements(qis) == ({"back\\slash": [0]}, 1)
 
 
 def _program(body: str, extra: str = "") -> str:
@@ -472,3 +486,83 @@ def test_deep_cfg_uses_iterative_traversals(*, cyclic_measurement: bool) -> None
             extract_result_tag_measurements(ir)
     else:
         assert extract_result_tag_measurements(ir) == ({"t": [0]}, 1)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "___lazy_measure",
+        "___lazy_measure_leaked",
+        "___read_future_bool",
+        "__quantum__rt__result_allocate",
+        "__quantum__qis__m__body",
+        "__quantum__qis__mz__body",
+        *(
+            f"print_{kind}{suffix}"
+            for kind in ("bool", "int", "uint", "float")
+            for suffix in ("", "_arr", "_selene", "_arr_selene")
+        ),
+    ],
+)
+def test_module_cannot_define_runtime_calls(name: str) -> None:
+    ir = _program("ret void", f"define void @{name}() {{\nret void\n}}")
+    with pytest.raises(_CertificationError, match=f"module defines runtime call @{name}$"):
+        extract_result_tag_measurements(ir)
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_defined_print_cannot_redirect_tag(*, alias: bool) -> None:
+    name = "helper" if alias else "print_bool"
+    alias_definition = "@print_bool = alias void (ptr, i64, i1), ptr @helper" if alias else ""
+    ir = _program(
+        f"{MEASURE}\n{READ}\n{PRINT}\nret void",
+        f"""@u = private constant [11 x i8] c"USER:BOOL:u"
+{alias_definition}
+define void @{name}(ptr %tag, i64 %len, i1 %value) {{
+  call void @print_bool_selene(ptr @u, i64 11, i1 %value)
+  ret void
+}}""",
+    )
+    with pytest.raises(_CertificationError, match=r"module defines runtime call @print_bool$"):
+        extract_result_tag_measurements(ir)
+
+
+@pytest.mark.parametrize(
+    ("ir", "reason"),
+    [
+        (_program("%f =\ncall i64 @___lazy_measure(i64 0)\nret void"), "incomplete instruction"),
+        ("define void @qmain(", "Unterminated function parameter list"),
+        (_program("tail\nret void"), "incomplete tail call"),
+        (_program("%f = call i64 @___lazy_measure(i64)\nret void"), "missing operand"),
+        (
+            _program(
+                "call void @f0()\nret void",
+                "\n".join(f"define void @f{n}() {{\ncall void @f{n + 1}()\nret void\n}}" for n in range(2000))
+                + "\ndefine void @f2000() {\nret void\n}",
+            ),
+            "call graph exceeds Python's recursion limit",
+        ),
+        (
+            _program(f"{MEASURE}\n{READ}\ncall void @print_bool(ptr @tag, i64 {'1' * 5000}, i1 %v)\nret void"),
+            "result tag length exceeds the supported integer range",
+        ),
+    ],
+    ids=[
+        "split-assignment",
+        "unclosed-parameters",
+        "incomplete-tail",
+        "missing-operand",
+        "deep-call-chain",
+        "huge-tag-length",
+    ],
+)
+def test_malformed_input_is_a_certification_error(ir: str, reason: str) -> None:
+    with pytest.raises(_CertificationError, match=reason):
+        extract_result_tag_measurements(ir)
+
+
+@pytest.mark.parametrize("escape", [r"\n", r"\q", r"\0Z"])
+def test_non_llvm_string_escapes_rejected(escape: str) -> None:
+    ir = _program("ret void").replace(TAG, f'@tag = private constant [1 x i8] c"{escape}"')
+    with pytest.raises(_CertificationError, match="invalid LLVM string escape"):
+        extract_result_tag_measurements(ir)

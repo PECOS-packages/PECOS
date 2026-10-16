@@ -48,6 +48,7 @@ import hashlib
 import json
 import math
 import warnings
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
@@ -59,6 +60,7 @@ from pecos._traced_circuit import (
     normalize_traced_tick_circuit,
 )
 from pecos.programs import Guppy
+from pecos.qec import _qis_result_tags
 from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem_spec import (
@@ -69,6 +71,7 @@ from pecos.qec.dem_spec import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from typing import Self
 
     from hugr import Hugr
@@ -658,7 +661,8 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     """Cheap gate: does any entry use ``result_tags``? (substring check).
 
     Only decides whether JSON metadata needs tag resolution. Static extraction
-    is performed in Python; the measurement-count guard and metadata resolution stay in Rust.
+    is performed in Python, which also checks the measurement and tag-occurrence counts;
+    metadata resolution and a second measurement-count guard stay in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
@@ -695,7 +699,7 @@ class _GuppyProgramAnalysis:
     @cached_property
     def hugr(self) -> Hugr:
         """Return the validated module, loading it only on first use."""
-        from pecos.qec._hugr_result_tags import load_hugr_from_bytes
+        from pecos.qec._hugr_preflight import load_hugr_from_bytes
 
         return load_hugr_from_bytes(self.hugr_bytes)
 
@@ -709,10 +713,8 @@ class _GuppyProgramAnalysis:
     @cached_property
     def _tag_analysis(self) -> tuple[dict[str, list[int | None]], int] | _CertificationError:
         """Cache certification failures too, for builds with multiple consumers."""
-        from pecos.qec._qis_result_tags import extract_result_tag_measurements
-
         try:
-            return extract_result_tag_measurements(self.qis)
+            return _qis_result_tags.extract_result_tag_measurements(self.qis)
         except _CertificationError as error:
             return error
 
@@ -772,7 +774,7 @@ def _preflight_guppy_static_schedule(
     if generator_layout is not None:
         return generator_layout, analysis
 
-    from pecos.qec._hugr_result_tags import has_nontrivial_control_flow
+    from pecos.qec._hugr_preflight import has_nontrivial_control_flow
 
     if has_nontrivial_control_flow(analysis.hugr):
         msg = (
@@ -782,6 +784,50 @@ def _preflight_guppy_static_schedule(
         )
         raise ValueError(msg)
     return None, analysis
+
+
+def _tag_certification_message(reference: str) -> str:
+    return (
+        f"Cannot bind {reference}: the program's lowered form could not be certified; "
+        "use records, rec[-k], or meas_ids instead."
+    )
+
+
+def _check_measurement_count(static_count: int, source_ids: Sequence[int]) -> None:
+    if static_count != len(source_ids):
+        msg = (
+            f"the certified lowered program has {static_count} measurement(s) but "
+            f"the traced program emitted {len(source_ids)} measurement(s)"
+        )
+        raise _CertificationError(msg)
+
+
+def _check_result_tag_occurrences(
+    tag_occurrences: Mapping[str, Sequence[int | None]],
+    runtime_occurrences: Mapping[str, int],
+    tags: Iterable[str],
+) -> None:
+    for tag in sorted(set(tags)):
+        certified_count = len(tag_occurrences.get(tag, ()))
+        runtime_count = runtime_occurrences.get(tag, 0)
+        if certified_count != runtime_count:
+            msg = (
+                f"result tag {tag!r} has {certified_count} certified occurrence(s) but "
+                f"the runtime trace contains {runtime_count} occurrence(s)"
+            )
+            raise _CertificationError(msg)
+
+
+def _json_result_tag_names(*documents: str) -> set[str]:
+    """Read tag names; the Rust resolver still validates tag-field shapes."""
+    tags: set[str] = set()
+    for document in documents:
+        entries = json.loads(document) if document.strip() else []
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict) and isinstance(entry.get("result_tags"), list):
+                    tags.update(tag for tag in entry["result_tags"] if isinstance(tag, str))
+    return tags
 
 
 def _compiler_certified_result_traces(
@@ -810,23 +856,6 @@ def _compiler_certified_result_traces(
     if not candidate_tags:
         return []
 
-    try:
-        tag_occurrences, static_measurement_count = analysis.result_tags
-    except _CertificationError:
-        if required_tags:
-            raise
-        return []
-    source_measurement_ids = _validated_source_measurement_ids(circuit)
-    if static_measurement_count != len(source_measurement_ids):
-        if required_tags:
-            msg = (
-                "Cannot bind result_ref(...): "
-                f"the certified lowered program has {static_measurement_count} measurement(s) but "
-                f"the traced program emitted {len(source_measurement_ids)} measurement(s)"
-            )
-            raise ValueError(msg)
-        return []
-
     required = set(required_tags)
     runtime_arities: dict[tuple[str, int], int] = {}
     runtime_occurrences: dict[str, int] = {}
@@ -839,6 +868,16 @@ def _compiler_certified_result_traces(
         values = trace.get("values")
         if isinstance(values, list):
             runtime_arities[(tag, occurrence)] = max(len(values), 1)
+    try:
+        tag_occurrences, static_measurement_count = analysis.result_tags
+        source_measurement_ids = _validated_source_measurement_ids(circuit)
+        _check_measurement_count(static_measurement_count, source_measurement_ids)
+        _check_result_tag_occurrences(tag_occurrences, runtime_occurrences, candidate_tags)
+    except _CertificationError as error:
+        if required_tags:
+            msg = _tag_certification_message("result_ref")
+            raise ValueError(msg) from error
+        return []
     certified: list[dict[str, Any]] = []
     for tag in candidate_tags:
         occurrences = tag_occurrences.get(tag)
@@ -1305,7 +1344,7 @@ class GuppyDemBuilder:
             required_tags=referenced_tags,
             json_result_tags=json_needs_tags,
         )
-        with _collect_program_result_traces() as result_traces:
+        with _collect_program_result_traces() as runtime_result_traces:
             circuit = trace_program_to_tick_circuit(
                 _QisProgram(analysis.qis),
                 num_qubits,
@@ -1347,7 +1386,7 @@ class GuppyDemBuilder:
             generator_layout,
             analysis,
             circuit,
-            result_traces,
+            runtime_result_traces,
             required_tags=referenced_tags,
         )
         typed_schema = _resolve_dem_specs(
@@ -1365,7 +1404,22 @@ class GuppyDemBuilder:
                 "guppy_source_measurement_ids",
             )
             source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
-            tag_occurrences, static_measurement_count = analysis.result_tags
+            # Preserve the raw trace: compiler-certified placeholders are not
+            # independent evidence of how often the executed program printed.
+            runtime_occurrences = Counter(
+                trace["name"] for trace in runtime_result_traces if isinstance(trace.get("name"), str)
+            )
+            try:
+                tag_occurrences, static_measurement_count = analysis.result_tags
+                _check_measurement_count(static_measurement_count, source_measurement_ids)
+                _check_result_tag_occurrences(
+                    tag_occurrences,
+                    runtime_occurrences,
+                    _json_result_tag_names(raw_detectors_json, raw_observables_json),
+                )
+            except _CertificationError as error:
+                msg = _tag_certification_message("result_tags")
+                raise ValueError(msg) from error
             detectors_json, observables_json = resolve_result_tags_for_guppy(
                 detectors_json,
                 observables_json,

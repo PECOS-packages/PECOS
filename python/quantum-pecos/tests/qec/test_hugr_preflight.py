@@ -9,8 +9,8 @@ from hugr.build.dfg import Dfg
 from hugr.cli import convert
 from hugr.envelope import EnvelopeConfig, EnvelopeFormat
 from hugr.package import Package
-from pecos.qec import _hugr_result_tags
-from pecos.qec._hugr_result_tags import (
+from pecos.qec import _hugr_preflight
+from pecos.qec._hugr_preflight import (
     has_nontrivial_control_flow,
     load_hugr_from_bytes,
 )
@@ -144,6 +144,6 @@ def test_loader_rejects_unknown_extension() -> None:
 
 def test_loader_rejects_unresolved_operation_after_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the Python guard independently of the native validator's rejection."""
-    monkeypatch.setattr(_hugr_result_tags, "validate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_hugr_preflight, "validate", lambda *_args, **_kwargs: None)
     with pytest.raises(ValueError, match=r"^Failed to parse HUGR: unresolved operation unknown\.extension\.missing$"):
         load_hugr_from_bytes(_unresolved_package())

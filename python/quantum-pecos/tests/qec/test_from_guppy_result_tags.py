@@ -13,6 +13,7 @@ from guppylang.std.lang import owned
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import Detector, DetectorErrorModel, build_dem_from_guppy, rec, result_ref
+from pecos.qec._qis_result_tags import _CertificationError
 
 
 # A scrambled straight-line program: three measurements in source order
@@ -119,16 +120,18 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
     with pytest.raises(
         ValueError,
         match=(
-            r"^Cannot certify measurement order from the lowered program: "
-            r"order-relevant block %\S+ is on a CFG cycle$"
+            r"^Cannot bind result_tags: the program's lowered form could not be certified; "
+            r"use records, rec\[-k\], or meas_ids instead\.$"
         ),
-    ):
+    ) as raised:
         DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis="Z"),
             num_qubits=get_num_qubits(3),
             detectors_json='[{"id":0,"result_tags":["any_tag"]}]',
             **_NOISE,
         )
+    assert isinstance(raised.value.__cause__, _CertificationError)
+    assert str(raised.value.__cause__).endswith("is on a CFG cycle")
 
 
 # ---------------------------------------------------------------------------

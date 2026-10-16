@@ -37,6 +37,7 @@ _PRINTS = {
     for suffix in ("", "_arr", "_selene", "_arr_selene")
 }
 _RELEVANT = _MEASUREMENTS | _ALLOCATORS | _UNSUPPORTED_MEASUREMENTS | _PRINTS.keys()
+_RUNTIME_CALLS = _RELEVANT | {"___read_future_bool"}
 _SUPPORTED_TERMINATORS = {"ret", "br", "switch", "unreachable"}
 _TERMINATORS = _SUPPORTED_TERMINATORS | {
     "invoke",
@@ -66,6 +67,10 @@ def _bytes(literal: str) -> bytes:
     index = 0
     while index < len(literal):
         if literal[index] == "\\":
+            if literal[index + 1 : index + 2] == "\\":
+                result.append(0x5C)
+                index += 2
+                continue
             escape = literal[index + 1 : index + 3]
             if not re.fullmatch(r"[0-9a-fA-F]{2}", escape):
                 msg = "invalid LLVM string escape"
@@ -86,16 +91,34 @@ class _Call:
     args: list[str]
 
     def check(self, return_type: str, arg_types: list[str]) -> None:
-        if self.return_type != return_type or [_parameter_type(arg) for arg in self.args] != arg_types:
+        try:
+            actual_types = [_parameter_type(arg) for arg in self.args]
+        except ValueError as error:
+            raise _CertificationError(str(error)) from error
+        if self.return_type != return_type or actual_types != arg_types:
             msg = f"unsupported signature for @{self.target}"
             raise _CertificationError(msg)
+        if any(len(_tokens(arg)) < 2 for arg in self.args):
+            msg = f"missing operand for @{self.target}"
+            raise _CertificationError(msg)
+
+
+def _instruction_start(tokens: list[str]) -> int:
+    start = 2 if len(tokens) > 1 and tokens[1] == "=" else 0
+    if start >= len(tokens):
+        msg = "incomplete instruction"
+        raise _CertificationError(msg)
+    return start
 
 
 def _call(instruction: str) -> _Call | None:
     tokens = _tokens(instruction)
-    start = 2 if len(tokens) > 1 and tokens[1] == "=" else 0
+    start = _instruction_start(tokens)
     if tokens[start] in {"tail", "musttail", "notail"}:
         start += 1
+        if start >= len(tokens):
+            msg = "incomplete tail call"
+            raise _CertificationError(msg)
     if tokens[start] != "call":
         return None
     # Skip attribute arguments and explicit function types. The callee itself
@@ -119,10 +142,14 @@ def _call(instruction: str) -> _Call | None:
     if depth:
         msg = "unterminated call"
         raise _CertificationError(msg)
+    try:
+        return_type = _return_type(" ".join(tokens[start + 1 : opening - 1])).partition(" (")[0]
+    except ValueError as error:
+        raise _CertificationError(str(error)) from error
     return _Call(
         _symbol(target),
         tokens[0] if start >= 2 and tokens[1] == "=" else None,
-        _return_type(" ".join(tokens[start + 1 : opening - 1])).partition(" (")[0],
+        return_type,
         _split_parameters(" ".join(tokens[opening + 1 : closing - 1])),
     )
 
@@ -182,7 +209,7 @@ def _blocks(body: str) -> dict[str, list[str]]:
 
 def _opcode(instruction: str) -> str:
     tokens = _tokens(instruction)
-    return tokens[2] if len(tokens) > 1 and tokens[1] == "=" else tokens[0]
+    return tokens[_instruction_start(tokens)]
 
 
 def _successors(instruction: str) -> list[str]:
@@ -353,10 +380,14 @@ def _tag(call: _Call, globals_: dict[str, bytes]) -> str:
         msg = f"missing tag global @{name}"
         raise _CertificationError(msg)
     length = _tokens(call.args[1])
-    if len(length) != 2 or not length[1].isdigit():
+    if len(length) != 2 or not re.fullmatch(r"[0-9]+", length[1]):
         msg = "result tag length is not a non-negative constant"
         raise _CertificationError(msg)
-    size = int(length[1])
+    try:
+        size = int(length[1])
+    except ValueError as error:
+        msg = "result tag length exceeds the supported integer range"
+        raise _CertificationError(msg) from error
     # Direct exports skip one byte; Selene exports already point at string data.
     # ffi.rs uses the explicit length, not the value of the skipped byte.
     offset = 0 if selene else 1
@@ -379,7 +410,10 @@ def _tag(call: _Call, globals_: dict[str, bytes]) -> str:
 class _Analysis:
     def __init__(self, text: str) -> None:
         tokens = [match for match in _LEXER.finditer(text) if not match.group().startswith(";")]
-        functions = _functions(tokens)
+        try:
+            functions = _functions(tokens)
+        except ValueError as error:
+            raise _CertificationError(str(error)) from error
         self.declarations = {_symbol(tokens[function.name].group()) for function in functions if function.body is None}
         self.bodies = {
             _symbol(tokens[function.name].group()): text[
@@ -388,6 +422,16 @@ class _Analysis:
             for function in functions
             if function.body is not None
         }
+        # Aliases and other global definitions can override runtime symbols too.
+        global_definitions = {
+            _symbol(token.group())
+            for index, token in enumerate(tokens[:-1])
+            if token.group().startswith("@") and tokens[index + 1].group() == "="
+        }
+        defined_runtime_calls = (self.bodies.keys() | global_definitions) & _RUNTIME_CALLS
+        if defined_runtime_calls:
+            msg = f"module defines runtime call @{min(defined_runtime_calls)}"
+            raise _CertificationError(msg)
         self.globals = {}
         global_pattern = re.compile(
             r'(@(?:"[^"\n]*"|[\w.$-]+))\s*=\s*(?:[a-z_]+\s+)*constant\s+\[\s*\d+\s+x\s+i8\s*\]\s+c\s*"([^"\n]*)"',
@@ -416,7 +460,7 @@ class _Analysis:
             for call in calls:
                 if call.target in self.bodies:
                     self.discover(call.target, (*stack, name))
-                elif call.target not in self.declarations and call.target not in _RELEVANT | {"___read_future_bool"}:
+                elif call.target not in self.declarations and call.target not in _RUNTIME_CALLS:
                     msg = f"callee @{call.target} is neither a function definition nor a declaration"
                     raise _CertificationError(msg)
 
@@ -458,14 +502,18 @@ class _Analysis:
 def extract_result_tag_measurements(qis: str) -> tuple[dict[str, list[int | None]], int]:
     """Return sorted tags with execution ordinals (or unsupported holes), and count.
 
-    Raises ValueError with a certification reason if the reachable program is
+    Raises _CertificationError (a ValueError) if the reachable program is
     outside the supported CFG/call subset. Dead code contributes no measurements
     or tags; block boundaries are validated throughout each discovered function.
     Only direct scalar ``print_bool <- ___read_future_bool <- ___lazy_measure``
     within one function carries provenance; all other prints contribute None.
     """
     analysis = _Analysis(qis)
-    analysis.discover("qmain")
+    try:
+        analysis.discover("qmain")
+    except RecursionError as error:
+        msg = "call graph exceeds Python's recursion limit"
+        raise _CertificationError(msg) from error
     relevant = set(_RELEVANT)
     changed = True
     while changed:
@@ -477,5 +525,9 @@ def extract_result_tag_measurements(qis: str) -> tuple[dict[str, list[int | None
         changed = not added <= relevant
         relevant.update(added)
     ordered = {name: function.ordered_blocks(relevant) for name, function in analysis.functions.items()}
-    analysis.walk("qmain", ordered)
+    try:
+        analysis.walk("qmain", ordered)
+    except RecursionError as error:
+        msg = "call graph exceeds Python's recursion limit"
+        raise _CertificationError(msg) from error
     return dict(sorted(analysis.occurrences.items())), analysis.count

@@ -145,7 +145,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - Fixed Guppy result tags binding to the wrong measurement when HUGR node order
   differed from runtime order, such as with inlined helpers. Tags now bind from
-  the lowered program that is executed.
+  the lowered program that is executed. Errors for uncertifiable `result_tags` /
+  `result_ref` programs have changed text: they previously mentioned runtime loops
+  and now explain how to use positional records or measurement IDs instead.
 
 ### Rust breaking changes
 

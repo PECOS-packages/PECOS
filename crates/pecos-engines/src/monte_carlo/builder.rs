@@ -192,7 +192,8 @@ impl MonteCarloEngineBuilder {
     /// * `probability` - The probability parameter for depolarizing noise (between 0.0 and 1.0)
     ///
     /// # Returns
-    /// The builder for method chaining
+    /// `Ok(builder)` with the noise model installed for further method chaining,
+    /// or `Err(PecosError)` when the probability is invalid.
     ///
     /// # Errors
     /// Returns an error for a non-finite probability or one outside `0.0..=1.0`.

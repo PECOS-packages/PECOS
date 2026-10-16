@@ -719,11 +719,10 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `PecosError` if `config` cannot be parsed as an `f64` or if the
-    /// simulation fails.
+    /// Returns a `PecosError` if `config` cannot be parsed as an `f64`, the
+    /// probability is non-finite or outside `0.0..=1.0`, or the simulation fails.
     ///
     /// # Panics
-    /// - If the parsed probability is outside `0.0..=1.0` or is not a number.
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
     pub fn run_with_config(
@@ -734,11 +733,13 @@ impl MonteCarloEngine {
     ) -> Result<ShotVec, PecosError> {
         // Parse the configuration string as a noise probability
         let p = config.parse::<f64>().map_err(|e| {
-            PecosError::Input(format!("Failed to parse config string as float: {e}"))
+            PecosError::Input(format!(
+                "invalid depolarizing config {config:?}: {e}; supply a finite probability in 0.0..=1.0"
+            ))
         })?;
 
         // Create and seed a depolarizing noise model
-        let mut noise_model = crate::noise::DepolarizingNoiseModel::new_uniform(p);
+        let mut noise_model = crate::noise::DepolarizingNoiseModel::try_new_uniform(p)?;
 
         if let Some(s) = seed {
             noise_model.set_seed(derive_seed(s, "noise_model"));

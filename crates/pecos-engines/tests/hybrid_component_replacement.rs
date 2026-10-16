@@ -68,7 +68,9 @@ fn assert_preserved_components(setter: &str) {
     let builder = MonteCarloEngine::builder().with_hybrid_engine(original);
     let (builder, preserved) = match setter {
         "classical" => (
-            builder.with_classical_engine(Box::new(ExternalClassicalEngine::new())),
+            builder.with_classical_engine(Box::new(ExternalClassicalEngine::new_with_circuit(
+                replacement_circuit(),
+            ))),
             [false, true, true],
         ),
         "quantum" => (
@@ -102,8 +104,15 @@ fn assert_preserved_components(setter: &str) {
                 original_addresses[i],
                 "{setter}: component {i} was replaced or cloned"
             );
+        } else {
+            assert_ne!(
+                addresses(&result)[i],
+                original_addresses[i],
+                "{setter}: component {i} was not replaced"
+            );
         }
     }
+    assert_replacement(&mut result, setter);
     if preserved[2] {
         let noise = result.quantum_system.noise_model();
         assert_eq!(
@@ -128,17 +137,57 @@ fn assert_preserved_components(setter: &str) {
         );
         assert_quantum_state_and_rng(&mut result, expected_quantum.as_mut(), setter);
     }
-    if setter == "qubits" {
-        assert_eq!(
+}
+
+fn replacement_circuit() -> ByteMessage {
+    ByteMessage::quantum_operations_builder()
+        .x(&[0])
+        .mz(&[0])
+        .build()
+}
+
+fn assert_replacement(result: &mut HybridEngine, setter: &str) {
+    match setter {
+        "classical" => assert_eq!(
+            result
+                .classical_engine
+                .generate_commands()
+                .unwrap()
+                .as_bytes(),
+            replacement_circuit().as_bytes(),
+        ),
+        "quantum" | "qubits" | "system" => {
+            assert_eq!(
+                result
+                    .quantum_system
+                    .quantum_engine()
+                    .as_any()
+                    .downcast_ref::<StateVecEngine>()
+                    .unwrap()
+                    .simulator()
+                    .num_qubits(),
+                4,
+            );
+        }
+        "depolarizing" => assert_eq!(
             result
                 .quantum_system
-                .quantum_engine()
+                .noise_model()
                 .as_any()
-                .downcast_ref::<StateVecEngine>()
+                .downcast_ref::<DepolarizingNoiseModel>()
                 .unwrap()
-                .simulator()
-                .num_qubits(),
-            4
+                .probabilities(),
+            (0.1, 0.1, 0.1, 0.1),
+        ),
+        _ => {}
+    }
+    if matches!(setter, "noise" | "system") {
+        assert!(
+            result
+                .quantum_system
+                .noise_model()
+                .as_any()
+                .is::<PassThroughNoiseModel>()
         );
     }
 }
@@ -225,5 +274,105 @@ fn hybrid_depolarizing_probability_is_fallible() {
                 .probabilities(),
             (p, p, p, p)
         );
+    }
+}
+
+fn runtime_noise() -> Box<dyn pecos_engines::noise::NoiseModel> {
+    use pecos_engines::noise::GeneralNoiseModel;
+    use pecos_engines::noise::IntoNoiseModel;
+    use pecos_engines::runtime_frame::{FrameLimits, RuntimeNoise};
+    RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default())
+        .unwrap()
+        .into_noise_model()
+        .unwrap()
+}
+
+fn runtime_hybrid() -> HybridEngine {
+    HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(ExternalClassicalEngine::new_with_circuit(
+            ByteMessage::quantum_operations_builder()
+                .pz(&[0])
+                .pz(&[1])
+                .x(&[1])
+                .mz(&[0])
+                .mz(&[1])
+                .build(),
+        )))
+        .with_quantum_system(QuantumSystem::new(
+            runtime_noise(),
+            Box::new(StateVecEngine::new(2)),
+        ))
+        .build()
+}
+
+fn assert_runtime_replacement_starts_shot(from_hybrid: bool, replace_noise: bool) {
+    let original = runtime_hybrid();
+    let builder = if from_hybrid {
+        HybridEngineBuilder::from(original)
+    } else {
+        HybridEngineBuilder::new()
+            .with_classical_engine(original.classical_engine)
+            .with_quantum_system(original.quantum_system)
+    };
+    let builder = if replace_noise {
+        builder.with_noise_model(runtime_noise())
+    } else {
+        builder.with_quantum_engine(Box::new(StateVecEngine::new(2)))
+    };
+    assert_runtime_shot(&mut builder.build());
+}
+
+fn assert_runtime_shot(engine: &mut HybridEngine) {
+    use pecos_engines::shot_results::Data;
+    let shot = engine
+        .run_shot()
+        .expect("a newly built engine needs no reset");
+    assert_eq!(shot.data.get("result"), Some(&Data::U32(0)));
+    assert_eq!(shot.data.get("result_1"), Some(&Data::U32(1)));
+}
+
+#[test]
+fn runtime_from_hybrid_replaces_quantum_without_reset() {
+    assert_runtime_replacement_starts_shot(true, false);
+}
+
+#[test]
+fn runtime_from_hybrid_replaces_noise_without_reset() {
+    assert_runtime_replacement_starts_shot(true, true);
+}
+
+#[test]
+fn runtime_from_system_replaces_quantum_without_reset() {
+    assert_runtime_replacement_starts_shot(false, false);
+}
+
+#[test]
+fn runtime_from_system_replaces_noise_without_reset() {
+    assert_runtime_replacement_starts_shot(false, true);
+}
+
+#[test]
+fn runtime_rebuilding_discards_shot_authorization_and_failure_state() {
+    for (from_hybrid, poison) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut original = runtime_hybrid();
+        assert_runtime_shot(&mut original);
+        if poison {
+            // The existing context forbids a second shot. The failed host attempt
+            // blocks execution; mutable access also poisons the frame owner.
+            assert!(original.run_shot().is_err());
+            let _ = original.quantum_system.engine_mut();
+        }
+        let pointers = addresses(&original);
+        let builder = if from_hybrid {
+            HybridEngineBuilder::from(original)
+        } else {
+            HybridEngineBuilder::new()
+                .with_classical_engine(original.classical_engine)
+                .with_quantum_system(original.quantum_system)
+        };
+        let mut rebuilt = builder.build();
+        assert_eq!(addresses(&rebuilt), pointers);
+        assert!(rebuilt.quantum_system.shot_context().is_none());
+        assert_runtime_shot(&mut rebuilt);
     }
 }

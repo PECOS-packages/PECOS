@@ -144,3 +144,25 @@ fn monte_carlo_depolarizing_returns_probability_errors() {
         );
     }
 }
+
+#[test]
+fn monte_carlo_config_rejects_invalid_probability() {
+    for config in ["-0.1", "1.1", "NaN", "inf", "-inf", "not-a-probability"] {
+        let error = MonteCarloEngine::run_with_config(config, 1, 1, Some(42))
+            .expect_err("invalid config probability must return an error")
+            .to_string();
+        assert!(error.contains(config), "{error}");
+        assert!(
+            error.contains("supply a finite probability in 0.0..=1.0"),
+            "{error}"
+        );
+    }
+    for config in ["0", "1"] {
+        assert_eq!(
+            MonteCarloEngine::run_with_config(config, 1, 1, Some(42))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}

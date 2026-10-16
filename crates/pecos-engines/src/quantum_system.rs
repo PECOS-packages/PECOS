@@ -57,6 +57,16 @@ impl QuantumSystem {
         }
     }
 
+    /// Consume the system and return its noise model and quantum engine, in that order.
+    ///
+    /// Component state, including RNG streams, is preserved. Shot authorization,
+    /// frame poison and host blocking are transient execution state and are discarded.
+    /// Recompose with [`Self::new`] to start a fresh execution owner.
+    #[must_use]
+    pub fn into_components(self) -> (Box<dyn NoiseModel>, Box<dyn QuantumEngine>) {
+        (self.noise_model, self.quantum_engine)
+    }
+
     fn drive_legacy(&mut self, input: ByteMessage) -> Result<ByteMessage, PecosError> {
         let stage = self.noise_model.start(input)?;
         self.drive_stage(stage)

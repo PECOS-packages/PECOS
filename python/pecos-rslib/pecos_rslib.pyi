@@ -4260,7 +4260,7 @@ class _ScheduledBatchAdapter(Protocol):
     def translate(self, batch: ScheduledEventBatch) -> list[Gate]: ...
 
 class ScheduledEventIdleZ:
-    """Checked v4 profile returned by scheduled_event_idle_z()."""
+    """Checked v7 profile returned by scheduled_event_idle_z()."""
 
     ...
 
@@ -4288,7 +4288,7 @@ def scheduled_idle_noise(
 ) -> ScheduledIdleNoise: ...
 
 class ScheduledEventIdleNoise:
-    """Checked v4 local idle-noise profile with a per-shot batch adapter."""
+    """Checked v7 local idle-noise profile with a per-shot batch adapter."""
 
 def scheduled_event_idle_noise(
     profile: ScheduledIdleNoise,
@@ -4317,7 +4317,7 @@ def scheduled_local_noise(
     ...
 
 class ScheduledEventLocalNoise:
-    """Checked v4 local faults with a per-shot batch adapter."""
+    """Checked v7 local faults with a per-shot batch adapter."""
 
 def scheduled_event_local_noise(
     profile: ScheduledLocalNoise,

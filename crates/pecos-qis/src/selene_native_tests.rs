@@ -1248,7 +1248,7 @@ mod measurement_followups {
             if extra == 0 {
                 let batches = result.unwrap();
                 assert_eq!(batches.len(), count);
-                let (wire, _) = encode_mode(batches, 0, ScheduledTransport::V3).unwrap();
+                let (wire, _) = encode_mode(batches, 0, ScheduledTransport::V6).unwrap();
                 assert_eq!(wire.as_bytes().len(), 16 + count * 40);
             } else {
                 let Err(error) = result else {

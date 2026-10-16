@@ -613,7 +613,7 @@ impl QASMEngine {
         &mut self,
         gate_type: pecos_core::prelude::GateType,
         qubits: &[usize],
-        params: &[f64],
+        params: &[Angle64],
     ) -> Result<(), PecosError> {
         let expected = gate_type.angle_arity();
         if params.len() != expected {
@@ -627,30 +627,26 @@ impl QASMEngine {
             GateType::RX => {
                 let angle = params[0];
                 for &qubit in qubits {
-                    self.message_builder
-                        .rx(Angle64::try_from_radians(angle)?, &[qubit]);
+                    self.message_builder.rx(angle, &[qubit]);
                 }
             }
             GateType::RY => {
                 let angle = params[0];
                 for &qubit in qubits {
-                    self.message_builder
-                        .ry(Angle64::try_from_radians(angle)?, &[qubit]);
+                    self.message_builder.ry(angle, &[qubit]);
                 }
             }
             GateType::RZ => {
                 let angle = params[0];
                 for &qubit in qubits {
-                    self.message_builder
-                        .rz(Angle64::try_from_radians(angle)?, &[qubit]);
+                    self.message_builder.rz(angle, &[qubit]);
                 }
             }
             GateType::RZZ => {
                 let angle = params[0];
                 for chunk in qubits.chunks(2) {
                     if chunk.len() == 2 {
-                        self.message_builder
-                            .rzz(Angle64::try_from_radians(angle)?, &[(chunk[0], chunk[1])]);
+                        self.message_builder.rzz(angle, &[(chunk[0], chunk[1])]);
                     }
                 }
             }
@@ -658,11 +654,7 @@ impl QASMEngine {
                 let theta = params[0];
                 let phi = params[1];
                 for &qubit in qubits {
-                    self.message_builder.rxy1q(
-                        Angle64::try_from_radians(theta)?,
-                        Angle64::try_from_radians(phi)?,
-                        &[qubit],
-                    );
+                    self.message_builder.rxy1q(theta, phi, &[qubit]);
                 }
             }
             GateType::RXYXY2Q => {
@@ -675,11 +667,8 @@ impl QASMEngine {
                 let phi = params[1];
                 for chunk in qubits.chunks(2) {
                     if chunk.len() == 2 {
-                        self.message_builder.rxyxy2q(
-                            Angle64::try_from_radians(theta)?,
-                            Angle64::try_from_radians(phi)?,
-                            &[(chunk[0], chunk[1])],
-                        );
+                        self.message_builder
+                            .rxyxy2q(theta, phi, &[(chunk[0], chunk[1])]);
                     }
                 }
             }
@@ -688,12 +677,7 @@ impl QASMEngine {
                 let phi = params[1];
                 let lambda = params[2];
                 for &qubit in qubits {
-                    self.message_builder.u(
-                        Angle64::try_from_radians(theta)?,
-                        Angle64::try_from_radians(phi)?,
-                        Angle64::try_from_radians(lambda)?,
-                        &[qubit],
-                    );
+                    self.message_builder.u(theta, phi, lambda, &[qubit]);
                 }
             }
             _ => {
@@ -765,15 +749,7 @@ impl QASMEngine {
             | GateType::RXXRYYRZZ
             | GateType::U2q
             | GateType::RXY1Q
-            | GateType::U => {
-                // Convert angles to radians for process_parameterized_gate
-                let angles_as_radians: Vec<f64> = gate
-                    .angles
-                    .iter()
-                    .map(pecos_core::Angle::to_radians)
-                    .collect();
-                self.process_parameterized_gate(gate.gate_type, &qubits, &angles_as_radians)
-            }
+            | GateType::U => self.process_parameterized_gate(gate.gate_type, &qubits, &gate.angles),
             GateType::MX
             | GateType::MZ
             | GateType::MeasureLeaked
@@ -1920,6 +1896,29 @@ mod tests {
     use pecos_core::gate_type::GateType;
 
     #[test]
+    fn native_parameterized_gates_keep_all_angle_bits() {
+        use pecos_core::Gate;
+        let a = pecos_core::radians!(-0.73);
+        let b = Angle64::new(u64::MAX);
+        for gate in [
+            Gate::rx(a, &[0]),
+            Gate::ry(a, &[0]),
+            Gate::rz(a, &[0]),
+            Gate::rzz(a, &[(0, 1)]),
+            Gate::rxy1q(a, b, &[0]),
+            Gate::rxyxy2q(a, b, &[(0, 1)]),
+            Gate::u(a, b, Angle64::new(1), &[0]),
+        ] {
+            let mut engine = QASMEngine::default();
+            engine.process_native_gate(&gate).unwrap();
+            assert_eq!(
+                engine.message_builder.build().quantum_ops().unwrap(),
+                vec![gate]
+            );
+        }
+    }
+
+    #[test]
     fn parameterized_gate_rejects_missing_angle() {
         let err = QASMEngine::default()
             .process_parameterized_gate(GateType::RZ, &[0], &[])
@@ -1933,7 +1932,11 @@ mod tests {
     #[test]
     fn parameterized_gate_rejects_surplus_angle() {
         let err = QASMEngine::default()
-            .process_parameterized_gate(GateType::RZ, &[0], &[0.5, 0.25])
+            .process_parameterized_gate(
+                GateType::RZ,
+                &[0],
+                &[Angle64::HALF_TURN, Angle64::QUARTER_TURN],
+            )
             .expect_err("surplus angles must fail");
         assert!(
             err.to_string()

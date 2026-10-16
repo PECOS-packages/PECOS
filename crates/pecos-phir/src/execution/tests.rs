@@ -498,6 +498,41 @@ fn test_processor_cphase_gate() {
 }
 
 #[test]
+fn test_processor_cphase_preserves_fixed_point_half() {
+    // Signed magnitudes are 2143200067395860927 and ...928 ticks;
+    // their halves toward zero differ by one tick although both map to -0.73 f64.
+    for (angle, half_magnitude) in [
+        (pecos_core::radians!(-0.73), 1_071_600_033_697_930_463),
+        (
+            Angle64::new(16_303_544_006_313_690_688),
+            1_071_600_033_697_930_464,
+        ),
+    ] {
+        let mut processor = PhirProcessor::new();
+        processor
+            .ssa_values
+            .insert(0, super::environment::TypedValue::I64(0));
+        processor
+            .ssa_values
+            .insert(1, super::environment::TypedValue::I64(1));
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        let cp = instr(
+            Operation::Quantum(QuantumOp::CPhase(angle)),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Qubit],
+        );
+        processor.process_instruction(&cp, &mut builder).unwrap();
+        let ops = builder.build().quantum_ops().unwrap();
+        let magnitude = Angle64::new(half_magnitude);
+        assert_eq!(ops[0].angles[0], magnitude);
+        assert_eq!(ops[1].angles[2], -magnitude);
+        assert_eq!(ops[2].angles[0], -magnitude);
+    }
+}
+
+#[test]
 fn test_processor_cz_gate() {
     let mut processor = PhirProcessor::new();
     processor

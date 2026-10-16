@@ -949,8 +949,7 @@ mod tests {
     }
 
     // Captured gate order and randomness retained; bytes migrated to version 5.
-    // RZ fractions use exact significand-ratio rounding, independently checked
-    // with Python Fraction (f64 radians / f64 TAU * 2^64).
+    // This sequence contains no angle words; only the protocol version byte changed.
     #[test]
     fn field_name_setters_match_captured_alias_gate_sequence() {
         let mut noise = DepolarizingNoiseModel::builder()

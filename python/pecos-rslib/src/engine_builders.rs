@@ -174,7 +174,7 @@ impl PyQisEngineBuilder {
         self.clone()
     }
 
-    /// Opt into v4 event batches; pair with a scheduled event noise factory.
+    /// Opt into v7 event batches; pair with a scheduled event noise factory.
     #[pyo3(signature = (enabled = true))]
     fn scheduled_event_batches(&mut self, enabled: bool) -> Self {
         self.inner = self.inner.clone().scheduled_event_batches(enabled);
@@ -1402,7 +1402,7 @@ pub fn scheduled_local_noise(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })
 }
-/// Extract a checked scheduled v3 profile without widening other noise capabilities.
+/// Extract a checked scheduled v6 profile without widening other noise capabilities.
 pub(crate) fn extract_scheduled_idle(
     noise: &Py<PyAny>,
     py: Python<'_>,

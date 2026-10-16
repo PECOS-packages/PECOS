@@ -360,7 +360,7 @@ impl Engine for QuantumSystem {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        let scheduled = matches!(input.as_bytes().get(4), Some(3 | 4));
+        let scheduled = matches!(input.as_bytes().get(4), Some(6 | 7));
         if self.scheduled_model().is_some() {
             return self.process_scheduled(&input);
         }

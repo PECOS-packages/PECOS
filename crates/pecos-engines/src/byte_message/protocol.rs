@@ -8,8 +8,9 @@ use bytemuck::{Pod, Zeroable};
 
 // Magic bytes to identify PECOS message batches - "PECS"
 pub const BATCH_MAGIC: u32 = 0x50_45_43_53;
-// Version 5 stores gate angles as u64 fractions. Versions 2-4 identify
-// runtime/scheduled envelopes; version 1 used lossy f64 radians.
+// Version 5 stores ordinary gate angles as u64 fractions; versions 6/7 do
+// the same for scheduled batches/events. Version 2 is the runtime envelope.
+// Legacy versions 1 (ordinary) and 3/4 (scheduled) used lossy f64 radians.
 pub const PROTOCOL_VERSION: u8 = 5;
 
 bitflags! {

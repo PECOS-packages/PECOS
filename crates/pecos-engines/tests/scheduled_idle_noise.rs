@@ -417,8 +417,8 @@ fn overflowing_later_gap_rejects_before_execution_or_rng_mutation() {
         ];
         assert!(s.process(message(&invalid, events)).is_err());
         assert_eq!(before, s.controller().rng().clone().next_u64());
-        // v4 adapter normalization failures poison the owner, even before gate
-        // execution. Reset is required there; v3 admission permits retry.
+        // v7 adapter normalization failures poison the owner, even before gate
+        // execution. Reset is required there; v6 admission permits retry.
         if events {
             s.reset().unwrap();
             s.begin_shot(context(1)).unwrap();

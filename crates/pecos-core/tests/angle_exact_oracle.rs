@@ -76,3 +76,57 @@ fn rounded_ratios_wrap_at_every_width() {
     })+}; }
     check!(Angle8, Angle16, Angle32, Angle64, Angle128);
 }
+
+#[test]
+fn ratios_above_one_turn_are_rejected_before_rounding() {
+    macro_rules! check { ($($angle:ty),+) => {$({
+        for (n, d) in [((1_i64 << 62) + 1, 1_i64 << 62), ((1_i64 << 62) + 3, 1_i64 << 62), (i64::MAX, i64::MAX - 1)] {
+            for sign in [-1, 1] {
+                let error = std::panic::catch_unwind(|| <$angle>::from_turn_ratio(sign * n, d)).expect_err("ratio exceeds one turn");
+                let message = error.downcast_ref::<String>().unwrap();
+                assert!(message.contains(&format!("{}/{d}", sign * n)));
+                assert!(message.contains("ratio within one turn"));
+            }
+        }
+    })+}; }
+    check!(Angle8, Angle16, Angle32, Angle64, Angle128);
+}
+
+#[test]
+fn scaling_uses_exact_fraction_significands() {
+    use pecos_core::Angle64;
+    let angle = pecos_core::radians!(-0.73);
+    assert_eq!(angle.try_scale(1.0).unwrap(), angle);
+    assert_eq!(angle.try_scale(-1.0).unwrap(), -angle);
+    assert_eq!(Angle64::new(3).try_scale(0.5).unwrap().fraction(), 2);
+    assert_eq!(Angle64::new(3).try_scale(-0.5).unwrap(), -Angle64::new(2));
+    assert_eq!(
+        Angle64::new(u64::MAX).try_scale(2.0).unwrap().fraction(),
+        u64::MAX - 1
+    );
+    assert_eq!(angle.try_scale(f64::from_bits(1)).unwrap(), Angle64::ZERO);
+    assert_eq!(angle.try_scale(f64::MAX).unwrap(), Angle64::ZERO);
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(
+            angle
+                .try_scale(invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("scale factor")
+        );
+    }
+}
+
+#[test]
+fn signed_float_output_converts_the_integer_magnitude() {
+    use pecos_core::Angle64;
+    for positive in [
+        Angle64::new(1),
+        pecos_core::radians!(0.73),
+        Angle64::QUARTER_TURN,
+    ] {
+        assert_eq!((-positive).to_radians_signed(), -positive.to_radians());
+        assert_eq!((-positive).to_turns_signed(), -positive.to_turns());
+    }
+    assert_eq!(pecos_core::radians!(-0.73).to_radians_signed(), -0.73);
+}

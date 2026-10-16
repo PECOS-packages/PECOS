@@ -1460,9 +1460,9 @@ impl GateAction for OverRotation {
         let base_angle = ctx
             .current_gate()
             .and_then(super::super::context::GateInfo::angle)
-            .map_or(0.0, |a| a.to_radians());
+            .unwrap_or(pecos_core::Angle64::ZERO);
 
-        let error_angle = base_angle * self.fraction;
+        let error_angle = base_angle.to_radians() * self.fraction;
 
         if error_angle.abs() < 1e-10 {
             return CompositeResponse::None;
@@ -1472,8 +1472,9 @@ impl GateAction for OverRotation {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
             payload: GatePayload::Angles(smallvec![
-                pecos_core::Angle64::try_from_radians(error_angle)
-                    .expect("bounded over-rotation fraction times a stored angle is finite")
+                base_angle
+                    .try_scale(self.fraction)
+                    .expect("OverRotation constructors validate that the scale factor is finite")
             ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
@@ -2932,6 +2933,19 @@ mod tests {
             (leak_rate - 0.25).abs() < 0.05,
             "Expected ~25% leakage, got {leak_rate}"
         );
+    }
+
+    #[test]
+    fn over_rotation_preserves_full_precision_angle() {
+        let mut ctx = make_test_context();
+        let angle = pecos_core::radians!(-0.73);
+        ctx.set_current_gate(GateType::RZ, &[angle], 1);
+        let response = OverRotation::rz(1.0).unwrap().apply(
+            QubitId(0),
+            &mut ctx,
+            &mut PecosRng::seed_from_u64(42),
+        );
+        assert_eq!(response.collect_gates()[0].angles()[0], angle);
     }
 
     #[test]

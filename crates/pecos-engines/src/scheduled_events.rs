@@ -1,4 +1,4 @@
-//! Mandatory v4 scheduled batches and a restricted, shot-local batch adapter.
+//! Mandatory v7 scheduled batches and a restricted, shot-local batch adapter.
 //!
 //! Adapters normalize complete inputs before quantum execution. They cannot observe
 //! measurement outcomes or access simulator/RNG state. This is not an arbitrary
@@ -139,7 +139,7 @@ impl Writer {
         self.bytes(&v.to_le_bytes())
     }
 }
-/// Encode mandatory v4; ordinary consumers must reject its version.
+/// Encode mandatory v7; ordinary consumers must reject its version.
 ///
 /// # Errors
 /// Rejects invalid records, identities, payloads and total size above 64 MiB.
@@ -173,7 +173,7 @@ pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessa
         }
     }
     w.0[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
-    w.0[4] = 4;
+    w.0[4] = 7;
     w.0[8..12].copy_from_slice(
         &u32::try_from(batches.len())
             .map_err(|_| error("batch count overflow"))?
@@ -200,16 +200,22 @@ impl<'a> Reader<'a> {
         usize::try_from(self.word()?).map_err(|_| error("event size overflow"))
     }
 }
-/// Decode an entire v4 input without invoking adapters or touching physics.
+/// Decode an entire v7 input without invoking adapters or touching physics.
 ///
 /// # Errors
 /// Rejects malformed, unknown-version, oversized or ambiguous records.
 pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBatch>, PecosError> {
     let bytes = input.as_bytes();
+    if let Some(version) = bytes.get(4..8)
+        && version != [7, 0, 0, 0]
+    {
+        return Err(error(&format!(
+            "scheduled version bytes {version:?} are unsupported; rebuild the message with version 7, which stores angles as exact u64 fractions"
+        )));
+    }
     if bytes.len() < 16
         || bytes.len() > MAX_SCHEDULE_BYTES
         || bytes[..4] != crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes()
-        || bytes[4..8] != [4, 0, 0, 0]
         || u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize != bytes.len()
     {
         return Err(error("invalid scheduled event header/version/length"));
@@ -222,7 +228,7 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     let mut result = Vec::new();
     for _ in 0..count {
         let nested_bytes = r.size()?;
-        // A nested v3 frame holds exactly one bounded batch, without opaque data.
+        // A nested v6 frame holds exactly one bounded batch, without opaque data.
         if nested_bytes > 56 + MAX_BATCH_OPERATIONS * 40 {
             return Err(error("event gate count limit"));
         }
@@ -366,7 +372,7 @@ type Factory =
 pub type ScheduledEventIdleZ = ScheduledEventNoise;
 /// Compatibility name for [`ScheduledEventNoise`], retaining the supplied profile.
 pub type ScheduledEventIdleNoise = ScheduledEventNoise;
-/// Explicit opt-in to mandatory v4 with the same checked local physics as v3.
+/// Explicit opt-in to mandatory v7 with the same checked local physics as v6.
 #[derive(Clone)]
 pub struct ScheduledEventNoise {
     profile: ScheduledNoise,

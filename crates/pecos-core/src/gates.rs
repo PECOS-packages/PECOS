@@ -1295,7 +1295,14 @@ impl Gate {
     /// - The number of angles doesn't match the gate's angle arity
     /// - The number of qubits is not a multiple of the gate's quantum arity
     /// - Any qubit is repeated within the gate command
+    /// - A Custom gate carries non-angle parameters, which its payload cannot distinguish
     pub fn validate(&self) -> Result<(), String> {
+        if self.gate_type == GateType::Custom && !self.params.is_empty() {
+            return Err(format!(
+                "Custom gate has non-angle parameters {:?}; remove these parameters and supply only angles, because the Custom payload contains only angle fractions",
+                self.params
+            ));
+        }
         if self.is_channel() {
             let Some(channel) = &self.channel else {
                 return Err("GateType::Channel requires a channel payload".to_string());

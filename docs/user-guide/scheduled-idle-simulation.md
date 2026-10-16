@@ -132,7 +132,7 @@ Gate faults, readout faults, crosstalk and repumping are not configurable in thi
 profile. Each nonempty batch goes through one existing general-noise controller
 lifecycle; empty batches do not trigger a lifecycle or split an idle interval.
 In particular, this adapter is not permission to split arbitrary noise controllers.
-The v4 [event adapter](scheduled-event-adapters.md) can use the same profile via
+The v7 [event adapter](scheduled-event-adapters.md) can use the same profile via
 `scheduled_event_idle_noise(profile, adapter_factory)`.
 
 ## Local gate, preparation and readout faults
@@ -197,8 +197,8 @@ In Python, the `idle` base must be created with `scheduled_idle_noise()`;
 `scheduled_idle_z()` and an existing local profile are not accepted. For a Z-only
 base, use `scheduled_idle_noise()` with its default Z models and the same rates.
 
-Use `local` as `.noise(local)` with v3, or
-`scheduled_event_local_noise(local, adapter_factory)` with v4. These numbers are
+Use `local` as `.noise(local)` with v6, or
+`scheduled_event_local_noise(local, adapter_factory)` with v7. These numbers are
 invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
 meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Unlike Python, the
 Rust constructor accepts a carrier that already contains local faults: it replaces
@@ -219,7 +219,7 @@ Every scheduled profile admits at most 4096 gates per batch. Same-qubit
 measurement, reset and reuse (including repeated measurement) execute in the
 runtime's original operation order. Each measurement captures the leakage state
 at its own position, so a later reset cannot change an earlier readout. This
-applies to both original v3 and normalized v4 gates, including idle-only profiles.
+applies to both original v6 and normalized v7 gates, including idle-only profiles.
 Adapters cannot split or retime native batches.
 
 Readout faults retain the general model's batch-level sampling order: gate and
@@ -253,13 +253,15 @@ Terminal scheduled batches execute before the shot is finalized. Measurement
 feedback invalidates earlier drain certification; completion requires a fresh
 empty drain after the final feedback and execution.
 
-The mandatory wire envelope is version 3: a 16-byte little-endian header (PECS
+The mandatory wire envelope is version 6: a 16-byte little-endian header (PECS
 magic, version byte and three zero reserved bytes, u32 batch count, u32 total
 length), followed by batches. Each batch has five u64 fields: runtime shot ID,
 batch ordinal, start, duration, gate count. Each gate has five u64 fields: opcode,
-first target, second target, theta IEEE-754 bits, phi IEEE-754 bits. Opcodes are
+first target, second target, theta Angle64 fraction, phi Angle64 fraction.
+The angle words preserve all 64 bits. Legacy version 3 used f64 radians and is
+rejected; rebuild those messages with the current encoder. Opcodes are
 1 RXY, 2 RZ, 3 RZZ, 4 RXYXY, 5 reset-Z, 6 measure-Z, 7 leakage-aware measure.
-Unused fields must be zero. Unknown records, nonfinite angles, invalid targets,
+Unused fields must be zero. Unknown records, invalid targets,
 length errors and unsupported envelope versions reject. Each complete envelope
 is limited to 64 MiB. This does **not** bound the upstream native drain's aggregate
 allocation or guarantee termination of a misbehaving plugin.

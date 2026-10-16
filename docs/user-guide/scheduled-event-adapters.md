@@ -1,6 +1,6 @@
 # Scheduled event adapters
 
-Mandatory v4 transport preserves opaque native events for a shot-local adapter.
+Mandatory v7 transport preserves opaque native events for a shot-local adapter.
 The adapter normalizes complete batches into checked gates **before quantum
 execution**. It supports checked local noise profiles and the 1–16-qubit StateVec limit;
 Python supports an opt-in adapter factory on the QIS/HUGR engines route. This is
@@ -25,10 +25,10 @@ The aliases preserve the supplied checked profile; `ScheduledIdleZ` itself remai
 a Z-only convenience constructor. The factory receives `ShotContext` and
 must return an independent `Box<dyn ScheduledBatchAdapter>` for each shot.
 
-The builder has three transport modes: off, v3, v4. Enabling scheduled batches
-preserves a selected v4 mode; disabling batches turns transport off. Disabling
-events downgrades v4 to v3 and leaves an already-disabled transport off. Existing
-v3 and ordinary consumers reject v4; v3 still rejects opaque events.
+The builder has three transport modes: off, v6, v7. Enabling scheduled batches
+preserves a selected v7 mode; disabling batches turns transport off. Disabling
+events downgrades v7 to v6 and leaves an already-disabled transport off. Existing
+v6 and ordinary consumers reject v7; v6 still rejects opaque events.
 
 - `validate` checks every event schema without side effects. Unknown or unsupported
   semantics must reject. All batches are validated before translation starts.
@@ -57,10 +57,12 @@ callbacks. No rollback of adapter side effects is promised.
 
 ## Wire and bounds
 
-The 16-byte header contains the batch magic, version 4, zero reserved bytes, u32 batch
-count and u32 total byte length. All integers are little endian. Each batch contains:
+The 16-byte header contains the batch magic, version 7, zero reserved bytes, u32 batch
+count and u32 total byte length. All integers are little endian. Legacy version 4
+embedded float-angle frames and is rejected; rebuild those messages with the
+current encoder. Each batch contains:
 
-1. A u64 length followed by exactly one v3 batch of ordinary gates.
+1. A u64 length followed by exactly one v6 batch of ordinary gates.
 2. A u64 event count and ordered records: u64 original position, tag, payload length,
    then payload bytes.
 3. A u64 measurement count and triples of u64 original position, native result ID,
@@ -69,7 +71,7 @@ count and u32 total byte length. All integers are little endian. Each batch cont
 
 Unknown records, versions, reserved bits and malformed lengths reject. Each source
 or expanded batch allows 4096 operations; opaque payloads total at most 256 KiB per
-batch. Wire and expanded v3-equivalent sizes are each capped at 64 MiB. These bounds
+batch. Wire and expanded v6-equivalent sizes are each capped at 64 MiB. These bounds
 are not a process-RSS limit. Native extraction still has no aggregate output cap,
 and adapters must bound their own retained state. The host retains only bounded
 per-qubit timing and shot/ordinal state after processing.
@@ -91,12 +93,12 @@ contracts described under [shared scheduled limits](scheduled-idle-simulation.md
 **normalized** gates emitted by the adapter, using the same per-qubit rules as
 [scheduled idle-noise simulation](scheduled-idle-simulation.md#timing-and-noise-contract).
 Source timing admission remains enforced even when a preparation gap is omitted.
-Use StateVec and the explicit physical capacity as for v3.
+Use StateVec and the explicit physical capacity as for v6.
 The normal `pecos.sim(program).classical(...).noise(...).run(shots)` route and
 QIS `.build()` simulations support this configuration, including HUGR/Guppy
 lowering to QIS. Other stacks and operation tracing do not support this factory.
 
-On the first v4 input of each host shot, `adapter_factory((run, worker, shot))`
+On the first v7 input of each host shot, `adapter_factory((run, worker, shot))`
 must create a fresh object with two methods:
 
 - `validate(batch)` returns `None`, or raises for an unsupported schema/semantics.

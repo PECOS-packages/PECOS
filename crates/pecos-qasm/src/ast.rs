@@ -9,7 +9,7 @@ use std::fmt;
 fn native_gate_parameters(gate: &Gate) -> Vec<f64> {
     gate.angles
         .iter()
-        .map(pecos_core::Angle64::to_radians)
+        .map(pecos_core::Angle64::to_radians_signed)
         .chain(gate.params.iter().copied())
         .collect()
 }

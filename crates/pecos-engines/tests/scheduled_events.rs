@@ -259,15 +259,15 @@ fn malformed_wire_rejects_before_factory_and_never_reaches_legacy_consumers() {
         Box::new(StateVecEngine::new(1)),
     );
     assert!(old.process(good.clone()).is_err());
-    let mut v3 = QuantumSystem::new(
+    let mut v6 = QuantumSystem::new(
         ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
             .unwrap()
             .into_noise_model()
             .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
-    begin(&mut v3);
-    assert!(v3.process(good).is_err());
+    begin(&mut v6);
+    assert!(v6.process(good).is_err());
     let mut too_large = batch(
         0,
         vec![ScheduledEventOp::Custom {
@@ -832,4 +832,19 @@ fn repeated_program_id_round_trips_and_reaches_event_adapter() {
         decode_event_batches(&ByteMessage::new(&bytes)).unwrap()[0].measurements,
         b.measurements
     );
+}
+
+#[test]
+fn event_angles_keep_every_fraction_bit() {
+    let a = pecos_core::radians!(-0.73);
+    let original = batch(0, vec![gate(Gate::rxyxy2q(a, Angle64::new(1), &[(0, 1)]))]);
+    let message = encode_event_batches(std::slice::from_ref(&original)).unwrap();
+    let decoded = decode_event_batches(&message).unwrap();
+    let ScheduledEventOp::Gate(decoded_gate) = &decoded[0].operations[0] else {
+        panic!("expected gate")
+    };
+    assert_eq!(**decoded_gate, Gate::rxyxy2q(a, Angle64::new(1), &[(0, 1)]));
+    let mut old = message.as_bytes().to_vec();
+    old[4] = 4;
+    assert!(decode_event_batches(&ByteMessage::new(&old)).is_err());
 }

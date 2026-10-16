@@ -186,11 +186,13 @@ pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Result<Vec<Gate>, 
     lower_phase_angle(gamma, qubits)
 }
 
-/// Keep stored angles exact when checking whether a scalar is the identity.
-pub(crate) fn lower_phase_angle(
-    gamma: Angle64,
-    qubits: &[QubitId],
-) -> Result<Vec<Gate>, PhaseGateError> {
+/// Lower a stored phase without converting through floating point.
+/// Two-operand phases halve the signed principal fraction toward zero.
+///
+/// # Errors
+/// Rejects duplicate operands, unsupported arities and nonidentity scalar phases,
+/// with the same rules as [`lower_phase`].
+pub fn lower_phase_angle(gamma: Angle64, qubits: &[QubitId]) -> Result<Vec<Gate>, PhaseGateError> {
     Ok(match qubits {
         [] if gamma != Angle64::ZERO => {
             return Err(PhaseGateError::UnrepresentableGlobalPhase { phase: gamma });

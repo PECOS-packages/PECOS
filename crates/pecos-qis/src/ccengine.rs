@@ -3503,7 +3503,7 @@ mod tests {
         use pecos_core::gate_type::GateType::{PZ, RZ};
         use pecos_engines::scheduled_events::{ScheduledEventOp, decode_event_batches};
         let mut engine = prep_test_engine(true);
-        engine.scheduled_transport = ScheduledTransport::V4;
+        engine.scheduled_transport = ScheduledTransport::V7;
         let lowered = engine
             .lower_operations_to_commands(&[
                 Operation::AllocateQubit { id: 7 },
@@ -5068,7 +5068,7 @@ mod scheduled_completion_tests {
         drop(batches);
         runtime.stage = 0;
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
-        engine.scheduled_transport = ScheduledTransport::V4;
+        engine.scheduled_transport = ScheduledTransport::V7;
         let Err(error) = engine.drain_terminal_commands() else {
             panic!("oversized V4 encoding must fail");
         };
@@ -5094,7 +5094,7 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_terminal_padding_without_feedback_fails_promptly() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 output: TerminalOutput::Padding,
                 ..Default::default()
@@ -5132,7 +5132,7 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_feedback_permits_only_one_more_terminal_drain() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 output: TerminalOutput::FeedbackThenPadding,
                 ..Default::default()
@@ -5206,7 +5206,7 @@ mod scheduled_completion_tests {
     }
 
     fn assert_scheduled_drain_progress_cleared(reset: bool) {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let gate = Arc::new(std::sync::Barrier::new(2));
             let mut engine = QisEngine::new(
                 Box::new(GatedTerminalInterface(Arc::clone(&gate))),
@@ -5272,7 +5272,7 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_gate_only_final_tail_completes_without_feedback() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 stage: 3,
                 ..Default::default()
@@ -5310,7 +5310,7 @@ mod scheduled_completion_tests {
         use pecos_engines::scheduled_frame::ScheduledIdleZ;
         use pecos_engines::{StateVecEngine, quantum_system::QuantumSystem};
         let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail::default()));
-        engine.scheduled_transport = ScheduledTransport::V3;
+        engine.scheduled_transport = ScheduledTransport::V6;
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -5472,7 +5472,7 @@ mod scheduled_completion_tests {
             fail_tail: true,
             ..FeedbackTail::default()
         }));
-        engine.scheduled_transport = ScheduledTransport::V3;
+        engine.scheduled_transport = ScheduledTransport::V6;
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,

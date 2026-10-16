@@ -32,6 +32,10 @@ pub enum ConvertError {
     UnsupportedGate(String),
     #[error("circuit extraction failed: {0}")]
     ExtractionFailed(String),
+    #[error(
+        "angle fraction {0} requires a denominator of 2^63 in half turns, beyond QuiZX Rational64; supply an even Angle64 fraction to convert exactly"
+    )]
+    UnrepresentableAngle(u64),
 }
 
 /// Convert an `Angle64` (full turns) to a QuiZX `Phase` (half turns, i.e. multiples of pi).
@@ -39,18 +43,40 @@ pub enum ConvertError {
 /// PECOS stores angles as fractions of a full turn (2pi radians).
 /// QuiZX stores phases as multiples of pi (half turns).
 /// Conversion: `half_turns = 2.0 * full_turns`.
-fn angle_to_phase(angle: Angle64) -> Phase {
-    let full_turns = angle.to_radians() / std::f64::consts::TAU;
-    let half_turns = 2.0 * full_turns;
-    Phase::from_f64(half_turns)
+fn angle_to_phase(angle: Angle64) -> Result<Phase, ConvertError> {
+    let fraction = angle.fraction();
+    if fraction & 1 != 0 {
+        return Err(ConvertError::UnrepresentableAngle(fraction));
+    }
+    let negative = fraction > (1_u64 << 63);
+    let magnitude = if negative {
+        fraction.wrapping_neg()
+    } else {
+        fraction
+    };
+    // Dividing numerator and denominator by two makes both fit i64.
+    let numerator =
+        i64::try_from(magnitude >> 1).expect("a principal angle magnitude is at most 2^63 ticks");
+    Ok(Phase::new((
+        if negative { -numerator } else { numerator },
+        1_i64 << 62,
+    )))
 }
 
-/// Convert a QuiZX `Phase` (half turns) to an `Angle64` (full turns).
+/// Convert the exact rational phase to ticks, rounding once (ties away from zero).
 fn phase_to_angle(phase: Phase) -> Angle64 {
-    let half_turns = phase.to_f64();
-    let full_turns = half_turns / 2.0;
-    Angle64::try_from_turns(full_turns)
-        .expect("a QuiZX Phase is a normalized Rational64 and converts to finite turns")
+    let rational = phase.to_rational();
+    let numerator = u128::from(rational.numer().unsigned_abs());
+    let denominator = u128::from(rational.denom().unsigned_abs());
+    // Rational64's numerator occupies at most 64 bits, so shifting by 63 fits.
+    let ticks = ((numerator << 63) + denominator / 2) / denominator;
+    let fraction = u64::try_from(ticks & u128::from(u64::MAX))
+        .expect("mask restricts the rational phase to 64 fraction bits");
+    Angle64::new(if rational.numer().is_negative() {
+        fraction.wrapping_neg()
+    } else {
+        fraction
+    })
 }
 
 /// Emit the best-matching PECOS gate for a `ZPhase` with the given phase.
@@ -97,7 +123,8 @@ fn xphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
 /// # Errors
 ///
 /// Returns `ConvertError::UnsupportedGate` if the circuit contains gate types
-/// that have no ZX calculus equivalent (e.g., `Idle`, `CCX`).
+/// that have no ZX calculus equivalent (e.g., `Idle`, `CCX`), or
+/// `ConvertError::UnrepresentableAngle` for an odd fraction that Rational64 cannot hold.
 pub fn dag_to_zx(dag: &DagCircuit) -> Result<ZxGraph, ConvertError> {
     let zx_circuit = dag_to_zx_circuit(dag)?;
     Ok(zx_circuit.to_graph())
@@ -107,7 +134,8 @@ pub fn dag_to_zx(dag: &DagCircuit) -> Result<ZxGraph, ConvertError> {
 ///
 /// # Errors
 ///
-/// Returns `ConvertError::UnsupportedGate` for unsupported gate types.
+/// Returns `ConvertError::UnsupportedGate` for unsupported gate types, or
+/// `ConvertError::UnrepresentableAngle` for an odd fraction that Rational64 cannot hold.
 pub fn dag_to_zx_circuit(dag: &DagCircuit) -> Result<ZxCircuit, ConvertError> {
     let num_qubits = dag.width();
     let mut zx_circ = ZxCircuit::new(num_qubits);
@@ -125,7 +153,7 @@ pub fn dag_to_zx_circuit(dag: &DagCircuit) -> Result<ZxCircuit, ConvertError> {
                 zx_circ.push(ZxGate::new_with_phase(
                     GType::ZPhase,
                     qs,
-                    angle_to_phase(lambda),
+                    angle_to_phase(lambda)?,
                 ));
                 continue;
             }
@@ -179,11 +207,11 @@ pub fn dag_to_zx_circuit(dag: &DagCircuit) -> Result<ZxCircuit, ConvertError> {
 
                 // Rotation gates (parameterized)
                 GateType::RZ => {
-                    let phase = angle_to_phase(gate.angles[0]);
+                    let phase = angle_to_phase(gate.angles[0])?;
                     zx_circ.push(ZxGate::new_with_phase(GType::ZPhase, qs, phase));
                 }
                 GateType::RX => {
-                    let phase = angle_to_phase(gate.angles[0]);
+                    let phase = angle_to_phase(gate.angles[0])?;
                     zx_circ.push(ZxGate::new_with_phase(GType::XPhase, qs, phase));
                 }
 
@@ -337,16 +365,26 @@ mod tests {
     #[test]
     fn test_angle_phase_roundtrip() {
         let angle = Angle64::HALF_TURN;
-        let phase = angle_to_phase(angle);
+        let phase = angle_to_phase(angle).unwrap();
         let roundtrip = phase_to_angle(phase);
         let diff = (angle.to_radians() - roundtrip.to_radians()).abs();
         assert!(diff < 1e-6, "roundtrip error: {diff}");
     }
 
     #[test]
+    fn phase_conversion_keeps_representable_bits_and_rejects_loss() {
+        let odd = pecos_core::radians!(-0.73);
+        let even = Angle64::new(odd.fraction() - 1);
+        assert_eq!(phase_to_angle(angle_to_phase(even).unwrap()), even);
+        let error = angle_to_phase(odd).unwrap_err().to_string();
+        assert!(error.contains(&odd.fraction().to_string()));
+        assert!(error.contains("even Angle64 fraction"));
+    }
+
+    #[test]
     fn test_angle_phase_quarter_turn() {
         let angle = Angle64::QUARTER_TURN;
-        let phase = angle_to_phase(angle);
+        let phase = angle_to_phase(angle).unwrap();
         assert!((phase.to_f64() - 0.5).abs() < 1e-6);
     }
 

@@ -109,7 +109,8 @@ fn malformed_transport_and_unknown_records_return_errors_without_panics() {
         (8, u32::MAX.to_le_bytes().to_vec()),
         (48, u64::MAX.to_le_bytes().to_vec()),
         (56, 99_u64.to_le_bytes().to_vec()),
-        (80, f64::NAN.to_bits().to_le_bytes().to_vec()),
+        // RXY1Q has no second target; angle words now accept every u64.
+        (72, 1_u64.to_le_bytes().to_vec()),
     ] {
         let mut mutated = original.to_vec();
         mutated[offset..offset + bytes.len()].copy_from_slice(&bytes);

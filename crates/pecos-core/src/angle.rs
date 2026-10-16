@@ -197,6 +197,47 @@ const fn float_significand(value: f64) -> (u128, u64) {
 }
 
 impl Angle<u64> {
+    /// Scale the unsigned `[0, 1)` turn representative by a finite factor.
+    /// Multiplies the exact binary significand, rounds once to the nearest tick
+    /// (ties away from zero), and wraps modulo one turn without a float round trip.
+    ///
+    /// # Errors
+    /// Rejects non-finite scale factors.
+    pub fn try_scale(self, factor: f64) -> Result<Self, NonFiniteAngleError> {
+        if !factor.is_finite() {
+            return Err(NonFiniteAngleError {
+                value: factor,
+                unit: "scale factor",
+            });
+        }
+        let (significand, exponent) = float_significand(factor);
+        // Binary64's exponent bias plus its 52 explicit significand bits.
+        let exponent_offset = 1023 + 52;
+        // 64 fraction bits times at most 53 significand bits fit in u128.
+        let product = u128::from(self.fraction) * significand;
+        let rounded = if exponent >= exponent_offset + 64 {
+            0
+        } else if exponent >= exponent_offset {
+            product << (exponent - exponent_offset)
+        } else {
+            let right = exponent_offset - exponent;
+            if right >= 128 {
+                0
+            } else {
+                let quotient = product >> right;
+                let remainder = product & ((1_u128 << right) - 1);
+                quotient + u128::from(remainder >= (1_u128 << (right - 1)))
+            }
+        };
+        let [a, b, c, d, e, f, g, h, ..] = rounded.to_le_bytes();
+        let wrapped = u64::from_le_bytes([a, b, c, d, e, f, g, h]);
+        Ok(Self::new(if factor.is_sign_negative() {
+            wrapped.wrapping_neg()
+        } else {
+            wrapped
+        }))
+    }
+
     /// Const-evaluable counterpart of [`Self::try_from_radians`], with identical
     /// signed remainder, rounding, and integer wrapping.
     ///
@@ -294,11 +335,10 @@ where
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_radians_signed(&self) -> f64 {
-        let r = self.to_radians();
         if self.uses_negative_signed_representative() {
-            r - std::f64::consts::TAU
+            -(-*self).to_radians()
         } else {
-            r
+            self.to_radians()
         }
     }
 
@@ -357,12 +397,12 @@ where
     }
 
     /// Converts the angle to signed turns in `(-0.5, 0.5]`.
+    /// Converts the integer magnitude before applying its sign, avoiding cancellation.
     pub fn to_turns_signed(&self) -> f64 {
-        let t = self.to_turns();
         if self.uses_negative_signed_representative() {
-            t - 1.0
+            -(-*self).to_turns()
         } else {
-            t
+            self.to_turns()
         }
     }
 
@@ -640,7 +680,7 @@ where
     /// # Panics
     /// Code will panic if:
     /// - The denominator is zero.
-    /// - The rounded ratio is too large to represent in the underlying type.
+    /// - The magnitude of the ratio exceeds one turn.
     /// - Normalizing a negative denominator would overflow an i64 input.
     #[must_use]
     pub fn from_turn_ratio(mut numerator: i64, mut denominator: i64) -> Self {
@@ -668,11 +708,11 @@ where
         let abs_numerator = u128::from(numerator.unsigned_abs());
         let abs_denominator = u128::from(denominator.unsigned_abs());
 
+        if abs_numerator > abs_denominator {
+            invalid();
+        }
+
         if T::default().count_zeros() == 128 {
-            // Preserve the existing rejection of ratios outside one turn.
-            if abs_numerator > abs_denominator {
-                invalid();
-            }
             // Split (numerator * 2^128 + denominator/2) / denominator into
             // two base-2^64 digits. The denominator is positive and <= i64::MAX;
             // each remainder is smaller, so both shifted dividends fit u128.

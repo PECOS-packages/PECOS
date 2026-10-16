@@ -560,7 +560,7 @@ fn format_gate_stmt(
         let param_strs: Vec<String> = gate
             .angles
             .iter()
-            .map(|a| format!("{}", a.to_radians()))
+            .map(|a| format!("{}", a.to_radians_signed()))
             .collect();
         format!("({})", param_strs.join(", "))
     };

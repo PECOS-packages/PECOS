@@ -74,3 +74,31 @@ fn legacy_f64_angle_batches_are_rejected() {
     assert!(error.contains("version 5"), "{error}");
     assert!(error.contains("rebuild"), "{error}");
 }
+
+#[test]
+fn custom_non_angle_parameters_are_rejected_before_encoding() {
+    let gate = Gate::new(
+        GateType::Custom,
+        vec![pecos_core::radians!(-0.73)],
+        vec![1.25],
+        vec![0.into()],
+    );
+    let error = gate.validate().unwrap_err();
+    assert!(error.contains("1.25"), "{error}");
+    assert!(error.contains("remove"), "{error}");
+}
+
+#[test]
+fn custom_invalid_payload_cannot_reach_the_wire() {
+    let gate = Gate::new(
+        GateType::Custom,
+        vec![pecos_core::radians!(-0.73)],
+        vec![1.25],
+        vec![0.into()],
+    );
+    let result = std::panic::catch_unwind(|| {
+        let mut builder = ByteMessage::quantum_operations_builder();
+        builder.add_gate_command(&gate);
+    });
+    assert!(result.is_err());
+}

@@ -2381,7 +2381,7 @@ case pending_rz_repeated_measurements
 measurement 0 0 0
 measurement 0 0 1
 measurement 1 0 1
-amplitude 0 3fef7436b9504f7e bfc78b8f5cdb9599
+amplitude 0 3fef7436b9504f7e bfc78b8f5cdb95a7
 amplitude 1 0000000000000000 0000000000000000
 amplitude 2 0000000000000000 0000000000000000
 amplitude 3 0000000000000000 0000000000000000

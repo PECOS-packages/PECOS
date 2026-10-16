@@ -248,7 +248,11 @@ where
     ///
     /// Unlike scalar division, angles strictly above a half turn are first interpreted
     /// as negative. Keeping the calculation in the underlying integer width avoids the
-    /// precision loss of a round trip through `f64`.
+    /// precision loss of a round trip through `f64`. The signed fraction is divided
+    /// by two with rounding toward zero: even magnitudes halve exactly, and odd
+    /// magnitudes discard half a fraction unit. Thus `(-a).signed_half()` equals
+    /// `-(a.signed_half())` except at exactly a half turn. That self-inverse angle
+    /// uses the positive representative +π and therefore halves to +π/2.
     ///
     /// # Panics
     ///
@@ -256,21 +260,21 @@ where
     #[inline]
     #[must_use]
     pub fn signed_half(&self) -> Self {
-        let bit_count = std::mem::size_of::<T>() * 8;
-        let half_turn = 1_u128 << (bit_count - 1);
-        let fraction = self
-            .fraction
+        let negative = self.uses_negative_signed_representative();
+        let magnitude = if negative {
+            self.fraction.wrapping_neg()
+        } else {
+            self.fraction
+        };
+        let half_magnitude = magnitude
             .to_u128()
-            .expect("Failed to convert fraction to u128");
-        let signed_half = fraction / 2
-            + if self.uses_negative_signed_representative() {
-                half_turn
-            } else {
-                0
-            };
-        Self::new(
-            T::from_u128(signed_half).expect("Failed to convert signed half to angle fraction"),
-        )
+            .expect("unsigned primitive angle magnitudes fit in u128")
+            / 2;
+        let half = Self::new(
+            T::from_u128(half_magnitude)
+                .expect("halving an unsigned magnitude fits its original integer width"),
+        );
+        if negative { -half } else { half }
     }
 
     /// Whether the stored fraction lies strictly above the positive half-turn boundary.
@@ -893,6 +897,55 @@ mod tests {
         check_width!(Angle32, u32);
         check_width!(Angle64, u64);
         check_width!(Angle128, u128);
+    }
+
+    #[test]
+    fn signed_half_rounds_toward_zero_and_is_odd_across_widths() {
+        macro_rules! check_width {
+            ($angle:ty, $integer:ty) => {{
+                let half_turn: $integer = 1 << (<$integer>::BITS - 1);
+                for fraction in [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    half_turn / 2 - 1,
+                    half_turn / 2,
+                    half_turn / 2 + 1,
+                    half_turn - 3,
+                    half_turn - 2,
+                    half_turn - 1,
+                ] {
+                    let angle = <$angle>::new(fraction);
+                    assert_eq!(angle.signed_half(), <$angle>::new(fraction / 2));
+                    assert_eq!(
+                        (-angle).signed_half(),
+                        -angle.signed_half(),
+                        "fraction={fraction}"
+                    );
+                    assert_eq!((-angle).signed_half(), -<$angle>::new(fraction / 2));
+                }
+                // +pi is self-inverse modulo 2pi. Odd symmetry is impossible at
+                // this single point; the principal-value convention chooses +pi/2.
+                assert_eq!(
+                    <$angle>::new(half_turn).signed_half(),
+                    <$angle>::new(half_turn / 2)
+                );
+            }};
+        }
+        check_width!(Angle8, u8);
+        check_width!(Angle16, u16);
+        check_width!(Angle32, u32);
+        check_width!(Angle64, u64);
+        check_width!(Angle128, u128);
+        for fraction in 0..=u16::MAX {
+            let angle = Angle16::new(fraction);
+            if angle != Angle16::HALF_TURN {
+                assert_eq!((-angle).signed_half(), -angle.signed_half());
+            }
+        }
     }
 
     // Basic Construction and Properties

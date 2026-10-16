@@ -459,6 +459,20 @@ mod tests {
     }
 
     #[test]
+    fn default_u_odd_phase_halves_cancel_exactly() {
+        let target = [QubitId(0)];
+        for fraction in [1, 2, 3, 5, Angle64::HALF_TURN.fraction() - 1] {
+            let angle = Angle64::new(fraction);
+            let mut recorder = RecordingSimulator::default();
+            recorder.u(Angle64::ZERO, angle, -angle, &target);
+            assert_eq!(
+                recorder.global_phase_calls,
+                vec![(Angle64::ZERO, target.to_vec())]
+            );
+        }
+    }
+
+    #[test]
     fn default_u_000_is_exact_identity() {
         assert_default_u_phase_gate(
             Angle64::ZERO,

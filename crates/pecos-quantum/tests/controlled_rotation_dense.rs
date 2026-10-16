@@ -84,3 +84,59 @@ fn dense_reduced_lowering_matches_raw_half_at_800_angles() {
     println!("800-angle worst raw-half disagreement={worst:.3e}");
     assert!(worst < 1e-12);
 }
+
+#[test]
+fn crz_fixed_point_legs_are_exact_negatives_and_match_dense_reference() {
+    use num_complex::Complex64;
+    use std::f64::consts::PI;
+    let mut angles = vec![0.0, -0.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE];
+    for tiny in [1e-18, 1e-17, 1e-16, 1e-15, 1e-12] {
+        angles.extend([tiny, -tiny]);
+    }
+    for fraction in 1..=1024 {
+        let theta = Angle64::new(fraction).to_radians();
+        angles.extend([theta, -theta]);
+        let positive = lower_crz(theta, QubitId(1), QubitId(0)).unwrap();
+        let negative = lower_crz(-theta, QubitId(1), QubitId(0)).unwrap();
+        assert_eq!(positive[1].angles[0], Angle64::new(fraction / 2));
+        assert_eq!(negative[1].angles[0], -Angle64::new(fraction / 2));
+    }
+    for boundary in [-2.0 * TAU, -TAU, -PI, PI, TAU, 2.0 * TAU] {
+        angles.extend([
+            boundary.next_down(),
+            boundary,
+            boundary.next_up(),
+            boundary - 1e-7,
+            boundary + 1e-7,
+        ]);
+    }
+    for sample in -512..=512 {
+        angles.push(f64::from(sample) * TAU / 128.0);
+    }
+    for theta in angles {
+        let gates = lower_crz(theta, QubitId(1), QubitId(0)).unwrap();
+        let rzz = &gates[gates.len() - 2];
+        let rz = &gates[gates.len() - 1];
+        assert_eq!(rzz.angles[0], -rz.angles[0], "theta={theta}");
+        // The existing dense evaluator keeps the control-off block and global
+        // phase, so this also detects a missing or spurious parity correction.
+        let actual = dense(&gates);
+        let mut expected = UnitaryMatrix::identity(4);
+        expected[(2, 2)] = Complex64::from_polar(1.0, -theta / 2.0);
+        expected[(3, 3)] = Complex64::from_polar(1.0, theta / 2.0);
+        assert!((&actual - expected).norm() < 4e-15, "theta={theta}");
+        // For tiny inputs an absolute 1e-12 test alone would hide a lost angle.
+        // Input quantization and integer halving contribute less than one tick.
+        // The existing dense evaluator also truncates half-angle fractions and
+        // octant complements; allow three ticks in this numerical comparison.
+        // The stored-angle assertions above remain exact, including odd ticks.
+        if theta.abs() < 1e-12 {
+            let tick = TAU * 2.0_f64.powi(-64);
+            assert!(
+                (actual[(2, 2)].im + (theta / 2.0).sin()).abs() <= 3.0 * tick,
+                "tiny theta={theta}: {}",
+                actual[(2, 2)]
+            );
+        }
+    }
+}

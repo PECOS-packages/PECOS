@@ -18,21 +18,38 @@ use crate::{Angle64, Gate, NonFiniteAngleError, PhaseGateError, QubitId};
 use smallvec::{SmallVec, smallvec};
 use std::f64::consts::{PI, TAU};
 
-/// Return half the principal value in `(-π, π]` and the parity of removed turns.
-/// Keep both reduction and parity in f64: storing the remainder in `Angle64`
-/// would quantize it before the turn count is recovered.
-fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
-    // Reduce directly to preserve the principal branch near -π and tiny angles.
-    let reduced = theta_radians.rem_euclid(TAU);
-    let signed = if reduced > PI { reduced - TAU } else { reduced };
-    let h = signed / 2.0;
-    // Use the 4π reduction only for parity. Subtracting an even number of 2π
+/// Quantize the signed principal magnitude once, halve it in fixed point, and
+/// return the parity of removed turns separately. An Angle alone loses that bit.
+fn reduced_half_and_wrap_parity(
+    theta_radians: f64,
+) -> Result<(Angle64, bool), NonFiniteAngleError> {
+    // Validate the original input so errors retain its value and unit.
+    Angle64::try_from_radians(theta_radians)?;
+    // A signed remainder avoids adding then subtracting TAU for tiny negatives.
+    // Keep +pi at the closed end of the principal interval (-pi, pi].
+    let reduced = theta_radians % TAU;
+    let signed = if reduced > PI {
+        reduced - TAU
+    } else if reduced <= -PI {
+        reduced + TAU
+    } else {
+        reduced
+    };
+    // Quantizing a tiny negative via an unsigned floating-point remainder would
+    // erase it. Convert its magnitude once and do both halving and negation on
+    // integers; the emitted legs are then exact additive inverses.
+    let magnitude_half = Angle64::try_from_radians(signed.abs())?.signed_half();
+    let half = if signed < 0.0 {
+        -magnitude_half
+    } else {
+        magnitude_half
+    };
+    // Use the 4pi reduction only for parity. Subtracting an even number of 2pi
     // turns preserves parity while keeping the rounded count in 0, 1, or 2.
     let bounded = theta_radians.rem_euclid(2.0 * TAU);
     let wraps = ((bounded - signed) / TAU).round();
-    // The rounded count has exact integer parity; compare exactly, without a tolerance.
     let needs_z = wraps.rem_euclid(2.0).total_cmp(&1.0).is_eq();
-    (h, needs_z)
+    Ok((half, needs_z))
 }
 
 /// Lower `CRZ(theta)` to native rotations.
@@ -42,11 +59,15 @@ fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
 /// before angle reduction. Reduce `theta` to `(-π, π]` before halving so neither
 /// stored leg reaches the ambiguous ±π pair. Each removed 2π turn contributes
 /// a `Z` on the control; retaining its parity preserves the exact global phase
-/// and 4π periodicity without quantizing the source angle through [`Angle64`].
+/// and 4π periodicity. The reduced magnitude is quantized once into [`Angle64`]
+/// and halved with [`Angle64::signed_half`]'s rounding toward zero. The two stored
+/// legs are exact fixed-point negatives; an odd fraction necessarily loses half
+/// a fraction unit when halved at the same width. The identity therefore holds
+/// up to that documented fixed-point quantization.
 /// A separate reduction modulo 4π keeps the turn count bounded without changing
-/// the directly reduced signed representative. This prevents loss of integer
-/// parity in an enormous quotient; it does not improve the accuracy of
-/// floating-point argument reduction.
+/// the signed representative. This prevents loss of integer
+/// parity in an enormous quotient; it does not provide exact real-π argument
+/// reduction for large floating-point inputs.
 ///
 /// # Numerical validation
 ///
@@ -65,18 +86,14 @@ pub fn lower_crz(
     control: QubitId,
     target: QubitId,
 ) -> Result<SmallVec<[Gate; 3]>, NonFiniteAngleError> {
-    Angle64::try_from_radians(theta_radians)?;
-    let (half_theta, needs_z) = reduced_half_and_wrap_parity(theta_radians);
+    let (half_theta, needs_z) = reduced_half_and_wrap_parity(theta_radians)?;
     let mut gates = SmallVec::new();
     if needs_z {
         gates.push(Gate::z(&[control]));
     }
     gates.extend([
-        Gate::rzz(
-            Angle64::try_from_radians(-half_theta)?,
-            &[(control, target)],
-        ),
-        Gate::rz(Angle64::try_from_radians(half_theta)?, &[target]),
+        Gate::rzz(-half_theta, &[(control, target)]),
+        Gate::rz(half_theta, &[target]),
     ]);
     Ok(gates)
 }
@@ -118,8 +135,8 @@ pub fn lower_cry(
 /// `U(0,0,lambda/2)` carries the `exp(i lambda/4)` factor. `CPhase` is
 /// 2π-periodic, so `lambda` is first reduced to its signed representative in
 /// `(-π, π]`; every halved angle then lies in `(-π/2, π/2]`, away from the ±π
-/// pair that a stored [`Angle64`] cannot tell apart, and the lowering is exact
-/// for every input.
+/// pair that a stored [`Angle64`] cannot tell apart. Halving uses
+/// [`Angle64::signed_half`], including its toward-zero rounding for odd fractions.
 /// # Errors
 /// Rejects a non-finite angle, naming its value and unit.
 pub fn lower_cphase(
@@ -473,8 +490,10 @@ mod tests {
         for limit in [200.0, 10_000.0] {
             for sample in 0..300_000 {
                 let theta = -limit + 2.0 * limit * (f64::from(sample) + 0.5) / 300_000.0;
-                let (half, needs_z) = reduced_half_and_wrap_parity(theta);
-                assert!(half > -PI / 2.0 && half <= PI / 2.0);
+                let (half, needs_z) = reduced_half_and_wrap_parity(theta).unwrap();
+                assert!(
+                    half.to_radians_signed() > -PI / 2.0 && half.to_radians_signed() <= PI / 2.0
+                );
                 assert_eq!(needs_z, (theta / 2.0).cos() < 0.0, "theta={theta}");
             }
         }
@@ -483,8 +502,8 @@ mod tests {
     #[test]
     fn crz_just_above_negative_pi_keeps_two_gates() {
         let theta = (-PI).next_up();
-        let (half, needs_z) = reduced_half_and_wrap_parity(theta);
-        assert_eq!(half.to_bits(), (theta / 2.0).to_bits());
+        let (half, needs_z) = reduced_half_and_wrap_parity(theta).unwrap();
+        assert_eq!(half, -Angle64::new(4_611_686_018_427_387_392));
         assert!(!needs_z);
         let gates = lower_crz(theta, QubitId(0), QubitId(1)).unwrap();
         assert_eq!(gates.len(), 2);
@@ -495,10 +514,7 @@ mod tests {
                     Angle64::try_from_radians(-theta / 2.0).unwrap(),
                     &[(QubitId(0), QubitId(1))]
                 ),
-                Gate::rz(
-                    Angle64::try_from_radians(theta / 2.0).unwrap(),
-                    &[QubitId(1)]
-                ),
+                Gate::rz(-Angle64::new(4_611_686_018_427_387_392), &[QubitId(1)]),
             ]
         );
     }
@@ -509,8 +525,8 @@ mod tests {
     /// but it emits three gates where two suffice and so changes tick scheduling.
     #[test]
     fn crz_at_positive_pi_keeps_the_upper_branch_and_two_gates() {
-        let (half, needs_z) = reduced_half_and_wrap_parity(PI);
-        assert_eq!(half.to_bits(), (PI / 2.0).to_bits());
+        let (half, needs_z) = reduced_half_and_wrap_parity(PI).unwrap();
+        assert_eq!(half, Angle64::QUARTER_TURN);
         assert!(!needs_z);
 
         let gates = lower_crz(PI, QubitId(0), QubitId(1)).unwrap();
@@ -525,19 +541,16 @@ mod tests {
 
         // `-π` is the other end of the same half-open interval: it reduces onto the
         // upper branch and pays for it with the correction.
-        let (negated_half, negated_needs_z) = reduced_half_and_wrap_parity(-PI);
-        assert_eq!(negated_half.to_bits(), (PI / 2.0).to_bits());
+        let (negated_half, negated_needs_z) = reduced_half_and_wrap_parity(-PI).unwrap();
+        assert_eq!(negated_half, Angle64::QUARTER_TURN);
         assert!(negated_needs_z);
         assert_eq!(lower_crz(-PI, QubitId(0), QubitId(1)).unwrap().len(), 3);
     }
 
     #[test]
-    fn tiny_negative_crz_preserves_directly_reduced_half() {
-        let (half, needs_z) = reduced_half_and_wrap_parity(-1e-15);
-        assert_eq!(
-            (2.0 * half).to_bits(),
-            (-8.881_784_197_001_252e-16_f64).to_bits()
-        );
+    fn tiny_negative_crz_preserves_signed_residual_and_fixed_half() {
+        let (half, needs_z) = reduced_half_and_wrap_parity(-1e-15).unwrap();
+        assert_eq!(half, -Angle64::new(1468));
         assert!(!needs_z);
     }
 
@@ -565,9 +578,12 @@ mod tests {
             for (factor, parity) in [0.125, 0.37, 0.75, 1.0].into_iter().zip(expected) {
                 for sign in [-1.0, 1.0] {
                     let theta = sign * magnitude * factor;
-                    let (half, needs_z) = reduced_half_and_wrap_parity(theta);
+                    let (half, needs_z) = reduced_half_and_wrap_parity(theta).unwrap();
                     assert_eq!(needs_z, parity, "theta={theta}");
-                    assert!(half > -PI / 2.0 && half <= PI / 2.0);
+                    assert!(
+                        half.to_radians_signed() > -PI / 2.0
+                            && half.to_radians_signed() <= PI / 2.0
+                    );
                 }
             }
         }
@@ -579,7 +595,7 @@ mod tests {
         // answers. These two inputs have odd reference parity, but their reduced
         // f64 angles still lose accuracy.
         for (theta, rzz, rz) in [
-            (1e20, 15_664_121_865_801_654_272, 2_782_622_207_907_898_368),
+            (1e20, 15_664_121_865_801_653_248, 2_782_622_207_907_898_368),
             (
                 18_014_398_509_482_004.0,
                 3_526_899_157_453_711_360,
@@ -594,7 +610,7 @@ mod tests {
         }
         // Even a value below 1e13 can lie close enough to a sheet boundary for
         // f64 reduction to choose the wrong parity. Do not promise a uniform bound.
-        assert!(reduced_half_and_wrap_parity(156_700_000_000.0).1);
+        assert!(reduced_half_and_wrap_parity(156_700_000_000.0).unwrap().1);
     }
 
     #[test]

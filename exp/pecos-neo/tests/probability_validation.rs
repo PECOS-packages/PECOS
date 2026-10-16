@@ -502,11 +502,14 @@ fn per_gate_probability_sum_accepts_roundoff_only() {
             .with_1q_rates(GateType::H, [0.34, 0.56, 0.10])
             .is_ok()
     );
-    assert!(
-        PerGatePauliChannel::new()
-            .with_1q_rates(GateType::H, [0.34, 0.56, 0.11])
-            .is_err()
-    );
+    let error = PerGatePauliChannel::new()
+        .with_1q_rates(GateType::H, [0.34, 0.56, 0.11])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("1.01"), "{error}");
+    assert!(error.contains("exceeds 1.0"), "{error}");
+    assert!(error.contains("total is at most 1.0"), "{error}");
+    assert!(!error.contains("Normalize"), "{error}");
     assert!(
         PerGatePauliChannel::new()
             .with_1q_rates(GateType::H, [1.0 + f64::EPSILON, 0.0, 0.0])

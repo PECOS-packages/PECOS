@@ -49,6 +49,51 @@ const TABLE: [Row; COUNT] = {
     rows
 };
 
+const EDGES: &[f64] = &[
+    100.0,
+    -100.0,
+    1e6,
+    -1e6,
+    -1e-15,
+    -1e-16,
+    -1e-17,
+    -1e-18,
+    1e-17,
+    -2.710_505_431_213_761e-20, // negative half of an Angle64 tick, in turns
+    std::f64::consts::TAU.next_down(),
+    std::f64::consts::TAU,
+    std::f64::consts::TAU.next_up(),
+    -std::f64::consts::TAU.next_down(),
+    -std::f64::consts::TAU,
+    -std::f64::consts::TAU.next_up(),
+    1.0_f64.next_down(),
+    1.0,
+    1.0_f64.next_up(),
+    -1.0_f64.next_down(),
+    -1.0,
+    -1.0_f64.next_up(),
+    f64::from_bits((1023 + 63) << 52).next_down(),
+    f64::from_bits((1023 + 63) << 52),
+    f64::from_bits((1023 + 63) << 52).next_up(),
+    -f64::from_bits((1023 + 63) << 52).next_down(),
+    -f64::from_bits((1023 + 63) << 52),
+    -f64::from_bits((1023 + 63) << 52).next_up(),
+];
+const EDGE_TABLE: [Row; EDGES.len()] = {
+    let mut rows = [(0.0, Ok(Angle64::ZERO), Ok(Angle64::ZERO)); EDGES.len()];
+    let mut i = 0;
+    while i < EDGES.len() {
+        let x = EDGES[i];
+        rows[i] = (
+            x,
+            Angle64::const_try_from_radians(x),
+            Angle64::const_try_from_turns(x),
+        );
+        i += 1;
+    }
+    rows
+};
+
 fn assert_same(
     constant: Result<Angle64, NonFiniteAngleError>,
     runtime: Result<Angle64, NonFiniteAngleError>,
@@ -66,7 +111,7 @@ fn assert_same(
 
 #[test]
 fn const_evaluation_matches_generic_runtime_conversion() {
-    for &(x, radians, turns) in &TABLE {
+    for &(x, radians, turns) in TABLE.iter().chain(EDGE_TABLE.iter()) {
         assert_same(
             radians,
             Angle64::try_from_radians(std::hint::black_box(x)),
@@ -241,4 +286,12 @@ fn migrated_exact_constants_preserve_old_float_bits() {
         .unwrap(),
         Angle64::ZERO
     );
+}
+
+#[test]
+fn negative_literals_preserve_tiny_fractions() {
+    const RADIANS: Angle64 = pecos_core::radians!(-1e-17);
+    const TURNS: Angle64 = pecos_core::turns!(-1e-17);
+    assert_eq!(RADIANS, -Angle64::new(29));
+    assert_eq!(TURNS, -Angle64::new(184));
 }

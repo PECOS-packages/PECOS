@@ -98,8 +98,9 @@ fn crz_fixed_point_legs_are_exact_negatives_and_match_dense_reference() {
         angles.extend([theta, -theta]);
         let positive = lower_crz(theta, QubitId(1), QubitId(0)).unwrap();
         let negative = lower_crz(-theta, QubitId(1), QubitId(0)).unwrap();
-        assert_eq!(positive[1].angles[0], Angle64::new(fraction / 2));
-        assert_eq!(negative[1].angles[0], -Angle64::new(fraction / 2));
+        let half = Angle64::try_from_radians(theta / 2.0).unwrap();
+        assert_eq!(positive[1].angles[0], half);
+        assert_eq!(negative[1].angles[0], -half);
     }
     for boundary in [-2.0 * TAU, -TAU, -PI, PI, TAU, 2.0 * TAU] {
         angles.extend([
@@ -126,7 +127,7 @@ fn crz_fixed_point_legs_are_exact_negatives_and_match_dense_reference() {
         expected[(3, 3)] = Complex64::from_polar(1.0, theta / 2.0);
         assert!((&actual - expected).norm() < 4e-15, "theta={theta}");
         // For tiny inputs an absolute 1e-12 test alone would hide a lost angle.
-        // Input quantization and integer halving contribute less than one tick.
+        // Quantizing the floating-point half contributes at most half a tick.
         // The existing dense evaluator also truncates half-angle fractions and
         // octant complements; allow three ticks in this numerical comparison.
         // The stored-angle assertions above remain exact, including odd ticks.

@@ -16,15 +16,17 @@ fn program(angles: Value, args: Value) -> Value {
     program
 }
 
+// ByteMessage stores f64 radians, not raw Angle64 fractions. Its documented
+// round trip can lose low fraction bits even when the source f64 is unchanged.
+fn message_angle(radians: f64) -> Angle64 {
+    let angle = Angle64::try_from_radians(radians).unwrap();
+    Angle64::try_from_radians(angle.to_radians()).unwrap()
+}
+
 #[test]
 fn rxyxy2q_json_units_and_execution() {
     let theta = -0.73_f64;
     let phi = 0.41_f64;
-    let expected = Gate::rxyxy2q(
-        Angle64::try_from_radians(theta).unwrap(),
-        Angle64::try_from_radians(phi).unwrap(),
-        &[(2, 0)],
-    );
     for (unit, values) in [
         ("rad", [theta, phi]),
         ("deg", [theta.to_degrees(), phi.to_degrees()]),
@@ -34,7 +36,8 @@ fn rxyxy2q_json_units_and_execution() {
         ),
     ] {
         let json = program(json!([values, unit]), json!([[["q", 2], ["q", 0]]]));
-        let ast: PHIRProgram = serde_json::from_value(json.clone()).unwrap();
+        let source = json.to_string();
+        let ast: PHIRProgram = serde_json::from_str(&source).unwrap();
         let Operation::QuantumOp {
             qop,
             angles: Some(angles),
@@ -47,6 +50,14 @@ fn rxyxy2q_json_units_and_execution() {
         assert_eq!(qop, "RXYXY2Q");
         assert!((angles[0] - theta).abs() < 1e-14);
         assert!((angles[1] - phi).abs() < 1e-14);
+        // Unit conversion and JSON parsing can round the source f64 by an ulp.
+        // Check the original radians numerically above, and require every engine
+        // to preserve its ByteMessage round trip exactly below.
+        let expected = Gate::rxyxy2q(
+            message_angle(angles[0]),
+            message_angle(angles[1]),
+            &[(2, 0)],
+        );
         let mut processor = OperationProcessor::new();
         processor.add_quantum_variable("q", 3).unwrap();
         let (name, qubits, angles) = processor
@@ -65,7 +76,7 @@ fn rxyxy2q_json_units_and_execution() {
             engine.generate_commands().unwrap().quantum_ops().unwrap(),
             std::slice::from_ref(&expected)
         );
-        let module = phir_json_to_module(&json.to_string()).unwrap();
+        let module = phir_json_to_module(&source).unwrap();
         let mut engine = PhirEngine::new(module).unwrap();
         assert_eq!(
             engine.generate_commands().unwrap().quantum_ops().unwrap(),
@@ -107,7 +118,18 @@ fn rxyxy2q_json_preserves_multiple_pairs() {
         serde_json::json!([[-0.73, 0.41], "rad"]),
         serde_json::json!([[["q", 2], ["q", 0]], [["q", 0], ["q", 1]]]),
     );
-    let module = phir_json_to_module(&json.to_string()).unwrap();
+    let source = json.to_string();
+    let ast: PHIRProgram = serde_json::from_str(&source).unwrap();
+    let Operation::QuantumOp {
+        angles: Some(angles),
+        ..
+    } = &ast.ops[1]
+    else {
+        panic!("expected rotation")
+    };
+    let theta = message_angle(angles[0]);
+    let phi = message_angle(angles[1]);
+    let module = phir_json_to_module(&source).unwrap();
     let mut function = pecos_phir::phir::Function::new(
         "main",
         pecos_phir::types::FunctionType {
@@ -154,13 +176,7 @@ fn rxyxy2q_json_preserves_multiple_pairs() {
     let mut engine = PhirEngine::new(module).unwrap();
     let expected: Vec<_> = [(2, 0), (0, 1)]
         .into_iter()
-        .map(|pair| {
-            Gate::rxyxy2q(
-                pecos_core::radians!(-0.73),
-                pecos_core::radians!(0.41),
-                &[pair],
-            )
-        })
+        .map(|pair| Gate::rxyxy2q(theta, phi, &[pair]))
         .collect();
     assert_eq!(
         engine.generate_commands().unwrap().quantum_ops().unwrap(),

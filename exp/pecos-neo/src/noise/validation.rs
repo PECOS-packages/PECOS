@@ -155,6 +155,31 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
     Ok(())
 }
 
+/// Absolute roundoff tolerance shared by probability-sum validators.
+const PROBABILITY_SUM_TOLERANCE: f64 = 1e-6;
+
+/// Validate rates whose total is at most one, allowing roundoff in the sum.
+/// Each individual rate is checked strictly; the remainder is identity probability.
+///
+/// # Errors
+/// Rejects invalid individual probabilities or a total exceeding one by the
+/// distribution roundoff tolerance, with an at-most-one remedy.
+pub fn validate_probability_sum_at_most_one(rates: &[f64], field: &str) -> ValidationResult<()> {
+    for (index, &rate) in rates.iter().enumerate() {
+        validate_probability(rate, &format!("{field}[{index}]"))?;
+    }
+    let total: f64 = rates.iter().sum();
+    if total - 1.0 >= PROBABILITY_SUM_TOLERANCE {
+        return Err(ValidationError::new(
+            format!("{field} total"),
+            format!("the rates sum to {total}, which exceeds 1.0"),
+        )
+        .with_value(&total)
+        .with_suggestion("Reduce the rates so their total is at most 1.0"));
+    }
+    Ok(())
+}
+
 /// Validate probabilities forming a normalized discrete distribution.
 ///
 /// # Errors
@@ -162,7 +187,7 @@ pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()
 pub fn validate_distribution(weights: &[f64], field: &str) -> ValidationResult<()> {
     validate_weights_sum(weights, field)?;
     let total: f64 = weights.iter().sum();
-    if (total - 1.0).abs() >= 1e-6 {
+    if (total - 1.0).abs() >= PROBABILITY_SUM_TOLERANCE {
         return Err(ValidationError::new(field, "weights must sum to 1.0")
             .with_value(&total)
             .with_suggestion("Normalize the weights so their sum is 1.0"));

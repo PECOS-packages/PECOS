@@ -35,7 +35,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, TWO_QUBIT_PAULIS};
 use crate::command::{GateCommand, GateType};
-use crate::noise::validation::{ValidationResult, validate_probability};
+use crate::noise::validation::ValidationResult;
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use rand::RngExt;
@@ -60,15 +60,7 @@ pub struct PerGatePauliChannel {
 }
 
 fn validate_probability_vector(rates: &[f64], what: &str) -> ValidationResult<()> {
-    for (index, &rate) in rates.iter().enumerate() {
-        validate_probability(rate, &format!("{what}[{index}]"))?;
-    }
-    // The remaining probability belongs to the identity. For totals slightly
-    // above one, reuse the distribution validator's roundoff tolerance.
-    if rates.iter().sum::<f64>() > 1.0 {
-        super::validation::validate_distribution(rates, &format!("{what} total"))?;
-    }
-    Ok(())
+    super::validation::validate_probability_sum_at_most_one(rates, what)
 }
 
 impl PerGatePauliChannel {

@@ -18,8 +18,8 @@ use crate::{Angle64, Gate, NonFiniteAngleError, PhaseGateError, QubitId};
 use smallvec::{SmallVec, smallvec};
 use std::f64::consts::{PI, TAU};
 
-/// Quantize the signed principal magnitude once, halve it in fixed point, and
-/// return the parity of removed turns separately. An Angle alone loses that bit.
+/// Halve the signed principal magnitude before quantizing it once, and return
+/// the parity of removed turns separately. An Angle alone loses that bit.
 fn reduced_half_and_wrap_parity(
     theta_radians: f64,
 ) -> Result<(Angle64, bool), NonFiniteAngleError> {
@@ -36,9 +36,10 @@ fn reduced_half_and_wrap_parity(
         reduced
     };
     // Quantizing a tiny negative via an unsigned floating-point remainder would
-    // erase it. Convert its magnitude once and do both halving and negation on
-    // integers; the emitted legs are then exact additive inverses.
-    let magnitude_half = Angle64::try_from_radians(signed.abs())?.signed_half();
+    // erase it. Halving in f64 is exact except for subnormal underflow; those
+    // subnormal halves are far below one Angle64 tick and correctly round to zero.
+    // Quantize the half once, then use integer negation for both signs and legs.
+    let magnitude_half = Angle64::try_from_radians(signed.abs() / 2.0)?;
     let half = if signed < 0.0 {
         -magnitude_half
     } else {
@@ -59,11 +60,11 @@ fn reduced_half_and_wrap_parity(
 /// before angle reduction. Reduce `theta` to `(-π, π]` before halving so neither
 /// stored leg reaches the ambiguous ±π pair. Each removed 2π turn contributes
 /// a `Z` on the control; retaining its parity preserves the exact global phase
-/// and 4π periodicity. The reduced magnitude is quantized once into [`Angle64`]
-/// and halved with [`Angle64::signed_half`]'s rounding toward zero. The two stored
-/// legs are exact fixed-point negatives; an odd fraction necessarily loses half
-/// a fraction unit when halved at the same width. The identity therefore holds
-/// up to that documented fixed-point quantization.
+/// and 4π periodicity. Halve the reduced magnitude before quantizing it once into
+/// [`Angle64`], rounding to the nearest half-angle fraction (ties away from zero).
+/// The two stored legs are exact fixed-point negatives. Half-angle quantization
+/// contributes at most half a fraction unit, in addition to f64 argument-reduction
+/// and radians-to-turns conversion error.
 /// A separate reduction modulo 4π keeps the turn count bounded without changing
 /// the signed representative. This prevents loss of integer
 /// parity in an enormous quotient; it does not provide exact real-π argument
@@ -135,8 +136,8 @@ pub fn lower_cry(
 /// `U(0,0,lambda/2)` carries the `exp(i lambda/4)` factor. `CPhase` is
 /// 2π-periodic, so `lambda` is first reduced to its signed representative in
 /// `(-π, π]`; every halved angle then lies in `(-π/2, π/2]`, away from the ±π
-/// pair that a stored [`Angle64`] cannot tell apart. Halving uses
-/// [`Angle64::signed_half`], including its toward-zero rounding for odd fractions.
+/// pair that a stored [`Angle64`] cannot tell apart. The floating-point half is
+/// quantized once to the nearest fraction unit, with ties away from zero.
 /// # Errors
 /// Rejects a non-finite angle, naming its value and unit.
 pub fn lower_cphase(
@@ -144,15 +145,15 @@ pub fn lower_cphase(
     control: QubitId,
     target: QubitId,
 ) -> Result<[Gate; 3], NonFiniteAngleError> {
-    Ok(lower_cphase_angle(
-        Angle64::try_from_radians(lambda_radians)?,
-        control,
-        target,
-    ))
+    let (half, _) = reduced_half_and_wrap_parity(lambda_radians)?;
+    Ok(lower_cphase_half(half, control, target))
 }
 
 fn lower_cphase_angle(lambda: Angle64, control: QubitId, target: QubitId) -> [Gate; 3] {
-    let half_angle = lambda.signed_half();
+    lower_cphase_half(lambda.signed_half(), control, target)
+}
+
+fn lower_cphase_half(half_angle: Angle64, control: QubitId, target: QubitId) -> [Gate; 3] {
     [
         Gate::rzz(-half_angle, &[(control, target)]),
         Gate::u(Angle64::ZERO, Angle64::ZERO, half_angle, &[control]),
@@ -175,7 +176,14 @@ fn lower_cphase_angle(lambda: Angle64, control: QubitId, target: QubitId) -> [Ga
 /// an operand is repeated, or a nontrivial
 /// zero-operand phase cannot be represented.
 pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Result<Vec<Gate>, PhaseGateError> {
-    lower_phase_angle(Angle64::try_from_radians(gamma_radians)?, qubits)
+    // Preserve the source precision for the two-operand floating-point lowering.
+    // Stored-angle callers below retain signed_half's fixed-point rounding.
+    let gamma = Angle64::try_from_radians(gamma_radians)?;
+    if let &[control, target] = qubits {
+        crate::unitary_rep::validate_phase_qubits(&[control.index(), target.index()])?;
+        return Ok(lower_cphase(gamma_radians, control, target)?.to_vec());
+    }
+    lower_phase_angle(gamma, qubits)
 }
 
 /// Keep stored angles exact when checking whether a scalar is the identity.

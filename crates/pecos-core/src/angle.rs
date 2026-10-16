@@ -133,14 +133,44 @@ pub struct Angle<T: Unsigned + Copy> {
     fraction: T, // Fixed-point fractional representation in [0, 2^n) turns
 }
 
-// Equivalent to f64::rem_euclid, which is not yet const on stable Rust.
-const fn const_rem_euclid(value: f64, rhs: f64) -> f64 {
-    let r = value % rhs;
-    if r < 0.0 { r + rhs.abs() } else { r }
+/// Convert a finite floating-point value to fraction bits. Keep this one
+/// implementation const-evaluable so literals and runtime constructors agree.
+const fn float_fraction(value: f64, units_per_turn: f64, fraction_bits: u64) -> u128 {
+    let modulus = f64::from_bits((1023 + fraction_bits) << 52);
+    // The signed remainder is exact relative to the supplied f64 period and
+    // never adds a full turn to a negative value. Reduce before division so
+    // division rounding depends on one turn, not the original input magnitude.
+    let scaled = ((value % units_per_turn) / units_per_turn) * modulus;
+    let rounded = scaled.round(); // nearest integer, half-way ties away from zero
+    let representation = rounded.to_bits();
+    let exponent = (representation >> 52) & 0x7ff;
+    if exponent < 1023 {
+        return 0; // rounded magnitude is zero
+    }
+    if exponent == 1023 + 128 {
+        return 0; // Angle128's reduced value rounded to exactly one full turn
+    }
+    // Decode the already-rounded integer directly. Unlike a float-to-int cast,
+    // this is const-evaluable without saturating a boundary value. The range
+    // of the signed remainder guarantees a magnitude below 2^128 here.
+    let significand = ((representation & ((1_u64 << 52) - 1)) | (1_u64 << 52)) as u128;
+    let integer_exponent = exponent - 1023;
+    let magnitude = if integer_exponent >= 52 {
+        significand << (integer_exponent - 52)
+    } else {
+        significand >> (52 - integer_exponent)
+    };
+    let signed_bits = if rounded < 0.0 {
+        magnitude.wrapping_neg()
+    } else {
+        magnitude
+    };
+    signed_bits & (u128::MAX >> (128 - fraction_bits))
 }
 
 impl Angle<u64> {
-    /// Const-evaluable counterpart of [`Self::try_from_radians`].
+    /// Const-evaluable counterpart of [`Self::try_from_radians`], with identical
+    /// signed remainder, rounding, and integer wrapping.
     ///
     /// # Errors
     /// Returns the original value and unit if the input is not finite.
@@ -151,12 +181,11 @@ impl Angle<u64> {
                 unit: "radians",
             });
         }
-        Ok(Self::const_from_normalized_turns(
-            const_rem_euclid(radians, std::f64::consts::TAU) / std::f64::consts::TAU,
-        ))
+        Ok(Self::const_from_float(radians, std::f64::consts::TAU))
     }
 
-    /// Const-evaluable counterpart of [`Self::try_from_turns`].
+    /// Const-evaluable counterpart of [`Self::try_from_turns`], with identical
+    /// signed remainder, rounding, and integer wrapping.
     ///
     /// # Errors
     /// Returns the original value and unit if the input is not finite.
@@ -167,16 +196,17 @@ impl Angle<u64> {
                 unit: "turns",
             });
         }
-        Ok(Self::const_from_normalized_turns(const_rem_euclid(
-            turns, 1.0,
-        )))
+        Ok(Self::const_from_float(turns, 1.0))
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    const fn const_from_normalized_turns(turns: f64) -> Self {
-        const MODULUS: f64 = 18_446_744_073_709_551_616.0;
+    const fn const_from_float(value: f64, units_per_turn: f64) -> Self {
+        // The fraction is reduced to 64 bits. Byte conversion keeps this narrowing
+        // exact and const-evaluable without a truncating float or integer cast.
+        let bytes = float_fraction(value, units_per_turn, 64).to_le_bytes();
         Self {
-            fraction: const_rem_euclid((turns * MODULUS).round(), MODULUS) as u64,
+            fraction: u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]),
         }
     }
 }
@@ -330,6 +360,17 @@ where
 
     /// Creates an angle from radians.
     ///
+    /// First take the signed remainder modulo the f64 `TAU`, then divide by
+    /// `TAU`, scale by 2^bits, and round once to the nearest fraction unit
+    /// (ties away from zero). Wrap the signed rounded integer modulo 2^bits.
+    /// This preserves tiny negative fractions and positive/negative symmetry.
+    /// Rounding to a full turn wraps to zero, including at 128 bits.
+    ///
+    /// The remainder is exact relative to the f64 period; division has ordinary
+    /// f64 rounding error bounded by the reduced value, independent of the number
+    /// of removed turns. This does not promise exact real-π argument reduction:
+    /// at large magnitudes, the f64 period's difference from real 2π still matters.
+    ///
     /// # Errors
     /// Returns an error containing the value and unit when the input is not finite.
     pub fn try_from_radians(radians: f64) -> Result<Self, NonFiniteAngleError> {
@@ -340,10 +381,18 @@ where
                 unit: "radians",
             });
         }
-        Ok(Self::from_normalized_turns(radians.rem_euclid(TAU) / TAU))
+        Ok(Self::from_float(radians, TAU))
     }
 
     /// Creates an angle from turns.
+    ///
+    /// First take the exact signed remainder modulo one turn, then scale by
+    /// 2^bits and round once to the nearest fraction unit (ties away from zero).
+    /// Wrap the signed rounded integer modulo 2^bits. Scaling the remainder by
+    /// this power of two is exact, so both signs retain equal precision even for
+    /// tiny fractions. Rounding to a full turn wraps to zero at every width.
+    /// Large f64 inputs may already have lost their fractional turns before this
+    /// conversion; the exact remainder cannot recover those absent bits.
     ///
     /// # Errors
     /// Returns an error containing the value and unit when the input is not finite.
@@ -354,19 +403,17 @@ where
                 unit: "turns",
             });
         }
-        Ok(Self::from_normalized_turns(turns.rem_euclid(1.0)))
+        Ok(Self::from_float(turns, 1.0))
     }
 
-    fn from_normalized_turns(turns: f64) -> Self {
-        let modulus = Self::fraction_modulus();
-        // Both rem_euclid and rounding can reach a full turn. Wrap after
-        // rounding so that it represents zero, just like integer arithmetic.
-        let fraction = (turns * modulus).round().rem_euclid(modulus);
-
+    fn from_float(value: f64, units_per_turn: f64) -> Self {
+        let max = T::max_value()
+            .to_u128()
+            .expect("unsigned primitive angle fractions fit in u128");
+        let bits = u64::from(max.bit_width());
         Self {
-            fraction: T::from_f64(fraction).expect(
-                "rounded fraction reduced modulo the unsigned modulus fits the fraction type",
-            ),
+            fraction: T::from_u128(float_fraction(value, units_per_turn, bits))
+                .expect("integer reduction masks the fraction to its unsigned type's width"),
         }
     }
 
@@ -557,18 +604,21 @@ where
     /// Creates an `Angle` from a ratio of a turn.
     ///
     /// This method calculates the angle as `numerator / denominator` of a turn,
-    /// where a full turn corresponds to the maximum fixed-point value.
+    /// rounding the magnitude to the nearest fraction unit (ties away from zero).
+    /// A full turn contains 2^bits fraction units and is represented by zero.
+    /// The 128-bit case uses two 64-bit division steps without constructing 2^128.
     ///
     /// # Panics
     /// Code will panic if:
     /// - The denominator is zero.
-    /// - The numerator is too large to represent in the underlying type.
+    /// - The rounded ratio is too large to represent in the underlying type.
+    /// - Normalizing a negative denominator would overflow an i64 input.
     #[must_use]
     pub fn from_turn_ratio(mut numerator: i64, mut denominator: i64) -> Self {
         let original = (numerator, denominator);
         let invalid = || -> ! {
             panic!(
-                "invalid turn ratio {}/{}; use a nonzero denominator, a ratio within one turn, and an integer width below 128 bits",
+                "invalid turn ratio {}/{}; use a nonzero denominator, a ratio within one turn, and inputs whose signs can be normalized in i64",
                 original.0, original.1
             )
         };
@@ -587,6 +637,31 @@ where
 
         let abs_numerator = u128::from(numerator.unsigned_abs());
         let abs_denominator = u128::from(denominator.unsigned_abs());
+
+        if T::default().count_zeros() == 128 {
+            // Preserve the existing rejection of ratios outside one turn.
+            if abs_numerator > abs_denominator {
+                invalid();
+            }
+            // Split (numerator * 2^128 + denominator/2) / denominator into
+            // two base-2^64 digits. The denominator is positive and <= i64::MAX;
+            // each remainder is smaller, so both shifted dividends fit u128.
+            let high_dividend = (abs_numerator % abs_denominator) << 64;
+            let high = high_dividend / abs_denominator;
+            let low_dividend = ((high_dividend % abs_denominator) << 64) + (abs_denominator >> 1);
+            let low = low_dividend / abs_denominator;
+            // For a proper fraction, the gap below a turn is at least 2^128/den,
+            // greater than 2^65 ticks. Adding the rounded low digit cannot overflow.
+            let fraction = (high << 64) + low;
+            let fraction = if numerator < 0 {
+                fraction.wrapping_neg()
+            } else {
+                fraction
+            };
+            return Self {
+                fraction: T::try_from(fraction).unwrap_or_else(|_| invalid()),
+            };
+        }
 
         let scaling_factor = 1_u128
             .checked_shl(T::default().count_zeros())

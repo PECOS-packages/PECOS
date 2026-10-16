@@ -995,7 +995,7 @@ impl QisEngine {
                                 *angle,
                                 control.into(),
                                 target.into(),
-                            );
+                            )?;
                             builder.add_gate_commands(&gates);
                             let metadata = std::mem::take(&mut pending_metadata);
                             gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
@@ -1237,7 +1237,7 @@ impl QisEngine {
                             angle,
                             control.into(),
                             target.into(),
-                        );
+                        )?;
                         builder.add_gate_commands(&gates);
                         gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
                     }
@@ -3775,7 +3775,7 @@ mod tests {
             assert_eq!(gates[0].qubits.as_slice(), &qubits.map(pecos_core::QubitId));
             assert_eq!(
                 gates[0].angles.as_slice(),
-                &[Angle64::from_radians(-0.73), Angle64::from_radians(0.41)]
+                &[pecos_core::radians!(-0.73), pecos_core::radians!(0.41)]
             );
             assert_eq!(batch.gate_metadata, vec![metadata.clone()]);
         }
@@ -3821,11 +3821,7 @@ mod tests {
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
-        builder.rxy1q(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-            Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2),
-            &[0],
-        );
+        builder.rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &[0]);
         builder.rz(Angle64::HALF_TURN, &[0]);
         builder.measure_leakages(&[0]);
 
@@ -5400,11 +5396,9 @@ mod scheduled_completion_tests {
                 for op in &b.operations {
                     out.push(match op {
                         ScheduledEventOp::Gate(g) => g.as_ref().clone(),
-                        ScheduledEventOp::Custom { .. } => Gate::rxy1q(
-                            Angle64::from_radians(std::f64::consts::PI),
-                            Angle64::from_radians(0.0),
-                            &[0],
-                        ),
+                        ScheduledEventOp::Custom { .. } => {
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])
+                        }
                     })?;
                 }
                 Ok(())

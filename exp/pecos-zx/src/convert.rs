@@ -49,7 +49,8 @@ fn angle_to_phase(angle: Angle64) -> Phase {
 fn phase_to_angle(phase: Phase) -> Angle64 {
     let half_turns = phase.to_f64();
     let full_turns = half_turns / 2.0;
-    Angle64::from_turns(full_turns)
+    Angle64::try_from_turns(full_turns)
+        .expect("a QuiZX Phase is a normalized Rational64 and converts to finite turns")
 }
 
 /// Emit the best-matching PECOS gate for a `ZPhase` with the given phase.

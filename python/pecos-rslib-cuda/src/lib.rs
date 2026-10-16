@@ -485,11 +485,14 @@ impl PyCuStateVec {
         Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
-            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crx(
-                angle,
-                QubitId(pair[0]),
-                QubitId(pair[1]),
-            ));
+            self.apply_lowered_controlled_rotation(
+                pecos_core::controlled_rotations::lower_crx(
+                    angle,
+                    QubitId(pair[0]),
+                    QubitId(pair[1]),
+                )
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         Ok(())
     }
@@ -499,11 +502,14 @@ impl PyCuStateVec {
         Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
-            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_cry(
-                angle,
-                QubitId(pair[0]),
-                QubitId(pair[1]),
-            ));
+            self.apply_lowered_controlled_rotation(
+                pecos_core::controlled_rotations::lower_cry(
+                    angle,
+                    QubitId(pair[0]),
+                    QubitId(pair[1]),
+                )
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         Ok(())
     }
@@ -513,11 +519,14 @@ impl PyCuStateVec {
         Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
-            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crz(
-                angle,
-                QubitId(pair[0]),
-                QubitId(pair[1]),
-            ));
+            self.apply_lowered_controlled_rotation(
+                pecos_core::controlled_rotations::lower_crz(
+                    angle,
+                    QubitId(pair[0]),
+                    QubitId(pair[1]),
+                )
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
         Ok(())
     }

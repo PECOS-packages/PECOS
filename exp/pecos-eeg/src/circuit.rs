@@ -475,7 +475,7 @@ mod tests {
         let theta = -0.37;
         let gates = vec![Gate::with_angles(
             GateType::RZ,
-            vec![pecos_core::Angle64::from_radians(theta)],
+            vec![pecos_core::Angle64::try_from_radians(theta).unwrap()],
             vec![QubitId(0)],
         )];
         let result = analyze_expanded(

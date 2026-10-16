@@ -33,10 +33,13 @@ fn dense(gates: &[Gate]) -> UnitaryMatrix {
 fn old_lowering(theta: f64) -> [Gate; 2] {
     [
         Gate::rzz(
-            Angle64::from_radians(-theta / 2.0),
+            Angle64::try_from_radians(-theta / 2.0).unwrap(),
             &[(QubitId(1), QubitId(0))],
         ),
-        Gate::rz(Angle64::from_radians(theta / 2.0), &[QubitId(0)]),
+        Gate::rz(
+            Angle64::try_from_radians(theta / 2.0).unwrap(),
+            &[QubitId(0)],
+        ),
     ]
 }
 
@@ -44,14 +47,14 @@ fn old_lowering(theta: f64) -> [Gate; 2] {
 fn dense_controlled_rotations_are_continuous_and_exact_at_odd_turns() {
     let control_z = dense(&[Gate::z(&[QubitId(1)])]);
     for theta in [TAU, -TAU, 3.0 * TAU, -3.0 * TAU] {
-        let fixed = dense(&lower_crz(theta, QubitId(1), QubitId(0)));
+        let fixed = dense(&lower_crz(theta, QubitId(1), QubitId(0)).unwrap());
         let old = dense(&old_lowering(theta));
         let error = (&fixed - &control_z).norm();
         let old_error = (&old - &control_z).norm();
         assert!(error < 1e-12);
         assert!((old_error - 4.0).abs() < 1e-12);
         for offset in [-1e-7, 1e-7] {
-            let near = dense(&lower_crz(theta + offset, QubitId(1), QubitId(0)));
+            let near = dense(&lower_crz(theta + offset, QubitId(1), QubitId(0)).unwrap());
             let jump = (&fixed - &near).norm();
             let old_jump = (&old - dense(&old_lowering(theta + offset))).norm();
             println!(
@@ -61,7 +64,7 @@ fn dense_controlled_rotations_are_continuous_and_exact_at_odd_turns() {
             assert!((old_jump - 4.0).abs() < 1e-7);
         }
         for lowering in [lower_crx, lower_cry] {
-            let matrix = dense(&lowering(theta, QubitId(1), QubitId(0)));
+            let matrix = dense(&lowering(theta, QubitId(1), QubitId(0)).unwrap());
             assert!((&matrix - &control_z).norm() < 1e-12);
         }
         println!("theta={theta}: fixed Z error={error:.6}, old Z error={old_error:.6}");
@@ -73,9 +76,9 @@ fn dense_reduced_lowering_matches_raw_half_at_800_angles() {
     let mut worst = 0.0_f64;
     for sample in 0..800 {
         let theta = -200.0 + 400.0 * (f64::from(sample) + 0.5) / 800.0;
-        let fixed = dense(&lower_crz(theta, QubitId(1), QubitId(0)));
+        let fixed = dense(&lower_crz(theta, QubitId(1), QubitId(0)).unwrap());
         worst = worst.max((&fixed - dense(&old_lowering(theta))).norm());
-        let shifted = dense(&lower_crz(theta + 2.0 * TAU, QubitId(1), QubitId(0)));
+        let shifted = dense(&lower_crz(theta + 2.0 * TAU, QubitId(1), QubitId(0)).unwrap());
         assert!((&fixed - shifted).norm() < 1e-12);
     }
     println!("800-angle worst raw-half disagreement={worst:.3e}");

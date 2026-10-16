@@ -4808,7 +4808,7 @@ mod tests {
     #[test]
     fn crosstalk_unsupported_rotation_diagnostic_preserves_angles() {
         let mut sim = SymbolicSparseStab::new(1);
-        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turns(0.125), &[0]);
+        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
         let error = DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate)
             .unwrap_err();
         assert!(error.to_string().contains("RZ(0.125000 turns)"));

@@ -1110,8 +1110,8 @@ mod tests {
     #[test]
     fn strict_all_parameterized_gates_round_trip() {
         let mut builder = ByteMessageBuilder::new();
-        let theta = Angle64::from_radians(0.25);
-        let phi = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.25);
+        let phi = pecos_core::radians!(0.5);
         builder.idle(0.75, &[0]);
         builder.rx(theta, &[0]);
         builder.ry(theta, &[0]);
@@ -1228,7 +1228,7 @@ mod tests {
         // Add gates using new GateCommand interface
         let gate = Gate::h(&[0]);
         builder.add_gate_command(&gate);
-        let gate = Gate::rz(Angle64::from_radians(0.5), &[1]);
+        let gate = Gate::rz(pecos_core::radians!(0.5), &[1]);
         builder.add_gate_command(&gate);
 
         // Test multiple gates at once
@@ -1240,7 +1240,7 @@ mod tests {
             message.quantum_ops().unwrap(),
             [
                 Gate::h(&[0]),
-                Gate::rz(Angle64::from_radians(0.5), &[1]),
+                Gate::rz(pecos_core::radians!(0.5), &[1]),
                 Gate::x(&[2]),
                 Gate::cx(&[(0, 1)]),
             ]
@@ -1347,8 +1347,8 @@ mod tests {
         builder.x(&[1]);
         builder.y(&[2]);
         builder.z(&[3]);
-        builder.rz(Angle64::from_radians(0.5), &[4]);
-        builder.rxy1q(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.rz(pecos_core::radians!(0.5), &[4]);
+        builder.rxy1q(pecos_core::radians!(0.1), pecos_core::radians!(0.2), &[5]);
         builder.mz(&[6]);
 
         // Build the message
@@ -1379,12 +1379,12 @@ mod tests {
 
     #[test]
     fn test_single_item_fast_paths_match_generic_gate_encoding() {
-        let theta_rx = Angle64::from_radians(0.3);
-        let theta_ry = Angle64::from_radians(0.4);
-        let theta_rz = Angle64::from_radians(0.5);
-        let theta_rxy1q = Angle64::from_radians(0.6);
-        let phi_rxy1q = Angle64::from_radians(0.7);
-        let theta_rzz = Angle64::from_radians(0.8);
+        let theta_rx = pecos_core::radians!(0.3);
+        let theta_ry = pecos_core::radians!(0.4);
+        let theta_rz = pecos_core::radians!(0.5);
+        let theta_rxy1q = pecos_core::radians!(0.6);
+        let phi_rxy1q = pecos_core::radians!(0.7);
+        let theta_rzz = pecos_core::radians!(0.8);
 
         let mut generic_builder = ByteMessageBuilder::new();
         let _ = generic_builder.for_quantum_operations();

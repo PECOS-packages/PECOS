@@ -320,7 +320,6 @@ mod tests {
     use super::*;
     use crate::Gate;
     use crate::byte_message::ByteMessage;
-    use pecos_core::Angle64;
 
     #[test]
     fn strict_debug_reader_errors() {
@@ -399,7 +398,7 @@ mod tests {
     #[test]
     fn test_dump_batch() {
         // Create a ByteMessage with different gate types
-        let commands = vec![Gate::h(&[0]), Gate::rz(Angle64::from_radians(0.5), &[1])];
+        let commands = vec![Gate::h(&[0]), Gate::rz(pecos_core::radians!(0.5), &[1])];
 
         // Create a ByteMessage using the builder
         let message = ByteMessage::builder().add_gate_commands(&commands).build();

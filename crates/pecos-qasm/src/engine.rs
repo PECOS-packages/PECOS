@@ -446,15 +446,13 @@ impl QASMEngine {
         _params: &[f64],
     ) -> Result<(), PecosError> {
         // CY = S† · CX · S
-        engine.message_builder.rz(
-            Angle64::from_radians(-std::f64::consts::PI / 2.0),
-            &[qubits[1]],
-        ); // S†
+        engine
+            .message_builder
+            .rz(Angle64::THREE_QUARTERS_TURN, &[qubits[1]]); // S†
         engine.message_builder.cx(&[(qubits[0], qubits[1])]);
-        engine.message_builder.rz(
-            Angle64::from_radians(std::f64::consts::PI / 2.0),
-            &[qubits[1]],
-        ); // S
+        engine
+            .message_builder
+            .rz(Angle64::QUARTER_TURN, &[qubits[1]]); // S
         Ok(())
     }
 

@@ -192,7 +192,7 @@ fn test_4qubit_random_circuit() {
         ("cx", vec![1, 2], None),
         ("t", vec![1], None),
         ("h", vec![3], None),
-        ("rz", vec![3], Some(Angle64::from_radians(0.7))),
+        ("rz", vec![3], Some(pecos_core::radians!(0.7))),
     ];
     let (stn_sv, crz_sv) = run_circuit_on_both(4, &gates, 42);
     assert_states_match(&stn_sv, &crz_sv, "4-qubit random circuit");
@@ -214,7 +214,7 @@ fn test_5qubit_deep_circuit() {
         ("h", vec![0], None),
         ("t", vec![0], None),
         ("cz", vec![0, 3], None),
-        ("rz", vec![4], Some(Angle64::from_radians(1.5))),
+        ("rz", vec![4], Some(pecos_core::radians!(1.5))),
         ("cx", vec![4, 0], None),
         ("t", vec![4], None),
     ];
@@ -235,7 +235,7 @@ fn test_repeated_t_on_same_qubit() {
 
 #[test]
 fn test_rx_gate() {
-    let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_3);
+    let theta = pecos_core::radians!(std::f64::consts::FRAC_PI_3);
     let gates = vec![
         ("rx", vec![0], Some(theta)),
         ("cx", vec![0, 1], None),
@@ -247,7 +247,7 @@ fn test_rx_gate() {
 
 #[test]
 fn test_rzz_gate() {
-    let theta = Angle64::from_radians(0.5);
+    let theta = pecos_core::radians!(0.5);
     let gates = vec![
         ("h", vec![0], None),
         ("h", vec![1], None),
@@ -284,7 +284,7 @@ fn test_alternating_clifford_and_t() {
 fn test_rx_measurement_probabilities() {
     // RX(pi/3)|0> has prob(0) = cos^2(pi/6) = 3/4
     let expected_p0 = 0.75;
-    let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_3);
+    let theta = pecos_core::radians!(std::f64::consts::FRAC_PI_3);
 
     let num_trials = 1000;
     let mut count_0 = 0;
@@ -485,18 +485,20 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
             6 => {
                 // Random RZ angle
                 let angle_bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 stn.rz(angle, &[QubitId(q0)]);
                 crz.rz(angle, &[QubitId(q0)]);
             }
             _ => {
                 // RX
                 let angle_bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 stn.rx(angle, &[QubitId(q0)]);
                 crz.rx(angle, &[QubitId(q0)]);
             }
@@ -564,15 +566,19 @@ fn fuzz_circuit_with_tol(num_qubits: usize, num_gates: usize, seed: u64, tol: f6
                 }
                 6 => {
                     let ab = next2(&mut rng2);
-                    let a =
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                    let a = Angle64::try_from_radians(
+                        (ab % 1000) as f64 * 0.001 * std::f64::consts::TAU,
+                    )
+                    .unwrap();
                     stn2.rz(a, &[QubitId(q0s)]);
                     dsv2.rz(a, &[QubitId(q0s)]);
                 }
                 _ => {
                     let ab = next2(&mut rng2);
-                    let a =
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                    let a = Angle64::try_from_radians(
+                        (ab % 1000) as f64 * 0.001 * std::f64::consts::TAU,
+                    )
+                    .unwrap();
                     stn2.rx(a, &[QubitId(q0s)]);
                     dsv2.rx(a, &[QubitId(q0s)]);
                 }
@@ -641,7 +647,7 @@ fn test_fuzz_seed_115_mps_check() {
     stn.h(&[q0]);
     stn.cz(&[(q0, q1)]);
     stn.sz(&[q0]);
-    stn.rz(Angle64::from_radians(0.2702), &[q1]);
+    stn.rz(pecos_core::radians!(0.2702), &[q1]);
     let mps8 = stn.mps().state_vector();
     eprintln!(
         "Step 8 MPS: {:?}",
@@ -665,7 +671,7 @@ fn test_fuzz_seed_115_mps_check() {
     dsv.h(&[q0]);
     dsv.cz(&[(q0, q1)]);
     dsv.sz(&[q0]);
-    dsv.rz(Angle64::from_radians(0.2702), &[q1]);
+    dsv.rz(pecos_core::radians!(0.2702), &[q1]);
     dsv.cx(&[(q0, q1)]);
     let ref_sv: Vec<Complex64> = (0..4).map(|i| dsv.get_amplitude(i)).collect();
     eprintln!(
@@ -694,9 +700,9 @@ fn test_fuzz_seed_115_mps_check() {
 fn test_fuzz_seed_101_measurement_stats() {
     // Verify STN measurement probabilities match the state vector.
     let t = Angle64::QUARTER_TURN / 2u64;
-    let rz_angle = Angle64::from_radians(4.0024);
-    let rx1 = Angle64::from_radians(5.6800);
-    let rx2 = Angle64::from_radians(5.3973);
+    let rz_angle = pecos_core::radians!(4.0024);
+    let rx1 = pecos_core::radians!(5.6800);
+    let rx2 = pecos_core::radians!(5.3973);
 
     // Compute expected probabilities from state vector.
     let mut stn_ref = StabMps::with_seed(2, 42);
@@ -751,8 +757,8 @@ fn test_fuzz_debug_seed_101() {
     // Minimal repro: T, H, S, S, RZ, RX sequence on 2 qubits
     // Step-by-step comparison to find divergence point.
     let t = Angle64::QUARTER_TURN / 2u64;
-    let rz_angle = Angle64::from_radians(4.0024);
-    let rx_angle1 = Angle64::from_radians(5.6800);
+    let rz_angle = pecos_core::radians!(4.0024);
+    let rx_angle1 = pecos_core::radians!(5.6800);
 
     let mut stn = StabMps::builder(2).seed(101).merge_rz(false).build();
     let mut crz = StabVec::builder(2).seed(101).build();
@@ -841,7 +847,7 @@ fn test_fuzz_debug_seed_101() {
 
     // Continue with remaining gates from fuzz sequence
     // Step 6: RX on q1 = H(1) + RZ(1) + H(1)
-    let rx_angle2 = Angle64::from_radians(5.3973);
+    let rx_angle2 = pecos_core::radians!(5.3973);
     stn.h(&[QubitId(1)]);
     crz.h(&[QubitId(1)]);
     eprintln!("step 6a (H1): norm={:.6}", stn.mps().norm_squared());
@@ -991,18 +997,20 @@ fn test_debug_seed_502() {
             }
             6 => {
                 let angle_bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 gate_name = format!("RZ({}, {:.4})", q0, angle.to_radians());
                 stn.rz(angle, &[QubitId(q0)]);
                 dsv.rz(angle, &[QubitId(q0)]);
             }
             _ => {
                 let angle_bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 gate_name = format!("RX({}, {:.4})", q0, angle.to_radians());
                 stn.rx(angle, &[QubitId(q0)]);
                 dsv.rx(angle, &[QubitId(q0)]);
@@ -1082,7 +1090,7 @@ fn test_rx_pi_after_nonclifford() {
     let mut stn = StabMps::builder(2).seed(42).merge_rz(false).build();
     let mut dsv = pecos_simulators::DenseStateVec::new(2);
     let t = Angle64::QUARTER_TURN / 2u64;
-    let pi = Angle64::from_radians(std::f64::consts::PI);
+    let pi = Angle64::HALF_TURN;
 
     for (gate, qids, angle) in [
         ("h", vec![QubitId(0)], None),
@@ -1172,7 +1180,7 @@ fn test_seed319_minimal() {
     let gates = vec![
         ("t", vec![0], None),
         ("h", vec![1], None),
-        ("rz", vec![3], Some(Angle64::from_radians(3.3427))),
+        ("rz", vec![3], Some(pecos_core::radians!(3.3427))),
         ("cz", vec![0, 3], None),
         ("rz", vec![1], Some(t)), // RZ(pi/4) equals T up to global phase.
         ("cz", vec![1, 2], None),
@@ -1180,13 +1188,9 @@ fn test_seed319_minimal() {
         ("h", vec![2], None),
         ("t", vec![2], None),
         ("h", vec![2], None),
-        ("rz", vec![3], Some(Angle64::from_radians(3.0976))),
-        ("rx", vec![0], Some(Angle64::from_radians(5.2025))),
-        (
-            "rx",
-            vec![1],
-            Some(Angle64::from_radians(std::f64::consts::PI)),
-        ),
+        ("rz", vec![3], Some(pecos_core::radians!(3.0976))),
+        ("rx", vec![0], Some(pecos_core::radians!(5.2025))),
+        ("rx", vec![1], Some(Angle64::HALF_TURN)),
     ];
     let (stn_sv, crz_sv) = run_circuit_on_both(4, &gates, 42);
     assert_states_match(&stn_sv, &crz_sv, "seed319 minimal");
@@ -1216,7 +1220,7 @@ fn test_h_swap_rz_t() {
         ("cx", vec![0, 1], None),
         ("cx", vec![1, 0], None),
         ("cx", vec![0, 1], None),
-        ("rx", vec![1], Some(Angle64::from_radians(5.0265))),
+        ("rx", vec![1], Some(pecos_core::radians!(5.0265))),
         ("t", vec![1], None),
     ];
     let (stn_sv, crz_sv) = run_circuit_on_both(2, &gates, 42);
@@ -1227,8 +1231,8 @@ fn test_h_swap_rz_t() {
 fn test_seed502_prefix() {
     // Seed 502 circuit prefix: T(1), RZ(0), X(0), T(1), X(0), RZ(0,~pi),
     // H(0), H(1), CX CX CX, RX(1), T(1)
-    let rz_angle = Angle64::from_radians(3.6317); // angle from seed 502 RNG
-    let rx_angle = Angle64::from_radians(5.0265);
+    let rz_angle = pecos_core::radians!(3.6317); // angle from seed 502 RNG
+    let rx_angle = pecos_core::radians!(5.0265);
     // Try: full prefix T, RZ, X, T, X, Z, H, H, SWAP, RX, T
     let gates = vec![
         ("t", vec![1], None),
@@ -1236,11 +1240,7 @@ fn test_seed502_prefix() {
         ("x", vec![0], None),
         ("t", vec![1], None),
         ("x", vec![0], None),
-        (
-            "rz",
-            vec![0],
-            Some(Angle64::from_radians(std::f64::consts::PI)),
-        ),
+        ("rz", vec![0], Some(Angle64::HALF_TURN)),
         ("h", vec![0], None),
         ("h", vec![1], None),
         ("cx", vec![0, 1], None),
@@ -1568,16 +1568,18 @@ fn measurement_probability_check(num_qubits: usize, num_gates: usize, seed: u64)
             }
             6 => {
                 let angle_bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 stn_ref.rz(angle, &[QubitId(q0)]);
             }
             _ => {
                 let angle_bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians(
+                let angle = Angle64::try_from_radians(
                     (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                );
+                )
+                .unwrap();
                 stn_ref.rx(angle, &[QubitId(q0)]);
             }
         }
@@ -1687,7 +1689,7 @@ fn test_disentangle_various_circuits() {
             DisentangleTestGate::H(0),
             DisentangleTestGate::Cx(0, 1),
             DisentangleTestGate::Cx(1, 2),
-            DisentangleTestGate::Rz(1, Angle64::from_radians(0.7)),
+            DisentangleTestGate::Rz(1, pecos_core::radians!(0.7)),
         ],
     ];
 
@@ -1712,8 +1714,9 @@ fn apply_heuristic_trigger_circuit<S>(simulator: &mut S)
 where
     S: ArbitraryRotationGateable + CliffordGateable,
 {
-    let angle =
-        |units: u32| Angle64::from_radians(f64::from(units) * 0.0001 * std::f64::consts::TAU);
+    let angle = |units: u32| {
+        Angle64::try_from_radians(f64::from(units) * 0.0001 * std::f64::consts::TAU).unwrap()
+    };
     simulator.rx(angle(3546), &[QubitId(0)]);
     simulator.cz(&[(QubitId(1), QubitId(0))]);
     simulator.rz(angle(8057), &[QubitId(1)]);
@@ -1825,7 +1828,7 @@ fn test_disentangle_flushes_lazy_measurement_and_merged_rz() {
     );
     let mut expected = project_dense_z(&pre_measurement, 0, outcome);
 
-    let pending_angle = Angle64::from_radians(0.37);
+    let pending_angle = pecos_core::radians!(0.37);
     stn.rz(pending_angle, &[QubitId(1)]);
     let half_angle = pending_angle.to_radians_signed() / 2.0;
     for (index, amplitude) in expected.iter_mut().enumerate() {
@@ -1909,7 +1912,7 @@ fn test_tdg_gate() {
 #[test]
 fn test_rz_near_zero_angle() {
     // Very small angle -- should behave like identity
-    let tiny = Angle64::from_radians(1e-6);
+    let tiny = pecos_core::radians!(1e-6);
     let gates = vec![("h", vec![0], None), ("rz", vec![0], Some(tiny))];
     let (stn_sv, crz_sv) = run_circuit_on_both(1, &gates, 42);
     assert_states_match(&stn_sv, &crz_sv, "near-zero RZ");
@@ -1918,7 +1921,7 @@ fn test_rz_near_zero_angle() {
 #[test]
 fn test_rz_near_pi() {
     // Angle near pi -- should behave like Z gate
-    let near_pi = Angle64::from_radians(std::f64::consts::PI - 1e-6);
+    let near_pi = pecos_core::radians!(std::f64::consts::PI - 1e-6);
     let gates = vec![("h", vec![0], None), ("rz", vec![0], Some(near_pi))];
     let (stn_sv, crz_sv) = run_circuit_on_both(1, &gates, 42);
     assert_states_match(&stn_sv, &crz_sv, "near-pi RZ");
@@ -2067,20 +2070,26 @@ fn fuzz_with_rzz(num_qubits: usize, num_gates: usize, seed: u64) {
             }
             6 => {
                 let ab = next_rng(&mut rng_state);
-                let a = Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                let a =
+                    Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU)
+                        .unwrap();
                 stn.rz(a, &[QubitId(q0)]);
                 dsv.rz(a, &[QubitId(q0)]);
             }
             7 => {
                 let ab = next_rng(&mut rng_state);
-                let a = Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                let a =
+                    Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU)
+                        .unwrap();
                 stn.rx(a, &[QubitId(q0)]);
                 dsv.rx(a, &[QubitId(q0)]);
             }
             8 | 9 => {
                 // RZZ gate
                 let ab = next_rng(&mut rng_state);
-                let a = Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                let a =
+                    Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU)
+                        .unwrap();
                 let pairs = [(QubitId(q0), QubitId(q1))];
                 stn.rzz(a, &pairs);
                 dsv.rzz(a, &pairs);
@@ -2381,7 +2390,7 @@ fn test_mast_applies_t_correction_before_later_h() {
 
 #[test]
 fn test_mast_applies_non_clifford_correction_before_later_h() {
-    let theta = Angle64::from_radians(0.7);
+    let theta = pecos_core::radians!(0.7);
     let exact = exact_h_rz_h_p0(theta);
     // The old end-of-circuit correction gives P(0)=1 instead of
     // cos(0.35)^2 = 0.882421...; 2,000 shots distinguish the gap by more
@@ -2902,7 +2911,7 @@ fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {
     stn.cx(&[(QubitId(2), QubitId(3))]);
     // This creates a 2.5e-9-weight coefficient branch: below the configured
     // 1e-8 adaptive budget, but above numerical zero.
-    stn.rz(Angle64::from_radians(1e-4), &[QubitId(3)]);
+    stn.rz(pecos_core::radians!(1e-4), &[QubitId(3)]);
     // Uncompute the entangler and rotate every affected axis so the weak
     // branch changes computational-basis probabilities, then retain a
     // nonlocal tableau frame for the sequential forced-projection readers.
@@ -3394,7 +3403,7 @@ fn test_numerical_flag_redetection_random_probabilities() {
 #[test]
 fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
     let t = Angle64::QUARTER_TURN / 2u64;
-    let final_angle = Angle64::from_radians(0.37);
+    let final_angle = pecos_core::radians!(0.37);
     let mut stn = StabMps::builder(2)
         .merge_rz(false)
         .numerical_flag_redetection(true)
@@ -3439,7 +3448,7 @@ fn test_numerical_flag_redetection_recovers_cancelled_rotation() {
 #[test]
 fn test_numerical_flag_redetection_rejects_nonzero_product_site() {
     let t = Angle64::QUARTER_TURN / 2u64;
-    let final_angle = Angle64::from_radians(0.37);
+    let final_angle = pecos_core::radians!(0.37);
     let mut stn = StabMps::builder(2)
         .merge_rz(false)
         .numerical_flag_redetection(true)
@@ -3485,7 +3494,7 @@ fn prepared_two_site_subtype_simulator(saturation_telemetry: bool) -> StabMps {
 
 #[test]
 fn test_multi_std_subtype_labels_distinguish_add_and_cascade() {
-    let angle = Angle64::from_radians(0.37);
+    let angle = pecos_core::radians!(0.37);
 
     let mut add = prepared_two_site_subtype_simulator(true);
     add.cx(&[(QubitId(0), QubitId(1))]);
@@ -3560,7 +3569,7 @@ fn test_multi_std_subtype_labels_distinguish_add_and_cascade() {
 fn test_saturation_telemetry_flag_off_records_no_expensive_diagnostics() {
     let mut simulator = prepared_two_site_subtype_simulator(false);
     simulator.cx(&[(QubitId(0), QubitId(1))]);
-    simulator.rz(Angle64::from_radians(0.37), &[QubitId(1)]);
+    simulator.rz(pecos_core::radians!(0.37), &[QubitId(1)]);
 
     assert_eq!(simulator.stats.multi_std_add, 1);
     assert_eq!(simulator.stats.signed_eigenstate_candidates, 0);
@@ -3801,21 +3810,27 @@ fn fuzz_with_tdg(num_qubits: usize, num_gates: usize, seed: u64) {
             6 => {
                 // Random negative-angle RZ
                 let ab = next_rng(&mut rng_state);
-                let a = -Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                let a =
+                    -Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU)
+                        .unwrap();
                 stn.rz(a, &[QubitId(q0)]);
                 dsv.rz(a, &[QubitId(q0)]);
             }
             7 => {
                 // Random positive-angle RZ
                 let ab = next_rng(&mut rng_state);
-                let a = Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                let a =
+                    Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU)
+                        .unwrap();
                 stn.rz(a, &[QubitId(q0)]);
                 dsv.rz(a, &[QubitId(q0)]);
             }
             8 => {
                 // RX with negative angle
                 let ab = next_rng(&mut rng_state);
-                let a = -Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                let a =
+                    -Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU)
+                        .unwrap();
                 stn.rx(a, &[QubitId(q0)]);
                 dsv.rx(a, &[QubitId(q0)]);
             }
@@ -3890,8 +3905,10 @@ fn test_fuzz_szdg_circuits() {
                 }
                 6 => {
                     let ab = next_rng(&mut rng_state);
-                    let a =
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                    let a = Angle64::try_from_radians(
+                        (ab % 1000) as f64 * 0.001 * std::f64::consts::TAU,
+                    )
+                    .unwrap();
                     stn.rz(a, &[QubitId(q0)]);
                     dsv.rz(a, &[QubitId(q0)]);
                 }
@@ -4141,15 +4158,19 @@ fn test_fuzz_single_qubit() {
                 }
                 4 => {
                     let ab = next_rng(&mut rng_state);
-                    let a =
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                    let a = Angle64::try_from_radians(
+                        (ab % 1000) as f64 * 0.001 * std::f64::consts::TAU,
+                    )
+                    .unwrap();
                     stn.rz(a, &[QubitId(0)]);
                     dsv.rz(a, &[QubitId(0)]);
                 }
                 _ => {
                     let ab = next_rng(&mut rng_state);
-                    let a =
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * std::f64::consts::TAU);
+                    let a = Angle64::try_from_radians(
+                        (ab % 1000) as f64 * 0.001 * std::f64::consts::TAU,
+                    )
+                    .unwrap();
                     stn.rx(a, &[QubitId(0)]);
                     dsv.rx(a, &[QubitId(0)]);
                 }
@@ -4208,7 +4229,7 @@ fn test_rzz_clifford_angles() {
 #[test]
 fn test_rzz_then_non_clifford() {
     // RZZ at non-Clifford angle, then more gates. Verify state.
-    let angle = Angle64::from_radians(0.7);
+    let angle = pecos_core::radians!(0.7);
     let t = Angle64::QUARTER_TURN / 2u64;
 
     let mut stn = StabMps::builder(3).seed(42).merge_rz(false).build();

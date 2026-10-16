@@ -5,7 +5,7 @@ use quizx::tensor::ToTensor;
 
 #[test]
 fn phase_u_zx_export() {
-    for angle in [Angle64::HALF_TURN, Angle64::from_radians(-0.37)] {
+    for angle in [Angle64::HALF_TURN, pecos_core::radians!(-0.37)] {
         let mut dag = DagCircuit::new();
         dag.u(Angle64::ZERO, Angle64::ZERO, angle, &[0, 1]);
         let circuit = dag_to_zx_circuit(&dag).unwrap();

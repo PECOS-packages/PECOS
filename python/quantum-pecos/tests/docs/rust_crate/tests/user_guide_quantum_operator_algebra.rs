@@ -351,7 +351,7 @@ fn test_user_guide_quantum_operator_algebra_rust_17() {
 // Build a stabilizer group
 
 #[test]
-fn test_user_guide_quantum_operator_algebra_rust_18() {
+fn test_user_guide_quantum_operator_algebra_rust_18() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_qec::StabilizerCode;
     use pecos_quantum::PauliStabilizerGroup;
@@ -363,9 +363,10 @@ fn test_user_guide_quantum_operator_algebra_rust_18() {
     // Wrap in a StabilizerCode for QEC analysis
     let code = StabilizerCode::from_group(group);
     assert_eq!(code.num_logical_qubits(), 1);
-    assert_eq!(code.distance(), Some(1));
+    assert_eq!(code.distance()?, Some(1));
 
     // Or use standard constructors directly
     let steane = StabilizerCode::steane();
-    assert_eq!(steane.distance(), Some(3));
+    assert_eq!(steane.distance()?, Some(3));
+    Ok(())
 }

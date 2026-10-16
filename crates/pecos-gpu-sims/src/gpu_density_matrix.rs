@@ -1435,7 +1435,7 @@ mod tests {
         let Ok(mut sv) = GpuStateVec64::new(4) else {
             return;
         };
-        let t = Angle64::from_radians(0.37);
+        let t = pecos_core::radians!(0.37);
         sv.rzz(t, &[(QubitId(0), QubitId(1))]);
         let state = sv.state();
         let t_rad = t.to_radians_signed();
@@ -1472,7 +1472,7 @@ mod tests {
             return;
         };
         let mut cpu = DensityMatrix::new(2);
-        let t = Angle64::from_radians(0.37);
+        let t = pecos_core::radians!(0.37);
         gpu.h(&[QubitId(0), QubitId(1)])
             .rzz(t, &[(QubitId(0), QubitId(1))]);
         cpu.h(&[QubitId(0), QubitId(1)])
@@ -1493,7 +1493,7 @@ mod tests {
             return;
         };
         let mut cpu = DensityMatrix::new(3);
-        let t = Angle64::from_radians(0.37);
+        let t = pecos_core::radians!(0.37);
         gpu.h(&[QubitId(0), QubitId(1), QubitId(2)])
             .rz(t, &[QubitId(0)])
             .rxx(t, &[(QubitId(0), QubitId(1))])

@@ -165,11 +165,7 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                         2_000_000_000,
                         0,
                         vec![
-                            Gate::rxy1q(
-                                Angle64::from_radians(std::f64::consts::PI),
-                                Angle64::ZERO,
-                                &[0]
-                            ),
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
                             Gate::measure_leaked(&[0])
                         ]
                     )],
@@ -287,8 +283,8 @@ fn all_idle_families_match_explicit_general_noise_outcomes_and_rng() {
             1_300_000_000,
             200_000_000,
             vec![
-                Gate::rxy1q(Angle64::from_radians(0.9), Angle64::ZERO, &[0]),
-                Gate::rzz(Angle64::from_radians(0.7), &[(0, 1)]),
+                Gate::rxy1q(pecos_core::radians!(0.9), Angle64::ZERO, &[0]),
+                Gate::rzz(pecos_core::radians!(0.7), &[(0, 1)]),
             ],
         ),
         batch(
@@ -415,11 +411,7 @@ fn overflowing_later_gap_rejects_before_execution_or_rng_mutation() {
                 0,
                 0,
                 0,
-                vec![Gate::rxy1q(
-                    Angle64::from_radians(std::f64::consts::PI),
-                    Angle64::ZERO,
-                    &[0],
-                )],
+                vec![Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])],
             ),
             batch(1, 10_000_000_000, 0, vec![Gate::mz(&[0])]),
         ];

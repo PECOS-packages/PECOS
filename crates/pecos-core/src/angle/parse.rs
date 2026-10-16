@@ -187,9 +187,9 @@ where
 
         // First check if it's just "pi" or "π" or "-pi" or "-π"
         if s == "pi" || s == "π" {
-            return Ok(Self::from_radians(std::f64::consts::PI));
+            return Ok(Self::from_turn_ratio(1, 2));
         } else if s == "-pi" || s == "-π" {
-            return Ok(Self::from_radians(-std::f64::consts::PI));
+            return Ok(Self::from_turn_ratio(-1, 2));
         }
 
         // Handle decimal numbers (with or without pi)
@@ -249,7 +249,9 @@ where
             Ok(Self::from_turn_ratio(num_val, den_val * 2))
         } else {
             let radians = num_val as f64 / den_val as f64;
-            Ok(Self::from_radians(radians))
+            Self::try_from_radians(radians).map_err(|error| ParseAngleError::Overflow {
+                value: error.to_string(),
+            })
         }
     }
 

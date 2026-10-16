@@ -169,7 +169,7 @@ fn small_non_clifford() -> CaseResult {
     let mut dense = StateVecSoA::with_seed(5, SEED);
 
     for (qubit, radians) in [(0, 0.37), (1, -0.51), (2, 0.83)] {
-        let angle = Angle64::from_radians(radians);
+        let angle = Angle64::try_from_radians(radians).unwrap();
         stab.h(&qid(qubit)).rz(angle, &qid(qubit)).h(&qid(qubit));
         dense.h(&qid(qubit)).rz(angle, &qid(qubit)).h(&qid(qubit));
     }
@@ -306,7 +306,7 @@ fn divergent_structure_measurement() -> CaseResult {
     stab.h(&qid(6));
     dense.h(&qid(6));
     for (qubit, radians) in [(0, 0.37), (1, 0.53), (2, 0.71)] {
-        let angle = Angle64::from_radians(radians);
+        let angle = Angle64::try_from_radians(radians).unwrap();
         stab.h(&qid(qubit)).rz(angle, &qid(qubit)).h(&qid(qubit));
         dense.h(&qid(qubit)).rz(angle, &qid(qubit)).h(&qid(qubit));
     }
@@ -333,7 +333,7 @@ fn pending_rz_repeated_measurements() -> CaseResult {
     const SEED: u64 = 0x0EAD_BEEF;
     let mut stab = exact_stab(3, SEED);
     let mut dense = StateVecSoA::with_seed(3, SEED);
-    let angle = Angle64::from_radians(0.37);
+    let angle = pecos_core::radians!(0.37);
 
     stab.h(&qid(0)).rz(angle, &qid(0));
     dense.h(&qid(0)).rz(angle, &qid(0));

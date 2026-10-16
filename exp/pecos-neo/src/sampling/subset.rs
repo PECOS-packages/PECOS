@@ -2404,9 +2404,9 @@ mod tests {
     fn rxyxy2q_support_uses_shared_policy() {
         use pecos_core::Angle64;
         for (theta, phi, expected) in [
-            (Angle64::ZERO, Angle64::from_radians(0.123), true),
+            (Angle64::ZERO, pecos_core::radians!(0.123), true),
             (Angle64::HALF_TURN, Angle64::QUARTER_TURN, true),
-            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123), false),
+            (Angle64::QUARTER_TURN, pecos_core::radians!(0.123), false),
         ] {
             let commands = crate::CommandBuilder::new()
                 .rxyxy2q(&[(0, 1)], theta, phi)
@@ -2445,7 +2445,7 @@ mod tests {
                 GateCommand::with_angles(
                     gate_type,
                     qubits,
-                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                    vec![pecos_core::radians!(0.3); angle_arity],
                 ),
             ),
         ]

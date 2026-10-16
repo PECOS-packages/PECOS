@@ -2712,19 +2712,23 @@ impl DagCircuit {
     }
 
     /// Lower CRZ (controlled-RZ) boundary spelling into native rotations.
+    ///
+    /// # Errors
+    /// Returns the value and unit of a non-finite angle before modifying the circuit.
     pub fn crz(
         &mut self,
         theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> &mut Self {
+    ) -> Result<&mut Self, pecos_core::NonFiniteAngleError> {
+        Angle64::try_from_radians(theta_radians)?;
         for &(c, t) in pairs {
             for gate in
-                pecos_core::controlled_rotations::lower_crz(theta_radians, c.into(), t.into())
+                pecos_core::controlled_rotations::lower_crz(theta_radians, c.into(), t.into())?
             {
                 self.add_gate_auto_wire(gate);
             }
         }
-        self
+        Ok(self)
     }
 
     // -------------------- Three-qubit gates --------------------
@@ -4027,7 +4031,7 @@ mod tests {
         if basis & 2 != 0 {
             circuit.x(&[1]);
         }
-        circuit.crz(theta, &[(1, 0)]);
+        circuit.crz(theta, &[(1, 0)]).unwrap();
         let mut simulator = StateVec::new(2);
         for node in circuit.topological_order() {
             let gate = circuit.gate(node).expect("DAG node contains a gate");
@@ -4602,7 +4606,7 @@ mod tests {
             vec![],
             vec![QubitId::from(0)],
         ));
-        let rz = circuit.add_gate(Gate::rz(Angle64::from_turns(0.5), &[0]));
+        let rz = circuit.add_gate(Gate::rz(Angle64::HALF_TURN, &[0]));
 
         circuit.connect(h, t, QubitId::from(0)).unwrap();
         circuit.connect(t, rz, QubitId::from(0)).unwrap();
@@ -4642,7 +4646,7 @@ mod tests {
         circuit.add_gate(Gate::h(&[0]));
         circuit.add_gate(Gate::h(&[1]));
         circuit.add_gate(Gate::cx(&[(0, 1)]));
-        circuit.add_gate(Gate::rz(Angle64::from_turns(0.5), &[0]));
+        circuit.add_gate(Gate::rz(Angle64::HALF_TURN, &[0]));
 
         assert_eq!(circuit.gate_type_count(GateType::H), 2);
         assert_eq!(circuit.gate_type_count(GateType::CX), 1);
@@ -4707,10 +4711,7 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         let h = circuit.add_gate(Gate::h(&[0]));
-        let rz = circuit.add_gate(Gate::rz(
-            Angle64::from_radians(std::f64::consts::PI / 4.0),
-            &[0],
-        ));
+        let rz = circuit.add_gate(Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]));
 
         // Set gate-level attributes
         assert!(circuit.set_gate_attr(h, "error_rate", Attribute::Float(0.001)));
@@ -4830,7 +4831,7 @@ mod tests {
         // API follows simulator convention: rx(theta, q)
         circuit
             .h(&[0])
-            .rz(Angle64::from_radians(PI / 4.0), &[0])
+            .rz(Angle64::from_turn_ratio(1, 8), &[0])
             .rx(Angle64::QUARTER_TURN, &[0]); // Angle64, then qubit
         circuit.mz(&[0]);
 
@@ -4906,8 +4907,6 @@ mod tests {
 
     #[test]
     fn test_builder_simulator_api_compatibility() {
-        use std::f64::consts::FRAC_PI_4;
-
         // Test that the API matches simulator conventions
         let mut circuit = DagCircuit::new();
 
@@ -4925,10 +4924,10 @@ mod tests {
         // Matches ArbitraryRotationGateable API: rx(theta, q)
         let mut circuit2 = DagCircuit::new();
         circuit2
-            .rx(Angle64::from_radians(FRAC_PI_4), &[0])
-            .ry(Angle64::from_radians(FRAC_PI_4), &[0])
-            .rz(Angle64::from_radians(FRAC_PI_4), &[0])
-            .rzz(Angle64::from_radians(FRAC_PI_4), &[(0, 1)]); // rzz(theta, &[(q1, q2)])
+            .rx(Angle64::from_turn_ratio(1, 8), &[0])
+            .ry(Angle64::from_turn_ratio(1, 8), &[0])
+            .rz(Angle64::from_turn_ratio(1, 8), &[0])
+            .rzz(Angle64::from_turn_ratio(1, 8), &[(0, 1)]); // rzz(theta, &[(q1, q2)])
 
         assert_eq!(circuit2.gate_count(), 4);
     }

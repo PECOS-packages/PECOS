@@ -418,7 +418,7 @@ impl IdleChannel {
                     for &qubit in &unique_qubits {
                         // Skip leaked qubits (fast path skips check if no leakage exists)
                         if !has_any_leakage || !ctx.is_leaked(qubit) {
-                            gates.push(GateCommand::rz(qubit, Angle64::from_radians(angle)));
+                            gates.push(GateCommand::rz(qubit, Angle64::try_from_radians(angle).expect("validated quadratic rate times a bounded idle duration is finite")));
                         }
                     }
                 }
@@ -1295,7 +1295,7 @@ mod tests {
             collect_gates(coherent.apply(&event, &mut NoiseContext::new(), &mut coherent_rng));
         let expected_coherent = qubits
             .iter()
-            .map(|&qubit| GateCommand::rz(qubit, Angle64::from_radians(1.4)))
+            .map(|&qubit| GateCommand::rz(qubit, pecos_core::radians!(1.4)))
             .collect::<Vec<_>>();
         assert_eq!(
             coherent_output, expected_coherent,

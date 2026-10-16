@@ -2098,7 +2098,7 @@ mod tests {
 
     #[test]
     fn tick_near_quarter_turn_rotation_unchanged() {
-        let angle = Angle64::from_turns(0.25 + 1e-12);
+        let angle = pecos_core::turns!(0.25 + 1e-12);
         let mut tc = TickCircuit::new();
         tc.tick().rz(angle, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
@@ -2119,7 +2119,7 @@ mod tests {
 
     #[test]
     fn tick_near_zero_angle_rotation_unchanged() {
-        let angle = Angle64::from_turns(1e-10);
+        let angle = pecos_core::turns!(1e-10);
         let mut tc = TickCircuit::new();
         tc.tick().rz(angle, &[0]);
         SimplifyRotations.apply_tick(&mut tc);
@@ -2130,7 +2130,7 @@ mod tests {
 
     #[test]
     fn tick_near_zero_rxy1q_rotation_unchanged() {
-        let theta = Angle64::from_turns(1e-10);
+        let theta = pecos_core::turns!(1e-10);
         let mut tc = TickCircuit::new();
         tc.tick().rxy1q(theta, Angle64::ZERO, &[0]);
         SimplifyRotations.apply_tick(&mut tc);

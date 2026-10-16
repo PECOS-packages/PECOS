@@ -1032,7 +1032,7 @@ mod tests {
     fn quantum_ops_round_trips_custom_gate_angles() {
         let original = Gate::new(
             GateType::Custom,
-            vec![Angle64::from_radians(0.5), Angle64::from_radians(0.25)],
+            vec![pecos_core::radians!(0.5), pecos_core::radians!(0.25)],
             Vec::<f64>::new(),
             vec![QubitId(0), QubitId(1)],
         );

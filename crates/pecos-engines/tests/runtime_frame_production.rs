@@ -812,12 +812,9 @@ fn metadata_preserves_consecutive_measurement_sampling() {
 #[test]
 fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[
-            Gate::x(&[0]),
-            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
-        ])
-        .as_bytes()
-        .to_vec();
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::radians!(0.5), &[0])])
+            .as_bytes()
+            .to_vec();
         let end = bytes.len();
         bytes[end - 8..].copy_from_slice(&invalid.to_le_bytes());
         let mut system = setup(GeneralNoiseModel::builder().with_p1(0.5), 17);
@@ -1020,12 +1017,9 @@ fn failed_host_readmission_requires_whole_host_reset() {
 #[test]
 fn shared_parser_rejects_nonfinite_angles_without_panicking() {
     for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[
-            Gate::x(&[0]),
-            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
-        ])
-        .as_bytes()
-        .to_vec();
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::radians!(0.5), &[0])])
+            .as_bytes()
+            .to_vec();
         let end = bytes.len();
         bytes[end - 8..].copy_from_slice(&angle.to_le_bytes());
         let result = std::panic::catch_unwind(|| ByteMessage::new(&bytes).quantum_ops());

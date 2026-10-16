@@ -6770,13 +6770,12 @@ mod tests {
     #[test]
     fn test_sim_neo_statevec_rz_gate() {
         use pecos_core::Angle64;
-        use std::f64::consts::PI;
 
         // RZ(pi) on |+> should flip phase, so H then RZ(pi) then H = X (up to global phase)
         // Instead, simpler test: RZ on |0> leaves |0>
         let circuit = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(PI / 4.0)) // arbitrary rotation
+            .rz(&[0], Angle64::from_turn_ratio(1, 8)) // arbitrary rotation
             .mz(&[0])
             .build();
 

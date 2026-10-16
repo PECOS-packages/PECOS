@@ -21,8 +21,8 @@ fn rxyxy2q_json_units_and_execution() {
     let theta = -0.73_f64;
     let phi = 0.41_f64;
     let expected = Gate::rxyxy2q(
-        Angle64::from_radians(theta),
-        Angle64::from_radians(phi),
+        Angle64::try_from_radians(theta).unwrap(),
+        Angle64::try_from_radians(phi).unwrap(),
         &[(2, 0)],
     );
     for (unit, values) in [
@@ -156,8 +156,8 @@ fn rxyxy2q_json_preserves_multiple_pairs() {
         .into_iter()
         .map(|pair| {
             Gate::rxyxy2q(
-                Angle64::from_radians(-0.73),
-                Angle64::from_radians(0.41),
+                pecos_core::radians!(-0.73),
+                pecos_core::radians!(0.41),
                 &[pair],
             )
         })

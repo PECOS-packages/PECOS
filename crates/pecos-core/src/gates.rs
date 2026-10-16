@@ -71,7 +71,7 @@ pub struct Gate {
     /// The type of the gate
     pub gate_type: GateType,
     /// Rotation angles for parameterized gates (in full turns).
-    /// Use `Angle64::from_turns()` or `Angle64::from_radians()` to create.
+    /// Use `Angle64::try_from_turns()` or `Angle64::try_from_radians()` to create.
     /// Stack-allocated for up to 3 angles.
     pub angles: GateAngles,
     /// Other non-angle parameters (e.g., duration for Idle gate)
@@ -1418,13 +1418,13 @@ mod tests {
         assert!(x_gate.angles.is_empty());
 
         // Parameterized single qubit gates
-        let rz_gate = Gate::rz(Angle64::from_turns(0.5), &[1, 2]);
+        let rz_gate = Gate::rz(Angle64::HALF_TURN, &[1, 2]);
         assert_eq!(rz_gate.gate_type, GateType::RZ);
         assert_eq!(
             rz_gate.qubits.as_slice(),
             &[QubitId::from(1), QubitId::from(2)]
         );
-        assert_eq!(rz_gate.angles.as_slice(), &[Angle64::from_turns(0.5)]);
+        assert_eq!(rz_gate.angles.as_slice(), &[Angle64::HALF_TURN]);
 
         // Two qubit gates
         let cx_gate = Gate::cx(&[(0, 1), (2, 3)]);
@@ -1504,8 +1504,8 @@ mod tests {
 
         assert!(!Gate::h(&[0]).can_batch_with(&Gate::h(&[0])));
         assert!(
-            !Gate::rz(Angle64::from_turns(0.25), &[0])
-                .can_batch_with(&Gate::rz(Angle64::from_turns(0.5), &[1]))
+            !Gate::rz(Angle64::QUARTER_TURN, &[0])
+                .can_batch_with(&Gate::rz(Angle64::HALF_TURN, &[1]))
         );
         assert!(
             !Gate::custom(vec![QubitId::from(0)])
@@ -1554,7 +1554,7 @@ mod tests {
         assert_eq!(szzdg_pairs.angles, szzdg_vec.angles);
 
         // Test RZZ with _vec variant
-        let angle = Angle64::from_turns(0.25);
+        let angle = Angle64::QUARTER_TURN;
         let rzz_pairs = Gate::rzz(angle, &[(0, 1), (2, 3)]);
         let rzz_vec = Gate::rzz_vec(angle, &[0, 1, 2, 3]);
         assert_eq!(rzz_pairs.gate_type, rzz_vec.gate_type);
@@ -1591,7 +1591,7 @@ mod tests {
 
     #[test]
     fn test_gate_validate_rejects_repeated_qubits_in_parameterized_two_qubit_gates() {
-        let angle = Angle64::from_turns(0.25);
+        let angle = Angle64::QUARTER_TURN;
         let kak_angles = [[Angle64::ZERO; 3]; 2];
         let interaction = [Angle64::ZERO; 3];
 
@@ -1622,7 +1622,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "RZZ gate requires an even number of qubits")]
     fn test_rzz_vec_odd_qubits() {
-        let _ = Gate::rzz_vec(Angle64::from_turns(0.5), &[0, 1, 2]);
+        let _ = Gate::rzz_vec(Angle64::HALF_TURN, &[0, 1, 2]);
     }
 
     #[test]
@@ -1654,7 +1654,7 @@ mod tests {
         assert!(!x_gate.is_two_qubit());
 
         // Test parameterized single-qubit gates
-        let rz_gate = Gate::rz(Angle64::from_turns(0.25), &[0]);
+        let rz_gate = Gate::rz(Angle64::QUARTER_TURN, &[0]);
         assert_eq!(rz_gate.classical_arity(), 1);
         assert_eq!(rz_gate.angle_arity(), 1);
         assert_eq!(rz_gate.quantum_arity(), 1);
@@ -1663,7 +1663,7 @@ mod tests {
         assert!(!rz_gate.is_two_qubit());
 
         // Test two-parameter single-qubit gates
-        let rxy1q_gate = Gate::rxy1q(Angle64::from_turns(0.5), Angle64::from_turns(0.25), &[1]);
+        let rxy1q_gate = Gate::rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN, &[1]);
         assert_eq!(rxy1q_gate.classical_arity(), 2);
         assert_eq!(rxy1q_gate.angle_arity(), 2);
         assert_eq!(rxy1q_gate.quantum_arity(), 1);
@@ -1673,9 +1673,9 @@ mod tests {
 
         // Test three-parameter single-qubit gates
         let u_gate = Gate::u(
-            Angle64::from_turns(0.5),
-            Angle64::from_turns(0.25),
-            Angle64::from_turns(0.125),
+            Angle64::HALF_TURN,
+            Angle64::QUARTER_TURN,
+            Angle64::from_turn_ratio(1, 8),
             &[2],
         );
         assert_eq!(u_gate.classical_arity(), 3);
@@ -1695,7 +1695,7 @@ mod tests {
         assert!(cx_gate.is_two_qubit());
 
         // Test parameterized two-qubit gates
-        let rzz_two_qubit = Gate::rzz(Angle64::from_turns(0.25), &[(0, 1)]);
+        let rzz_two_qubit = Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]);
         assert_eq!(rzz_two_qubit.classical_arity(), 1);
         assert_eq!(rzz_two_qubit.angle_arity(), 1);
         assert_eq!(rzz_two_qubit.quantum_arity(), 2);
@@ -1719,16 +1719,16 @@ mod tests {
         let valid_x = Gate::x(&[0]);
         assert!(valid_x.validate().is_ok());
 
-        let valid_rz = Gate::rz(Angle64::from_turns(0.25), &[1]);
+        let valid_rz = Gate::rz(Angle64::QUARTER_TURN, &[1]);
         assert!(valid_rz.validate().is_ok());
 
-        let valid_rxy1q = Gate::rxy1q(Angle64::from_turns(0.5), Angle64::from_turns(0.25), &[2]);
+        let valid_rxy1q = Gate::rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN, &[2]);
         assert!(valid_rxy1q.validate().is_ok());
 
         let valid_u = Gate::u(
-            Angle64::from_turns(0.5),
-            Angle64::from_turns(0.25),
-            Angle64::from_turns(0.125),
+            Angle64::HALF_TURN,
+            Angle64::QUARTER_TURN,
+            Angle64::from_turn_ratio(1, 8),
             &[3],
         );
         assert!(valid_u.validate().is_ok());
@@ -1736,13 +1736,13 @@ mod tests {
         let valid_cx_gate = Gate::cx(&[(0, 1)]);
         assert!(valid_cx_gate.validate().is_ok());
 
-        let valid_rzz = Gate::rzz(Angle64::from_turns(0.25), &[(2, 3)]);
+        let valid_rzz = Gate::rzz(Angle64::QUARTER_TURN, &[(2, 3)]);
         assert!(valid_rzz.validate().is_ok());
 
         // Test invalid gates - wrong angle count
         let invalid_angles = Gate::try_new(
             GateType::RZ,
-            vec![Angle64::from_turns(0.25), Angle64::from_turns(0.5)],
+            vec![Angle64::QUARTER_TURN, Angle64::HALF_TURN],
             Vec::<f64>::new(),
             vec![QubitId::from(0)],
         )
@@ -1753,7 +1753,7 @@ mod tests {
 
         let missing_angles = Gate::try_new(
             GateType::U,
-            vec![Angle64::from_turns(0.25)],
+            vec![Angle64::QUARTER_TURN],
             Vec::<f64>::new(),
             vec![QubitId::from(0)],
         )
@@ -1892,7 +1892,7 @@ mod tests {
         );
 
         let mut stale_angles = Gate::channel(BitFlip(0.1, 0));
-        stale_angles.angles.push(Angle64::from_turns(0.25));
+        stale_angles.angles.push(Angle64::QUARTER_TURN);
         assert!(
             stale_angles
                 .validate()

@@ -15,8 +15,8 @@ fn err() -> PecosError {
 }
 fn rotation(theta: f64) -> Gate {
     Gate::rxy1q(
-        Angle64::from_radians(theta),
-        Angle64::from_radians(0.0),
+        Angle64::try_from_radians(theta).unwrap(),
+        Angle64::ZERO,
         &[0],
     )
 }

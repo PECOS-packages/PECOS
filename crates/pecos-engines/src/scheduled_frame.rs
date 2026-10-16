@@ -728,7 +728,7 @@ mod local_gate_contract {
         let stage = model
             .start_admitted(
                 &ByteMessage::quantum_operations_builder()
-                    .rz(Angle64::from_radians(0.4), &[0])
+                    .rz(pecos_core::radians!(0.4), &[0])
                     .build(),
             )
             .unwrap();

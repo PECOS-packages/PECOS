@@ -1123,7 +1123,10 @@ impl GateAction for InjectCoherentRZ {
         let cmd = GateCommand {
             gate_type: GateType::RZ,
             qubits: smallvec![qubit],
-            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
+            payload: GatePayload::Angles(smallvec![
+                pecos_core::Angle64::try_from_radians(angle)
+                    .expect("validated bounded rate times a TimeUnits duration is finite")
+            ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1331,7 +1334,10 @@ impl GateAction for CoherentRotation {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(self.angle)]),
+            payload: GatePayload::Angles(smallvec![
+                pecos_core::Angle64::try_from_radians(self.angle)
+                    .expect("the constructor validated the stored coherent angle as finite")
+            ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1413,7 +1419,10 @@ impl GateAction for OverRotation {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(error_angle)]),
+            payload: GatePayload::Angles(smallvec![
+                pecos_core::Angle64::try_from_radians(error_angle)
+                    .expect("bounded over-rotation fraction times a stored angle is finite")
+            ]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1479,9 +1488,10 @@ impl GateAction for ZZDephasing {
             let cmd = GateCommand {
                 gate_type: GateType::RZ,
                 qubits: smallvec![qubit],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(
-                    self.angle
-                )]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(self.angle)
+                        .expect("the constructor validated the stored coherent angle as finite")
+                ]),
             };
             return CompositeResponse::InjectGates(vec![cmd]);
         };
@@ -1491,9 +1501,10 @@ impl GateAction for ZZDephasing {
             let cmd = GateCommand {
                 gate_type: GateType::RZZ,
                 qubits: smallvec![qubit, other],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(
-                    self.angle
-                )]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(self.angle)
+                        .expect("the constructor validated the stored coherent angle as finite")
+                ]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         } else {
@@ -1544,7 +1555,10 @@ impl GateAction for ZZDephasingRate {
             let cmd = GateCommand {
                 gate_type: GateType::RZ,
                 qubits: smallvec![qubit],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(angle)
+                        .expect("validated bounded rate times a TimeUnits duration is finite")
+                ]),
             };
             return CompositeResponse::InjectGates(vec![cmd]);
         };
@@ -1553,7 +1567,10 @@ impl GateAction for ZZDephasingRate {
             let cmd = GateCommand {
                 gate_type: GateType::RZZ,
                 qubits: smallvec![qubit, other],
-                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
+                payload: GatePayload::Angles(smallvec![
+                    pecos_core::Angle64::try_from_radians(angle)
+                        .expect("validated bounded rate times a TimeUnits duration is finite")
+                ]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         } else {

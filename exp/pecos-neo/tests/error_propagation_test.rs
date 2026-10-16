@@ -125,7 +125,7 @@ fn sequential_classical_error_is_returned() {
 #[test]
 fn sequential_quantum_error_is_returned() {
     let circuit = CommandBuilder::new()
-        .rz(&[0], pecos_core::Angle64::from_radians(0.3))
+        .rz(&[0], pecos_core::radians!(0.3))
         .build();
     let error = sim_neo(circuit)
         .quantum(sparse_stab())
@@ -169,7 +169,7 @@ fn startup_error_is_returned_on_every_run() {
 #[test]
 fn event_handler_gate_error_is_returned() {
     let injected_gate = CommandBuilder::new()
-        .rz(&[0], pecos_core::Angle64::from_radians(0.3))
+        .rz(&[0], pecos_core::radians!(0.3))
         .build()
         .iter()
         .next()
@@ -193,7 +193,7 @@ fn event_handler_gate_error_is_returned() {
 fn importance_sampling_rejects_non_clifford_circuit_at_build() {
     let _ = sim_neo(
         CommandBuilder::new()
-            .rz(&[0], pecos_core::Angle64::from_radians(0.3))
+            .rz(&[0], pecos_core::radians!(0.3))
             .build(),
     )
     .quantum(sparse_stab())
@@ -206,7 +206,7 @@ fn importance_sampling_rejects_non_clifford_circuit_at_build() {
 fn path_enumeration_rejects_non_clifford_circuit_at_build() {
     let _ = sim_neo(
         CommandBuilder::new()
-            .rz(&[0], pecos_core::Angle64::from_radians(0.3))
+            .rz(&[0], pecos_core::radians!(0.3))
             .build(),
     )
     .quantum(sparse_stab())
@@ -219,7 +219,7 @@ fn path_enumeration_rejects_non_clifford_circuit_at_build() {
 fn subset_simulation_rejects_non_clifford_circuit_at_build() {
     let _ = sim_neo(
         CommandBuilder::new()
-            .rz(&[0], pecos_core::Angle64::from_radians(0.3))
+            .rz(&[0], pecos_core::radians!(0.3))
             .build(),
     )
     .quantum(sparse_stab())

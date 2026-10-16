@@ -187,7 +187,7 @@ fn rotations_match_dense_with_and_without_merging() {
                 Angle64::QUARTER_TURN,
                 Angle64::HALF_TURN,
                 Angle64::THREE_QUARTERS_TURN,
-                Angle64::from_radians(0.37),
+                pecos_core::radians!(0.37),
             ] {
                 for q in 0..2 {
                     for repetitions in [1, 2] {

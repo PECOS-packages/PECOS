@@ -3140,7 +3140,7 @@ mod tests {
         let ctx = &mut Context::new();
         let alloc = QallocOp::new(ctx);
         // rz on a qec.alloc handle (not a qubitref).
-        let bad = RzOp::new(ctx, alloc.get_result(ctx), Angle64::from_radians(0.5));
+        let bad = RzOp::new(ctx, alloc.get_result(ctx), pecos_core::radians!(0.5));
         assert!(
             verify_op(&bad, ctx).is_err(),
             "qec.rz on a qec.alloc handle must fail verification"
@@ -3219,7 +3219,7 @@ mod tests {
         }
         let q = push!(QallocOp::new(ctx));
         let sv = push!(SlotOp::new(ctx, q.get_result(ctx), 0)).get_result(ctx);
-        let angle = Angle64::from_radians(1.07);
+        let angle = pecos_core::radians!(1.07);
         let rz = push!(RzOp::new(ctx, sv, angle));
         let got = get_angle(ctx, rz.get_operation());
         assert_eq!(

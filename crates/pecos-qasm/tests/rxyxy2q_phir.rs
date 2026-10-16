@@ -19,8 +19,8 @@ fn rxyxy2q_qasm_phir_equivalence() {
         assert_eq!(
             expected,
             [Gate::rxyxy2q(
-                Angle64::from_radians(-0.73),
-                Angle64::from_radians(0.41),
+                pecos_core::radians!(-0.73),
+                pecos_core::radians!(0.41),
                 &[(2, 0)]
             )]
         );
@@ -42,8 +42,14 @@ fn rxyxy2q_qasm_phir_equivalence() {
             expected
         );
         assert_eq!(qop, "RXYXY2Q");
-        assert_eq!(Angle64::from_radians(angles[0]), expected[0].angles[0]);
-        assert_eq!(Angle64::from_radians(angles[1]), expected[0].angles[1]);
+        assert_eq!(
+            Angle64::try_from_radians(angles[0]).unwrap(),
+            expected[0].angles[0]
+        );
+        assert_eq!(
+            Angle64::try_from_radians(angles[1]).unwrap(),
+            expected[0].angles[1]
+        );
         let [pecos_phir_json::v0_1::ast::QubitArg::MultipleQubits(pair)] = args.as_slice() else {
             panic!("expected pair")
         };
@@ -68,7 +74,7 @@ fn rxyxy2q_bridges_reject_wrong_counts() {
         let QasmOp::NativeGate(gate) = &mut program.operations[0] else {
             panic!("expected native gate")
         };
-        gate.angles = vec![Angle64::from_radians(-0.73); count].into();
+        gate.angles = vec![pecos_core::radians!(-0.73); count].into();
         assert!(pecos_qasm::program_to_phir_json(&program).is_err());
         assert!(pecos_qasm::qasm_program_to_phir_module(&program).is_err());
     }

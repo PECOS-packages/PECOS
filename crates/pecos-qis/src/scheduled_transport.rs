@@ -510,11 +510,9 @@ mod tests {
                 for op in &b.operations {
                     out.push(match op {
                         ScheduledEventOp::Gate(g) => g.as_ref().clone(),
-                        ScheduledEventOp::Custom { .. } => Gate::rxy1q(
-                            Angle64::from_radians(std::f64::consts::PI),
-                            Angle64::from_radians(0.0),
-                            &[0],
-                        ),
+                        ScheduledEventOp::Custom { .. } => {
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])
+                        }
                     })?;
                 }
                 Ok(())

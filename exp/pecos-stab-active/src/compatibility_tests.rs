@@ -8,9 +8,9 @@ fn fixed_seed_trait_bits() {
     let mut records = Vec::new();
     for _ in 0..4 {
         state.h(&[QubitId(0)]).sz(&[QubitId(1)]);
-        state.rx(Angle64::from_radians(0.321), &[QubitId(0), QubitId(2)]);
-        state.ry(Angle64::from_radians(-0.789), &[QubitId(1)]);
-        state.rzz(Angle64::from_radians(0.456), &[(QubitId(0), QubitId(1))]);
+        state.rx(pecos_core::radians!(0.321), &[QubitId(0), QubitId(2)]);
+        state.ry(pecos_core::radians!(-0.789), &[QubitId(1)]);
+        state.rzz(pecos_core::radians!(0.456), &[(QubitId(0), QubitId(1))]);
         state.cx(&[(QubitId(1), QubitId(2))]);
         records.extend(state.mx(&[QubitId(0)]).iter().map(|r| r.outcome));
         state.px(&[QubitId(2)]);

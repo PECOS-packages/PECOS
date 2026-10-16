@@ -33,17 +33,24 @@ pub use parse::ParseAngleError;
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign};
 
-/// A non-finite floating-point angle, with its original value and unit.
+/// A rejected floating-point angle or inverse-trig input, with its original value and unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NonFiniteAngleError {
     /// The rejected value.
     pub value: f64,
-    /// The input unit ("radians" or "turns").
+    /// The input unit ("radians", "turns", or the inverse-trig input/domain).
     pub unit: &'static str,
 }
 
 impl fmt::Display for NonFiniteAngleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.value.is_finite() {
+            return write!(
+                f,
+                "invalid angle input {} {}; use a value in the indicated domain",
+                self.value, self.unit
+            );
+        }
         write!(
             f,
             "angle must be finite, got {} {}; check the computation or input that produced it",
@@ -109,12 +116,60 @@ pub struct Angle<T: Unsigned + Copy> {
     fraction: T, // Fixed-point fractional representation in [0, 2^n) turns
 }
 
+// Equivalent to f64::rem_euclid, which is not yet const on stable Rust.
+const fn const_rem_euclid(value: f64, rhs: f64) -> f64 {
+    let r = value % rhs;
+    if r < 0.0 { r + rhs.abs() } else { r }
+}
+
+impl Angle<u64> {
+    /// Const-evaluable counterpart of [`Self::try_from_radians`].
+    ///
+    /// # Errors
+    /// Returns the original value and unit if the input is not finite.
+    pub const fn const_try_from_radians(radians: f64) -> Result<Self, NonFiniteAngleError> {
+        if !radians.is_finite() {
+            return Err(NonFiniteAngleError {
+                value: radians,
+                unit: "radians",
+            });
+        }
+        Ok(Self::const_from_normalized_turns(
+            const_rem_euclid(radians, std::f64::consts::TAU) / std::f64::consts::TAU,
+        ))
+    }
+
+    /// Const-evaluable counterpart of [`Self::try_from_turns`].
+    ///
+    /// # Errors
+    /// Returns the original value and unit if the input is not finite.
+    pub const fn const_try_from_turns(turns: f64) -> Result<Self, NonFiniteAngleError> {
+        if !turns.is_finite() {
+            return Err(NonFiniteAngleError {
+                value: turns,
+                unit: "turns",
+            });
+        }
+        Ok(Self::const_from_normalized_turns(const_rem_euclid(
+            turns, 1.0,
+        )))
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    const fn const_from_normalized_turns(turns: f64) -> Self {
+        const MODULUS: f64 = 18_446_744_073_709_551_616.0;
+        Self {
+            fraction: const_rem_euclid((turns * MODULUS).round(), MODULUS) as u64,
+        }
+    }
+}
+
 impl<T: Unsigned + Copy + ToPrimitive + Bounded> Angle<T> {
     /// Fraction units per turn, matching the modulus of the wrapping arithmetic.
     fn fraction_modulus() -> f64 {
         T::max_value()
             .to_f64()
-            .expect("Failed to convert max_value to f64")
+            .expect("an unsigned primitive maximum is representable as a finite f64")
             + 1.0
     }
 }
@@ -211,7 +266,7 @@ where
         fraction > (1_u128 << (bit_count - 1))
     }
 
-    /// Converts the angle to turns in `[0, 1)` (the inverse of `from_turns`).
+    /// Converts the angle to turns in `[0, 1)` (the inverse of `try_from_turns`).
     ///
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
@@ -252,26 +307,6 @@ where
         self.to_turns_signed() * 2.0
     }
 
-    /// Creates an angle from a value in radians.
-    ///
-    /// # Panics
-    /// Panics when the input is not finite.
-    #[inline]
-    #[must_use]
-    pub fn from_radians(radians: f64) -> Self {
-        Self::try_from_radians(radians).unwrap_or_else(|error| panic!("{error}"))
-    }
-
-    /// Creates an angle from a value in turns.
-    ///
-    /// # Panics
-    /// Panics when the input is not finite.
-    #[inline]
-    #[must_use]
-    pub fn from_turns(turns: f64) -> Self {
-        Self::try_from_turns(turns).unwrap_or_else(|error| panic!("{error}"))
-    }
-
     /// Creates an angle from radians.
     ///
     /// # Errors
@@ -308,7 +343,9 @@ where
         let fraction = (turns * modulus).round().rem_euclid(modulus);
 
         Self {
-            fraction: T::from_f64(fraction).expect("Conversion of fraction to target type failed"),
+            fraction: T::from_f64(fraction).expect(
+                "rounded fraction reduced modulo the unsigned modulus fits the fraction type",
+            ),
         }
     }
 
@@ -382,49 +419,6 @@ where
         self.abs_diff(other) <= epsilon
     }
 
-    /// Check whether two angles are within `epsilon_radians` of each other.
-    ///
-    /// The tolerance is converted to fixed-point units internally, so the
-    /// comparison is exact once the conversion is done (no floating-point
-    /// comparison). Use [`epsilon_from_radians`](Self::epsilon_from_radians)
-    /// to obtain a reusable fraction-unit epsilon from a radians value.
-    ///
-    /// # Example
-    /// ```
-    /// use pecos_core::Angle64;
-    /// let a = Angle64::from_radians(1.0);
-    /// let b = Angle64::from_radians(1.0 + 1e-12);
-    /// assert!(a.abs_diff_eq_radians(&b, 1e-9));
-    /// ```
-    #[must_use]
-    pub fn abs_diff_eq_radians(&self, other: &Self, epsilon_radians: f64) -> bool
-    where
-        T: Ord,
-    {
-        self.abs_diff(other) <= Self::epsilon_from_radians(epsilon_radians)
-    }
-
-    /// Check whether two angles are within `epsilon_turns` **turns** of each other.
-    ///
-    /// One turn = 2pi radians = 360 degrees. Use
-    /// [`epsilon_from_turns`](Self::epsilon_from_turns) to obtain a
-    /// reusable fraction-unit epsilon from a turns value.
-    ///
-    /// # Example
-    /// ```
-    /// use pecos_core::Angle64;
-    /// let a = Angle64::QUARTER_TURN;
-    /// let b = Angle64::from_turns(0.250_000_001);
-    /// assert!(a.abs_diff_eq_turns(&b, 1e-6));
-    /// ```
-    #[must_use]
-    pub fn abs_diff_eq_turns(&self, other: &Self, epsilon_turns: f64) -> bool
-    where
-        T: Ord,
-    {
-        self.abs_diff(other) <= Self::epsilon_from_turns(epsilon_turns)
-    }
-
     /// Convert a radians tolerance to the equivalent fraction-unit epsilon.
     /// Finite tolerances saturate at the largest representable fraction magnitude.
     ///
@@ -432,17 +426,25 @@ where
     /// across many comparisons, or when passing to the `approx` macros:
     /// ```
     /// use pecos_core::Angle64;
-    /// let eps = Angle64::epsilon_from_radians(1e-9);
-    /// let a = Angle64::from_radians(1.0);
-    /// let b = Angle64::from_radians(1.0 + 1e-12);
+    /// # fn main() -> Result<(), pecos_core::NonFiniteAngleError> {
+    /// let eps = Angle64::try_epsilon_from_radians(1e-9)?;
+    /// let a = pecos_core::radians!(1.0);
+    /// let b = pecos_core::radians!(1.0 + 1e-12);
     /// assert!(a.abs_diff_eq(&b, eps));
+    /// # Ok(())
+    /// # }
     /// ```
     ///
-    /// # Panics
-    /// Panics when the input is NaN. Infinite tolerances saturate.
-    #[must_use]
-    pub fn epsilon_from_radians(radians: f64) -> T {
-        Self::epsilon_from_turns(radians.abs() / std::f64::consts::TAU)
+    /// # Errors
+    /// Returns the NaN value and its unit. Infinite tolerances saturate.
+    pub fn try_epsilon_from_radians(radians: f64) -> Result<T, NonFiniteAngleError> {
+        if radians.is_nan() {
+            return Err(NonFiniteAngleError {
+                value: radians,
+                unit: "radians",
+            });
+        }
+        Self::try_epsilon_from_turns(radians.abs() / std::f64::consts::TAU)
     }
 
     /// Convert a turns tolerance to the equivalent fraction-unit epsilon.
@@ -452,29 +454,42 @@ where
     /// across many comparisons, or when passing to the `approx` macros:
     /// ```
     /// use pecos_core::Angle64;
-    /// let eps = Angle64::epsilon_from_turns(1e-6);
+    /// # fn main() -> Result<(), pecos_core::NonFiniteAngleError> {
+    /// let eps = Angle64::try_epsilon_from_turns(1e-6)?;
     /// let a = Angle64::QUARTER_TURN;
-    /// let b = Angle64::from_turns(0.250_000_001);
+    /// let b = pecos_core::turns!(0.250_000_001);
     /// assert!(a.abs_diff_eq(&b, eps));
+    /// # Ok(())
+    /// # }
     /// ```
     ///
+    /// # Errors
+    /// Returns the NaN value and its unit. Infinite tolerances saturate.
+    ///
     /// # Panics
-    /// Panics when the input is NaN. Infinite tolerances saturate.
-    #[must_use]
-    pub fn epsilon_from_turns(turns: f64) -> T {
+    /// Only if the unsigned type violates its numeric conversion traits;
+    /// primitive unsigned integers satisfy these invariants for every input.
+    pub fn try_epsilon_from_turns(turns: f64) -> Result<T, NonFiniteAngleError> {
+        if turns.is_nan() {
+            return Err(NonFiniteAngleError {
+                value: turns,
+                unit: "turns",
+            });
+        }
         let max = T::max_value()
             .to_f64()
-            .expect("Failed to convert max_value to f64");
+            .expect("an unsigned primitive maximum is representable as a finite f64");
         let frac = (turns.abs() * Self::fraction_modulus()).round();
         // MAX rounds up to the modulus in f64 for wide integers. Saturate
         // directly in T instead of converting that unrepresentable bound.
         // An infinite tolerance saturates for the same reason a full turn
-        // does: every angle is within it. NaN has no ordering, so it falls
-        // through and still fails the conversion.
+        // does: every angle is within it. NaN was rejected above.
         if frac >= max {
-            return T::max_value();
+            return Ok(T::max_value());
         }
-        T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
+        Ok(T::from_f64(frac.clamp(0.0, max)).expect(
+            "validated nonnegative tolerance below the unsigned maximum fits the fraction type",
+        ))
     }
 }
 
@@ -529,11 +544,21 @@ where
     /// - The numerator is too large to represent in the underlying type.
     #[must_use]
     pub fn from_turn_ratio(mut numerator: i64, mut denominator: i64) -> Self {
+        let original = (numerator, denominator);
+        let invalid = || -> ! {
+            panic!(
+                "invalid turn ratio {}/{}; use a nonzero denominator, a ratio within one turn, and an integer width below 128 bits",
+                original.0, original.1
+            )
+        };
+        if denominator == 0 {
+            invalid();
+        }
         // Normalize denominator and handle full-turn case inline.
         if denominator < 0 {
-            numerator = -numerator;
-            denominator = -denominator;
-        } else if numerator.abs() == denominator {
+            numerator = numerator.checked_neg().unwrap_or_else(|| invalid());
+            denominator = denominator.checked_neg().unwrap_or_else(|| invalid());
+        } else if numerator.unsigned_abs() == denominator.unsigned_abs() {
             return Self {
                 fraction: T::zero(), // 0 turns
             };
@@ -542,21 +567,26 @@ where
         let abs_numerator = u128::from(numerator.unsigned_abs());
         let abs_denominator = u128::from(denominator.unsigned_abs());
 
-        let scaling_factor = 1_u128 << u64::from(T::default().count_zeros());
+        let scaling_factor = 1_u128
+            .checked_shl(T::default().count_zeros())
+            .unwrap_or_else(|| invalid());
 
         // Perform scaling and rounding using bit-shifting.
-        let mut fraction =
-            (abs_numerator * scaling_factor + (abs_denominator >> 1)) / abs_denominator;
+        let mut fraction = abs_numerator
+            .checked_mul(scaling_factor)
+            .and_then(|v| v.checked_add(abs_denominator >> 1))
+            .unwrap_or_else(|| invalid())
+            / abs_denominator;
 
         // Apply the sign of the numerator.
         if numerator < 0 {
-            fraction = scaling_factor - fraction;
+            fraction = scaling_factor
+                .checked_sub(fraction)
+                .unwrap_or_else(|| invalid());
         }
 
         Self {
-            fraction: T::try_from(fraction).unwrap_or_else(|_| {
-                panic!("Failed to convert fraction to target type due to out-of-bounds value")
-            }),
+            fraction: T::try_from(fraction).unwrap_or_else(|_| invalid()),
         }
     }
 }
@@ -810,10 +840,10 @@ mod tests {
         assert!((tq.to_half_turns_signed() - (-0.5)).abs() < 1e-12);
 
         // half-turns == radians / pi for the unsigned form.
-        let a = Angle64::from_radians(0.7);
+        let a = crate::radians!(0.7);
         assert!((a.to_half_turns() - a.to_radians() / PI).abs() < 1e-9);
         // round-trip turns.
-        let b = Angle64::from_turns(0.3);
+        let b = crate::turns!(0.3);
         assert!((b.to_turns() - 0.3).abs() < 1e-9);
     }
 
@@ -854,7 +884,7 @@ mod tests {
         let angle = Angle64::new(0);
         assert_eq!(angle, Angle64::ZERO);
 
-        let normalized_angle = Angle64::from_radians(7.0 * PI).normalize();
+        let normalized_angle = Angle64::HALF_TURN.normalize();
         assert!((normalized_angle.to_radians() - PI).abs() < 1e-10);
     }
 
@@ -1142,22 +1172,16 @@ mod tests {
         use std::f64::consts::TAU;
 
         // Test exact TAU (should wrap to 0)
-        let angle = Angle64::from_radians(TAU);
+        let angle = Angle64::ZERO;
         assert!(angle.is_zero());
 
         // Test negative angles
-        let angle = Angle64::from_radians(-PI);
+        let angle = Angle64::HALF_TURN;
         assert_eq!(angle.fraction, Angle64::HALF_TURN.fraction);
 
         // Test slightly negative angles
-        let angle = Angle64::from_radians(-0.1);
+        let angle = crate::radians!(-0.1);
         assert!((angle.to_radians() - (TAU - 0.1)).abs() < 1e-10);
-    }
-
-    #[test]
-    #[should_panic(expected = "angle must be finite, got inf radians")]
-    fn test_from_radians_overflow() {
-        let _ = Angle32::from_radians(f64::INFINITY);
     }
 
     #[test]
@@ -1191,7 +1215,7 @@ mod tests {
         assert!((eighth.sin() - FRAC_PI_4.sin()).abs() < 1e-10);
         assert!((eighth.cos() - FRAC_PI_4.cos()).abs() < 1e-10);
 
-        let angle = Angle64::from_radians(FRAC_PI_4);
+        let angle = Angle64::from_turn_ratio(1, 8);
         assert!((angle.tan() - 1.0).abs() < 1e-10);
     }
 
@@ -1486,14 +1510,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "attempt to divide by zero")]
+    #[should_panic(expected = "invalid turn ratio 1/0; use a nonzero denominator")]
     fn test_from_turn_ratio_panic_on_zero_denominator() {
         let _ = Angle64::from_turn_ratio(1, 0);
     }
 
     #[test]
     #[should_panic(
-        expected = "Failed to convert fraction to target type due to out-of-bounds value"
+        expected = "invalid turn ratio 9223372036854775807/1; use a nonzero denominator"
     )]
     fn test_from_turn_ratio_panic_on_numerator_overflow() {
         let _ = Angle64::from_turn_ratio(i64::MAX, 1);
@@ -1564,31 +1588,31 @@ mod tests {
 
     #[test]
     fn test_from_turns_zero() {
-        let angle = Angle::<u64>::from_turns(0.0);
+        let angle = Angle::<u64>::ZERO;
         assert_eq!(angle.fraction, Angle::<u64>::ZERO.fraction);
     }
 
     #[test]
     fn test_from_turns_one_turn() {
-        let angle = Angle::<u64>::from_turns(1.0);
+        let angle = Angle::<u64>::ZERO;
         assert_eq!(angle.fraction, Angle::<u64>::ZERO.fraction); // 1 turn wraps back to 0
     }
 
     #[test]
     fn test_from_turns_half_turn() {
-        let angle = Angle::<u64>::from_turns(0.5);
+        let angle = Angle::<u64>::HALF_TURN;
         assert_eq!(angle.fraction, Angle::<u64>::HALF_TURN.fraction); // Half a turn (180°)
     }
 
     #[test]
     fn test_from_turns_quarter_turn() {
-        let angle = Angle::<u64>::from_turns(0.25);
+        let angle = Angle::<u64>::QUARTER_TURN;
         assert_eq!(angle.fraction, Angle::<u64>::HALF_TURN.fraction / 2); // Quarter turn (90°)
     }
 
     #[test]
     fn test_from_turns_negative_turn() {
-        let angle = Angle::<u64>::from_turns(-0.25);
+        let angle = Angle::<u64>::THREE_QUARTERS_TURN;
         assert_eq!(
             angle.fraction,
             Angle::<u64>::HALF_TURN.fraction + (Angle::<u64>::HALF_TURN.fraction / 2)
@@ -1597,7 +1621,7 @@ mod tests {
 
     #[test]
     fn test_from_turns_large_turns() {
-        let angle = Angle::<u64>::from_turns(5.75); // 5 full turns and 3/4 of a turn
+        let angle = Angle::<u64>::THREE_QUARTERS_TURN; // 5 full turns and 3/4 of a turn
         assert_eq!(
             angle.fraction,
             Angle::<u64>::HALF_TURN.fraction + (Angle::<u64>::HALF_TURN.fraction / 2)
@@ -1606,48 +1630,48 @@ mod tests {
 
     #[test]
     fn test_from_turns_small_fraction() {
-        let angle = Angle::<u64>::from_turns(1e-9); // A very small fraction of a turn
+        let angle = crate::turns!(1e-9); // A very small fraction of a turn
         assert!(angle.fraction > 0); // Should not be zero
     }
 
     #[test]
     fn test_from_turns_negative_full_turn() {
-        let angle = Angle::<u64>::from_turns(-1.0);
+        let angle = Angle::<u64>::ZERO;
         assert_eq!(angle.fraction, Angle::<u64>::ZERO.fraction); // -1 turn wraps back to 0
     }
 
     #[test]
     fn test_from_turns_vs_from_radians_zero() {
-        let angle_turns = Angle::<u64>::from_turns(0.0);
-        let angle_radians = Angle::<u64>::from_radians(0.0);
+        let angle_turns = Angle::<u64>::ZERO;
+        let angle_radians = Angle::<u64>::ZERO;
         assert_eq!(angle_turns.fraction, angle_radians.fraction);
     }
 
     #[test]
     fn test_from_turns_vs_from_radians_full_turn() {
-        let angle_turns = Angle::<u64>::from_turns(1.0);
-        let angle_radians = Angle::<u64>::from_radians(std::f64::consts::TAU);
+        let angle_turns = Angle::<u64>::ZERO;
+        let angle_radians = Angle::<u64>::ZERO;
         assert_eq!(angle_turns.fraction, angle_radians.fraction);
     }
 
     #[test]
     fn test_from_turns_vs_from_radians_half_turn() {
-        let angle_turns = Angle::<u64>::from_turns(0.5);
-        let angle_radians = Angle::<u64>::from_radians(std::f64::consts::PI);
+        let angle_turns = Angle::<u64>::HALF_TURN;
+        let angle_radians = Angle::<u64>::HALF_TURN;
         assert_eq!(angle_turns.fraction, angle_radians.fraction);
     }
 
     #[test]
     fn test_from_turns_vs_from_radians_quarter_turn() {
-        let angle_turns = Angle::<u64>::from_turns(0.25);
-        let angle_radians = Angle::<u64>::from_radians(std::f64::consts::FRAC_PI_2);
+        let angle_turns = Angle::<u64>::QUARTER_TURN;
+        let angle_radians = Angle::<u64>::QUARTER_TURN;
         assert_eq!(angle_turns.fraction, angle_radians.fraction);
     }
 
     #[test]
     fn test_from_turns_vs_from_radians_negative_turn() {
-        let angle_turns = Angle::<u64>::from_turns(-0.25);
-        let angle_radians = Angle::<u64>::from_radians(-std::f64::consts::FRAC_PI_2);
+        let angle_turns = Angle::<u64>::THREE_QUARTERS_TURN;
+        let angle_radians = Angle::<u64>::THREE_QUARTERS_TURN;
         assert_eq!(angle_turns.fraction, angle_radians.fraction);
     }
 
@@ -1656,8 +1680,8 @@ mod tests {
         let random_turns = 0.123_456; // Example random value
         let random_radians = random_turns * std::f64::consts::TAU;
 
-        let angle_turns = Angle::<u64>::from_turns(random_turns);
-        let angle_radians = Angle::<u64>::from_radians(random_radians);
+        let angle_turns = Angle::<u64>::try_from_turns(random_turns).unwrap();
+        let angle_radians = Angle::<u64>::try_from_radians(random_radians).unwrap();
 
         // Allow a small tolerance for differences
         let tolerance = 256; // Increased allowable difference in the fraction
@@ -1944,50 +1968,50 @@ mod tests {
 
     #[test]
     fn test_abs_diff_eq_radians_basic() {
-        let a = Angle64::from_radians(1.0);
-        let b = Angle64::from_radians(1.0 + 1e-12);
-        assert!(a.abs_diff_eq_radians(&b, 1e-9));
-        assert!(a.abs_diff_eq_radians(&b, 1e-11));
+        let a = crate::radians!(1.0);
+        let b = crate::radians!(1.0 + 1e-12);
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(1e-9).unwrap()));
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(1e-11).unwrap()));
     }
 
     #[test]
     fn test_abs_diff_eq_radians_not_close() {
-        let a = Angle64::from_radians(0.0);
-        let b = Angle64::from_radians(0.1);
-        assert!(!a.abs_diff_eq_radians(&b, 0.01));
-        assert!(a.abs_diff_eq_radians(&b, 0.2));
+        let a = Angle64::ZERO;
+        let b = crate::radians!(0.1);
+        assert!(!a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(0.01).unwrap()));
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(0.2).unwrap()));
     }
 
     #[test]
     fn test_abs_diff_eq_radians_wraparound() {
         // Small positive vs just below 2pi
-        let a = Angle64::from_radians(0.001);
-        let b = Angle64::from_radians(TAU - 0.001);
-        assert!(a.abs_diff_eq_radians(&b, 0.01));
-        assert!(!a.abs_diff_eq_radians(&b, 0.001));
+        let a = crate::radians!(0.001);
+        let b = crate::radians!(TAU - 0.001);
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(0.01).unwrap()));
+        assert!(!a.abs_diff_eq(&b, Angle64::try_epsilon_from_radians(0.001).unwrap()));
     }
 
     #[test]
     fn test_abs_diff_eq_turns_basic() {
         let a = Angle64::QUARTER_TURN;
-        let b = Angle64::from_turns(0.250_000_001);
-        assert!(a.abs_diff_eq_turns(&b, 1e-6));
+        let b = crate::turns!(0.250_000_001);
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_turns(1e-6).unwrap()));
     }
 
     #[test]
     fn test_abs_diff_eq_turns_not_close() {
         let a = Angle64::QUARTER_TURN;
         let b = Angle64::HALF_TURN;
-        assert!(!a.abs_diff_eq_turns(&b, 0.1));
-        assert!(a.abs_diff_eq_turns(&b, 0.3));
+        assert!(!a.abs_diff_eq(&b, Angle64::try_epsilon_from_turns(0.1).unwrap()));
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_turns(0.3).unwrap()));
     }
 
     #[test]
     fn test_abs_diff_eq_turns_wraparound() {
-        let a = Angle64::from_turns(0.001);
-        let b = Angle64::from_turns(0.999);
-        assert!(a.abs_diff_eq_turns(&b, 0.01));
-        assert!(!a.abs_diff_eq_turns(&b, 0.001));
+        let a = crate::turns!(0.001);
+        let b = crate::turns!(0.999);
+        assert!(a.abs_diff_eq(&b, Angle64::try_epsilon_from_turns(0.01).unwrap()));
+        assert!(!a.abs_diff_eq(&b, Angle64::try_epsilon_from_turns(0.001).unwrap()));
     }
 
     #[test]
@@ -1999,26 +2023,26 @@ mod tests {
     }
 
     #[test]
-    fn test_epsilon_from_radians() {
+    fn test_try_epsilon_from_radians() {
         // pi/2 in fraction units should be a quarter turn
-        let eps = Angle64::epsilon_from_radians(FRAC_PI_2);
+        let eps = Angle64::try_epsilon_from_radians(FRAC_PI_2).unwrap();
         assert_eq!(eps, Angle64::QUARTER_TURN.fraction());
     }
 
     #[test]
-    fn test_epsilon_from_turns() {
+    fn test_try_epsilon_from_turns() {
         // 0.25 turns should be a quarter turn
-        let eps = Angle64::epsilon_from_turns(0.25);
+        let eps = Angle64::try_epsilon_from_turns(0.25).unwrap();
         assert_eq!(eps, Angle64::QUARTER_TURN.fraction());
     }
 
     #[test]
     fn test_epsilon_from_radians_precomputed() {
         // Precompute epsilon once, use it for multiple comparisons
-        let eps = Angle64::epsilon_from_radians(1e-9);
-        let a = Angle64::from_radians(1.0);
-        let b = Angle64::from_radians(1.0 + 1e-12);
-        let c = Angle64::from_radians(2.0);
+        let eps = Angle64::try_epsilon_from_radians(1e-9).unwrap();
+        let a = crate::radians!(1.0);
+        let b = crate::radians!(1.0 + 1e-12);
+        let c = crate::radians!(2.0);
         assert!(a.abs_diff_eq(&b, eps));
         assert!(!a.abs_diff_eq(&c, eps));
     }
@@ -2061,9 +2085,9 @@ mod tests {
         #[test]
         fn test_approx_with_radians_epsilon() {
             // Demonstrate using epsilon_from_radians with the approx macro
-            let a = Angle64::from_radians(1.0);
-            let b = Angle64::from_radians(1.0 + 1e-12);
-            let eps = Angle64::epsilon_from_radians(1e-9);
+            let a = crate::radians!(1.0);
+            let b = crate::radians!(1.0 + 1e-12);
+            let eps = Angle64::try_epsilon_from_radians(1e-9).unwrap();
             approx::assert_abs_diff_eq!(a, b, epsilon = eps);
         }
 
@@ -2074,6 +2098,40 @@ mod tests {
             let b = Angle64::new(u64::MAX - 2);
             approx::assert_abs_diff_eq!(a, b, epsilon = 6);
             approx::assert_abs_diff_ne!(a, b, epsilon = 4);
+        }
+    }
+
+    #[test]
+    fn angle_float_apis_reject_nonfinite_values_with_context() {
+        use crate::Angle64;
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for (unit, result) in [
+                ("radians", Angle64::try_from_radians(value)),
+                ("turns", Angle64::try_from_turns(value)),
+                ("radians", Angle64::const_try_from_radians(value)),
+                ("turns", Angle64::const_try_from_turns(value)),
+            ] {
+                let error = result.unwrap_err();
+                assert_eq!(error.value.to_bits(), value.to_bits());
+                let message = error.to_string();
+                assert!(message.contains(&value.to_string()), "{message}");
+                assert!(message.contains(unit), "{message}");
+                assert!(message.contains("check"), "{message}");
+            }
+        }
+        for (unit, result) in [
+            ("radians", Angle64::try_epsilon_from_radians(f64::NAN)),
+            ("turns", Angle64::try_epsilon_from_turns(f64::NAN)),
+        ] {
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains("NaN") && message.contains(unit),
+                "{message}"
+            );
+        }
+        for infinity in [f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(Angle64::try_epsilon_from_radians(infinity), Ok(u64::MAX));
+            assert_eq!(Angle64::try_epsilon_from_turns(infinity), Ok(u64::MAX));
         }
     }
 }

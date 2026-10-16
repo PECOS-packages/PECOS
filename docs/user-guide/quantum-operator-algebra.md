@@ -470,11 +470,11 @@ let group = PauliStabilizerGroup::new(vec![
 // Wrap in a StabilizerCode for QEC analysis
 let code = StabilizerCode::from_group(group);
 assert_eq!(code.num_logical_qubits(), 1);
-assert_eq!(code.distance(), Some(1));
+assert_eq!(code.distance()?, Some(1));
 
 // Or use standard constructors directly
 let steane = StabilizerCode::steane();
-assert_eq!(steane.distance(), Some(3));
+assert_eq!(steane.distance()?, Some(3));
 ```
 
 For details on `StabilizerCode` and `StabilizerCodeSpec`, see the [Stabilizer Codes guide](stabilizer-codes.md).

@@ -66,7 +66,7 @@ impl StabMpsSimulator {
         }
         let q = QubitId(Self::to_usize(qubit));
         self.simulator
-            .rz(Angle64::from_radians(-phi), &[q])
+            .rz(Angle64::try_from_radians(-phi)?, &[q])
             .rx(theta_angle, &[q])
             .rz(phi_angle, &[q]);
         Ok(())

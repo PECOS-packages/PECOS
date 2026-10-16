@@ -893,7 +893,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create superposition with phase
-    /// state.rx(Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);  // Creates (|0> - i|1>)/sqrt(2)
+    /// state.rx(Angle64::QUARTER_TURN, &[QubitId(0)]);  // Creates (|0> - i|1>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -931,7 +931,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create equal superposition
-    /// state.ry(Angle64::from_radians(PI/2.0), &[QubitId(0)]);  // Creates (|0> + |1>)/sqrt(2)
+    /// state.ry(Angle64::QUARTER_TURN, &[QubitId(0)]);  // Creates (|0> + |1>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -969,7 +969,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create superposition and add phase
-    /// state.h(&[QubitId(0)]).rz(Angle64::from_radians(FRAC_PI_4), &[QubitId(0)]);  // T up to global phase
+    /// state.h(&[QubitId(0)]).rz(Angle64::from_turn_ratio(1, 8), &[QubitId(0)]);  // T up to global phase
     /// ```
     ///
     /// # Safety
@@ -1007,7 +1007,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // Create arbitrary rotation (equivalent to TH up to global phase)
-    /// state.u(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(0.0), Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);
+    /// state.u(Angle64::QUARTER_TURN, Angle64::ZERO, Angle64::QUARTER_TURN, &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
@@ -1054,7 +1054,7 @@ where
     /// let mut state = StateVecAoS::new(1);
     ///
     /// // 90-degree rotation around X+Y axis
-    /// state.rxy1q(Angle64::from_radians(FRAC_PI_2), Angle64::from_radians(FRAC_PI_2), &[QubitId(0)]);
+    /// state.rxy1q(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &[QubitId(0)]);
     /// ```
     ///
     /// # Safety
@@ -1095,7 +1095,7 @@ where
     /// let mut state = StateVecAoS::new(2);
     ///
     /// // Create maximally entangled state
-    /// state.rxx(Angle64::from_radians(FRAC_PI_2), &[(QubitId(0), QubitId(1))]);  // Creates (|00> - i|11>)/sqrt(2)
+    /// state.rxx(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);  // Creates (|00> - i|11>)/sqrt(2)
     /// ```
     ///
     /// # Safety
@@ -1164,7 +1164,7 @@ where
     ///      .cx(&[(QubitId(0), QubitId(1))]);
     ///
     /// // Apply RYY rotation
-    /// state.ryy(Angle64::from_radians(FRAC_PI_2), &[(QubitId(0), QubitId(1))]);
+    /// state.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
     /// ```
     ///
     /// # Safety
@@ -1228,7 +1228,7 @@ where
     ///      .cx(&[(QubitId(1), QubitId(2))]);
     ///
     /// // Apply phase rotation between first and last qubit
-    /// state.rzz(Angle64::from_radians(PI/4.0), &[(QubitId(0), QubitId(2))]);
+    /// state.rzz(Angle64::from_turn_ratio(1, 8), &[(QubitId(0), QubitId(2))]);
     /// ```
     ///
     /// # Safety
@@ -1340,7 +1340,7 @@ where
 mod tests {
     use super::*;
     use pecos_core::QubitId;
-    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI, TAU};
+    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
 
     use num_complex::Complex64;
 
@@ -1730,13 +1730,13 @@ mod tests {
         let mut q = StateVecAoS::new(1);
 
         // RX(π) should flip |0⟩ to -i|1⟩
-        q.rx(Angle64::from_radians(PI), &qid(0));
+        q.rx(Angle64::HALF_TURN, &qid(0));
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].norm() - 1.0).abs() < 1e-10);
 
         // RX(2π) should return to the initial state up to global phase
         let mut q = StateVecAoS::new(1);
-        q.rx(Angle64::from_radians(2.0 * PI), &qid(0));
+        q.rx(Angle64::ZERO, &qid(0));
         assert!((q.state[0].norm() - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
     }
@@ -1746,12 +1746,12 @@ mod tests {
         let mut q = StateVecAoS::new(1);
 
         // RY(π) should flip |0⟩ to |1⟩
-        q.ry(Angle64::from_radians(PI), &qid(0));
+        q.ry(Angle64::HALF_TURN, &qid(0));
         assert!(q.state[0].norm() < 1e-10); // Close to zero
         assert!((q.state[1].norm() - 1.0).abs() < 1e-10); // Magnitude 1 for |1⟩
 
         // Two RY(π) rotations should return to the initial state
-        q.ry(Angle64::from_radians(PI), &qid(0));
+        q.ry(Angle64::HALF_TURN, &qid(0));
         assert!((q.state[0].norm() - 1.0).abs() < 1e-10); // Magnitude 1 for |0⟩
         assert!(q.state[1].norm() < 1e-10); // Close to zero
     }
@@ -1764,7 +1764,7 @@ mod tests {
         q.h(&qid(0)); // Put qubit in superposition
         let probs_before: Vec<f64> = q.state.iter().map(num_complex::Complex::norm_sqr).collect();
 
-        q.rz(Angle64::from_radians(FRAC_PI_2), &qid(0)); // Rotate Z by π/2
+        q.rz(Angle64::QUARTER_TURN, &qid(0)); // Rotate Z by π/2
         let probs_after: Vec<f64> = q.state.iter().map(num_complex::Complex::norm_sqr).collect();
 
         for (p1, p2) in probs_before.iter().zip(probs_after.iter()) {
@@ -1781,9 +1781,9 @@ mod tests {
         let phi = PI / 7.0;
         let lambda = PI / 3.0;
         q.u(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            Angle64::from_radians(lambda),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
+            Angle64::try_from_radians(lambda).unwrap(),
             &qid(0),
         );
 
@@ -1810,16 +1810,16 @@ mod tests {
 
         // Apply the manual `rxy1q` implementation.
         state_vec_rxy1q.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &qid(0),
         );
 
         // Apply the `rxy1q` implementation from the `ArbitraryRotationGateable` trait.
         ArbitraryRotationGateable::rxy1q(
             &mut trait_rxy1q,
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &qid(0),
         );
 
@@ -1833,10 +1833,7 @@ mod tests {
     fn test_rxx() {
         // Test 1: RXX(π/2) on |00⟩ should give (|00⟩ - i|11⟩)/√2
         let mut q = StateVecAoS::new(2);
-        q.rxx(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q.rxx(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
 
         let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].re - expected).abs() < 1e-10);
@@ -1848,7 +1845,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0)); // Create some initial state
         let initial = q.state.clone();
-        q.rxx(Angle64::from_radians(TAU), &[(QubitId(0), QubitId(1))]);
+        q.rxx(Angle64::ZERO, &[(QubitId(0), QubitId(1))]);
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -1860,7 +1857,7 @@ mod tests {
 
         // Test 3: RXX(π) should flip |00⟩ to |11⟩ up to phase
         let mut q = StateVecAoS::new(2);
-        q.rxx(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
+        q.rxx(Angle64::HALF_TURN, &[(QubitId(0), QubitId(1))]);
 
         // Should get -i|11⟩
         assert!(q.state[0].norm() < 1e-10);
@@ -1876,10 +1873,7 @@ mod tests {
         // Test all basis states for RYY(π/2)
         // |00⟩ -> (1/√2)|00⟩ - i(1/√2)|11⟩
         let mut q = StateVecAoS::new(2);
-        q.ryy(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
         assert!((q.state[0].re - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1888,10 +1882,7 @@ mod tests {
         // |11⟩ -> i(1/√2)|00⟩ + (1/√2)|11⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0)).x(&qid(1)); // Prepare |11⟩
-        q.ryy(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
         assert!((q.state[0].im - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
@@ -1900,10 +1891,7 @@ mod tests {
         // |01⟩ -> (1/√2)|01⟩ + i(1/√2)|10⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(1)); // Prepare |01⟩
-        q.ryy(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
         assert!(q.state[0].norm() < 1e-10);
         assert!(q.state[1].re.abs() < 1e-10);
         assert!((q.state[1].im + expected).abs() < 1e-10);
@@ -1914,10 +1902,7 @@ mod tests {
         // |10⟩ -> (1/√2)|10⟩ + i(1/√2)|01⟩
         let mut q = StateVecAoS::new(2);
         q.x(&qid(0)); // Prepare |10⟩
-        q.ryy(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - expected).abs() < 1e-10);
         assert!(q.state[1].im.abs() < 1e-10);
@@ -1931,7 +1916,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0)); // Create non-trivial initial state
         let initial = q.state.clone();
-        q.ryy(Angle64::from_radians(TAU), &[(QubitId(0), QubitId(1))]);
+        q.ryy(Angle64::ZERO, &[(QubitId(0), QubitId(1))]);
         // Need to account for potential global phase
         if q.state[0].norm() > 1e-10 {
             let phase = q.state[0] / initial[0];
@@ -1948,18 +1933,9 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)); // Create non-trivial initial state
         q2.h(&qid(0)); // Same initial state
-        q1.ryy(
-            Angle64::from_radians(FRAC_PI_3),
-            &[(QubitId(0), QubitId(1))],
-        )
-        .ryy(
-            Angle64::from_radians(FRAC_PI_6),
-            &[(QubitId(0), QubitId(1))],
-        );
-        q2.ryy(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q1.ryy(pecos_core::radians!(FRAC_PI_3), &[(QubitId(0), QubitId(1))])
+            .ryy(pecos_core::radians!(FRAC_PI_6), &[(QubitId(0), QubitId(1))]);
+        q2.ryy(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
         // Compare up to global phase
         if q1.state[0].norm() > 1e-10 {
             let phase = q1.state[0] / q2.state[0];
@@ -1976,14 +1952,8 @@ mod tests {
         let mut q2 = StateVecAoS::new(2);
         q1.h(&qid(0)).h(&qid(1)); // Create non-trivial initial state
         q2.h(&qid(0)).h(&qid(1)); // Same initial state
-        q1.ryy(
-            Angle64::from_radians(FRAC_PI_3),
-            &[(QubitId(0), QubitId(1))],
-        );
-        q2.ryy(
-            Angle64::from_radians(FRAC_PI_3),
-            &[(QubitId(1), QubitId(0))],
-        );
+        q1.ryy(pecos_core::radians!(FRAC_PI_3), &[(QubitId(0), QubitId(1))]);
+        q2.ryy(pecos_core::radians!(FRAC_PI_3), &[(QubitId(1), QubitId(0))]);
         // States should be exactly equal (no phase difference)
         for (a, b) in q1.state.iter().zip(q2.state.iter()) {
             assert!((a - b).norm() < 1e-10, "Symmetry test failed: a={a}, b={b}");
@@ -1999,7 +1969,7 @@ mod tests {
         q.cx(&[(QubitId(0), QubitId(1))]);
         let initial = q.state.clone();
 
-        q.rzz(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
+        q.rzz(Angle64::HALF_TURN, &[(QubitId(0), QubitId(1))]);
 
         // Compare up to global phase
         if q.state[0].norm() > 1e-10 {
@@ -2013,10 +1983,7 @@ mod tests {
         let mut q = StateVecAoS::new(2);
         q.h(&qid(0));
         q.h(&qid(1));
-        q.rzz(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q.rzz(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
 
         // e^(-iπ/4) = (1-i)/√2
         // e^(iπ/4) = (1+i)/√2

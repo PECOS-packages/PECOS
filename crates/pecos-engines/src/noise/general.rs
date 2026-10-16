@@ -1303,13 +1303,13 @@ impl GeneralNoiseModel {
 
             match axis {
                 "RX" => {
-                    builder.rx(Angle64::from_radians(angle), &affected);
+                    builder.rx(Angle64::try_from_radians(angle).expect("validate_frame_idle checked every coherent rate times multiplier times duration as finite"), &affected);
                 }
                 "RY" => {
-                    builder.ry(Angle64::from_radians(angle), &affected);
+                    builder.ry(Angle64::try_from_radians(angle).expect("validate_frame_idle checked every coherent rate times multiplier times duration as finite"), &affected);
                 }
                 "RZ" => {
-                    builder.rz(Angle64::from_radians(angle), &affected);
+                    builder.rz(Angle64::try_from_radians(angle).expect("validate_frame_idle checked every coherent rate times multiplier times duration as finite"), &affected);
                 }
                 _ => unreachable!("coherent-family model was validated by the builder"),
             }
@@ -4215,7 +4215,7 @@ mod tests {
         assert_eq!(gates[0].gate_type, GateType::RY);
         assert_eq!(
             gates[0].angles,
-            [Angle64::from_radians(expected_angle)].into()
+            [Angle64::try_from_radians(expected_angle).unwrap()].into()
         );
     }
 
@@ -4237,13 +4237,16 @@ mod tests {
             gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
             [GateType::RX, GateType::RY, GateType::RZ]
         );
-        assert_eq!(gates[0].angles, [Angle64::from_radians(0.1)].into());
-        assert_eq!(gates[1].angles, [Angle64::from_radians(0.2)].into());
+        assert_eq!(gates[0].angles, [pecos_core::radians!(0.1)].into());
+        assert_eq!(gates[1].angles, [pecos_core::radians!(0.2)].into());
         assert_eq!(
             gates[2].angles,
-            [Angle64::from_radians(
-                GeneralNoiseModel::coherent_rotation_angle(0.2, 3.0, 0.5),
-            )]
+            [
+                Angle64::try_from_radians(GeneralNoiseModel::coherent_rotation_angle(
+                    0.2, 3.0, 0.5
+                ),)
+                .unwrap()
+            ]
             .into()
         );
     }
@@ -4254,8 +4257,8 @@ mod tests {
         let gates = coherent_idle_gates(0.2, &model, 0.5, 424);
 
         assert_eq!(gates.len(), 2);
-        assert_eq!(gates[0].angles, [Angle64::from_radians(0.1)].into());
-        assert_eq!(gates[1].angles, [Angle64::from_radians(0.1)].into());
+        assert_eq!(gates[0].angles, [pecos_core::radians!(0.1)].into());
+        assert_eq!(gates[1].angles, [pecos_core::radians!(0.1)].into());
     }
 
     #[test]
@@ -4320,7 +4323,7 @@ mod tests {
         assert_eq!(gates[0].gate_type, GateType::CX);
         assert_eq!(gates[1].gate_type, GateType::RZ);
         assert_eq!(gates[1].qubits, [QubitId(0), QubitId(1)].into());
-        assert_eq!(gates[1].angles, [Angle64::from_radians(0.3)].into());
+        assert_eq!(gates[1].angles, [pecos_core::radians!(0.3)].into());
     }
 
     #[test]
@@ -4345,7 +4348,7 @@ mod tests {
             gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
             [GateType::X, GateType::Z, GateType::RY]
         );
-        assert_eq!(gates[2].angles, [Angle64::from_radians(0.25)].into());
+        assert_eq!(gates[2].angles, [pecos_core::radians!(0.25)].into());
     }
 
     #[test]
@@ -4889,7 +4892,7 @@ mod tests {
         // Create an RZ gate (noiseless - should not have noise applied)
         let rz_gate = Gate {
             gate_type: GateType::RZ,
-            angles: vec![Angle64::from_radians(0.1)].into(),
+            angles: vec![pecos_core::radians!(0.1)].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
             meas_ids: vec![].into(),

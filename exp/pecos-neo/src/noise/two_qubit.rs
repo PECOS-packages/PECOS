@@ -871,7 +871,7 @@ mod tests {
         // For negative pi/2: 0.1 + 2.0 * 0.5 + 0 = 1.1
         // Note: Angle64 normalizes angles, so -pi/2 becomes 3pi/2 internally,
         // but to_radians_signed() converts back to -pi/2
-        let neg_quarter = Angle64::from_radians(-std::f64::consts::FRAC_PI_2);
+        let neg_quarter = Angle64::THREE_QUARTERS_TURN;
         assert!((scaling.scale(neg_quarter) - 1.1).abs() < 1e-10);
 
         // For zero: average of offsets = (0.1 + 0.2) / 2 = 0.15
@@ -895,7 +895,7 @@ mod tests {
         ] {
             for turns in [-4.0, -1.0, 0.0, 1.0, 4.0] {
                 let input = angle + turns * TAU;
-                let actual = scaling.scale(Angle64::from_radians(input));
+                let actual = scaling.scale(Angle64::try_from_radians(input).unwrap());
                 assert!(
                     (actual - expected).abs() < 1e-12,
                     "angle {input}: expected {expected}, got {actual}"
@@ -1002,7 +1002,7 @@ mod tests {
         );
 
         // Negative π/2: 0.1 + 0.5 * 0.5 = 0.35
-        let neg_quarter = Angle64::from_radians(-std::f64::consts::FRAC_PI_2);
+        let neg_quarter = Angle64::THREE_QUARTERS_TURN;
         assert!((scaling.scale(neg_quarter) - 0.35).abs() < 1e-10);
 
         // Positive π/2: 0.2 + 1.0 * 0.5 = 0.7
@@ -1010,7 +1010,7 @@ mod tests {
 
         // Negative 3π/4: 0.1 + 0.5 * 0.75 = 0.475
         // (Using 3π/4 instead of π since -π and +π are equivalent)
-        let neg_three_quarter_pi = Angle64::from_radians(-3.0 * std::f64::consts::FRAC_PI_4);
+        let neg_three_quarter_pi = Angle64::from_turn_ratio(5, 8);
         assert!((scaling.scale(neg_three_quarter_pi) - 0.475).abs() < 1e-10);
     }
 
@@ -1024,7 +1024,7 @@ mod tests {
         assert!((scaling.scale(full) - 0.0).abs() < 1e-10);
 
         // 3/4 turn = 3π/2 radians, signed = -π/2, normalized = 0.5
-        let three_quarter = Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2);
+        let three_quarter = Angle64::THREE_QUARTERS_TURN;
         assert!((scaling.scale(three_quarter) - 0.5).abs() < 1e-10);
     }
 
@@ -1056,7 +1056,7 @@ mod tests {
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+            Angle64::from_turn_ratio(1, 8),
         ] {
             let q_val = quadratic.scale(angle);
             let p_val = polynomial.scale(angle);
@@ -1077,7 +1077,7 @@ mod tests {
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
+            Angle64::from_turn_ratio(1, 8),
         ] {
             let l_val = linear.scale(angle);
             let p_val = polynomial.scale(angle);
@@ -1098,7 +1098,7 @@ mod tests {
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
+            Angle64::THREE_QUARTERS_TURN,
         ] {
             let c_val = constant.scale(angle);
             let p_val = polynomial.scale(angle);
@@ -1133,7 +1133,7 @@ mod tests {
         let scaling = AngleScaling::polynomial(0.01, 0.1, 1.0, 2.0);
 
         // Very small angle: should be dominated by constant term
-        let tiny = Angle64::from_radians(0.001);
+        let tiny = pecos_core::radians!(0.001);
         let result = scaling.scale(tiny);
         // 0.01 + 0.1 * (0.001/π) + 1.0 * (0.001/π)^2 ≈ 0.01
         assert!(result > 0.009 && result < 0.011);

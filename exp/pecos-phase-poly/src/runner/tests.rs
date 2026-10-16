@@ -27,9 +27,9 @@ fn append(circuit: &mut TickCircuit, mut gate: Gate) {
 fn compile_errors_have_locations() {
     for gate in [
         Gate::simple(GateType::H, vec![QubitId(1)]),
-        Gate::rz(Angle64::from_turns(0.01), &[1]),
+        Gate::rz(pecos_core::turns!(0.01), &[1]),
         Gate::rzz(
-            Angle64::from_turns(0.125) + Angle64::from_turns(1e-12),
+            Angle64::from_turn_ratio(1, 8) + pecos_core::turns!(1e-12),
             &[(1, 2)],
         ),
         Gate::channel(channel::from_unitary(unitary::H(1))),

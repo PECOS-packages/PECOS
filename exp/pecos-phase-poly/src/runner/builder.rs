@@ -154,7 +154,7 @@ fn validate_gate(gate: Batch<'_>, tick: usize) -> Result<Operation, CompileError
     match kind {
         GateType::RZ | GateType::RZZ => {
             let power = (0_u8..8)
-                .find(|&k| gate.angles[0] == Angle64::from_turns(f64::from(k) / 8.0))
+                .find(|&k| gate.angles[0] == Angle64::from_turn_ratio(i64::from(k), 8))
                 .ok_or_else(|| error(gate, tick, "angle must be an exact multiple of pi/4"))?;
             Ok(if kind == GateType::RZ {
                 Operation::Phase(power)

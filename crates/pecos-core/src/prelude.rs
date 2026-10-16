@@ -20,7 +20,9 @@ pub use crate::{
     pauli::{Pauli, PauliOperator},
     phase::quarter_phase::QuarterPhase,
     qubit_id::QubitId,
+    radians,
     rng::{RngManageable, rng_manageable::derive_seed},
+    turns,
 };
 
 // Re-export PauliString from its submodule

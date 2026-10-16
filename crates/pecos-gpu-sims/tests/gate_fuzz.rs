@@ -178,13 +178,13 @@ fn apply_cpu(sim: &mut StateVecSoA, op: Op) {
             sim.tdg(&[QubitId(q)]);
         }
         Op::Rx(q, t) => {
-            sim.rx(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rx(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op::Ry(q, t) => {
-            sim.ry(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.ry(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op::Cx(a, b) => {
             sim.cx(&[(QubitId(a), QubitId(b))]);
@@ -217,13 +217,22 @@ fn apply_cpu(sim: &mut StateVecSoA, op: Op) {
             sim.syydg(&[(QubitId(a), QubitId(b))]);
         }
         Op::Rxx(a, b, t) => {
-            sim.rxx(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+            sim.rxx(
+                Angle64::try_from_radians(t).unwrap(),
+                &[(QubitId(a), QubitId(b))],
+            );
         }
         Op::Ryy(a, b, t) => {
-            sim.ryy(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+            sim.ryy(
+                Angle64::try_from_radians(t).unwrap(),
+                &[(QubitId(a), QubitId(b))],
+            );
         }
         Op::Rzz(a, b, t) => {
-            sim.rzz(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+            sim.rzz(
+                Angle64::try_from_radians(t).unwrap(),
+                &[(QubitId(a), QubitId(b))],
+            );
         }
     }
 }
@@ -269,13 +278,13 @@ macro_rules! apply_gpu_impl {
                     sim.tdg(&[QubitId(q)]);
                 }
                 Op::Rx(q, t) => {
-                    sim.rx(Angle64::from_radians(t), &[QubitId(q)]);
+                    sim.rx(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
                 }
                 Op::Ry(q, t) => {
-                    sim.ry(Angle64::from_radians(t), &[QubitId(q)]);
+                    sim.ry(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
                 }
                 Op::Rz(q, t) => {
-                    sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+                    sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
                 }
                 Op::Cx(a, b) => {
                     sim.cx(&[(QubitId(a), QubitId(b))]);
@@ -308,13 +317,22 @@ macro_rules! apply_gpu_impl {
                     sim.syydg(&[(QubitId(a), QubitId(b))]);
                 }
                 Op::Rxx(a, b, t) => {
-                    sim.rxx(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+                    sim.rxx(
+                        Angle64::try_from_radians(t).unwrap(),
+                        &[(QubitId(a), QubitId(b))],
+                    );
                 }
                 Op::Ryy(a, b, t) => {
-                    sim.ryy(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+                    sim.ryy(
+                        Angle64::try_from_radians(t).unwrap(),
+                        &[(QubitId(a), QubitId(b))],
+                    );
                 }
                 Op::Rzz(a, b, t) => {
-                    sim.rzz(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+                    sim.rzz(
+                        Angle64::try_from_radians(t).unwrap(),
+                        &[(QubitId(a), QubitId(b))],
+                    );
                 }
             }
         }
@@ -450,7 +468,7 @@ fn angle_edge_cases() {
     let gate_kind = ["rx", "ry", "rz", "rxx", "ryy", "rzz"];
     for (gi, gate) in gate_kind.iter().enumerate() {
         for (ai, &theta) in angles.iter().enumerate() {
-            let t = Angle64::from_radians(theta);
+            let t = Angle64::try_from_radians(theta).unwrap();
             let mut cpu = StateVecSoA::new(n);
             cpu.h(&qubits);
 

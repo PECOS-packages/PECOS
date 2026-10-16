@@ -3410,7 +3410,7 @@ mod tests {
         // decomposition.
         let circuit = crate::command::CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(0.123))
+            .rz(&[0], pecos_core::radians!(0.123))
             .mz(&[0])
             .build();
 
@@ -3445,8 +3445,8 @@ mod tests {
         assert_eq!(actual.stab_tableau(), expected.stab_tableau());
         assert_eq!(actual.destab_tableau(), expected.destab_tableau());
         for (theta, phi) in [
-            (Angle64::from_radians(0.3), Angle64::ZERO),
-            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123)),
+            (pecos_core::radians!(0.3), Angle64::ZERO),
+            (Angle64::QUARTER_TURN, pecos_core::radians!(0.123)),
         ] {
             let commands = CommandBuilder::new().rxyxy2q(&[(0, 1)], theta, phi).build();
             assert!(matches!(
@@ -3484,7 +3484,7 @@ mod tests {
 
     #[test]
     fn multi_angle_non_clifford_rotations_get_specific_error() {
-        let non_clifford = Angle64::from_radians(0.123);
+        let non_clifford = pecos_core::radians!(0.123);
         let commands = [
             GateCommand::with_angles(
                 GateType::RXY1Q,
@@ -3617,7 +3617,7 @@ mod tests {
 
         let circuit = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .rz(&[0], Angle64::QUARTER_TURN)
             .mz(&[0])
             .build();
 
@@ -3636,7 +3636,7 @@ mod tests {
         // fast path executes RZ(pi/2) = S and |0> stays |0> (measure 0).
         let control = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .rz(&[0], Angle64::QUARTER_TURN)
             .mz(&[0])
             .build();
         let mut state = SparseStab::with_seed(1, 42);

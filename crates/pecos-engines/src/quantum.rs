@@ -499,15 +499,9 @@ fn process_general_message<
             GateType::CH => {
                 for qubits in cmd.qubits.as_chunks::<2>().0 {
                     let target_slice = &[qubits[1]];
-                    sim.ry(
-                        Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                        target_slice,
-                    );
+                    sim.ry(Angle64::from_turn_ratio(1, 8), target_slice);
                     sim.cx(&[(qubits[0], qubits[1])]);
-                    sim.ry(
-                        Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                        target_slice,
-                    );
+                    sim.ry(Angle64::from_turn_ratio(7, 8), target_slice);
                 }
             }
             GateType::CS | GateType::CSdg => {
@@ -990,15 +984,11 @@ where
                             qubits[0], qubits[1]
                         );
                         let target_slice = &[qubits[1]];
-                        self.simulator.ry(
-                            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
+                        self.simulator
+                            .ry(Angle64::from_turn_ratio(1, 8), target_slice);
                         self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        self.simulator.ry(
-                            Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
+                        self.simulator
+                            .ry(Angle64::from_turn_ratio(7, 8), target_slice);
                     }
                 }
                 GateType::RZZ => {

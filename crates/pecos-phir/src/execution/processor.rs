@@ -273,7 +273,8 @@ impl PhirProcessor {
                     angle.to_radians_signed(),
                     q1.into(),
                     q2.into(),
-                );
+                )
+                .map_err(pecos_core::errors::PecosError::from)?;
                 message_builder.add_gate_commands(&gates);
                 Ok(true)
             }

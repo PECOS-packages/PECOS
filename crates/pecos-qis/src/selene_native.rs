@@ -187,7 +187,7 @@ fn native_sequence(op: &QuantumOp, native_set: RuntimeNativeGateSet) -> Result<R
         QuantumOp::CRZ(theta, c, t) => {
             pecos_core::Angle64::try_from_radians(theta)
                 .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
-            pecos_core::controlled_rotations::lower_crz(theta, c.into(), t.into())
+            pecos_core::controlled_rotations::lower_crz(theta, c.into(), t.into())?
                 .into_iter()
                 .map(|gate| crz_native_gate(&gate))
                 .collect::<Result<Vec<_>>>()?
@@ -281,7 +281,7 @@ pub(crate) mod tests {
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecAoS};
 
     pub(crate) fn apply(sim: &mut StateVecAoS, op: &QuantumOp) {
-        let angle = Angle64::from_radians;
+        let angle = |value| Angle64::try_from_radians(value).unwrap();
         match *op {
             QuantumOp::H(q) => {
                 sim.h(&[QubitId(q)]);
@@ -489,11 +489,12 @@ pub(crate) mod tests {
                         let f = f64::from(u32::try_from(q).unwrap());
                         original
                             .ry(
-                                Angle64::from_radians(0.37 + f * 0.43 + offset * 0.19),
+                                Angle64::try_from_radians(0.37 + f * 0.43 + offset * 0.19).unwrap(),
                                 &[QubitId(q)],
                             )
                             .rz(
-                                Angle64::from_radians(-0.61 + f * 0.29 - offset * 0.23),
+                                Angle64::try_from_radians(-0.61 + f * 0.29 - offset * 0.23)
+                                    .unwrap(),
                                 &[QubitId(q)],
                             );
                     }

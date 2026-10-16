@@ -3094,9 +3094,9 @@ impl<'a> TickHandle<'a> {
     ///
     /// let mut circuit = TickCircuit::new();
     /// // Single qubit
-    /// circuit.tick().rx(pecos_core::Angle64::from_radians(PI / 2.0), &[0]);
+    /// circuit.tick().rx(pecos_core::Angle64::QUARTER_TURN, &[0]);
     /// // Multiple qubits with same angle
-    /// circuit.tick().rx(pecos_core::Angle64::from_radians(PI / 4.0), &[1, 2, 3]);
+    /// circuit.tick().rx(pecos_core::Angle64::from_turn_ratio(1, 8), &[1, 2, 3]);
     /// ```
     pub fn rx(
         &mut self,
@@ -3135,7 +3135,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().rxy1q(pecos_core::Angle64::from_radians(PI / 2.0), pecos_core::Angle64::from_radians(PI / 4.0), &[0]);
+    /// circuit.tick().rxy1q(pecos_core::Angle64::QUARTER_TURN, pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
     /// ```
     pub fn rxy1q(
         &mut self,
@@ -3157,7 +3157,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().u(pecos_core::Angle64::from_radians(PI / 2.0), pecos_core::Angle64::from_radians(0.0), pecos_core::Angle64::from_radians(PI), &[0]);
+    /// circuit.tick().u(pecos_core::Angle64::QUARTER_TURN, pecos_core::Angle64::ZERO, pecos_core::Angle64::HALF_TURN, &[0]);
     /// ```
     pub fn u(
         &mut self,
@@ -3324,7 +3324,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().rxx(pecos_core::Angle64::from_radians(PI / 4.0), &[(0, 1)]);
+    /// circuit.tick().rxx(pecos_core::Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
     /// ```
     pub fn rxx(
         &mut self,
@@ -3343,7 +3343,7 @@ impl<'a> TickHandle<'a> {
     /// use std::f64::consts::PI;
     ///
     /// let mut circuit = TickCircuit::new();
-    /// circuit.tick().ryy(pecos_core::Angle64::from_radians(PI / 4.0), &[(0, 1)]);
+    /// circuit.tick().ryy(pecos_core::Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
     /// ```
     pub fn ryy(
         &mut self,
@@ -3363,9 +3363,9 @@ impl<'a> TickHandle<'a> {
     ///
     /// let mut circuit = TickCircuit::new();
     /// // Single pair
-    /// circuit.tick().rzz(pecos_core::Angle64::from_radians(PI / 4.0), &[(0, 1)]);
+    /// circuit.tick().rzz(pecos_core::Angle64::from_turn_ratio(1, 8), &[(0, 1)]);
     /// // Multiple pairs with same angle
-    /// circuit.tick().rzz(pecos_core::Angle64::from_radians(PI / 2.0), &[(2, 3), (4, 5)]);
+    /// circuit.tick().rzz(pecos_core::Angle64::QUARTER_TURN, &[(2, 3), (4, 5)]);
     /// ```
     pub fn rzz(
         &mut self,
@@ -3419,6 +3419,10 @@ impl<'a> TickHandle<'a> {
                 control.into(),
                 target.into(),
             )
+            .map_err(|error| TickGateError::InvalidGate {
+                message: error.to_string(),
+                tick_idx: Some(self.tick_idx),
+            })?
             .into_iter()
             .enumerate()
             {
@@ -4574,8 +4578,8 @@ mod tests {
     fn test_tick_construction_keeps_different_parameters_in_separate_batches() {
         let mut tc = TickCircuit::new();
         tc.tick()
-            .rz(Angle64::from_turns(0.25), &[0])
-            .rz(Angle64::from_turns(0.5), &[1]);
+            .rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::HALF_TURN, &[1]);
 
         let tick = tc.get_tick(0).unwrap();
         assert_eq!(tick.len(), 2);
@@ -4587,9 +4591,9 @@ mod tests {
     fn test_parameterized_gate_batching_counts_and_round_trip() {
         let mut tc1 = TickCircuit::new();
         tc1.tick()
-            .rz(Angle64::from_turns(0.25), &[0])
-            .rz(Angle64::from_turns(0.25), &[1])
-            .rz(Angle64::from_turns(0.5), &[2]);
+            .rz(Angle64::QUARTER_TURN, &[0])
+            .rz(Angle64::QUARTER_TURN, &[1])
+            .rz(Angle64::HALF_TURN, &[2]);
 
         let tick = tc1.get_tick(0).unwrap();
         assert_eq!(tick.len(), 2);
@@ -4616,7 +4620,7 @@ mod tests {
         );
         assert_eq!(
             tick.gate_batches()[0].angles,
-            Gate::rz(Angle64::from_turns(0.25), &[0]).angles
+            Gate::rz(Angle64::QUARTER_TURN, &[0]).angles
         );
         assert_eq!(
             tick.gate_batches()[1].qubits.as_slice(),
@@ -4624,7 +4628,7 @@ mod tests {
         );
         assert_eq!(
             tick.gate_batches()[1].angles,
-            Gate::rz(Angle64::from_turns(0.5), &[2]).angles
+            Gate::rz(Angle64::HALF_TURN, &[2]).angles
         );
     }
 
@@ -5310,9 +5314,9 @@ mod tests {
                     .meta("role", Attribute::String("entangle".into()));
             } else {
                 tc1.tick()
-                    .rz(Angle64::from_turns(0.25), &[base])
-                    .rz(Angle64::from_turns(0.25), &[base + 1])
-                    .rz(Angle64::from_turns(0.5), &[base + 2]);
+                    .rz(Angle64::QUARTER_TURN, &[base])
+                    .rz(Angle64::QUARTER_TURN, &[base + 1])
+                    .rz(Angle64::HALF_TURN, &[base + 2]);
             }
 
             let ms = tc1.tick().mz(&[base, base + 1]);
@@ -5359,8 +5363,8 @@ mod tests {
                 tc1.tick().cx(&[(base, base + 2), (base + 1, base + 3)]);
             } else {
                 tc1.tick()
-                    .rz(Angle64::from_turns(0.25), &[base])
-                    .rz(Angle64::from_turns(0.25), &[base + 1]);
+                    .rz(Angle64::QUARTER_TURN, &[base])
+                    .rz(Angle64::QUARTER_TURN, &[base + 1]);
             }
 
             let measurements = tc1.tick().mz(&[base, base + 1, base + 2]);
@@ -5480,14 +5484,14 @@ mod tests {
             .szzdg(&[(36, 37)])
             .swap(&[(38, 39)]);
         tc1.tick()
-            .rx(Angle64::from_turns(0.125), &[40])
-            .ry(Angle64::from_turns(0.25), &[41])
-            .rz(Angle64::from_turns(0.375), &[42])
-            .rxy1q(Angle64::from_turns(0.125), Angle64::from_turns(0.25), &[43])
+            .rx(Angle64::from_turn_ratio(1, 8), &[40])
+            .ry(Angle64::QUARTER_TURN, &[41])
+            .rz(Angle64::from_turn_ratio(3, 8), &[42])
+            .rxy1q(Angle64::from_turn_ratio(1, 8), Angle64::QUARTER_TURN, &[43])
             .u(
-                Angle64::from_turns(0.125),
-                Angle64::from_turns(0.25),
-                Angle64::from_turns(0.375),
+                Angle64::from_turn_ratio(1, 8),
+                Angle64::QUARTER_TURN,
+                Angle64::from_turn_ratio(3, 8),
                 &[44],
             );
         tc1.tick()
@@ -5686,8 +5690,8 @@ mod tests {
                 tick.meta("round", Attribute::Int(1))
                     .meta("kind", Attribute::String("mixed".into()));
                 apply_pair(&mut tick, two, base + 2, base + 3);
-                tick.rz(Angle64::from_turns(rz_turns), &[base + 4])
-                    .rx(Angle64::from_turns(0.25), &[base + 5]);
+                tick.rz(Angle64::try_from_turns(rz_turns).unwrap(), &[base + 4])
+                    .rx(Angle64::QUARTER_TURN, &[base + 5]);
             }
             tc1.tick()
                 .meta("round", Attribute::Int(2))
@@ -5760,9 +5764,9 @@ mod tests {
 
     #[test]
     fn test_batching_invariants_cover_parameters_channels_and_measurements() {
-        let same_rz = Gate::rz(Angle64::from_turns(0.25), &[0]);
-        let same_rz_disjoint = Gate::rz(Angle64::from_turns(0.25), &[1]);
-        let different_rz = Gate::rz(Angle64::from_turns(0.5), &[2]);
+        let same_rz = Gate::rz(Angle64::QUARTER_TURN, &[0]);
+        let same_rz_disjoint = Gate::rz(Angle64::QUARTER_TURN, &[1]);
+        let different_rz = Gate::rz(Angle64::HALF_TURN, &[2]);
         assert!(same_rz.can_batch_with(&same_rz_disjoint));
         assert!(!same_rz.can_batch_with(&different_rz));
 
@@ -6979,7 +6983,7 @@ mod tests {
     #[test]
     fn test_custom_gate_mismatch_angle_arity() {
         let mut tc = TickCircuit::new();
-        let angle = Angle64::from_radians(1.0);
+        let angle = pecos_core::radians!(1.0);
         tc.tick()
             .custom_gate("PARAM_GATE", &[0], &[angle])
             .expect("first use");
@@ -7008,8 +7012,8 @@ mod tests {
     #[test]
     fn test_custom_gate_with_angles() {
         let mut tc = TickCircuit::new();
-        let a1 = Angle64::from_radians(0.5);
-        let a2 = Angle64::from_radians(1.0);
+        let a1 = pecos_core::radians!(0.5);
+        let a2 = pecos_core::radians!(1.0);
         tc.tick()
             .custom_gate("PARAM2", &[0], &[a1, a2])
             .expect("should succeed");
@@ -7045,7 +7049,7 @@ mod tests {
         tc.import_signatures(&sigs);
 
         // Now using AOT_GATE with correct arity succeeds
-        let angle = Angle64::from_radians(0.5);
+        let angle = pecos_core::radians!(0.5);
         tc.tick()
             .custom_gate("AOT_GATE", &[0, 1], &[angle])
             .expect("correct arity");

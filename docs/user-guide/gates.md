@@ -776,9 +776,9 @@ fn main() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     // CODE
 }
 ```
@@ -808,7 +808,7 @@ Non-Clifford gates include arbitrary rotation gates that cannot be efficiently s
     let mut sim = StateVec::new(5);
     let q = QubitId(0);
     let (q0, q1) = (QubitId(0), QubitId(1));
-    let theta = Angle64::from_radians(PI / 4.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
     ```
 
 ### Single-Qubit Rotations

@@ -5032,8 +5032,8 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.rx(Angle64::from_radians(theta), &[QubitId(0)]);
-            opt.rx(Angle64::from_radians(theta), &[QubitId(0)]);
+            sv.rx(Angle64::try_from_radians(theta).unwrap(), &[QubitId(0)]);
+            opt.rx(Angle64::try_from_radians(theta).unwrap(), &[QubitId(0)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RX({theta})"));
         }
@@ -5045,15 +5045,15 @@ mod tests {
         let mut opt: StateVecSoA = StateVecSoA::new(2);
 
         sv.u(
-            Angle64::from_radians(PI / 3.0),
-            Angle64::from_radians(PI / 4.0),
-            Angle64::from_radians(PI / 5.0),
+            pecos_core::radians!(PI / 3.0),
+            Angle64::from_turn_ratio(1, 8),
+            pecos_core::radians!(PI / 5.0),
             &[QubitId(0)],
         );
         opt.u(
-            Angle64::from_radians(PI / 3.0),
-            Angle64::from_radians(PI / 4.0),
-            Angle64::from_radians(PI / 5.0),
+            pecos_core::radians!(PI / 3.0),
+            Angle64::from_turn_ratio(1, 8),
+            pecos_core::radians!(PI / 5.0),
             &[QubitId(0)],
         );
 
@@ -5514,8 +5514,8 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.ry(Angle64::from_radians(theta), &[QubitId(0)]);
-            opt.ry(Angle64::from_radians(theta), &[QubitId(0)]);
+            sv.ry(Angle64::try_from_radians(theta).unwrap(), &[QubitId(0)]);
+            opt.ry(Angle64::try_from_radians(theta).unwrap(), &[QubitId(0)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RY({theta})"));
         }
@@ -5531,8 +5531,8 @@ mod tests {
             // Put in superposition to see phase effects
             sv.h(&[QubitId(0)]);
             opt.h(&[QubitId(0)]);
-            sv.rz(Angle64::from_radians(theta), &[QubitId(0)]);
-            opt.rz(Angle64::from_radians(theta), &[QubitId(0)]);
+            sv.rz(Angle64::try_from_radians(theta).unwrap(), &[QubitId(0)]);
+            opt.rz(Angle64::try_from_radians(theta).unwrap(), &[QubitId(0)]);
 
             assert_states_match(&mut sv, &mut opt, &format!("RZ({theta})"));
         }
@@ -5547,13 +5547,13 @@ mod tests {
         let phi = FRAC_PI_4;
 
         sv.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &[QubitId(0)],
         );
         opt.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &[QubitId(0)],
         );
 
@@ -5567,8 +5567,14 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.rxx(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-            opt.rxx(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+            sv.rxx(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[(QubitId(0), QubitId(1))],
+            );
+            opt.rxx(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[(QubitId(0), QubitId(1))],
+            );
 
             assert_states_match(&mut sv, &mut opt, &format!("RXX({theta})"));
         }
@@ -5581,8 +5587,14 @@ mod tests {
             let mut sv = StateVecSoA::new(2);
             let mut opt: StateVecSoA = StateVecSoA::new(2);
 
-            sv.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-            opt.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+            sv.ryy(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[(QubitId(0), QubitId(1))],
+            );
+            opt.ryy(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[(QubitId(0), QubitId(1))],
+            );
 
             assert_states_match(&mut sv, &mut opt, &format!("RYY({theta})"));
         }
@@ -5601,8 +5613,14 @@ mod tests {
             sv.h(&[QubitId(1)]);
             opt.h(&[QubitId(1)]);
 
-            sv.rzz(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-            opt.rzz(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+            sv.rzz(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[(QubitId(0), QubitId(1))],
+            );
+            opt.rzz(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[(QubitId(0), QubitId(1))],
+            );
 
             assert_states_match(&mut sv, &mut opt, &format!("RZZ({theta})"));
         }

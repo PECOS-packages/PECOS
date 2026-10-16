@@ -29,8 +29,8 @@ fn ramsey(gap: u64) -> Vec<TimedBatch> {
             start_nanos: 0,
             duration_nanos: 100,
             gates: vec![Gate::rxy1q(
-                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+                Angle64::QUARTER_TURN,
+                Angle64::QUARTER_TURN,
                 &[0],
             )],
         },
@@ -40,11 +40,7 @@ fn ramsey(gap: u64) -> Vec<TimedBatch> {
             start_nanos: 100 + gap,
             duration_nanos: 10,
             gates: vec![
-                Gate::rxy1q(
-                    Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                    Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                    &[0],
-                ),
+                Gate::rxy1q(Angle64::THREE_QUARTERS_TURN, Angle64::QUARTER_TURN, &[0]),
                 Gate::mz(&[0]),
             ],
         },
@@ -126,11 +122,7 @@ fn malformed_transport_and_unknown_records_return_errors_without_panics() {
 #[test]
 fn later_invalid_batch_rejects_before_state_or_cursor_mutation() {
     let mut input = ramsey(1);
-    input[0].gates = vec![Gate::rxy1q(
-        Angle64::from_radians(std::f64::consts::PI),
-        Angle64::ZERO,
-        &[0],
-    )];
+    input[0].gates = vec![Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])];
     input[1].gates = vec![Gate::mz(&[2])];
     let mut s = system(0.0);
     assert!(s.process(encode_timed_batches(&input).unwrap()).is_err());

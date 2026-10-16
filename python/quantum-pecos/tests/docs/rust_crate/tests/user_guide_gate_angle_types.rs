@@ -41,7 +41,7 @@ fn test_user_guide_gate_angle_types_rust_3() {
     assert_eq!(p.as_quarter(), Some(pecos_core::QuarterPhase::PlusI));
 
     // Arbitrary phase
-    let p = GlobalPhase::from_angle(Angle64::from_turns(0.125)); // e^{i*pi/4}
+    let p = GlobalPhase::from_angle(Angle64::from_turn_ratio(1, 8)); // e^{i*pi/4}
 }
 
 
@@ -56,7 +56,7 @@ fn test_user_guide_gate_angle_types_rust_4() {
     let full = Angle64::FULL_TURN;         // 2*pi (wraps to 0)
 
     // From turns (fractional rotations)
-    let eighth = Angle64::from_turns(0.125);  // pi/4
+    let eighth = Angle64::from_turn_ratio(1, 8);  // pi/4
 
     // Exact rational construction
     let third = Angle64::from_turn_ratio(1, 3);  // 2*pi/3

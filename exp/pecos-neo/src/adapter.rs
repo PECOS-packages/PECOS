@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn test_parameterized_gate_conversion() {
         // Create an RZ gate with angle
-        let angle = Angle64::from_radians(std::f64::consts::PI / 2.0);
+        let angle = Angle64::QUARTER_TURN;
         let gate = Gate::new(CoreGateType::RZ, vec![angle], vec![], vec![QubitId(0)]);
 
         let cmd = gate_to_command(&gate).expect("should convert");

@@ -21,7 +21,7 @@ fn test_experimental_composable_noise_rust_1() {
 // Simple depolarizing noise
 
 #[test]
-fn test_experimental_composable_noise_rust_2() {
+fn test_experimental_composable_noise_rust_2() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let model = depolarizing_only(0.001, 0.01);
 
@@ -34,31 +34,33 @@ fn test_experimental_composable_noise_rust_2() {
             .with_p1(0.001)
             .with_p2(0.01)
             .with_measurement_error(0.02)
-            .with_t1(0.0001).unwrap()
-    ).unwrap();
+            .with_t1(0.0001)?
+    )?;
 
     // Surface code optimized noise
-    let model = surface_code_noise(0.001, true).unwrap();
+    let model = surface_code_noise(0.001, true)?;
+    Ok(())
 }
 
 
 
 #[test]
-fn test_experimental_composable_noise_rust_3() {
+fn test_experimental_composable_noise_rust_3() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let model = NoiseModelBuilder::new()
         .with_depolarizing(0.001, 0.01)
         .with_measurement_error(0.02)
         .with_preparation_error(0.001)
-        .with_idle_noise(0.0001, 0.0005).unwrap()  // T1 and T2 rates
+        .with_idle_noise(0.0001, 0.0005)?  // T1 and T2 rates
         .build();
+    Ok(())
 }
 
 
 // Custom single-qubit noise with leakage handling
 
 #[test]
-fn test_experimental_composable_noise_rust_4() {
+fn test_experimental_composable_noise_rust_4() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let sq_noise = seq![
         skip_if_leaked(),                    // Skip gate if qubit is leaked
@@ -70,32 +72,34 @@ fn test_experimental_composable_noise_rust_4() {
                     (0.9, pauli()),          // 90% are Pauli errors
                 ]
             )
-        ).unwrap(),
+        )?,
     ];
 
     let model = NoiseModelBuilder::new()
         .with_single_qubit_noise(sq_noise)
         .build();
+    Ok(())
 }
 
 
 // Using pattern
 
 #[test]
-fn test_experimental_composable_noise_rust_5() {
+fn test_experimental_composable_noise_rust_5() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let model = depolarizing_only(0.001, 0.01);
 
     // Using primitives
-    let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli()).unwrap());
-    let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli()).unwrap());
+    let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli())?);
+    let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli())?);
+    Ok(())
 }
 
 
 // Symmetric (same error rate for 0->1 and 1->0)
 
 #[test]
-fn test_experimental_composable_noise_rust_6() {
+fn test_experimental_composable_noise_rust_6() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let model = measurement_only(0.02, 0.02);
 
@@ -104,66 +108,71 @@ fn test_experimental_composable_noise_rust_6() {
 
     // Using primitives for outcome-dependent noise
     let meas_noise = seq![
-        on_zero(prob(0.01, flip_outcome()).unwrap()),  // 1% flip when measuring 0
-        on_one(prob(0.03, flip_outcome()).unwrap()),   // 3% flip when measuring 1
+        on_zero(prob(0.01, flip_outcome())?),  // 1% flip when measuring 0
+        on_one(prob(0.03, flip_outcome())?),   // 3% flip when measuring 1
     ];
+    Ok(())
 }
 
 
 
 #[test]
-fn test_experimental_composable_noise_rust_7() {
+fn test_experimental_composable_noise_rust_7() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let model = with_leakage(
         0.001,  // p1: single-qubit error rate
         0.01,   // p2: two-qubit error rate
         0.1,    // 10% of errors cause leakage
         0.5,    // 50% seepage rate (return from leaked state)
-    ).unwrap();
+    )?;
+    Ok(())
 }
 
 
 // Using builder
 
 #[test]
-fn test_experimental_composable_noise_rust_8() {
+fn test_experimental_composable_noise_rust_8() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
     let model = NoiseModelBuilder::new()
-        .with_idle_noise(0.0001, 0.0005).unwrap()  // T1 rate, T2 rate
+        .with_idle_noise(0.0001, 0.0005)?  // T1 rate, T2 rate
         .build();
 
     // Using primitives for custom idle behavior
-    let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli()).unwrap());
-    let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z()).unwrap());
+    let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli())?);
+    let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z())?);
+    Ok(())
 }
 
 
 // 1D chain crosstalk during measurement
 
 #[test]
-fn test_experimental_composable_noise_rust_9() {
+fn test_experimental_composable_noise_rust_9() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
-    let model = chain_measurement_crosstalk(0.01).unwrap();
+    let model = chain_measurement_crosstalk(0.01)?;
 
     // 2D grid crosstalk (5 columns)
-    let model = grid_measurement_crosstalk(5, 0.01).unwrap();
+    let model = grid_measurement_crosstalk(5, 0.01)?;
 
     // Custom crosstalk with composite primitives
-    let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z()).unwrap())
+    let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z())?)
         .responds_to_measurement()
         .local(chain_neighbors);  // Only affect adjacent qubits
+    Ok(())
 }
 
 
 // Chain-correlated errors
 
 #[test]
-fn test_experimental_composable_noise_rust_10() {
+fn test_experimental_composable_noise_rust_10() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::prelude::*;
-    let model = chain_correlated(0.01, 0.5).unwrap();  // 50% correlation factor
+    let model = chain_correlated(0.01, 0.5)?;  // 50% correlation factor
 
     // Using CorrelatedNoiseChannel directly
-    let channel = CorrelatedNoiseChannel::new(0.01, 0.5).unwrap();
+    let channel = CorrelatedNoiseChannel::new(0.01, 0.5)?;
+    Ok(())
 }
 
 

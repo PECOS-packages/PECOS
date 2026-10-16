@@ -1,7 +1,7 @@
 //! Growth preserves the quantum state, deferred gates, and random stream.
 
 use num_complex::Complex64;
-use pecos_core::{Angle64, QubitId, RngManageable};
+use pecos_core::{QubitId, RngManageable};
 use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, StateVec, StateVecAoS, StateVecSoA,
@@ -15,7 +15,7 @@ where
     let mut sim = S::with_seed(2, 42);
     sim.h(&[QubitId(0)]);
     sim.cx(&[(QubitId(0), QubitId(1))]);
-    sim.rz(Angle64::from_radians(0.7), &[QubitId(0)]);
+    sim.rz(pecos_core::radians!(0.7), &[QubitId(0)]);
     sim.sx(&[QubitId(1)]);
     sim.sz(&[QubitId(0)]);
 

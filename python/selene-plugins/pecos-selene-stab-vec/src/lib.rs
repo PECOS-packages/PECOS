@@ -72,7 +72,7 @@ impl StabVecSimulator {
         // Gates are applied left-to-right in code but the matrix multiplication
         // is right-to-left, so we apply Rz(-phi) first
         self.simulator
-            .rz(Angle64::from_radians(-phi), &[q])
+            .rz(Angle64::try_from_radians(-phi)?, &[q])
             .rx(theta_angle, &[q])
             .rz(phi_angle, &[q]);
 

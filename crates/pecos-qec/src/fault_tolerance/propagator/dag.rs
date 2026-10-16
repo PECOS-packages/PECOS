@@ -2869,7 +2869,7 @@ mod tests {
             circuit
         }
 
-        let non_clifford = Angle64::from_radians(0.123);
+        let non_clifford = pecos_core::radians!(0.123);
         for gate in [
             Gate::rxyxy2q(Angle64::QUARTER_TURN, non_clifford, &[(0, 1)]),
             Gate::rxyxy2q(non_clifford, Angle64::ZERO, &[(0, 1)]),

@@ -3,7 +3,6 @@ use pecos_simulators::DensityMatrix;
 use pecos_simulators::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use pecos_simulators::clifford_gateable::CliffordGateable;
 use pecos_simulators::quantum_simulator::QuantumSimulator;
-use std::f64::consts::PI;
 
 #[test]
 fn test_new_density_matrix() {
@@ -173,7 +172,7 @@ fn test_rotation_gates() {
     let mut dm = DensityMatrix::new(1);
 
     // Apply Rx(pi/2) to |0><0|
-    dm.rx(Angle64::from_radians(PI / 2.0), &qid(0));
+    dm.rx(Angle64::QUARTER_TURN, &qid(0));
 
     // Should result in equal superposition in X basis
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);
@@ -181,7 +180,7 @@ fn test_rotation_gates() {
 
     // Reset and try Ry
     dm.reset();
-    dm.ry(Angle64::from_radians(PI / 2.0), &qid(0));
+    dm.ry(Angle64::QUARTER_TURN, &qid(0));
 
     // Should result in equal superposition in Y basis
     assert!((dm.probability(0) - 0.5).abs() < 1e-10);

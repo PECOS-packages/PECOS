@@ -19,7 +19,7 @@ fn main() {
     let runs: usize = std::env::args()
         .nth(1)
         .map_or(10, |value| value.parse().expect("runs must be an integer"));
-    let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
+    let theta = Angle64::from_turn_ratio(1, 8);
     println!("qubits,t_gates,run,measurement,terms,elapsed_ns,outcome,deterministic");
     for (num_qubits, t_gates) in [(8, 6), (10, 8), (12, 10)] {
         for run in 0..=runs {

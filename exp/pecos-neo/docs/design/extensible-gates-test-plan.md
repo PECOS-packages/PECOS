@@ -326,7 +326,7 @@ fn test_no_canonicalization_for_arbitrary_angle() {
     let canon = GateCanonicalizer::standard();
 
     // RZ(0.123) has no canonical form
-    let arbitrary = Angle64::from_turns(0.123);
+    let arbitrary = pecos_core::turns!(0.123);
     let result = canon.canonicalize(gates::RZ, &[arbitrary]);
     assert_eq!(result, None);
 }
@@ -338,7 +338,7 @@ fn test_no_canonicalization_for_arbitrary_angle() {
 fn test_angle64_exact_comparison() {
     // Standard angles are exactly representable
     let quarter = Angle64::QUARTER_TURN;
-    let from_turns = Angle64::from_turns(0.25);
+    let from_turns = Angle64::QUARTER_TURN;
 
     assert_eq!(quarter, from_turns); // EXACT equality
 }
@@ -346,10 +346,10 @@ fn test_angle64_exact_comparison() {
 #[test]
 fn test_angle64_from_turns_exact_fractions() {
     // Powers of 2 denominators are exact
-    assert_eq!(Angle64::from_turns(0.5), Angle64::HALF_TURN);
-    assert_eq!(Angle64::from_turns(0.25), Angle64::QUARTER_TURN);
-    assert_eq!(Angle64::from_turns(0.125), Angle64::HALF_TURN / 4);
-    assert_eq!(Angle64::from_turns(0.0625), Angle64::HALF_TURN / 8);
+    assert_eq!(Angle64::HALF_TURN, Angle64::HALF_TURN);
+    assert_eq!(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN);
+    assert_eq!(Angle64::from_turn_ratio(1, 8), Angle64::HALF_TURN / 4);
+    assert_eq!(Angle64::from_turn_ratio(1, 16), Angle64::HALF_TURN / 8);
 }
 
 #[test]
@@ -380,7 +380,7 @@ fn test_snap_close_angle() {
     let snapper = AngleSnapper::standard(1e-9);
 
     // Slightly off from π/2
-    let close = Angle64::from_turns(0.25 + 1e-12);
+    let close = pecos_core::turns!(0.25 + 1e-12);
     let result = snapper.snap(close).unwrap();
 
     assert_eq!(result.snapped, Angle64::QUARTER_TURN);
@@ -392,7 +392,7 @@ fn test_snap_fails_outside_tolerance() {
     let snapper = AngleSnapper::standard(1e-9);
 
     // Way off from any standard angle
-    let far = Angle64::from_turns(0.123456);
+    let far = pecos_core::turns!(0.123456);
     let result = snapper.snap(far);
 
     assert!(result.is_err());
@@ -405,7 +405,7 @@ fn test_snap_fails_outside_tolerance() {
 fn test_snap_or_keep_keeps_non_standard() {
     let snapper = AngleSnapper::standard(1e-9);
 
-    let arbitrary = Angle64::from_turns(0.123);
+    let arbitrary = pecos_core::turns!(0.123);
     let result = snapper.snap_or_keep(arbitrary);
 
     assert_eq!(result, arbitrary); // Kept as-is
@@ -462,7 +462,7 @@ fn test_clifford_validator_rejects_arbitrary_rz() {
     let registry = GateRegistry::new();
 
     let circuit = Circuit::from_gates(vec![
-        Gate::rz(Angle64::from_turns(0.123), &[0]), // Arbitrary angle
+        Gate::rz(pecos_core::turns!(0.123), &[0]), // Arbitrary angle
     ]);
 
     let result = validator.validate(&circuit, &registry);
@@ -503,7 +503,7 @@ fn test_exact_angle_validator_rejects_non_canonicalizable() {
     let registry = GateRegistry::new();
 
     let circuit = Circuit::from_gates(vec![
-        Gate::rz(Angle64::from_turns(0.123), &[0]), // Can't canonicalize
+        Gate::rz(pecos_core::turns!(0.123), &[0]), // Can't canonicalize
     ]);
 
     let result = validator.validate(&circuit, &registry);

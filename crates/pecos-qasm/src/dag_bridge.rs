@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn test_parameterized_gate_dag_to_qasm() {
         let mut dag = DagCircuit::new();
-        dag.rz(Angle64::from_radians(std::f64::consts::FRAC_PI_4), &[0]);
+        dag.rz(Angle64::from_turn_ratio(1, 8), &[0]);
 
         let qasm = dag_to_qasm(&dag);
         assert!(qasm.contains("rz("));
@@ -861,8 +861,8 @@ mod tests {
         assert_eq!(
             gate,
             Gate::rxyxy2q(
-                Angle64::from_radians(-0.73),
-                Angle64::from_radians(0.41),
+                pecos_core::radians!(-0.73),
+                pecos_core::radians!(0.41),
                 &[(2, 0)]
             )
         );

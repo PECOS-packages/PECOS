@@ -1,9 +1,9 @@
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
 fn run_test(nq: usize, nrz: usize, threshold: f64) {
-    let theta = Angle64::from_radians(0.3);
+    let theta = pecos_core::radians!(0.3);
     let mc = if threshold < 0.0 { None } else { Some(2048) };
     let actual_threshold = threshold.abs();
     let mut sim = StabVec::builder(nq)

@@ -316,7 +316,8 @@ impl PyNoiseModelBuilder {
         }
         if self.idle_rz_angle > 0.0 {
             noise = noise.add_channel(crate::coherent_idle_channel::CoherentIdleChannel::new(
-                Angle64::from_radians(self.idle_rz_angle),
+                Angle64::try_from_radians(self.idle_rz_angle)
+                    .expect("idle_rz validated the stored angle as finite"),
             ));
         }
         Some(noise)
@@ -1604,12 +1605,21 @@ fn build_rust_tick_circuit_from_gates(
                         let lowered = match gate_name.as_str() {
                             "CRX" => {
                                 pecos_core::controlled_rotations::lower_crx(angle, pair[0], pair[1])
+                                    .map_err(|error| {
+                                        pyo3::exceptions::PyValueError::new_err(error.to_string())
+                                    })?
                             }
                             "CRY" => {
                                 pecos_core::controlled_rotations::lower_cry(angle, pair[0], pair[1])
+                                    .map_err(|error| {
+                                        pyo3::exceptions::PyValueError::new_err(error.to_string())
+                                    })?
                             }
                             "CRZ" => {
                                 pecos_core::controlled_rotations::lower_crz(angle, pair[0], pair[1])
+                                    .map_err(|error| {
+                                        pyo3::exceptions::PyValueError::new_err(error.to_string())
+                                    })?
                                     .into_iter()
                                     .collect()
                             }
@@ -2157,17 +2167,26 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            ),
+                            )
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?,
                             "CRY" => pecos_core::controlled_rotations::lower_cry(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            ),
+                            )
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?,
                             "CRZ" => pecos_core::controlled_rotations::lower_crz(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
                             )
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?
                             .into_iter()
                             .collect(),
                             _ => unreachable!(),

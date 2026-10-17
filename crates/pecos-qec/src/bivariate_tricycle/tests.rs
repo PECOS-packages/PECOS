@@ -80,6 +80,51 @@ fn ccz_layers() {
     }
 }
 
+/// Brute-force arXiv:2508.10714, Proposition (`fccz_def`): over distinct
+/// sectors `(i,j,k)` and all `(p,q,r)`, keep `r in_i in_j = q in_i out_k = p out_j out_k`.
+fn triple_cup_by_search(code: &BivariateTricycleCode) -> BTreeSet<[usize; 3]> {
+    let (l, m) = code.dimensions();
+    let size = l * m;
+    let terms = [*code.a_terms(), *code.b_terms(), *code.c_terms()];
+    let shift = |g: usize, (x, y): BbMonomial| ((g / m + x) % l) * m + (g % m + y) % m;
+    let mut triples = BTreeSet::new();
+    for [i, j, k] in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let [in_i, in_j, out_j, out_k] = [terms[i][0], terms[j][0], terms[j][1], terms[k][1]];
+        for p in 0..size {
+            for q in 0..size {
+                for r in 0..size {
+                    let from_r = shift(shift(r, in_i), in_j);
+                    if from_r == shift(shift(q, in_i), out_k)
+                        && from_r == shift(shift(p, out_j), out_k)
+                    {
+                        triples.insert([i * size + p, j * size + q, k * size + r]);
+                    }
+                }
+            }
+        }
+    }
+    triples
+}
+
+#[test]
+fn ccz_matches_triple_cup_definition() {
+    for code in codes() {
+        let gates = code
+            .cup_product_ccz()
+            .concat()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(gates, triple_cup_by_search(&code));
+    }
+}
+
 fn evaluate(gates: &[[usize; 3]], vectors: [&[u8]; 3]) -> u8 {
     gates.iter().fold(0, |parity, &[a, b, c]| {
         parity ^ (vectors[0][a] & vectors[1][b] & vectors[2][c])

@@ -70,7 +70,7 @@ pub struct ShotResult {
 /// A shot could not execute on the supplied simulator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
-    /// The simulator must have exactly the compiled circuit's qubit count.
+    /// The simulator does not satisfy the entry point's qubit-count contract.
     QubitCount {
         /// Compiled qubit count.
         expected: usize,
@@ -171,6 +171,29 @@ impl Program {
             });
         }
         sim.reset();
+        self.run_segment(sim, rng)
+    }
+
+    /// Execute without resetting, returning only this segment's records and parities.
+    ///
+    /// The simulator may have more qubits than this program: a suffix can leave
+    /// ancillas from an earlier segment untouched while operating on its data.
+    /// Both RNG streams and the incoming quantum state are preserved.
+    ///
+    /// # Errors
+    /// Rejects an undersized simulator before any state or RNG mutation.
+    /// An incompatible X measurement retains the executed prefix, as in `run_shot`.
+    pub fn run_segment(
+        &self,
+        sim: &mut PhasePoly,
+        rng: &mut PecosRng,
+    ) -> Result<ShotResult, RunError> {
+        if sim.num_qubits() < self.num_qubits {
+            return Err(RunError::QubitCount {
+                expected: self.num_qubits,
+                actual: sim.num_qubits(),
+            });
+        }
         let mut records = Vec::with_capacity(self.num_records);
         for instruction in &self.instructions {
             instruction.execute(sim, rng, &mut records)?;

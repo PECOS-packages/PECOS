@@ -4,7 +4,15 @@ unmaintained = "none"
 unsound = "none"
 # relay-bp 0.2.2 (latest) requires ndarray-npy ^0.9.1, which requires zip ^2;
 # every zip 2.x release is yanked. Remove once relay-bp moves to an unyanked zip.
-ignore = [{ crate = "zip@2.4.2", reason = "only reachable through relay-bp; no unyanked zip 2.x exists" }]
+# RUSTSEC-2026-0367/0368/0369 are fixed only in zip >= 9 and affect only
+# ZipArchive::extract and ZipStreamReader::extract. ndarray-npy reads .npz
+# entries with ZipArchive::by_name and never extracts archives.
+ignore = [
+    { crate = "zip@2.4.2", reason = "only reachable through relay-bp; no unyanked zip 2.x exists" },
+    { id = "RUSTSEC-2026-0367", reason = "zip extract APIs are unused; ndarray-npy only reads entries by name" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extract APIs are unused; ndarray-npy only reads entries by name" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extract APIs are unused; ndarray-npy only reads entries by name" },
+]
 
 [bans]
 multiple-versions = "allow"

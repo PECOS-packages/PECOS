@@ -1148,6 +1148,12 @@ impl PhirProcessor {
             (TypedValue::Bool(a), TypedValue::Bool(b)) => {
                 TypedValue::Bool(unsigned_op(u64::from(*a), u64::from(*b)) & 1 != 0)
             }
+            (TypedValue::U8(a), TypedValue::U8(b)) => {
+                Self::integer_storage(unsigned_op(u64::from(*a), u64::from(*b)), instruction)?
+            }
+            (TypedValue::U16(a), TypedValue::U16(b)) => {
+                Self::integer_storage(unsigned_op(u64::from(*a), u64::from(*b)), instruction)?
+            }
             // Mixed types: coerce to I64
             _ => {
                 let a = Self::integer_bits(&l, &instruction.operation.name())?;
@@ -1182,7 +1188,23 @@ impl PhirProcessor {
             #[allow(clippy::cast_possible_truncation)]
             TypedValue::U32(v) => TypedValue::U32(unsigned_op(u64::from(v)) as u32),
             TypedValue::U64(v) => TypedValue::U64(unsigned_op(v)),
-            other => other,
+            TypedValue::U8(v) => Self::integer_storage(unsigned_op(u64::from(v)), instruction)?,
+            TypedValue::U16(v) => Self::integer_storage(unsigned_op(u64::from(v)), instruction)?,
+            TypedValue::Bool(v) => Self::integer_storage(unsigned_op(u64::from(v)), instruction)?,
+            TypedValue::I8(v) => Self::integer_storage(
+                u64::from_ne_bytes(signed_op(i64::from(v)).to_ne_bytes()),
+                instruction,
+            )?,
+            TypedValue::I16(v) => Self::integer_storage(
+                u64::from_ne_bytes(signed_op(i64::from(v)).to_ne_bytes()),
+                instruction,
+            )?,
+            other => {
+                return Err(PhirError::internal(format!(
+                    "{}: expected integer operand, got {other}; use an integer operand",
+                    instruction.operation.name()
+                )));
+            }
         };
         self.ssa_values.insert(res_id, result);
         Ok(())
@@ -1680,6 +1702,11 @@ impl PhirProcessor {
         use crate::types::{IntWidth, Type};
         Ok(match instruction.result_types.first() {
             Some(Type::Int(_)) => TypedValue::I64(i64::from_ne_bytes(bits.to_ne_bytes())),
+            Some(Type::UInt(IntWidth::I8)) => TypedValue::U8(bits.to_le_bytes()[0]),
+            Some(Type::UInt(IntWidth::I16)) => {
+                let bytes = bits.to_le_bytes();
+                TypedValue::U16(u16::from_le_bytes([bytes[0], bytes[1]]))
+            }
             Some(Type::UInt(IntWidth::I32)) => {
                 let bytes = bits.to_le_bytes();
                 TypedValue::U32(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))

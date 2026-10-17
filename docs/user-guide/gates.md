@@ -100,8 +100,9 @@ PECOS supports two categories of quantum gates:
 
 `CRX`, `CRY`, `CRZ`, `CPhase`, and `CU1` may be accepted by source-format and
 simulator APIs, but they are boundary spellings rather than stored PECOS gates.
-The HUGR, QIS, PHIR, SLR native-codegen, circuit-builder, and direct-simulator
-ingresses lower them to native Clifford, `RZ`, `RZZ`, and `U` operations.
+The HUGR, QIS, PHIR module, SLR native-codegen, circuit-builder, and
+direct-simulator ingresses lower them to native Clifford, `RZ`, `RZZ`, and `U`
+operations. PHIR-JSON rejects `CPhase`; lower it before emitting PHIR JSON.
 Consequently a lowered `CRZ` is one two-qubit `RZZ` noise location followed by
 one single-qubit `RZ` location in consecutive ticks. Gate counts and traces
 describe those executed native operations.

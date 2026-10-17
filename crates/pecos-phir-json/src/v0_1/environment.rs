@@ -241,6 +241,31 @@ pub struct VariableInfo {
     pub metadata: Option<BTreeMap<String, serde_json::Value>>,
 }
 
+/// A whole-register or indexed reference in a Result mapping.
+#[derive(Debug, Clone)]
+pub(crate) struct ResultReference {
+    pub name: String,
+    pub index: Option<usize>,
+}
+
+impl ResultReference {
+    pub(crate) fn from_arg(arg: &super::ast::ArgItem, field: &str) -> Result<Self, PecosError> {
+        match arg {
+            super::ast::ArgItem::Simple(name) => Ok(Self {
+                name: name.clone(),
+                index: None,
+            }),
+            super::ast::ArgItem::Indexed((name, index)) => Ok(Self {
+                name: name.clone(),
+                index: Some(*index),
+            }),
+            _ => Err(PecosError::Input(format!(
+                "Result: invalid {field} entry {arg:?}; supply a variable name or [name, bit index]"
+            ))),
+        }
+    }
+}
+
 /// A variable value stored as a fixed-width integer using `BitUInt`.
 ///
 /// All values are stored as `BitUInt` (unsigned) with the declared bit width.
@@ -723,6 +748,134 @@ impl Environment {
         }
     }
 
+    /// Resolve a declared classical register for Result or measurement operations.
+    pub(crate) fn classical_info(&self, name: &str) -> Result<&VariableInfo, PecosError> {
+        self.get_variable_info_opt(name)
+            .filter(|info| info.data_type != DataType::Qubits)
+            .ok_or_else(|| PecosError::Input(format!(
+                "Result or measurement: unknown classical variable {name:?}; declare it with cvar_define before use"
+            )))
+    }
+
+    /// Validate a measurement against the declared size, not the backing integer width.
+    pub(crate) fn validate_measurement_write(
+        &self,
+        name: &str,
+        index: usize,
+    ) -> Result<(), PecosError> {
+        let size = self.classical_info(name)?.size;
+        if index >= size {
+            return Err(PecosError::Input(format!(
+                "Measurement write {name}[{index}] is out of range for a register of declared size {size}; use an index below {size}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_result_index(&self, reference: &ResultReference) -> Result<(), PecosError> {
+        if let Some(index) = reference.index {
+            let size = self
+                .get_variable_info_opt(&reference.name)
+                .map_or(64, |info| info.size);
+            if index >= size {
+                return Err(PecosError::Input(format!(
+                    "Result: bit index {index} is invalid for register {:?} of declared size {size}; use an index below {size}",
+                    reference.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate all sources before any copies, then validate destination names and indices.
+    pub(crate) fn validate_result(
+        &self,
+        args: &[super::ast::ArgItem],
+        returns: &[super::ast::ArgItem],
+    ) -> Result<Vec<(ResultReference, ResultReference)>, PecosError> {
+        super::operations::validate_result_counts(args.len(), returns.len())?;
+        let sources = args
+            .iter()
+            .map(|arg| ResultReference::from_arg(arg, "args"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let destinations = returns
+            .iter()
+            .map(|arg| ResultReference::from_arg(arg, "returns"))
+            .collect::<Result<Vec<_>, _>>()?;
+        for source in &sources {
+            self.classical_info(&source.name)?;
+            self.validate_result_index(source)?;
+        }
+        for destination in &destinations {
+            if self.quantum_registers.contains_key(&destination.name) {
+                return Err(PecosError::Input(format!(
+                    "Result: destination {:?} is quantum; use a classical variable or a new export name",
+                    destination.name
+                )));
+            }
+            self.validate_result_index(destination)?;
+        }
+        Ok(sources.into_iter().zip(destinations).collect())
+    }
+
+    /// Create Result destinations with the native whole-register or indexed storage rules.
+    pub(crate) fn prepare_result_destination(
+        &mut self,
+        source: &ResultReference,
+        destination: &ResultReference,
+    ) -> Result<(), PecosError> {
+        if !self.has_variable(&destination.name) {
+            let (data_type, size) = if let Some(index) = destination.index {
+                (DataType::U64, (index + 1).max(32))
+            } else {
+                let info = self.classical_info(&source.name)?;
+                (info.data_type.clone(), info.size)
+            };
+            self.ensure_classical_variable(&destination.name, data_type, size)?;
+        }
+        // Earlier pairs may have created this destination with a smaller size.
+        self.validate_result_index(destination)
+    }
+
+    /// Copy Result values in source order, preserving bit indices and destination widths.
+    pub(crate) fn apply_result(
+        &mut self,
+        args: &[super::ast::ArgItem],
+        returns: &[super::ast::ArgItem],
+    ) -> Result<(), PecosError> {
+        for (source, destination) in self.validate_result(args, returns)? {
+            self.copy_result_pair(&source, &destination)?;
+            self.add_mapping(&destination.name, &destination.name)?;
+        }
+        Ok(())
+    }
+
+    fn copy_result_pair(
+        &mut self,
+        source: &ResultReference,
+        destination: &ResultReference,
+    ) -> Result<(), PecosError> {
+        let value = if let Some(index) = source.index {
+            u64::from(self.get_bit(&source.name, index)?.0)
+        } else {
+            self.get(&source.name)
+                .ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "Result: source {:?} has no value; declare it with cvar_define before use",
+                        source.name
+                    ))
+                })?
+                .as_u64()
+        };
+        self.prepare_result_destination(source, destination)?;
+        if let Some(index) = destination.index {
+            self.set_bit(&destination.name, index, value & 1)?;
+        } else {
+            self.set(&destination.name, value)?;
+        }
+        Ok(())
+    }
+
     /// Gets metadata for a variable
     ///
     /// # Errors
@@ -900,37 +1053,17 @@ impl Environment {
         results
     }
 
-    /// Copy a variable value to another variable
-    /// Used for Result operation in Python implementation
+    /// Copy a whole classical register, retaining the destination's declared width.
     ///
     /// # Errors
-    /// Returns an error if the source variable doesn't exist.
+    /// Returns an error for an unknown classical source or a quantum destination.
     pub fn copy_variable(&mut self, src_name: &str, dst_name: &str) -> Result<(), PecosError> {
-        // Check if source exists
-        if let Some(src_idx) = self.name_to_index.get(src_name) {
-            let src_value = self.values[*src_idx].clone();
-            let src_info = &self.metadata[*src_idx];
-
-            // If destination doesn't exist, create it
-            if !self.has_variable(dst_name) {
-                self.add_variable(dst_name, src_info.data_type.clone(), src_info.size)?;
-            }
-
-            // Set the destination value
-            if let Some(dst_idx) = self.name_to_index.get(dst_name) {
-                self.values[*dst_idx] = src_value;
-                Ok(())
-            } else {
-                // This should never happen as we just created the variable if it didn't exist
-                Err(PecosError::Input(format!(
-                    "Failed to copy '{src_name}' to '{dst_name}': destination not found after creation"
-                )))
-            }
-        } else {
-            Err(PecosError::Input(format!(
-                "Failed to copy '{src_name}' to '{dst_name}': source not found"
-            )))
+        let args = [super::ast::ArgItem::Simple(src_name.to_string())];
+        let returns = [super::ast::ArgItem::Simple(dst_name.to_string())];
+        for (source, destination) in self.validate_result(&args, &returns)? {
+            self.copy_result_pair(&source, &destination)?;
         }
+        Ok(())
     }
 }
 

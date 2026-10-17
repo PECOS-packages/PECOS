@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::declarations::{DeclarationKind, Declarations};
-use super::environment::Environment;
+use super::environment::{DataType, Environment, VariableInfo};
 
 /// Information about a bit-indexed write
 #[derive(Debug, Clone)]
@@ -130,8 +130,6 @@ struct ImprovedConverter {
     next_ssa_id: u32,
     resolved_qubits: BTreeSet<u32>,
     variable_map: BTreeMap<String, u32>,
-    variable_types: BTreeMap<String, Type>,
-    variable_widths: BTreeMap<String, usize>,
     bit_indexed_writes: BTreeMap<String, Vec<BitIndexedWrite>>,
 }
 
@@ -143,8 +141,6 @@ impl ImprovedConverter {
             next_ssa_id: 0,
             resolved_qubits: BTreeSet::new(),
             variable_map: BTreeMap::new(),
-            variable_types: BTreeMap::new(),
-            variable_widths: BTreeMap::new(),
             bit_indexed_writes: BTreeMap::new(),
         }
     }
@@ -200,7 +196,7 @@ impl ImprovedConverter {
         let mut instructions = Vec::new();
         let mut export_names = Vec::new();
 
-        // First pass: convert all operations except Result operations
+        // Convert operations in source order, flushing measurements before Result copies.
         for op in ops {
             if let Some(cop) = op
                 .as_object()
@@ -242,11 +238,17 @@ impl ImprovedConverter {
 
         self.combine_pending_measurements(&mut instructions)?;
         if export_names.is_empty() {
-            export_names.extend(self.variable_widths.keys().cloned());
+            export_names.extend(
+                self.environment
+                    .get_all_variables()
+                    .iter()
+                    .filter(|info| info.data_type != DataType::Qubits)
+                    .map(|info| info.name.clone()),
+            );
         }
         for name in export_names {
             let source = self.classical_value(&name)?;
-            let width = if self.variable_widths[&name] <= 32 {
+            let width = if Self::register_width(self.environment.classical_info(&name)?) <= 32 {
                 IntWidth::I32
             } else {
                 IntWidth::I64
@@ -273,13 +275,28 @@ impl ImprovedConverter {
         Ok(instructions)
     }
 
-    fn classical_value(&self, name: &str) -> Result<SSAValue, PecosError> {
-        if self.variable_widths.contains_key(name)
-            && let Some(&id) = self.variable_map.get(name)
-        {
-            return Ok(SSAValue::new(id));
+    fn register_width(info: &VariableInfo) -> usize {
+        info.size + usize::from(info.data_type.is_signed())
+    }
+
+    fn storage_type(info: &VariableInfo) -> Type {
+        match info.data_type {
+            DataType::I8 => Type::Int(IntWidth::I8),
+            DataType::I16 => Type::Int(IntWidth::I16),
+            DataType::I32 => Type::Int(IntWidth::I32),
+            DataType::I64 => Type::Int(IntWidth::I64),
+            DataType::U8 => Type::UInt(IntWidth::I8),
+            DataType::U16 => Type::UInt(IntWidth::I16),
+            DataType::U32 => Type::UInt(IntWidth::I32),
+            DataType::U64 => Type::UInt(IntWidth::I64),
+            DataType::Bool => Type::Bool,
+            DataType::Qubits => Type::QuantumReg(info.size),
         }
-        Err(PecosError::Input(format!(
+    }
+
+    fn classical_value(&self, name: &str) -> Result<SSAValue, PecosError> {
+        self.environment.classical_info(name)?;
+        self.variable_map.get(name).copied().map(SSAValue::new).ok_or_else(|| PecosError::Input(format!(
             "Result or measurement: unknown classical variable {name:?}; declare it with cvar_define before use"
         )))
     }
@@ -307,51 +324,55 @@ impl ImprovedConverter {
     ) -> Result<(), PecosError> {
         for (name, writes) in std::mem::take(&mut self.bit_indexed_writes) {
             let mut current = self.classical_value(&name)?;
-            let value_type = self.variable_types[&name].clone();
-            let width = self.variable_widths[&name];
+            let value_type = Self::storage_type(self.environment.classical_info(&name)?);
             for write in writes {
-                if write.bit_index as usize >= width {
-                    return Err(PecosError::Input(format!(
-                        "Measure: bit index {} is invalid for register {name:?} of width {width}; use an index below {width}",
-                        write.bit_index
-                    )));
-                }
-                let bit = self.append_classical(
-                    ClassicalOp::Bitcast,
-                    vec![write.ssa_value],
-                    &value_type,
-                    instructions,
-                )?;
-                let shifted = self.append_classical(
-                    ClassicalOp::Shl(write.bit_index),
-                    vec![bit],
-                    &value_type,
-                    instructions,
-                )?;
-                // Replace the bit, including when a later measurement writes zero.
-                let mask = i64::from_ne_bytes((!(1_u64 << write.bit_index)).to_ne_bytes());
-                let mask = self.append_classical(
-                    ClassicalOp::ConstInt(mask),
-                    vec![],
-                    &value_type,
-                    instructions,
-                )?;
-                let cleared = self.append_classical(
-                    ClassicalOp::And,
-                    vec![current, mask],
-                    &value_type,
-                    instructions,
-                )?;
-                current = self.append_classical(
-                    ClassicalOp::Or,
-                    vec![cleared, shifted],
-                    &value_type,
-                    instructions,
-                )?;
+                self.environment
+                    .validate_measurement_write(&name, write.bit_index as usize)?;
+                current = self.replace_bit(current, &write, &value_type, instructions)?;
             }
             self.variable_map.insert(name, current.id);
         }
         Ok(())
+    }
+
+    fn replace_bit(
+        &mut self,
+        current: SSAValue,
+        write: &BitIndexedWrite,
+        value_type: &Type,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<SSAValue, PecosError> {
+        let bit = self.append_classical(
+            ClassicalOp::Bitcast,
+            vec![write.ssa_value],
+            value_type,
+            instructions,
+        )?;
+        let shifted = self.append_classical(
+            ClassicalOp::Shl(write.bit_index),
+            vec![bit],
+            value_type,
+            instructions,
+        )?;
+        let mask = i64::from_ne_bytes((!(1_u64 << write.bit_index)).to_ne_bytes());
+        let mask = self.append_classical(
+            ClassicalOp::ConstInt(mask),
+            vec![],
+            value_type,
+            instructions,
+        )?;
+        let cleared = self.append_classical(
+            ClassicalOp::And,
+            vec![current, mask],
+            value_type,
+            instructions,
+        )?;
+        self.append_classical(
+            ClassicalOp::Or,
+            vec![cleared, shifted],
+            value_type,
+            instructions,
+        )
     }
 
     fn unsupported_operation(kind: &str, name: &str) -> PecosError {
@@ -447,22 +468,6 @@ impl ImprovedConverter {
                 self.declarations.register(variable, kind)?;
                 let var_id = self.get_ssa_id(variable)?;
 
-                let result_type = match data {
-                    "qvar_define" => Type::QuantumReg(size),
-                    "cvar_define" => match data_type {
-                        "i8" => Type::Int(IntWidth::I8),
-                        "i16" => Type::Int(IntWidth::I16),
-                        "i32" => Type::Int(IntWidth::I32),
-                        "u8" => Type::UInt(IntWidth::I8),
-                        "u16" => Type::UInt(IntWidth::I16),
-                        "u32" => Type::UInt(IntWidth::I32),
-                        "u64" => Type::UInt(IntWidth::I64),
-                        "bool" => Type::Bool,
-                        _ => Type::Int(IntWidth::I64), // Default fallback (includes "i64")
-                    },
-                    _ => Type::Unknown,
-                };
-
                 if data == "cvar_define" {
                     let explicit_size =
                         raw_size.map(usize::try_from).transpose().map_err(|_| {
@@ -474,12 +479,12 @@ impl ImprovedConverter {
                     let native_type: super::environment::DataType = data_type.parse()?;
                     self.environment
                         .add_classical_variable(variable, native_type.clone(), size)?;
-                    let width = size + usize::from(native_type.is_signed());
-                    self.variable_widths.insert(variable.to_string(), width);
                 }
-                // Store the type for later use
-                self.variable_types
-                    .insert(variable.to_string(), result_type.clone());
+                let result_type = if data == "qvar_define" {
+                    Type::QuantumReg(size)
+                } else {
+                    Self::storage_type(self.environment.classical_info(variable)?)
+                };
 
                 let instruction = Instruction {
                     operation: Operation::Builtin(BuiltinOp::VarDefine(var_define_op)),
@@ -687,64 +692,137 @@ impl ImprovedConverter {
         Ok(id)
     }
 
+    // SSA register values contain declared-width bits. Native signed values also
+    // extend the sign bit to their backing type before a whole-register copy.
+    fn result_source_bits(
+        &mut self,
+        value: SSAValue,
+        info: &VariableInfo,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<SSAValue, PecosError> {
+        let width = Self::register_width(info);
+        let backing = info.data_type.bit_width();
+        if !info.data_type.is_signed() || width == backing {
+            return Ok(value);
+        }
+        let shift = u32::try_from(64 - width).map_err(|_| {
+            PecosError::Input(format!(
+                "Result: register {:?} has invalid width {width}; use at most 64 bits",
+                info.name
+            ))
+        })?;
+        let storage = Type::Int(IntWidth::I64);
+        let value =
+            self.append_classical(ClassicalOp::Bitcast, vec![value], &storage, instructions)?;
+        let value =
+            self.append_classical(ClassicalOp::Shl(shift), vec![value], &storage, instructions)?;
+        let value =
+            self.append_classical(ClassicalOp::Shr(shift), vec![value], &storage, instructions)?;
+        if backing == 64 {
+            return Ok(value);
+        }
+        let mask = i64::from_ne_bytes(((1_u64 << backing) - 1).to_ne_bytes());
+        let mask =
+            self.append_classical(ClassicalOp::ConstInt(mask), vec![], &storage, instructions)?;
+        self.append_classical(ClassicalOp::And, vec![value, mask], &storage, instructions)
+    }
+
     fn convert_result_operation(
         &mut self,
         op: &Value,
         instructions: &mut Vec<Instruction>,
     ) -> Result<Vec<String>, PecosError> {
-        let names = |field: &str| -> Result<Vec<&str>, PecosError> {
-            let value = op.get(field).ok_or_else(|| {
-                PecosError::Input(format!(
-                    "Result: missing {field}; supply an array of variable names"
-                ))
-            })?;
+        let references = |field: &str| -> Result<Vec<super::ast::ArgItem>, PecosError> {
+            let value = op.get(field).ok_or_else(|| PecosError::Input(format!(
+                "Result: missing {field}; supply an array of variable names or [name, bit index] references"
+            )))?;
             let values = value.as_array().ok_or_else(|| {
                 PecosError::Input(format!(
-                    "Result: invalid {field} {value}; supply an array of variable names"
+                    "Result: invalid {field} {value}; supply an array of variable references"
                 ))
             })?;
-            values
-                .iter()
-                .map(|value| {
-                    value.as_str().ok_or_else(|| {
-                        PecosError::Input(format!(
-                            "Result: invalid {field} entry {value}; \
-                         supply a variable name as a string"
-                        ))
-                    })
-                })
-                .collect()
+            values.iter().map(|value| {
+                let arg = serde_json::from_value::<super::ast::ArgItem>(value.clone()).map_err(|_| PecosError::Input(format!(
+                    "Result: invalid {field} entry {value}; supply a variable name or [name, bit index]"
+                )))?;
+                super::environment::ResultReference::from_arg(&arg, field)?;
+                Ok(arg)
+            }).collect()
         };
-        let args = names("args")?;
-        let returns = names("returns")?;
-        super::operations::validate_result_counts(args.len(), returns.len())?;
-        // Validate every source before copying, as the native processor does.
-        for name in &args {
-            self.classical_value(name)?;
-        }
-        for destination in &returns {
-            if self.variable_types.contains_key(*destination)
-                && !self.variable_widths.contains_key(*destination)
-            {
-                return Err(PecosError::Input(format!(
-                    "Result: destination {destination:?} is quantum; use a classical variable or a new export name"
-                )));
+        let args = references("args")?;
+        let returns = references("returns")?;
+        let pairs = self.environment.validate_result(&args, &returns)?;
+        let mut export_names = Vec::new();
+        for (source, destination) in pairs {
+            let mut value = self.classical_value(&source.name)?;
+            let source_info = self.environment.classical_info(&source.name)?.clone();
+            let source_type = Self::storage_type(&source_info);
+            let source_width = if source_info.data_type.is_signed() {
+                source_info.data_type.bit_width()
+            } else {
+                Self::register_width(&source_info)
+            };
+            if source.index.is_none() && destination.index.is_none() {
+                value = self.result_source_bits(value, &source_info, instructions)?;
             }
-        }
-        for (source, destination) in args.into_iter().zip(&returns) {
-            let mut value = self.classical_value(source)?;
-            let source_type = self.variable_types[source].clone();
-            let source_width = self.variable_widths[source];
-            let value_type = self
-                .variable_types
-                .entry((*destination).to_string())
-                .or_insert(source_type)
-                .clone();
-            let width = *self
-                .variable_widths
-                .entry((*destination).to_string())
-                .or_insert(source_width);
-            if width < source_width {
+            if let Some(index) = source.index {
+                let index = u32::try_from(index).map_err(|_| {
+                    PecosError::Input(format!(
+                        "Result: bit index {index} is too large; use an index below {source_width}"
+                    ))
+                })?;
+                value = self.append_classical(
+                    ClassicalOp::LShr(index),
+                    vec![value],
+                    &source_type,
+                    instructions,
+                )?;
+            }
+            if source.index.is_some() || destination.index.is_some() {
+                let one = self.append_classical(
+                    ClassicalOp::ConstInt(1),
+                    vec![],
+                    &source_type,
+                    instructions,
+                )?;
+                value = self.append_classical(
+                    ClassicalOp::And,
+                    vec![value, one],
+                    &source_type,
+                    instructions,
+                )?;
+            }
+            self.environment
+                .prepare_result_destination(&source, &destination)?;
+            let destination_info = self.environment.classical_info(&destination.name)?;
+            let value_type = Self::storage_type(destination_info);
+            let width = Self::register_width(destination_info);
+            if let Some(index) = destination.index {
+                let current = if self.variable_map.contains_key(&destination.name) {
+                    self.classical_value(&destination.name)?
+                } else {
+                    self.append_classical(
+                        ClassicalOp::ConstInt(0),
+                        vec![],
+                        &value_type,
+                        instructions,
+                    )?
+                };
+                let bit_index = u32::try_from(index).map_err(|_| {
+                    PecosError::Input(format!(
+                        "Result: bit index {index} is too large; use an index below {width}"
+                    ))
+                })?;
+                value = self.replace_bit(
+                    current,
+                    &BitIndexedWrite {
+                        bit_index,
+                        ssa_value: value,
+                    },
+                    &value_type,
+                    instructions,
+                )?;
+            } else if width < source_width {
                 let mask = i64::from_ne_bytes(((1_u64 << width) - 1).to_ne_bytes());
                 let mask = self.append_classical(
                     ClassicalOp::ConstInt(mask),
@@ -759,10 +837,10 @@ impl ImprovedConverter {
                     instructions,
                 )?;
             }
-            self.variable_map
-                .insert((*destination).to_string(), value.id);
+            self.variable_map.insert(destination.name.clone(), value.id);
+            export_names.push(destination.name);
         }
-        Ok(returns.into_iter().map(str::to_string).collect())
+        Ok(export_names)
     }
 }
 
@@ -800,7 +878,12 @@ mod tests {
             let before = (
                 converter.next_ssa_id,
                 converter.variable_map.clone(),
-                converter.variable_types.clone(),
+                converter
+                    .environment
+                    .get_all_variables()
+                    .iter()
+                    .map(|info| (info.name.clone(), info.data_type.clone(), info.size))
+                    .collect::<Vec<_>>(),
             );
             let error = converter
                 .convert_operation(&declaration(second, "a"))
@@ -825,7 +908,12 @@ mod tests {
                 (
                     converter.next_ssa_id,
                     converter.variable_map.clone(),
-                    converter.variable_types.clone()
+                    converter
+                        .environment
+                        .get_all_variables()
+                        .iter()
+                        .map(|info| (info.name.clone(), info.data_type.clone(), info.size))
+                        .collect::<Vec<_>>()
                 ),
                 before,
                 "rejection must preserve SSA allocation and type state"

@@ -47,6 +47,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- PHIR measurement destinations must be declared classical registers. The native
+  engine (including `sim(PhirJson(...))` and `PhirJsonEngine`) no longer creates
+  undeclared destinations. Both HybridEngine interpreters raise `ValueError`
+  rather than `KeyError` for undeclared measurement registers, and reject writes
+  outside the declared size instead of dropping the bit. Signed register sizes
+  exclude the sign bit from measurement destinations.
+- Result rejects quantum destinations, unknown classical sources and out-of-range
+  indexed references with named errors. Declare classical sources and use a
+  classical destination or a new export name.
+
 - `sim(PhirJson(...))` and `PhirJsonEngine` reject repeated qubit IDs within
   one qop and incorrect angle counts, including angles on gates that take none
   (for example, H with angles). Put sequential uses of a qubit in separate qops
@@ -187,6 +197,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- Both PHIR interpreters preserve indexed Result sources and destinations and
+  narrow whole-register copies to the destination width. Indexed copies no
+  longer disappear or copy the entire register.
+
 - `QuantumCircuit.to_phir_json()` merges consecutive quantum operations only
   when all targets are disjoint. Repeated H/Measure operations and CX ladders
   retain their order and measurement destinations across ticks. Compaction no
@@ -218,6 +232,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
+
+- Native PHIR-JSON measurements no longer create undeclared destination
+  registers. Native execution, the Rust interpreter and JSON-to-module conversion
+  reject unknown classical destinations and bit indices outside the declared
+  size, including a signed register's sign-bit position. Declare measurement
+  registers with `cvar_define` and use indices below their declared size.
+- Result rejects quantum destinations, unknown classical sources and indexed
+  references outside the declared size with named errors. This also prevents
+  indexed writes from silently disappearing beyond a destination's width.
+- JSON-to-module exports retain register widths: exports above 32 bits use U64,
+  and programs without Result export all declared classical registers.
 
 - The native PHIR-JSON engine rejects repeated qubit IDs within one qop,
   incorrect angle counts (including H with angles), and two-qubit argument
@@ -383,6 +408,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
+- The PHIR processor stores U8/U16 integer results and evaluates their shifts
+  and bitwise operations. JSON-to-module measurements and Result narrowing now
+  work for every supported classical type, including u8/u16 and bool.
+- JSON-to-module conversion supports the spec's indexed Result sources and
+  destinations. Native execution and the Rust interpreter share Result copying
+  and validation, preserving bit indices, source order and destination widths.
+  Chained copies through signed registers retain the native backing-bit pattern
+  when widened; Python copies follow the same rule.
+- The converter uses one register metadata store for type and declared size;
+  signed measurement bounds no longer include the extra sign bit.
+
 - JSON-to-module conversion splits multi-entry Results into individual named
   exports, preserving copy order, register widths and values captured before
   later measurements. Repeated bit writes replace earlier bits, including zero.
@@ -395,8 +431,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   share validation and actionable errors for malformed two-qubit argument groups
   (including RXYXY2Q) and repeated qubit IDs. RXYXY2Q gate validation now runs at
   execution/conversion, like other gates, rather than during AST deserialization.
-- JSON-to-module Result conversion rejects nonstring argument and destination
-  entries instead of silently dropping them, and requires args/returns arrays.
+- JSON-to-module Result conversion rejects entries that are neither register
+  names nor `[name, bit]` references instead of silently dropping them, and
+  requires args/returns arrays.
   Unsupported block, machine and meta
   operation names are printed without JSON quotes.
 

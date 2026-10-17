@@ -498,26 +498,33 @@ class PhirClassicalInterpreter:
 
         elif op.name == "Result":
             validate_phir_result_counts(len(op.args), len(op.returns or []))
-            # The "Result" instruction maps internal register names to external ones
-            # For example: {"cop": "Result", "args": ["m"], "returns": ["c"]}
-            # maps the "m" register to "c" for user-facing results
-            for src_reg, dst_reg in zip(op.args, op.returns, strict=False):
-                if isinstance(src_reg, str) and src_reg in self.csym2id:
-                    # If source register exists, copy its value to the destination register
-                    src_id = self.csym2id[src_reg]
-                    src_val = self.cenv[src_id]
-                    src_size = self.cvar_meta[src_id].size
-                    src_type = self.cvar_meta[src_id].data_type
-
-                    # Create destination register if it doesn't exist yet
-                    if dst_reg not in self.csym2id:
-                        # Use the correct method to create a new variable
-                        dtype = data_type_map[src_type]
-                        self.add_cvar(dst_reg, dtype, src_size)
-
-                    # Copy the value
-                    dst_id = self.csym2id[dst_reg]
-                    self.cenv[dst_id] = src_val
+            sources = [self._result_reference(ref) for ref in op.args]
+            destinations = [self._result_reference(ref) for ref in op.returns]
+            for name, index in sources:
+                self._classical_meta(name)
+                self._check_result_index(name, index)
+            for name, index in destinations:
+                if name in self.program.qvar_meta:
+                    msg = (
+                        f"PHIR interpreter failed: Result: destination {json.dumps(name)} is quantum; "
+                        "use a classical variable or a new export name"
+                    )
+                    raise ValueError(msg)
+                self._check_result_index(name, index)
+            for (source, source_index), (destination, destination_index) in zip(sources, destinations, strict=True):
+                source_dtype = self.cid2dtype[self.csym2id[source]]
+                value = int(self.get_cval(source)) & ((1 << (source_dtype.itemsize * 8)) - 1)
+                if source_index is not None:
+                    value = (value >> source_index) & 1
+                if destination not in self.csym2id:
+                    if destination_index is None:
+                        meta = self._classical_meta(source)
+                        self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
+                    else:
+                        self.add_cvar(destination, data_type_map["u64"], max(32, destination_index + 1))
+                self._check_result_index(destination, destination_index)
+                target = destination if destination_index is None else (destination, destination_index)
+                self.assign_int(target, value)
 
         elif isinstance(op, pt.opt.FFCall):
             args = []
@@ -546,10 +553,53 @@ class PhirClassicalInterpreter:
             msg = f"Unsupported COp: {op}"
             raise Exception(msg)
 
+    def _classical_meta(self, name: str) -> pt.data.CVarDefine:
+        """Resolve a declared classical Result or measurement register."""
+        if name not in self.csym2id:
+            msg = (
+                f"PHIR interpreter failed: Result or measurement: unknown classical variable {json.dumps(name)}; "
+                "declare it with cvar_define before use"
+            )
+            raise ValueError(msg)
+        return self.cvar_meta[self.csym2id[name]]
+
+    @staticmethod
+    def _result_reference(reference: str | list | tuple) -> tuple[str, int | None]:
+        """Decode whole-register and bit references without discarding the index."""
+        if isinstance(reference, str):
+            return reference, None
+        if (
+            isinstance(reference, list | tuple)
+            and len(reference) == 2
+            and isinstance(reference[0], str)
+            and isinstance(reference[1], int)
+        ):
+            return reference[0], reference[1]
+        msg = f"Result: invalid reference {reference!r}; supply a variable name or [name, bit index]"
+        raise TypeError(msg)
+
+    def _check_result_index(self, name: str, index: int | None) -> None:
+        """Check an indexed Result against declared storage or a new u64 destination."""
+        size = self._classical_meta(name).size if name in self.csym2id else 64
+        if index is not None and not 0 <= index < size:
+            msg = (
+                f"PHIR interpreter failed: Result: bit index {index} is invalid for register {json.dumps(name)} "
+                f"of declared size {size}; use an index below {size}"
+            )
+            raise ValueError(msg)
+
     def receive_results(self, qsim_results: list[dict]) -> None:
         """Receive measurement results and assign as needed."""
         for meas in qsim_results:
             for cvar, val in meas.items():
+                name, index = self._result_reference(cvar)
+                meta = self._classical_meta(name)
+                if index is not None and not 0 <= index < meta.size:
+                    msg = (
+                        f"PHIR interpreter failed: Measurement write {name}[{index}] is out of range "
+                        f"for a register of declared size {meta.size}; use an index below {meta.size}"
+                    )
+                    raise ValueError(msg)
                 self.assign_int(cvar, val)
 
     def results(self, *, return_int: bool = True) -> dict:

@@ -524,13 +524,14 @@ impl PhirClassicalInterpreter {
     /// The Environment's `BitValue` storage automatically masks to the declared
     /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
-        // Assigning a measurement result to an undeclared variable is an error
-        // (matching Python's `csym2id[cvar]` lookup), not a silent no-op.
+        // Measurement destinations must already be declared classical registers.
+        self.environment.classical_info(name)?;
         self.environment.set_raw(name, val)
     }
 
     /// Assign a bit value to a specific bit of a classical variable.
     fn assign_int_bit(&mut self, name: &str, idx: usize, val: i64) -> Result<(), PecosError> {
+        self.environment.validate_measurement_write(name, idx)?;
         self.environment.set_bit(name, idx, (val & 1) != 0)
     }
 
@@ -594,28 +595,7 @@ impl PhirClassicalInterpreter {
                 }
             }
             "Result" => {
-                super::operations::validate_result_counts(args.len(), returns.len())?;
-                // Map source register to destination register
-                for (src_arg, dst_arg) in args.iter().zip(returns.iter()) {
-                    let src_name = match src_arg {
-                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
-                        _ => {
-                            return Err(PecosError::Input(
-                                "Result source must be a variable".to_string(),
-                            ));
-                        }
-                    };
-                    let dst_name = match dst_arg {
-                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
-                        _ => {
-                            return Err(PecosError::Input(
-                                "Result destination must be a variable".to_string(),
-                            ));
-                        }
-                    };
-                    // Copy variable value from source to destination
-                    self.environment.copy_variable(&src_name, &dst_name)?;
-                }
+                self.environment.apply_result(args, returns)?;
             }
             "ffcall" => {
                 let func_name = function

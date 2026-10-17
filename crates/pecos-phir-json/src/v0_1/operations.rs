@@ -1156,12 +1156,7 @@ impl OperationProcessor {
         // For most operations, validate all variable accesses
         if cop == "Result" {
             validate_result_counts(args.len(), returns.len())?;
-            // For Result operation, only validate the source variables (args)
-            // The return variables are outputs and don't need to be defined
-            for arg in args {
-                let (var, idx) = extract_var_idx(arg)?;
-                self.validate_variable_access(&var, idx)?;
-            }
+            self.environment.validate_result(args, returns)?;
         } else if cop == "ffcall" {
             debug!("Processing ffcall operation: {:?}", ops.get(current_op));
         } else if cop == "=" {
@@ -1263,7 +1258,7 @@ impl OperationProcessor {
             );
 
             // Use our improved method that handles bit indexing and uses the environment
-            self.process_result_op(args, returns)?;
+            self.environment.apply_result(args, returns)?;
 
             // Return true to indicate this operation was handled.
             return Ok(true);
@@ -1729,31 +1724,8 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         log::debug!("PHIR: Storing measurement result {var_name}[{var_idx}] = {outcome}");
 
-        // Step 1: Ensure the main variable exists in the environment with appropriate size
-        if !self.environment.has_variable(var_name) {
-            // Determine appropriate size (at least large enough to hold this
-            // bit). Measurement registers are unsigned bit collections, so use
-            // an unsigned type -- `u64` is valid for any size up to 64, whereas
-            // a signed `i32` could not hold e.g. bit index 31 (size 32).
-            let var_size = std::cmp::max(var_idx + 1, 32);
-            self.environment
-                .ensure_classical_variable(var_name, DataType::U64, var_size)?;
-            log::debug!("Created variable {var_name} with size {var_size}");
-        }
-
-        // Step 2: Update the specific bit directly. An out-of-range write is a
-        // hard error -- fail fast rather than silently dropping the outcome.
-        // `Environment::set_bit` only bounds-checks the backing integer width
-        // and then re-masks to the declared width, which would silently drop a
-        // bit between the declared size and the backing width -- so check the
-        // declared size here.
-        let declared_size = self.environment.get_variable_info(var_name)?.size;
-        if var_idx >= declared_size {
-            return Err(PecosError::Input(format!(
-                "Measurement write {var_name}[{var_idx}] is out of range for a register of \
-                 declared size {declared_size}"
-            )));
-        }
+        self.environment
+            .validate_measurement_write(var_name, var_idx)?;
         let bit_value = u64::from(outcome != 0);
         self.environment.set_bit(var_name, var_idx, bit_value)?;
         log::debug!("Set bit {var_name}[{var_idx}] = {bit_value} in environment");
@@ -1823,146 +1795,6 @@ impl OperationProcessor {
             );
             for (source, dest) in mappings {
                 log::debug!("PHIR: Mapping {source} -> {dest}");
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Helper method to extract variable name and optional index from an argument
-    fn extract_arg_info(arg: &ArgItem) -> Result<(String, Option<usize>), PecosError> {
-        match arg {
-            ArgItem::Simple(name) => Ok((name.clone(), None)),
-            ArgItem::Indexed((name, idx)) => Ok((name.clone(), Some(*idx))),
-            _ => Err(PecosError::Input(format!(
-                "Invalid argument for Result operation: {arg:?}"
-            ))),
-        }
-    }
-
-    /// Get a variable value from the environment
-    ///
-    /// This simplified implementation treats the environment as the single source of truth
-    /// for retrieving variable values.
-    fn get_variable_value(&self, var_name: &str, index: Option<usize>) -> Result<u64, PecosError> {
-        log::debug!("Getting variable value for {var_name}[{index:?}]");
-
-        // Ensure the variable exists in the environment
-        if !self.environment.has_variable(var_name) {
-            return Err(PecosError::Input(format!(
-                "Variable not found in environment: {var_name}[{index:?}]"
-            )));
-        }
-
-        // Handle bit access if an index is provided
-        if let Some(idx) = index {
-            // Try to get the specific bit using the environment's bit accessor
-            match self.environment.get_bit(var_name, idx) {
-                Ok(bit_value) => {
-                    log::debug!("Found bit value in environment: {var_name}[{idx}] = {bit_value}");
-                    return Ok(u64::from(bit_value.0));
-                }
-                Err(_) => {
-                    // Fall back to extracting bit from full u64 value
-                    if let Some(full_val) = self.environment.get(var_name) {
-                        let raw = full_val.as_u64();
-                        let bit_value = (raw >> idx) & 1;
-                        log::debug!("Extracted bit from variable: {var_name}[{idx}] = {bit_value}");
-                        return Ok(bit_value);
-                    }
-                }
-            }
-            // If we couldn't get the bit, return an error
-            return Err(PecosError::Input(format!(
-                "Could not access bit {var_name}[{idx}] in environment"
-            )));
-        }
-
-        // Handle whole variable access
-        if let Some(val) = self.environment.get(var_name) {
-            log::debug!("Got value from environment: {var_name} = {val}");
-            return Ok(val.as_u64());
-        }
-
-        // If we get here, the variable exists but has no value
-        Err(PecosError::Input(format!(
-            "Variable exists in environment but has no value: {var_name}"
-        )))
-    }
-
-    /// Process a Result operation which maps source variables to destination variables
-    ///
-    /// This method:
-    /// 1. Creates mappings between source and destination variables in the environment
-    /// 2. Gets values from the source variables
-    /// 3. Stores values in the destination variables, handling both whole variables and bit access
-    fn process_result_op(
-        &mut self,
-        args: &[ArgItem],
-        returns: &[ArgItem],
-    ) -> Result<(), PecosError> {
-        log::debug!(
-            "Processing Result operation with {} args and {} returns",
-            args.len(),
-            returns.len()
-        );
-
-        // Process each source -> destination mapping
-        for (i, src) in args.iter().enumerate() {
-            if i < returns.len() {
-                let dst = &returns[i];
-
-                // Extract source and destination information
-                let (src_name, src_index) = Self::extract_arg_info(src)?;
-                let (dst_name, dst_index) = Self::extract_arg_info(dst)?;
-
-                log::debug!(
-                    "Result mapping: {src_name}[{src_index:?}] -> {dst_name}[{dst_index:?}]"
-                );
-
-                // Get the source value from the environment (single source of truth).
-                let value = self.get_variable_value(&src_name, src_index)?;
-
-                log::debug!("Got value for {src_name}: {value}");
-
-                // Create destination variable if needed
-                if !self.environment.has_variable(&dst_name) {
-                    let (var_type, var_size) = if let Some(idx) = dst_index {
-                        // An indexed destination is an unsigned bit collection;
-                        // it must be wide enough for `idx` regardless of the
-                        // source's type/size (inheriting a small or signed
-                        // source would drop the bit).
-                        (DataType::U64, std::cmp::max(idx + 1, 32))
-                    } else {
-                        // Whole-register copy: mirror the source, else default.
-                        self.environment
-                            .get_variable_info_opt(&src_name)
-                            .map_or((DataType::U64, 32), |info| {
-                                (info.data_type.clone(), info.size)
-                            })
-                    };
-                    self.environment
-                        .ensure_classical_variable(&dst_name, var_type, var_size)?;
-                }
-
-                // Store the value in the destination, failing loudly on error
-                // (e.g. a bit index that does not fit the backing type).
-                if let Some(idx) = dst_index {
-                    self.environment.set_bit(&dst_name, idx, value & 1)?;
-                    log::debug!("Set bit {dst_name}[{idx}] = {}", value & 1);
-                } else {
-                    self.environment.set(&dst_name, value)?;
-                    log::debug!("Set variable {dst_name} = {value}");
-                }
-
-                // Export the destination register, which now holds the copied
-                // (whole-register `set`) or accumulated (indexed `set_bit`)
-                // value. Measurement ordering is handled by the engine (classical
-                // ops are deferred until batch measurements are applied), so the
-                // destination is correct at this point -- mapping it to itself is
-                // correct even when multiple Results (whole-register and/or
-                // indexed) target the same destination.
-                let _ = self.environment.add_mapping(&dst_name, &dst_name);
             }
         }
 

@@ -178,8 +178,13 @@ fn rxyxy2q_requires_pairs_on_every_path() {
 }
 
 #[test]
-fn result_rejects_non_string_arguments() {
-    for value in [json!(7), json!(null), json!(["q", 0]), json!({"bad":true})] {
+fn result_rejects_invalid_references() {
+    for value in [
+        json!(7),
+        json!(null),
+        json!(["q", "bad"]),
+        json!({"bad":true}),
+    ] {
         let source = program(&json!({"cop":"Result","args":[value],"returns":["out"]}));
         let error = phir_json_to_module(&source).unwrap_err().to_string();
         assert!(
@@ -268,5 +273,105 @@ fn result_counts_are_validated_before_conversion_or_execution() {
             error.contains("Result") && error.contains("supply") && error.contains("counts"),
             "{error}"
         );
+    }
+}
+
+#[test]
+fn measurement_destinations_are_declared_and_within_declared_size() {
+    use pecos_phir_json::v0_1::classical_interpreter::{MeasKey, PhirClassicalInterpreter};
+    for (name, dtype, bit, message) in [
+        (
+            "s",
+            "i32",
+            3,
+            "Measurement write s[3] is out of range for a register of declared size 3",
+        ),
+        (
+            "s",
+            "u32",
+            3,
+            "Measurement write s[3] is out of range for a register of declared size 3",
+        ),
+        (
+            "missing",
+            "u32",
+            0,
+            "unknown classical variable \"missing\"",
+        ),
+    ] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","variable":"q","size":1},
+            {"data":"cvar_define","data_type":dtype,"variable":"s","size":3},
+            {"qop":"Measure","args":[["q",0]],"returns":[[name,bit]]}
+        ]})
+        .to_string();
+        let mut native = PhirJsonEngine::from_json(&source).unwrap();
+        let native_error = match native.generate_commands() {
+            Err(error) => error,
+            Ok(commands) => {
+                use pecos_engines::Engine;
+                let outcomes = pecos_engines::StateVecEngine::new(1)
+                    .process(commands)
+                    .unwrap();
+                native.handle_measurements(outcomes).unwrap_err()
+            }
+        }
+        .to_string();
+        let mut interpreter = PhirClassicalInterpreter::new();
+        interpreter.init(&source, None).unwrap();
+        let error = interpreter
+            .receive_results(&[[(MeasKey::Bit(name.into(), bit), 1)].into()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(message), "{error}");
+        assert_eq!(error, native_error);
+        assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
+    }
+}
+
+#[test]
+fn result_quantum_destinations_have_the_same_named_error() {
+    let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+        {"data":"qvar_define","variable":"q","size":1},
+        {"data":"cvar_define","data_type":"u32","variable":"a","size":3},
+        {"cop":"Result","args":["a"],"returns":["q"]}
+    ]})
+    .to_string();
+    let error = native_error(&source);
+    assert!(
+        error.contains("Result: destination \"q\" is quantum"),
+        "{error}"
+    );
+    assert_eq!(error, interpreter_error(&source));
+    assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
+}
+
+#[test]
+fn result_reference_errors_agree_across_rust_paths() {
+    for (args, returns, message) in [
+        (
+            json!(["unknown"]),
+            json!(["out"]),
+            "unknown classical variable \"unknown\"",
+        ),
+        (json!([["a", 3]]), json!(["out"]), "bit index 3"),
+        (json!(["a"]), json!([["a", 3]]), "bit index 3"),
+        (json!(["a"]), json!([["out", 64]]), "bit index 64"),
+        (
+            json!(["a"]),
+            json!([["q", 0]]),
+            "destination \"q\" is quantum",
+        ),
+    ] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","variable":"q","size":1},
+            {"data":"cvar_define","data_type":"i32","variable":"a","size":3},
+            {"cop":"Result","args":args,"returns":returns}
+        ]})
+        .to_string();
+        let error = native_error(&source);
+        assert!(error.contains(message), "{error}");
+        assert_eq!(error, interpreter_error(&source));
+        assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
     }
 }

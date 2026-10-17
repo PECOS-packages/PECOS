@@ -273,3 +273,149 @@ fn result_copies_preserve_widths_and_later_bit_writes() {
         assert_eq!(converted.data["small"].as_u32(), Some(0));
     }
 }
+
+#[test]
+fn measurement_exports_cover_every_classical_storage_type() {
+    for (dtype, size) in [
+        ("i8", 7),
+        ("i16", 15),
+        ("i32", 31),
+        ("i64", 63),
+        ("u8", 4),
+        ("u8", 8),
+        ("u16", 8),
+        ("u16", 16),
+        ("u32", 32),
+        ("u64", 64),
+        ("bool", 1),
+    ] {
+        for explicit_result in [false, true] {
+            let mut ops = vec![
+                json!({"data":"qvar_define","variable":"q","size":1}),
+                json!({"data":"cvar_define","data_type":dtype,"variable":"a","size":size}),
+                json!({"data":"cvar_define","data_type":dtype,"variable":"small","size":1}),
+                json!({"qop":"X","args":[["q",0]]}),
+                json!({"qop":"Measure","args":[["q",0]],"returns":[["a",size-1]]}),
+            ];
+            if explicit_result {
+                ops.push(json!({"cop":"Result","args":["a","a"],"returns":["out","small"]}));
+            }
+            let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":ops}).to_string();
+            let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+            let converted =
+                run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+            for name in if explicit_result {
+                ["out", "small"]
+            } else {
+                ["a", "small"]
+            } {
+                let expected =
+                    u64::from_str_radix(&native.register_to_binary_string(name).unwrap(), 2)
+                        .unwrap();
+                let actual = match converted.data[name] {
+                    pecos_engines::Data::U32(v) => u64::from(v),
+                    pecos_engines::Data::U64(v) => v,
+                    ref value => panic!("unexpected export {value:?}"),
+                };
+                assert_eq!(actual, expected, "{dtype} Result={explicit_result}, {name}");
+            }
+        }
+    }
+}
+
+#[test]
+fn indexed_results_preserve_bits_and_destination_values() {
+    for result in [
+        json!({"cop":"Result","args":[["a",2]],"returns":["out"]}),
+        json!({"cop":"Result","args":[["a",2],["a",0]],"returns":[["out",40],["out",1]]}),
+        json!({"cop":"Result","args":[["a",2],["a",1]],"returns":[["a",0],["a",2]]}),
+        json!({"cop":"Result","args":["a"],"returns":[["out",3]]}),
+    ] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","variable":"q","size":1},
+            {"data":"cvar_define","data_type":"u8","variable":"a","size":4},
+            {"qop":"X","args":[["q",0]]},
+            {"qop":"Measure","args":[["q",0]],"returns":[["a",2]]}, result
+        ]})
+        .to_string();
+        let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+        let converted = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+        for (name, value) in &converted.data {
+            let expected =
+                u64::from_str_radix(&native.register_to_binary_string(name).unwrap(), 2).unwrap();
+            let actual = match value {
+                pecos_engines::Data::U32(v) => u64::from(*v),
+                pecos_engines::Data::U64(v) => *v,
+                other => panic!("unexpected export {other:?}"),
+            };
+            assert_eq!(actual, expected, "{source}");
+        }
+    }
+}
+
+#[test]
+fn interpreter_indexed_results_match_native() {
+    use pecos_phir_json::v0_1::{
+        ast::ArgItem,
+        classical_interpreter::{MeasKey, PhirClassicalInterpreter, ResultValue},
+    };
+    let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+        {"data":"cvar_define","data_type":"u8","variable":"a","size":4},
+        {"data":"cvar_define","data_type":"u8","variable":"small","size":1}
+    ]})
+    .to_string();
+    let mut interpreter = PhirClassicalInterpreter::new();
+    interpreter.init(&source, None).unwrap();
+    interpreter
+        .receive_results(&[[(MeasKey::Bit("a".into(), 2), 1)].into()])
+        .unwrap();
+    for (args, returns) in [
+        (
+            json!([["a", 2], ["a", 0]]),
+            json!([["out", 40], ["out", 1]]),
+        ),
+        (json!([["a", 2], ["a", 1]]), json!([["a", 0], ["a", 2]])),
+        (json!(["a"]), json!(["small"])),
+    ] {
+        let args: Vec<ArgItem> = serde_json::from_value(args).unwrap();
+        let returns: Vec<ArgItem> = serde_json::from_value(returns).unwrap();
+        interpreter
+            .handle_cop("Result", &args, &returns, &None)
+            .unwrap();
+    }
+    let results = interpreter.results(true);
+    for (name, expected) in [("a", 1), ("small", 1), ("out", 1_u64 << 40)] {
+        match &results[name] {
+            ResultValue::UInt(value, _) => assert_eq!(*value, expected, "{name}"),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn result_copies_preserve_signed_backing_bits_when_widened() {
+    for dtype in ["i8", "i16", "i32", "i64"] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","variable":"q","size":1},
+            {"data":"cvar_define","data_type":"u8","variable":"a","size":4},
+            {"data":"cvar_define","data_type":dtype,"variable":"s","size":3},
+            {"data":"cvar_define","data_type":"u64","variable":"out","size":64},
+            {"qop":"X","args":[["q",0]]},
+            {"qop":"Measure","args":[["q",0]],"returns":[["a",3]]},
+            {"cop":"Result","args":["a","s"],"returns":["s","out"]}
+        ]})
+        .to_string();
+        let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+        let converted = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+        for name in ["s", "out"] {
+            let expected =
+                u64::from_str_radix(&native.register_to_binary_string(name).unwrap(), 2).unwrap();
+            let actual = match converted.data[name] {
+                pecos_engines::Data::U32(v) => u64::from(v),
+                pecos_engines::Data::U64(v) => v,
+                ref other => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(actual, expected, "{dtype} {name}");
+        }
+    }
+}

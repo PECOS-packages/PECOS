@@ -842,8 +842,8 @@ def test_assign_to_undeclared_variable_raises_key_error(interp: str, ops: list) 
 
 
 @pytest.mark.parametrize("interp", ["python", "rust"])
-def test_measure_to_undeclared_variable_raises_key_error(interp: str) -> None:
-    """Measuring into an undeclared classical variable raises ``KeyError`` in both interpreters."""
+def test_measure_to_undeclared_variable_raises_value_error(interp: str) -> None:
+    """Measuring into an undeclared classical variable raises ``ValueError`` in both interpreters."""
     phir = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
@@ -852,7 +852,7 @@ def test_measure_to_undeclared_variable_raises_key_error(interp: str) -> None:
             {"qop": "Measure", "args": [["q", 0]], "returns": [["undeclared", 0]]},
         ],
     }
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match=r"unknown classical variable.*undeclared"):
         HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
 
 
@@ -1418,7 +1418,7 @@ def test_interpreters_reject_invalid_quantum_arguments_identically(op: dict, mes
     assert messages[0] == messages[1]
 
 
-@pytest.mark.parametrize(("args", "returns"), [(["a"], []), ([], []), (["a", "a"], ["x"])])
+@pytest.mark.parametrize(("args", "returns"), [(["a"], []), ([], []), (["a", "a"], ["x"]), (["a"], ["x", "y"])])
 def test_interpreters_reject_invalid_result_counts_identically(args, returns) -> None:
     """Neither interpreter silently truncates a Result mapping."""
     source = _make_classical_program(
@@ -1429,6 +1429,91 @@ def test_interpreters_reject_invalid_result_counts_identically(args, returns) ->
     for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
         interpreter.phir_validate = False
         with pytest.raises(ValueError, match="Result: invalid counts") as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize(("dtype", "size", "bit"), [("i32", 3, 3), ("u32", 3, 3), ("u8", 4, 4)])
+def test_measurement_declared_bounds_match(dtype: str, size: int, bit: int) -> None:
+    """Neither interpreter may discard a measurement beyond the declared bits."""
+    source = _make_classical_program([("a", dtype, size)], [])
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.init(source)
+        with pytest.raises(ValueError, match=f"Measurement write a\\[{bit}\\].*declared size {size}") as error:
+            interpreter.receive_results([{("a", bit): 1}])
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize("destination", ["q", ["q", 0]])
+def test_result_rejects_quantum_destinations(destination) -> None:
+    """Result exports must not overwrite quantum declarations."""
+    source = _make_classical_program(
+        [("a", "u32", 3)],
+        [
+            {"data": "qvar_define", "variable": "q", "size": 1},
+            {"cop": "Result", "args": ["a"], "returns": [destination]},
+        ],
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match='Result: destination "q" is quantum') as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+def test_result_indices_and_narrowing_preserve_values() -> None:
+    """Indexed copies extract/replace bits; whole copies honor destination widths."""
+    source = _make_classical_program(
+        [("a", "u8", 4), ("small", "u8", 1)],
+        [
+            {"cop": "=", "args": [4], "returns": ["a"]},
+            {"cop": "Result", "args": [["a", 2], ["a", 0]], "returns": [["out", 40], ["out", 1]]},
+            {"cop": "Result", "args": [["a", 2], ["a", 1]], "returns": [["a", 0], ["a", 2]]},
+            {"cop": "Result", "args": ["a"], "returns": ["small"]},
+        ],
+    )
+    python, rust = _run_classical(source)
+    assert python == rust == {"a": 1, "small": 1, "out": 1 << 40}
+
+
+@pytest.mark.parametrize(("dtype", "width"), [("i8", 8), ("i16", 16), ("i32", 32), ("i64", 64)])
+def test_result_signed_sources_copy_native_backing_bits(dtype: str, width: int) -> None:
+    """Widening a signed Result source copies its backing type's raw bits."""
+    source = _make_classical_program(
+        [("a", "u8", 4), ("s", dtype, 3), ("out", "u64", 64)],
+        [
+            {"cop": "=", "args": [8], "returns": ["a"]},
+            {"cop": "Result", "args": ["a", "s"], "returns": ["s", "out"]},
+        ],
+    )
+    python, rust = _run_classical(source)
+    assert python == rust == {"a": 8, "s": -8, "out": (1 << width) - 8}
+
+
+@pytest.mark.parametrize(
+    ("args", "returns", "message"),
+    [
+        (["unknown"], ["out"], 'unknown classical variable "unknown"'),
+        ([["a", 3]], ["out"], "bit index 3"),
+        (["a"], [["a", 3]], "bit index 3"),
+        (["a"], [["out", 64]], "bit index 64"),
+    ],
+)
+def test_result_reference_errors_match(args, returns, message: str) -> None:
+    """Bad Result references produce the same named, actionable ValueError."""
+    source = _make_classical_program(
+        [("a", "i32", 3)],
+        [{"cop": "Result", "args": args, "returns": returns}],
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match=message) as error:
             HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
         messages.append(str(error.value))
     assert messages[0] == messages[1]

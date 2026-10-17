@@ -242,15 +242,22 @@ including preparations and measurements. Each instruction receives the same
 rotation angles; measurement destinations retain their argument order.
 The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
 Two-qubit argument groups must contain exactly two qubits in the native engine,
-Rust and Python classical interpreters and converter. They share validation of group shapes,
-qubit uniqueness and gate signatures. RXYXY2Q requires paired arguments; its gate
-validation runs during execution/conversion, after structural AST decoding.
+Rust and Python classical interpreters and converter. They share validation of
+group shapes, qubit uniqueness and gate signatures. RXYXY2Q requires paired
+arguments; its gate validation runs during execution/conversion, after structural
+AST decoding.
 
 JSON-to-module conversion supports register declarations, quantum operations
-and Result exports with string variable names. Result args and returns must have
-matching nonzero lengths. Each pair becomes a named Result instruction; copies
+and Result exports with whole-register names or indexed `[name, bit]` references.
+Result args and returns must have matching nonzero lengths. Each pair becomes a named Result instruction; copies
 retain their source-order values even when subsequent measurements overwrite a
-register. Without Result mappings, all declared classical registers are exported.
+register. Indexed sources extract one bit; indexed destinations replace one bit
+without losing the others. Result cannot overwrite quantum registers or read
+unknown sources. Measurement destinations must be declared classical registers,
+and their bit indices must be below the declared size (excluding the sign bit).
+All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
+measurements. Exports use U32 through 32 bits and U64 for wider registers.
+Without Result mappings, all declared classical registers are exported.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
 
 Known limitation ([#1323](https://github.com/PECOS-packages/PECOS/issues/1323)):
@@ -259,9 +266,10 @@ exports all classical registers unless Result mappings select them. Lowering it
 to module Result instructions would select different registers.
 
 The converter rejects blocks such as `qparallel` and `if`, machine/meta operations,
-unsupported data/classical operations and unrecognized operations with a named error. Use the native PHIR-JSON engine for supported PHIR
-programs containing these constructs. Although the module IR has structural
-parallel and conditional forms, its current execution path does not execute
+unsupported data/classical operations and unrecognized operations with a named
+error. Use the native PHIR-JSON engine for supported PHIR programs containing
+these constructs. Although the module IR has structural parallel and conditional
+forms, its current execution path does not execute
 those regions; the converter does not emit programs that would lose their work.
 PHIR comments carry no execution semantics and are ignored.
 

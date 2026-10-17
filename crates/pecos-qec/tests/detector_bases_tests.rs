@@ -48,7 +48,7 @@ fn detector_bases_reject_detectors_without_an_xz_sector() {
     dem.add_detector(detector(1, None));
     assert!(error_text(&dem).contains("detector D1 is undefined or has no fault sector"));
 
-    // A deformed-code family is a valid fault sector but not an X/Z family.
+    // Any other label is a valid fault sector but not an X/Z family.
     dem.detectors[1].fault_sector = Some("XZ-rotated".into());
     assert!(error_text(&dem).contains(r#"detector D1 has fault sector "XZ-rotated""#));
 

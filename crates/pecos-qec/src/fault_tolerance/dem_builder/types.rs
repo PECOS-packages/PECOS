@@ -5308,13 +5308,14 @@ impl DetectorErrorModel {
     /// views in [`pecos_decoder_core::dem_views`].
     ///
     /// The family is read from the detector's fault sector, which CSS
-    /// generators label `"X"` or `"Z"`.
+    /// generators label `"X"` or `"Z"`. For a Clifford-deformed CSS code the
+    /// label is the undeformed family, so the views' initialization basis must
+    /// be given in that frame too.
     ///
     /// # Errors
     /// Returns an invalid-configuration error for an out-of-range id, or for
     /// the first detector id that is undefined, has no fault sector, or has a
-    /// fault sector other than `"X"` or `"Z"` (for example a deformed-code
-    /// family).
+    /// fault sector other than `"X"` or `"Z"`.
     pub fn detector_bases(
         &self,
     ) -> Result<Vec<DetectorBasis>, pecos_decoder_core::errors::DecoderError> {

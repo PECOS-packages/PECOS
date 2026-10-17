@@ -199,10 +199,10 @@ impl GariModel {
 ///
 /// Round one and final readout emit only the initialization-basis family;
 /// intermediate rounds emit X detectors followed by Z detectors. This helper
-/// describes only that canonical layout. PECOS CSS memory circuits interleave
-/// X and Z detectors per check; PECOS-built DEMs carry their mask through the
-/// detector fault sectors (`DetectorErrorModel::detector_bases` in
-/// `pecos-qec`).
+/// describes only that canonical layout. PECOS memory circuits order
+/// detectors differently (the Rust CSS builder interleaves X and Z per check);
+/// PECOS-built DEMs carry their mask through the detector fault sectors
+/// (`DetectorErrorModel::detector_bases` in `pecos-qec`).
 ///
 /// # Panics
 ///

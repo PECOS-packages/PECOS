@@ -12,7 +12,9 @@
 
 //! Component provenance and checked graphs for whole-component window commits.
 
-use super::{StructuredDem, StructuredDemComponent, StructuredDemError, invalid};
+use super::{
+    StructuredDem, StructuredDemComponent, StructuredDemError, invalid, validate_fault_sectors,
+};
 use crate::{DecoderError, DemMatchingGraph, MatchingEdge};
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -182,6 +184,7 @@ impl StructuredDem {
                 "commit-window ranges must be increasing and commit must lie inside rows",
             ));
         }
+        validate_fault_sectors(&self.detector_fault_sectors, self.num_detectors)?;
         let times = self.commit_detector_times()?;
         let columns = self.commit_columns()?;
         let mut local_to_global_detector = Vec::new();
@@ -310,6 +313,10 @@ impl StructuredDem {
             detector_coords: local_to_global_detector
                 .iter()
                 .map(|&d| self.detector_coords[d as usize].clone())
+                .collect(),
+            detector_fault_sectors: local_to_global_detector
+                .iter()
+                .map(|&d| self.detector_fault_sectors[d as usize].clone())
                 .collect(),
             num_detectors: local_to_global_detector.len(),
             num_observables: self.num_observables,

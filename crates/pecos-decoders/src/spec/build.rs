@@ -34,75 +34,20 @@ use crate::{
 #[cfg(feature = "mwpf")]
 use crate::{MwpfConfig as MwpfEngineConfig, MwpfSolverType as MwpfEngineSolverType};
 
-/// Reject a hyperedge model for a decoder that can only represent a graph.
-///
-/// The matching-graph parser drops mechanisms touching three or more detectors,
-/// which would leave the decoder silently scoring against a model the caller
-/// never asked for -- including, in the worst case, one where an observable is
-/// unreachable. Fail at construction and name the remedy instead.
-fn ensure_graphlike_model(spec: &DecoderSpec, dem: &str) -> Result<(), DecoderError> {
-    if !spec.requires_graphlike_model() {
-        return Ok(());
-    }
-    let skipped = count_skipped_hyperedges(dem)?;
-    if skipped > 0 {
+#[cfg(any(feature = "uf", test))]
+use super::config::PecosUfConfig;
+#[cfg(test)]
+use super::prepare::prepare_model;
+use super::prepare::{ProjectionContext, prepare_model_in_context};
+#[cfg(test)]
+use pecos_decoder_core::graphlike_projection::IrreduciblePolicy;
+
+/// Preserve the existing matching-graph checks for Hybrid and beam phase 1.
+fn ensure_graphlike_matching_model(context: &str, dem: &str) -> Result<(), DecoderError> {
+    let count = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?.skipped_hyperedges;
+    if count > 0 {
         return Err(DecoderError::InvalidConfiguration(format!(
-            "{} needs a graphlike model, but this DEM has {skipped} mechanism(s) touching \
-             three or more detectors. Decoding it here would silently ignore them. \
-             {GRAPHLIKE_REMEDY}",
-            family_name(spec),
-        )));
-    }
-    Ok(())
-}
-
-/// The remedy sentence shared by every graphlike-guard error message.
-const GRAPHLIKE_REMEDY: &str = "Pass a decomposed model \
-    (DetectorErrorModel.to_string_terminal_graphlike_decomposed() or \
-    to_string_source_graphlike_decomposed()), or use a decoder that accepts \
-    hyperedges such as bp_osd or tesseract.";
-
-fn count_skipped_hyperedges(dem: &str) -> Result<usize, DecoderError> {
-    Ok(pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?.skipped_hyperedges)
-}
-
-fn ensure_graphlike_structured_model(
-    spec: &DecoderSpec,
-    dem: &StructuredDem,
-) -> Result<(), DecoderError> {
-    if !spec.requires_graphlike_model() {
-        return Ok(());
-    }
-    let skipped = dem
-        .errors
-        .iter()
-        .flat_map(|error| &error.components)
-        .filter(|component| component.detectors.len() > 2)
-        .count();
-    if skipped == 0 {
-        return Ok(());
-    }
-    Err(DecoderError::InvalidConfiguration(format!(
-        "{} needs a graphlike model, but this DEM has {skipped} mechanism(s) touching \
-         three or more detectors. Decoding it here would silently ignore them. \
-         {GRAPHLIKE_REMEDY}",
-        family_name(spec),
-    )))
-}
-
-/// Guard for the hard-coded phase-1 `UfDecoder` inside windowed/beam-search
-/// builds. Those closures do not go through [`build`], so the top-level guard
-/// never sees them, and the top-level model is the wrong thing to check
-/// anyway: windowing can slice a hyperedge into graphlike pieces per window.
-/// Check the exact sub-model the parser is about to truncate.
-#[cfg(feature = "uf")]
-fn ensure_graphlike_submodel(context: &str, sub_dem: &str) -> Result<(), DecoderError> {
-    let skipped = count_skipped_hyperedges(sub_dem)?;
-    if skipped > 0 {
-        return Err(DecoderError::InvalidConfiguration(format!(
-            "{context} builds its phase-1 window decoder from a matching graph, but a window \
-             sub-model has {skipped} mechanism(s) touching three or more detectors. Decoding \
-             it here would silently ignore them. {GRAPHLIKE_REMEDY}",
+            "{context} needs a graphlike model, but this DEM has {count} mechanism(s) touching three or more detectors. Pass a graphlike (^ decomposed) model or use a hyperedge-capable decoder such as bp_osd or tesseract."
         )));
     }
     Ok(())
@@ -112,9 +57,20 @@ pub(super) fn build(
     spec: &DecoderSpec,
     model: &DecodeModel,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    // The graphlike guard runs inside the two building arms, after the
-    // spec/model-kind mismatch arms: a caller who passed the wrong model kind
-    // should hear that, not a remedy for a model the spec would never parse.
+    build_in_context(spec, model, &ProjectionContext::default())
+}
+
+fn build_in_context(
+    spec: &DecoderSpec,
+    model: &DecodeModel,
+    context: &ProjectionContext,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    let prepared = prepare_model_in_context(spec, model, context)?;
+    let model = &prepared.model;
+    #[cfg(test)]
+    if spec.requires_graphlike_model() && spec.irreducible_policy().is_some() {
+        LEAF_MODELS.with(|models| models.borrow_mut().push(model.clone()));
+    }
     let decoder = match (spec, model) {
         (
             DecoderSpec::BeliefMatching(BeliefMatchingConfig {
@@ -123,7 +79,7 @@ pub(super) fn build(
             }),
             DecodeModel::HybridDem { full, decomposed },
         ) => {
-            ensure_graphlike_model(spec, decomposed)?;
+            ensure_graphlike_matching_model("belief_matching_hybrid decomposed model", decomposed)?;
             build_belief_matching_hybrid(full, decomposed)
         }
         (
@@ -142,14 +98,8 @@ pub(super) fn build(
         ) => Err(DecoderError::InvalidConfiguration(
             "belief_matching_hybrid requires DecodeModel::HybridDem".to_string(),
         )),
-        (_, DecodeModel::SingleDem(dem)) => {
-            ensure_graphlike_model(spec, dem)?;
-            build_single(spec, dem)
-        }
-        (_, DecodeModel::StructuredDem(dem)) => {
-            ensure_graphlike_structured_model(spec, dem)?;
-            build_structured_single(spec, dem)
-        }
+        (_, DecodeModel::SingleDem(dem)) => build_single(spec, dem, context),
+        (_, DecodeModel::StructuredDem(dem)) => build_structured_single(spec, dem, context),
         (_, DecodeModel::HybridDem { .. }) => Err(DecoderError::InvalidConfiguration(format!(
             "{} requires DecodeModel::SingleDem or DecodeModel::StructuredDem",
             family_name(spec)
@@ -202,13 +152,17 @@ impl ObservableDecoder for ModelDimensionDecoder {
     }
 }
 
-fn build_single(spec: &DecoderSpec, dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+fn build_single(
+    spec: &DecoderSpec,
+    dem: &str,
+    context: &ProjectionContext,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     match spec {
         DecoderSpec::PyMatching(config) => build_pymatching(dem, config),
         DecoderSpec::Tesseract(config) => build_tesseract(dem, config),
         DecoderSpec::TesseractTrellis(config) => build_tesseract_trellis(dem, config),
         DecoderSpec::KMwpm(config) => build_k_mwpm(dem, *config),
-        DecoderSpec::AStar => build_astar(dem, false),
+        DecoderSpec::AStar(_) => build_astar(dem, false),
         DecoderSpec::AStarFull => build_astar(dem, true),
         DecoderSpec::FusionBlossom(config) => build_fusion_blossom(dem, *config),
         DecoderSpec::PerturbedFusionBlossomCorrelated(config) => {
@@ -220,34 +174,45 @@ fn build_single(spec: &DecoderSpec, dem: &str) -> Result<Box<dyn ObservableDecod
         DecoderSpec::UnionFind => build_union_find(dem),
         DecoderSpec::RelayBp(config) => build_relay_bp(dem, config),
         DecoderSpec::MinSumBp(config) => build_min_sum_bp(dem, config),
-        DecoderSpec::PecosUf(preset) => build_pecos_uf(dem, *preset),
+        DecoderSpec::PecosUf(config) => build_pecos_uf(dem, config.preset),
         DecoderSpec::BeliefMatching(config) => build_belief_matching(dem, config),
         DecoderSpec::Windowed(config) => build_windowed(dem, config),
         DecoderSpec::Mwpf(config) => build_mwpf(dem, config),
-        DecoderSpec::Perturbed(config) => build_perturbed(dem, config),
-        DecoderSpec::BeamSearch(config) => build_beamsearch(dem, config),
-        DecoderSpec::Ensemble(config) => build_ensemble(dem, config),
+        DecoderSpec::Perturbed(config) => build_perturbed(dem, config, &context.inner("perturbed")),
+        DecoderSpec::BeamSearch(config) => build_beamsearch(dem, config, &context.phase2()),
+        DecoderSpec::Ensemble(config) => {
+            build_ensemble(&DecodeModel::SingleDem(dem.to_string()), config, context)
+        }
     }
 }
 
 fn build_structured_single(
     spec: &DecoderSpec,
     dem: &StructuredDem,
+    context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     match spec {
         DecoderSpec::Windowed(config) => build_windowed_structured(dem, config),
-        DecoderSpec::BeamSearch(config) => build_beamsearch_structured(dem, config),
-        _ => build_single(spec, &dem.to_dem_string()),
+        DecoderSpec::BeamSearch(config) => {
+            build_beamsearch_structured(dem, config, &context.phase2())
+        }
+        DecoderSpec::Ensemble(config) => {
+            build_ensemble(&DecodeModel::StructuredDem(dem.clone()), config, context)
+        }
+        DecoderSpec::Perturbed(config) => {
+            build_perturbed_structured(dem, config, &context.inner("perturbed"))
+        }
+        _ => build_single(spec, &dem.to_dem_string(), context),
     }
 }
 
-fn family_name(spec: &DecoderSpec) -> &'static str {
+pub(super) fn family_name(spec: &DecoderSpec) -> &'static str {
     match spec {
         DecoderSpec::PyMatching(_) => "pymatching",
         DecoderSpec::Tesseract(_) => "tesseract",
         DecoderSpec::TesseractTrellis(_) => "tesseract_trellis",
         DecoderSpec::KMwpm(_) => "k_mwpm",
-        DecoderSpec::AStar => "astar",
+        DecoderSpec::AStar(_) => "astar",
         DecoderSpec::AStarFull => "astar_full",
         DecoderSpec::FusionBlossom(_) => "fusion_blossom",
         DecoderSpec::PerturbedFusionBlossomCorrelated(_) => "perturbed_fb_corr",
@@ -1228,14 +1193,6 @@ fn build_windowed_structured(
     dem: &StructuredDem,
     config: &WindowedConfig,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    match &*config.inner {
-        DecoderSpec::PecosUf(PecosUfPreset::Fast) | DecoderSpec::PyMatching(_) => {}
-        inner => {
-            return Err(DecoderError::InvalidConfiguration(format!(
-                "windowed does not support inner {inner:?}; use pecos_uf or pymatching"
-            )));
-        }
-    }
     let decoder = crate::StreamingWindowedDecoder::from_structured_dem(
         dem,
         WindowedEngineConfig {
@@ -1253,9 +1210,13 @@ fn build_window_inner(
     inner: &DecoderSpec,
 ) -> Result<Box<dyn pecos_decoder_core::EdgeDecoder>, DecoderError> {
     match inner {
-        DecoderSpec::PecosUf(PecosUfPreset::Fast) => Ok(Box::new(
-            crate::UfDecoder::from_commit_window(window, crate::UfDecoderConfig::fast())?,
-        )),
+        DecoderSpec::PecosUf(PecosUfConfig {
+            preset: PecosUfPreset::Fast,
+            ..
+        }) => Ok(Box::new(crate::UfDecoder::from_commit_window(
+            window,
+            crate::UfDecoderConfig::fast(),
+        )?)),
         DecoderSpec::PyMatching(config) => build_window_matching(window, config),
         _ => Err(DecoderError::InvalidConfiguration(format!(
             "windowed does not support inner {inner:?}"
@@ -1336,6 +1297,32 @@ fn build_mwpf(
 fn build_perturbed(
     dem: &str,
     config: &PerturbedConfig,
+    context: &ProjectionContext,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    use pecos_decoder_core::perturbed::{PerturbedConfig as CoreConfig, build_perturbed_ensemble};
+
+    let decoder = build_perturbed_ensemble(
+        dem,
+        &CoreConfig {
+            k: config.k,
+            sigma: config.sigma,
+            seed: config.seed,
+        },
+        |member_dem| {
+            build_in_context(
+                &config.inner,
+                &DecodeModel::SingleDem(member_dem.to_string()),
+                context,
+            )
+        },
+    )?;
+    Ok(Box::new(decoder))
+}
+
+fn build_perturbed_structured(
+    dem: &StructuredDem,
+    config: &PerturbedConfig,
+    context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     use pecos_decoder_core::perturbed::{PerturbedConfig as CoreConfig, build_perturbed_ensemble};
 
@@ -1345,8 +1332,12 @@ fn build_perturbed(
         seed: config.seed,
     };
     let inner = config.inner.clone();
-    let decoder = build_perturbed_ensemble(dem, &core_config, |member_dem| {
-        inner.build(&DecodeModel::SingleDem(member_dem.to_string()))
+    let decoder = build_perturbed_ensemble(&dem.to_dem_string(), &core_config, |member_dem| {
+        let mut member = StructuredDem::from_dem_str(member_dem)?;
+        member
+            .detector_fault_sectors
+            .clone_from(&dem.detector_fault_sectors);
+        build_in_context(&inner, &DecodeModel::StructuredDem(member), context)
     })?;
     Ok(Box::new(decoder))
 }
@@ -1355,15 +1346,17 @@ fn build_perturbed(
 fn build_beamsearch(
     dem: &str,
     config: &BeamSearchConfig,
+    context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     let dem = StructuredDem::from_dem_str(dem)?;
-    build_beamsearch_structured(&dem, config)
+    build_beamsearch_structured(&dem, config, context)
 }
 
 #[cfg(feature = "uf")]
 fn build_beamsearch_structured(
     dem: &StructuredDem,
     config: &BeamSearchConfig,
+    context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     let resolved = resolve_beamsearch_config(config);
     let engine_config = BeamSearchEngineConfig {
@@ -1383,10 +1376,12 @@ fn build_beamsearch_structured(
         dem,
         engine_config,
         |sub_dem| {
-            ensure_graphlike_submodel("beamsearch", sub_dem)?;
+            ensure_graphlike_matching_model("beamsearch phase-1 window", sub_dem)?;
             crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
         },
-        Some(|model: &StructuredDem| phase2.build(&DecodeModel::StructuredDem(model.clone()))),
+        Some(|model: &StructuredDem| {
+            build_in_context(&phase2, &DecodeModel::StructuredDem(model.clone()), context)
+        }),
     )?;
     Ok(Box::new(decoder))
 }
@@ -1395,6 +1390,7 @@ fn build_beamsearch_structured(
 fn build_beamsearch(
     _dem: &str,
     _config: &BeamSearchConfig,
+    _context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     unavailable("beamsearch", "uf")
 }
@@ -1403,13 +1399,15 @@ fn build_beamsearch(
 fn build_beamsearch_structured(
     _dem: &StructuredDem,
     _config: &BeamSearchConfig,
+    _context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     unavailable("beamsearch", "uf")
 }
 
 fn build_ensemble(
-    dem: &str,
+    model: &DecodeModel,
     config: &EnsembleConfig,
+    context: &ProjectionContext,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     if config.members.is_empty() {
         return Err(DecoderError::InvalidConfiguration(
@@ -1419,7 +1417,8 @@ fn build_ensemble(
     let members = config
         .members
         .iter()
-        .map(|member| member.build(&DecodeModel::SingleDem(dem.to_string())))
+        .enumerate()
+        .map(|(index, member)| build_in_context(member, model, &context.member(index)))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Box::new(
         pecos_decoder_core::ensemble::EnsembleDecoder::new(members),
@@ -1430,6 +1429,7 @@ fn build_ensemble(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "uf")]
     const HYPEREDGE_DEM: &str = "error(0.1) D0 D1 D2 L0\nerror(0.05) D0\n";
 
     #[cfg(feature = "uf")]
@@ -1438,7 +1438,10 @@ mod tests {
         let spec = DecoderSpec::Windowed(WindowedConfig {
             step_size: 0,
             buffer_size: 1,
-            inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+            inner: Box::new(DecoderSpec::PecosUf(PecosUfConfig {
+                preset: PecosUfPreset::Fast,
+                ..Default::default()
+            })),
         });
         for model in [
             DecodeModel::SingleDem(String::new()),
@@ -1467,41 +1470,6 @@ mod tests {
     }
 
     #[test]
-    fn graphlike_decoders_reject_a_hyperedge_model_instead_of_dropping_it() {
-        // Regression: these decoders used to build fine and then score against a
-        // model with the hyperedges silently removed, which can make an
-        // observable unreachable and every shot a "logical error".
-        for spec in [
-            DecoderSpec::FusionBlossom(FusionBlossomConfig::default()),
-            DecoderSpec::PecosUf(PecosUfPreset::Fast),
-            DecoderSpec::KMwpm(KMwpmConfig::default()),
-            DecoderSpec::AStar,
-            DecoderSpec::PyMatching(PyMatchingConfig::default()),
-            DecoderSpec::PyMatching(PyMatchingConfig {
-                correlated: true,
-                ..PyMatchingConfig::default()
-            }),
-            // Composite: not classified at the top level, but the member build
-            // runs the guard against the member's own (cardinality-preserving)
-            // model, so the rejection still surfaces.
-            DecoderSpec::Perturbed(PerturbedConfig {
-                inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
-                ..PerturbedConfig::default()
-            }),
-        ] {
-            let Err(error) = spec.build(&DecodeModel::SingleDem(HYPEREDGE_DEM.to_string())) else {
-                panic!("graphlike decoder must reject a hyperedge model");
-            };
-            let message = error.to_string();
-            assert!(message.contains("graphlike"), "{message}");
-            assert!(
-                message.contains("to_string_terminal_graphlike_decomposed"),
-                "{message}"
-            );
-        }
-    }
-
-    #[test]
     fn hyperedge_capable_decoders_are_not_classified_graphlike_only() {
         for spec in [
             DecoderSpec::BpOsd(BpOsdConfig::default()),
@@ -1525,15 +1493,24 @@ mod tests {
             DecoderSpec::Windowed(WindowedConfig {
                 step_size: 1,
                 buffer_size: 1,
-                inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+                inner: Box::new(DecoderSpec::PecosUf(PecosUfConfig {
+                    preset: PecosUfPreset::Fast,
+                    ..Default::default()
+                })),
             }),
             DecoderSpec::BeamSearch(BeamSearchConfig::default()),
             DecoderSpec::Perturbed(PerturbedConfig {
-                inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+                inner: Box::new(DecoderSpec::PecosUf(PecosUfConfig {
+                    preset: PecosUfPreset::Fast,
+                    ..Default::default()
+                })),
                 ..PerturbedConfig::default()
             }),
             DecoderSpec::Ensemble(EnsembleConfig {
-                members: vec![DecoderSpec::PecosUf(PecosUfPreset::Fast)],
+                members: vec![DecoderSpec::PecosUf(PecosUfConfig {
+                    preset: PecosUfPreset::Fast,
+                    ..Default::default()
+                })],
             }),
         ] {
             assert!(
@@ -1545,13 +1522,14 @@ mod tests {
 
     #[cfg(feature = "uf")]
     #[test]
-    fn windowed_phase1_rejects_global_hyperedges_and_unsupported_inner() {
+    fn windowed_refuses_irreducible_hyperedges_and_unsupported_inner() {
         let spec = DecoderSpec::parse("windowed:step=1,buf=1,inner=pecos_uf").unwrap();
         let dem =
             format!("{HYPEREDGE_DEM}detector(0,0,0) D0\ndetector(1,0,0) D1\ndetector(2,0,0) D2\n");
         let error = spec.build(&DecodeModel::SingleDem(dem)).err().unwrap();
-        assert!(error.to_string().contains("error 0 component 0"));
-        assert!(error.to_string().contains("graphlike"));
+        // contract: full-model projection now refuses before constructing commit windows.
+        assert!(error.to_string().contains("1 irreducible errors"));
+        assert!(error.to_string().contains("irreducible=drop"));
         let unsupported = DecoderSpec::parse("windowed:step=1,buf=1,inner=bp_osd").unwrap();
         let error = unsupported
             .build(&DecodeModel::SingleDem(DEM.to_string()))
@@ -1678,17 +1656,28 @@ mod tests {
     #[test]
     fn uf_and_windowed_families_accept_64_and_reject_65_observables() {
         for spec in [
-            DecoderSpec::AStar,
+            DecoderSpec::AStar(crate::spec::AStarConfig::default()),
             DecoderSpec::AStarFull,
-            DecoderSpec::PecosUf(PecosUfPreset::Fast),
-            DecoderSpec::PecosUf(PecosUfPreset::Bp),
+            DecoderSpec::PecosUf(PecosUfConfig {
+                preset: PecosUfPreset::Fast,
+                ..Default::default()
+            }),
+            DecoderSpec::PecosUf(PecosUfConfig {
+                preset: PecosUfPreset::Bp,
+                ..Default::default()
+            }),
             DecoderSpec::Windowed(WindowedConfig {
                 step_size: 1,
                 buffer_size: 1,
-                inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+                inner: Box::new(DecoderSpec::PecosUf(PecosUfConfig {
+                    preset: PecosUfPreset::Fast,
+                    ..Default::default()
+                })),
             }),
             DecoderSpec::BeamSearch(BeamSearchConfig {
                 beam_width: 1,
+                // compatibility: keep this UF-only test independent of PyMatching.
+                phase2: Box::new(DecoderSpec::PecosUf(PecosUfConfig::default())),
                 ..BeamSearchConfig::default()
             }),
         ] {
@@ -1705,12 +1694,14 @@ mod tests {
             BeliefMatchingMode::MatchingGraphBp,
         ] {
             assert_64_then_65_rejected(&DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+                irreducible: IrreduciblePolicy::default(),
                 mode,
                 embedded_full_dem: None,
             }));
         }
 
         let hybrid = DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+            irreducible: IrreduciblePolicy::default(),
             mode: BeliefMatchingMode::Hybrid,
             embedded_full_dem: None,
         });
@@ -1761,6 +1752,7 @@ mod tests {
     #[test]
     fn model_family_mismatches_are_configuration_errors() {
         let hybrid = DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+            irreducible: IrreduciblePolicy::default(),
             mode: BeliefMatchingMode::Hybrid,
             embedded_full_dem: None,
         });
@@ -1822,7 +1814,13 @@ mod tests {
             ),
             (DecoderSpec::BpOsd(BpOsdConfig::default()), "ldpc"),
             (DecoderSpec::RelayBp(RelayBpConfig::default()), "relay-bp"),
-            (DecoderSpec::PecosUf(PecosUfPreset::Fast), "uf"),
+            (
+                DecoderSpec::PecosUf(PecosUfConfig {
+                    preset: PecosUfPreset::Fast,
+                    ..Default::default()
+                }),
+                "uf",
+            ),
         ];
         for (spec, expected_feature) in cases {
             let error = spec
@@ -2060,5 +2058,789 @@ mod tests {
 
         assert_eq!(ordered.decode_obs(&[1]).unwrap().to_u64(), Some(0));
         assert_eq!(swapped.decode_obs(&[1]).unwrap().to_u64(), Some(1));
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static LEAF_MODELS: std::cell::RefCell<Vec<DecodeModel>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use crate::batch::DecoderFactory;
+    #[cfg(feature = "uf")]
+    use crate::batch::{DecodeOptions, ExecutionPath, SampleBatch};
+    use pecos_decoder_core::graphlike_projection::project_graphlike;
+    #[cfg(feature = "uf")]
+    use pecos_decoder_core::obs_mask::ObsMask;
+
+    const GRAPH_NAMES: &[&str] = &[
+        "pymatching",
+        "pymatching_correlated",
+        "pymatching_uncorrelated",
+        "fusion_blossom",
+        "fusion_blossom_serial",
+        "fusion_blossom_parallel",
+        "fusion_blossom_correlated",
+        "perturbed_fb_corr",
+        "astar",
+        "k_mwpm",
+        "pecos_uf",
+        "pecos_uf:balanced",
+        "pecos_uf:accurate",
+        "pecos_uf:bp",
+        "pecos_uf:bp_serial",
+        "belief_matching",
+        "belief_matching_correlated",
+        "belief_matching_mgbp",
+    ];
+    const RAW: &str = "error(0.12345678912345678) D0 D1 D2 L0\nerror(0.02) D0 D1 L0\nerror(0.03) D2\nerror(0.04) D0\nerror(0.05) D1\n";
+    const IRREDUCIBLE: &str =
+        "error(0.1) D0 D1 D2 L0\nerror(0.02) D0\nerror(0.03) D1\nerror(0.04) D2\n";
+    const DECOMPOSED: &str = "error(0.12345678912345678) D0 D1 L0 ^ D2\nerror(0.02) D0 D1 L0\nerror(0.03) D2\nerror(0.04) D0\nerror(0.05) D1\n";
+
+    fn with_drop(name: &str) -> DecoderSpec {
+        DecoderSpec::parse(&format!(
+            "{name}{}irreducible=drop",
+            if name.contains(':') { ',' } else { ':' }
+        ))
+        .unwrap()
+    }
+
+    fn built(spec: &DecoderSpec, model: &DecodeModel) -> Option<Box<dyn ObservableDecoder>> {
+        match spec.build(model) {
+            Ok(decoder) => Some(decoder),
+            Err(DecoderError::BackendUnavailable { .. }) => None,
+            Err(error) => panic!("{spec:?}: {error}"),
+        }
+    }
+
+    fn predictions_equal(
+        mut left: Box<dyn ObservableDecoder>,
+        mut right: Box<dyn ObservableDecoder>,
+        width: usize,
+    ) {
+        assert_eq!(left.num_detectors(), right.num_detectors());
+        for bits in 0..1usize << width {
+            let syndrome: Vec<_> = (0..width)
+                .map(|bit| u8::from(bits & (1 << bit) != 0))
+                .collect();
+            assert_eq!(
+                left.decode_obs(&syndrome).unwrap(),
+                right.decode_obs(&syndrome).unwrap(),
+                "syndrome {syndrome:?}"
+            );
+        }
+    }
+
+    // contract: every graph leaf projects reducible raw input and honors explicit loss policy.
+    #[test]
+    fn every_graph_leaf_projects_or_refuses() {
+        let raw = StructuredDem::from_dem_str(RAW).unwrap();
+        let projected = project_graphlike(&raw, IrreduciblePolicy::Refuse)
+            .unwrap()
+            .model;
+        let explicit = DecodeModel::SingleDem(projected.to_dem_string());
+        for name in GRAPH_NAMES {
+            let spec = DecoderSpec::parse(name).unwrap();
+            assert!(spec.requires_graphlike_model());
+            for input in [
+                DecodeModel::SingleDem(RAW.into()),
+                DecodeModel::StructuredDem(raw.clone()),
+            ] {
+                LEAF_MODELS.with(|models| models.borrow_mut().clear());
+                let decoder = built(&spec, &input);
+                // Inspect the actual leaf boundary before any backend text rendering.
+                let prepared = LEAF_MODELS.with(|models| models.borrow().last().unwrap().clone());
+                assert_eq!(prepared, DecodeModel::StructuredDem(projected.clone()));
+                let DecodeModel::StructuredDem(model) = prepared else {
+                    unreachable!()
+                };
+                for (retained, original) in model.errors.iter().zip(&raw.errors) {
+                    assert_eq!(
+                        retained.probability.to_bits(),
+                        original.probability.to_bits()
+                    );
+                }
+                assert_eq!(model.errors[0].components.len(), 2);
+                assert_eq!((model.num_detectors, model.num_observables), (3, 1));
+                assert_eq!(model.detector_fault_sectors, raw.detector_fault_sectors);
+                assert_eq!(
+                    StructuredDem::from_dem_str(&model.to_dem_string()).unwrap(),
+                    model
+                );
+                if let Some(decoder) = decoder {
+                    predictions_equal(decoder, built(&spec, &explicit).unwrap(), 3);
+                }
+            }
+            let irreducible = DecodeModel::SingleDem(IRREDUCIBLE.into());
+            let error = spec.build(&irreducible).err().unwrap().to_string();
+            assert!(
+                error.starts_with(&format!("Invalid configuration: {}:", family_name(&spec))),
+                "{error}"
+            );
+            for message in [
+                "1 irreducible errors",
+                "[0]",
+                "irreducible=drop",
+                "bp_osd",
+                "tesseract",
+            ] {
+                assert!(error.contains(message), "{name}: {error}");
+            }
+            assert!(!error.contains("does not apply"), "{name}: {error}");
+            let drop = with_drop(name);
+            let prepared = drop.decode_model(IRREDUCIBLE).unwrap();
+            assert_eq!(prepared.projection.unwrap().dropped_indices, vec![0]);
+            let mut original = StructuredDem::from_dem_str(IRREDUCIBLE).unwrap();
+            original.detector_fault_sectors = vec![Some("X".into()), Some("Z".into()), None];
+            built(&drop, &DecodeModel::StructuredDem(original.clone()));
+            let actual = LEAF_MODELS.with(|models| models.borrow().last().unwrap().clone());
+            let DecodeModel::StructuredDem(actual) = actual else {
+                unreachable!()
+            };
+            assert_eq!(actual.errors, original.errors[1..]);
+            assert_eq!(actual.num_detectors, original.num_detectors);
+            assert_eq!(actual.num_observables, original.num_observables);
+            assert_eq!(
+                actual.detector_fault_sectors,
+                original.detector_fault_sectors
+            );
+            for (retained, original) in actual.errors.iter().zip(&original.errors[1..]) {
+                assert_eq!(
+                    retained.probability.to_bits(),
+                    original.probability.to_bits()
+                );
+            }
+            let supplied = DecodeModel::SingleDem(DECOMPOSED.into());
+            let prepared = prepare_model(&spec, &supplied).unwrap();
+            assert_eq!(prepared.model, supplied);
+            assert_eq!(prepared.projection, None);
+            let decoder = built(&spec, &supplied);
+            assert_eq!(
+                LEAF_MODELS.with(|models| models.borrow().last().unwrap().clone()),
+                supplied
+            );
+            if let Some(decoder) = decoder {
+                predictions_equal(decoder, built(&spec, &explicit).unwrap(), 3);
+            }
+            let mixed = DecodeModel::SingleDem(format!("{DECOMPOSED}error(0.01) D0 D1 D2\n"));
+            assert!(
+                spec.build(&mixed)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("mixes decomposed and raw hyperedges")
+            );
+        }
+    }
+
+    // contract: classification is structural and identical for text and structured input.
+    #[test]
+    fn structural_classification_parity() {
+        let spec = DecoderSpec::parse("astar").unwrap();
+        for text in [
+            RAW,
+            DECOMPOSED,
+            IRREDUCIBLE,
+            "error(0) D0 D1 D2",
+            "error(0.1) D0 D1 D2 ^ D0 D1 ^ D2",
+            "error(0.1) D0 ^ D1\nerror(0) D0 D1 D2",
+            "error(0.1) D0 D1 D2 ^ D3",
+            "error(0.01) D0 L0",
+        ] {
+            let text_model = DecodeModel::SingleDem(text.into());
+            let structured_model =
+                DecodeModel::StructuredDem(StructuredDem::from_dem_str(text).unwrap());
+            match (
+                prepare_model(&spec, &text_model),
+                prepare_model(&spec, &structured_model),
+            ) {
+                (Ok(a), Ok(b)) => {
+                    assert_eq!(a.projection, b.projection);
+                    if a.projection.is_some() {
+                        assert_eq!(a.model, b.model);
+                    } else {
+                        assert_eq!(a.model, text_model);
+                        assert_eq!(b.model, structured_model);
+                    }
+                }
+                (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+                other => panic!("classification differs: {other:?}"),
+            }
+        }
+        let zero = spec.decode_model("error(0) D0 D1 D2").unwrap();
+        assert_eq!(zero.projection.unwrap().zero_probability_omitted, vec![0]);
+        let error = spec
+            .decode_model("error(0.1) D0 D1 D2 ^ D0 D1 ^ D2")
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("component(s) touch more than two detectors")
+        );
+    }
+
+    // compatibility: Hybrid requires two models and never applies a raw projection policy.
+    #[test]
+    fn hybrid_is_exempt() {
+        let mut spec = DecoderSpec::parse("belief_matching_hybrid:error(0.1) D0 D1 D2 L0").unwrap();
+        assert!(
+            spec.build(&DecodeModel::SingleDem(RAW.into()))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("requires DecodeModel::HybridDem")
+        );
+        let model = DecodeModel::HybridDem {
+            full: IRREDUCIBLE.into(),
+            decomposed: DECOMPOSED.into(),
+        };
+        assert_eq!(prepare_model(&spec, &model).unwrap().projection, None);
+        built(&spec, &model);
+        let bad = DecodeModel::HybridDem {
+            full: RAW.into(),
+            decomposed: RAW.into(),
+        };
+        let error = spec.build(&bad).err().unwrap().to_string();
+        assert!(error.contains("graphlike"));
+        assert!(!error.contains("irreducible=drop"));
+        let DecoderSpec::BeliefMatching(config) = &mut spec else {
+            unreachable!()
+        };
+        config.irreducible = IrreduciblePolicy::Drop;
+        assert!(
+            spec.build(&model)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("does not support an irreducible policy")
+        );
+    }
+
+    // contract: projection error variants retain their precise diagnostics, even under Drop.
+    #[test]
+    fn projection_failures_keep_their_messages() {
+        for text in [
+            "error(0.1) D0 D1\nerror(0.1) D1 D2\nerror(0.1) D1 D3\nerror(0.2) D0 D1 D2 D3",
+            "error(0.1) D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 D10 D11 D12",
+        ] {
+            let model = StructuredDem::from_dem_str(text).unwrap();
+            let expected = project_graphlike(&model, IrreduciblePolicy::Drop)
+                .unwrap_err()
+                .to_string();
+            let actual = with_drop("astar")
+                .decode_model(text)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                actual.starts_with("Invalid configuration: astar:"),
+                "{actual}"
+            );
+            assert!(actual.contains(&expected), "{actual}: {expected}");
+            for spec in [DecoderSpec::parse("astar").unwrap(), with_drop("astar")] {
+                let error = spec
+                    .build(&DecodeModel::SingleDem(text.into()))
+                    .err()
+                    .unwrap()
+                    .to_string();
+                for remedy in [
+                    "irreducible=drop does not apply to this effect",
+                    "bp_osd",
+                    "tesseract",
+                ] {
+                    assert!(error.contains(remedy), "{error}");
+                }
+            }
+        }
+        let mut invalid = StructuredDem::from_dem_str(RAW).unwrap();
+        invalid.errors[0].probability = f64::NAN;
+        let expected = project_graphlike(&invalid, IrreduciblePolicy::Drop)
+            .unwrap_err()
+            .to_string();
+        let actual = prepare_model(&with_drop("astar"), &DecodeModel::StructuredDem(invalid))
+            .unwrap_err()
+            .to_string();
+        assert!(actual.ends_with(&expected), "{actual}");
+    }
+
+    #[cfg(all(feature = "uf", feature = "ldpc"))]
+    #[test]
+    fn perturbed_mixed_ensemble_preserves_zero_hyperedges() {
+        let spec = DecoderSpec::Perturbed(PerturbedConfig {
+            k: 3,
+            inner: Box::new(DecoderSpec::parse("ensemble:astar,bp_osd").unwrap()),
+            ..Default::default()
+        });
+        assert_eq!(spec.irreducible_policy(), None);
+        let text = IRREDUCIBLE.replace("error(0.1)", "error(0)");
+        for model in [
+            DecodeModel::SingleDem(text.clone()),
+            DecodeModel::StructuredDem(StructuredDem::from_dem_str(&text).unwrap()),
+        ] {
+            let mut decoder = spec.build(&model).unwrap();
+            for bits in 0..8 {
+                let syndrome: Vec<_> = (0..3).map(|bit| u8::from(bits & (1 << bit) != 0)).collect();
+                assert_eq!(
+                    decoder.decode_obs(&syndrome).unwrap(),
+                    pecos_decoder_core::obs_mask::ObsMask::new()
+                );
+            }
+        }
+    }
+
+    // contract: sector-sensitive choices survive Ensemble and probability perturbation.
+    #[cfg(feature = "uf")]
+    #[test]
+    fn composites_preserve_sector_choices() {
+        let mut model = StructuredDem::from_dem_str("error(0.01) D0 D1 L0\nerror(0.01) D2 D3\nerror(0.4) D0 D2 L0\nerror(0.4) D1 D3\nerror(0.123456789) D3 D1 D0 D2 L0\nerror(0.001) D0\nerror(0.001) D1\nerror(0.001) D2\nerror(0.001) D3").unwrap();
+        let without_sectors = project_graphlike(&model, IrreduciblePolicy::Refuse)
+            .unwrap()
+            .model;
+        model.detector_fault_sectors = vec![
+            Some("X".into()),
+            Some("X".into()),
+            Some("Z".into()),
+            Some("Z".into()),
+        ];
+        let projected = project_graphlike(&model, IrreduciblePolicy::Refuse)
+            .unwrap()
+            .model;
+        assert_ne!(
+            projected.errors[4].components,
+            without_sectors.errors[4].components
+        );
+        let leaf = DecoderSpec::parse("astar").unwrap();
+        for (composite, expected_count) in [
+            ("ensemble:astar", 1),
+            ("perturbed:k=3,sigma=1.5,inner=astar", 3),
+        ] {
+            LEAF_MODELS.with(|models| models.borrow_mut().clear());
+            let spec = DecoderSpec::parse(composite).unwrap();
+            let actual = built(&spec, &DecodeModel::StructuredDem(model.clone()));
+            let members = LEAF_MODELS.with(|models| models.borrow().clone());
+            assert_eq!(members.len(), expected_count, "{composite}");
+            for member in members {
+                let DecodeModel::StructuredDem(member) = member else {
+                    panic!("lost structured transport")
+                };
+                assert_eq!(member.detector_fault_sectors, model.detector_fault_sectors);
+                assert_eq!(member.errors[4].components, projected.errors[4].components);
+            }
+            if let Some(actual) = actual {
+                let (expected_spec, expected_model) = if composite.starts_with("ensemble") {
+                    (&leaf, &model)
+                } else {
+                    (&spec, &projected)
+                };
+                let expected = built(
+                    expected_spec,
+                    &DecodeModel::StructuredDem(expected_model.clone()),
+                )
+                .unwrap();
+                predictions_equal(actual, expected, 4);
+            }
+        }
+    }
+
+    // contract: one projection before parallel workers, with report and direct/batch agreement.
+    #[cfg(feature = "uf")]
+    #[test]
+    fn parallel_preparation_projects_once_per_call() {
+        use crate::spec::prepare::PROJECTION_INPUTS;
+        for (name, probability) in [
+            ("astar", "0.123456780001"),
+            ("perturbed:k=3,sigma=0.9,inner=astar", "0.123456780002"),
+        ] {
+            let text = RAW.replace("0.12345678912345678", probability);
+            let raw = StructuredDem::from_dem_str(&text).unwrap();
+            let count = || {
+                PROJECTION_INPUTS
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|model| **model == raw)
+                    .count()
+            };
+            let spec = DecoderSpec::parse(name).unwrap();
+            let batch = SampleBatch::from_row_major(
+                &vec![vec![1u8, 1, 1]; 16],
+                &vec![ObsMask::new(); 16],
+                1,
+            )
+            .unwrap();
+            let before = count();
+            let result = batch
+                .decode_with(
+                    &text,
+                    &spec,
+                    &DecodeOptions::default().workers(2).predictions(true),
+                )
+                .unwrap();
+            assert_eq!(result.execution_path, ExecutionPath::Parallel);
+            assert_eq!(result.workers_used, 2);
+            assert_eq!(count() - before, 1);
+            assert_eq!(result.projection.unwrap().projected, 1);
+            let mut direct = spec.build(&DecodeModel::SingleDem(text)).unwrap();
+            assert_eq!(
+                result.predictions.unwrap(),
+                vec![direct.decode_obs(&[1, 1, 1]).unwrap(); 16]
+            );
+        }
+    }
+
+    // contract: the inner policy applies to the full model before window construction.
+    #[cfg(all(feature = "uf", feature = "pymatching"))]
+    #[test]
+    fn windowed_projects_full_model_with_inner_policy() {
+        let coords = "detector(0,0,0) D0\ndetector(1,0,0) D1\ndetector(2,0,0) D2\n";
+        let spec = DecoderSpec::parse("windowed:step=1,buf=1,inner=pymatching").unwrap();
+        let text = format!("{RAW}{coords}");
+        let prepared = spec.decode_model(&text).unwrap();
+        assert_eq!(prepared.projection.unwrap().projected, 1);
+        predictions_equal(
+            spec.build(&DecodeModel::SingleDem(text)).unwrap(),
+            spec.build(&prepared.model).unwrap(),
+            3,
+        );
+        let text = format!("{IRREDUCIBLE}{coords}");
+        assert!(
+            spec.build(&DecodeModel::SingleDem(text.clone()))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("irreducible=drop")
+        );
+        let drop =
+            DecoderSpec::parse("windowed:step=1,buf=1,inner=pymatching:irreducible=drop").unwrap();
+        let prepared = drop.decode_model(&text).unwrap();
+        assert_eq!(prepared.projection.unwrap().dropped_indices, vec![0]);
+        predictions_equal(
+            drop.build(&DecodeModel::SingleDem(text)).unwrap(),
+            drop.build(&prepared.model).unwrap(),
+            3,
+        );
+    }
+
+    // compatibility: beam phase 1 still refuses raw hyperedges and offers no policy option.
+    #[cfg(feature = "uf")]
+    #[test]
+    fn beam_phase_one_still_refuses() {
+        let text = format!("{RAW}detector(0,0,0) D0\ndetector(1,0,0) D1\ndetector(2,0,0) D2\n");
+        let spec = DecoderSpec::parse("beamsearch:step=1,buf=1").unwrap();
+        let error = spec
+            .build(&DecodeModel::SingleDem(text))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("graphlike"), "{error}");
+        assert!(!error.contains("irreducible=drop"));
+    }
+    const TIE: &str = "error(0.1) D0 D1 L0\nerror(0.1) D2 D3\nerror(0.1) D0 D2 L0\nerror(0.1) D1 D3\nerror(0.123456781234) D0 D1 D2 D3 L0\nerror(0.001) D0\nerror(0.001) D1\nerror(0.001) D2\nerror(0.001) D3\n";
+
+    // contract: recursive consensus includes nested Perturbed, Windowed, and graph ensembles.
+    #[test]
+    fn recursive_policy_resolution() {
+        for name in [
+            "perturbed:inner=ensemble:astar,pecos_uf",
+            "perturbed:inner=perturbed:inner=astar",
+            "perturbed:inner=windowed:step=1,buf=1,inner=pecos_uf",
+            "ensemble:astar,perturbed:inner=astar",
+        ] {
+            let spec = DecoderSpec::parse(name).unwrap();
+            assert_eq!(spec.irreducible_policy(), Some(IrreduciblePolicy::Refuse));
+            assert_eq!(
+                spec.decode_model(TIE)
+                    .unwrap()
+                    .projection
+                    .unwrap()
+                    .projected,
+                1
+            );
+        }
+        for name in ["ensemble:astar,astar_full", "ensemble:astar_full,astar"] {
+            let spec = DecoderSpec::parse(name).unwrap();
+            assert_eq!(spec.irreducible_policy(), None);
+            assert_eq!(spec.decode_model(TIE).unwrap().projection, None);
+        }
+        assert_eq!(
+            DecoderSpec::Ensemble(EnsembleConfig::default()).irreducible_policy(),
+            None
+        );
+        let drop = DecoderSpec::parse(
+            "perturbed:inner=ensemble:astar:irreducible=drop,pecos_uf:irreducible=drop",
+        )
+        .unwrap();
+        assert_eq!(drop.irreducible_policy(), Some(IrreduciblePolicy::Drop));
+        assert_eq!(
+            drop.decode_model(IRREDUCIBLE)
+                .unwrap()
+                .projection
+                .unwrap()
+                .dropped_indices,
+            vec![0]
+        );
+    }
+
+    // contract: compositions without a shared report must never hide dropped faults.
+    #[test]
+    fn mixed_compositions_refuse_drop() {
+        for name in [
+            "ensemble:astar,astar:irreducible=drop",
+            "ensemble:astar_full,astar:irreducible=drop",
+            "perturbed:inner=ensemble:astar_full,astar:irreducible=drop",
+            "ensemble:astar_full,perturbed:inner=astar:irreducible=drop",
+            "ensemble:astar_full,ensemble:astar:irreducible=drop,astar:irreducible=drop",
+        ] {
+            let spec = DecoderSpec::parse(name).unwrap();
+            let message = spec.decode_model(TIE).unwrap_err().to_string();
+            assert!(message.contains("astar ("), "{message}");
+            assert!(message.contains("ensemble member"), "{message}");
+            assert!(
+                message.contains(
+                    "drop inside such a composition needs every graph member to share the policy"
+                ),
+                "{message}"
+            );
+        }
+    }
+
+    // compatibility: Refuse compositions remain lossless and may prepare members individually.
+    #[test]
+    fn mixed_compositions_accept_refuse() {
+        let spec = DecoderSpec::parse("ensemble:astar,astar_full").unwrap();
+        assert_eq!(spec.decode_model(TIE).unwrap().projection, None);
+        spec.build(&DecodeModel::SingleDem(TIE.into())).unwrap();
+    }
+
+    // contract: shared policies choose one decomposition before any nested copy is perturbed.
+    #[cfg(feature = "uf")]
+    #[test]
+    fn nested_perturbed_shares_one_projection() {
+        for inner in [
+            "ensemble:astar,astar",
+            "perturbed:k=2,sigma=1.5,inner=astar",
+        ] {
+            let spec =
+                DecoderSpec::parse(&format!("perturbed:k=8,sigma=1.5,inner={inner}")).unwrap();
+            let prepared = spec.decode_model(TIE).unwrap();
+            assert_eq!(prepared.projection.unwrap().projected, 1);
+            let DecodeModel::StructuredDem(projected) = prepared.model else {
+                unreachable!()
+            };
+            LEAF_MODELS.with(|models| models.borrow_mut().clear());
+            spec.build(&DecodeModel::SingleDem(TIE.into())).unwrap();
+            let members = LEAF_MODELS.with(|models| models.borrow().clone());
+            assert_eq!(members.len(), 16);
+            for member in members {
+                let DecodeModel::StructuredDem(member) = member else {
+                    unreachable!()
+                };
+                assert_eq!(member.errors[4].components, projected.errors[4].components);
+            }
+        }
+    }
+
+    // contract: lossless mixed ensembles project each graph member after perturbation.
+    #[cfg(feature = "uf")]
+    #[test]
+    fn mixed_perturbed_ensemble_projects_individually() {
+        for (inner, count) in [
+            ("ensemble:astar,astar_full", 8),
+            ("ensemble:astar_full,astar", 8),
+        ] {
+            let spec =
+                DecoderSpec::parse(&format!("perturbed:k=8,sigma=1.5,inner={inner}")).unwrap();
+            assert_eq!(spec.decode_model(TIE).unwrap().projection, None);
+            LEAF_MODELS.with(|models| models.borrow_mut().clear());
+            spec.build(&DecodeModel::SingleDem(TIE.into())).unwrap();
+            let members = LEAF_MODELS.with(|models| models.borrow().clone());
+            assert_eq!(members.len(), count);
+            let choices: std::collections::BTreeSet<_> = members
+                .into_iter()
+                .map(|member| {
+                    let DecodeModel::StructuredDem(member) = member else {
+                        unreachable!()
+                    };
+                    member.errors[4]
+                        .components
+                        .iter()
+                        .map(|component| component.detectors.clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert!(
+                choices.len() > 1,
+                "fixture must expose probability-dependent choices"
+            );
+        }
+    }
+
+    // contract: remedies identify the leaf, its member/inner location, and where to set policy.
+    #[test]
+    fn projection_errors_name_decoder_and_location() {
+        for (name, leaf, location, example) in [
+            (
+                "windowed:step=1,buf=1,inner=pymatching",
+                "pymatching",
+                "windowed inner decoder",
+                "windowed:...,inner=pymatching:irreducible=drop",
+            ),
+            (
+                "perturbed:inner=astar",
+                "astar",
+                "perturbed inner decoder",
+                "perturbed:...,inner=astar:irreducible=drop",
+            ),
+            (
+                "ensemble:astar,pecos_uf",
+                "astar",
+                "ensemble member 0",
+                "drop needs every graph member to share one policy",
+            ),
+            (
+                "ensemble:astar,astar_full",
+                "astar",
+                "ensemble member 0",
+                "drop needs every graph member to share one policy",
+            ),
+            (
+                "perturbed:inner=ensemble:astar,astar_full",
+                "astar",
+                "ensemble member 0",
+                "drop needs every graph member to share one policy",
+            ),
+        ] {
+            let spec = DecoderSpec::parse(name).unwrap();
+            let error = spec
+                .build(&DecodeModel::SingleDem(IRREDUCIBLE.into()))
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.starts_with(&format!("Invalid configuration: {leaf}")),
+                "{error}"
+            );
+            for text in [location, example, "1 irreducible errors", "[0]"] {
+                assert!(error.contains(text), "{name}: {error}");
+            }
+        }
+    }
+
+    // contract: a composite ensemble member needs typed advice when its parameters contain commas.
+    #[test]
+    fn nested_member_remedy_uses_typed_ensemble() {
+        let spec = DecoderSpec::Ensemble(EnsembleConfig {
+            members: vec![
+                DecoderSpec::parse("perturbed:k=8,inner=astar").unwrap(),
+                DecoderSpec::parse("astar_full").unwrap(),
+            ],
+        });
+        let message = spec
+            .build(&DecodeModel::SingleDem(IRREDUCIBLE.into()))
+            .err()
+            .unwrap()
+            .to_string();
+        for part in [
+            "astar",
+            "ensemble member 0",
+            "perturbed inner decoder",
+            "drop needs every graph member to share one policy",
+            "mixing graph and hypergraph members cannot do this",
+            "ensemble:astar:irreducible=drop,pecos_uf:irreducible=drop",
+            "ensemble(perturbed(inner=astar(irreducible=\"drop\")), astar(irreducible=\"drop\"))",
+            "hyperedge-capable decoder",
+            "typed EnsembleConfig.members",
+            "pecos_rslib.decoders.ensemble(...)",
+            "irreducible=drop",
+        ] {
+            assert!(message.contains(part), "{message}");
+        }
+    }
+
+    // contract: unsupported Windowed inners fail before projection, even beneath composites.
+    #[test]
+    fn windowed_support_precedes_projection() {
+        for prefix in ["", "perturbed:inner=", "ensemble:"] {
+            for policy in ["", ",irreducible=drop"] {
+                let spec = if prefix == "ensemble:" {
+                    DecoderSpec::Ensemble(EnsembleConfig {
+                        members: vec![
+                            DecoderSpec::parse(&format!(
+                                "windowed:step=1,buf=1,inner=pecos_uf:balanced{policy}"
+                            ))
+                            .unwrap(),
+                        ],
+                    })
+                } else {
+                    DecoderSpec::parse(&format!(
+                        "{prefix}windowed:step=1,buf=1,inner=pecos_uf:balanced{policy}"
+                    ))
+                    .unwrap()
+                };
+                let errors = [
+                    spec.decode_model(IRREDUCIBLE).unwrap_err(),
+                    spec.build(&DecodeModel::SingleDem(IRREDUCIBLE.into()))
+                        .err()
+                        .unwrap(),
+                ];
+                for error in errors {
+                    let message = error.to_string();
+                    assert!(
+                        message.contains("windowed does not support inner"),
+                        "{message}"
+                    );
+                    assert!(!message.contains("1 irreducible errors"));
+                    assert!(!message.contains("irreducible=drop"));
+                }
+            }
+        }
+    }
+
+    // contract: graphlike phase-1 slices can leave raw hyperedges for phase 2 to project.
+    #[cfg(feature = "uf")]
+    #[test]
+    fn beam_phase_two_projects_and_names_typed_policy() {
+        let coords = "detector(0,0,0) D0\ndetector(0,0,3) D1\ndetector(0,0,6) D2\n";
+        let mut spec = DecoderSpec::parse("beamsearch:k=1,step=1,buf=1").unwrap();
+        let DecoderSpec::BeamSearch(config) = &mut spec else {
+            unreachable!()
+        };
+        *config.phase2 = DecoderSpec::parse("astar").unwrap();
+        let mut decoder = spec
+            .build(&DecodeModel::SingleDem(format!("{RAW}{coords}")))
+            .unwrap();
+        assert!(decoder.decode_obs(&[0, 0, 0]).unwrap().is_zero());
+        let text = format!("{IRREDUCIBLE}{coords}");
+        let error = spec
+            .build(&DecodeModel::SingleDem(text.clone()))
+            .err()
+            .unwrap()
+            .to_string();
+        for part in [
+            "astar",
+            "beamsearch phase-2 decoder",
+            "typed spec",
+            "BeamSearchConfig.phase2",
+            "pecos_rslib.decoders.beamsearch(phase2=...)",
+            "no phase2 key",
+            "1 irreducible errors",
+        ] {
+            assert!(error.contains(part), "{error}");
+        }
+        let DecoderSpec::BeamSearch(config) = &mut spec else {
+            unreachable!()
+        };
+        *config.phase2 = with_drop("astar");
+        let error = spec
+            .build(&DecodeModel::SingleDem(text))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("beamsearch phase-2 decoder"));
+        assert!(error.contains("every graph member to share the policy"));
+        assert!(DecoderSpec::parse("beamsearch:phase2=astar").is_err());
     }
 }

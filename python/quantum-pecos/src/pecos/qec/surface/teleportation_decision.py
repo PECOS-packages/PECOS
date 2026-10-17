@@ -231,7 +231,7 @@ class TeleportationDecisionModel:
         predictions = (
             SampleBatch(rows, [0] * len(raw), num_observables=1)
             .decode(
-                str(dem),
+                dem,
                 decoder,
                 predictions=True,
             )

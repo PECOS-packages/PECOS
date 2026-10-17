@@ -5359,9 +5359,10 @@ impl DetectorErrorModel {
     /// be given in that frame too.
     ///
     /// # Errors
-    /// Returns an invalid-configuration error for an out-of-range id, or for
-    /// the first detector id that is undefined, has no fault sector, or has a
-    /// fault sector other than `"X"` or `"Z"`.
+    /// Returns an invalid-configuration error for a detector id outside
+    /// `0..num_detectors()`, or for the first id in that range that is
+    /// undefined, has no fault sector, or has a fault sector other than `"X"`
+    /// or `"Z"`.
     pub fn detector_bases(
         &self,
     ) -> Result<Vec<DetectorBasis>, pecos_decoder_core::errors::DecoderError> {
@@ -5372,7 +5373,7 @@ impl DetectorErrorModel {
         for detector in &self.detectors {
             let Some(slot) = sectors.get_mut(detector.id as usize) else {
                 return Err(DecoderError::InvalidConfiguration(format!(
-                    "detector D{} is outside the model's detector dimension {num_detectors}",
+                    "detector D{} is outside the ids of the model's {num_detectors} detector definitions",
                     detector.id
                 )));
             };

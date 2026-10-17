@@ -59,7 +59,7 @@ fn detector_bases_reject_detectors_without_an_xz_sector() {
     dem.detectors[1].id = 2;
     assert_eq!(
         error_text(&dem),
-        dem.to_structured_decoder_dem().unwrap_err().to_string()
+        "Invalid configuration: detector D2 is outside the ids of the model's 2 detector definitions"
     );
 }
 

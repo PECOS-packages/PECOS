@@ -811,10 +811,6 @@ impl GpuPauliProp {
     // =========================================================================
 
     fn queue_gate(&mut self, gate_type: u32, qubit1: u32, qubit2: u32) {
-        self.check_qubit(qubit1 as usize);
-        if matches!(gate_type, GATE_CX | GATE_CZ | GATE_SWAP) {
-            self.check_qubit(qubit2 as usize);
-        }
         if self.gate_queue.len() + 3 > MAX_GATE_QUEUE_SIZE {
             self.flush();
         }

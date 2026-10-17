@@ -99,16 +99,23 @@ fn simplify_pair(first: u32, second: u32) -> Option<Option<u32>> {
 ///
 /// Accumulates gates and fuses consecutive single-qubit gates on the same qubit.
 pub struct CliffordFuser {
-    /// Pending gate sequence for each qubit
     num_qubits: usize,
+    /// Pending gate sequence for each qubit
     pending: HashMap<usize, GateSequence>,
     /// Output gate queue (packed gates)
     output: Vec<u32>,
 }
 
 impl CliffordFuser {
-    /// Create a new gate fuser
+    /// Create a new gate fuser.
+    ///
+    /// # Panics
+    /// Panics if `num_qubits` exceeds the 14-bit packed register capacity.
     pub fn new(num_qubits: usize) -> Self {
+        assert!(
+            num_qubits <= crate::qubit_validation::PACKED_QUBIT_CAPACITY,
+            "GpuStab fuser: register size {num_qubits} exceeds the packed capacity; use at most 16384 qubits"
+        );
         Self {
             num_qubits,
             pending: HashMap::new(),
@@ -127,11 +134,18 @@ impl CliffordFuser {
     /// Add a gate to the fuser
     ///
     /// Returns true if the gate was absorbed (fused with pending), false if it was emitted.
+    ///
+    /// # Panics
+    /// Panics if a gate operand is outside the register, before accumulating it.
     pub fn add_gate(&mut self, gate_type: u32, target: usize, control: usize) -> bool {
-        crate::qubit_validation::check_qubit(target, self.num_qubits, "GpuStab");
-        if !Self::is_single_qubit(gate_type) {
-            crate::qubit_validation::check_qubit(control, self.num_qubits, "GpuStab");
-        }
+        // Validate through the packer before even a cancelling gate can accumulate.
+        let packed = crate::qubit_validation::pack_gate(
+            gate_type,
+            target,
+            (!Self::is_single_qubit(gate_type)).then_some(control),
+            self.num_qubits,
+            "GpuStab",
+        );
         if Self::is_single_qubit(gate_type) {
             // Single-qubit gate - try to fuse
             let seq = self.pending.entry(target).or_default();
@@ -143,13 +157,6 @@ impl CliffordFuser {
             self.flush_qubit(control);
 
             // Emit the two-qubit gate
-            let packed = crate::qubit_validation::pack_gate(
-                gate_type,
-                target,
-                Some(control),
-                self.num_qubits,
-                "GpuStab",
-            );
             self.output.push(packed);
             false
         }
@@ -193,7 +200,7 @@ fn unpack_gate(packed: u32) -> (u32, u32, u32) {
 }
 
 #[cfg(test)]
-mod tests {
+mod gpu_free_tests {
     use super::*;
 
     #[test]
@@ -303,9 +310,9 @@ mod tests {
 }
 
 #[cfg(test)]
-mod bounds_tests {
+mod gpu_free_bounds {
     use super::*;
-    use crate::qubit_validation::tests::assert_bounds_panic;
+    use crate::qubit_validation::gpu_free_tests::assert_bounds_panic;
 
     #[test]
     fn fusion_checks_before_accumulating() {

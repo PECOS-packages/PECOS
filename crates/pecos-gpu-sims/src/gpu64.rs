@@ -128,8 +128,8 @@ pub struct GpuStateVec64 {
 }
 
 impl GpuStateVec64 {
-    fn check_qubit(&self, index: usize) -> u32 {
-        crate::qubit_validation::checked_index(index, self.num_qubits as usize, "GpuStateVec64")
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_qubits as usize, "GpuStateVec64");
     }
 
     fn compute_workgroups(num_elements: usize) -> (u32, u32) {
@@ -878,7 +878,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_single_gate(&mut self, qubit: u32, matrix: [f64; 8]) {
-        self.check_qubit(qubit as usize);
         // Diagonal gates have zero off-diagonal elements (b=0, c=0).
         // Use the specialized diagonal shader: half the arithmetic, fully coalesced.
         let is_diagonal =
@@ -904,8 +903,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_cx(&mut self, control: u32, target: u32) {
-        self.check_qubit(control as usize);
-        self.check_qubit(target as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::CX,
             params: GateParams64 {
@@ -922,8 +919,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_cz(&mut self, control: u32, target: u32) {
-        self.check_qubit(control as usize);
-        self.check_qubit(target as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::CZ,
             params: GateParams64 {
@@ -940,8 +935,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_cy(&mut self, control: u32, target: u32) {
-        self.check_qubit(control as usize);
-        self.check_qubit(target as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::CY,
             params: GateParams64 {
@@ -958,8 +951,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_swap(&mut self, qubit0: u32, qubit1: u32) {
-        self.check_qubit(qubit0 as usize);
-        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Swap,
             params: GateParams64 {
@@ -976,8 +967,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_rxx(&mut self, qubit0: u32, qubit1: u32, theta: f64) {
-        self.check_qubit(qubit0 as usize);
-        self.check_qubit(qubit1 as usize);
         // Precompute cos/sin on the CPU -- wgpu+Vulkan doesn't reliably support
         // f64 transcendental functions in the shader. Pass (c, s) as f64 instead.
         let (c, s) = ((theta / 2.0).cos(), (theta / 2.0).sin());
@@ -997,8 +986,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_ryy(&mut self, qubit0: u32, qubit1: u32, theta: f64) {
-        self.check_qubit(qubit0 as usize);
-        self.check_qubit(qubit1 as usize);
         let (c, s) = ((theta / 2.0).cos(), (theta / 2.0).sin());
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Ryy,
@@ -1016,8 +1003,6 @@ impl GpuStateVec64 {
     }
 
     fn queue_rzz(&mut self, qubit0: u32, qubit1: u32, theta: f64) {
-        self.check_qubit(qubit0 as usize);
-        self.check_qubit(qubit1 as usize);
         let (c, s) = ((theta / 2.0).cos(), (theta / 2.0).sin());
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Rzz,
@@ -1044,8 +1029,6 @@ impl GpuStateVec64 {
         qubit1: u32,
         dagger: bool,
     ) {
-        self.check_qubit(qubit0 as usize);
-        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline,
             params: GateParams64 {
@@ -1075,7 +1058,6 @@ impl GpuStateVec64 {
     #[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
     fn mz_cpu_path(&mut self, qubit: u32) -> (u32, bool) {
         const DET_EPS: f64 = 1e-10;
-        self.check_qubit(qubit as usize);
 
         let mut state_data = self.state();
         let target_mask = 1usize << qubit;
@@ -1119,7 +1101,6 @@ impl GpuStateVec64 {
 
     fn mz_gpu(&mut self, qubit: u32) -> (u32, bool) {
         const DET_EPS: f64 = 1e-10;
-        self.check_qubit(qubit as usize);
 
         if self.num_qubits <= self.persistent_max_qubits {
             return self.mz_cpu_path(qubit);
@@ -1310,7 +1291,7 @@ impl CliffordGateable for GpuStateVec64 {
         let (sin, cos) = phase.to_radians_signed().sin_cos();
         let matrix = [cos, sin, 0.0, 0.0, 0.0, 0.0, cos, sin];
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), matrix);
+            self.queue_single_gate(q.index() as u32, matrix);
         }
         self
     }
@@ -1321,7 +1302,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::H;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1332,7 +1313,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::H2;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1343,7 +1324,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::H3;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1354,7 +1335,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::H4;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1365,7 +1346,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::H5;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1376,7 +1357,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::H6;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1387,7 +1368,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::X;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1398,7 +1379,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::Y;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1409,7 +1390,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::Z;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1420,7 +1401,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::SX;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1431,7 +1412,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::SXDG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1442,7 +1423,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::SY;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1453,7 +1434,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::SYDG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1464,7 +1445,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::S;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1475,7 +1456,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::SDG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1486,7 +1467,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1497,7 +1478,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::FDG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1508,7 +1489,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F2;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1519,7 +1500,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F2DG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1530,7 +1511,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F3;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1541,7 +1522,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F3DG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1552,7 +1533,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F4;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1563,7 +1544,7 @@ impl CliffordGateable for GpuStateVec64 {
         }
         let m = gates_f64::F4DG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1574,7 +1555,7 @@ impl CliffordGateable for GpuStateVec64 {
             self.check_qubit(b.index());
         }
         for &(c, t) in pairs {
-            self.queue_cx(self.check_qubit(c.index()), self.check_qubit(t.index()));
+            self.queue_cx(c.index() as u32, t.index() as u32);
         }
         self
     }
@@ -1585,7 +1566,7 @@ impl CliffordGateable for GpuStateVec64 {
             self.check_qubit(b.index());
         }
         for &(c, t) in pairs {
-            self.queue_cy(self.check_qubit(c.index()), self.check_qubit(t.index()));
+            self.queue_cy(c.index() as u32, t.index() as u32);
         }
         self
     }
@@ -1596,7 +1577,7 @@ impl CliffordGateable for GpuStateVec64 {
             self.check_qubit(b.index());
         }
         for &(c, t) in pairs {
-            self.queue_cz(self.check_qubit(c.index()), self.check_qubit(t.index()));
+            self.queue_cz(c.index() as u32, t.index() as u32);
         }
         self
     }
@@ -1607,7 +1588,7 @@ impl CliffordGateable for GpuStateVec64 {
             self.check_qubit(b.index());
         }
         for &(q0, q1) in pairs {
-            self.queue_swap(self.check_qubit(q0.index()), self.check_qubit(q1.index()));
+            self.queue_swap(q0.index() as u32, q1.index() as u32);
         }
         self
     }
@@ -1620,8 +1601,8 @@ impl CliffordGateable for GpuStateVec64 {
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rzz,
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
+                q0.index() as u32,
+                q1.index() as u32,
                 false,
             );
         }
@@ -1636,8 +1617,8 @@ impl CliffordGateable for GpuStateVec64 {
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rzz,
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
+                q0.index() as u32,
+                q1.index() as u32,
                 true,
             );
         }
@@ -1652,8 +1633,8 @@ impl CliffordGateable for GpuStateVec64 {
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rxx,
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
+                q0.index() as u32,
+                q1.index() as u32,
                 false,
             );
         }
@@ -1668,8 +1649,8 @@ impl CliffordGateable for GpuStateVec64 {
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rxx,
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
+                q0.index() as u32,
+                q1.index() as u32,
                 true,
             );
         }
@@ -1684,8 +1665,8 @@ impl CliffordGateable for GpuStateVec64 {
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Ryy,
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
+                q0.index() as u32,
+                q1.index() as u32,
                 false,
             );
         }
@@ -1700,8 +1681,8 @@ impl CliffordGateable for GpuStateVec64 {
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Ryy,
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
+                q0.index() as u32,
+                q1.index() as u32,
                 true,
             );
         }
@@ -1709,11 +1690,6 @@ impl CliffordGateable for GpuStateVec64 {
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
-        for q in qubits {
-            self.check_qubit(q.index());
-        }
-        self.flush_gates();
-
         // Empirical f64 mz path selection (RTX 4090, 2026-04-11).
         // M=1 always GPU: single readback amortizes poorly vs reduction+collapse.
         // Larger M covers the readback and the CPU loop wins for small N.
@@ -1809,7 +1785,7 @@ impl GpuStateVec64 {
             .iter()
             .map(|&q| {
                 #[allow(clippy::cast_possible_truncation)]
-                let (outcome, is_deterministic) = self.mz_gpu(self.check_qubit(q.index()));
+                let (outcome, is_deterministic) = self.mz_gpu(q.index() as u32);
                 MeasurementResult {
                     outcome: outcome == 1,
                     is_deterministic,
@@ -1829,7 +1805,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let m = gates_f64::rx(theta.to_radians_signed());
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1840,7 +1816,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let m = gates_f64::ry(theta.to_radians_signed());
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1851,7 +1827,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let m = gates_f64::rz(theta.to_radians_signed());
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1862,7 +1838,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let m = gates_f64::T;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1873,7 +1849,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let m = gates_f64::TDG;
         for &q in qubits {
-            self.queue_single_gate(self.check_qubit(q.index()), m);
+            self.queue_single_gate(q.index() as u32, m);
         }
         self
     }
@@ -1885,11 +1861,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let theta = theta.to_radians_signed();
         for &(q0, q1) in pairs {
-            self.queue_rxx(
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
-                theta,
-            );
+            self.queue_rxx(q0.index() as u32, q1.index() as u32, theta);
         }
         self
     }
@@ -1901,11 +1873,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let theta = theta.to_radians_signed();
         for &(q0, q1) in pairs {
-            self.queue_ryy(
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
-                theta,
-            );
+            self.queue_ryy(q0.index() as u32, q1.index() as u32, theta);
         }
         self
     }
@@ -1918,11 +1886,7 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         }
         let theta = theta.to_radians_signed();
         for &(q0, q1) in pairs {
-            self.queue_rzz(
-                self.check_qubit(q0.index()),
-                self.check_qubit(q1.index()),
-                theta,
-            );
+            self.queue_rzz(q0.index() as u32, q1.index() as u32, theta);
         }
         self
     }

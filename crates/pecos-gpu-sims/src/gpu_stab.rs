@@ -261,8 +261,8 @@ impl GpuStab<PecosRng> {
 }
 
 impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
-    fn check_qubit(&self, index: usize) -> u32 {
-        crate::qubit_validation::checked_index(index, self.num_qubits as usize, "GpuStab")
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_qubits as usize, "GpuStab");
     }
 
     /// Create a new GPU stabilizer simulator with a specific RNG seed.
@@ -1227,14 +1227,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Queue a single-qubit gate
     fn queue_single_gate(&mut self, gate_type: u32, qubit: usize) {
-        self.check_qubit(qubit);
         self.add_single_gate(gate_type, qubit);
     }
 
     /// Queue a two-qubit gate
     fn queue_two_qubit_gate(&mut self, gate_type: u32, control: usize, target: usize) {
-        self.check_qubit(control);
-        self.check_qubit(target);
         self.add_two_qubit_gate(gate_type, control, target);
     }
 
@@ -1511,13 +1508,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Panics if an operand is outside the register or a gate has invalid control arity.
     pub fn compile_circuit(&mut self, gates: &[CompiledGate]) -> u64 {
         crate::circuit_compiler::validate_gates(gates, self.num_qubits as usize, "GpuStab");
-        // Flush any pending gates first
         self.flush_fused_gates();
-
         // Compile the circuit (cached by hash)
-        let compiled = self
-            .circuit_compiler
-            .compile(gates, self.num_qubits as usize);
+        let compiled = self.circuit_compiler.compile_validated(gates);
         let hash = compiled.hash;
 
         // Create pipeline if not already cached
@@ -1608,8 +1601,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Panics if an operand is outside the register or a gate has invalid control arity.
     pub fn is_circuit_compiled(&self, gates: &[CompiledGate]) -> bool {
         crate::circuit_compiler::validate_gates(gates, self.num_qubits as usize, "GpuStab");
-        self.circuit_compiler
-            .is_cached(gates, self.num_qubits as usize)
+        self.circuit_compiler.is_cached_validated(gates)
     }
 
     /// Get the number of compiled circuits in the cache.
@@ -1637,7 +1629,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Add a single-qubit gate, optionally through the fuser.
     fn add_single_gate(&mut self, gate_type: u32, target: usize) {
-        self.check_qubit(target);
         if self.fusion_enabled
             && let Some(ref mut fuser) = self.fuser
         {
@@ -1654,8 +1645,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Add a two-qubit gate, flushing any pending fused gates first.
     fn add_two_qubit_gate(&mut self, gate_type: u32, control: usize, target: usize) {
-        self.check_qubit(control);
-        self.check_qubit(target);
         if self.fusion_enabled
             && let Some(ref mut fuser) = self.fuser
         {
@@ -1683,7 +1672,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     ///
     /// Uses subgroup-based parallel reduction when available for O(1) search.
     fn find_first_anticommuting(&mut self, qubit: u32) -> Option<usize> {
-        self.check_qubit(qubit as usize);
         // Flush and wait to ensure all pending gates are executed
         self.flush();
         self.sync_wait();
@@ -1823,9 +1811,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     ///
     /// Returns `MeasurementResult` for each qubit.
     fn measure_batch_gpu(&mut self, qubits: &[u32]) -> Vec<MeasurementResult> {
-        for &q in qubits {
-            self.check_qubit(q as usize);
-        }
         if qubits.is_empty() {
             return Vec::new();
         }
@@ -1849,7 +1834,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Measure a single qubit on GPU with proper tableau update for non-deterministic cases.
     fn measure_single_qubit_gpu(&mut self, qubit: u32, random_bit: u32) -> MeasurementResult {
-        self.check_qubit(qubit as usize);
         // Step 1: Find if there's an anticommuting stabilizer
         let anticom_gen = self.find_anticommuting_single(qubit);
 
@@ -1875,7 +1859,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Find the first anticommuting stabilizer for a single qubit.
     /// Returns None if deterministic, `Some(gen_index)` if non-deterministic.
     fn find_anticommuting_single(&mut self, qubit: u32) -> Option<u32> {
-        self.check_qubit(qubit as usize);
         // Prepare input: [count=1, qubit]
         let input_data = [1u32, qubit];
         self.queue.write_buffer(
@@ -1955,7 +1938,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Compute deterministic outcome for a single qubit measurement.
     fn compute_deterministic_outcome_single(&mut self, qubit: u32) -> bool {
-        self.check_qubit(qubit as usize);
         // Prepare input: [count=1, qubit]
         let input_data = [1u32, qubit];
         self.queue.write_buffer(
@@ -2036,7 +2018,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Run the full 5-stage measurement process for non-deterministic measurement.
     /// This properly updates the stabilizer tableau.
     fn run_full_measurement(&mut self, qubit: u32, outcome: u32) {
-        self.check_qubit(qubit as usize);
         // Initialize measurement_data: [min_weight=0xFFFFFFFF, chosen_row=0, outcome, qubit, ...]
         let mut init_data = vec![0xFFFF_FFFFu32, 0, outcome, qubit];
         // Add space for per-generator weights
@@ -2197,7 +2178,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         self.flush();
         self.sync_wait();
 
-        let qubit_indices: Vec<u32> = qubits.iter().map(|q| self.check_qubit(q.index())).collect();
+        let qubit_indices: Vec<u32> = qubits.iter().map(|q| q.index() as u32).collect();
         let count = qubit_indices.len();
 
         // Process each measurement sequentially to handle non-deterministic cases correctly
@@ -2336,7 +2317,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
 
     /// Compute deterministic measurement outcome
     fn compute_deterministic_outcome(&self, qubit: usize) -> bool {
-        self.check_qubit(qubit);
         let num_qubits = self.num_qubits as usize;
         let gen_words = self.gen_words as usize;
         let tableau_size = (num_qubits * gen_words * 4) as u64;
@@ -2496,7 +2476,7 @@ impl<R: Rng + SeedableRng + Debug> CliffordGateable for GpuStab<R> {
         }
 
         // Use fully GPU-accelerated batch measurement
-        let qubit_indices: Vec<u32> = qubits.iter().map(|q| self.check_qubit(q.index())).collect();
+        let qubit_indices: Vec<u32> = qubits.iter().map(|q| q.index() as u32).collect();
         self.measure_batch_gpu(&qubit_indices)
     }
 }
@@ -4306,9 +4286,9 @@ mod tests {
 }
 
 #[cfg(test)]
-mod bounds_tests {
+mod gpu_free_bounds {
     use super::*;
-    use crate::qubit_validation::tests::assert_bounds_panic;
+    use crate::qubit_validation::gpu_free_tests::assert_bounds_panic;
 
     #[test]
     fn direct_packers_check_before_masking() {

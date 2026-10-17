@@ -169,6 +169,11 @@ impl CircuitCompiler {
     /// Panics if any operand is outside `num_qubits` or a gate has invalid control arity.
     pub fn compile(&mut self, gates: &[Gate], num_qubits: usize) -> &CompiledCircuit {
         validate_gates(gates, num_qubits, "CircuitCompiler");
+        self.compile_validated(gates)
+    }
+
+    // GpuStab validates at its public boundary with its own simulator name.
+    pub(crate) fn compile_validated(&mut self, gates: &[Gate]) -> &CompiledCircuit {
         let hash = Self::compute_hash(gates);
 
         self.cache
@@ -183,6 +188,11 @@ impl CircuitCompiler {
     #[must_use]
     pub fn is_cached(&self, gates: &[Gate], num_qubits: usize) -> bool {
         validate_gates(gates, num_qubits, "CircuitCompiler");
+        self.is_cached_validated(gates)
+    }
+
+    // GpuStab validates at its public boundary with its own simulator name.
+    pub(crate) fn is_cached_validated(&self, gates: &[Gate]) -> bool {
         let hash = Self::compute_hash(gates);
         self.cache.contains_key(&hash)
     }
@@ -425,7 +435,7 @@ impl Default for CircuitCompiler {
 }
 
 #[cfg(test)]
-mod tests {
+mod gpu_free_tests {
     use super::*;
 
     #[test]
@@ -505,9 +515,9 @@ mod tests {
 }
 
 #[cfg(test)]
-mod bounds_tests {
+mod gpu_free_bounds {
     use super::*;
-    use crate::qubit_validation::tests::assert_bounds_panic;
+    use crate::qubit_validation::gpu_free_tests::assert_bounds_panic;
 
     #[test]
     fn compilation_checks_all_operands_even_on_cache_hits() {

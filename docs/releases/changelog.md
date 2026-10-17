@@ -319,6 +319,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
+- `CircuitExecutor` now distinguishes fixed register capacity from growing Pauli
+  tracker support, so fresh `PauliProp` and `BitmaskPauliProp` trackers accept
+  circuits while fixed registers still reject invalid operands before any gate.
+  GPU-free bounds tests now run in CI without an adapter. GPU validation avoids
+  redundant checks inside gate and measurement loops, and `GpuNoisySampler`
+  returns an error for invalid operands with a usable index remedy.
+
 - GPU simulators reject out-of-range qubit indices before narrowing, packing, or GPU work,
   including fused gates, compiled circuits, measurements, and Pauli queries.
   `CircuitExecutor` checks every operand against simulator capacity before applying any gates.

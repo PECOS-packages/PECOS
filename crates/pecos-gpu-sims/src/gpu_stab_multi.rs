@@ -86,8 +86,8 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
 }
 
 impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
-    fn check_qubit(&self, index: usize) -> u32 {
-        crate::qubit_validation::checked_index(index, self.num_qubits as usize, "GpuStabMulti")
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_qubits as usize, "GpuStabMulti");
     }
 
     /// Create a new multi-shot GPU stabilizer simulator
@@ -722,7 +722,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     /// Queue a single-qubit gate
     fn queue_single_gate(&mut self, gate_type: u32, qubit: usize) {
-        self.check_qubit(qubit);
         let packed = crate::qubit_validation::pack_gate(
             gate_type,
             qubit,
@@ -739,8 +738,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     /// Queue a two-qubit gate
     fn queue_two_qubit_gate(&mut self, gate_type: u32, control: usize, target: usize) {
-        self.check_qubit(control);
-        self.check_qubit(target);
         let packed = crate::qubit_validation::pack_gate(
             gate_type,
             target,
@@ -943,58 +940,46 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_h(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         self.queue_single_gate(0, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_sz(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         self.queue_single_gate(1, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_szdg(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         self.queue_single_gate(2, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_x(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         self.queue_single_gate(3, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_y(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         self.queue_single_gate(4, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_z(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         self.queue_single_gate(5, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_cx(&mut self, control: usize, target: usize) {
-        self.check_qubit(control);
-        self.check_qubit(target);
         self.queue_two_qubit_gate(6, control, target);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_cz(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.check_qubit(qubit_a);
-        self.check_qubit(qubit_b);
         self.queue_two_qubit_gate(7, qubit_a, qubit_b);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_swap(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.check_qubit(qubit_a);
-        self.check_qubit(qubit_b);
         self.queue_two_qubit_gate(8, qubit_a, qubit_b);
     }
 
@@ -1139,9 +1124,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Internal measurement implementation that takes raw indices
     #[allow(clippy::cast_possible_truncation)] // qubit/measurement indices and f32 thresholds fit in u32
     fn mz_internal(&mut self, qubits: &[usize]) -> Vec<Vec<bool>> {
-        for &q in qubits {
-            self.check_qubit(q);
-        }
         if qubits.is_empty() {
             return vec![vec![]; self.shots_per_batch as usize];
         }
@@ -1300,9 +1282,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             self.check_qubit(q.index());
         }
         // X-basis measurement = H, Mz, H
-        self.h(qubits);
-        let results = self.mz(qubits);
-        self.h(qubits);
+        let indices: Vec<usize> = qubits.iter().map(QubitId::index).collect();
+        for &q in &indices {
+            self.queue_h(q);
+        }
+        let results = self.mz_internal(&indices);
+        for &q in &indices {
+            self.queue_h(q);
+        }
         results
     }
 
@@ -1324,11 +1311,20 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         }
         // Y-basis measurement = Sdg, H, Mz, H, S
         // (transforms Y eigenstates to Z eigenstates)
-        self.szdg(qubits);
-        self.h(qubits);
-        let results = self.mz(qubits);
-        self.h(qubits);
-        self.sz(qubits);
+        let indices: Vec<usize> = qubits.iter().map(QubitId::index).collect();
+        for &q in &indices {
+            self.queue_szdg(q);
+        }
+        for &q in &indices {
+            self.queue_h(q);
+        }
+        let results = self.mz_internal(&indices);
+        for &q in &indices {
+            self.queue_h(q);
+        }
+        for &q in &indices {
+            self.queue_sz(q);
+        }
         results
     }
 
@@ -1535,9 +1531,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         qubits: &[usize],
         all_random_bits: &[Vec<u32>],
     ) -> Vec<Vec<bool>> {
-        for &q in qubits {
-            self.check_qubit(q);
-        }
         let batch_shots = self.shots_per_batch;
         let num_qubits_measured = qubits.len();
 

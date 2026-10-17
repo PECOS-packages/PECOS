@@ -8,7 +8,7 @@
 pub fn check_qubit(index: usize, num_qubits: usize, simulator: &str) {
     assert!(
         index < num_qubits,
-        "{simulator}: qubit {index} is out of range for a {num_qubits}-qubit register; use a smaller qubit index or construct the simulator with a qubit count greater than {index}"
+        "{simulator}: qubit {index} is out of range for a {num_qubits}-qubit register; use a qubit index below {num_qubits}, or construct the simulator with more qubits"
     );
 }
 
@@ -23,7 +23,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "GpuStab: qubit 16384 is out of range for a 16384-qubit register; use a smaller qubit index or construct the simulator with a qubit count greater than 16384"
+        expected = "GpuStab: qubit 16384 is out of range for a 16384-qubit register; use a qubit index below 16384, or construct the simulator with more qubits"
     )]
     fn first_invalid_operand() {
         check_qubit(16384, 16384, "GpuStab");

@@ -537,9 +537,6 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
         F: Fn(&mut SV, &[QubitId]),
         G: Fn(&mut SV, &[QubitId]),
     {
-        for q in qubits {
-            self.check_qubit(q.index());
-        }
         let n = self.num_physical_qubits;
         for &q in qubits {
             let qi = q.index();
@@ -557,10 +554,6 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
         F: Fn(&mut SV, &[(QubitId, QubitId)]),
         G: Fn(&mut SV, &[(QubitId, QubitId)]),
     {
-        for (a, b) in pairs {
-            self.check_qubit(a.index());
-            self.check_qubit(b.index());
-        }
         let n = self.num_physical_qubits;
         for &(c, t) in pairs {
             let ci = c.index();
@@ -1188,13 +1181,13 @@ mod tests {
     }
 
     #[test]
-    fn bounds_checked_on_physical_register_without_gpu() {
+    fn gpu_free_bounds_checked_on_physical_register_without_gpu() {
         let mut sim = GpuDensityMatrix::<StateVecSoA>::new(2).expect("CPU backend is available");
         crate::qubit_bounds_tests::check_clifford_bounds(&mut sim, "GpuDensityMatrix");
         crate::qubit_bounds_tests::check_rotation_bounds(&mut sim, "GpuDensityMatrix");
         for bad in [2, 16383, 16384, usize::MAX] {
             for probability in [0.0, 0.5] {
-                crate::qubit_validation::tests::assert_bounds_panic(
+                crate::qubit_validation::gpu_free_tests::assert_bounds_panic(
                     "GpuDensityMatrix",
                     bad,
                     2,
@@ -1202,7 +1195,7 @@ mod tests {
                         sim.apply_amplitude_damping(bad, probability);
                     },
                 );
-                crate::qubit_validation::tests::assert_bounds_panic(
+                crate::qubit_validation::gpu_free_tests::assert_bounds_panic(
                     "GpuDensityMatrix",
                     bad,
                     2,
@@ -1210,7 +1203,7 @@ mod tests {
                         sim.apply_phase_damping(bad, probability);
                     },
                 );
-                crate::qubit_validation::tests::assert_bounds_panic(
+                crate::qubit_validation::gpu_free_tests::assert_bounds_panic(
                     "GpuDensityMatrix",
                     bad,
                     2,
@@ -1218,7 +1211,7 @@ mod tests {
                         sim.apply_depolarizing_noise(bad, probability);
                     },
                 );
-                crate::qubit_validation::tests::assert_bounds_panic(
+                crate::qubit_validation::gpu_free_tests::assert_bounds_panic(
                     "GpuDensityMatrix",
                     bad,
                     2,
@@ -1226,7 +1219,7 @@ mod tests {
                         sim.apply_bit_flip(bad, probability);
                     },
                 );
-                crate::qubit_validation::tests::assert_bounds_panic(
+                crate::qubit_validation::gpu_free_tests::assert_bounds_panic(
                     "GpuDensityMatrix",
                     bad,
                     2,
@@ -1397,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn rounded_f32_deterministic_measurement_ignores_upper_tail_draw() {
+    fn gpu_free_rounded_f32_deterministic_measurement_ignores_upper_tail_draw() {
         check_rounded_deterministic_measurement::<RoundedF32StateVec>().unwrap();
     }
 
@@ -1545,22 +1538,22 @@ mod tests {
     }
 
     #[test]
-    fn complex_unitaries_have_analytic_off_diagonals() {
+    fn gpu_free_complex_unitaries_have_analytic_off_diagonals() {
         check_complex_unitary_analytics::<StateVecSoA>(CONJUGATION_TOLERANCE).unwrap();
     }
 
     #[test]
-    fn seeded_complex_circuit_matches_state_vector_outer_product() {
+    fn gpu_free_seeded_complex_circuit_matches_state_vector_outer_product() {
         check_seeded_state_vector_oracle::<StateVecSoA>(1e-10).unwrap();
     }
 
     #[test]
-    fn mixed_bit_flip_measurement_preserves_environment_information() {
+    fn gpu_free_mixed_bit_flip_measurement_preserves_environment_information() {
         check_mixed_bit_flip_measurement::<StateVecSoA>(CONJUGATION_TOLERANCE).unwrap();
     }
 
     #[test]
-    fn mixed_amplitude_damping_measurement_preserves_environment_information() {
+    fn gpu_free_mixed_amplitude_damping_measurement_preserves_environment_information() {
         check_mixed_amplitude_damping_measurement::<StateVecSoA>(CONJUGATION_TOLERANCE).unwrap();
     }
 

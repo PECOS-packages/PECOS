@@ -509,7 +509,7 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "--exclude",
         "pecos-decoders",
         "--exclude",
-        "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
+        "pecos-gpu-sims", // Test separately: full suite with a GPU, gpu_free subset otherwise
     ]);
 
     args.extend(profile_args);
@@ -562,13 +562,15 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 
     if include_gpu_sims {
         println!("Including pecos-gpu-sims in Rust tests");
-        let mut args = vec!["test", "-p", "pecos-gpu-sims"];
-        args.extend(profile_args);
-        if !run(&args) {
-            return Err(Error::Config(
-                "cargo test (pecos-gpu-sims) failed".to_string(),
-            ));
-        }
+    } else {
+        println!("Testing the GPU-free pecos-gpu-sims subset");
+    }
+    let mut args = gpu_test_args(include_gpu_sims);
+    args.extend(profile_args);
+    if !run(&args) {
+        return Err(Error::Config(
+            "cargo test (pecos-gpu-sims) failed".to_string(),
+        ));
     }
 
     println!("Testing pecos-decoders...");
@@ -600,8 +602,27 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     Ok(())
 }
 
+// Keep hardware tests unchanged when the probe succeeds. The `gpu_free` marker
+// selects only tests that neither request an adapter nor create GPU resources.
+fn gpu_test_args(include_gpu_sims: bool) -> Vec<&'static str> {
+    let mut args = vec!["test", "-p", "pecos-gpu-sims"];
+    if !include_gpu_sims {
+        args.extend(["--lib", "gpu_free"]);
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gpu_probe_selects_full_or_gpu_free_suite() {
+        assert_eq!(super::gpu_test_args(true), ["test", "-p", "pecos-gpu-sims"]);
+        assert_eq!(
+            super::gpu_test_args(false),
+            ["test", "-p", "pecos-gpu-sims", "--lib", "gpu_free"]
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -84,18 +84,18 @@ impl<'a> CircuitExecutor<'a> {
     /// non-Clifford, an operand exceeds simulator capacity, or the simulator does not support
     /// the gate. Capacity is checked for the whole circuit before any gate is applied.
     pub fn run<S: CliffordGateable>(&self, sim: &mut S) -> Result<Vec<MeasurementResult>, String> {
-        let capacity = sim.num_qubits();
-        for (_, tick) in self.circuit.iter_ticks() {
-            for batch in tick.iter_gate_batches() {
-                let gate = batch.as_gate();
-                for qubit in &gate.qubits {
-                    if qubit.index() >= capacity {
-                        return Err(format!(
-                            "Gate {:?} targets qubit {} but the simulator holds {capacity} qubits; use a smaller qubit index or construct the simulator with a qubit count greater than {}",
-                            gate.gate_type,
-                            qubit.index(),
-                            qubit.index()
-                        ));
+        if let Some(capacity) = sim.qubit_capacity() {
+            for (_, tick) in self.circuit.iter_ticks() {
+                for batch in tick.iter_gate_batches() {
+                    let gate = batch.as_gate();
+                    for qubit in &gate.qubits {
+                        if qubit.index() >= capacity {
+                            return Err(format!(
+                                "Gate {:?} targets qubit {} but the simulator holds {capacity} qubits; use a qubit index below {capacity}, or construct the simulator with more qubits",
+                                gate.gate_type,
+                                qubit.index()
+                            ));
+                        }
                     }
                 }
             }
@@ -439,7 +439,30 @@ mod tests {
 #[cfg(test)]
 mod capacity_tests {
     use super::*;
-    use crate::{SparseStab, StabilizerTableauSimulator};
+    use crate::{QuantumSimulator, SparseStab, StabilizerTableauSimulator};
+
+    #[test]
+    fn growing_pauli_tracker_accepts_circuits() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        let mut sim = crate::PauliProp::new();
+        assert_eq!(sim.qubit_capacity(), None);
+        assert!(CircuitExecutor::new(&circuit).run(&mut sim).is_ok());
+        assert_eq!(sim.qubit_capacity(), None);
+    }
+
+    #[test]
+    fn growing_bitmask_tracker_accepts_circuits() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        let mut sim = crate::BitmaskPauliProp::new();
+        assert_eq!(sim.qubit_capacity(), None);
+        assert!(CircuitExecutor::new(&circuit).run(&mut sim).is_ok());
+        assert_eq!(sim.num_qubits(), 2);
+        assert_eq!(sim.qubit_capacity(), None);
+    }
 
     #[test]
     fn capacity_preflight_applies_nothing() {

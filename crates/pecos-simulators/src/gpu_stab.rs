@@ -185,7 +185,6 @@ impl GpuStab {
     ///
     /// GPU kernel: Each thread handles one u32 word (32 generators)
     fn apply_h(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         // Process stabilizers
@@ -214,7 +213,6 @@ impl GpuStab {
     ///
     /// GPU kernel: Each thread handles one u32 word (32 generators)
     fn apply_s(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         // Process stabilizers
@@ -242,7 +240,6 @@ impl GpuStab {
     ///
     /// GPU kernel: Each thread handles one u32 word (32 generators)
     fn apply_sdg(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         // Process stabilizers
@@ -268,8 +265,6 @@ impl GpuStab {
     ///
     /// GPU kernel: Each thread handles one u32 word, XORs two columns
     fn apply_cx(&mut self, control: usize, target: usize) {
-        self.check_qubit(control);
-        self.check_qubit(target);
         let ctrl_base = control * self.words_per_col;
         let tgt_base = target * self.words_per_col;
 
@@ -293,8 +288,6 @@ impl GpuStab {
     ///
     /// GPU kernel: Each thread handles one u32 word
     fn apply_cz(&mut self, q1: usize, q2: usize) {
-        self.check_qubit(q1);
-        self.check_qubit(q2);
         let base1 = q1 * self.words_per_col;
         let base2 = q2 * self.words_per_col;
 
@@ -322,7 +315,6 @@ impl GpuStab {
     /// Apply X gate.
     /// X: Z → -Z (flips sign for generators with Z on this qubit)
     fn apply_x(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         for w in 0..self.words_per_col {
@@ -334,7 +326,6 @@ impl GpuStab {
     /// Apply Y gate.
     /// Y: X → -X, Z → -Z
     fn apply_y(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         for w in 0..self.words_per_col {
@@ -352,7 +343,6 @@ impl GpuStab {
     /// Apply Z gate.
     /// Z: X → -X (flips sign for generators with X on this qubit)
     fn apply_z(&mut self, qubit: usize) {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         for w in 0..self.words_per_col {
@@ -368,7 +358,6 @@ impl GpuStab {
     ///
     /// GPU: This is a parallel OR reduction over the column.
     fn is_deterministic(&self, qubit: usize) -> bool {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
         for w in 0..self.words_per_col {
             if self.stab_col_x[col_base + w] != 0 {
@@ -383,7 +372,6 @@ impl GpuStab {
     ///
     /// GPU: This is a parallel "find first set" operation.
     fn find_anticommuting_stabilizer(&self, qubit: usize) -> Option<usize> {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
         for w in 0..self.words_per_col {
             let word = self.stab_col_x[col_base + w];
@@ -398,7 +386,6 @@ impl GpuStab {
     /// Outcome is determined by the product of stabilizers corresponding to
     /// destabilizers that have X on the measured qubit.
     fn deterministic_meas(&self, qubit: usize) -> MeasurementResult {
-        self.check_qubit(qubit);
         let col_base = qubit * self.words_per_col;
 
         // Count destabilizers with X on this qubit intersected with
@@ -464,7 +451,6 @@ impl GpuStab {
     /// Perform non-deterministic measurement.
     /// Randomly chooses outcome and updates tableau.
     fn nondeterministic_meas(&mut self, qubit: usize, outcome: bool) -> MeasurementResult {
-        self.check_qubit(qubit);
         let pivot = self
             .find_anticommuting_stabilizer(qubit)
             .expect("non-deterministic measurement requires anticommuting stabilizer");
@@ -615,7 +601,6 @@ impl GpuStab {
 
     /// Set stabilizer to ±Z on the given qubit.
     fn set_stabilizer_to_z(&mut self, generator: usize, qubit: usize, negative: bool) {
-        self.check_qubit(qubit);
         let word = generator / 32;
         let bit = 1u32 << (generator % 32);
 
@@ -915,7 +900,7 @@ mod bounds_tests {
 
     #[test]
     #[should_panic(
-        expected = "GpuStab: qubit 2 is out of range for a 2-qubit register; use a smaller qubit index or construct the simulator with a qubit count greater than 2"
+        expected = "GpuStab: qubit 2 is out of range for a 2-qubit register; use a qubit index below 2, or construct the simulator with more qubits"
     )]
     fn cpu_gpu_layout_checks_bounds() {
         GpuStab::new(2).h(&[QubitId(2)]);

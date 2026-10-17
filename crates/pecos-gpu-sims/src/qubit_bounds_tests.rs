@@ -1,5 +1,5 @@
 //! Hardware integration coverage. Pure boundary coverage lives in `qubit_validation`.
-use crate::qubit_validation::tests::assert_bounds_panic;
+use crate::qubit_validation::gpu_free_tests::assert_bounds_panic;
 use crate::{
     CompiledGate, GpuDensityMatrix32, GpuPauliProp, GpuStab, GpuStabMulti, GpuStateVec32,
     GpuStateVec64,

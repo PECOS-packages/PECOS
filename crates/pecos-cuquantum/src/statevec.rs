@@ -223,6 +223,11 @@ impl CuStateVec {
     /// Panics if any qubit is outside this simulator's register.
     pub fn apply_matrix_1q(&mut self, qubit: usize, matrix: &[[f64; 2]; 4]) {
         self.check_qubit(qubit);
+        self.apply_matrix_1q_validated(qubit, matrix);
+    }
+
+    // Caller validates the complete batch before entering its gate loop.
+    fn apply_matrix_1q_validated(&mut self, qubit: usize, matrix: &[[f64; 2]; 4]) {
         // Convert to cuDoubleComplex format
         let gate_matrix: [cuDoubleComplex; 4] = [
             cuDoubleComplex {
@@ -284,6 +289,16 @@ impl CuStateVec {
     pub fn apply_matrix_2q(&mut self, qubit_a: usize, qubit_b: usize, matrix: &[[f64; 2]; 16]) {
         self.check_qubit(qubit_a);
         self.check_qubit(qubit_b);
+        self.apply_matrix_2q_validated(qubit_a, qubit_b, matrix);
+    }
+
+    // Caller validates the complete batch before entering its gate loop.
+    fn apply_matrix_2q_validated(
+        &mut self,
+        qubit_a: usize,
+        qubit_b: usize,
+        matrix: &[[f64; 2]; 16],
+    ) {
         debug_assert!(qubit_a != qubit_b, "qubits must be different");
 
         // Convert to cuDoubleComplex format
@@ -385,8 +400,6 @@ impl CuStateVec {
 
     /// Measure a single qubit in the Z basis
     fn measure_single(&mut self, qubit: usize) -> MeasurementResult {
-        self.check_qubit(qubit);
-
         let basis_bits = [qubit as i32];
         let mut parity: i32 = 0;
         let rand_num = self.rng.f64();
@@ -594,7 +607,7 @@ impl CliffordGateable for CuStateVec {
         let (sin, cos) = phase.to_radians_signed().sin_cos();
         let matrix = [[cos, sin], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -605,7 +618,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::SZ);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -616,7 +629,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::H);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -627,7 +640,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::H2);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -638,7 +651,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::H3);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -649,7 +662,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::H4);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -660,7 +673,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::H5);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -671,7 +684,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::H6);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -691,7 +704,7 @@ impl CliffordGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 0.0],
         ];
         for &(q0, q1) in pairs {
-            self.apply_matrix_2q(q0.0, q1.0, &matrix);
+            self.apply_matrix_2q_validated(q0.0, q1.0, &matrix);
         }
         self
     }
@@ -711,7 +724,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::X);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -722,7 +735,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::Y);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -733,7 +746,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::Z);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -744,7 +757,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::SZdg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -755,7 +768,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::SY);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -766,7 +779,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::SYdg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -777,7 +790,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -788,7 +801,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::Fdg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -799,7 +812,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F2);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -810,7 +823,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F2dg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -821,7 +834,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F3);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -832,7 +845,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F3dg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -843,7 +856,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F4);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -854,7 +867,7 @@ impl CliffordGateable for CuStateVec {
         }
         let matrix = canonical_clifford_matrix(Clifford::F4dg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -874,7 +887,7 @@ impl CliffordGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [-1.0, 0.0],
         ];
         for &(q0, q1) in pairs {
-            self.apply_matrix_2q(q0.0, q1.0, &matrix);
+            self.apply_matrix_2q_validated(q0.0, q1.0, &matrix);
         }
         self
     }
@@ -894,7 +907,7 @@ impl CliffordGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [1.0, 0.0],
         ];
         for &(q0, q1) in pairs {
-            self.apply_matrix_2q(q0.0, q1.0, &matrix);
+            self.apply_matrix_2q_validated(q0.0, q1.0, &matrix);
         }
         self
     }
@@ -913,7 +926,7 @@ impl ArbitraryRotationGateable for CuStateVec {
         let s = (theta / 2.0).sin();
         let matrix = [[c, 0.0], [0.0, -s], [0.0, -s], [c, 0.0]];
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -928,7 +941,7 @@ impl ArbitraryRotationGateable for CuStateVec {
         let s = (theta / 2.0).sin();
         let matrix = [[c, -s], [0.0, 0.0], [0.0, 0.0], [c, s]];
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -950,7 +963,7 @@ impl ArbitraryRotationGateable for CuStateVec {
             [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [c, -s],
         ];
         for &(q0, q1) in pairs {
-            self.apply_matrix_2q(q0.0, q1.0, &matrix);
+            self.apply_matrix_2q_validated(q0.0, q1.0, &matrix);
         }
         self
     }
@@ -966,7 +979,7 @@ impl ArbitraryRotationGateable for CuStateVec {
         let s = (theta / 2.0).sin();
         let matrix = [[c, 0.0], [-s, 0.0], [s, 0.0], [c, 0.0]];
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -978,7 +991,7 @@ impl ArbitraryRotationGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::T);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }
@@ -990,7 +1003,7 @@ impl ArbitraryRotationGateable for CuStateVec {
         }
         let matrix = canonical_single_qubit_matrix(GateType::Tdg);
         for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
+            self.apply_matrix_1q_validated(q.0, &matrix);
         }
         self
     }

@@ -7,6 +7,8 @@ pub(crate) fn checked_index(index: usize, num_qubits: usize, simulator: &str) ->
 
 pub(crate) const PACKED_QUBIT_CAPACITY: usize = 1 << 14;
 
+/// Register owners establish the 14-bit capacity at construction. Operand bounds
+/// are checked here even when a public batch has already been validated.
 pub(crate) fn pack_gate(
     gate_type: u32,
     target: usize,
@@ -16,15 +18,11 @@ pub(crate) fn pack_gate(
 ) -> u32 {
     let target = checked_index(target, num_qubits, simulator);
     let control = control.map(|q| checked_index(q, num_qubits, simulator));
-    assert!(
-        num_qubits <= PACKED_QUBIT_CAPACITY,
-        "packed GPU registers are limited to 14-bit operands"
-    );
     (gate_type & 0xF) | (target << 4) | (control.unwrap_or(0) << 18)
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(crate) mod gpu_free_tests {
     use super::*;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -44,7 +42,7 @@ pub(crate) mod tests {
         assert_eq!(
             message,
             format!(
-                "{simulator}: qubit {index} is out of range for a {capacity}-qubit register; use a smaller qubit index or construct the simulator with a qubit count greater than {index}"
+                "{simulator}: qubit {index} is out of range for a {capacity}-qubit register; use a qubit index below {capacity}, or construct the simulator with more qubits"
             )
         );
     }

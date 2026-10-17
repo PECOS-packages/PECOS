@@ -101,17 +101,13 @@ fn noisy_summary(
     seed: u64,
     model: CczModel,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
-    // Heuristic: ancilla prep + measurement flips and four weight-4-check
-    // Depolarizing2 X/Y-on-target marginals. Ignores data faults propagated
-    // through the schedule; q is a decoder prior, not the physical p.
-    let q = (2.0 + 4.0 * 8.0 / 15.0) * p;
-    let protocol = NoisyCcz::new(code, p, q, model)?;
+    let protocol = NoisyCcz::new(code, p, model)?;
     let (build_time, compile_time) = protocol.construction_times();
     let started = Instant::now();
     let counts = protocol.run_counts(shots as usize, seed)?;
     let sample_s = started.elapsed().as_secs_f64();
     Ok(serde_json::json!({
-        "n": code.num_qubits(), "k": code.num_logical_qubits(), "p": p, "q": q,
+        "n": code.num_qubits(), "k": code.num_logical_qubits(), "p": p,
         "model": match model { CczModel::Exact => "exact", CczModel::PaperSurrogate => "surrogate" },
         "shots": shots, "seed": seed, "attempted": counts.attempted,
         "repair_failures": counts.repair_failures, "accepted": counts.accepted,

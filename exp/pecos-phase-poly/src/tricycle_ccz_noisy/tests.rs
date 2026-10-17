@@ -19,7 +19,7 @@ fn noiseless(model: CczModel) {
     // [kill: skip the X correction] Diagnostics must also remain zero.
     // [kill: use H_Z^T or M_Z^T] Orientation is essential to repair and correction.
     for code in codes() {
-        let protocol = NoisyCcz::new(&code, 0.0, 0.01, model).unwrap();
+        let protocol = NoisyCcz::new(&code, 0.0, model).unwrap();
         let result = protocol.run(16, 8108).unwrap();
         let residual = result
             .outcomes
@@ -94,7 +94,7 @@ fn forced_measurement_and_data_faults() {
                     qubit: 3 * n + index,
                     kind: GateType::X,
                 }];
-                let result = NoisyCcz::build(&code, 0.0, 0.01, model, &faults)
+                let result = NoisyCcz::build(&code, 0.0, model, &faults)
                     .unwrap()
                     .run(4, 71)
                     .unwrap();
@@ -114,7 +114,7 @@ fn forced_measurement_and_data_faults() {
                 qubit: n + 2,
                 kind: GateType::Z,
             }];
-            let result = NoisyCcz::build(&code, 0.0, 0.01, model, &faults)
+            let result = NoisyCcz::build(&code, 0.0, model, &faults)
                 .unwrap()
                 .run(16, 72)
                 .unwrap();
@@ -155,7 +155,7 @@ fn image_check_even_for_zero_meta_syndrome() {
             })
             .collect::<Vec<_>>();
         for model in [CczModel::Exact, CczModel::PaperSurrogate] {
-            let result = NoisyCcz::build(&code, 0.0, 0.01, model, &faults)
+            let result = NoisyCcz::build(&code, 0.0, model, &faults)
                 .unwrap()
                 .run(8, 77)
                 .unwrap();
@@ -192,17 +192,11 @@ fn supports_and_probabilities() {
     let code = &codes()[0];
     for p in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert_eq!(
-            NoisyCcz::new(code, p, 0.01, CczModel::Exact).err().unwrap(),
+            NoisyCcz::new(code, p, CczModel::Exact).err().unwrap(),
             "p must be finite and in [0,1]"
         );
     }
-    for q in [0.0, 0.5, -0.1, f64::NAN, f64::INFINITY] {
-        assert_eq!(
-            NoisyCcz::new(code, 0.0, q, CczModel::Exact).err().unwrap(),
-            "q must be finite and in (0,0.5)"
-        );
-    }
-    assert!(NoisyCcz::new(code, 1.0, 0.01, CczModel::Exact).is_ok());
+    assert!(NoisyCcz::new(code, 1.0, CczModel::Exact).is_ok());
 }
 
 #[test]
@@ -210,7 +204,7 @@ fn reproducibility_and_statistical_smoke() {
     let code = &codes()[0];
     for model in [CczModel::Exact, CczModel::PaperSurrogate] {
         // [contract] Decoder state and all RNG streams restart on each run.
-        let protocol = NoisyCcz::new(code, 0.01, 0.04, model).unwrap();
+        let protocol = NoisyCcz::new(code, 0.01, model).unwrap();
         assert_eq!(
             protocol.run(32, 2026).unwrap(),
             protocol.run(32, 2026).unwrap()
@@ -222,7 +216,7 @@ fn reproducibility_and_statistical_smoke() {
         );
         assert_eq!(protocol.run_counts(0, 2026).unwrap(), Counts::default());
         // [contract] Nontrivial acceptance and internally consistent counts.
-        let result = NoisyCcz::new(code, 0.001, 0.004, model)
+        let result = NoisyCcz::new(code, 0.001, model)
             .unwrap()
             .run(256, 2027)
             .unwrap();
@@ -378,7 +372,7 @@ fn residual_x_is_diagnostic_only() {
         qubit: 0,
         kind: GateType::X,
     }];
-    let result = NoisyCcz::build(code, 0.0, 0.01, CczModel::PaperSurrogate, &faults)
+    let result = NoisyCcz::build(code, 0.0, CczModel::PaperSurrogate, &faults)
         .unwrap()
         .run(16, 90)
         .unwrap();
@@ -399,7 +393,7 @@ fn exact_logical_pivot_x_is_not_z_clean() {
         qubit: pivot,
         kind: GateType::X,
     }];
-    let result = NoisyCcz::build(code, 0.0, 0.01, CczModel::Exact, &faults)
+    let result = NoisyCcz::build(code, 0.0, CczModel::Exact, &faults)
         .unwrap()
         .run(500, 2026)
         .unwrap();

@@ -82,6 +82,23 @@ batch, retaining their source labels; an empty drain adds no batch. Certificatio
 then checks for unexpected late operations and still fails if any remain. Scheduled
 execution retains its own terminal batch drain.
 
+After that pre-end drain, the host calls the runtime end hook exactly once and
+executes its final operations before certifying completion. Native extraction
+polls after `shot_end` without submitting another barrier. Scheduled output keeps
+its original complete batches, timestamps, duration, order and runtime shot ID;
+it is processed by the same noise model and simulator as the program's output.
+No new schedule is constructed for the tail.
+
+`QisRuntime::finish_operations` and `finish_scheduled_operations` expose this
+final delivery to host implementations. A runtime whose ordinary drain cannot be
+used after end must override these methods. Direct `SeleneRuntime::shot_end`
+callers receive an error if native end emits work they would otherwise discard.
+Post-end measurements requiring feedback are currently unsupported and fail the
+shot explicitly. End-hook, extraction, admission and custom-event failures remain
+sticky until reset; no completed trace is emitted on failure. Native final
+extraction uses the existing per-batch and aggregate transport retention bounds.
+
+
 ## Allocation lifetimes and capacity
 
 Every qubit handle stays alive through ordinary and leakage-aware measurements.

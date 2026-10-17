@@ -230,6 +230,7 @@ def test_conflicting_qubit_counts_build_is_value_error():
 
 @pytest.mark.parametrize("method", ["run", "build", "capture_operation_trace"])
 def test_qis_requires_explicit_qubits_as_value_error(method) -> None:
+    """Missing counts fail before resolving the program or loading Selene."""
     from pecos_rslib.programs import Qis
 
     builder = sim(Qis.from_string("define void @main() { ret void }"))

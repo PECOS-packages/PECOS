@@ -550,6 +550,12 @@ impl PySimBuilder {
 
         match &self.inner {
             SimBuilderInner::QisControl(builder) => {
+                let n = builder.explicit_num_qubits.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "QIS programs require explicit qubit specification. \
+                        Please call .qubits(N) before capture_operation_trace().",
+                    )
+                })?;
                 let engine_builder = builder.engine_builder()?;
                 let collector: pecos_qis::OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
                 let engine_builder =
@@ -568,12 +574,6 @@ impl PySimBuilder {
                 if let Some(workers) = builder.workers {
                     sim_builder = sim_builder.workers(workers);
                 }
-                let n = builder.explicit_num_qubits.ok_or_else(|| {
-                    PyValueError::new_err(
-                        "QIS programs require explicit qubit specification. \
-                        Please call .qubits(N) before capture_operation_trace().",
-                    )
-                })?;
                 sim_builder = sim_builder.qubits(n);
 
                 if let Some(ref qe_py) = builder.quantum_engine_builder {
@@ -727,6 +727,18 @@ impl PySimBuilder {
             SimBuilderInner::Qasm(builder) => run_qasm_via_facade(builder, shots),
             SimBuilderInner::QisControl(builder) => {
                 // Implementation for QIS Engine
+                let n = builder.explicit_num_qubits.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "QIS programs require explicit qubit specification. \
+                        Please call .qubits(N) to specify the number of qubits.\n\
+                        \n\
+                        Example:\n\
+                        sim(qis_program).qubits(10).run(100)\n\
+                        \n\
+                        Unlike QASM programs which declare qubit registers explicitly, \
+                        QIS programs need the qubit count to be specified for proper simulation.",
+                    )
+                })?;
                 let engine_builder = builder.engine_builder()?;
                 let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                     engine_builder.trace_operations_to(trace_dir)
@@ -743,19 +755,6 @@ impl PySimBuilder {
                 if let Some(workers) = builder.workers {
                     sim_builder = sim_builder.workers(workers);
                 }
-                // QIS programs require explicit qubit specification since they don't inherently specify qubit count
-                let n = builder.explicit_num_qubits.ok_or_else(|| {
-                    PyValueError::new_err(
-                        "QIS programs require explicit qubit specification. \
-                        Please call .qubits(N) to specify the number of qubits.\n\
-                        \n\
-                        Example:\n\
-                        sim(qis_program).qubits(10).run(100)\n\
-                        \n\
-                        Unlike QASM programs which declare qubit registers explicitly, \
-                        QIS programs need the qubit count to be specified for proper simulation.",
-                    )
-                })?;
                 sim_builder = sim_builder.qubits(n);
                 // Apply quantum engine if present
                 if let Some(ref qe_py) = builder.quantum_engine_builder {
@@ -1146,6 +1145,12 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::QisControl(builder) => {
                     // Implementation for QIS Engine build()
+                    let n = builder.explicit_num_qubits.ok_or_else(|| {
+                        PyValueError::new_err(
+                            "QIS programs require explicit qubit specification. \
+                            Please call .qubits(N) to specify the number of qubits.",
+                        )
+                    })?;
                     let engine_builder = builder.engine_builder()?;
                     let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                         engine_builder.trace_operations_to(trace_dir)
@@ -1162,13 +1167,6 @@ impl PySimBuilder {
                     if let Some(workers) = builder.workers {
                         sim_builder = sim_builder.workers(workers);
                     }
-                    // QIS programs require explicit qubit specification
-                    let n = builder.explicit_num_qubits.ok_or_else(|| {
-                        PyValueError::new_err(
-                            "QIS programs require explicit qubit specification. \
-                            Please call .qubits(N) to specify the number of qubits.",
-                        )
-                    })?;
                     sim_builder = sim_builder.qubits(n);
 
                     // Apply quantum engine if present
@@ -1574,7 +1572,9 @@ mod preflight_tests {
         Python::attach(|py| {
             let builder = PySimBuilder {
                 inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
-                    engine_builder: Arc::new(Mutex::new(Some(pecos_qis::qis_engine()))),
+                    // No cached engine or program: attempting engine resolution would fail.
+                    // Missing count must be rejected before any native runtime is needed.
+                    engine_builder: Arc::new(Mutex::new(None)),
                     seed: None,
                     workers: None,
                     shots: None,

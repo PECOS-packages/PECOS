@@ -57,14 +57,14 @@ def test_phir_noise_shortcuts_raise_value_error(probability: float, generic: boo
 
 
 @pytest.mark.parametrize(
-    "factory, name",
+    ("factory", "name"),
     [
         (depolarizing_noise, "uniform depolarizing probability"),
         (biased_depolarizing_noise, "uniform biased depolarizing probability"),
     ],
 )
 def test_noise_configuration_message_has_one_prefix(factory, name) -> None:
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(ValueError, match=rf"Invalid noise configuration: {name} must be between") as error:
         sim(Qasm.from_string("OPENQASM 2.0; qreg q[1];")).noise(factory().with_uniform_probability(1.5)).run(1)
     assert str(error.value) == (
         f"Invalid noise configuration: {name} must be between 0.0 and 1.0, got 1.5; "

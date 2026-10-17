@@ -2050,12 +2050,7 @@ impl PyGeneralNoiseModelBuilder {
 }
 
 pub(crate) fn noise_configuration_error(error: pecos_core::errors::PecosError) -> PyErr {
-    match error {
-        pecos_core::errors::PecosError::Input(message) => pyo3::exceptions::PyValueError::new_err(
-            format!("Invalid noise configuration: {message}"),
-        ),
-        error => crate::errors::simulation_error(error, "Invalid noise configuration"),
-    }
+    crate::errors::simulation_error(error, "Invalid noise configuration")
 }
 
 /// Python wrapper for `DepolarizingNoiseModelBuilder`

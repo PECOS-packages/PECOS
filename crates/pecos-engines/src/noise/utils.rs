@@ -31,6 +31,16 @@ pub(super) fn panic_on_noise_error(error: PecosError) -> ! {
     }
 }
 
+/// Validate a probability, returning its bare diagnostic for deferred builder errors.
+pub(super) fn validate_probability(probability: f64, name: &str) -> Result<(), String> {
+    if !(0.0..=1.0).contains(&probability) {
+        return Err(format!(
+            "{name} must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
+        ));
+    }
+    Ok(())
+}
+
 /// Helper trait for validating probability values
 pub trait ProbabilityValidator {
     /// Validate that a probability is between 0.0 and 1.0
@@ -50,12 +60,7 @@ pub trait ProbabilityValidator {
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     fn try_validate_probability(probability: f64, name: &str) -> Result<(), PecosError> {
-        if !(0.0..=1.0).contains(&probability) {
-            return Err(PecosError::Input(format!(
-                "{name} must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
-            )));
-        }
-        Ok(())
+        validate_probability(probability, name).map_err(PecosError::Input)
     }
 }
 

@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use super::utils::panic_on_noise_error;
+use super::utils::{panic_on_noise_error, validate_probability};
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType};
 use crate::engine_system::{ControlEngine, EngineStage};
@@ -602,20 +602,16 @@ impl BiasedDepolarizingNoiseModelBuilder {
 
     /// Set the same probability for all error types
     ///
-    /// Invalid values are recorded and reported by `validate_configuration` or `try_build`.
     /// This is a convenience method to set all probabilities to the same value.
+    /// Invalid values are recorded and reported by `validate_configuration` or `try_build`.
     ///
     /// # Arguments
     /// * `probability` - The probability value to set for all error types
     #[must_use]
     pub fn with_uniform_probability(mut self, probability: f64) -> Self {
-        if let Err(error) = BiasedDepolarizingNoiseModel::try_validate_probability(
-            probability,
-            "uniform biased depolarizing probability",
-        ) {
-            let PecosError::Input(message) = error else {
-                unreachable!("probability validation only returns PecosError::Input");
-            };
+        if let Err(message) =
+            validate_probability(probability, "uniform biased depolarizing probability")
+        {
             self.setter_error.get_or_insert(message);
             return self;
         }

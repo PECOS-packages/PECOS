@@ -117,6 +117,22 @@ impl Gate {
     }
 }
 
+pub(crate) fn validate_gates(gates: &[Gate], num_qubits: usize, simulator: &str) {
+    for gate in gates {
+        crate::qubit_validation::check_qubit(gate.target as usize, num_qubits, simulator);
+        if let Some(control) = gate.control {
+            crate::qubit_validation::check_qubit(control as usize, num_qubits, simulator);
+        }
+        let needs_control = matches!(gate.gate_type, GateType::Cx | GateType::Cz | GateType::Swap);
+        assert!(
+            needs_control == gate.control.is_some(),
+            "{simulator}: gate {:?} has control {:?}; use a gate constructor with the correct number of operands",
+            gate.gate_type,
+            gate.control
+        );
+    }
+}
+
 /// A compiled circuit ready for GPU execution
 #[derive(Debug, Clone)]
 pub struct CompiledCircuit {
@@ -150,20 +166,23 @@ impl CircuitCompiler {
     /// Compile a gate sequence to a specialized WGSL shader
     ///
     /// # Panics
-    /// Panics if the cache entry is unexpectedly missing after insertion.
-    pub fn compile(&mut self, gates: &[Gate]) -> &CompiledCircuit {
+    /// Panics if any operand is outside `num_qubits` or a gate has invalid control arity.
+    pub fn compile(&mut self, gates: &[Gate], num_qubits: usize) -> &CompiledCircuit {
+        validate_gates(gates, num_qubits, "CircuitCompiler");
         let hash = Self::compute_hash(gates);
 
         self.cache
             .entry(hash)
-            .or_insert_with(|| Self::generate_shader(gates, hash));
-
-        self.cache.get(&hash).expect("just inserted")
+            .or_insert_with(|| Self::generate_shader(gates, hash))
     }
 
-    /// Check if a circuit is already compiled
+    /// Check if a circuit is already compiled.
+    ///
+    /// # Panics
+    /// Panics if an operand is outside `num_qubits` or a gate has invalid control arity.
     #[must_use]
-    pub fn is_cached(&self, gates: &[Gate]) -> bool {
+    pub fn is_cached(&self, gates: &[Gate], num_qubits: usize) -> bool {
+        validate_gates(gates, num_qubits, "CircuitCompiler");
         let hash = Self::compute_hash(gates);
         self.cache.contains_key(&hash)
     }
@@ -218,11 +237,12 @@ fn {}(
             gates.len(),
             entry_point
         )
-        .unwrap();
+        .expect("formatting into a String cannot fail");
 
         // Generate code for each gate
         for (i, gate) in gates.iter().enumerate() {
-            writeln!(wgsl, "    // Gate {}: {:?}", i, gate.gate_type).unwrap();
+            writeln!(wgsl, "    // Gate {}: {:?}", i, gate.gate_type)
+                .expect("formatting into a String cannot fail");
             wgsl.push_str(&Self::generate_gate_code(gate));
             wgsl.push('\n');
         }
@@ -326,7 +346,9 @@ fn {}(
             ),
 
             GateType::Cx => {
-                let ctrl = gate.control.expect("two-qubit gate must have control");
+                let ctrl = gate
+                    .control
+                    .expect("validated two-qubit gates have a control operand");
                 format!(
                     r"    {{
         let c_off = {}u * gw + word_idx;
@@ -344,7 +366,9 @@ fn {}(
             }
 
             GateType::Cz => {
-                let a = gate.control.expect("two-qubit gate must have control");
+                let a = gate
+                    .control
+                    .expect("validated two-qubit gates have a control operand");
                 let b = gate.target;
                 format!(
                     r"    {{
@@ -366,7 +390,9 @@ fn {}(
             }
 
             GateType::Swap => {
-                let a = gate.control.expect("two-qubit gate must have control");
+                let a = gate
+                    .control
+                    .expect("validated two-qubit gates have a control operand");
                 let b = gate.target;
                 format!(
                     r"    {{
@@ -408,7 +434,7 @@ mod tests {
 
         let gates = vec![Gate::h(0), Gate::cx(0, 1), Gate::h(1)];
 
-        let compiled = compiler.compile(&gates);
+        let compiled = compiler.compile(&gates, 16384);
 
         assert_eq!(compiled.num_gates, 3);
         assert!(compiled.wgsl_source.contains("stab_x"));
@@ -422,9 +448,9 @@ mod tests {
 
         let gates = vec![Gate::h(0), Gate::h(1)];
 
-        assert!(!compiler.is_cached(&gates));
-        compiler.compile(&gates);
-        assert!(compiler.is_cached(&gates));
+        assert!(!compiler.is_cached(&gates, 16384));
+        compiler.compile(&gates, 16384);
+        assert!(compiler.is_cached(&gates, 16384));
     }
 
     #[test]
@@ -467,7 +493,7 @@ mod tests {
             }
         }
 
-        let compiled = compiler.compile(&gates);
+        let compiled = compiler.compile(&gates, 16384);
 
         println!("Surface code d={} round: {} gates", d, compiled.num_gates);
         println!("Shader length: {} bytes", compiled.wgsl_source.len());
@@ -475,5 +501,28 @@ mod tests {
         // Verify the shader is valid WGSL (basic check)
         assert!(compiled.wgsl_source.contains("@compute"));
         assert!(compiled.wgsl_source.contains("@workgroup_size(256)"));
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+    use crate::qubit_validation::tests::assert_bounds_panic;
+
+    #[test]
+    fn compilation_checks_all_operands_even_on_cache_hits() {
+        let mut compiler = CircuitCompiler::new();
+        let gates = [Gate::h(0), Gate::cx(0, 3)];
+        compiler.compile(&gates, 4);
+        assert_bounds_panic("CircuitCompiler", 3, 2, || {
+            compiler.compile(&gates, 2);
+        });
+        for bad in [2, 16383, 16384, u32::MAX] {
+            for gate in [Gate::h(bad), Gate::cx(bad, 0), Gate::cx(0, bad)] {
+                assert_bounds_panic("CircuitCompiler", bad as usize, 2, || {
+                    compiler.compile(&[gate], 2);
+                });
+            }
+        }
     }
 }

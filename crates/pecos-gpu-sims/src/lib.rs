@@ -49,10 +49,13 @@ mod gpu_sampler;
 mod gpu_stab;
 mod gpu_stab_multi;
 pub mod prelude;
+mod qubit_validation;
 pub mod state_access;
 
 #[cfg(test)]
 mod gpu_sampler_validation;
+#[cfg(test)]
+mod qubit_bounds_tests;
 
 pub use circuit_compiler::{CompiledCircuit, Gate as CompiledGate, GateType};
 pub use gpu::{GpuError, GpuStateVec32, RequiredFeature};

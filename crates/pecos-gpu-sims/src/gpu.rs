@@ -188,6 +188,10 @@ pub struct GpuStateVec32 {
 const MAX_WORKGROUPS_PER_DIM: u32 = 65535;
 
 impl GpuStateVec32 {
+    fn check_qubit(&self, index: usize) -> u32 {
+        crate::qubit_validation::checked_index(index, self.num_qubits as usize, "GpuStateVec32")
+    }
+
     /// Compute the number of workgroups needed for a given number of elements.
     /// Uses 256 threads per workgroup (standard for GPU compute).
     /// Returns (x, y) dimensions for dispatch, using 2D dispatch when count exceeds limit.
@@ -1050,6 +1054,7 @@ impl GpuStateVec32 {
 
     /// Queue an arbitrary single-qubit gate for batched dispatch.
     fn queue_single_gate(&mut self, qubit: u32, matrix: [f32; 8]) {
+        self.check_qubit(qubit as usize);
         // Diagonal gates have zero off-diagonal elements (b=0, c=0).
         // Use the specialized diagonal shader: half the arithmetic, fully coalesced.
         let is_diagonal =
@@ -1079,6 +1084,8 @@ impl GpuStateVec32 {
 
     /// Queue a CX gate for batched dispatch.
     fn queue_cx(&mut self, control: u32, target: u32) {
+        self.check_qubit(control as usize);
+        self.check_qubit(target as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::CX,
             params: GateParams {
@@ -1098,6 +1105,8 @@ impl GpuStateVec32 {
 
     /// Queue a CZ gate for batched dispatch.
     fn queue_cz(&mut self, control: u32, target: u32) {
+        self.check_qubit(control as usize);
+        self.check_qubit(target as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::CZ,
             params: GateParams {
@@ -1116,6 +1125,8 @@ impl GpuStateVec32 {
     }
 
     fn queue_cy(&mut self, control: u32, target: u32) {
+        self.check_qubit(control as usize);
+        self.check_qubit(target as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::CY,
             params: GateParams {
@@ -1133,6 +1144,8 @@ impl GpuStateVec32 {
     }
 
     fn queue_swap(&mut self, qubit0: u32, qubit1: u32) {
+        self.check_qubit(qubit0 as usize);
+        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Swap,
             params: GateParams {
@@ -1150,6 +1163,8 @@ impl GpuStateVec32 {
     }
 
     fn queue_rxx(&mut self, qubit0: u32, qubit1: u32, theta: f32) {
+        self.check_qubit(qubit0 as usize);
+        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Rxx,
             params: GateParams {
@@ -1167,6 +1182,8 @@ impl GpuStateVec32 {
     }
 
     fn queue_ryy(&mut self, qubit0: u32, qubit1: u32, theta: f32) {
+        self.check_qubit(qubit0 as usize);
+        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Ryy,
             params: GateParams {
@@ -1185,6 +1202,8 @@ impl GpuStateVec32 {
 
     /// Queue an RZZ gate for batched dispatch.
     fn queue_rzz(&mut self, qubit0: u32, qubit1: u32, theta: f32) {
+        self.check_qubit(qubit0 as usize);
+        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline: GatePipeline::Rzz,
             params: GateParams {
@@ -1212,6 +1231,8 @@ impl GpuStateVec32 {
         qubit1: u32,
         dagger: bool,
     ) {
+        self.check_qubit(qubit0 as usize);
+        self.check_qubit(qubit1 as usize);
         self.gate_queue.push(QueuedGate {
             pipeline,
             params: GateParams {
@@ -1229,7 +1250,11 @@ impl GpuStateVec32 {
     }
 
     /// Apply an arbitrary single-qubit gate
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_single_gate(&mut self, qubit: u32, matrix: [f32; 8]) {
+        self.check_qubit(qubit as usize);
         let params = GateParams {
             target_qubit: qubit,
             control_qubit: 0,
@@ -1269,7 +1294,12 @@ impl GpuStateVec32 {
     /// Apply a single CX (CNOT) gate directly.
     ///
     /// This bypasses the trait layer and dispatches directly to the GPU.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_cx(&mut self, control: u32, target: u32) {
+        self.check_qubit(control as usize);
+        self.check_qubit(target as usize);
         let params = GateParams {
             target_qubit: target,
             control_qubit: control,
@@ -1324,6 +1354,7 @@ impl GpuStateVec32 {
     /// GPU dispatches when the state is small enough. Returns (outcome, `is_deterministic`).
     fn mz_cpu_path(&mut self, qubit: u32) -> (u32, bool) {
         const DET_EPS: f32 = 1e-6;
+        self.check_qubit(qubit as usize);
 
         let mut state_data = self.state();
         let target_mask = 1usize << qubit;
@@ -1367,6 +1398,7 @@ impl GpuStateVec32 {
 
     fn mz_gpu(&mut self, qubit: u32) -> (u32, bool) {
         const DET_EPS: f32 = 1e-6;
+        self.check_qubit(qubit as usize);
 
         // Fast path for small states: read entire state, compute probability + collapse on CPU.
         // Avoids 2 GPU dispatches (reduction + collapse) and 2 buffer writes.
@@ -1586,213 +1618,312 @@ impl QuantumSimulator for GpuStateVec32 {
 
 // Trait implementations queue gates for batched dispatch.
 #[allow(clippy::cast_possible_truncation)] // Qubit indices from QubitId fit in u32
+/// # Panics
+/// Qubit operands outside the simulator register panic before GPU work.
 impl CliffordGateable for GpuStateVec32 {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
+    }
     fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let (sin, cos) = phase.to_radians_signed().sin_cos();
         let matrix = [
             cos as f32, sin as f32, 0.0, 0.0, 0.0, 0.0, cos as f32, sin as f32,
         ];
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
+            self.queue_single_gate(self.check_qubit(q.index()), matrix);
         }
         self
     }
 
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::H);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::H);
         }
         self
     }
 
     fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::H2);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::H2);
         }
         self
     }
 
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::H3);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::H3);
         }
         self
     }
 
     fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::H4);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::H4);
         }
         self
     }
 
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::H5);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::H5);
         }
         self
     }
 
     fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::H6);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::H6);
         }
         self
     }
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::X);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::X);
         }
         self
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::Y);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::Y);
         }
         self
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::Z);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::Z);
         }
         self
     }
 
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::SX);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::SX);
         }
         self
     }
 
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::SXDG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::SXDG);
         }
         self
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::SY);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::SY);
         }
         self
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::SYDG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::SYDG);
         }
         self
     }
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::S);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::S);
         }
         self
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::SDG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::SDG);
         }
         self
     }
 
     fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F);
         }
         self
     }
 
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::FDG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::FDG);
         }
         self
     }
 
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F2);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F2);
         }
         self
     }
 
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F2DG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F2DG);
         }
         self
     }
 
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F3);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F3);
         }
         self
     }
 
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F3DG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F3DG);
         }
         self
     }
 
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F4);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F4);
         }
         self
     }
 
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::F4DG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::F4DG);
         }
         self
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(c, t) in pairs {
-            self.queue_cx(c.index() as u32, t.index() as u32);
+            self.queue_cx(self.check_qubit(c.index()), self.check_qubit(t.index()));
         }
         self
     }
 
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(c, t) in pairs {
-            self.queue_cy(c.index() as u32, t.index() as u32);
+            self.queue_cy(self.check_qubit(c.index()), self.check_qubit(t.index()));
         }
         self
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(c, t) in pairs {
-            self.queue_cz(c.index() as u32, t.index() as u32);
+            self.queue_cz(self.check_qubit(c.index()), self.check_qubit(t.index()));
         }
         self
     }
 
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
-            self.queue_swap(q0.index() as u32, q1.index() as u32);
+            self.queue_swap(self.check_qubit(q0.index()), self.check_qubit(q1.index()));
         }
         self
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rzz,
-                q0.index() as u32,
-                q1.index() as u32,
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
                 false,
             );
         }
@@ -1800,11 +1931,15 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rzz,
-                q0.index() as u32,
-                q1.index() as u32,
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
                 true,
             );
         }
@@ -1812,11 +1947,15 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rxx,
-                q0.index() as u32,
-                q1.index() as u32,
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
                 false,
             );
         }
@@ -1824,11 +1963,15 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Rxx,
-                q0.index() as u32,
-                q1.index() as u32,
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
                 true,
             );
         }
@@ -1836,11 +1979,15 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Ryy,
-                q0.index() as u32,
-                q1.index() as u32,
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
                 false,
             );
         }
@@ -1848,11 +1995,15 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_named_pauli_root(
                 GatePipeline::Ryy,
-                q0.index() as u32,
-                q1.index() as u32,
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
                 true,
             );
         }
@@ -1860,6 +2011,9 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.flush_gates();
 
         // Empirical mz path selection (RTX 4090 / PCIe 4.0, 2026-04-11).
@@ -1882,8 +2036,14 @@ impl GpuStateVec32 {
     /// Read state, measure all qubits on CPU, write state back. Skips path
     /// selection -- intended for benchmarking and tests that need to force a
     /// specific path. Production code should call `mz()`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn mz_cpu_batch(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         const DET_EPS: f32 = 1e-6;
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
 
         self.flush_gates();
         let mut state_data = self.state();
@@ -1941,13 +2101,19 @@ impl GpuStateVec32 {
     /// Sequential per-qubit GPU measurement. Skips path selection -- intended
     /// for benchmarking and tests that need to force a specific path.
     /// Production code should call `mz()`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn mz_gpu_sequential(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.flush_gates();
         qubits
             .iter()
             .map(|&q| {
                 #[allow(clippy::cast_possible_truncation)]
-                let (outcome, is_deterministic) = self.mz_gpu(q.index() as u32);
+                let (outcome, is_deterministic) = self.mz_gpu(self.check_qubit(q.index()));
                 MeasurementResult {
                     outcome: outcome == 1,
                     is_deterministic,
@@ -1958,71 +2124,112 @@ impl GpuStateVec32 {
 }
 
 #[allow(clippy::cast_possible_truncation)] // Qubit indices from QubitId fit in u32
+/// # Panics
+/// Qubit operands outside the simulator register panic before GPU work.
 impl ArbitraryRotationGateable for GpuStateVec32 {
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let theta = theta.to_radians_signed();
         let matrix = gates::rx(theta);
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
+            self.queue_single_gate(self.check_qubit(q.index()), matrix);
         }
         self
     }
 
     fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let theta = theta.to_radians_signed();
         let matrix = gates::ry(theta);
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
+            self.queue_single_gate(self.check_qubit(q.index()), matrix);
         }
         self
     }
 
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let theta = theta.to_radians_signed();
         let matrix = gates::rz(theta);
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
+            self.queue_single_gate(self.check_qubit(q.index()), matrix);
         }
         self
     }
 
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::T);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::T);
         }
         self
     }
 
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
-            self.queue_single_gate(q.index() as u32, gates::TDG);
+            self.queue_single_gate(self.check_qubit(q.index()), gates::TDG);
         }
         self
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         let theta = theta.to_radians_signed() as f32;
         for &(q0, q1) in pairs {
-            self.queue_rxx(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_rxx(
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
+                theta,
+            );
         }
         self
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         let theta = theta.to_radians_signed() as f32;
         for &(q0, q1) in pairs {
-            self.queue_ryy(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_ryy(
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
+                theta,
+            );
         }
         self
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         let theta = theta.to_radians_signed() as f32;
         for &(q0, q1) in pairs {
-            self.queue_rzz(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_rzz(
+                self.check_qubit(q0.index()),
+                self.check_qubit(q1.index()),
+                theta,
+            );
         }
         self
     }

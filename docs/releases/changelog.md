@@ -319,6 +319,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
+- GPU simulators reject out-of-range qubit indices before narrowing, packing, or GPU work,
+  including fused gates, compiled circuits, measurements, and Pauli queries.
+  `CircuitExecutor` checks every operand against simulator capacity before applying any gates.
+
 - Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
   a `TickCircuit`, could be placed before existing gates on the same qubit.
   After a removal an append could also panic, or wire from an unrelated gate

@@ -117,6 +117,10 @@ pub type GpuDensityMatrix32 = GpuDensityMatrix<GpuStateVec32>;
 pub type GpuDensityMatrix64 = GpuDensityMatrix<GpuStateVec64>;
 
 impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_physical_qubits, "GpuDensityMatrix");
+    }
+
     /// Create a density matrix for `n` physical qubits, initialized to |0..0><0..0|.
     ///
     /// # Errors
@@ -303,7 +307,11 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     /// `E_0 = |0><0| + sqrt(1-gamma)|1><1|`, `E_1 = sqrt(gamma)|0><1|`. Applies
     /// the channel on the density matrix then Cholesky-re-purifies the Choi
     /// state so `probability()` / `purity()` stay consistent.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_amplitude_damping(&mut self, qubit: usize, gamma: f64) -> &mut Self {
+        self.check_qubit(qubit);
         let gamma = gamma.clamp(0.0, 1.0);
         if gamma < f64::EPSILON {
             return self;
@@ -337,7 +345,11 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     /// Phase damping (pure dephasing): diagonals preserved, off-diagonals
     /// (w.r.t. the target qubit) scaled by sqrt(1-lambda). Applies the channel
     /// on the density matrix then Cholesky-re-purifies the Choi state.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_phase_damping(&mut self, qubit: usize, lambda: f64) -> &mut Self {
+        self.check_qubit(qubit);
         let lambda = lambda.clamp(0.0, 1.0);
         if lambda < f64::EPSILON {
             return self;
@@ -367,7 +379,11 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     /// Depolarizing: `rho -> (1-p) rho + (p/3)(X rho X + Y rho Y + Z rho Z)`.
     /// Uses Cholesky re-purification of the transformed density matrix, so has
     /// a readback + O(dim^3) CPU cost + writeback round trip.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_depolarizing_noise(&mut self, qubit: usize, probability: f64) -> &mut Self {
+        self.check_qubit(qubit);
         let p = probability.clamp(0.0, 1.0);
         if p < f64::EPSILON {
             return self;
@@ -397,7 +413,11 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     }
 
     /// Bit flip: `rho -> (1-p) rho + p X rho X`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_bit_flip(&mut self, qubit: usize, probability: f64) -> &mut Self {
+        self.check_qubit(qubit);
         let p = probability.clamp(0.0, 1.0);
         if p < f64::EPSILON {
             return self;
@@ -420,7 +440,11 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     }
 
     /// Phase flip: `rho -> (1-p) rho + p Z rho Z`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_phase_flip(&mut self, qubit: usize, probability: f64) -> &mut Self {
+        self.check_qubit(qubit);
         let p = probability.clamp(0.0, 1.0);
         if p < f64::EPSILON {
             return self;
@@ -513,6 +537,9 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
         F: Fn(&mut SV, &[QubitId]),
         G: Fn(&mut SV, &[QubitId]),
     {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let n = self.num_physical_qubits;
         for &q in qubits {
             let qi = q.index();
@@ -530,6 +557,10 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
         F: Fn(&mut SV, &[(QubitId, QubitId)]),
         G: Fn(&mut SV, &[(QubitId, QubitId)]),
     {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         let n = self.num_physical_qubits;
         for &(c, t) in pairs {
             let ci = c.index();
@@ -570,10 +601,20 @@ impl<SV: GpuStateVecBackend> RngManageable for GpuDensityMatrix<SV> {
     }
 }
 
+/// # Panics
+/// Qubit operands outside the simulator register panic before GPU work.
 impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
+    }
     // --- Real 1q: apply identically on physical system and environment ---
 
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -587,6 +628,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -600,6 +644,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -616,6 +663,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -631,6 +681,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     // --- Complex 1q: environment gets the elementwise conjugate ---
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -644,6 +697,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -657,6 +713,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -670,6 +729,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -683,6 +745,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -699,6 +764,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -717,6 +785,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     // --- 2q gates ---
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -730,6 +802,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -745,6 +821,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -758,6 +838,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -773,6 +857,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     // SZZ/SXX/SYY are symmetric, so their conjugates are their daggers.
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -786,6 +874,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -799,6 +891,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -812,6 +908,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -825,6 +925,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -838,6 +942,10 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         self.apply_2q_sys_env(
             pairs,
             |s, p| {
@@ -853,6 +961,9 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     /// Z-basis projective measurement. Reads state back, samples + projects on
     /// the CPU, writes collapsed state back. O(2^(2N)) per measurement.
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let n = self.num_physical_qubits;
         let sv_size = 1usize << (2 * n);
         let mut results = Vec::with_capacity(qubits.len());
@@ -930,8 +1041,13 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
     }
 }
 
+/// # Panics
+/// Qubit operands outside the simulator register panic before GPU work.
 impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> {
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // RX(-theta) = Z * RX(theta) * Z
         let n = self.num_physical_qubits;
         for &q in qubits {
@@ -945,6 +1061,9 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
     }
 
     fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // RY is real, RY* = RY
         let n = self.num_physical_qubits;
         for &q in qubits {
@@ -956,6 +1075,9 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
     }
 
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // RZ(-theta) = X * RZ(theta) * X
         let n = self.num_physical_qubits;
         for &q in qubits {
@@ -969,6 +1091,9 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
     }
 
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // T* = Tdg
         self.apply_1q_sys_env(
             qubits,
@@ -983,6 +1108,9 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
     }
 
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         self.apply_1q_sys_env(
             qubits,
             |s, q| {
@@ -1001,6 +1129,10 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
     // rotations here would omit the conjugate action on the environment copy.
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         // RZZ(-theta) = (X tensor I) RZZ(theta) (X tensor I). X on just one
         // qubit anticommutes with Z (x) Z; X on both commutes and doesn't flip.
         let n = self.num_physical_qubits;
@@ -1053,6 +1185,57 @@ mod tests {
         }
 
         fn sync_backend(&mut self) {}
+    }
+
+    #[test]
+    fn bounds_checked_on_physical_register_without_gpu() {
+        let mut sim = GpuDensityMatrix::<StateVecSoA>::new(2).expect("CPU backend is available");
+        crate::qubit_bounds_tests::check_clifford_bounds(&mut sim, "GpuDensityMatrix");
+        crate::qubit_bounds_tests::check_rotation_bounds(&mut sim, "GpuDensityMatrix");
+        for bad in [2, 16383, 16384, usize::MAX] {
+            for probability in [0.0, 0.5] {
+                crate::qubit_validation::tests::assert_bounds_panic(
+                    "GpuDensityMatrix",
+                    bad,
+                    2,
+                    || {
+                        sim.apply_amplitude_damping(bad, probability);
+                    },
+                );
+                crate::qubit_validation::tests::assert_bounds_panic(
+                    "GpuDensityMatrix",
+                    bad,
+                    2,
+                    || {
+                        sim.apply_phase_damping(bad, probability);
+                    },
+                );
+                crate::qubit_validation::tests::assert_bounds_panic(
+                    "GpuDensityMatrix",
+                    bad,
+                    2,
+                    || {
+                        sim.apply_depolarizing_noise(bad, probability);
+                    },
+                );
+                crate::qubit_validation::tests::assert_bounds_panic(
+                    "GpuDensityMatrix",
+                    bad,
+                    2,
+                    || {
+                        sim.apply_bit_flip(bad, probability);
+                    },
+                );
+                crate::qubit_validation::tests::assert_bounds_panic(
+                    "GpuDensityMatrix",
+                    bad,
+                    2,
+                    || {
+                        sim.apply_phase_flip(bad, probability);
+                    },
+                );
+            }
+        }
     }
 
     /// CPU-backed adapter that uses the GPU's f32 Hadamard coefficients. It exercises the real

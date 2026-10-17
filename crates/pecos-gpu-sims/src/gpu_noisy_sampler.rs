@@ -528,6 +528,9 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
     ///
     /// # Errors
     /// Returns an error if GPU resource creation or shader execution fails.
+    ///
+    /// # Panics
+    /// Panics if a circuit gate or noise operand is outside the register.
     pub fn sample<F>(&mut self, shots: usize, circuit_fn: F) -> Result<Vec<ShotResult>, String>
     where
         F: Fn(&mut CircuitBuilder),
@@ -536,6 +539,26 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
         let mut builder = CircuitBuilder::new();
         circuit_fn(&mut builder);
         let steps = builder.steps().to_vec();
+        for step in &steps {
+            let (a, b) = match *step {
+                NoisyCircuitStep::Gate(
+                    Gate::H(q)
+                    | Gate::S(q)
+                    | Gate::Sdg(q)
+                    | Gate::X(q)
+                    | Gate::Y(q)
+                    | Gate::Z(q)
+                    | Gate::Mz(q),
+                )
+                | NoisyCircuitStep::Noise(NoiseInjection::OneQ(q)) => (q, None),
+                NoisyCircuitStep::Gate(Gate::Cx(a, b) | Gate::Cz(a, b) | Gate::Swap(a, b))
+                | NoisyCircuitStep::Noise(NoiseInjection::TwoQ(a, b)) => (a, Some(b)),
+            };
+            crate::qubit_validation::check_qubit(a, self.num_qubits, "GpuNoisySampler");
+            if let Some(b) = b {
+                crate::qubit_validation::check_qubit(b, self.num_qubits, "GpuNoisySampler");
+            }
+        }
 
         let mut results = Vec::with_capacity(shots);
 

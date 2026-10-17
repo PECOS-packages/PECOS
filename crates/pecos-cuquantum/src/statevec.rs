@@ -72,6 +72,10 @@ pub struct CuStateVec {
 }
 
 impl CuStateVec {
+    fn check_qubit(&self, index: usize) {
+        pecos_simulators::qubit_validation::check_qubit(index, self.num_qubits, "CuStateVec");
+    }
+
     /// Create a new state vector simulator
     ///
     /// Initializes the state to |0...0>.
@@ -214,9 +218,11 @@ impl CuStateVec {
     /// * `qubit` - Target qubit index
     /// * `matrix` - 2x2 unitary matrix in row-major order [a, b, c, d]
     ///   Each element is [real, imag]
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_matrix_1q(&mut self, qubit: usize, matrix: &[[f64; 2]; 4]) {
-        debug_assert!(qubit < self.num_qubits, "qubit index out of range");
-
+        self.check_qubit(qubit);
         // Convert to cuDoubleComplex format
         let gate_matrix: [cuDoubleComplex; 4] = [
             cuDoubleComplex {
@@ -272,9 +278,12 @@ impl CuStateVec {
     /// * `qubit_a` - First qubit index (lower in ordering)
     /// * `qubit_b` - Second qubit index (higher in ordering)
     /// * `matrix` - 4x4 unitary matrix in row-major order (16 complex elements)
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn apply_matrix_2q(&mut self, qubit_a: usize, qubit_b: usize, matrix: &[[f64; 2]; 16]) {
-        debug_assert!(qubit_a < self.num_qubits, "qubit_a index out of range");
-        debug_assert!(qubit_b < self.num_qubits, "qubit_b index out of range");
+        self.check_qubit(qubit_a);
+        self.check_qubit(qubit_b);
         debug_assert!(qubit_a != qubit_b, "qubits must be different");
 
         // Convert to cuDoubleComplex format
@@ -376,7 +385,7 @@ impl CuStateVec {
 
     /// Measure a single qubit in the Z basis
     fn measure_single(&mut self, qubit: usize) -> MeasurementResult {
-        debug_assert!(qubit < self.num_qubits, "qubit index out of range");
+        self.check_qubit(qubit);
 
         let basis_bits = [qubit as i32];
         let mut parity: i32 = 0;
@@ -570,8 +579,18 @@ impl QuantumSimulator for CuStateVec {
     }
 }
 
+/// # Panics
+/// Panics if any qubit operand is outside the register.
 impl CliffordGateable for CuStateVec {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
+    }
     fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let (sin, cos) = phase.to_radians_signed().sin_cos();
         let matrix = [[cos, sin], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
         for &q in qubits {
@@ -581,6 +600,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::SZ);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -589,6 +611,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::H);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -597,6 +622,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::H2);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -605,6 +633,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::H3);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -613,6 +644,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::H4);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -621,6 +655,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::H5);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -629,6 +666,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::H6);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -637,6 +677,10 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         // CNOT matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,0,1], [0,0,1,0]]
         #[rustfmt::skip]
@@ -653,12 +697,18 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         qubits.iter().map(|&q| self.measure_single(q.0)).collect()
     }
 
     // Override some gates for efficiency (direct GPU implementation)
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::X);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -667,6 +717,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::Y);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -675,6 +728,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::Z);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -683,6 +739,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::SZdg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -691,6 +750,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::SY);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -699,6 +761,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::SYdg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -707,6 +772,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -715,6 +783,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::Fdg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -723,6 +794,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F2);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -731,6 +805,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F2dg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -739,6 +816,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F3);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -747,6 +827,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F3dg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -755,6 +838,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F4);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -763,6 +849,9 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_clifford_matrix(Clifford::F4dg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -771,6 +860,10 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         // CZ matrix (4x4)
         // [[1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,-1]]
         #[rustfmt::skip]
@@ -787,6 +880,10 @@ impl CliffordGateable for CuStateVec {
     }
 
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         // SWAP matrix (4x4)
         // [[1,0,0,0], [0,0,1,0], [0,1,0,0], [0,0,0,1]]
         #[rustfmt::skip]
@@ -803,8 +900,13 @@ impl CliffordGateable for CuStateVec {
     }
 }
 
+/// # Panics
+/// Panics if any qubit operand is outside the register.
 impl ArbitraryRotationGateable for CuStateVec {
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let theta = theta.to_radians_signed();
         // RX(theta) = [[cos(theta/2), -i*sin(theta/2)], [-i*sin(theta/2), cos(theta/2)]]
         let c = (theta / 2.0).cos();
@@ -817,6 +919,9 @@ impl ArbitraryRotationGateable for CuStateVec {
     }
 
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let theta = theta.to_radians_signed();
         // RZ(theta) = [[e^(-i*theta/2), 0], [0, e^(i*theta/2)]]
         let c = (theta / 2.0).cos();
@@ -829,6 +934,10 @@ impl ArbitraryRotationGateable for CuStateVec {
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         let theta = theta.to_radians_signed();
         // RZZ(theta) = diag(e^(-i*theta/2), e^(i*theta/2), e^(i*theta/2), e^(-i*theta/2))
         let c = (theta / 2.0).cos();
@@ -848,6 +957,9 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     // Override ry for efficiency
     fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let theta = theta.to_radians_signed();
         // RY(theta) = [[cos(theta/2), -sin(theta/2)], [sin(theta/2), cos(theta/2)]]
         let c = (theta / 2.0).cos();
@@ -861,6 +973,9 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     // Override T gate for efficiency
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::T);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
@@ -870,6 +985,9 @@ impl ArbitraryRotationGateable for CuStateVec {
 
     // Override T-dagger for efficiency
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let matrix = canonical_single_qubit_matrix(GateType::Tdg);
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);

@@ -80,7 +80,15 @@ impl QuantumSimulator for GpuStateVecAuto {
     }
 }
 
+/// # Panics
+/// Panics if a qubit is outside the selected backend's register.
 impl CliffordGateable for GpuStateVecAuto {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        match self {
+            Self::F64(sim) => sim.validate_qubits(qubits),
+            Self::F32(sim) => sim.validate_qubits(qubits),
+        }
+    }
     fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, apply_global_phase(phase, qubits))
     }

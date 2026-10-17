@@ -86,6 +86,10 @@ pub struct GpuStabMulti<R: Rng + SeedableRng = PecosRng> {
 }
 
 impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
+    fn check_qubit(&self, index: usize) -> u32 {
+        crate::qubit_validation::checked_index(index, self.num_qubits as usize, "GpuStabMulti")
+    }
+
     /// Create a new multi-shot GPU stabilizer simulator
     ///
     /// # Errors
@@ -100,6 +104,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Returns an error if no GPU adapter is found or buffer allocation exceeds device limits.
     #[allow(clippy::cast_possible_truncation)] // GPU params: qubit/shot counts fit in u32
     pub fn with_seed(num_qubits: usize, num_shots: usize, seed: u64) -> Result<Self, String> {
+        if !(1..=crate::qubit_validation::PACKED_QUBIT_CAPACITY).contains(&num_qubits) {
+            return Err(format!(
+                "GpuStabMulti: register size {num_qubits} is unsupported; construct the simulator with 1..=16384 qubits"
+            ));
+        }
         let gpu = gpu_context().map_err(|error| error.to_string())?;
         let device = gpu.device;
         let queue = gpu.queue;
@@ -712,8 +721,15 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Queue a single-qubit gate
-    fn queue_single_gate(&mut self, gate_type: u32, qubit: u32) {
-        let packed = (gate_type & 0xF) | ((qubit & 0x3FFF) << 4);
+    fn queue_single_gate(&mut self, gate_type: u32, qubit: usize) {
+        self.check_qubit(qubit);
+        let packed = crate::qubit_validation::pack_gate(
+            gate_type,
+            qubit,
+            None,
+            self.num_qubits as usize,
+            "GpuStabMulti",
+        );
         self.gate_queue.push(packed);
 
         if self.gate_queue.len() >= GATE_QUEUE_BUFFER_SIZE {
@@ -722,8 +738,16 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Queue a two-qubit gate
-    fn queue_two_qubit_gate(&mut self, gate_type: u32, control: u32, target: u32) {
-        let packed = (gate_type & 0xF) | ((target & 0x3FFF) << 4) | ((control & 0x3FFF) << 18);
+    fn queue_two_qubit_gate(&mut self, gate_type: u32, control: usize, target: usize) {
+        self.check_qubit(control);
+        self.check_qubit(target);
+        let packed = crate::qubit_validation::pack_gate(
+            gate_type,
+            target,
+            Some(control),
+            self.num_qubits as usize,
+            "GpuStabMulti",
+        );
         self.gate_queue.push(packed);
 
         if self.gate_queue.len() >= GATE_QUEUE_BUFFER_SIZE {
@@ -919,47 +943,59 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_h(&mut self, qubit: usize) {
-        self.queue_single_gate(0, qubit as u32);
+        self.check_qubit(qubit);
+        self.queue_single_gate(0, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_sz(&mut self, qubit: usize) {
-        self.queue_single_gate(1, qubit as u32);
+        self.check_qubit(qubit);
+        self.queue_single_gate(1, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_szdg(&mut self, qubit: usize) {
-        self.queue_single_gate(2, qubit as u32);
+        self.check_qubit(qubit);
+        self.queue_single_gate(2, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_x(&mut self, qubit: usize) {
-        self.queue_single_gate(3, qubit as u32);
+        self.check_qubit(qubit);
+        self.queue_single_gate(3, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_y(&mut self, qubit: usize) {
-        self.queue_single_gate(4, qubit as u32);
+        self.check_qubit(qubit);
+        self.queue_single_gate(4, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_z(&mut self, qubit: usize) {
-        self.queue_single_gate(5, qubit as u32);
+        self.check_qubit(qubit);
+        self.queue_single_gate(5, qubit);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_cx(&mut self, control: usize, target: usize) {
-        self.queue_two_qubit_gate(6, control as u32, target as u32);
+        self.check_qubit(control);
+        self.check_qubit(target);
+        self.queue_two_qubit_gate(6, control, target);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_cz(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.queue_two_qubit_gate(7, qubit_a as u32, qubit_b as u32);
+        self.check_qubit(qubit_a);
+        self.check_qubit(qubit_b);
+        self.queue_two_qubit_gate(7, qubit_a, qubit_b);
     }
 
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     fn queue_swap(&mut self, qubit_a: usize, qubit_b: usize) {
-        self.queue_two_qubit_gate(8, qubit_a as u32, qubit_b as u32);
+        self.check_qubit(qubit_a);
+        self.check_qubit(qubit_b);
+        self.queue_two_qubit_gate(8, qubit_a, qubit_b);
     }
 
     /// Get the number of shots requested
@@ -1088,8 +1124,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// probability `p_meas`.
     ///
     /// Non-deterministic measurements are now fully supported with proper tableau updates.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit/measurement indices and f32 thresholds fit in u32
     pub fn mz(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let qubit_indices: Vec<usize> = qubits.iter().map(pecos_core::QubitId::index).collect();
         self.mz_internal(&qubit_indices)
     }
@@ -1097,6 +1139,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Internal measurement implementation that takes raw indices
     #[allow(clippy::cast_possible_truncation)] // qubit/measurement indices and f32 thresholds fit in u32
     fn mz_internal(&mut self, qubits: &[usize]) -> Vec<Vec<bool>> {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         if qubits.is_empty() {
             return vec![vec![]; self.shots_per_batch as usize];
         }
@@ -1247,7 +1292,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn mx(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // X-basis measurement = H, Mz, H
         self.h(qubits);
         let results = self.mz(qubits);
@@ -1264,7 +1315,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     ///
     /// If noise is enabled, measurement errors (bit flips) are applied with
     /// probability `p_meas`.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn my(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // Y-basis measurement = Sdg, H, Mz, H, S
         // (transforms Y eigenstates to Z eigenstates)
         self.szdg(qubits);
@@ -1293,6 +1350,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     #[cfg(test)]
     #[allow(clippy::cast_possible_truncation)] // qubit/measurement indices and f32 thresholds fit in u32
     fn mz_gpu(&mut self, qubits: &[QubitId]) -> Vec<Vec<bool>> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         if qubits.is_empty() {
             return vec![vec![]; self.shots_per_batch as usize];
         }
@@ -1475,6 +1535,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         qubits: &[usize],
         all_random_bits: &[Vec<u32>],
     ) -> Vec<Vec<bool>> {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         let batch_shots = self.shots_per_batch;
         let num_qubits_measured = qubits.len();
 
@@ -1679,7 +1742,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// let results = sim.mz_fetch();
     /// // results[shot][measurement_index] = true/false
     /// ```
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn mz_queue(&mut self, qubits: &[QubitId]) {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         // Mid-circuit semantics: each mz_queue call must observe the state at
         // the TIME of the call. The queue is not drained until mz_fetch (or
         // flush), but we must execute any previously-queued measurements
@@ -1894,7 +1963,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     // it has multi-shot semantics (mz returns Vec<Vec<bool>> not Vec<MeasurementResult>)
 
     /// Hadamard gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_h(q.index());
         }
@@ -1902,7 +1977,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// SZ (sqrt-Z) gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_sz(q.index());
         }
@@ -1910,7 +1991,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// SZ-dagger gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_szdg(q.index());
         }
@@ -1918,7 +2005,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Pauli X gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_x(q.index());
         }
@@ -1926,7 +2019,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Pauli Y gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_y(q.index());
         }
@@ -1934,7 +2033,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// Pauli Z gate on specified qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.queue_z(q.index());
         }
@@ -1942,7 +2047,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// CNOT gate on pairs of qubits (control, target)
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_cx(q0.index(), q1.index());
         }
@@ -1950,7 +2062,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// CZ gate on pairs of qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_cz(q0.index(), q1.index());
         }
@@ -1958,7 +2077,14 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     }
 
     /// SWAP gate on pairs of qubits
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.queue_swap(q0.index(), q1.index());
         }

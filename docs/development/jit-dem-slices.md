@@ -310,6 +310,15 @@ omitted `buffer` derives the safe forward overlap. An explicit `buffer` also
 adds that many look-behind rounds and is rejected if it is smaller than the
 derived forward requirement.
 
+## Composition invariants
+
+Detector `fault_sector` labels travel with emitted declarations, just like
+coordinates. Slice extraction takes the label from the source detector emitted
+at relative round zero; port-only source detectors do not contribute labels.
+Declarations for the same composed address must agree on coordinates and labels,
+including whether a label is present. Disagreement is a
+`ConflictingDetectorDeclaration` error.
+
 ## Window boundaries
 
 `DemWindowSpec` describes a half-open commit region followed by a half-open

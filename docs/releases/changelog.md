@@ -158,7 +158,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `StateVecEngine` keeps the qubit count it was constructed with; addressing a
   higher qubit raises instead of resizing the simulator.
 
-- Simulation `build()` and `run()` map input errors to `ValueError`; genuine
+- Simulation `build()` and `run()` map input errors to `ValueError`, with the
+  message as `"<context>: <detail>"` (no `Input error:` prefix); genuine
   execution failures remain `RuntimeError`.
 
 ### Python bug fixes

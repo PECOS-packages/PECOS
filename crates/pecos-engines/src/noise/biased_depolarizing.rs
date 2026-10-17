@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use super::utils::{panic_on_noise_error, validate_probability};
+use super::utils::{ensure_probability_in_range, panic_on_noise_error};
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType};
 use crate::engine_system::{ControlEngine, EngineStage};
@@ -610,7 +610,7 @@ impl BiasedDepolarizingNoiseModelBuilder {
     #[must_use]
     pub fn with_uniform_probability(mut self, probability: f64) -> Self {
         if let Err(message) =
-            validate_probability(probability, "uniform biased depolarizing probability")
+            ensure_probability_in_range(probability, "uniform biased depolarizing probability")
         {
             self.setter_error.get_or_insert(message);
             return self;

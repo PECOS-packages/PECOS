@@ -44,6 +44,20 @@ from pecos.qec.surface.patch import PatchOrientation
 from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder, transform_two_patch_pauli
 
 
+def _assert_cached_detector_fault_sectors(builder, oracle, *, p1, p2, p_meas, p_prep, expected_sectors=("X", "Z")):
+    cached = builder._build_structured_dem_from_cached_slices(  # noqa: SLF001
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
+    assert cached is not None
+    model, _ = cached
+    sectors = oracle.detector_fault_sectors()
+    assert model.detector_fault_sectors() == sectors
+    assert {sector for _, sector in sectors} >= set(expected_sectors)
+
+
 def _memory_descriptor(d: int, rounds: int) -> dict:
     patch = SurfacePatch.create(d)
     b = LogicalCircuitBuilder()
@@ -250,6 +264,7 @@ def test_memory_provider_reuses_bounded_slices_and_preserves_detector_order(monk
         p_prep=0.0,
     )
     assert descriptor["full_dem"] == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
     after_first = _cached_surface_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
@@ -300,6 +315,15 @@ def test_single_round_memory_provider_reuses_bounded_slices(monkeypatch):
         p_prep=0.004,
     )
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(
+        builder,
+        oracle,
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+        expected_sectors=("X",),
+    )
     after_first = _cached_surface_singleton_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
@@ -358,6 +382,7 @@ def test_multi_patch_memory_provider_matches_full_compile(rounds, shapes, bases)
         p_prep=0.004,
     )
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
 
 
 def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
@@ -458,6 +483,15 @@ def test_cached_memory_provider_matches_full_compile_across_geometries(dx, dz, b
         p_prep=0.005,
     )
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(
+        builder,
+        oracle,
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+        expected_sectors=(basis,) if rounds == 1 else ("X", "Z"),
+    )
 
 
 def test_logical_h_provider_reuses_bounded_slices(monkeypatch):
@@ -488,6 +522,7 @@ def test_logical_h_provider_reuses_bounded_slices(monkeypatch):
         p_prep=0.004,
     )
     assert descriptor["full_dem"] == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
     after_first = _cached_surface_h_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
@@ -554,6 +589,7 @@ def test_cached_logical_h_provider_matches_full_compile_across_families(
         p_prep=0.005,
     )
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)
 
 
 @pytest.mark.parametrize(
@@ -585,6 +621,7 @@ def test_repeated_logical_h_provider_matches_full_compile(orientation, rounds, b
         p_prep=0.005,
     )
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -661,6 +698,7 @@ def test_logical_cx_provider_reuses_bounded_slices_and_routes_patch_coordinates(
         p_prep=0.004,
     )
     assert descriptor["full_dem"] == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
     assert descriptor["boundary_gates"][0][0]["type"] == "Cnot"
     after_first = _cached_surface_cx_dem_slices.cache_info()
     assert after_first.misses == 1
@@ -777,6 +815,7 @@ def test_cached_logical_cx_provider_matches_full_compile_across_families(
         p_prep=0.005,
     )
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)
 
 
 @pytest.mark.parametrize(
@@ -807,6 +846,7 @@ def test_repeated_logical_cx_provider_matches_full_compile(final_basis, rounds):
         p_prep=0.005,
     )
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -931,6 +971,7 @@ def test_mixed_h_cx_provider_matches_full_compile(gate_names, rounds, initial_ba
         p_prep=0.005,
     )
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    _assert_cached_detector_fault_sectors(builder, oracle, p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,

@@ -584,3 +584,61 @@ def test_contract_object_is_standard_text_plus_labels(tracked):
         batch.compare_decoders(dem, "bp_osd", "bp_osd").counts
         == batch.compare_decoders(str(dem), "bp_osd", "bp_osd").counts
     )
+
+
+def test_corpus_object_labels_and_save_rules(tmp_path):
+    dem = _sector_dem()
+    batch = dem.to_sampler().sample_batch(128, seed=41)
+    path = tmp_path / "labels.pecos"
+    assert batch.dem_fault_sectors is None
+    batch.save(path, dem=dem)
+    assert batch.dem is batch.dem_fault_sectors is None
+    loaded = SampleBatch.load(path)
+    assert loaded.format_version == 2
+    assert loaded.dem_fault_sectors == ["X", "Z", "X", "Z"]
+    with pytest.raises(AttributeError):
+        loaded.dem_fault_sectors = []
+    loaded.dem_fault_sectors[0] = "changed"
+    spec = pymatching(correlated=True)
+    embedded = loaded.decode(None, spec, predictions=True)
+    explicit = loaded.decode(dem, spec, predictions=True)
+    assert embedded.predictions == explicit.predictions
+    assert embedded.num_errors == explicit.num_errors
+    assert embedded.projection == explicit.projection
+    assert embedded.projection.unlabelled_detectors == 0
+    assert loaded.decode(loaded.dem, spec).projection.unlabelled_detectors == 4
+    assert loaded.compare_decoders(loaded.dem, "pymatching", "pymatching").dut_projection.unlabelled_detectors == 4
+    for override in [False, True]:
+        loaded.save(path, dem=loaded.dem, allow_dem_mismatch=override)
+        assert SampleBatch.load(path).dem_fault_sectors == ["X", "Z", "X", "Z"]
+    other = _sector_dem(labelled=False)
+    assert str(other) == loaded.dem
+    for override in [False, True]:
+        loaded.save(path, dem=other, allow_dem_mismatch=override)
+        assert SampleBatch.load(path).dem_fault_sectors == [None] * 4
+    loaded.save(path, dem=loaded.dem + "\n", allow_dem_mismatch=True)
+    assert SampleBatch.load(path).dem_fault_sectors == [None] * 4
+    different = _repeated_detector_dem(4)
+    assert str(different) != loaded.dem
+    loaded.save(path, dem=different, allow_dem_mismatch=True)
+    assert SampleBatch.load(path).dem_fault_sectors == ["X"] * 4
+    batch.save(path, dem=str(dem))
+    assert SampleBatch.load(path).dem_fault_sectors == [None] * 4
+
+
+@pytest.mark.parametrize("ids", [[7], [0, 1]])
+def test_corpus_dense_sparse_and_partial_labels(tmp_path, ids):
+    from pecos_rslib.qec import DetectorErrorModel
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz([0])
+    for index, detector in enumerate(ids):
+        circuit.add_detector([-1], detector_id=detector, fault_sector="opaque" if index == 0 else None)
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.01, p_prep=0)
+    batch = SampleBatch([[0] * (max(ids) + 1)], [0], num_observables=0)
+    path = tmp_path / "sparse.pecos"
+    batch.save(path, dem=dem)
+    expected = [None] * (max(ids) + 1)
+    expected[ids[0]] = "opaque"
+    assert SampleBatch.load(path).dem_fault_sectors == expected

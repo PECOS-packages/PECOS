@@ -536,6 +536,8 @@ class SampleBatch:
     @property
     def dem(self) -> str | None: ...
     @property
+    def dem_fault_sectors(self) -> list[str | None] | None: ...
+    @property
     def metadata_json(self) -> str | None: ...
     @property
     def generator(self) -> str | None: ...
@@ -549,13 +551,27 @@ class SampleBatch:
         self,
         path: str | os.PathLike[str],
         *,
-        dem: str,
+        dem: str | DetectorErrorModel,
         metadata_json: str | None = ...,
         clear_metadata: bool = ...,
         allow_dem_mismatch: bool = ...,
-    ) -> None: ...
+    ) -> None:
+        """Write v2 (older PECOS rejects it); readers accept v1 and v2.
+
+        Objects supply labels; equal embedded text preserves stored labels;
+        other text writes all-null labels. Identity compares only text.
+        Saving does not attach a model or mutate the source batch.
+        """
+        ...
+
     @staticmethod
-    def load(path: str | os.PathLike[str]) -> SampleBatch: ...
+    def load(path: str | os.PathLike[str]) -> SampleBatch:
+        """Read v1 (unlabelled) or v2; format_version reports the disk version.
+
+        Every save writes v2, which older PECOS installations reject.
+        """
+        ...
+
     def decode(
         self,
         dem: str | DetectorErrorModel | None = ...,
@@ -569,8 +585,9 @@ class SampleBatch:
         """Decode all shots with planned native, sequential, or parallel execution.
 
         ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
-        requires a corpus-loaded batch with an embedded DEM. Embedded text
-        does not persist fault-sector labels: every detector is unlabelled.
+        requires a loaded corpus and uses its text plus stored fault-sector labels.
+        Labelled embedded models use object semantics and refuse providers;
+        all-null labels use text semantics. Explicit text is unlabelled.
         An object decodes its standard text plus its fault_sector labels. Explicit
         ``workers`` requests that exact count; automatic execution respects
         stateful and wall-clock-limited decoder contracts. Predictions are

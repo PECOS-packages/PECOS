@@ -5404,18 +5404,12 @@ impl DetectorErrorModel {
     ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
     {
         let parsed = pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
-        let mut detector_fault_sectors = parsed.detector_fault_sectors;
+        let mut detector_fault_sectors = vec![None; parsed.num_detectors];
         for detector in &self.detectors {
             // The index is in bounds because to_string declares every detector definition.
             detector_fault_sectors[detector.id as usize].clone_from(&detector.fault_sector);
         }
-        pecos_decoder_core::window::StructuredDem::try_new(
-            parsed.errors,
-            parsed.detector_coords,
-            detector_fault_sectors,
-            parsed.num_detectors,
-            parsed.num_observables,
-        )
+        parsed.with_detector_fault_sectors(detector_fault_sectors)
     }
 
     pub(crate) const fn source_locations_index_influence_map(&self) -> bool {

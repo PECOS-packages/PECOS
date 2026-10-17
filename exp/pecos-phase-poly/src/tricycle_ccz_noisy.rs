@@ -3,12 +3,21 @@
 
 //! Noisy single-shot BT CCZ preparation with syndrome repair in the loop.
 //!
-//! Implements arXiv:2510.07269, appendix "Details for simulations", Fig.
-//! (`fig:simulation_circuits`)(d) and Table II, with two explicit extensions. Repair rejection
-//! (corrected syndrome outside im `H_Z`) is not specified by the paper
+//! Follows the protocol of arXiv:2510.07269, appendix "Details for simulations",
+//! Fig. (`fig:simulation_circuits`)(d), with two explicit extensions. Repair
+//! rejection (corrected syndrome outside im `H_Z`) is not specified by the paper
 //! (source line 1161); it is counted separately from X-detector rejection. We use
 //! any solution of `H_Z` x = s', instead of integer programming, as permitted
 //! for logical-plus preparation by source line 1150.
+//!
+//! The noise is circuit-level depolarizing (source line 1132) with every
+//! preparation noisy, so acceptance is not directly comparable with Table II.
+//! The simulation code released with the paper applies no data-preparation
+//! error, uses single-qubit depolarizing (outcome flip 2p/3) on ancilla
+//! preparation, ancilla measurement and final readout, and simulates no syndrome
+//! repair. For the [[27,3,3]] code at p = 1e-3 that convention gives 0.70
+//! acceptance (Table II) where this module gives about 0.62; data-preparation
+//! noise accounts for most of the difference.
 //!
 //! X-check detectors plus inverse-target readout use dephasing, ideal inverse
 //! encoding, X-check pivot detectors, and logical-pivot observables. In exact
@@ -152,22 +161,15 @@ pub struct NoisyCcz {
 impl NoisyCcz {
     /// Compile both circuit segments and precompute syndrome repair.
     ///
-    /// `q` is the explicit syndrome-error prior, independent of physical `p`.
     /// No idle noise is included. Each data and ancilla qubit is prepared once.
     ///
     /// # Errors
-    /// Rejects invalid p, nonfinite q or q outside (0, 0.5), size overflow,
-    /// edge-coloring errors, or invalid generated circuits.
-    pub fn new(
-        code: &BivariateTricycleCode,
-        p: f64,
-        q: f64,
-        model: CczModel,
-    ) -> Result<Self, String> {
+    /// Rejects invalid p, size overflow, edge-coloring errors, or invalid
+    /// generated circuits.
+    pub fn new(code: &BivariateTricycleCode, p: f64, model: CczModel) -> Result<Self, String> {
         Self::build(
             code,
             p,
-            q,
             model,
             #[cfg(test)]
             &[],
@@ -177,15 +179,11 @@ impl NoisyCcz {
     fn build(
         code: &BivariateTricycleCode,
         p: f64,
-        q: f64,
         model: CczModel,
         #[cfg(test)] faults: &[Fault],
     ) -> Result<Self, String> {
         let started = Instant::now();
         validate_probability(p)?;
-        if !q.is_finite() || q <= 0.0 || q >= 0.5 {
-            return Err("q must be finite and in (0,0.5)".into());
-        }
         let n = code.num_qubits();
         let m_z = code.hz().num_checks();
         let total = n
@@ -210,7 +208,11 @@ impl NoisyCcz {
         let meta_rows = code.meta_z().rows();
         let meta = Array2::from_shape_vec((meta_rows.len(), m_z), meta_rows.concat())
             .map_err(|e| e.to_string())?;
-        let priors = vec![q; m_z];
+        // Min-sum relay-BP is invariant under scaling every log-likelihood
+        // ratio by one positive factor, so a uniform prior in (0, 1/2) carries
+        // no information; its value only changes floating-point rounding of
+        // exactly tied messages. Fixed, and positive even when p = 0.
+        let priors = vec![0.1; m_z];
         let solver = SyndromeSolver::new(&F2Matrix::from_rows(code.hz().rows()));
         let build_time = started.elapsed();
         let started = Instant::now();

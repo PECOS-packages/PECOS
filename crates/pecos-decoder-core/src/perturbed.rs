@@ -227,6 +227,15 @@ mod tests {
     }
 
     #[test]
+    fn test_perturb_dem_rejects_non_finite_factor() {
+        let error = perturb_dem("error(0.1) D0", f64::NAN, &mut || 0.5).unwrap_err();
+        assert!(
+            error.to_string().contains("non-finite probability"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn test_perturb_dem_preserves_zero_probability() {
         for sigma in [0.5, 1000.0] {
             let text = perturb_dem("error(0) D0 D1 D2 L0", sigma, &mut || 0.001).unwrap();

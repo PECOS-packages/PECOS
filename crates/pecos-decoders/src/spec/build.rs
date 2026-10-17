@@ -2190,6 +2190,7 @@ mod projection_tests {
             ] {
                 assert!(error.contains(message), "{name}: {error}");
             }
+            assert!(!error.contains("does not apply"), "{name}: {error}");
             let drop = with_drop(name);
             let prepared = drop.decode_model(IRREDUCIBLE).unwrap();
             assert_eq!(prepared.projection.unwrap().dropped_indices, vec![0]);
@@ -2359,12 +2360,10 @@ mod projection_tests {
         let expected = project_graphlike(&invalid, IrreduciblePolicy::Drop)
             .unwrap_err()
             .to_string();
-        assert!(
-            prepare_model(&with_drop("astar"), &DecodeModel::StructuredDem(invalid))
-                .unwrap_err()
-                .to_string()
-                .contains(&expected)
-        );
+        let actual = prepare_model(&with_drop("astar"), &DecodeModel::StructuredDem(invalid))
+            .unwrap_err()
+            .to_string();
+        assert!(actual.ends_with(&expected), "{actual}");
     }
 
     #[cfg(all(feature = "uf", feature = "ldpc"))]

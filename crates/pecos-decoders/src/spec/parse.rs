@@ -100,21 +100,32 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
     }
 }
 
+fn pecos_uf_preset(name: &str) -> Option<PecosUfPreset> {
+    match name {
+        "fast" => Some(PecosUfPreset::Fast),
+        "balanced" => Some(PecosUfPreset::Balanced),
+        "accurate" => Some(PecosUfPreset::Accurate),
+        "bp" => Some(PecosUfPreset::Bp),
+        "bp_serial" => Some(PecosUfPreset::BpSerial),
+        _ => None,
+    }
+}
+
 fn parse_graph_options(name: &str, mut params: &str) -> Result<DecoderSpec, DecoderError> {
-    if name == "pecos_uf" && params.split(',').skip(1).any(|part| !part.contains('=')) {
+    if name == "pecos_uf"
+        && params
+            .split(',')
+            .skip(1)
+            .any(|part| pecos_uf_preset(part).is_some())
+    {
         return invalid("pecos_uf preset must come first, before key=value parameters");
     }
     let mut spec = parse(name)?;
     if name == "pecos_uf" && !params.is_empty() && !params.split(',').next().unwrap().contains('=')
     {
         let (preset, rest) = params.split_once(',').unwrap_or((params, ""));
-        let preset = match preset {
-            "fast" => PecosUfPreset::Fast,
-            "balanced" => PecosUfPreset::Balanced,
-            "accurate" => PecosUfPreset::Accurate,
-            "bp" => PecosUfPreset::Bp,
-            "bp_serial" => PecosUfPreset::BpSerial,
-            _ => return invalid(format!("pecos_uf has unknown preset '{preset}'")),
+        let Some(preset) = pecos_uf_preset(preset) else {
+            return invalid(format!("pecos_uf has unknown preset '{preset}'"));
         };
         spec = DecoderSpec::PecosUf(PecosUfConfig {
             preset,
@@ -660,6 +671,8 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("preset must come first"), "{error}");
+        let error = parse("pecos_uf:fast,bogus").unwrap_err().to_string();
+        assert!(error.contains("key=value"), "{error}");
     }
 
     #[test]

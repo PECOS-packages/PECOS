@@ -2608,6 +2608,7 @@ mod projection_tests {
     }
 
     // compatibility: Refuse compositions remain lossless and may prepare members individually.
+    #[cfg(feature = "uf")]
     #[test]
     fn mixed_compositions_accept_refuse() {
         let spec = DecoderSpec::parse("ensemble:astar,astar_full").unwrap();

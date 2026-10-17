@@ -238,8 +238,8 @@ def test_dem_requires_parameterless_entry_point(*, wrapped: bool) -> None:
 def test_non_guppy_callable_is_rejected(*, entry_point: bool) -> None:
     from pecos._compilation import guppy_to_hugr
 
-    def impostor() -> None:
-        pass
+    def impostor(flip: bool) -> bool:
+        return flip
 
     # Attributes accepted by the old duck-typing checks must not grant admission.
     impostor.name = "impostor"

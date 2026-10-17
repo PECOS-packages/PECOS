@@ -11,6 +11,13 @@ ignore = [
     # Python RelayBpDecoder and builds from Cargo.lock. Remove this entry when
     # relay-bp releases on a non-yanked zip.
     { crate = "zip@2.4.2", reason = "only reachable through the opt-in relay-bp feature; no non-yanked zip ^2 exists" },
+    # The same zip@2.4.2 has advisories against ZipArchive::extract and
+    # ZipStreamReader::extract only. ndarray-npy reads .npz entries by name and
+    # relay-bp never extracts archives, so neither affected API is called. Remove
+    # these with the zip@2.4.2 entry above.
+    { id = "RUSTSEC-2026-0367", reason = "zip@2.4.2 via relay-bp -> ndarray-npy; extract() SUID/SGID handling is never called" },
+    { id = "RUSTSEC-2026-0368", reason = "zip@2.4.2 via relay-bp -> ndarray-npy; extract() symlink targets are never created" },
+    { id = "RUSTSEC-2026-0369", reason = "zip@2.4.2 via relay-bp -> ndarray-npy; extract() permissions through symlinks are never applied" },
 ]
 
 [bans]

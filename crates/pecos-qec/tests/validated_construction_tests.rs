@@ -1,5 +1,5 @@
 //! Circuit-owning analysis APIs reject unsupported gates at construction.
-use pecos_core::{Angle64, Gate, QubitId};
+use pecos_core::{Gate, QubitId};
 use pecos_qec::fault_tolerance::*;
 use pecos_quantum::{DagCircuit, GateType, TickCircuit};
 
@@ -7,7 +7,7 @@ macro_rules! constructor_rejections {
     ($($name:ident => |$tick:ident, $dag:ident| $construct:expr),* $(,)?) => { $(
         #[test]
         fn $name() {
-            for gate in [Gate::simple(GateType::T, vec![QubitId(0)]), Gate::rz(Angle64::from_radians(0.3), &[0])] {
+            for gate in [Gate::simple(GateType::T, vec![QubitId(0)]), Gate::rz(pecos_core::radians!(0.3), &[0])] {
                 let mut $tick = TickCircuit::new();
                 $tick.tick().h(&[0]);
                 $tick.tick().try_add_gate(gate.clone()).unwrap();

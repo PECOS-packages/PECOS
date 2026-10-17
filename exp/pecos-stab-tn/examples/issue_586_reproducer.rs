@@ -109,11 +109,11 @@ fn main() {
     ];
     for (injection, &(target, other, dagger)) in injections.iter().enumerate() {
         let angle = if dagger {
-            -std::f64::consts::FRAC_PI_4
+            Angle64::from_turn_ratio(-1, 8)
         } else {
-            std::f64::consts::FRAC_PI_4
+            Angle64::from_turn_ratio(1, 8)
         };
-        simulator.rz(Angle64::from_radians(angle), &[QubitId(target)]);
+        simulator.rz(angle, &[QubitId(target)]);
         simulator.h(&[QubitId(target)]);
         if injection & 1 == 0 {
             simulator.cx(&[(QubitId(target), QubitId(other))]);

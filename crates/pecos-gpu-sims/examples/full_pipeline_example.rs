@@ -84,7 +84,10 @@ fn main() {
     println!("   Circuit built: {} gates", circuit.gate_count());
 
     // Build influence map with a tracked Z Pauli (sensitive to X errors)
-    let builder = InfluenceBuilder::new(&circuit).unwrap().with_z(&[0, 1, 2]);
+    let builder = InfluenceBuilder::new(&circuit)
+        .expect("benchmark circuit uses supported Clifford gates")
+        .with_z(&[0, 1, 2])
+        .expect("benchmark support is a literal list or enumerated range of distinct qubits");
 
     let influence_map = builder.build().expect("circuit is replayable");
     println!("   Locations: {}", influence_map.locations.len());
@@ -160,8 +163,9 @@ fn main() {
 
     // Build influence map with a tracked X Pauli (sensitive to Z errors on this plaquette)
     let builder = InfluenceBuilder::new(&circuit)
-        .unwrap()
-        .with_x(&[0, 1, 2, 3]);
+        .expect("benchmark circuit uses supported Clifford gates")
+        .with_x(&[0, 1, 2, 3])
+        .expect("benchmark support is a literal list or enumerated range of distinct qubits");
 
     let influence_map = builder.build().expect("circuit is replayable");
     println!("   Locations: {}", influence_map.locations.len());
@@ -225,7 +229,10 @@ fn main() {
 
     for num_rounds in [1, 2, 4, 8] {
         let circuit = build_repetition_code_circuit(num_rounds);
-        let builder = InfluenceBuilder::new(&circuit).unwrap().with_z(&[0, 1, 2]);
+        let builder = InfluenceBuilder::new(&circuit)
+            .expect("benchmark circuit uses supported Clifford gates")
+            .with_z(&[0, 1, 2])
+            .expect("benchmark support is a literal list or enumerated range of distinct qubits");
         let influence_map = builder.build().expect("circuit is replayable");
 
         let (

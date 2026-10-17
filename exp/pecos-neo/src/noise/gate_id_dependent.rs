@@ -20,22 +20,26 @@
 //! # Example
 //!
 //! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::noise::{GateIdDependentChannel, GateIdNoiseConfig, PauliWeights};
 //! use pecos_neo::extensible::{gates, GateId};
 //!
 //! let channel = GateIdDependentChannel::new()
 //!     // Configure core gates by their GateId
-//!     .with_gate(gates::H, GateIdNoiseConfig::new(0.001))
-//!     .with_gate(gates::CX, GateIdNoiseConfig::new(0.02))
+//!     .with_gate(gates::H, GateIdNoiseConfig::new(0.001)?)
+//!     .with_gate(gates::CX, GateIdNoiseConfig::new(0.02)?)
 //!     // Configure custom gates the same way
-//!     .with_gate(GateId(256), GateIdNoiseConfig::new(0.005))
+//!     .with_gate(GateId(256), GateIdNoiseConfig::new(0.005)?)
 //!     // Fallback for unlisted gates
-//!     .with_default(0.001);
+//!     .with_default(0.001)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
 use crate::command::{GateCommand, GateType};
 use crate::extensible::GateId;
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -45,26 +49,44 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct GateIdNoiseConfig {
     /// Error probability for this gate.
-    pub error_probability: f64,
+    error_probability: f64,
     /// Pauli weight distribution when an error occurs.
-    pub pauli_weights: PauliWeights,
+    pauli_weights: PauliWeights,
 }
 
 impl GateIdNoiseConfig {
-    /// Create a new gate noise configuration with uniform Pauli distribution.
+    /// Return the configured `error_probability`.
     #[must_use]
-    pub fn new(error_probability: f64) -> Self {
-        Self {
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> &PauliWeights {
+        &self.pauli_weights
+    }
+
+    /// Create a new gate noise configuration with uniform Pauli distribution.
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn new(error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
+        Ok(Self {
             error_probability,
             pauli_weights: PauliWeights::uniform(),
-        }
+        })
     }
 
     /// Set custom Pauli weights.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 }
 
@@ -78,15 +100,18 @@ impl GateIdNoiseConfig {
 /// # Example
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::{GateIdDependentChannel, GateIdNoiseConfig};
 /// use pecos_neo::extensible::{gates, GateId};
 ///
 /// // Core gates and custom gates can be configured the same way
 /// let channel = GateIdDependentChannel::new()
-///     .with_gate_error(gates::H, 0.001)      // H gate at 0.1% error
-///     .with_gate_error(gates::CX, 0.02)     // CX gate at 2% error
-///     .with_gate_error(GateId(256), 0.005) // Custom gate at 0.5% error
-///     .with_default(0.001);                  // Everything else at 0.1%
+///     .with_gate_error(gates::H, 0.001)?      // H gate at 0.1% error
+///     .with_gate_error(gates::CX, 0.02)?     // CX gate at 2% error
+///     .with_gate_error(GateId(256), 0.005)? // Custom gate at 0.5% error
+///     .with_default(0.001)?;                  // Everything else at 0.1%
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct GateIdDependentChannel {
@@ -116,11 +141,17 @@ impl GateIdDependentChannel {
     /// Add a simple error probability for a specific gate ID.
     ///
     /// Uses uniform Pauli distribution.
-    #[must_use]
-    pub fn with_gate_error(mut self, gate_id: GateId, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_gate_error(
+        mut self,
+        gate_id: GateId,
+        error_probability: f64,
+    ) -> ValidationResult<Self> {
         self.gate_configs
-            .insert(gate_id, GateIdNoiseConfig::new(error_probability));
-        self
+            .insert(gate_id, GateIdNoiseConfig::new(error_probability)?);
+        Ok(self)
     }
 
     /// Configure a core gate by its `GateType`.
@@ -134,16 +165,24 @@ impl GateIdDependentChannel {
     /// Configure a core gate by its `GateType` with a simple error probability.
     ///
     /// This is a convenience method that converts the `GateType` to `GateId`.
-    #[must_use]
-    pub fn with_gate_type_error(self, gate_type: GateType, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_gate_type_error(
+        self,
+        gate_type: GateType,
+        error_probability: f64,
+    ) -> ValidationResult<Self> {
         self.with_gate_error(gate_type.to_gate_id(), error_probability)
     }
 
     /// Set the default configuration for gates not explicitly configured.
-    #[must_use]
-    pub fn with_default(mut self, error_probability: f64) -> Self {
-        self.default_config = Some(GateIdNoiseConfig::new(error_probability));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_default(mut self, error_probability: f64) -> ValidationResult<Self> {
+        self.default_config = Some(GateIdNoiseConfig::new(error_probability)?);
+        Ok(self)
     }
 
     /// Set the default configuration with custom Pauli weights.
@@ -251,7 +290,9 @@ mod tests {
     fn test_gate_id_dependent_different_rates() {
         let channel = GateIdDependentChannel::new()
             .with_gate_error(gates::H, 1.0)
-            .with_gate_error(gates::SZ, 0.0);
+            .unwrap()
+            .with_gate_error(gates::SZ, 0.0)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -288,7 +329,9 @@ mod tests {
     fn test_gate_id_dependent_with_default() {
         let channel = GateIdDependentChannel::new()
             .with_gate_error(gates::H, 0.5)
-            .with_default(0.1);
+            .unwrap()
+            .with_default(0.1)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -319,7 +362,9 @@ mod tests {
 
         let channel = GateIdDependentChannel::new()
             .with_gate_error(custom_gate, 1.0)
-            .with_gate_error(gates::H, 0.0);
+            .unwrap()
+            .with_gate_error(gates::H, 0.0)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -346,7 +391,9 @@ mod tests {
 
     #[test]
     fn test_gate_id_dependent_applies_noise() {
-        let channel = GateIdDependentChannel::new().with_gate_error(gates::H, 1.0);
+        let channel = GateIdDependentChannel::new()
+            .with_gate_error(gates::H, 1.0)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -371,7 +418,9 @@ mod tests {
         // Test with_gate_type convenience method
         let channel = GateIdDependentChannel::new()
             .with_gate_type_error(GateType::H, 0.5)
-            .with_gate_type_error(GateType::CX, 0.02);
+            .unwrap()
+            .with_gate_type_error(GateType::CX, 0.02)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -387,7 +436,9 @@ mod tests {
 
     #[test]
     fn test_gate_id_dependent_skips_leaked_qubits() {
-        let channel = GateIdDependentChannel::new().with_gate_error(gates::H, 1.0);
+        let channel = GateIdDependentChannel::new()
+            .with_gate_error(gates::H, 1.0)
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];

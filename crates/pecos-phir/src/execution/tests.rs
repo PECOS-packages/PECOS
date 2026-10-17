@@ -316,9 +316,7 @@ fn test_processor_rz_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rz_instr = instr(
-        Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
-            std::f64::consts::FRAC_PI_2,
-        ))),
+        Operation::Quantum(QuantumOp::RZ(Angle64::QUARTER_TURN)),
         vec![0],
         vec![1],
         vec![Type::Qubit],
@@ -339,10 +337,7 @@ fn test_processor_rxy1q_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rxy1q_instr = instr(
-        Operation::Quantum(QuantumOp::RXY1Q(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-            Angle64::ZERO,
-        )),
+        Operation::Quantum(QuantumOp::RXY1Q(Angle64::QUARTER_TURN, Angle64::ZERO)),
         vec![0],
         vec![1],
         vec![Type::Qubit],
@@ -362,15 +357,13 @@ fn test_processor_rx_ry_gates() {
     let mut builder = ByteMessageBuilder::new();
 
     let rx_instr = instr(
-        Operation::Quantum(QuantumOp::RX(Angle64::from_radians(std::f64::consts::PI))),
+        Operation::Quantum(QuantumOp::RX(Angle64::HALF_TURN)),
         vec![0],
         vec![1],
         vec![Type::Qubit],
     );
     let ry_instr = instr(
-        Operation::Quantum(QuantumOp::RY(Angle64::from_radians(
-            std::f64::consts::FRAC_PI_4,
-        ))),
+        Operation::Quantum(QuantumOp::RY(Angle64::from_turn_ratio(1, 8))),
         vec![0],
         vec![2],
         vec![Type::Qubit],
@@ -398,9 +391,9 @@ fn test_processor_u3_gate() {
 
     let u3_instr = instr(
         Operation::Quantum(QuantumOp::U3(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
+            Angle64::QUARTER_TURN,
             Angle64::ZERO,
-            Angle64::from_radians(std::f64::consts::PI),
+            Angle64::HALF_TURN,
         )),
         vec![0],
         vec![1],
@@ -456,9 +449,7 @@ fn test_processor_rzz_gate() {
     let mut builder = ByteMessageBuilder::new();
 
     let rzz_instr = instr(
-        Operation::Quantum(QuantumOp::RZZ(Angle64::from_radians(
-            std::f64::consts::FRAC_PI_4,
-        ))),
+        Operation::Quantum(QuantumOp::RZZ(Angle64::from_turn_ratio(1, 8))),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
@@ -485,9 +476,7 @@ fn test_processor_cphase_gate() {
     let _ = builder.for_quantum_operations();
 
     let cp_instr = instr(
-        Operation::Quantum(QuantumOp::CPhase(Angle64::from_radians(
-            std::f64::consts::PI,
-        ))),
+        Operation::Quantum(QuantumOp::CPhase(Angle64::HALF_TURN)),
         vec![0, 1],
         vec![2],
         vec![Type::Qubit],
@@ -506,6 +495,41 @@ fn test_processor_cphase_gate() {
     assert_eq!(ops[0].qubits.as_slice(), [0.into(), 1.into()]);
     assert_eq!(ops[1].qubits.as_slice(), [0.into()]);
     assert_eq!(ops[2].qubits.as_slice(), [1.into()]);
+}
+
+#[test]
+fn test_processor_cphase_preserves_fixed_point_half() {
+    // Signed magnitudes are 2143200067395860927 and ...928 ticks;
+    // their halves toward zero differ by one tick although both map to -0.73 f64.
+    for (angle, half_magnitude) in [
+        (pecos_core::radians!(-0.73), 1_071_600_033_697_930_463),
+        (
+            Angle64::new(16_303_544_006_313_690_688),
+            1_071_600_033_697_930_464,
+        ),
+    ] {
+        let mut processor = PhirProcessor::new();
+        processor
+            .ssa_values
+            .insert(0, super::environment::TypedValue::I64(0));
+        processor
+            .ssa_values
+            .insert(1, super::environment::TypedValue::I64(1));
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        let cp = instr(
+            Operation::Quantum(QuantumOp::CPhase(angle)),
+            vec![0, 1],
+            vec![2],
+            vec![Type::Qubit],
+        );
+        processor.process_instruction(&cp, &mut builder).unwrap();
+        let ops = builder.build().quantum_ops().unwrap();
+        let magnitude = Angle64::new(half_magnitude);
+        assert_eq!(ops[0].angles[0], magnitude);
+        assert_eq!(ops[1].angles[2], -magnitude);
+        assert_eq!(ops[2].angles[0], -magnitude);
+    }
 }
 
 #[test]
@@ -1813,26 +1837,19 @@ fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
-                std::f64::consts::FRAC_PI_2,
-            ))),
+            Operation::Quantum(QuantumOp::RZ(Angle64::QUARTER_TURN)),
             vec![0],
             vec![1],
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RXY1Q(
-                Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                Angle64::ZERO,
-            )),
+            Operation::Quantum(QuantumOp::RXY1Q(Angle64::QUARTER_TURN, Angle64::ZERO)),
             vec![0],
             vec![2],
             vec![Type::Qubit],
         ),
         instr(
-            Operation::Quantum(QuantumOp::RZ(Angle64::from_radians(
-                std::f64::consts::FRAC_PI_2,
-            ))),
+            Operation::Quantum(QuantumOp::RZ(Angle64::QUARTER_TURN)),
             vec![0],
             vec![3],
             vec![Type::Qubit],
@@ -1912,8 +1929,8 @@ fn test_dynamic_zero_engine_rejected_without_explicit_qubits() {
 
 #[test]
 fn test_processor_rxyxy2q_gate() {
-    let theta = Angle64::from_radians(-0.73);
-    let phi = Angle64::from_radians(0.41);
+    let theta = pecos_core::radians!(-0.73);
+    let phi = pecos_core::radians!(0.41);
     let mut processor = PhirProcessor::new();
     processor
         .ssa_values

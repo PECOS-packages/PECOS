@@ -32,26 +32,28 @@ impl SeleneSimBehavior for StateVecBehavior {
 
     fn apply_rxy(&mut self, qubit: QubitId, theta: f64, phi: f64) -> Result<()> {
         self.sim
-            .rz(Angle64::from_radians(-phi), &[qubit])
-            .rx(Angle64::from_radians(theta), &[qubit])
-            .rz(Angle64::from_radians(phi), &[qubit]);
+            .rz(Angle64::try_from_radians(-phi).unwrap(), &[qubit])
+            .rx(Angle64::try_from_radians(theta).unwrap(), &[qubit])
+            .rz(Angle64::try_from_radians(phi).unwrap(), &[qubit]);
         Ok(())
     }
 
     fn apply_rz(&mut self, qubit: QubitId, theta: f64) -> Result<()> {
-        self.sim.rz(Angle64::from_radians(theta), &[qubit]);
+        self.sim
+            .rz(Angle64::try_from_radians(theta).unwrap(), &[qubit]);
         Ok(())
     }
 
     fn apply_rzz(&mut self, q1: QubitId, q2: QubitId, theta: f64) -> Result<()> {
-        self.sim.rzz(Angle64::from_radians(theta), &[(q1, q2)]);
+        self.sim
+            .rzz(Angle64::try_from_radians(theta).unwrap(), &[(q1, q2)]);
         Ok(())
     }
 
     fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()> {
         self.sim.rxyxy2q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &[(q1, q2)],
         );
         Ok(())
@@ -226,8 +228,8 @@ impl SeleneSimBehavior for StabilizerBehavior {
     fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()> {
         self.sim
             .try_rxyxy2q(
-                Angle64::from_radians(theta),
-                Angle64::from_radians(phi),
+                Angle64::try_from_radians(theta).unwrap(),
+                Angle64::try_from_radians(phi).unwrap(),
                 &[(q1, q2)],
             )
             .map_err(|error| anyhow!(error))?;

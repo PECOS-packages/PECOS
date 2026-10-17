@@ -564,24 +564,24 @@ impl fmt::Display for MeasResolveError {
         match self {
             Self::Unknown(id) => write!(
                 f,
-                "MeasId({}) does not name a measurement in this circuit",
+                "MeasId({}) does not name a measurement in this circuit; use a MeasId returned by this circuit",
                 id.index()
             ),
             Self::Removed(id) => write!(
                 f,
-                "MeasId({})'s measurement was removed from this circuit",
+                "MeasId({})'s measurement was removed from this circuit; use a current measurement ID",
                 id.index()
             ),
             Self::RecordLess { id, node } => write!(
                 f,
                 "MeasId({}) names a measurement at node {node} that consumes no \
-                 measurement record",
+                 measurement record; use a record-consuming measurement",
                 id.index()
             ),
             Self::Inconsistent(id) => write!(
                 f,
                 "MeasId({})'s bookkeeping is inconsistent -- held but unreserved, or \
-                 held by more than one gate",
+                 held by more than one gate; assign each MeasId to exactly one reserved measurement",
                 id.index()
             ),
         }
@@ -645,11 +645,11 @@ impl std::error::Error for AnnotationRefError {}
 
 /// The role of a Pauli annotation in the circuit.
 ///
-/// All three kinds track the same thing -- whether a Pauli string flips due to
-/// faults. The difference is how the answer is read out and what it means.
-#[derive(Debug, Clone)]
+/// Detectors and observables reference measurement outcomes at distinct circuit
+/// points. Tracked Paulis specify a single-time operator at a meta node.
+#[derive(Debug, Clone, PartialEq)]
 pub enum AnnotationKind {
-    /// Stabilizer check: the Pauli should be deterministic (flip = error detected).
+    /// Stabilizer check: the measurement parity should be deterministic.
     /// Stores the identities of the measurements whose XOR is the readout, plus
     /// optional coordinates for visualization/matching.
     ///
@@ -661,28 +661,21 @@ pub enum AnnotationKind {
         measurement_ids: Vec<MeasId>,
         coords: Vec<f64>,
     },
-    /// Logical observable: the Pauli's flip determines a logical outcome.
+    /// Logical observable defined by measurement parity.
     /// Stores the identities of the measurements whose XOR is the readout.
     Observable { measurement_ids: Vec<MeasId> },
     /// Tracked Pauli: no measurement readout.
     /// Position is determined by a `TrackedPauliMeta` node in the DAG.
-    TrackedPauli,
+    TrackedPauli { pauli: pecos_core::PauliString },
 }
 
-/// A unified Pauli annotation: detectors, observables, and tracked Paulis
-/// are all Pauli strings tracked for flipping via backward propagation.
+/// A circuit annotation defining measurement parity or a tracked operator.
 ///
-/// - **Detectors** are stabilizer checks that should be +1 (noiseless).
-///   Their Pauli is the measured Pauli (X for MX, Z otherwise) on the
-///   measured qubits.
-/// - **Observables** are logical operators read out via measurements.
-///   Their Pauli is the measured Pauli on the measured qubits.
-/// - **Tracked Paulis** are arbitrary Pauli strings with no measurement readout.
-///   Their Pauli is user-specified and their position comes from a meta-gate node.
-#[derive(Debug, Clone)]
+/// Detectors and observables store ordered measurement identities, including
+/// duplicates. Their individual bases are resolved from the circuit gates.
+/// Only tracked Paulis carry a single-time Pauli string.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PauliAnnotation {
-    /// The Pauli string being tracked.
-    pub pauli: pecos_core::PauliString,
     /// What role this annotation plays.
     pub kind: AnnotationKind,
     /// Optional label.
@@ -910,7 +903,7 @@ impl DagCircuit {
     /// Resolve a [`MeasId`] to the measurement that holds it.
     ///
     /// A deliberate O(gates) scan rather than a maintained index. Consumers
-    /// that resolve many ids build their own map from one pass over the circuit.
+    /// that resolve many bases can use [`Self::measured_paulis`] for one pass.
     ///
     /// # Errors
     ///
@@ -931,56 +924,128 @@ impl DagCircuit {
     ///   id). It is a real measurement, but nothing that reads records can
     ///   resolve through it.
     ///
-    /// # Panics
-    ///
-    /// Panics if a gate holds more ids than qubits. DAG insertion and update
-    /// reject such payloads using [`Gate::validate`]; `Gate` itself has public fields.
+    /// Malformed gates that hold more ids than qubits return
+    /// [`MeasResolveError::Inconsistent`].
     pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
-        // Scan the whole circuit rather than stopping at the first hit, so a
-        // duplicate holder is reported instead of silently winning.
-        let mut found: Option<(usize, usize)> = None;
+        let found = self.scan_measurements(&[id]);
+        self.resolve_measurement(id, found.get(&id))
+    }
+
+    fn scan_measurements(
+        &self,
+        ids: &[MeasId],
+    ) -> BTreeMap<MeasId, Result<(usize, usize), MeasResolveError>> {
+        let requested: BTreeSet<_> = ids.iter().copied().collect();
+        let mut found = BTreeMap::new();
+        if requested.is_empty() {
+            return found;
+        }
         for (node, gate) in self.gates.iter().enumerate() {
             let Some(gate) = gate.as_ref() else { continue };
-            for (position, &held) in gate.meas_ids.iter().enumerate() {
-                if held != id {
-                    continue;
+            for (position, &id) in gate.meas_ids.iter().enumerate() {
+                if requested.contains(&id) {
+                    match found.entry(id) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(Ok((node, position)));
+                        }
+                        std::collections::btree_map::Entry::Occupied(mut entry) => {
+                            *entry.get_mut() = Err(MeasResolveError::Inconsistent(id));
+                        }
+                    }
                 }
-                if found.is_some() {
-                    return Err(MeasResolveError::Inconsistent(id));
-                }
-                found = Some((node, position));
             }
         }
-        let Some((node, position)) = found else {
+        found
+    }
+
+    fn resolve_measurement(
+        &self,
+        id: MeasId,
+        found: Option<&Result<(usize, usize), MeasResolveError>>,
+    ) -> Result<MeasRef, MeasResolveError> {
+        let Some(found) = found else {
             return if self.removed_meas_ids.contains(&id.index()) {
                 Err(MeasResolveError::Removed(id))
             } else if self.used_meas_ids.contains(&id.index()) {
-                // Reserved, never removed, yet no gate holds it. Not a
-                // removal, so not `Removed`.
                 Err(MeasResolveError::Inconsistent(id))
             } else {
                 Err(MeasResolveError::Unknown(id))
             };
         };
+        let (node, position) = found.clone()?;
         if !self.used_meas_ids.contains(&id.index()) || self.removed_meas_ids.contains(&id.index())
         {
             // Held but never reserved, or held despite its measurement having
             // been removed. Either way the holder cannot legitimately own it.
             return Err(MeasResolveError::Inconsistent(id));
         }
-        let gate = self.gates[node].as_ref().expect("found above");
+        let gate = self
+            .gates
+            .get(node)
+            .and_then(Option::as_ref)
+            .ok_or(MeasResolveError::Inconsistent(id))?;
         if !gate.gate_type.consumes_measurement_record() {
             return Err(MeasResolveError::RecordLess { id, node });
         }
         let qubit = *gate
             .qubits
             .get(position)
-            .expect("a validated measurement carries one id per qubit");
+            .ok_or(MeasResolveError::Inconsistent(id))?;
         Ok(MeasRef {
             node,
             qubit,
             meas_id: id,
         })
+    }
+
+    /// Resolves a measurement identity to its gate's Pauli basis and qubit.
+    ///
+    /// # Errors
+    /// Returns the same resolution errors as [`Self::find_measurement`].
+    pub fn measured_pauli(
+        &self,
+        id: MeasId,
+    ) -> Result<(pecos_core::Pauli, QubitId), MeasResolveError> {
+        self.measurement_basis(self.find_measurement(id)?)
+    }
+
+    /// Resolves measurement identities in input order with one circuit scan.
+    /// Repeated input identities produce repeated results.
+    ///
+    /// # Errors
+    /// Returns the first error in input order, using [`Self::find_measurement`]'s rules.
+    pub fn measured_paulis(
+        &self,
+        ids: &[MeasId],
+    ) -> Result<Vec<(pecos_core::Pauli, QubitId)>, MeasResolveError> {
+        let found = self.scan_measurements(ids);
+        ids.iter()
+            .map(|&id| self.measurement_basis(self.resolve_measurement(id, found.get(&id))?))
+            .collect()
+    }
+
+    /// Return the measured Pauli and qubit for an already resolved reference.
+    ///
+    /// # Errors
+    /// Returns [`MeasResolveError::Inconsistent`] if the referenced gate is gone, and
+    /// [`MeasResolveError::RecordLess`] if it does not consume a measurement record.
+    pub fn measurement_basis(
+        &self,
+        reference: MeasRef,
+    ) -> Result<(pecos_core::Pauli, QubitId), MeasResolveError> {
+        let gate = self
+            .gates
+            .get(reference.node)
+            .and_then(Option::as_ref)
+            .ok_or(MeasResolveError::Inconsistent(reference.meas_id))?;
+        let pauli = gate
+            .gate_type
+            .measured_pauli()
+            .ok_or(MeasResolveError::RecordLess {
+                id: reference.meas_id,
+                node: reference.node,
+            })?;
+        Ok((pauli, reference.qubit))
     }
 
     /// Check that `count` ids can still be minted, without minting them.
@@ -2564,7 +2629,7 @@ impl DagCircuit {
 
     /// Apply RZZ (ZZ rotation) gate(s).
     ///
-    /// Implements exp(-i * theta/2 * Z*Z). The angle can be `Angle64` or `f64` (radians).
+    /// Implements exp(-i * theta/2 * Z*Z). Use an explicit angle constructor for floating-point radians.
     pub fn rzz(
         &mut self,
         theta: impl Into<Angle64>,
@@ -2647,19 +2712,23 @@ impl DagCircuit {
     }
 
     /// Lower CRZ (controlled-RZ) boundary spelling into native rotations.
+    ///
+    /// # Errors
+    /// Returns the value and unit of a non-finite angle before modifying the circuit.
     pub fn crz(
         &mut self,
         theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> &mut Self {
+    ) -> Result<&mut Self, pecos_core::NonFiniteAngleError> {
+        Angle64::try_from_radians(theta_radians)?;
         for &(c, t) in pairs {
             for gate in
-                pecos_core::controlled_rotations::lower_crz(theta_radians, c.into(), t.into())
+                pecos_core::controlled_rotations::lower_crz(theta_radians, c.into(), t.into())?
             {
                 self.add_gate_auto_wire(gate);
             }
         }
-        self
+        Ok(self)
     }
 
     // -------------------- Three-qubit gates --------------------
@@ -2905,9 +2974,8 @@ impl DagCircuit {
     /// Annotate a detector: a set of measurements whose XOR should be
     /// deterministic in the noiseless case.
     ///
-    /// The Pauli string is the Pauli each referenced measurement reads (X for
-    /// MX, Z otherwise) on that measurement's own qubit -- referencing one
-    /// measurement of a batched gate touches only that qubit.
+    /// Stores the ordered measurement identities, including duplicates.
+    /// Resolve each measurement's basis and qubit with [`Self::measured_pauli`].
     ///
     /// Returns the annotation index.
     ///
@@ -2916,9 +2984,8 @@ impl DagCircuit {
     /// Returns [`AnnotationRefError`] if any reference does not name a
     /// measurement this circuit holds.
     pub fn detector(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         Ok(self.push_annotation(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Detector {
                 measurement_ids,
                 coords: Vec::new(),
@@ -2963,8 +3030,8 @@ impl DagCircuit {
     /// Annotate a logical observable: a set of measurements whose XOR
     /// defines whether a logical operator flipped.
     ///
-    /// The Pauli string is the Pauli each referenced measurement reads (X for
-    /// MX, Z otherwise) on that measurement's own qubit.
+    /// Stores ordered measurement identities. Resolve their individual bases
+    /// and qubits explicitly with [`Self::measured_paulis`].
     ///
     /// Returns the annotation index.
     ///
@@ -2973,9 +3040,8 @@ impl DagCircuit {
     /// Returns [`AnnotationRefError`] if any reference does not name a
     /// measurement this circuit holds.
     pub fn observable(&mut self, measurements: &[MeasRef]) -> Result<usize, AnnotationRefError> {
-        let (measurement_ids, pauli) = self.validated_ids_and_pauli(measurements)?;
+        let measurement_ids = self.validated_measurement_ids(measurements)?;
         Ok(self.push_annotation(PauliAnnotation {
-            pauli,
             kind: AnnotationKind::Observable { measurement_ids },
             label: None,
         }))
@@ -3029,15 +3095,14 @@ impl DagCircuit {
         idx
     }
 
-    /// Validate each reference against the gate it names and derive the ids
-    /// and basis-matched Pauli. Validation is a direct lookup per reference -- linear only
-    /// in the named gate's batch width, never in the circuit: the gate must
+    /// Validate each reference against the gate it names and derive the ids.
+    /// Validation is a direct lookup per reference -- linear only in the named
+    /// gate's batch width, never in the circuit: the gate must
     /// exist, consume measurement records, and hold the (qubit, id) pair.
-    fn validated_ids_and_pauli(
+    fn validated_measurement_ids(
         &self,
         measurements: &[MeasRef],
-    ) -> Result<(Vec<MeasId>, pecos_core::PauliString), AnnotationRefError> {
-        let mut paulis = Vec::with_capacity(measurements.len());
+    ) -> Result<Vec<MeasId>, AnnotationRefError> {
         for m in measurements {
             let Some(gate) = self.gate(m.node) else {
                 return Err(AnnotationRefError::NoSuchNode { node: m.node });
@@ -3057,23 +3122,8 @@ impl DagCircuit {
                     meas_id: m.meas_id,
                 });
             }
-            paulis.push((
-                if gate.gate_type == GateType::MX {
-                    pecos_core::Pauli::X
-                } else {
-                    pecos_core::Pauli::Z
-                },
-                m.qubit,
-            ));
         }
-        let ids = measurements.iter().map(|m| m.meas_id).collect();
-        Ok((
-            ids,
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                paulis,
-            ),
-        ))
+        Ok(measurements.iter().map(|m| m.meas_id).collect())
     }
 
     /// Place a tracked-Pauli meta-gate at this point in the circuit.
@@ -3105,8 +3155,7 @@ impl DagCircuit {
         let idx = self.annotations.len();
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::TrackedPauli,
+            kind: AnnotationKind::TrackedPauli { pauli },
             label: None,
         });
         idx
@@ -3122,8 +3171,7 @@ impl DagCircuit {
         let idx = self.annotations.len();
         self.insert_pauli_meta_gate(&pauli);
         self.annotations.push(PauliAnnotation {
-            pauli,
-            kind: AnnotationKind::TrackedPauli,
+            kind: AnnotationKind::TrackedPauli { pauli },
             label: Some(label.to_string()),
         });
         idx
@@ -3145,8 +3193,8 @@ impl DagCircuit {
     /// Add a pre-built annotation (used for conversion from `TickCircuit`).
     pub fn add_annotation(&mut self, ann: PauliAnnotation) {
         // For tracked-Pauli annotations, insert the meta-gate node.
-        if matches!(ann.kind, AnnotationKind::TrackedPauli) {
-            self.insert_pauli_meta_gate(&ann.pauli);
+        if let AnnotationKind::TrackedPauli { pauli } = &ann.kind {
+            self.insert_pauli_meta_gate(pauli);
         }
         self.annotations.push(ann);
     }
@@ -3175,7 +3223,7 @@ impl DagCircuit {
     pub fn tracked_paulis(&self) -> impl Iterator<Item = &PauliAnnotation> {
         self.annotations
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli { .. }))
     }
 
     // ========================================================================
@@ -3983,7 +4031,7 @@ mod tests {
         if basis & 2 != 0 {
             circuit.x(&[1]);
         }
-        circuit.crz(theta, &[(1, 0)]);
+        circuit.crz(theta, &[(1, 0)]).unwrap();
         let mut simulator = StateVec::new(2);
         for node in circuit.topological_order() {
             let gate = circuit.gate(node).expect("DAG node contains a gate");
@@ -4558,7 +4606,7 @@ mod tests {
             vec![],
             vec![QubitId::from(0)],
         ));
-        let rz = circuit.add_gate(Gate::rz(Angle64::from_turns(0.5), &[0]));
+        let rz = circuit.add_gate(Gate::rz(Angle64::HALF_TURN, &[0]));
 
         circuit.connect(h, t, QubitId::from(0)).unwrap();
         circuit.connect(t, rz, QubitId::from(0)).unwrap();
@@ -4598,7 +4646,7 @@ mod tests {
         circuit.add_gate(Gate::h(&[0]));
         circuit.add_gate(Gate::h(&[1]));
         circuit.add_gate(Gate::cx(&[(0, 1)]));
-        circuit.add_gate(Gate::rz(Angle64::from_turns(0.5), &[0]));
+        circuit.add_gate(Gate::rz(Angle64::HALF_TURN, &[0]));
 
         assert_eq!(circuit.gate_type_count(GateType::H), 2);
         assert_eq!(circuit.gate_type_count(GateType::CX), 1);
@@ -4663,10 +4711,7 @@ mod tests {
         let mut circuit = DagCircuit::new();
 
         let h = circuit.add_gate(Gate::h(&[0]));
-        let rz = circuit.add_gate(Gate::rz(
-            Angle64::from_radians(std::f64::consts::PI / 4.0),
-            &[0],
-        ));
+        let rz = circuit.add_gate(Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]));
 
         // Set gate-level attributes
         assert!(circuit.set_gate_attr(h, "error_rate", Attribute::Float(0.001)));
@@ -4782,11 +4827,11 @@ mod tests {
 
         let mut circuit = DagCircuit::new();
 
-        // Test that rotation gates accept both Angle64 and f64
+        // Test rotation gates with explicit angle constructors
         // API follows simulator convention: rx(theta, q)
         circuit
             .h(&[0])
-            .rz(PI / 4.0, &[0]) // f64 in radians, then qubit
+            .rz(Angle64::from_turn_ratio(1, 8), &[0])
             .rx(Angle64::QUARTER_TURN, &[0]); // Angle64, then qubit
         circuit.mz(&[0]);
 
@@ -4862,8 +4907,6 @@ mod tests {
 
     #[test]
     fn test_builder_simulator_api_compatibility() {
-        use std::f64::consts::FRAC_PI_4;
-
         // Test that the API matches simulator conventions
         let mut circuit = DagCircuit::new();
 
@@ -4881,10 +4924,10 @@ mod tests {
         // Matches ArbitraryRotationGateable API: rx(theta, q)
         let mut circuit2 = DagCircuit::new();
         circuit2
-            .rx(FRAC_PI_4, &[0])
-            .ry(FRAC_PI_4, &[0])
-            .rz(FRAC_PI_4, &[0])
-            .rzz(FRAC_PI_4, &[(0, 1)]); // rzz(theta, &[(q1, q2)])
+            .rx(Angle64::from_turn_ratio(1, 8), &[0])
+            .ry(Angle64::from_turn_ratio(1, 8), &[0])
+            .rz(Angle64::from_turn_ratio(1, 8), &[0])
+            .rzz(Angle64::from_turn_ratio(1, 8), &[(0, 1)]); // rzz(theta, &[(q1, q2)])
 
         assert_eq!(circuit2.gate_count(), 4);
     }

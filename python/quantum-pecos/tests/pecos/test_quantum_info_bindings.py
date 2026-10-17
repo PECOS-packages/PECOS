@@ -31,7 +31,7 @@ from pecos.quantum_info import (
     state_fidelity,
     state_fidelity_with_density_matrix,
 )
-from pecos_rslib import PauliString
+from pecos_rslib import PauliStabilizerGroup, PauliString
 
 
 def assert_close(actual: float, expected: float, tol: float = 1e-12) -> None:
@@ -316,3 +316,125 @@ def test_random_generators_are_seed_reproducible_and_valid() -> None:
     assert two_qubit.is_trace_preserving()
     assert two_qubit.to_superop().num_qubits() == 2
     assert len(two_qubit.to_superop().matrix()) == 16
+
+
+def test_stabilizer_group_rejects_minus_identity() -> None:
+    xx, zz, yy = [PauliString.from_str(s) for s in ("XX", "ZZ", "YY")]
+    message = r"generate -I.*stabilizes no state.*empty code space"
+    with pytest.raises(ValueError, match=message):
+        PauliStabilizerGroup([xx, zz, yy])
+    with pytest.raises(ValueError, match=message):
+        PauliStabilizerGroup.from_str("XX\nZZ\nYY")
+
+    group = PauliStabilizerGroup([xx, zz])
+    with pytest.raises(ValueError, match=message):
+        group.add_generator(yy)
+    assert group.num_generators() == 2
+    assert group.contains_with_phase(xx)
+
+    group = PauliStabilizerGroup([xx])
+    with pytest.raises(ValueError, match=message):
+        group.merge(PauliStabilizerGroup([zz, yy]))
+    assert group.num_generators() == 1
+    assert group.contains_with_phase(xx)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        ("XX", "ZZ", False),
+        ("X0", "Z1", True),
+        ("Y0", "Y0", True),
+        ("X", "XIX", True),
+        ("X0 Z100", "Y100", False),
+        ("-Y", "iY", True),
+        ("-X", "iZ", False),
+        ("", "XYZ", True),
+        ("", "", True),
+    ],
+)
+def test_qubitwise_commutation(first: str, second: str, *, expected: bool) -> None:
+    """Qubitwise commutation ignores phase and treats absent support as identity."""
+    left, right = PauliString.from_str(first), PauliString.from_str(second)
+    assert left.qubitwise_commutes_with(right) == expected
+    assert right.qubitwise_commutes_with(left) == expected
+
+
+def test_stabilizer_element_bindings() -> None:
+    """Enumeration is distinct; masks select the original generators."""
+    group = PauliStabilizerGroup.from_str("XX\nZZ\n-YY")
+    expected = [PauliString.from_str(s) for s in ["II", "XX", "ZZ", "-YY"]]
+    assert group.elements() == expected
+    assert [group.element(mask) for mask in range(4)] == expected
+    assert group.element(4) == expected[3]
+    assert group.element(7) == expected[0]
+    empty = PauliStabilizerGroup([])
+    assert empty.elements() == [PauliString()]
+    assert empty.element(0) == PauliString()
+    with pytest.raises(ValueError, match="mask"):
+        empty.element(1)
+    for mask in [-1, 8, 2**64]:
+        with pytest.raises(ValueError, match="mask"):
+            group.element(mask)
+    large = PauliStabilizerGroup([PauliString.Z(q) for q in range(31)])
+    with pytest.raises(ValueError, match="supported limit"):
+        large.elements()
+    assert large.element(1) == PauliString.Z(0)
+    redundant = PauliStabilizerGroup([PauliString.Z(0)] * 65)
+    assert redundant.elements() == [PauliString(), PauliString.Z(0)]
+    assert redundant.element(1 << 63) == PauliString.Z(0)
+
+
+@pytest.mark.parametrize("mask", [None, "1", 1.0, True, False])
+def test_stabilizer_mask_type_errors(mask: object) -> None:
+    """Masks require the integer protocol and exclude bool."""
+    with pytest.raises(TypeError, match="mask"):
+        PauliStabilizerGroup.from_str("Z").element(mask)
+
+
+def test_stabilizer_mask_numpy_and_high_generators() -> None:
+    """Integer-like masks work and only the first 64 generators are selectable."""
+    import numpy as np
+
+    group = PauliStabilizerGroup([PauliString.Z(0)] * 64 + [PauliString.Z(1)])
+    assert group.element(np.uint64(1 << 63)) == PauliString.Z(0)
+    assert group.element(np.int64(1)) == PauliString.Z(0)
+    assert group.element(2**64 - 1) == PauliString()
+    with pytest.raises(ValueError, match="mask"):
+        group.element(1 << 64)
+
+
+@pytest.mark.parametrize(
+    ("index", "error"),
+    [
+        (True, TypeError),
+        (False, TypeError),
+        (None, TypeError),
+        ("1", TypeError),
+        (1.0, TypeError),
+        (-1, ValueError),
+        (2**64, ValueError),
+        (2, IndexError),
+    ],
+)
+def test_remove_generator_invalid_index_is_atomic(index: object, error: type[Exception]) -> None:
+    """Invalid indices preserve the generators and report the appropriate error."""
+    generators = [PauliString.Z(0), PauliString.Z(1)]
+    group = PauliStabilizerGroup(generators)
+    with pytest.raises(error, match="index"):
+        group.remove_generator(index)
+    assert group.stabilizers() == generators
+
+
+def test_remove_generator_accepts_numpy_index() -> None:
+    """Removal uses the integer protocol and returns the selected generator."""
+    import numpy as np
+
+    first, second = PauliString.Z(0), PauliString.Z(1)
+    group = PauliStabilizerGroup([first, second])
+    assert group.remove_generator(np.int64(1)) == second
+    assert group.stabilizers() == [first]
+    assert group.remove_generator(np.uint64(0)) == first
+    assert group.stabilizers() == []
+    with pytest.raises(IndexError, match=r"generator index 0.*group has no generators"):
+        group.remove_generator(0)

@@ -66,7 +66,7 @@ class TestQubitAllocationLimits:
 
     @pytest.mark.parametrize("quantum_engine", [sparse_stab, state_vector], ids=["stabilizer", "state-vector"])
     def test_allocation_exceeds_runtime_capacity(self, quantum_engine) -> None:
-        """Selene capacity bounds allocation for fixed and growing backends alike."""
+        """Selene capacity bounds allocation for every fixed-capacity backend."""
         from guppylang.std.quantum import cx
 
         @guppy

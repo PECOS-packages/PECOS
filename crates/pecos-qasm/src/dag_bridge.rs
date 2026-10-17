@@ -292,7 +292,11 @@ fn resolve_gate(
         "ccx" | "toffoli" => Gate::simple(GateType::CCX, qubits.to_vec()),
         "rx" => {
             if parameters.len() == 1 {
-                Gate::rx(Angle64::from_radians(parameters[0]), qubits)
+                Gate::rx(
+                    Angle64::try_from_radians(parameters[0])
+                        .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                    qubits,
+                )
             } else {
                 return Err(QasmBridgeError::ParameterError(
                     "RX gate requires 1 parameter".into(),
@@ -301,7 +305,11 @@ fn resolve_gate(
         }
         "ry" => {
             if parameters.len() == 1 {
-                Gate::ry(Angle64::from_radians(parameters[0]), qubits)
+                Gate::ry(
+                    Angle64::try_from_radians(parameters[0])
+                        .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                    qubits,
+                )
             } else {
                 return Err(QasmBridgeError::ParameterError(
                     "RY gate requires 1 parameter".into(),
@@ -310,7 +318,11 @@ fn resolve_gate(
         }
         "rz" => {
             if parameters.len() == 1 {
-                Gate::rz(Angle64::from_radians(parameters[0]), qubits)
+                Gate::rz(
+                    Angle64::try_from_radians(parameters[0])
+                        .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                    qubits,
+                )
             } else {
                 return Err(QasmBridgeError::ParameterError(
                     "RZ gate requires 1 parameter".into(),
@@ -322,9 +334,12 @@ fn resolve_gate(
                 Gate::with_angles(
                     GateType::U,
                     vec![
-                        Angle64::from_radians(parameters[0]),
-                        Angle64::from_radians(parameters[1]),
-                        Angle64::from_radians(parameters[2]),
+                        Angle64::try_from_radians(parameters[0])
+                            .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                        Angle64::try_from_radians(parameters[1])
+                            .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                        Angle64::try_from_radians(parameters[2])
+                            .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
                     ],
                     qubits.to_vec(),
                 )
@@ -338,7 +353,10 @@ fn resolve_gate(
             if parameters.len() == 1 && qubits.len() == 2 {
                 Gate::with_angles(
                     GateType::RXX,
-                    vec![Angle64::from_radians(parameters[0])],
+                    vec![
+                        Angle64::try_from_radians(parameters[0])
+                            .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                    ],
                     qubits.to_vec(),
                 )
             } else {
@@ -351,7 +369,10 @@ fn resolve_gate(
             if parameters.len() == 1 && qubits.len() == 2 {
                 Gate::with_angles(
                     GateType::RYY,
-                    vec![Angle64::from_radians(parameters[0])],
+                    vec![
+                        Angle64::try_from_radians(parameters[0])
+                            .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                    ],
                     qubits.to_vec(),
                 )
             } else {
@@ -367,8 +388,10 @@ fn resolve_gate(
                 ));
             }
             Gate::rxyxy2q(
-                Angle64::from_radians(parameters[0]),
-                Angle64::from_radians(parameters[1]),
+                Angle64::try_from_radians(parameters[0])
+                    .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                Angle64::try_from_radians(parameters[1])
+                    .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
                 &[(qubits[0], qubits[1])],
             )
         }
@@ -376,7 +399,10 @@ fn resolve_gate(
             if parameters.len() == 1 && qubits.len() == 2 {
                 Gate::with_angles(
                     GateType::RZZ,
-                    vec![Angle64::from_radians(parameters[0])],
+                    vec![
+                        Angle64::try_from_radians(parameters[0])
+                            .map_err(|error| QasmBridgeError::ParameterError(error.to_string()))?,
+                    ],
                     qubits.to_vec(),
                 )
             } else {
@@ -534,7 +560,7 @@ fn format_gate_stmt(
         let param_strs: Vec<String> = gate
             .angles
             .iter()
-            .map(|a| format!("{}", a.to_radians()))
+            .map(|a| format!("{}", a.to_radians_signed()))
             .collect();
         format!("({})", param_strs.join(", "))
     };
@@ -678,7 +704,7 @@ mod tests {
     #[test]
     fn test_parameterized_gate_dag_to_qasm() {
         let mut dag = DagCircuit::new();
-        dag.rz(std::f64::consts::FRAC_PI_4, &[0]);
+        dag.rz(Angle64::from_turn_ratio(1, 8), &[0]);
 
         let qasm = dag_to_qasm(&dag);
         assert!(qasm.contains("rz("));
@@ -835,8 +861,8 @@ mod tests {
         assert_eq!(
             gate,
             Gate::rxyxy2q(
-                Angle64::from_radians(-0.73),
-                Angle64::from_radians(0.41),
+                pecos_core::radians!(-0.73),
+                pecos_core::radians!(0.41),
                 &[(2, 0)]
             )
         );

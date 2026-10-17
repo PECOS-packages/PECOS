@@ -140,6 +140,9 @@ pub fn I() -> PauliString {
 /// let p = Xs(0..3);
 /// assert_eq!(p.weight(), 3);
 /// ```
+///
+/// # Panics
+/// Panics if any qubit occurs more than once.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn Xs(qubits: impl QubitArgs) -> PauliString {
@@ -151,6 +154,9 @@ pub fn Xs(qubits: impl QubitArgs) -> PauliString {
 /// `Ys([0, 2, 5])` is equivalent to `Y(0) & Y(2) & Y(5)`.
 ///
 /// Accepts arrays, slices, `Vec<usize>`, and ranges.
+///
+/// # Panics
+/// Panics if any qubit occurs more than once.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn Ys(qubits: impl QubitArgs) -> PauliString {
@@ -175,6 +181,9 @@ pub fn Ys(qubits: impl QubitArgs) -> PauliString {
 /// let stab = Zs(0..=1);
 /// assert_eq!(stab.weight(), 2);
 /// ```
+///
+/// # Panics
+/// Panics if any qubit occurs more than once.
 #[must_use]
 #[allow(non_snake_case)]
 pub fn Zs(qubits: impl QubitArgs) -> PauliString {

@@ -15,11 +15,11 @@ cd "$PROJECT_ROOT"
 make clean build test
 
 cargo run --locked --bin pecos run examples/phir/bell.phir.json -s 10 -w 2 -p 0.2
-cargo run --locked --bin pecos run examples/llvm/bell.ll -s 10 -w 2 -p 0.2
+cargo run --locked --bin pecos run examples/llvm/bell.ll --qubits 2 -s 10 -w 2 -p 0.2
 cargo run --locked --bin pecos run examples/phir/bell.phir.json -s 10 -w 1
-cargo run --locked --bin pecos run examples/llvm/bell.ll -s 10 -w 1
+cargo run --locked --bin pecos run examples/llvm/bell.ll --qubits 2 -s 10 -w 1
 cargo run --locked --bin pecos run examples/phir/bell.phir.json -s 10 -w 10
-cargo run --locked --bin pecos run examples/llvm/bell.ll -s 10 -w 10
+cargo run --locked --bin pecos run examples/llvm/bell.ll --qubits 2 -s 10 -w 10
 cargo run --locked --example replaying_rng --package pecos-core
 cargo run --locked --example bell_state_replay --package pecos-simulators
 cargo run --locked --example run_noisy_circ

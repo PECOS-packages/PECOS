@@ -21,7 +21,7 @@ use pecos_neo::prelude::CorePlugin;
 use pecos_random::PecosRng;
 use std::hint::black_box;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let iterations = 1_000_000;
     let qubit = QubitId(0);
     let qubits = [qubit];
@@ -46,7 +46,7 @@ fn main() {
     // Single channel with event check
     let mut noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(0.001));
+        .add_channel(SingleQubitChannel::depolarizing(0.001)?);
     let mut rng = PecosRng::seed_from_u64(42);
 
     let start = std::time::Instant::now();
@@ -70,9 +70,9 @@ fn main() {
     // Multiple channels
     let mut noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(0.001))
-        .add_channel(SingleQubitChannel::depolarizing(0.001))
-        .add_channel(SingleQubitChannel::depolarizing(0.001));
+        .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+        .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+        .add_channel(SingleQubitChannel::depolarizing(0.001)?);
     let mut rng = PecosRng::seed_from_u64(42);
 
     let start = std::time::Instant::now();
@@ -98,7 +98,7 @@ fn main() {
     for _ in 0..iterations {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(SingleQubitChannel::depolarizing(0.001));
+            .add_channel(SingleQubitChannel::depolarizing(0.001)?);
         black_box(noise);
     }
     let creation_time = start.elapsed();
@@ -109,4 +109,5 @@ fn main() {
     );
 
     println!("\nDone!");
+    Ok(())
 }

@@ -125,7 +125,7 @@ assert_eq!(sparse, dense);
 assert_eq!(sparse, explicit_sparse);
 assert_eq!(dense, explicit_dense);
 assert_eq!(sparse.to_sparse_str(), "+X0 Z3");
-assert_eq!(sparse.to_dense_str(None), "+XIIZ");
+assert_eq!(sparse.to_dense_str(), "+XIIZ");
 ```
 
 ---
@@ -317,8 +317,8 @@ For working with multiple Pauli strings, `pecos-quantum` provides four collectio
 PauliSequence          -- ordered, no constraints
     ↓ validate commutativity
 PauliGroup             -- commuting generators, any phase
-    ↓ validate real phases
-PauliStabilizerGroup   -- commuting generators, +/-1 phase only
+    ↓ validate real phases and absence of -I
+PauliStabilizerGroup   -- commuting generators, +/-1 phases, excludes -I
 
 PauliSet               -- unordered, deduplicated (separate hierarchy)
 ```
@@ -347,7 +347,7 @@ assert!(!seq.contains(&X(0)));         // X not in Z-span
 // Commutativity check
 assert!(seq.is_abelian());  // all Z-type, so commute
 
-// Row reduction to independent generators
+// Row reduction to independent bodies (dependency phases are discarded)
 let reduced = seq.row_reduce();
 assert_eq!(reduced.len(), 2);
 ```
@@ -376,7 +376,7 @@ assert_eq!(union.len(), 3);  // X(0), Z(1), Y(2)
 
 ### PauliGroup (Abelian, Any Phase)
 
-A commuting subgroup of the Pauli group. Generators may carry any `QuarterPhase` (+1, -1, +i, -i). When a generator has imaginary phase, its order is 4 (not 2), and the group may contain -I.
+A commuting subgroup of the Pauli group. Generators may carry any `QuarterPhase` (+1, -1, +i, -i). An imaginary-phase generator has order 4 and its square is -I. Dependencies among real-phase generators can also generate -I, for example XX * ZZ * YY = -II.
 
 ```rust
 use pecos_quantum::PauliGroup;
@@ -397,9 +397,9 @@ let err = PauliGroup::new(vec![X(0), Z(0)]);
 assert!(err.is_err());
 ```
 
-### PauliStabilizerGroup (Abelian, Real Phase Only)
+### PauliStabilizerGroup (Abelian, Real Phases, Excludes -I)
 
-The standard stabilizer group for QEC. All generators must commute and have phase +1 or -1 (so every element squares to +I).
+The standard stabilizer group for QEC. All generators must commute, have phase +1 or -1, and not generate -I. Since -I|psi> = |psi> forces psi = 0, a group containing -I stabilizes no state and has an empty code space. Unitary conjugation preserves whether -I belongs to the group.
 
 ```rust
 use pecos_quantum::PauliStabilizerGroup;
@@ -435,14 +435,14 @@ use pecos_core::pauli::*;
 
 // Upward (widening) -- always succeeds
 let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
-let group: PauliGroup = stab.clone().into();        // drop phase constraint
+let group: PauliGroup = stab.clone().into();        // drop stabilizer constraints
 let seq: PauliSequence = group.into();               // drop commutativity constraint
 let set: PauliSet = PauliSet::from_iter(vec![Zs([0, 1])]);
 
 // Downward (narrowing) -- validates constraints
 let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
 let group: PauliGroup = seq.try_into().unwrap();     // checks commutativity
-let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases
+let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases and absence of -I
 
 // From strings
 let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
@@ -470,11 +470,11 @@ let group = PauliStabilizerGroup::new(vec![
 // Wrap in a StabilizerCode for QEC analysis
 let code = StabilizerCode::from_group(group);
 assert_eq!(code.num_logical_qubits(), 1);
-assert_eq!(code.distance(), Some(1));
+assert_eq!(code.distance()?, Some(1));
 
 // Or use standard constructors directly
 let steane = StabilizerCode::steane();
-assert_eq!(steane.distance(), Some(3));
+assert_eq!(steane.distance()?, Some(3));
 ```
 
 For details on `StabilizerCode` and `StabilizerCodeSpec`, see the [Stabilizer Codes guide](stabilizer-codes.md).

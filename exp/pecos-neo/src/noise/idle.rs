@@ -53,6 +53,10 @@
 //! - **Incoherent**: Stochastic Z error with probability = sin(rate * duration / 2)^2.
 //!   This is the exact Pauli twirl of the coherent RZ rotation.
 
+use super::validation::{
+    ValidationError, ValidationResult, validate_angle_rate, validate_duration, validate_positive,
+    validate_rate, validate_scaled_angle_rate,
+};
 use super::{
     NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse, PauliWeights,
 };
@@ -72,19 +76,19 @@ pub struct IdleChannel {
     /// Error rate per time unit for linear (stochastic) noise.
     ///
     /// Probability of error = `linear_rate` * duration.
-    pub linear_rate: f64,
+    pub(crate) linear_rate: f64,
 
     /// Distribution of Pauli errors for linear noise.
     ///
     /// By default, uses Z-only errors. Can be set to uniform for depolarizing
     /// or any custom distribution.
-    pub linear_weights: PauliWeights,
+    pub(crate) linear_weights: PauliWeights,
 
     /// DEM-style stochastic sine-squared idle rate in radians per time unit.
-    pub sin_squared_rate: f64,
+    pub(crate) sin_squared_rate: f64,
 
     /// Unnormalized per-axis relative multipliers for the sine-squared idle family.
-    pub sin_squared_model: BTreeMap<String, f64>,
+    pub(crate) sin_squared_model: BTreeMap<String, f64>,
 
     /// Error rate per time unit for quadratic (dephasing) noise.
     ///
@@ -94,10 +98,10 @@ pub struct IdleChannel {
     /// The factor of one half makes the incoherent model the exact Pauli twirl
     /// of the coherent RZ rotation. This deliberately changes numerical results
     /// from earlier versions for incoherent quadratic idle noise.
-    pub quadratic_rate: f64,
+    pub(crate) quadratic_rate: f64,
 
     /// Whether to model quadratic dephasing coherently (RZ) or incoherently (stochastic Z).
-    pub coherent_dephasing: bool,
+    pub(crate) coherent_dephasing: bool,
 
     /// Scaling factor to convert coherent dephasing rates to incoherent rates.
     ///
@@ -108,21 +112,21 @@ pub struct IdleChannel {
     ///
     /// Default is 1.0 (no adjustment). Values > 1.0 increase the effective
     /// incoherent dephasing rate.
-    pub coherent_to_incoherent_factor: f64,
+    pub(crate) coherent_to_incoherent_factor: f64,
 
     /// Duration of the idle-noise site applied after a two-qubit gate.
     ///
     /// A duration of zero disables after-two-qubit idle sites. When enabled,
     /// the same linear, quadratic, and sine-squared mechanisms used for
     /// explicit idle events are applied to every distinct gate operand.
-    pub idle_after_2q: f64,
+    pub(crate) idle_after_2q: f64,
 }
 
 impl Default for IdleChannel {
     fn default() -> Self {
         Self {
             linear_rate: 0.0,
-            linear_weights: PauliWeights::custom(0.0, 0.0, 1.0), // Z-only by default
+            linear_weights: PauliWeights::z_only(), // Z-only by default
             sin_squared_rate: 0.0,
             sin_squared_model: BTreeMap::new(),
             quadratic_rate: 0.0,
@@ -137,12 +141,14 @@ impl IdleChannel {
     /// Create an idle noise channel with linear time dependence.
     ///
     /// Rate is per abstract time unit.
-    #[must_use]
-    pub fn linear(rate_per_time_unit: f64) -> Self {
-        Self {
-            linear_rate: rate_per_time_unit,
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn linear(rate_per_time_unit: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            linear_rate: validate_rate(rate_per_time_unit, "linear_rate")?,
             ..Default::default()
-        }
+        })
     }
 
     /// Create an idle noise channel from T1/T2 parameters in abstract time units.
@@ -174,61 +180,105 @@ impl IdleChannel {
     /// * `t1` - T1 relaxation time in abstract time units
     /// * `t2` - Total T2 transverse coherence time in the same units
     ///
-    /// # Panics
-    ///
-    /// Panics if either time is non-finite or not greater than zero, or if `t2 > 2 * t1`.
-    #[must_use]
-    pub fn from_t1_t2(t1: f64, t2: f64) -> Self {
-        Self::validate_t1_t2(t1, t2);
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a non-finite derived rate.
+    pub fn from_t1_t2(t1: f64, t2: f64) -> ValidationResult<Self> {
+        Self::validate_t1_t2(t1, t2)?;
 
         let rate_x = 1.0 / (4.0 * t1);
         let rate_y = rate_x;
         let rate_z = 1.0 / (2.0 * t2) - rate_x;
         let linear_rate = rate_x + rate_y + rate_z;
 
-        Self {
+        validate_rate(linear_rate, "derived linear_rate")?;
+        Ok(Self {
             linear_rate,
             linear_weights: PauliWeights::custom(
                 rate_x / linear_rate,
                 rate_y / linear_rate,
                 rate_z / linear_rate,
-            ),
+            )?,
             quadratic_rate: 0.0,
             ..Default::default()
-        }
+        })
     }
 
     /// Convert physical seconds with a time scale, preserving the constructor's validation.
-    pub(crate) fn from_t1_t2_seconds(t1_seconds: f64, t2_seconds: f64, scale: TimeScale) -> Self {
+    ///
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a missing time scale.
+    pub(crate) fn from_t1_t2_seconds(
+        t1_seconds: f64,
+        t2_seconds: f64,
+        scale: TimeScale,
+    ) -> ValidationResult<Self> {
         // Validate before TimeScale rounds into its unsigned integer representation, which would
         // otherwise erase the sign and non-finite state of some invalid inputs.
-        Self::validate_t1_t2(t1_seconds, t2_seconds);
+        Self::validate_t1_t2(t1_seconds, t2_seconds)?;
         let t1 = scale.from_seconds(t1_seconds).as_f64();
         let t2 = scale.from_seconds(t2_seconds).as_f64();
         Self::from_t1_t2(t1, t2)
     }
 
-    fn validate_t1_t2(t1: f64, t2: f64) {
-        assert!(
-            t1.is_finite(),
-            "t1 must be finite and greater than zero, got {t1}"
-        );
-        assert!(
-            t1 > 0.0,
-            "t1 must be finite and greater than zero, got {t1}"
-        );
-        assert!(
-            t2.is_finite(),
-            "t2 must be finite and greater than zero, got {t2}"
-        );
-        assert!(
-            t2 > 0.0,
-            "t2 must be finite and greater than zero, got {t2}"
-        );
-        assert!(
-            t2 <= 2.0 * t1,
-            "total transverse coherence time must satisfy t2 <= 2 * t1, got t1={t1} and t2={t2}"
-        );
+    fn validate_t1_t2(t1: f64, t2: f64) -> ValidationResult<()> {
+        validate_positive(t1, "t1")?;
+        validate_positive(t2, "t2")?;
+        if t2 > 2.0 * t1 {
+            return Err(ValidationError::new(
+                "t2",
+                format!("total transverse coherence time must satisfy t2 <= 2 * t1; t1 is {t1}, so use t2 <= {}", 2.0 * t1),
+            )
+            .with_value(&t2));
+        }
+        Ok(())
+    }
+
+    /// Set the quadratic dephasing rate per time unit.
+    ///
+    /// # Errors
+    /// Rejects a non-finite or negative rate.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_quadratic_rate(mut self, rate: f64) -> ValidationResult<Self> {
+        validate_angle_rate(rate, "quadratic_rate")?;
+        validate_scaled_angle_rate(
+            rate,
+            self.coherent_to_incoherent_factor,
+            "quadratic_rate",
+            "coherent_to_incoherent_factor",
+        )?;
+        self.quadratic_rate = rate;
+        Ok(self)
+    }
+
+    /// Set independent sine-squared noise rates and axis multipliers.
+    ///
+    /// # Errors
+    /// Rejects non-finite or negative values and axes other than X, Y, Z, L.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_sin_squared(
+        mut self,
+        rate: f64,
+        model: BTreeMap<String, f64>,
+    ) -> ValidationResult<Self> {
+        validate_rate(rate, "sin_squared_rate")?;
+        for (axis, multiplier) in &model {
+            if !matches!(axis.as_str(), "X" | "Y" | "Z" | "L") {
+                return Err(
+                    ValidationError::new("sin_squared_model", "expected X, Y, Z, or L")
+                        .with_value(axis),
+                );
+            }
+            validate_rate(*multiplier, &format!("sin_squared multiplier for '{axis}'"))?;
+            validate_scaled_angle_rate(
+                rate,
+                *multiplier,
+                "sin_squared_rate",
+                &format!("sin_squared multiplier for '{axis}'"),
+            )?;
+        }
+        self.sin_squared_rate = rate;
+        self.sin_squared_model = model;
+        Ok(self)
     }
 
     /// Set whether to use coherent dephasing.
@@ -241,10 +291,13 @@ impl IdleChannel {
     /// Set the linear noise Pauli weights.
     ///
     /// By default, linear noise is Z-only. Use this to set a custom distribution.
-    #[must_use]
-    pub fn with_linear_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_linear_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.linear_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set linear noise to uniform depolarizing (X, Y, Z with equal probability).
@@ -261,20 +314,32 @@ impl IdleChannel {
     /// stochastic modeling doesn't capture coherent phase accumulation.
     ///
     /// Default is 1.0. Values > 1.0 increase the effective dephasing rate.
-    #[must_use]
-    pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> ValidationResult<Self> {
+        validate_rate(factor, "coherent_to_incoherent_factor")?;
+        validate_scaled_angle_rate(
+            self.quadratic_rate,
+            factor,
+            "quadratic_rate",
+            "coherent_to_incoherent_factor",
+        )?;
         self.coherent_to_incoherent_factor = factor;
-        self
+        Ok(self)
     }
 
     /// Set the duration of the idle-noise site after each two-qubit gate.
     ///
     /// The duration uses the channel's abstract time units. A duration of zero
     /// disables these sites.
-    #[must_use]
-    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
-        self.idle_after_2q = duration;
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_after_2q(mut self, duration: f64) -> ValidationResult<Self> {
+        self.idle_after_2q = validate_duration(duration, "idle_after_2q")?;
+        Ok(self)
     }
 
     /// Calculate linear (stochastic) error probability for a given duration.
@@ -356,7 +421,7 @@ impl IdleChannel {
                     for &qubit in &unique_qubits {
                         // Skip leaked qubits (fast path skips check if no leakage exists)
                         if !has_any_leakage || !ctx.is_leaked(qubit) {
-                            gates.push(GateCommand::rz(qubit, Angle64::from_radians(angle)));
+                            gates.push(GateCommand::rz(qubit, Angle64::try_from_radians(angle).expect("validated quadratic rate times a bounded idle duration is finite")));
                         }
                     }
                 }
@@ -485,16 +550,6 @@ mod tests {
     use super::*;
     use pecos_core::QubitId;
 
-    fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
-        if let Some(message) = panic.downcast_ref::<String>() {
-            message.clone()
-        } else if let Some(message) = panic.downcast_ref::<&str>() {
-            (*message).to_string()
-        } else {
-            "non-string panic".to_string()
-        }
-    }
-
     fn assert_close(actual: f64, expected: f64) {
         assert!(
             (actual - expected).abs() < f64::EPSILON,
@@ -548,8 +603,34 @@ mod tests {
     }
 
     #[test]
+    fn scaled_angle_boundary_probabilities_are_finite() {
+        use crate::noise::validation::{MAX_ANGLE_RATE, MAX_DURATION};
+        let channel = IdleChannel::default()
+            .with_quadratic_rate(MAX_ANGLE_RATE / 2.0)
+            .unwrap()
+            .with_coherent_to_incoherent_factor(2.0)
+            .unwrap()
+            .with_sin_squared(
+                MAX_ANGLE_RATE / 2.0,
+                BTreeMap::from([("X".to_owned(), 2.0)]),
+            )
+            .unwrap();
+        for probability in [
+            channel.quadratic_probability(MAX_DURATION),
+            IdleChannel::sin_squared_probability(
+                channel.sin_squared_rate,
+                channel.sin_squared_model["X"],
+                MAX_DURATION,
+            ),
+        ] {
+            assert!(probability.is_finite());
+            assert!((0.0..=1.0).contains(&probability));
+        }
+    }
+
+    #[test]
     fn test_idle_error() {
-        let channel = IdleChannel::linear(1.0); // 100% error per ns
+        let channel = IdleChannel::linear(1.0).unwrap(); // 100% error per ns
 
         let qubits = [QubitId(0)];
         let duration = TimeUnits::new(1);
@@ -589,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_linear_probability_scaling() {
-        let channel = IdleChannel::linear(0.001);
+        let channel = IdleChannel::linear(0.001).unwrap();
 
         // At 10ns: p = 0.001 * 10 = 0.01
         let p = channel.linear_probability(TimeUnits::new(10).as_f64());
@@ -598,8 +679,8 @@ mod tests {
 
     #[test]
     fn t1_t2_short_times_are_not_clamped() {
-        let half_unit_t1 = IdleChannel::from_t1_t2(0.5, 1.0);
-        let one_unit_t1 = IdleChannel::from_t1_t2(1.0, 2.0);
+        let half_unit_t1 = IdleChannel::from_t1_t2(0.5, 1.0).unwrap();
+        let one_unit_t1 = IdleChannel::from_t1_t2(1.0, 2.0).unwrap();
 
         assert_close(half_unit_t1.linear_rate, 1.0);
         assert_close(one_unit_t1.linear_rate, 0.5);
@@ -611,48 +692,28 @@ mod tests {
 
     #[test]
     fn t1_t2_rejects_non_positive_and_non_finite_times_by_parameter() {
-        for t1 in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let panic = std::panic::catch_unwind(|| IdleChannel::from_t1_t2(t1, 1.0))
-                .expect_err("invalid t1 must panic");
-            let message = panic_message(panic.as_ref());
-            assert!(message.contains("t1"), "unexpected panic: {message}");
-            assert!(
-                message.contains("finite and greater than zero"),
-                "unexpected panic: {message}"
-            );
-        }
-
-        for t2 in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let panic = std::panic::catch_unwind(|| IdleChannel::from_t1_t2(1.0, t2))
-                .expect_err("invalid t2 must panic");
-            let message = panic_message(panic.as_ref());
-            assert!(message.contains("t2"), "unexpected panic: {message}");
-            assert!(
-                message.contains("finite and greater than zero"),
-                "unexpected panic: {message}"
-            );
+        for value in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for (t1, t2, parameter) in [(value, 1.0, "t1"), (1.0, value, "t2")] {
+                let error = IdleChannel::from_t1_t2(t1, t2).unwrap_err();
+                assert_eq!(error.field, parameter);
+                assert!(error.to_string().contains(&value.to_string()));
+            }
         }
     }
 
     #[test]
     fn total_t2_physical_bound_is_enforced_and_inclusive() {
-        let boundary = IdleChannel::from_t1_t2(1.0, 2.0);
+        let boundary = IdleChannel::from_t1_t2(1.0, 2.0).unwrap();
         assert_close(boundary.linear_weights.z, 0.0);
-
-        let panic = std::panic::catch_unwind(|| IdleChannel::from_t1_t2(1.0, 2.1))
-            .expect_err("T2 above the physical bound must panic");
-        let message = panic_message(panic.as_ref());
-        assert!(
-            message.contains("t2 <= 2 * t1"),
-            "unexpected panic: {message}"
-        );
-        assert!(message.contains("t1=1"), "unexpected panic: {message}");
-        assert!(message.contains("t2=2.1"), "unexpected panic: {message}");
+        let error = IdleChannel::from_t1_t2(1.0, 2.1).unwrap_err();
+        assert!(error.to_string().contains("t2 <= 2 * t1"));
+        assert_eq!(error.field, "t2");
+        assert_eq!(error.value.as_deref(), Some("2.1"));
     }
 
     #[test]
     fn t1_t2_sanity_values_match_first_order_pauli_twirl() {
-        let channel = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+        let channel = IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap();
 
         assert!((channel.linear_rate - 2.166_666_666_666_666_7e-5).abs() < f64::EPSILON);
         assert!((channel.linear_weights.x - 3.0 / 13.0).abs() < f64::EPSILON);
@@ -663,8 +724,8 @@ mod tests {
 
     #[test]
     fn t1_t2_uses_linear_t2_scaling_and_zero_quadratic_angle() {
-        let t2_30 = IdleChannel::from_t1_t2(50.0, 30.0);
-        let t2_60 = IdleChannel::from_t1_t2(50.0, 60.0);
+        let t2_30 = IdleChannel::from_t1_t2(50.0, 30.0).unwrap();
+        let t2_60 = IdleChannel::from_t1_t2(50.0, 60.0).unwrap();
 
         // theta_quadratic(t; T2) = 0. The first-order transverse Pauli error instead follows
         // pY(t) + pZ(t) = t / (2 * T2).
@@ -683,9 +744,11 @@ mod tests {
 
     #[test]
     fn t1_t2_convenience_equals_hand_written_linear_family() {
-        let convenience = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+        let convenience = IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap();
         let hand_written = IdleChannel::linear(2.166_666_666_666_666_7e-5)
-            .with_linear_weights(PauliWeights::custom(3.0 / 13.0, 3.0 / 13.0, 7.0 / 13.0));
+            .unwrap()
+            .with_linear_weights(PauliWeights::custom(3.0 / 13.0, 3.0 / 13.0, 7.0 / 13.0).unwrap())
+            .unwrap();
 
         assert_same_configuration(&convenience, &hand_written);
     }
@@ -693,8 +756,10 @@ mod tests {
     #[test]
     fn test_linear_with_custom_weights() {
         // X-biased linear noise
-        let channel =
-            IdleChannel::linear(1.0).with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0));
+        let channel = IdleChannel::linear(1.0)
+            .unwrap()
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap();
 
         let qubits = [QubitId(0)];
         let duration = TimeUnits::new(1);
@@ -720,7 +785,7 @@ mod tests {
     #[test]
     fn test_linear_depolarizing() {
         // Uniform linear noise (depolarizing)
-        let channel = IdleChannel::linear(1.0).with_linear_depolarizing();
+        let channel = IdleChannel::linear(1.0).unwrap().with_linear_depolarizing();
 
         // linear_weights should be uniform
         let weights = channel.linear_weights;
@@ -920,8 +985,14 @@ mod tests {
     #[test]
     fn after_2q_duration_scales_linear_noise() {
         let qubits = std::array::from_fn::<_, 64, _>(QubitId);
-        let short = IdleChannel::linear(0.25).with_idle_after_2q(1.0);
-        let long = IdleChannel::linear(0.25).with_idle_after_2q(4.0);
+        let short = IdleChannel::linear(0.25)
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
+        let long = IdleChannel::linear(0.25)
+            .unwrap()
+            .with_idle_after_2q(4.0)
+            .unwrap();
 
         let mut short_rng = PecosRng::seed_from_u64(17);
         let short_gates = collect_gates(short.apply(
@@ -958,8 +1029,11 @@ mod tests {
     #[test]
     fn linear_weights_are_honored_at_after_2q_sites() {
         let channel = IdleChannel::linear(1.0)
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let qubits = [QubitId(0), QubitId(1)];
         let mut rng = PecosRng::seed_from_u64(23);
 
@@ -973,8 +1047,11 @@ mod tests {
     #[test]
     fn batched_after_2q_idles_every_distinct_operand() {
         let channel = IdleChannel::linear(1.0)
-            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3), QubitId(1)];
         let mut rng = PecosRng::seed_from_u64(29);
 
@@ -990,7 +1067,10 @@ mod tests {
 
     #[test]
     fn after_2q_channel_ignores_single_qubit_gates() {
-        let channel = IdleChannel::linear(1.0).with_idle_after_2q(1.0);
+        let channel = IdleChannel::linear(1.0)
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let qubits = [QubitId(0)];
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::H,
@@ -1014,7 +1094,7 @@ mod tests {
     fn zero_duration_and_zero_rates_produce_nothing_without_rng_draws() {
         let qubits = [QubitId(0), QubitId(1)];
 
-        let zero_duration = IdleChannel::linear(1.0);
+        let zero_duration = IdleChannel::linear(1.0).unwrap();
         let event = NoiseEvent::IdleTime {
             qubits: &qubits,
             duration: TimeUnits::ZERO,
@@ -1029,7 +1109,10 @@ mod tests {
         let mut expected_rng = PecosRng::seed_from_u64(31);
         assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
 
-        let zero_after_2q_duration = IdleChannel::linear(1.0).with_idle_after_2q(0.0);
+        let zero_after_2q_duration = IdleChannel::linear(1.0)
+            .unwrap()
+            .with_idle_after_2q(0.0)
+            .unwrap();
         let event = after_cx(&qubits);
         assert!(!zero_after_2q_duration.responds_to(&event));
         let mut actual_rng = PecosRng::seed_from_u64(37);
@@ -1041,7 +1124,7 @@ mod tests {
         let mut expected_rng = PecosRng::seed_from_u64(37);
         assert_eq!(actual_rng.random::<u64>(), expected_rng.random::<u64>());
 
-        let zero_rates = IdleChannel::default().with_idle_after_2q(10.0);
+        let zero_rates = IdleChannel::default().with_idle_after_2q(10.0).unwrap();
         let event = after_cx(&qubits);
         assert!(!zero_rates.responds_to(&event));
         let mut actual_rng = PecosRng::seed_from_u64(41);
@@ -1093,8 +1176,10 @@ mod tests {
     #[test]
     fn after_2q_noise_reproduces_exactly_for_the_same_seed() {
         let channel = IdleChannel::linear(0.4)
+            .unwrap()
             .with_linear_depolarizing()
-            .with_idle_after_2q(2.0);
+            .with_idle_after_2q(2.0)
+            .unwrap();
         let qubits = std::array::from_fn::<_, 16, _>(QubitId);
 
         let sample = || {
@@ -1217,7 +1302,7 @@ mod tests {
             collect_gates(coherent.apply(&event, &mut NoiseContext::new(), &mut coherent_rng));
         let expected_coherent = qubits
             .iter()
-            .map(|&qubit| GateCommand::rz(qubit, Angle64::from_radians(1.4)))
+            .map(|&qubit| GateCommand::rz(qubit, pecos_core::radians!(1.4)))
             .collect::<Vec<_>>();
         assert_eq!(
             coherent_output, expected_coherent,

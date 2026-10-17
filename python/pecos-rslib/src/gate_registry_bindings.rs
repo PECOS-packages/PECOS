@@ -247,10 +247,13 @@ impl PyAngleSource {
 
     /// Use a fixed angle value (in turns, where 1.0 = full turn).
     #[staticmethod]
-    fn fixed(value: f64) -> Self {
-        Self {
-            inner: AngleSource::Fixed(Angle64::from_turns(value)),
-        }
+    fn fixed(value: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: AngleSource::Fixed(
+                Angle64::try_from_turns(value)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            ),
+        })
     }
 
     /// Negate the i-th input angle from the parent gate.
@@ -395,7 +398,11 @@ impl PyGateRegistry {
         angles: Vec<f64>,
     ) -> PyResult<Py<PyAny>> {
         let qubit_ids: Vec<QubitId> = qubits.into_iter().map(QubitId::from).collect();
-        let angle_vals: Vec<Angle64> = angles.into_iter().map(Angle64::from_turns).collect();
+        let angle_vals: Vec<Angle64> = angles
+            .into_iter()
+            .map(Angle64::try_from_turns)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         match self.inner.decompose(name, &qubit_ids, &angle_vals) {
             None => Ok(py.None()),

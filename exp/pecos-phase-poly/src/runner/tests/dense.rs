@@ -232,7 +232,7 @@ fn random_tick_circuits_match_dense_oracle() {
                 qs.truncate(batch_len);
                 let k = u8::try_from(index(&mut rng, 8)).unwrap();
                 let angles = if kind.angle_arity() == 1 {
-                    vec![Angle64::from_turns(f64::from(k) / 8.0)]
+                    vec![Angle64::try_from_turns(f64::from(k) / 8.0).unwrap()]
                 } else {
                     vec![]
                 };
@@ -283,7 +283,9 @@ fn random_tick_circuits_match_dense_oracle() {
     }
     for kind in [GateType::RZ, GateType::RZZ] {
         for k in 0_u8..8 {
-            assert!(rotations.contains(&(kind, Angle64::from_turns(f64::from(k) / 8.0))));
+            assert!(
+                rotations.contains(&(kind, Angle64::try_from_turns(f64::from(k) / 8.0).unwrap()))
+            );
         }
     }
     println!(
@@ -301,7 +303,7 @@ fn all_phase_rotation_identities_match_statevec() {
             circuit.tick().t(&[0, 2]);
             circuit.tick().cx(&[(0, 1), (2, 3)]);
             let angles = if kind.angle_arity() == 1 {
-                vec![Angle64::from_turns(f64::from(k) / 8.0)]
+                vec![Angle64::try_from_turns(f64::from(k) / 8.0).unwrap()]
             } else {
                 vec![]
             };

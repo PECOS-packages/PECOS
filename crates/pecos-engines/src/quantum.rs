@@ -118,7 +118,7 @@ fn check_qubit_capacity(
             return Err(PecosError::Generic(format!(
                 "quantum op {gate_type:?} targets qubit {} but the simulator holds \
                  {capacity} qubits (dynamic allocation exceeded the configured \
-                 capacity; raise the builder's qubit count)",
+                 capacity; construct the engine or builder with a qubit count greater than the targeted index)",
                 q.0
             )));
         }
@@ -499,15 +499,9 @@ fn process_general_message<
             GateType::CH => {
                 for qubits in cmd.qubits.as_chunks::<2>().0 {
                     let target_slice = &[qubits[1]];
-                    sim.ry(
-                        Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                        target_slice,
-                    );
+                    sim.ry(Angle64::from_turn_ratio(1, 8), target_slice);
                     sim.cx(&[(qubits[0], qubits[1])]);
-                    sim.ry(
-                        Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                        target_slice,
-                    );
+                    sim.ry(Angle64::from_turn_ratio(7, 8), target_slice);
                 }
             }
             GateType::CS | GateType::CSdg => {
@@ -730,9 +724,6 @@ where
 
     /// Create a new simulator with a specific seed.
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self;
-
-    /// Create a new simulator with a custom RNG.
-    fn create_with_rng(num_qubits: usize, rng: <Self as RngManageable>::Rng) -> Self;
 }
 
 impl StateVectorSimulator for StateVec {
@@ -742,10 +733,6 @@ impl StateVectorSimulator for StateVec {
 
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
         StateVec::with_seed(num_qubits, seed)
-    }
-
-    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
-        StateVec::with_rng(num_qubits, rng)
     }
 }
 
@@ -757,10 +744,6 @@ impl StateVectorSimulator for StateVecAoS {
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
         StateVecAoS::with_seed(num_qubits, seed)
     }
-
-    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
-        StateVecAoS::with_rng(num_qubits, rng)
-    }
 }
 
 impl StateVectorSimulator for StateVecSoA {
@@ -770,10 +753,6 @@ impl StateVectorSimulator for StateVecSoA {
 
     fn create_with_seed(num_qubits: usize, seed: u64) -> Self {
         StateVecSoA::with_seed(num_qubits, seed)
-    }
-
-    fn create_with_rng(num_qubits: usize, rng: PecosRng) -> Self {
-        StateVecSoA::with_rng(num_qubits, rng)
     }
 }
 
@@ -805,19 +784,6 @@ where
     pub fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
             simulator: S::create_with_seed(num_qubits, seed),
-        }
-    }
-
-    /// Ensure the simulator has the correct number of qubits, recreating if necessary
-    pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
-        if self.simulator.num_qubits() < required_qubits {
-            debug!(
-                "StateVectorEngine: Expanding simulator (was {} qubits, now {} qubits)",
-                self.simulator.num_qubits(),
-                required_qubits
-            );
-            let rng = self.simulator.rng().clone();
-            self.simulator = S::create_with_rng(required_qubits, rng);
         }
     }
 
@@ -874,18 +840,6 @@ where
         // Parse commands from the message
         let batch = message.quantum_ops()?;
 
-        // Calculate required number of qubits from operations and ensure simulator has correct size
-        if !batch.is_empty() {
-            let max_qubit_index = batch
-                .iter()
-                .flat_map(|cmd| cmd.qubits.iter())
-                .map(|q| usize::from(*q))
-                .max()
-                .unwrap_or(0);
-            let required_qubits = max_qubit_index + 1;
-            self.ensure_qubit_count(required_qubits);
-        }
-
         let mut measurements: Vec<usize> = Vec::new();
 
         // Use indexed iteration so we can batch consecutive MZ commands into
@@ -894,6 +848,7 @@ where
         while cmd_idx < batch.len() {
             let cmd = &batch[cmd_idx];
             validate_dispatch_gate(cmd)?;
+            check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
                 GateType::X => {
                     debug!("Processing X gate on qubits {:?}", cmd.qubits);
@@ -982,15 +937,11 @@ where
                             qubits[0], qubits[1]
                         );
                         let target_slice = &[qubits[1]];
-                        self.simulator.ry(
-                            Angle64::from_radians(std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
+                        self.simulator
+                            .ry(Angle64::from_turn_ratio(1, 8), target_slice);
                         self.simulator.cx(&[(qubits[0], qubits[1])]);
-                        self.simulator.ry(
-                            Angle64::from_radians(-std::f64::consts::FRAC_PI_4),
-                            target_slice,
-                        );
+                        self.simulator
+                            .ry(Angle64::from_turn_ratio(7, 8), target_slice);
                     }
                 }
                 GateType::RZZ => {
@@ -1212,6 +1163,11 @@ where
                     {
                         cmd_idx += 1;
                         validate_dispatch_gate(&batch[cmd_idx])?;
+                        check_qubit_capacity(
+                            batch[cmd_idx].gate_type,
+                            &batch[cmd_idx].qubits,
+                            self.simulator.num_qubits(),
+                        )?;
                         mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                     }
 
@@ -1760,6 +1716,7 @@ impl Engine for CoinTossEngine {
         let mut measurements = Vec::new();
 
         for cmd in &batch {
+            check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
                 // All gates are no-ops for CoinToss - only measurements matter
                 GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {

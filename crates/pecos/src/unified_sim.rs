@@ -293,7 +293,11 @@ impl ProgrammedSimBuilder {
             builder = builder.qubits(qubits);
         }
         if let Some(noise) = neo_noise {
-            builder = builder.noise(noise);
+            builder = builder.noise(
+                noise
+                    .build()
+                    .map_err(|error| PecosError::Input(error.to_string()))?,
+            );
         }
 
         let results = builder.run()?;

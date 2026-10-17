@@ -2085,8 +2085,8 @@ pub struct DemOutput {
     pub records: SmallVec<[i32; 4]>,
     /// PECOS DEM output kind, when known.
     pub kind: Option<DemOutputKind>,
-    /// Pauli string whose flip is tracked, when this came from a Pauli
-    /// annotation or logical operator builder.
+    /// Single-time Pauli supplied by a tracked-Pauli or logical operator builder.
+    /// Measurement-defined observable annotations leave this `None`.
     pub pauli: Option<PauliString>,
     /// Optional user label.
     pub label: Option<String>,
@@ -2112,7 +2112,7 @@ impl DemOutput {
             id,
             records: SmallVec::new(),
             kind: Some(metadata.kind),
-            pauli: Some(metadata.pauli.clone()),
+            pauli: metadata.pauli.clone(),
             label: metadata.label.clone(),
         }
     }
@@ -2566,9 +2566,11 @@ impl PauliWeights {
 
     /// Look up the weight for a specific `PauliString`.
     ///
-    /// Matches by Pauli type pattern only, ignoring qubit IDs.
-    /// E.g., `X(3) & Z(7)` matches a weight entry `X(0) & Z(1)` because
-    /// both have the pattern [X, Z] (sorted by qubit position).
+    /// Matches by non-identity Pauli type pattern only, ignoring qubit IDs.
+    /// This is used for single-qubit noise, not operand-relative two-qubit labels.
+    /// For two-qubit noise use [`Self::two_qubit_weight_for_on`]: a label `AB`
+    /// means A on the first gate operand and B on the second, regardless of indices.
+    /// For example, a single-qubit query `Z(7)` matches a weight entry `Z(0)`.
     #[must_use]
     pub fn weight_for(&self, pauli: &pecos_core::PauliString) -> f64 {
         let query_pattern = pauli_pattern(pauli);
@@ -2580,6 +2582,8 @@ impl PauliWeights {
 
     /// Look up the effective two-qubit Pauli weight for a specific gate.
     ///
+    /// The query uses operand positions 0 and 1, not absolute circuit qubits.
+    /// For physical qubits use [`Self::two_qubit_weight_for_on`].
     /// Plain entries contribute directly. Replacement entries first convolve with
     /// the Pauli twirl of the omitted gate, so `~II` on `SZZ` contributes half
     /// `II` and half `ZZ`, while `~XX` on `SZZ` contributes half `XX` and half
@@ -2594,10 +2598,26 @@ impl PauliWeights {
         pauli: &pecos_core::PauliString,
         approximation: ReplacementBranchApproximation,
     ) -> f64 {
-        let Ok(query_label) = two_qubit_pauli_label(pauli) else {
+        self.two_qubit_weight_for_on(clifford, pauli, [QubitId(0), QubitId(1)], approximation)
+    }
+
+    /// Looks up a physical Pauli using the gate's ordered operands.
+    ///
+    /// A label `AB` means A on `operands[0]` and B on `operands[1]`.
+    /// Weight entries use local positions 0 and 1. Returns zero if the Pauli
+    /// acts outside the operands or the operands are repeated.
+    #[must_use]
+    pub fn two_qubit_weight_for_on(
+        &self,
+        clifford: CliffordLowering,
+        pauli: &pecos_core::PauliString,
+        operands: [QubitId; 2],
+        approximation: ReplacementBranchApproximation,
+    ) -> f64 {
+        let Ok(query_label) = two_qubit_pauli_label(pauli, operands) else {
             return 0.0;
         };
-        let direct = self.post_gate_two_qubit_weight_for(pauli);
+        let direct = self.post_gate_weight_for_label(&query_label);
 
         if !approximation.consults_omitted_gate_twirl() {
             return direct
@@ -2605,7 +2625,11 @@ impl PauliWeights {
                     .replacement_entries
                     .iter()
                     .filter_map(|(ps, weight)| {
-                        (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+                        (two_qubit_pauli_label(ps, [QubitId(0), QubitId(1)])
+                            .ok()?
+                            .as_str()
+                            == query_label)
+                            .then_some(*weight)
                     })
                     .sum::<f64>();
         }
@@ -2622,13 +2646,21 @@ impl PauliWeights {
     /// Look up only the plain post-gate two-qubit Pauli weight.
     #[must_use]
     pub fn post_gate_two_qubit_weight_for(&self, pauli: &pecos_core::PauliString) -> f64 {
-        let Ok(query_label) = two_qubit_pauli_label(pauli) else {
+        let Ok(query_label) = two_qubit_pauli_label(pauli, [QubitId(0), QubitId(1)]) else {
             return 0.0;
         };
+        self.post_gate_weight_for_label(&query_label)
+    }
+
+    fn post_gate_weight_for_label(&self, query_label: &str) -> f64 {
         self.entries
             .iter()
             .filter_map(|(ps, weight)| {
-                (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+                (two_qubit_pauli_label(ps, [QubitId(0), QubitId(1)])
+                    .ok()?
+                    .as_str()
+                    == query_label)
+                    .then_some(*weight)
             })
             .sum::<f64>()
     }
@@ -2651,7 +2683,7 @@ impl PauliWeights {
         };
         let mut impacts = Vec::new();
         for (ps, replacement_weight) in &self.replacement_entries {
-            let Ok(replacement_label) = two_qubit_pauli_label(ps) else {
+            let Ok(replacement_label) = two_qubit_pauli_label(ps, [QubitId(0), QubitId(1)]) else {
                 continue;
             };
             for (twirl_label, twirl_weight) in &twirl {
@@ -4158,23 +4190,31 @@ fn pauli_pattern(ps: &pecos_core::PauliString) -> Vec<pecos_core::Pauli> {
     ps.paulis().iter().map(|&(p, _)| p).collect()
 }
 
-fn two_qubit_pauli_label(ps: &pecos_core::PauliString) -> Result<String, String> {
-    let mut chars = ['I', 'I'];
-    for &(pauli, qubit) in ps.paulis() {
-        let idx = qubit.index();
-        if idx >= 2 {
-            return Err(format!(
-                "two-qubit Pauli weights only support qubit indices 0 and 1, got {idx}"
-            ));
-        }
-        chars[idx] = match pauli {
+/// Labels a Pauli in gate operand order, including identity on absent operands.
+/// Local weight entries use operands `[0, 1]`; circuit events use physical operands.
+pub(crate) fn two_qubit_pauli_label(
+    ps: &pecos_core::PauliString,
+    operands: [QubitId; 2],
+) -> Result<String, String> {
+    if operands[0] == operands[1] {
+        return Err(format!(
+            "two-qubit Pauli operands must be distinct: {operands:?}"
+        ));
+    }
+    if let Some((_, qubit)) = ps.iter_pairs().find(|(_, q)| !operands.contains(q)) {
+        return Err(format!(
+            "Pauli qubit {qubit} is outside operands {operands:?}; restrict the Pauli to these operands"
+        ));
+    }
+    Ok(operands
+        .iter()
+        .map(|q| match ps.get(q.index()) {
             pecos_core::Pauli::I => 'I',
             pecos_core::Pauli::X => 'X',
             pecos_core::Pauli::Y => 'Y',
             pecos_core::Pauli::Z => 'Z',
-        };
-    }
-    Ok(chars.iter().collect())
+        })
+        .collect())
 }
 
 fn multiply_two_qubit_pauli_labels(left: &str, right: &str) -> String {
@@ -4742,39 +4782,45 @@ impl PerGateTypeNoise {
     /// gate/prep/measurement faults and cannot carry duration-dependent idle
     /// models without changing the simulated physics.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if this model carries dedicated idle noise or any
+    /// Returns an error if this model carries invalid probabilities, dedicated idle noise, or any
     /// `GateType::Idle` rates -- idle noise cannot be represented in the
     /// returned Pauli channel.
     #[cfg(feature = "neo")]
-    #[must_use]
-    pub fn to_neo_channel(&self) -> pecos_neo::noise::PerGatePauliChannel {
-        assert!(
-            !self.base.uses_dedicated_idle_noise()
-                && !self.rates_1q.contains_key(&GateType::Idle)
-                && !self
-                    .rates_1q_per_qubit
-                    .keys()
-                    .any(|(gate, _)| *gate == GateType::Idle),
-            "PerGateTypeNoise::to_neo_channel cannot carry idle noise; compose an idle channel separately"
-        );
+    pub fn to_neo_channel(
+        &self,
+    ) -> pecos_neo::noise::validation::ValidationResult<pecos_neo::noise::PerGatePauliChannel> {
+        if self.base.uses_dedicated_idle_noise()
+            || self.rates_1q.contains_key(&GateType::Idle)
+            || self
+                .rates_1q_per_qubit
+                .keys()
+                .any(|(gate, _)| *gate == GateType::Idle)
+        {
+            return Err(pecos_neo::noise::validation::ValidationError::new(
+                "idle noise",
+                "PerGateTypeNoise::to_neo_channel cannot carry idle noise",
+            )
+            .with_value(&"configured idle rates")
+            .with_suggestion("Compose an idle channel separately"));
+        }
 
         let mut channel = pecos_neo::noise::PerGatePauliChannel::new()
-            .with_base(self.base.p1, self.base.p2)
-            .with_meas_init(self.p_meas, self.p_init);
+            .with_base(self.base.p1, self.base.p2)?
+            .with_meas_init(self.p_meas, self.p_init)?;
 
         for (&gate, &total) in &self.base.p1_gate_rates {
             if self.rates_1q.contains_key(&gate) {
                 continue;
             }
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3]);
+            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3])?;
         }
         for (&gate, &rates) in &self.rates_1q {
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates);
+            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates)?;
         }
         for (&(gate, qubit), &rates) in &self.rates_1q_per_qubit {
-            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates);
+            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates)?;
         }
 
         for (&gate, &total) in &self.base.p2_gate_rates {
@@ -4784,10 +4830,10 @@ impl PerGateTypeNoise {
             channel = channel.with_2q_rates(
                 core_gate_to_neo(gate),
                 qec_2q_rates_to_neo([total / 15.0; 15]),
-            );
+            )?;
         }
         for (&gate, &rates) in &self.rates_2q {
-            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates));
+            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates))?;
         }
         for (&(gate, first, second), &rates) in &self.rates_2q_per_qubits {
             channel = channel.with_2q_rates_for_qubits(
@@ -4795,17 +4841,17 @@ impl PerGateTypeNoise {
                 first,
                 second,
                 qec_2q_rates_to_neo(rates),
-            );
+            )?;
         }
 
         for (&qubit, &p) in &self.measurement_rates {
-            channel = channel.with_meas_rate_for_qubit(qubit, p);
+            channel = channel.with_meas_rate_for_qubit(qubit, p)?;
         }
         for (&qubit, &p) in &self.init_rates {
-            channel = channel.with_init_rate_for_qubit(qubit, p);
+            channel = channel.with_init_rate_for_qubit(qubit, p)?;
         }
 
-        channel
+        Ok(channel)
     }
 }
 
@@ -5434,69 +5480,32 @@ impl DetectorErrorModel {
         &self.contributions
     }
 
-    /// Convert this PECOS model into the structured decoder input boundary.
+    /// Parse this model's standard DEM text and overlay opaque fault-sector labels by ID.
     ///
-    /// This uses the same equal-effect grouping and XOR probability combination
-    /// as [`Self::to_mechanisms`] and the default [`Display`] representation.
-    /// Tracked-Pauli outputs are rejected because matching decoders only consume
-    /// standard DEM observables.
+    /// Dimensions, coordinates, mechanism order, and probabilities are exactly those
+    /// of [`Self::to_string`], including its probability formatting (issue #1260).
+    /// Tracked-Pauli outputs are omitted by the standard text representation.
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) when
-    /// tracked-Pauli targets are present or model dimensions are inconsistent.
+    /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) if the
+    /// standard DEM text cannot be parsed or a detector's fault-sector label is empty.
     pub fn to_structured_decoder_dem(
         &self,
     ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
     {
-        use pecos_decoder_core::errors::DecoderError;
-        use pecos_decoder_core::window::{
-            StructuredDem, StructuredDemComponent, StructuredDemError,
-        };
-
-        if !self.tracked_paulis.is_empty()
-            || self.contributions.iter().any(|contribution| {
-                let kind = contribution.component_kind();
-                kind.components()
-                    .iter()
-                    .any(|component| !component.tracked_paulis.is_empty())
-            })
-        {
-            return Err(DecoderError::InvalidConfiguration(
-                "structured matching-decoder DEMs do not support PECOS tracked-Pauli outputs"
-                    .into(),
-            ));
-        }
-
-        let num_detectors = self.num_detectors();
-        let mut detector_coords = vec![None; num_detectors];
+        let parsed = pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
+        let mut detector_fault_sectors = parsed.detector_fault_sectors;
         for detector in &self.detectors {
-            let index = detector.id as usize;
-            let Some(slot) = detector_coords.get_mut(index) else {
-                return Err(DecoderError::InvalidConfiguration(format!(
-                    "detector D{} is outside the model's detector dimension {num_detectors}",
-                    detector.id
-                )));
-            };
-            *slot = detector.coords.map(|coords| coords.to_vec());
+            // The index is in bounds because to_string declares every detector definition.
+            detector_fault_sectors[detector.id as usize].clone_from(&detector.fault_sector);
         }
-
-        let (mechanisms, _) = self.to_mechanisms();
-        let errors = mechanisms
-            .iter()
-            .map(|(probability, detectors, observables)| StructuredDemError {
-                probability: *probability,
-                components: vec![StructuredDemComponent {
-                    detectors: detectors.clone(),
-                    observables: observables.clone(),
-                }],
-            })
-            .collect();
-        StructuredDem::try_new(
-            errors,
-            detector_coords,
-            num_detectors,
-            self.num_observables(),
+        pecos_decoder_core::window::StructuredDem::try_new(
+            parsed.errors,
+            parsed.detector_coords,
+            detector_fault_sectors,
+            parsed.num_detectors,
+            parsed.num_observables,
         )
     }
 
@@ -7945,6 +7954,7 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
         paulis.push((pa2, pecos_core::QubitId::from(1usize)));
     }
     pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+        .expect("pair weights use distinct fixed qubits 0 and 1")
 }
 
 #[cfg(test)]
@@ -9605,6 +9615,56 @@ mod tests {
         assert!((summary.y_decomposed_probability - 0.02).abs() < 1e-12);
     }
 
+    // contract: definitions supply opaque labels by ID; unset labels stay unknown.
+    #[test]
+    fn structured_decoder_handoff_preserves_fault_sectors_by_id() {
+        let mut dem = DetectorErrorModel::new();
+        for (id, sector) in [(3, Some("ZZ")), (0, Some("XX")), (2, None), (1, Some("YY"))] {
+            let mut detector = DetectorDef::new(id).with_coords([1.0, 2.0, f64::from(id)]);
+            detector.fault_sector = sector.map(str::to_owned);
+            dem.add_detector(detector);
+        }
+        let structured = dem.to_structured_decoder_dem().unwrap();
+        assert_eq!(
+            structured.detector_fault_sectors,
+            vec![
+                Some("XX".into()),
+                Some("YY".into()),
+                None,
+                Some("ZZ".into())
+            ]
+        );
+        assert_eq!(structured.detector_coords[3], Some(vec![1.0, 2.0, 3.0]));
+
+        dem.detectors[0].fault_sector = Some(String::new());
+        assert_eq!(
+            dem.to_structured_decoder_dem().unwrap_err().to_string(),
+            "Invalid configuration: detector D3 fault_sector is empty"
+        );
+    }
+
+    #[test]
+    fn structured_decoder_handoff_matches_standard_text_with_sparse_ids() {
+        let mut dem = DetectorErrorModel::new();
+        let mut detector = DetectorDef::new(7);
+        detector.fault_sector = Some("X".into());
+        dem.add_detector(detector);
+        dem.add_direct_contribution(
+            FaultMechanism::from_unsorted_with_tracked_paulis([7], [2], [4]),
+            0.012_345_678_9,
+        );
+        dem.tracked_paulis.push(DemOutput::new(4));
+        let mut expected =
+            pecos_decoder_core::window::StructuredDem::from_dem_str(&dem.to_string()).unwrap();
+        assert_ne!(
+            expected.errors[0].probability.to_bits(),
+            0.012_345_678_9_f64.to_bits()
+        );
+        expected.detector_fault_sectors[7] = Some("X".into());
+        assert_eq!(expected.num_detectors, 8);
+        assert_eq!(dem.to_structured_decoder_dem().unwrap(), expected);
+    }
+
     #[test]
     fn structured_decoder_handoff_matches_grouped_render_semantics() {
         let mut dem = DetectorErrorModel::new();
@@ -9618,6 +9678,7 @@ mod tests {
         let structured = dem.to_structured_decoder_dem().unwrap();
 
         assert_eq!(structured.num_detectors, 2);
+        assert_eq!(structured.detector_fault_sectors, vec![None; 2]);
         assert_eq!(structured.num_observables, 1);
         assert_eq!(structured.detector_coords[0], Some(vec![1.0, 2.0, 3.0]));
         assert_eq!(structured.errors[0].components.len(), 1);
@@ -10771,7 +10832,8 @@ mod tests {
                 pecos_core::PauliString::with_phase_and_paulis(
                     pecos_core::QuarterPhase::PlusOne,
                     Vec::new(),
-                ),
+                )
+                .unwrap(),
                 1.0,
             )],
         );

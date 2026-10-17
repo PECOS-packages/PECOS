@@ -1,4 +1,4 @@
-//! Mandatory v3 batches for checked local noise profiles. Not a custom-event format.
+//! Mandatory v6 batches for checked local noise profiles. Not a custom-event format.
 use crate::noise::{GeneralNoiseModel, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
@@ -329,7 +329,7 @@ impl IntoNoiseModel for ScheduledNoise {
         Ok(Box::new(self.build_model()))
     }
 }
-pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> {
+pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> {
     g.validate().map_err(|s| error(&s))?;
     let (code, n, angles) = match g.gate_type {
         GateType::RXY1Q => (1, 1, 2),
@@ -356,12 +356,12 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> 
         code,
         g.qubits[0].0 as u64,
         if n == 2 { g.qubits[1].0 as u64 } else { 0 },
-        g.angles.first().map_or(0.0, Angle64::to_radians),
-        g.angles.get(1).map_or(0.0, Angle64::to_radians),
+        g.angles.first().map_or(0, Angle64::fraction),
+        g.angles.get(1).map_or(0, Angle64::fraction),
     ))
 }
-/// Encode mandatory v3 transport: 16-byte header, 40-byte batch headers and gates.
-/// All fields are little endian. No unknown records, implicit padding or events.
+/// Encode mandatory v6 transport: 16-byte header, 40-byte batch headers and gates.
+/// Angle words are exact u64 fractions. All fields are little endian. No unknown records, implicit padding or events.
 /// # Errors
 /// Rejects unsupported gates and messages exceeding the transport limit.
 pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, PecosError> {
@@ -383,7 +383,12 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         .try_reserve_exact(size)
         .map_err(|_| processing_error("schedule allocation failed"))?;
     bytes.extend_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
-    bytes.extend_from_slice(&[3, 0, 0, 0]);
+    bytes.extend_from_slice(&[
+        crate::byte_message::protocol::SCHEDULED_FRAME_VERSION,
+        0,
+        0,
+        0,
+    ]);
     bytes.extend_from_slice(
         &u32::try_from(batches.len())
             .map_err(|_| error("batch count overflow"))?
@@ -406,7 +411,7 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         }
         for gate in &batch.gates {
             let (op, q0, q1, theta, phi) = fields(gate)?;
-            for v in [op, q0, q1, theta.to_bits(), phi.to_bits()] {
+            for v in [op, q0, q1, theta, phi] {
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
@@ -420,16 +425,45 @@ fn word(bytes: &[u8], offset: usize) -> u64 {
             .expect("bounded record"),
     )
 }
+/// Validate the common scheduled header before interpreting version-specific records.
+pub(crate) fn validate_scheduled_header(
+    bytes: &[u8],
+    expected_version: u32,
+) -> Result<(), PecosError> {
+    if bytes.len() < 16 {
+        return Err(error(&format!(
+            "scheduled message length {} is below the 16-byte header minimum; supply a complete scheduled message",
+            bytes.len()
+        )));
+    }
+    let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if magic != crate::byte_message::protocol::BATCH_MAGIC {
+        return Err(error(&format!(
+            "scheduled magic {magic:#x} is invalid; encode the input with the scheduled message builder"
+        )));
+    }
+    let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    if version != expected_version {
+        return Err(error(&format!(
+            "scheduled version {version} is unsupported; rebuild the message with version {expected_version}, which stores angles as exact u64 fractions"
+        )));
+    }
+    let declared = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    if bytes.len() > MAX_SCHEDULE_BYTES || declared != bytes.len() {
+        return Err(error(&format!(
+            "scheduled message length {} disagrees with declared length {declared} or exceeds limit {MAX_SCHEDULE_BYTES}; encode a complete message within the limit",
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
     let bytes = input.as_bytes();
-    if bytes.len() < 16
-        || bytes.len() > MAX_SCHEDULE_BYTES
-        || bytes[..4] != crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes()
-        || bytes[4..8] != [3, 0, 0, 0]
-        || u32::from_le_bytes(bytes[12..16].try_into().expect("header")) as usize != bytes.len()
-    {
-        return Err(error("invalid scheduled header/version/length"));
-    }
+    validate_scheduled_header(
+        bytes,
+        u32::from(crate::byte_message::protocol::SCHEDULED_FRAME_VERSION),
+    )?;
     let count = u32::from_le_bytes(bytes[8..12].try_into().expect("header")) as usize;
     if count > (bytes.len() - 16) / 40 {
         return Err(error("invalid scheduled batch count"));
@@ -457,15 +491,12 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
             let op = word(bytes, offset);
             let q0 = word(bytes, offset + 8);
             let q1 = word(bytes, offset + 16);
-            let theta = f64::from_bits(word(bytes, offset + 24));
-            let phi = f64::from_bits(word(bytes, offset + 32));
-            if !theta.is_finite() || !phi.is_finite() {
-                return Err(error("nonfinite scheduled angle"));
-            }
+            let theta = word(bytes, offset + 24);
+            let phi = word(bytes, offset + 32);
             let q0 = usize::try_from(q0).map_err(|_| error("target overflow"))?;
             let q1 = usize::try_from(q1).map_err(|_| error("target overflow"))?;
-            let a = Angle64::from_radians(theta);
-            let p = Angle64::from_radians(phi);
+            let a = Angle64::new(theta);
+            let p = Angle64::new(phi);
             let gate = match op {
                 1 => Gate::rxy1q(a, p, &[q0]),
                 2 => Gate::rz(a, &[q0]),
@@ -477,8 +508,8 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
                 _ => return Err(error("unknown mandatory scheduled operation")),
             };
             if !matches!(op, 3 | 4) && q1 != 0
-                || (op >= 5 && theta.to_bits() != 0)
-                || (op != 1 && op != 4 && phi.to_bits() != 0)
+                || (op >= 5 && theta != 0)
+                || (op != 1 && op != 4 && phi != 0)
             {
                 return Err(error("nonzero unused scheduled fields"));
             }
@@ -621,7 +652,7 @@ impl ControlEngine for ScheduledIdleModel {
         _: ByteMessage,
     ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
         Err(error(
-            "scheduled idle profile requires mandatory v3 transport",
+            "scheduled idle profile requires mandatory v6 transport",
         ))
     }
     fn continue_processing(
@@ -670,6 +701,23 @@ mod timing_tests {
             gates,
         }
     }
+    #[test]
+    fn scheduled_angles_keep_every_fraction_bit() {
+        for fraction in [0, 1, u64::MAX, pecos_core::radians!(-0.73).fraction()] {
+            let a = Angle64::new(fraction);
+            let gates = vec![
+                Gate::rz(a, &[0]),
+                Gate::rxy1q(a, -a, &[1]),
+                Gate::rxyxy2q(a, -a, &[(0, 1)]),
+            ];
+            let message = encode_timed_batches(&[batch(0, 0, 0, gates.clone())]).unwrap();
+            assert_eq!(decode(&message).unwrap()[0].gates, gates);
+            let mut old = message.as_bytes().to_vec();
+            old[4] = 3;
+            assert!(decode(&ByteMessage::new(&old)).is_err());
+        }
+    }
+
     fn config() -> ScheduledNoise {
         ScheduledIdleZ::new(2, 0.2, 0.3, 0.4).unwrap().into()
     }
@@ -731,7 +779,7 @@ mod local_gate_contract {
         let stage = model
             .start_admitted(
                 &ByteMessage::quantum_operations_builder()
-                    .rz(Angle64::from_radians(0.4), &[0])
+                    .rz(pecos_core::radians!(0.4), &[0])
                     .build(),
             )
             .unwrap();
@@ -746,5 +794,41 @@ mod local_gate_contract {
             GateType::X | GateType::Y | GateType::Z
         ));
         assert_eq!(gates[1].qubits, gates[0].qubits);
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_headers_check_length_and_magic_before_version() {
+        for version in [6_u32, 7] {
+            let decode = |bytes: &[u8]| -> Result<(), PecosError> {
+                let input = ByteMessage::new(bytes);
+                if version == 6 {
+                    super::decode(&input).map(|_| ())
+                } else {
+                    crate::scheduled_events::decode_event_batches(&input).map(|_| ())
+                }
+            };
+            for bytes in [vec![], vec![0xff; 8]] {
+                let error = decode(&bytes).unwrap_err().to_string();
+                assert!(error.contains("length") && error.contains("16"), "{error}");
+            }
+            let error = decode(&[0xff; 16]).unwrap_err().to_string();
+            assert!(error.contains("magic"), "{error}");
+            let mut bytes = vec![0; 16];
+            bytes[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
+            bytes[4..8].copy_from_slice(&(version - 3).to_le_bytes());
+            bytes[12..16].copy_from_slice(&16_u32.to_le_bytes());
+            let error = decode(&bytes).unwrap_err().to_string();
+            assert!(
+                error.contains("version") && error.contains(&format!("version {version}")),
+                "{error}"
+            );
+            bytes[4..8].copy_from_slice(&version.to_le_bytes());
+            decode(&bytes).unwrap();
+        }
     }
 }

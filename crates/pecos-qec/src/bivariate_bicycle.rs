@@ -579,7 +579,7 @@ mod tests {
                 AnnotationKind::Observable { measurement_ids } => {
                     observables.push(parity(measurement_ids));
                 }
-                AnnotationKind::TrackedPauli => {}
+                AnnotationKind::TrackedPauli { .. } => {}
             }
         }
         (detectors, observables)

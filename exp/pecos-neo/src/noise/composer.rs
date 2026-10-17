@@ -26,6 +26,7 @@ use super::{
     EventKinds, NoiseChannel, NoiseEvent, NoiseEventKind, NoiseGateRequirement, NoiseResponse,
 };
 use crate::command::GateType;
+use crate::noise::validation::{ValidationError, ValidationResult};
 use pecos_core::{QubitId, TimeScale};
 use pecos_random::PecosRng;
 
@@ -43,7 +44,8 @@ use pecos_random::PecosRng;
 /// let noise = ComposableNoiseModel::new()
 ///     .add_plugin(&CorePlugin)           // State tracking
 ///     .add_plugin(&LeakagePlugin::new()) // Leakage handling
-///     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02));
+///     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Direct Channel Usage (Legacy)
@@ -52,8 +54,9 @@ use pecos_random::PecosRng;
 /// use pecos_neo::noise::*;
 ///
 /// let noise = ComposableNoiseModel::new()
-///     .add_channel(SingleQubitChannel::depolarizing(0.01))
-///     .add_channel(TwoQubitChannel::depolarizing(0.02));
+///     .add_channel(SingleQubitChannel::depolarizing(0.01)?)
+///     .add_channel(TwoQubitChannel::depolarizing(0.02)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct ComposableNoiseModel {
     /// Event handlers that update context state (run before channels).
@@ -176,7 +179,7 @@ impl ComposableNoiseModel {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let gates = GateDefinitions::builder()
     ///     .define_gate("MyGate", GateSpec::new("MyGate").with_quantum_arity(2))
-    ///     .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)
+    ///     .with_category_noise(GateCategory::TwoQubitUnitary, 0.02)?
     ///     .build()?;
     ///
     /// let noise = ComposableNoiseModel::new()
@@ -359,10 +362,6 @@ impl ComposableNoiseModel {
     /// * `t1_seconds` - T1 relaxation time in seconds
     /// * `t2_seconds` - Total T2 transverse coherence time in seconds
     ///
-    /// # Panics
-    /// Panics if `with_time_scale()` has not been called, if either time is non-finite or not
-    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
-    ///
     /// # Example
     /// ```
     /// use pecos_neo::noise::ComposableNoiseModel;
@@ -370,15 +369,20 @@ impl ComposableNoiseModel {
     ///
     /// let noise = ComposableNoiseModel::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6);  // T1=50us, T2=30us
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap();  // T1=50us, T2=30us
     /// ```
-    #[must_use]
-    pub fn with_idle_t1_t2(self, t1_seconds: f64, t2_seconds: f64) -> Self {
-        let scale = self
-            .time_scale
-            .expect("with_time_scale() must be called before with_idle_t1_t2()");
-        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
-        self.add_channel(channel)
+    ///
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a missing time scale.
+    pub fn with_idle_t1_t2(self, t1_seconds: f64, t2_seconds: f64) -> ValidationResult<Self> {
+        let scale = self.time_scale.ok_or_else(|| {
+            ValidationError::new(
+                "time_scale",
+                "with_time_scale() must be called before with_idle_t1_t2()",
+            )
+        })?;
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale)?;
+        Ok(self.add_channel(channel))
     }
 
     /// Get the number of channels in the model.
@@ -672,10 +676,11 @@ impl<C: NoiseChannel + 'static> From<C> for ComposableNoiseModel {
     }
 }
 
-impl From<super::GeneralNoiseModelBuilder> for ComposableNoiseModel {
+impl TryFrom<super::GeneralNoiseModelBuilder> for ComposableNoiseModel {
+    type Error = super::validation::ValidationError;
     /// Convert a `GeneralNoiseModelBuilder` directly to a `ComposableNoiseModel`.
     ///
-    /// This allows passing the builder without calling `.build()`:
+    /// Use `try_into()` to propagate validation errors:
     ///
     /// ```no_run
     /// use pecos_neo::tool::sim_neo;
@@ -684,11 +689,13 @@ impl From<super::GeneralNoiseModelBuilder> for ComposableNoiseModel {
     ///
     /// let circuit = CommandQueue::new();
     ///
-    /// // Both of these work:
-    /// sim_neo(circuit.clone()).auto().noise(GeneralNoiseModelBuilder::new().with_p1(0.01).build());
-    /// sim_neo(circuit).noise(GeneralNoiseModelBuilder::new().with_p1(0.01));  // No .build()!
+    /// sim_neo(circuit.clone()).auto().noise(GeneralNoiseModelBuilder::new().with_p1(0.01).build()?);
+    /// let noise: pecos_neo::noise::ComposableNoiseModel =
+    ///     GeneralNoiseModelBuilder::new().with_p1(0.01).try_into()?;
+    /// sim_neo(circuit).noise(noise);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    fn from(builder: super::GeneralNoiseModelBuilder) -> Self {
+    fn try_from(builder: super::GeneralNoiseModelBuilder) -> Result<Self, Self::Error> {
         builder.build()
     }
 }
@@ -1145,7 +1152,7 @@ mod tests {
         // of whether the inner channel produces a response.
         let wrapper = ImportanceSamplingChannel::new(
             OptimizedEmptyChannel,
-            ImportanceConfig::with_boost(0.02, 10.0),
+            ImportanceConfig::with_boost(0.02, 10.0).unwrap(),
         );
         let mut bucketed = ComposableNoiseModel::new()
             .add_channel(wrapper.clone())
@@ -1193,29 +1200,43 @@ mod tests {
             .with_p_prep_crosstalk(0.2)
             .with_p_meas_crosstalk(0.3, 0.2)
             .with_p_idle_linear(0.1, &axes)
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         let builder = match idle_family {
-            0 => builder.with_p_idle_sin_squared(0.2, &axes),
-            1 => builder.with_p_idle_quadratic(0.2),
+            0 => builder.with_p_idle_sin_squared(0.2, &axes).unwrap(),
+            1 => builder.with_p_idle_quadratic(0.2).unwrap(),
             2 => builder
                 .with_p_idle_quadratic(0.2)
+                .unwrap()
                 .with_p_idle_coherent(true),
             _ => unreachable!("test defines three idle configurations"),
         };
         builder
             .build()
-            .add_channel(CategoryBasedChannel::new().with_default(0.2))
-            .add_channel(GateDependentChannel::new().with_gate_error(GateType::H, 0.2))
-            .add_channel(GateIdDependentChannel::new().with_gate_type_error(GateType::CX, 0.2))
-            .add_channel(CorrelatedNoiseChannel::new(0.2, 0.5))
+            .unwrap()
+            .add_channel(CategoryBasedChannel::new().with_default(0.2).unwrap())
+            .add_channel(
+                GateDependentChannel::new()
+                    .with_gate_error(GateType::H, 0.2)
+                    .unwrap(),
+            )
+            .add_channel(
+                GateIdDependentChannel::new()
+                    .with_gate_type_error(GateType::CX, 0.2)
+                    .unwrap(),
+            )
+            .add_channel(CorrelatedNoiseChannel::new(0.2, 0.5).unwrap())
             .add_channel(
                 PerGatePauliChannel::new()
                     .with_base(0.2, 0.2)
-                    .with_meas_init(0.2, 0.2),
+                    .unwrap()
+                    .with_meas_init(0.2, 0.2)
+                    .unwrap(),
             )
             .add_channel(ImportanceSamplingChannel::new(
-                SingleQubitChannel::depolarizing(0.2),
-                ImportanceConfig::with_boost(0.02, 10.0),
+                SingleQubitChannel::depolarizing(0.2).unwrap(),
+                ImportanceConfig::with_boost(0.02, 10.0).unwrap(),
             ))
             .add_channel(
                 CompositeChannel::new("composite", pauli())
@@ -1225,6 +1246,7 @@ mod tests {
             )
             .add_channel(
                 BatchCompositeChannel::new("batch", 0.2, pauli())
+                    .unwrap()
                     .with_filter(CompositeEventFilter::AnyGate),
             )
             .add_channel(

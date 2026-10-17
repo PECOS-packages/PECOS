@@ -50,6 +50,12 @@ from pecos.analysis.find_cliffs import (
     rz_ang2str,
     rz_matrix,
 )
+from pecos.analysis.stabilizer_tools import (
+    compatible_stabilizer_groups,
+    pauli_to_circuit,
+    pauli_to_dict,
+    to_pauli_string,
+)
 from pecos.analysis.stabilizer_verification import VerifyStabilizers
 from pecos.analysis.threshold_curve import threshold_fit
 from pecos.analysis.threshold_tools import (
@@ -77,10 +83,13 @@ __all__ = [
     "codecapacity_logical_rate",
     "codecapacity_logical_rate2",
     "codecapacity_logical_rate3",
+    "compatible_stabilizer_groups",
     "fault_tolerance",
     "fault_tolerance_check",
     "m2cliff",
     "mnormal",
+    "pauli_to_circuit",
+    "pauli_to_dict",
     "pseudo_threshold",
     "rxy1q2cliff",
     "rxy1q_ang2str",
@@ -91,4 +100,5 @@ __all__ = [
     "threshold",
     "threshold_code_capacity",
     "threshold_fit",
+    "to_pauli_string",
 ]

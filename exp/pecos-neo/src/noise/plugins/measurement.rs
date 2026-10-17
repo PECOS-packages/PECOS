@@ -14,6 +14,7 @@
 
 use crate::noise::measurement::MeasurementChannel;
 use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
+use crate::noise::validation::ValidationResult;
 
 /// Plugin that adds measurement (readout) errors.
 ///
@@ -26,40 +27,42 @@ use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 /// use pecos_neo::noise::plugins::MeasurementNoisePlugin;
 ///
 /// // Symmetric 1% measurement error
-/// let plugin = MeasurementNoisePlugin::symmetric(0.01);
+/// let plugin = MeasurementNoisePlugin::symmetric(0.01)?;
 ///
 /// // Asymmetric: 2% chance of 0->1, 1% chance of 1->0
-/// let plugin = MeasurementNoisePlugin::asymmetric(0.02, 0.01);
+/// let plugin = MeasurementNoisePlugin::asymmetric(0.02, 0.01)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct MeasurementNoisePlugin {
-    /// Probability of flipping 0 to 1.
-    pub p_0_to_1: f64,
-    /// Probability of flipping 1 to 0.
-    pub p_1_to_0: f64,
+    channel: MeasurementChannel,
 }
 
 impl MeasurementNoisePlugin {
-    /// Create a symmetric measurement noise plugin.
-    #[must_use]
-    pub fn symmetric(p: f64) -> Self {
-        Self {
-            p_0_to_1: p,
-            p_1_to_0: p,
-        }
+    /// Create symmetric readout noise.
+    ///
+    /// # Errors
+    /// Rejects probabilities outside [0, 1] or NaN.
+    pub fn symmetric(p: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            channel: MeasurementChannel::symmetric(p)?,
+        })
     }
-
-    /// Create an asymmetric measurement noise plugin.
-    #[must_use]
-    pub fn asymmetric(p_0_to_1: f64, p_1_to_0: f64) -> Self {
-        Self { p_0_to_1, p_1_to_0 }
+    /// Create asymmetric readout noise.
+    ///
+    /// # Errors
+    /// Rejects probabilities outside [0, 1] or NaN.
+    pub fn asymmetric(p_0_to_1: f64, p_1_to_0: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            channel: MeasurementChannel::asymmetric(p_0_to_1, p_1_to_0)?,
+        })
     }
 }
 
 impl NoisePlugin for MeasurementNoisePlugin {
     fn build(&self, config: &mut NoiseModelConfig) {
-        if self.p_0_to_1 > 0.0 || self.p_1_to_0 > 0.0 {
-            config.add_channel(MeasurementChannel::asymmetric(self.p_0_to_1, self.p_1_to_0));
+        if self.channel.is_active() {
+            config.add_channel(self.channel.clone());
         }
     }
 
@@ -74,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_symmetric_measurement() {
-        let plugin = MeasurementNoisePlugin::symmetric(0.01);
+        let plugin = MeasurementNoisePlugin::symmetric(0.01).unwrap();
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 
@@ -83,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_asymmetric_measurement() {
-        let plugin = MeasurementNoisePlugin::asymmetric(0.02, 0.01);
+        let plugin = MeasurementNoisePlugin::asymmetric(0.02, 0.01).unwrap();
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 
@@ -92,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_zero_probabilities() {
-        let plugin = MeasurementNoisePlugin::symmetric(0.0);
+        let plugin = MeasurementNoisePlugin::symmetric(0.0).unwrap();
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 

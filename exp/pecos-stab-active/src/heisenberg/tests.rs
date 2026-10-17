@@ -110,8 +110,8 @@ fn exact_quarter_turns_and_nearby_angles() {
         ] {
             for delta in [
                 Angle64::ZERO,
-                Angle64::from_turns(1e-12),
-                -Angle64::from_turns(1e-12),
+                pecos_core::turns!(1e-12),
+                -pecos_core::turns!(1e-12),
             ] {
                 let mut circuit = TickCircuit::new();
                 let qs = &([0, 1])[..axis.quantum_arity()];
@@ -123,8 +123,8 @@ fn exact_quarter_turns_and_nearby_angles() {
                 );
                 for readout in [GateType::MZ, GateType::MX] {
                     let mut probe = TickCircuit::new();
-                    probe.tick().rx(Angle64::from_radians(0.31), qs);
-                    probe.tick().ry(Angle64::from_radians(0.37), qs);
+                    probe.tick().rx(pecos_core::radians!(0.31), qs);
+                    probe.tick().ry(pecos_core::radians!(0.37), qs);
                     append(&mut probe, make_gate(axis, qs, &[base + delta]));
                     append(&mut probe, make_gate(readout, qs, &[]));
                     oracle::compare(&probe, 53);
@@ -158,7 +158,7 @@ fn rejected_kinds_have_locations_at_every_angle() {
         for angle in [
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
-            Angle64::from_radians(0.123),
+            pecos_core::radians!(0.123),
         ] {
             let mut circuit = TickCircuit::new();
             circuit.tick().h(&[4]);
@@ -329,12 +329,10 @@ fn signed_frames_on_entangled_prefixes() {
 fn batched_rotations_measurements_and_post_measurement_noise() {
     let mut circuit = TickCircuit::new();
     circuit.tick().h(&[0, 1, 2, 3]);
+    circuit.tick().ry(pecos_core::radians!(0.28), &[0, 1, 2, 3]);
     circuit
         .tick()
-        .ry(Angle64::from_radians(0.28), &[0, 1, 2, 3]);
-    circuit
-        .tick()
-        .rxx(Angle64::from_radians(0.57), &[(0, 1), (2, 3)]);
+        .rxx(pecos_core::radians!(0.57), &[(0, 1), (2, 3)]);
     circuit.tick().mx(&[3, 1]);
     circuit.tick().px(&[1, 3]);
     circuit.tick().mpz(&[0, 2]);
@@ -362,7 +360,7 @@ fn signed_general_paulis_and_empty_support() {
             vec![(0, X), (1, Z), (2, Y)],
         ] {
             let mut state = StabActive::with_seed(3, 81);
-            state.rotate_pauli(Angle64::from_radians(0.23), &pauli, negative);
+            state.rotate_pauli(pecos_core::radians!(0.23), &pauli, negative);
             let first = state.measure_pauli(&pauli, negative);
             let second = state.measure_pauli(&pauli, negative);
             assert_eq!(first.outcome, second.outcome);
@@ -521,7 +519,7 @@ fn exact_symbolic_pauli_channel_alternatives() {
     );
     let mut rejected = TickCircuit::new();
     rejected.tick().channel(channel::from_unitary(unitary::RX(
-        Angle64::HALF_TURN + Angle64::from_turns(1e-12),
+        Angle64::HALF_TURN + pecos_core::turns!(1e-12),
         0,
     )));
     assert!(HeisenbergProgram::compile(&rejected).is_err());

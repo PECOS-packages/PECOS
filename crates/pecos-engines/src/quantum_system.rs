@@ -57,6 +57,20 @@ impl QuantumSystem {
         }
     }
 
+    /// Consume the system and return its noise model and quantum engine, in that order.
+    ///
+    /// Component state, including RNG streams, is preserved. Shot authorization,
+    /// frame poison and host blocking are transient execution state and are discarded.
+    /// Recompose with [`Self::new`] to start a fresh execution owner.
+    ///
+    /// The components themselves are returned as they are: if this system ran or
+    /// failed a shot, they still hold that shot's simulator, noise and scheduled-timeline
+    /// state. Call `reset()` on the recomposed owner before running its next shot.
+    #[must_use]
+    pub fn into_components(self) -> (Box<dyn NoiseModel>, Box<dyn QuantumEngine>) {
+        (self.noise_model, self.quantum_engine)
+    }
+
     fn drive_legacy(&mut self, input: ByteMessage) -> Result<ByteMessage, PecosError> {
         let stage = self.noise_model.start(input)?;
         self.drive_stage(stage)
@@ -360,7 +374,7 @@ impl Engine for QuantumSystem {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        let scheduled = matches!(input.as_bytes().get(4), Some(3 | 4));
+        let scheduled = matches!(input.as_bytes().get(4), Some(6 | 7));
         if self.scheduled_model().is_some() {
             return self.process_scheduled(&input);
         }
@@ -391,8 +405,8 @@ impl Engine for QuantumSystem {
             .downcast_mut::<RuntimeGeneralNoise>()
             .expect("checked private compiled model");
         // Legacy inputs share this persistent simulator with later frames.
-        // Automatic growth recreates state, so reject undersized configuration
-        // before either route can mutate the model, simulator, or RNG.
+        // The frame profile requires its full configured capacity before either
+        // route can mutate the model, simulator, or RNG.
         if let Some(sim) = self
             .quantum_engine
             .as_any()

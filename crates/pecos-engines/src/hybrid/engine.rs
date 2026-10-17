@@ -55,6 +55,7 @@ use pecos_core::rng::rng_manageable::derive_seed;
 /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
 /// use pecos_engines::quantum::StateVecEngine;
 ///
+/// # fn main() -> Result<(), pecos_core::errors::PecosError> {
 /// // Create sample engines
 /// let classical_engine = Box::new(ExternalClassicalEngine::new());
 /// let quantum_engine = Box::new(StateVecEngine::new(2));
@@ -62,11 +63,13 @@ use pecos_core::rng::rng_manageable::derive_seed;
 /// let mut engine = HybridEngineBuilder::new()
 ///     .with_classical_engine(classical_engine)
 ///     .with_quantum_engine(quantum_engine)
-///     .with_depolarizing_noise(0.01)
+///     .with_depolarizing_noise(0.01)?
 ///     .build();
 ///
 /// // This would run a single shot but we won't actually run it in the doctest
-/// # let _result = engine.run_shot();
+/// # let _result = engine.run_shot()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct HybridEngine {
     /// The classical engine component responsible for program flow and measurement processing

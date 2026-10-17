@@ -269,11 +269,11 @@ impl PhirProcessor {
             }
             QuantumOp::CPhase(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "CPhase")?;
-                let gates = pecos_core::controlled_rotations::lower_cphase(
-                    angle.to_radians_signed(),
-                    q1.into(),
-                    q2.into(),
-                );
+                let gates = pecos_core::controlled_rotations::lower_phase_angle(
+                    *angle,
+                    &[q1.into(), q2.into()],
+                )
+                .map_err(|error| pecos_core::errors::PecosError::Input(error.to_string()))?;
                 message_builder.add_gate_commands(&gates);
                 Ok(true)
             }

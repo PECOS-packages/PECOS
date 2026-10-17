@@ -92,6 +92,12 @@ impl std::fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
+impl From<pecos_core::NonFiniteAngleError> for RuntimeError {
+    fn from(error: pecos_core::NonFiniteAngleError) -> Self {
+        Self::ExecutionError(error.to_string())
+    }
+}
+
 /// Classical state maintained by the runtime
 #[derive(Debug, Clone, Default)]
 pub struct ClassicalState {

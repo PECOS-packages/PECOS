@@ -445,7 +445,8 @@ fn angle_param(params: &[f64], index: usize, gate_type: GateType) -> Result<Angl
             params.len()
         )));
     }
-    Ok(Angle64::from_radians(params[index]))
+    Angle64::try_from_radians(params[index])
+        .map_err(|error| pecos_phir::PhirError::internal(error.to_string()))
 }
 
 #[cfg(test)]
@@ -574,15 +575,15 @@ mod tests {
         assert_eq!(
             quantum_ops,
             [
-                QuantumOp::RX(Angle64::from_radians(0.1)),
-                QuantumOp::RY(Angle64::from_radians(0.2)),
-                QuantumOp::RZ(Angle64::from_radians(0.3)),
-                QuantumOp::RZZ(Angle64::from_radians(0.4)),
-                QuantumOp::RXY1Q(Angle64::from_radians(0.5), Angle64::from_radians(0.6)),
+                QuantumOp::RX(pecos_core::radians!(0.1)),
+                QuantumOp::RY(pecos_core::radians!(0.2)),
+                QuantumOp::RZ(pecos_core::radians!(0.3)),
+                QuantumOp::RZZ(pecos_core::radians!(0.4)),
+                QuantumOp::RXY1Q(pecos_core::radians!(0.5), pecos_core::radians!(0.6)),
                 QuantumOp::U3(
-                    Angle64::from_radians(0.7),
-                    Angle64::from_radians(0.8),
-                    Angle64::from_radians(0.9)
+                    pecos_core::radians!(0.7),
+                    pecos_core::radians!(0.8),
+                    pecos_core::radians!(0.9)
                 ),
             ]
         );

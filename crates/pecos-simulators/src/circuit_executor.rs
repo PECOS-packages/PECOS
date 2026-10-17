@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn circuit_executor_non_clifford_rotation_returns_error() {
         let mut circuit = TickCircuit::new();
-        circuit.tick().rz(Angle64::from_radians(0.5), &[0]);
+        circuit.tick().rz(pecos_core::radians!(0.5), &[0]);
 
         let Err(err) = CircuitExecutor::new(&circuit).run(&mut SparseStab::new(1)) else {
             panic!("non-Clifford rotations must fail");

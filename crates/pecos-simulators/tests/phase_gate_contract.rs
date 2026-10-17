@@ -134,7 +134,7 @@ fn assert_columns_exact(name: &str, got: &[Vec<Complex64>], want: &[Vec<Complex6
 #[test]
 fn phase_matrix_follows_the_rule_directly() {
     for &g in &ANGLES {
-        let gamma = Angle64::from_radians(g);
+        let gamma = Angle64::try_from_radians(g).unwrap();
         // Single qubit, both positions in a two-qubit register.
         for q in 0..2usize {
             let rep = UnitaryRep::phase_gate(gamma, smallvec![q]);
@@ -170,7 +170,7 @@ fn phase_matrix_follows_the_rule_directly() {
 #[test]
 fn single_qubit_phase_is_exactly_u_0_0_gamma() {
     for &g in &ANGLES {
-        let gamma = Angle64::from_radians(g);
+        let gamma = Angle64::try_from_radians(g).unwrap();
         let phase = UnitaryRep::phase_gate(gamma, smallvec![0usize]);
         let u = UnitaryRep::Gate(
             Unitary::U3 {
@@ -191,7 +191,7 @@ fn single_qubit_phase_is_exactly_u_0_0_gamma() {
 #[test]
 fn phase_on_three_or_more_qubits_follows_the_rule() {
     for &g in &ANGLES {
-        let gamma = Angle64::from_radians(g);
+        let gamma = Angle64::try_from_radians(g).unwrap();
         for num_qubits in 3..=5 {
             let targets: Vec<usize> = (0..num_qubits).collect();
             let descriptor = Unitary::Phase { gamma, num_qubits };
@@ -226,7 +226,7 @@ fn phase_on_three_or_more_qubits_follows_the_rule() {
 #[test]
 fn three_operand_phase_lowering_allows_only_ccz() {
     for &g in &ANGLES {
-        if Angle64::from_radians(g) == Angle64::HALF_TURN {
+        if Angle64::try_from_radians(g).unwrap() == Angle64::HALF_TURN {
             let expected = vec![Gate::ccz(&[(0, 1, 2)])];
             assert_eq!(
                 lower_phase(g, &[QubitId(0), QubitId(1), QubitId(2)]),
@@ -241,7 +241,8 @@ fn three_operand_phase_lowering_allows_only_ccz() {
         assert!(message.contains("hardware lowering"), "{message}");
         assert!(message.contains("at most two"), "{message}");
         assert!(message.contains('3'), "{message}");
-        let phase = UnitaryRep::phase_gate(Angle64::from_radians(g), smallvec![0, 1, 2]);
+        let phase =
+            UnitaryRep::phase_gate(Angle64::try_from_radians(g).unwrap(), smallvec![0, 1, 2]);
         for rep in [
             phase.clone(),
             UnitaryRep::Compose(vec![phase.clone()]),
@@ -266,7 +267,7 @@ fn three_operand_phase_queries_are_conservative() {
         Angle64::ZERO,
         Angle64::HALF_TURN,
         Angle64::QUARTER_TURN,
-        Angle64::from_radians(0.37),
+        pecos_core::radians!(0.37),
     ] {
         let descriptor = Unitary::Phase {
             gamma,
@@ -328,7 +329,7 @@ fn lowering_matches_the_rule_exactly_in_the_dense_path() {
             let lowered = lower_phase(g, &qubits).unwrap();
             let composed = UnitaryRep::Compose(lowered.iter().map(lowered_as_rep).collect());
             let rule = UnitaryRep::phase_gate(
-                Angle64::from_radians(g),
+                Angle64::try_from_radians(g).unwrap(),
                 smallvec::SmallVec::from_slice(&targets),
             );
             assert_columns_exact(
@@ -337,7 +338,7 @@ fn lowering_matches_the_rule_exactly_in_the_dense_path() {
                 &columns(&rule, 2),
             );
         }
-        let phase = Angle64::from_radians(g);
+        let phase = Angle64::try_from_radians(g).unwrap();
         let expected = if phase == Angle64::ZERO {
             Ok(vec![])
         } else {
@@ -381,7 +382,7 @@ fn lowering_matches_the_rule_exactly_when_executed() {
 #[test]
 fn control_is_structural() {
     for &g in &ANGLES {
-        let gamma = Angle64::from_radians(g);
+        let gamma = Angle64::try_from_radians(g).unwrap();
         // control(Phase on {1}) by 0  ==  Phase on {0, 1}
         let controlled = UnitaryRep::phase_gate(gamma, smallvec![1usize])
             .control(0)
@@ -444,7 +445,7 @@ fn control_is_structural() {
 
 #[test]
 fn clifford_membership_follows_the_angle_table() {
-    let quarter = |k: u32| Angle64::from_radians(f64::from(k) * PI / 2.0);
+    let quarter = |k: u32| Angle64::try_from_radians(f64::from(k) * PI / 2.0).unwrap();
     // One qubit: multiples of pi/2 are Cliffords and identify as I, SZ, Z, SZdg.
     for (k, want) in [
         (0, GateType::I),
@@ -463,9 +464,9 @@ fn clifford_membership_follows_the_angle_table() {
             "Phase({k}·pi/2) on one qubit"
         );
     }
-    assert!(!UnitaryRep::phase_gate(Angle64::from_radians(0.37), smallvec![0usize]).is_clifford());
+    assert!(!UnitaryRep::phase_gate(pecos_core::radians!(0.37), smallvec![0usize]).is_clifford());
     assert!(
-        !UnitaryRep::phase_gate(Angle64::from_radians(PI / 4.0), smallvec![0usize]).is_clifford(),
+        !UnitaryRep::phase_gate(Angle64::from_turn_ratio(1, 8), smallvec![0usize]).is_clifford(),
         "T is not Clifford"
     );
     // Two qubits: only 0 and pi are Cliffords; pi is CZ.
@@ -504,7 +505,7 @@ fn composed_scalar_phase_matches_the_phased_wrapper() {
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
         Angle64::HALF_TURN / 4,
-        Angle64::from_radians(-0.37),
+        pecos_core::radians!(-0.37),
     ] {
         let (sin, cos) = gamma.sin_cos();
         let scalar = Complex64::new(cos, sin);
@@ -527,7 +528,7 @@ fn composed_scalar_phase_matches_the_phased_wrapper() {
                 let constructed = to_matrix_with_size(&inner.clone().with_phase(gamma), size);
                 assert!((constructed.inner() - &expected).norm() < 1e-12);
 
-                let outer = Angle64::from_radians(0.23);
+                let outer = pecos_core::radians!(0.23);
                 let nested = composed.clone().with_phase(outer);
                 let (sin, cos) = outer.sin_cos();
                 let nested_expected = &expected * Complex64::new(cos, sin);

@@ -15,8 +15,9 @@ This guide covers working with Pauli strings and stabilizer codes in PECOS's Rus
 use pecos_core::pauli::*;
 use pecos_core::PauliOperator;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // CODE
+    Ok(())
 }
 ```
 
@@ -126,7 +127,7 @@ Compute a basis for the logical operator space:
 use pecos_qec::StabilizerCode;
 
 let code = StabilizerCode::steane();
-let logicals = code.logical_operators();
+let logicals = code.logical_operators()?;
 
 // [[7, 1]] code has 2k = 2 independent logical directions
 assert_eq!(logicals.len(), 2);
@@ -146,15 +147,15 @@ Compute the minimum weight of a non-trivial logical operator:
 use pecos_qec::StabilizerCode;
 
 let code = StabilizerCode::five_qubit();
-assert_eq!(code.distance(), Some(3));
+assert_eq!(code.distance()?, Some(3));
 
 let code = StabilizerCode::steane();
-assert_eq!(code.distance(), Some(3));
+assert_eq!(code.distance()?, Some(3));
 
 // Returns None if there are no logical qubits
 let trivial = StabilizerCode::repetition(2);
 // (still has distance for this case)
-assert_eq!(trivial.distance(), Some(1));
+assert_eq!(trivial.distance()?, Some(1));
 ```
 
 The distance computation is exact but exponential: O(2^(k+r)) where k is the number of logical operators and r is the stabilizer rank. Only use it for small codes (k + r <= 30).
@@ -198,7 +199,7 @@ use pecos_qec::StabilizerCode;
 let toric = StabilizerCode::toric(2);
 assert_eq!(toric.num_qubits(), 8);        // 2 * 2^2
 assert_eq!(toric.num_logical_qubits(), 2);
-assert_eq!(toric.distance(), Some(2));
+assert_eq!(toric.distance()?, Some(2));
 ```
 
 ## Explicit Qubit Count

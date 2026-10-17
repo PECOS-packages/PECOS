@@ -242,15 +242,15 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start, &mut touched)?;
                     self.builder.rxy1q(
-                        Angle64::from_radians(theta),
-                        Angle64::from_radians(phi),
+                        Angle64::try_from_radians(theta)?,
+                        Angle64::try_from_radians(phi)?,
                         &[qubit],
                     );
                 }
                 Operation::RZGate { qubit_id, theta } => {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start, &mut touched)?;
-                    self.builder.rz(Angle64::from_radians(theta), &[qubit]);
+                    self.builder.rz(Angle64::try_from_radians(theta)?, &[qubit]);
                 }
                 Operation::RZZGate {
                     qubit_id_1,
@@ -262,7 +262,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.add_idle_before(first, start, &mut touched)?;
                     self.add_idle_before(second, start, &mut touched)?;
                     self.builder
-                        .rzz(Angle64::from_radians(theta), &[(first, second)]);
+                        .rzz(Angle64::try_from_radians(theta)?, &[(first, second)]);
                 }
                 Operation::Measure {
                     qubit_id,
@@ -307,8 +307,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.add_idle_before(first, start, &mut touched)?;
                     self.add_idle_before(second, start, &mut touched)?;
                     self.builder.rxyxy2q(
-                        Angle64::from_radians(theta),
-                        Angle64::from_radians(phi),
+                        Angle64::try_from_radians(theta)?,
+                        Angle64::try_from_radians(phi)?,
                         &[(first, second)],
                     );
                 }
@@ -383,6 +383,58 @@ mod tests {
 
     use super::{GeneralNoiseErrorModel, PluginConfig};
     use crate::simulator::SeleneSimulator;
+
+    #[test]
+    fn all_runtime_rotation_parameters_reject_nonfinite_values() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for operation in [
+                Operation::RZGate {
+                    qubit_id: 0,
+                    theta: value,
+                },
+                Operation::RZZGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: value,
+                },
+                Operation::RXYGate {
+                    qubit_id: 0,
+                    theta: value,
+                    phi: 0.0,
+                },
+                Operation::RXYGate {
+                    qubit_id: 0,
+                    theta: 0.0,
+                    phi: value,
+                },
+                Operation::RPPGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: value,
+                    phi: 0.0,
+                },
+                Operation::RPPGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta: 0.0,
+                    phi: value,
+                },
+            ] {
+                let mut model = build_error_model(r#"{"model":{}}"#, 2);
+                model.shot_start(0, 17).unwrap();
+                let error = model
+                    .handle_operations(runtime_batch(vec![operation], 0, 1), &mut ZeroSimulator)
+                    .err()
+                    .expect("non-finite runtime angle must fail");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("angle must be finite, got {value} radians")),
+                    "{error}"
+                );
+            }
+        }
+    }
 
     #[derive(Default)]
     struct ZeroSimulator;
@@ -570,15 +622,15 @@ mod tests {
                     let qubit = usize::try_from(*qubit_id).unwrap();
                     idle_before(qubit);
                     builder.rxy1q(
-                        Angle64::from_radians(*theta),
-                        Angle64::from_radians(*phi),
+                        Angle64::try_from_radians(*theta).unwrap(),
+                        Angle64::try_from_radians(*phi).unwrap(),
                         &[qubit],
                     );
                 }
                 Operation::RZGate { qubit_id, theta } => {
                     let qubit = usize::try_from(*qubit_id).unwrap();
                     idle_before(qubit);
-                    builder.rz(Angle64::from_radians(*theta), &[qubit]);
+                    builder.rz(Angle64::try_from_radians(*theta).unwrap(), &[qubit]);
                 }
                 Operation::RZZGate {
                     qubit_id_1,
@@ -589,7 +641,10 @@ mod tests {
                     let second = usize::try_from(*qubit_id_2).unwrap();
                     idle_before(first);
                     idle_before(second);
-                    builder.rzz(Angle64::from_radians(*theta), &[(first, second)]);
+                    builder.rzz(
+                        Angle64::try_from_radians(*theta).unwrap(),
+                        &[(first, second)],
+                    );
                 }
                 Operation::Measure {
                     qubit_id,
@@ -805,12 +860,12 @@ mod tests {
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
         builder.rxy1q(
-            Angle64::from_radians(0.75),
-            Angle64::from_radians(-0.25),
+            pecos_core::radians!(0.75),
+            pecos_core::radians!(-0.25),
             &[0],
         );
-        builder.rz(Angle64::from_radians(0.5), &[1]);
-        builder.rzz(Angle64::from_radians(-0.125), &[(0, 1)]);
+        builder.rz(pecos_core::radians!(0.5), &[1]);
+        builder.rzz(pecos_core::radians!(-0.125), &[(0, 1)]);
         builder.mz(&[0, 1]);
         let message = builder.build();
         let mut simulator = ClassicalSimulator::with_qubits(2);
@@ -1627,7 +1682,7 @@ mod tests {
         let q2: SmallVec<[usize; 3]> = smallvec![0, 1];
         let named = |g: GateType, q: &SmallVec<[usize; 3]>| UnitaryRep::gate(g, q.clone());
         let rot = |r: RotationType, a: f64, q: &SmallVec<[usize; 3]>| {
-            UnitaryRep::rotation(r, Angle64::from_radians(a), q.clone())
+            UnitaryRep::rotation(r, Angle64::try_from_radians(a).unwrap(), q.clone())
         };
         let arm = |name, build, pecos, expected| Arm {
             name,
@@ -1705,7 +1760,7 @@ mod tests {
             arm(
                 "RX(+0.37)",
                 |b| {
-                    b.rx(Angle64::from_radians(0.37), &[0]);
+                    b.rx(pecos_core::radians!(0.37), &[0]);
                 },
                 rot(RotationType::RX, 0.37, &q1),
                 0.0,
@@ -1713,7 +1768,7 @@ mod tests {
             arm(
                 "RX(-0.37)",
                 |b| {
-                    b.rx(Angle64::from_radians(-0.37), &[0]);
+                    b.rx(pecos_core::radians!(-0.37), &[0]);
                 },
                 rot(RotationType::RX, -0.37, &q1),
                 0.0,
@@ -1721,7 +1776,7 @@ mod tests {
             arm(
                 "RY(+0.37)",
                 |b| {
-                    b.ry(Angle64::from_radians(0.37), &[0]);
+                    b.ry(pecos_core::radians!(0.37), &[0]);
                 },
                 rot(RotationType::RY, 0.37, &q1),
                 0.0,
@@ -1729,7 +1784,7 @@ mod tests {
             arm(
                 "RY(-0.37)",
                 |b| {
-                    b.ry(Angle64::from_radians(-0.37), &[0]);
+                    b.ry(pecos_core::radians!(-0.37), &[0]);
                 },
                 rot(RotationType::RY, -0.37, &q1),
                 0.0,
@@ -1737,7 +1792,7 @@ mod tests {
             arm(
                 "RZ(+0.37)",
                 |b| {
-                    b.rz(Angle64::from_radians(0.37), &[0]);
+                    b.rz(pecos_core::radians!(0.37), &[0]);
                 },
                 rot(RotationType::RZ, 0.37, &q1),
                 0.0,
@@ -1745,7 +1800,7 @@ mod tests {
             arm(
                 "RZ(-0.37)",
                 |b| {
-                    b.rz(Angle64::from_radians(-0.37), &[0]);
+                    b.rz(pecos_core::radians!(-0.37), &[0]);
                 },
                 rot(RotationType::RZ, -0.37, &q1),
                 0.0,
@@ -1754,15 +1809,15 @@ mod tests {
                 "RXY1Q(+0.37, -0.91)",
                 |b| {
                     b.rxy1q(
-                        Angle64::from_radians(0.37),
-                        Angle64::from_radians(-0.91),
+                        pecos_core::radians!(0.37),
+                        pecos_core::radians!(-0.91),
                         &[0],
                     );
                 },
                 UnitaryRep::Gate(
                     pecos_core::Unitary::RXY1Q {
-                        theta: Angle64::from_radians(0.37),
-                        phi: Angle64::from_radians(-0.91),
+                        theta: pecos_core::radians!(0.37),
+                        phi: pecos_core::radians!(-0.91),
                     },
                     q1.clone(),
                 ),
@@ -1788,7 +1843,7 @@ mod tests {
             arm(
                 "RZZ(+0.37)",
                 |b| {
-                    b.rzz(Angle64::from_radians(0.37), &[(0, 1)]);
+                    b.rzz(pecos_core::radians!(0.37), &[(0, 1)]);
                 },
                 rot(RotationType::RZZ, 0.37, &q2),
                 0.0,
@@ -1796,7 +1851,7 @@ mod tests {
             arm(
                 "RZZ(-0.37)",
                 |b| {
-                    b.rzz(Angle64::from_radians(-0.37), &[(0, 1)]);
+                    b.rzz(pecos_core::radians!(-0.37), &[(0, 1)]);
                 },
                 rot(RotationType::RZZ, -0.37, &q2),
                 0.0,

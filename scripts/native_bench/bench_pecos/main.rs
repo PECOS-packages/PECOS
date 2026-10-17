@@ -17,7 +17,7 @@
 //!   --features gpu        (GpuStateVec via wgpu, f32)
 //!   --features cuquantum  (CuStateVec via cuQuantum, f64)
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QuantumSimulator, StateVecSoA,
 };
@@ -53,7 +53,7 @@ fn run_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     num_qubits: usize,
     num_layers: usize,
 ) {
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -71,7 +71,7 @@ fn run_sxx_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     num_qubits: usize,
     num_layers: usize,
 ) {
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -89,7 +89,7 @@ fn run_rxx_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     num_qubits: usize,
     num_layers: usize,
 ) {
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -107,7 +107,7 @@ fn run_ryy_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     num_qubits: usize,
     num_layers: usize,
 ) {
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -125,7 +125,7 @@ fn run_cz_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     num_qubits: usize,
     num_layers: usize,
 ) {
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -143,7 +143,7 @@ fn run_rzz_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     num_qubits: usize,
     num_layers: usize,
 ) {
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
@@ -307,7 +307,7 @@ fn bench_gate_rz(num_qubits: usize, iters: usize, reps: usize) {
     let mut sim = StateVecSoA::new(num_qubits);
     sim.set_parallel(false);
     sim.set_fusion(false);
-    let angle = Angle64::from_radians(0.1);
+    let angle = pecos_core::radians!(0.1);
     let mut times = vec![0.0_f64; reps];
 
     for t in &mut times {

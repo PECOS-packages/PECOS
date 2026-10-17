@@ -174,7 +174,7 @@ fn test_single_qubit_depolarizing_comparison() {
 
     // ComposableNoiseModel setup
     let composable_model =
-        ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));
+        ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1).unwrap());
 
     // Circuit for GeneralNoiseModel
     let general_counts = run_general_noise_model(
@@ -238,7 +238,7 @@ fn test_two_qubit_depolarizing_comparison() {
 
     // ComposableNoiseModel setup
     let composable_model =
-        ComposableNoiseModel::new().add_channel(TwoQubitChannel::depolarizing(p2));
+        ComposableNoiseModel::new().add_channel(TwoQubitChannel::depolarizing(p2).unwrap());
 
     // Circuit for GeneralNoiseModel
     let general_counts = run_general_noise_model(
@@ -305,8 +305,8 @@ fn test_measurement_error_comparison() {
         .build();
 
     // ComposableNoiseModel setup
-    let composable_model =
-        ComposableNoiseModel::new().add_channel(MeasurementChannel::asymmetric(p_meas_0, 0.0));
+    let composable_model = ComposableNoiseModel::new()
+        .add_channel(MeasurementChannel::asymmetric(p_meas_0, 0.0).unwrap());
 
     // Circuit for GeneralNoiseModel (just measure |0⟩)
     let general_counts = run_general_noise_model(
@@ -371,7 +371,8 @@ fn test_preparation_error_comparison() {
         .build();
 
     // ComposableNoiseModel setup
-    let composable_model = ComposableNoiseModel::new().add_channel(PreparationChannel::new(p_prep));
+    let composable_model =
+        ComposableNoiseModel::new().add_channel(PreparationChannel::new(p_prep).unwrap());
 
     // Circuit for GeneralNoiseModel
     // Note: GeneralNoiseModel may handle prep differently - it applies prep error after Prep gate
@@ -431,10 +432,10 @@ fn test_combined_noise_comparison() {
 
     // ComposableNoiseModel setup
     let composable_model = ComposableNoiseModel::new()
-        .add_channel(PreparationChannel::new(p_prep))
-        .add_channel(SingleQubitChannel::depolarizing(p1))
-        .add_channel(TwoQubitChannel::depolarizing(p2))
-        .add_channel(MeasurementChannel::symmetric(p_meas));
+        .add_channel(PreparationChannel::new(p_prep).unwrap())
+        .add_channel(SingleQubitChannel::depolarizing(p1).unwrap())
+        .add_channel(TwoQubitChannel::depolarizing(p2).unwrap())
+        .add_channel(MeasurementChannel::symmetric(p_meas).unwrap());
 
     // Bell state circuit for GeneralNoiseModel
     let general_counts = run_general_noise_model(
@@ -520,7 +521,8 @@ fn test_general_noise_model_builder_comparison() {
         .with_p1(p1)
         .with_p2(p2)
         .with_p_meas(p_meas_0, p_meas_1)
-        .build();
+        .build()
+        .unwrap();
 
     // Run circuit: prep → X → CX → measure
     let general_counts = run_general_noise_model(
@@ -578,8 +580,10 @@ fn test_idle_noise_with_time_scale() {
     // T1=10us=10000ns, T2=5us=5000ns
     let model = GeneralNoiseModelBuilder::new()
         .with_time_scale(TimeScale::NANOSECONDS)
-        .with_idle_t1_t2(10e-6, 5e-6) // 10us T1, 5us T2
-        .build();
+        .with_idle_t1_t2(10e-6, 5e-6)
+        .unwrap() // 10us T1, 5us T2
+        .build()
+        .unwrap();
 
     // Verify time scale is set
     assert!(model.time_scale().is_some());

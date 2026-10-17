@@ -149,7 +149,7 @@ A directed acyclic graph representation where nodes are gates and edges are qubi
 
     // Fluent builder API
     let mut circuit = DagCircuit::new();
-    circuit.h(&[0]).cx(&[(0, 1)]).rz(0.5, &[0]).mz(&[0]);
+    circuit.h(&[0]).cx(&[(0, 1)]).rz(pecos_core::radians!(0.5), &[0]).mz(&[0]);
 
     // Query properties
     println!("Gates: {}", circuit.gate_count());
@@ -211,15 +211,15 @@ The fluent API automatically wires gates on the same qubit:
     circuit.t(&[0]);       // T gate
     circuit.tdg(&[0]);     // T-dagger
 
-    // Rotation gates (angle in radians)
-    circuit.rx(3.14159, &[0]);
-    circuit.ry(1.5708, &[1]);
-    circuit.rz(0.7854, &[2]);
+    // Rotation gates (exact turn fractions)
+    circuit.rx(pecos_core::Angle64::HALF_TURN, &[0]);
+    circuit.ry(pecos_core::Angle64::QUARTER_TURN, &[1]);
+    circuit.rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[2]);
 
     // Two-qubit gates
     circuit.cx(&[(0, 1)]);
     circuit.szz(&[(0, 1)]);
-    circuit.rzz(0.5, &[(0, 1)]);
+    circuit.rzz(pecos_core::radians!(0.5), &[(0, 1)]);
 
     // Measurement and preparation
     circuit.mz(&[0]);

@@ -1874,7 +1874,7 @@ mod tests {
         crz.h(&qid(0));
         assert_eq!(crz.num_terms(), 1);
 
-        let theta = Angle64::from_radians(0.3);
+        let theta = pecos_core::radians!(0.3);
         crz.rz(theta, &qid(0));
         // RZ is buffered; terms double on flush (e.g., before measurement)
         assert_eq!(crz.num_terms(), 1); // still 1 until flushed
@@ -1887,7 +1887,7 @@ mod tests {
         let mut crz = StabVec::new(1);
         let mut sv = StateVec::new(1);
 
-        let theta = Angle64::from_radians(0.7);
+        let theta = pecos_core::radians!(0.7);
         crz.h(&qid(0)).rz(theta, &qid(0));
         sv.h(&qid(0)).rz(theta, &qid(0));
 
@@ -1900,7 +1900,7 @@ mod tests {
         let mut sv = StateVec::new(1);
 
         // Exercise the T-equivalent RZ(pi/4), which differs by a global phase.
-        let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
+        let theta = Angle64::from_turn_ratio(1, 8);
         crz.h(&qid(0)).rz(theta, &qid(0));
         sv.h(&qid(0)).rz(theta, &qid(0));
 
@@ -1912,8 +1912,8 @@ mod tests {
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
 
-        let theta1 = Angle64::from_radians(0.5);
-        let theta2 = Angle64::from_radians(1.2);
+        let theta1 = pecos_core::radians!(0.5);
+        let theta2 = pecos_core::radians!(1.2);
 
         crz.h(&qid(0))
             .h(&qid(1))
@@ -1933,7 +1933,7 @@ mod tests {
         let mut crz = StabVec::new(1);
         let mut sv = StateVec::new(1);
 
-        let theta = Angle64::from_radians(0.9);
+        let theta = pecos_core::radians!(0.9);
         crz.rx(theta, &qid(0));
         sv.rx(theta, &qid(0));
 
@@ -1945,7 +1945,7 @@ mod tests {
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
 
-        let theta = Angle64::from_radians(0.6);
+        let theta = pecos_core::radians!(0.6);
         crz.h(&qid(0))
             .h(&qid(1))
             .rzz(theta, &[(QubitId(0), QubitId(1))]);
@@ -1961,7 +1961,7 @@ mod tests {
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
 
-        let theta = Angle64::from_radians(0.4);
+        let theta = pecos_core::radians!(0.4);
 
         // H - CX - RZ - H - measure-like comparison
         crz.h(&qid(0))
@@ -1981,25 +1981,25 @@ mod tests {
         // RZ(0) = I: no term growth
         let mut crz = StabVec::new(1);
         crz.h(&qid(0));
-        crz.rz(Angle64::from_radians(0.0), &qid(0));
+        crz.rz(Angle64::ZERO, &qid(0));
         assert_eq!(crz.num_terms(), 1);
 
         // RZ(pi) = -iZ: no term growth
         let mut crz2 = StabVec::new(1);
         crz2.h(&qid(0));
-        crz2.rz(Angle64::from_radians(std::f64::consts::PI), &qid(0));
+        crz2.rz(Angle64::HALF_TURN, &qid(0));
         assert_eq!(crz2.num_terms(), 1, "RZ(pi) should not add terms");
 
         // RZ(pi/2) = e^{-i*pi/4} S: no term growth
         let mut crz3 = StabVec::new(1);
         crz3.h(&qid(0));
-        crz3.rz(Angle64::from_radians(std::f64::consts::FRAC_PI_2), &qid(0));
+        crz3.rz(Angle64::QUARTER_TURN, &qid(0));
         assert_eq!(crz3.num_terms(), 1, "RZ(pi/2) should not add terms");
 
         // RZ(-pi/2) = e^{i*pi/4} Sdg: no term growth
         let mut crz4 = StabVec::new(1);
         crz4.h(&qid(0));
-        crz4.rz(Angle64::from_radians(-std::f64::consts::FRAC_PI_2), &qid(0));
+        crz4.rz(Angle64::THREE_QUARTERS_TURN, &qid(0));
         assert_eq!(crz4.num_terms(), 1, "RZ(-pi/2) should not add terms");
     }
 
@@ -2019,7 +2019,7 @@ mod tests {
     fn test_measurement_after_rz() {
         // RZ(theta) on |0> gives e^{-i*theta/2}|0> -- still deterministic |0>
         let mut crz = StabVec::new_with_seed(1, 42);
-        let theta = Angle64::from_radians(0.7);
+        let theta = pecos_core::radians!(0.7);
         crz.rz(theta, &qid(0));
         let results = crz.mz(&qid(0));
         assert!(results[0].is_deterministic);
@@ -2030,7 +2030,7 @@ mod tests {
     fn test_measurement_after_h_rz() {
         // H|0> then RZ should give non-deterministic measurement
         let mut crz = StabVec::new_with_seed(1, 42);
-        let theta = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.5);
         crz.h(&qid(0)).rz(theta, &qid(0));
         let results = crz.mz(&qid(0));
         assert!(!results[0].is_deterministic);
@@ -2049,7 +2049,7 @@ mod tests {
         // RX(theta)|0> = cos(t/2)|0> - i*sin(t/2)|1>
         // Pr(0) = cos^2(t/2), Pr(1) = sin^2(t/2)
 
-        let theta = Angle64::from_radians(1.0); // ~cos^2(0.5) ≈ 0.7702
+        let theta = pecos_core::radians!(1.0); // ~cos^2(0.5) ≈ 0.7702
         let expected_p0 = (0.5f64).cos().powi(2);
         let num_shots = 10000;
         let mut count0 = 0;
@@ -2076,7 +2076,7 @@ mod tests {
     fn test_measurement_bell_state_with_rz() {
         // Create Bell state, apply RZ on q0, measure both.
         // After measuring q0, q1 outcome should be correlated.
-        let theta = Angle64::from_radians(0.6);
+        let theta = pecos_core::radians!(0.6);
         let mut crz = StabVec::new_with_seed(2, 42);
         crz.h(&qid(0))
             .cx(&[(QubitId(0), QubitId(1))])
@@ -2112,7 +2112,7 @@ mod tests {
         // |0> -> H -> RZ(0.5) -> MZ(force 0) -> H -> MZ
         // After measuring 0, state is |0>. After H, state is |+>.
         // Second measurement should be non-deterministic (50/50).
-        let theta = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.5);
 
         let mut crz = StabVec::new_with_seed(1, 42);
         crz.h(&qid(0)).rz(theta, &qid(0));
@@ -2146,7 +2146,7 @@ mod tests {
         let mut crz = StabVec::new(3);
         let mut sv = StateVec::new(3);
 
-        let theta = Angle64::from_radians(0.8);
+        let theta = pecos_core::radians!(0.8);
 
         // GHZ-like circuit with RZ
         crz.h(&qid(0))
@@ -2164,7 +2164,7 @@ mod tests {
     #[test]
     fn test_reset() {
         let mut crz = StabVec::new(2);
-        let theta = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.5);
         crz.h(&qid(0)).rz(theta, &qid(0));
         crz.flush_all_pending_rz();
         assert_eq!(crz.num_terms(), 2);
@@ -2185,9 +2185,9 @@ mod tests {
         // Leave both non-zero rotations pending while accumulating X/Y frames.
         // Y's standard-gate phase leaves a non-trivial global frame phase.
         reset_sim
-            .rz(Angle64::from_radians(0.37), &q0)
+            .rz(pecos_core::radians!(0.37), &q0)
             .x(&q0)
-            .rz(Angle64::from_radians(-0.91), &q1)
+            .rz(pecos_core::radians!(-0.91), &q1)
             .y(&q1);
         assert_eq!(reset_sim.cliff_frame[0], CliffordFrame::X);
         assert_eq!(reset_sim.cliff_frame[1], CliffordFrame::Y);
@@ -2207,7 +2207,7 @@ mod tests {
         // RZ(pi/2) should be equivalent to S (up to global phase)
         let mut crz = StabVec::new(1);
         let mut sv = StateVec::new(1);
-        let half_pi = Angle64::from_radians(std::f64::consts::FRAC_PI_2);
+        let half_pi = Angle64::QUARTER_TURN;
         crz.h(&qid(0)).rz(half_pi, &qid(0));
         sv.h(&qid(0)).rz(half_pi, &qid(0));
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "rz_pi_2");
@@ -2215,7 +2215,7 @@ mod tests {
         // RZ(pi) should be equivalent to Z (up to global phase)
         let mut crz2 = StabVec::new(1);
         let mut sv2 = StateVec::new(1);
-        let pi = Angle64::from_radians(std::f64::consts::PI);
+        let pi = Angle64::HALF_TURN;
         crz2.h(&qid(0)).rz(pi, &qid(0));
         sv2.h(&qid(0)).rz(pi, &qid(0));
         states_match_up_to_phase(&crz2.state_vector(), &sv2.state(), "rz_pi");
@@ -2229,7 +2229,7 @@ mod tests {
 
         let angles: Vec<Angle64> = [0.3, 0.7, 1.1, 0.5, 0.9]
             .iter()
-            .map(|&a| Angle64::from_radians(a))
+            .map(|&a| Angle64::try_from_radians(a).unwrap())
             .collect();
 
         // Interleave Clifford and RZ gates
@@ -2269,7 +2269,7 @@ mod tests {
         // Compare exact measurement probabilities between StabVec and StateVec.
         // Circuit: H(0) - CX(0,1) - RZ(0.8, q0) - H(1)
         // Then compute Pr(q0=0) and Pr(q1=0) from both simulators.
-        let theta = Angle64::from_radians(0.8);
+        let theta = pecos_core::radians!(0.8);
 
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
@@ -2310,7 +2310,7 @@ mod tests {
     #[test]
     fn test_post_measurement_state_matches_statevec() {
         // After forced measurement, compare the projected state vectors.
-        let theta = Angle64::from_radians(0.6);
+        let theta = pecos_core::radians!(0.6);
 
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
@@ -2345,7 +2345,7 @@ mod tests {
     #[test]
     fn test_measurement_does_not_corrupt_other_qubits() {
         // 3-qubit circuit: measure q0, verify q1 and q2 state is correct.
-        let theta = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.5);
 
         let mut crz = StabVec::new(3);
         let mut sv = StateVec::new(3);
@@ -2385,7 +2385,7 @@ mod tests {
         // Verify measurement distribution on an entangled+rotated 2-qubit state.
         // Circuit: H(0) - RZ(theta, q0) - CX(0,1)
         // This creates a state where Pr(00) != Pr(11) (not a standard Bell state).
-        let theta = Angle64::from_radians(1.0);
+        let theta = pecos_core::radians!(1.0);
         let num_shots = 5000;
 
         // Compute expected probabilities from state vector
@@ -2429,7 +2429,7 @@ mod tests {
         let mut crz = StabVec::new(1);
         let mut sv = StateVec::new(1);
 
-        let theta = Angle64::from_radians(1.2);
+        let theta = pecos_core::radians!(1.2);
         crz.ry(theta, &qid(0));
         sv.ry(theta, &qid(0));
 
@@ -2442,7 +2442,7 @@ mod tests {
         // |0> -> H -> MZ(force 0) -> RZ(theta) -> compare
         // After measuring 0, state is |0>. RZ(theta)|0> = e^{-i*theta/2}|0>.
         // State vector should have amp[0] = e^{-i*theta/2}, amp[1] = 0.
-        let theta = Angle64::from_radians(0.8);
+        let theta = pecos_core::radians!(0.8);
 
         let mut crz = StabVec::new_with_seed(1, 42);
         crz.h(&qid(0));
@@ -2465,8 +2465,8 @@ mod tests {
     #[test]
     fn test_rz_after_measurement_nondeterministic() {
         // H -> RZ -> MZ(force 0) -> H -> RZ -> compare with projected state
-        let theta1 = Angle64::from_radians(0.5);
-        let theta2 = Angle64::from_radians(0.9);
+        let theta1 = pecos_core::radians!(0.5);
+        let theta2 = pecos_core::radians!(0.9);
 
         let mut crz = StabVec::new_with_seed(1, 42);
         crz.h(&qid(0)).rz(theta1, &qid(0));
@@ -2490,7 +2490,7 @@ mod tests {
     fn test_rzz_then_measurement() {
         // Verify measurement after RZZ gives correct statistics.
         // H(0) H(1) - RZZ(theta) - MZ(0) MZ(1)
-        let theta = Angle64::from_radians(0.7);
+        let theta = pecos_core::radians!(0.7);
 
         // Compute expected probabilities from StateVec
         let mut sv = StateVec::new(2);
@@ -2540,8 +2540,8 @@ mod tests {
         let mut crz = StabVec::new(5);
         let mut sv = StateVec::new(5);
 
-        let theta1 = Angle64::from_radians(0.4);
-        let theta2 = Angle64::from_radians(1.1);
+        let theta1 = pecos_core::radians!(0.4);
+        let theta2 = pecos_core::radians!(1.1);
 
         // Build an entangled 5-qubit state with RZ gates
         for q in 0..5 {
@@ -2563,7 +2563,7 @@ mod tests {
     #[test]
     fn test_5_qubit_measurement() {
         // Measure all 5 qubits after Clifford+RZ circuit, verify normalization.
-        let theta = Angle64::from_radians(0.6);
+        let theta = pecos_core::radians!(0.6);
 
         let mut crz = StabVec::new_with_seed(5, 42);
         crz.h(&[QubitId(0)])
@@ -2619,7 +2619,7 @@ mod tests {
     #[test]
     fn test_builder_exact_mode() {
         // With threshold=0 (exact mode), no terms are pruned even for small angles.
-        let theta = Angle64::from_radians(0.001);
+        let theta = pecos_core::radians!(0.001);
         let mut sim = StabVec::builder(1).pruning_threshold(0.0).seed(42).build();
         sim.h(&qid(0));
         for _ in 0..8 {
@@ -2634,7 +2634,7 @@ mod tests {
     #[test]
     fn test_builder_aggressive_pruning() {
         // With aggressive pruning, small-angle terms are removed faster.
-        let theta = Angle64::from_radians(5.0f64.to_radians());
+        let theta = pecos_core::radians!(5.0f64.to_radians());
         let mut sim = StabVec::builder(4).pruning_threshold(1e-4).seed(42).build();
         for q in 0..4 {
             sim.h(&[QubitId(q)]);
@@ -2653,7 +2653,7 @@ mod tests {
 
     #[test]
     fn t_only_flushes_pending_rotation_on_its_target() {
-        let epsilon = Angle64::from_radians(1e-5);
+        let epsilon = pecos_core::radians!(1e-5);
         let q0 = qid(0);
         let q1 = qid(1);
 
@@ -2696,7 +2696,7 @@ mod tests {
     fn test_rxx_matches_statevec() {
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
-        let theta = Angle64::from_radians(0.7);
+        let theta = pecos_core::radians!(0.7);
         crz.h(&qid(0))
             .h(&qid(1))
             .rxx(theta, &[(QubitId(0), QubitId(1))]);
@@ -2710,7 +2710,7 @@ mod tests {
     fn test_ryy_matches_statevec() {
         let mut crz = StabVec::new(2);
         let mut sv = StateVec::new(2);
-        let theta = Angle64::from_radians(0.9);
+        let theta = pecos_core::radians!(0.9);
         crz.h(&qid(0))
             .h(&qid(1))
             .ryy(theta, &[(QubitId(0), QubitId(1))]);
@@ -2725,7 +2725,7 @@ mod tests {
         // With pruning_threshold=0, results should match StateVec exactly (up to phase).
         let mut crz = StabVec::builder(2).pruning_threshold(0.0).seed(42).build();
         let mut sv = StateVec::new(2);
-        let theta = Angle64::from_radians(0.3);
+        let theta = pecos_core::radians!(0.3);
         crz.h(&qid(0))
             .cx(&[(QubitId(0), QubitId(1))])
             .rz(theta, &qid(0))
@@ -2751,7 +2751,7 @@ mod tests {
         for nq in [8, 10, 14, 20] {
             let mut crz = StabVec::new_with_seed(nq, 42);
             let mut sv = StateVec::new(nq);
-            let theta = Angle64::from_radians(0.5);
+            let theta = pecos_core::radians!(0.5);
 
             // H on all, CX chain, RZ on q0
             for q in 0..nq {
@@ -2775,7 +2775,7 @@ mod tests {
         // This exercises the early-skip optimization and precomputed constraints.
         for nrz in [2, 3, 4] {
             let nq = 8; // pairwise path (n > 6)
-            let theta = Angle64::from_radians(0.3);
+            let theta = pecos_core::radians!(0.3);
             let mut crz_p0_sum = 0.0;
             let nshots = 5000;
             for seed in 0..nshots {
@@ -2825,7 +2825,7 @@ mod tests {
         // After measurement with many terms, verify the post-measurement state
         // is correctly normalized by checking that subsequent measurements work.
         let nq = 8;
-        let theta = Angle64::from_radians(0.4);
+        let theta = pecos_core::radians!(0.4);
         for nrz in [3, 4, 5] {
             let mut crz = StabVec::new_with_seed(nq, 42);
             for q in 0..nq {
@@ -2849,7 +2849,7 @@ mod tests {
     fn test_stab_vec_measurement_at_pairwise_threshold() {
         // n=7 (state vector path) and n=8 (pairwise path) should both work
         for nq in [6, 7, 8] {
-            let theta = Angle64::from_radians(0.5);
+            let theta = pecos_core::radians!(0.5);
             let mut crz = StabVec::new_with_seed(nq, 42);
             for q in 0..nq {
                 crz.h(&[QubitId(q)]);
@@ -2868,7 +2868,7 @@ mod tests {
         for q in 0..nq {
             crz.h(&[QubitId(q)]);
         }
-        crz.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+        crz.rz(pecos_core::radians!(0.3), &[QubitId(0)]);
         let results = crz.mz(&[QubitId(0)]);
         assert_eq!(results.len(), 1);
     }
@@ -2881,7 +2881,7 @@ mod tests {
         for q in 0..nq {
             crz.h(&[QubitId(q)]);
         }
-        crz.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+        crz.rz(pecos_core::radians!(0.3), &[QubitId(0)]);
         let results = crz.mz(&[QubitId(0)]);
         assert_eq!(results.len(), 1);
     }
@@ -2893,8 +2893,8 @@ mod tests {
         let mut sv = StateVec::new(1);
         crz.h(&qid(0));
         sv.h(&qid(0));
-        crz.ry(Angle64::from_radians(0.3), &qid(0));
-        sv.ry(Angle64::from_radians(0.3), &qid(0));
+        crz.ry(pecos_core::radians!(0.3), &qid(0));
+        sv.ry(pecos_core::radians!(0.3), &qid(0));
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "h_ry");
     }
 
@@ -2903,8 +2903,8 @@ mod tests {
         // RY on |0> should match statevec
         let mut crz = StabVec::new(1);
         let mut sv = StateVec::new(1);
-        crz.ry(Angle64::from_radians(0.3), &qid(0));
-        sv.ry(Angle64::from_radians(0.3), &qid(0));
+        crz.ry(pecos_core::radians!(0.3), &qid(0));
+        sv.ry(pecos_core::radians!(0.3), &qid(0));
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "ry_on_zero");
     }
 
@@ -2926,28 +2926,28 @@ mod tests {
         sv.cx(&[(QubitId(1), QubitId(2))]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after CX12");
 
-        crz.rz(Angle64::from_radians(0.5), &[QubitId(0)]);
-        sv.rz(Angle64::from_radians(0.5), &[QubitId(0)]);
+        crz.rz(pecos_core::radians!(0.5), &[QubitId(0)]);
+        sv.rz(pecos_core::radians!(0.5), &[QubitId(0)]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after RZ0");
 
-        crz.rz(Angle64::from_radians(0.8), &[QubitId(2)]);
-        sv.rz(Angle64::from_radians(0.8), &[QubitId(2)]);
+        crz.rz(pecos_core::radians!(0.8), &[QubitId(2)]);
+        sv.rz(pecos_core::radians!(0.8), &[QubitId(2)]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after RZ2");
 
         crz.h(&[QubitId(1)]);
         sv.h(&[QubitId(1)]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after H1");
 
-        crz.ry(Angle64::from_radians(0.3), &[QubitId(1)]);
-        sv.ry(Angle64::from_radians(0.3), &[QubitId(1)]);
+        crz.ry(pecos_core::radians!(0.3), &[QubitId(1)]);
+        sv.ry(pecos_core::radians!(0.3), &[QubitId(1)]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after RY1");
 
         crz.cz(&[(QubitId(0), QubitId(2))]);
         sv.cz(&[(QubitId(0), QubitId(2))]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after CZ02");
 
-        crz.rx(Angle64::from_radians(0.6), &[QubitId(0)]);
-        sv.rx(Angle64::from_radians(0.6), &[QubitId(0)]);
+        crz.rx(pecos_core::radians!(0.6), &[QubitId(0)]);
+        sv.rx(pecos_core::radians!(0.6), &[QubitId(0)]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after RX0");
     }
 
@@ -2985,7 +2985,7 @@ mod tests {
         stab_vec.h(&q0);
         state_vec.h(&q0);
         for step in 0..term_count.ilog2() {
-            let angle = Angle64::from_radians(0.37 + 0.11 * f64::from(step));
+            let angle = Angle64::try_from_radians(0.37 + 0.11 * f64::from(step)).unwrap();
             stab_vec.rz(angle, &q0).h(&q0);
             state_vec.rz(angle, &q0).h(&q0);
         }
@@ -3003,7 +3003,7 @@ mod tests {
         stab_vec.flush_all_cliff_frames();
         let _ = state_vec.state();
         for step in 0..term_count.ilog2() {
-            let angle = Angle64::from_radians(0.37 + 0.11 * f64::from(step));
+            let angle = Angle64::try_from_radians(0.37 + 0.11 * f64::from(step)).unwrap();
             stab_vec.rz(angle, &q0);
             stab_vec.flush_all_pending_rz();
             state_vec.rz(angle, &q0);
@@ -3199,7 +3199,7 @@ mod tests {
         let pair01 = [(QubitId(0), QubitId(1))];
         let pair23 = [(QubitId(2), QubitId(3))];
         let pair45 = [(QubitId(4), QubitId(5))];
-        let angle = Angle64::from_radians(0.37);
+        let angle = pecos_core::radians!(0.37);
 
         stab.x(&q0)
             .y(&q1)
@@ -3341,11 +3341,11 @@ mod tests {
                 let mut stab_vec = StabVec::builder(1).seed(0x715).build();
                 let mut state_vec = StateVecSoA::with_seed(1, 0x715);
                 stab_vec
-                    .ry(Angle64::from_radians(0.731), &q0)
-                    .rz(Angle64::from_radians(-0.417), &q0);
+                    .ry(pecos_core::radians!(0.731), &q0)
+                    .rz(pecos_core::radians!(-0.417), &q0);
                 state_vec
-                    .ry(Angle64::from_radians(0.731), &q0)
-                    .rz(Angle64::from_radians(-0.417), &q0);
+                    .ry(pecos_core::radians!(0.731), &q0)
+                    .rz(pecos_core::radians!(-0.417), &q0);
                 let _ = stab_vec.state_vector();
                 let _ = state_vec.state();
 
@@ -3390,7 +3390,7 @@ mod tests {
                         _ => unreachable!("generator sequence contains only H and S"),
                     }
                 }
-                let angle = Angle64::from_radians(0.37);
+                let angle = pecos_core::radians!(0.37);
                 stab_vec.rz(angle, &q0);
                 state_vec.rz(angle, &q0);
                 assert_eq!(stab_vec.pending_rz[0], angle);
@@ -3416,7 +3416,7 @@ mod tests {
         state_x.z(&q0).x(&q0);
         assert_phase_exact_state_matches(&stab_x.state_vector(), &state_x.state(), "Z; X");
 
-        let angle = Angle64::from_radians(0.37);
+        let angle = pecos_core::radians!(0.37);
         let mut stab_rz_x = StabVec::builder(1).seed(0x715).build();
         let mut state_rz_x = StateVecSoA::with_seed(1, 0x715);
         stab_rz_x.sz(&q0).rz(angle, &q0).x(&q0);
@@ -3477,7 +3477,7 @@ mod tests {
     #[test]
     fn measurement_preserves_pending_rz_branch_phase() {
         let q0 = qid(0);
-        let ordinary = Angle64::from_radians(0.37);
+        let ordinary = pecos_core::radians!(0.37);
         for (label, angles, expected_pending, expected_global_phase) in [
             (
                 "ordinary pending RZ",
@@ -3585,7 +3585,7 @@ mod tests {
     #[test]
     fn diagonal_phase_emission_does_not_change_seeded_outcome_streams() {
         let q0 = qid(0);
-        let angle = Angle64::from_radians(0.37);
+        let angle = pecos_core::radians!(0.37);
         let mut with_phase = Vec::with_capacity(16_750);
         let mut without_phase = Vec::with_capacity(16_750);
 
@@ -3613,7 +3613,7 @@ mod tests {
     #[test]
     fn measurement_preserves_combined_diagonal_frame_and_rz_branch_phase() {
         let q0 = qid(0);
-        let angle = Angle64::from_radians(-0.43);
+        let angle = pecos_core::radians!(-0.43);
         let mut stab_vec = StabVec::builder(1).seed(0x714).build();
         let mut state_vec = StateVecSoA::with_seed(1, 0x714);
 
@@ -3643,8 +3643,8 @@ mod tests {
     fn entangled_measurement_preserves_branch_phase_with_other_amplitudes() {
         let q0 = qid(0);
         let q1 = qid(1);
-        let measured_angle = Angle64::from_radians(0.37);
-        let other_angle = Angle64::from_radians(0.61);
+        let measured_angle = pecos_core::radians!(0.37);
+        let other_angle = pecos_core::radians!(0.61);
         let mut stab_vec = StabVec::builder(3).seed(0x714).build();
         let mut state_vec = StateVecSoA::with_seed(3, 0x714);
 
@@ -3684,8 +3684,8 @@ mod tests {
     fn z_preparations_preserve_both_sampled_branches_and_reference_trajectories() {
         let q0 = qid(0);
         let q1 = qid(1);
-        let angle = Angle64::from_radians(0.37);
-        let preparation_angle = Angle64::from_radians(0.8);
+        let angle = pecos_core::radians!(0.37);
+        let preparation_angle = pecos_core::radians!(0.8);
         let mut workaround_complement_count = 0;
 
         for prepare_negative_z in [false, true] {
@@ -3812,7 +3812,7 @@ mod tests {
                 let mut state_vec = StateVecSoA::new(2);
                 prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count / 2);
                 let q0 = qid(0);
-                let angle = Angle64::from_radians(0.37);
+                let angle = pecos_core::radians!(0.37);
                 stab_vec.rz(angle, &q0);
                 state_vec.rz(angle, &q0);
 
@@ -3898,7 +3898,7 @@ mod tests {
 
             let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
             let mut state_vec = StateVecSoA::new(2);
-            let angle = Angle64::from_radians(0.37);
+            let angle = pecos_core::radians!(0.37);
             stab_vec.h(&qid(0)).rz(angle, &qid(0));
             state_vec.h(&qid(0)).rz(angle, &qid(0));
             match gate {
@@ -3928,7 +3928,7 @@ mod tests {
         // deterministic Z support. Projecting q0 onto |1> makes term 0 a
         // zero-omega term while two compatible q1 terms remain live.
         for (qubit, angle) in [(QubitId(0), 0.37), (QubitId(1), 0.53)] {
-            let angle = Angle64::from_radians(angle);
+            let angle = Angle64::try_from_radians(angle).unwrap();
             stab_vec.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
             state_vec.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
         }
@@ -3975,7 +3975,7 @@ mod tests {
         let mut dense = StateVecSoA::with_seed(7, 694);
         for (q, angle) in [(0, 0.37), (1, 0.53), (2, 0.71)] {
             let qubit = QubitId(q);
-            let angle = Angle64::from_radians(angle);
+            let angle = Angle64::try_from_radians(angle).unwrap();
             stab.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
             dense.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
         }
@@ -4074,31 +4074,31 @@ mod tests {
         let mut dense = StateVecSoA::new(3);
         for (q, radians) in [(0, 0.339_52), (1, 0.721_75), (2, 0.090_18)] {
             let qubit = QubitId(q);
-            let angle = Angle64::from_radians(radians);
+            let angle = Angle64::try_from_radians(radians).unwrap();
             stab.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
             dense.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
         }
-        stab.rz(Angle64::from_radians(0.409_39), &qid(0))
+        stab.rz(pecos_core::radians!(0.409_39), &qid(0))
             .cx(&[(QubitId(2), QubitId(0))])
             .sz(&qid(2))
-            .rz(Angle64::from_radians(0.661_47), &qid(0))
+            .rz(pecos_core::radians!(0.661_47), &qid(0))
             .cx(&[(QubitId(2), QubitId(0))])
             .sz(&qid(0))
-            .rz(Angle64::from_radians(0.562_83), &qid(0))
+            .rz(pecos_core::radians!(0.562_83), &qid(0))
             .cx(&[(QubitId(1), QubitId(2))])
             .sz(&qid(1))
-            .rz(Angle64::from_radians(0.606_67), &qid(2));
+            .rz(pecos_core::radians!(0.606_67), &qid(2));
         dense
-            .rz(Angle64::from_radians(0.409_39), &qid(0))
+            .rz(pecos_core::radians!(0.409_39), &qid(0))
             .cx(&[(QubitId(2), QubitId(0))])
             .sz(&qid(2))
-            .rz(Angle64::from_radians(0.661_47), &qid(0))
+            .rz(pecos_core::radians!(0.661_47), &qid(0))
             .cx(&[(QubitId(2), QubitId(0))])
             .sz(&qid(0))
-            .rz(Angle64::from_radians(0.562_83), &qid(0))
+            .rz(pecos_core::radians!(0.562_83), &qid(0))
             .cx(&[(QubitId(1), QubitId(2))])
             .sz(&qid(1))
-            .rz(Angle64::from_radians(0.606_67), &qid(2));
+            .rz(pecos_core::radians!(0.606_67), &qid(2));
 
         let mut expected = dense.state();
         let _ = stab.state_vector();
@@ -4123,7 +4123,7 @@ mod tests {
     #[test]
     fn single_surviving_term_is_renormalized() {
         let mut stab = StabVec::builder(1).pruning_threshold(0.0).build();
-        let angle = Angle64::from_radians(0.37);
+        let angle = pecos_core::radians!(0.37);
         stab.h(&qid(0)).rz(angle, &qid(0)).h(&qid(0));
         assert_eq!(stab.num_terms(), 2);
 

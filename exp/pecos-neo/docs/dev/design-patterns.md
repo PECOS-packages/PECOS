@@ -63,15 +63,15 @@ let results = sim_neo(circuit).auto()
 
 // With noise
 let results = sim_neo(circuit).auto()
-    .depolarizing(0.01)
+    .depolarizing(0.01)?
     .sampling(monte_carlo(1000))
     .run();
 
 // With importance sampling
 let results = sim_neo(circuit).auto()
     .sampling(importance_sampling(10000)
-        .with_p1(0.001)
-        .with_boost(10.0))
+        .with_p1(0.001)?
+        .with_boost(10.0)?)
     .run();
 
 // Parallel execution
@@ -81,7 +81,7 @@ let results = sim_neo(circuit).auto()
 
 // Parallel execution with noise
 let results = sim_neo(circuit).auto()
-    .depolarizing(0.01)
+    .depolarizing(0.01)?
     .sampling(monte_carlo(1000).workers(4))
     .run();
 
@@ -185,7 +185,7 @@ let outcomes = runner.apply_circuit(&mut state, &commands)?;
 Need noise modeling?
 │
 ├─► Simple depolarizing noise?
-│   └─► Use .depolarizing(p) on sim_neo()
+│   └─► Use .depolarizing(p)? on sim_neo()
 │
 ├─► Standard noise with different rates?
 │   └─► Use GeneralNoiseModelBuilder
@@ -206,7 +206,7 @@ Need noise modeling?
 
 | Builder | Features | Complexity |
 |---------|----------|------------|
-| `.depolarizing(p)` | Uniform depolarizing | Simplest |
+| `.depolarizing(p)?` | Uniform depolarizing | Simplest |
 | `GeneralNoiseModelBuilder` | Separate p1/p2/p_meas | Simple |
 | `CompositeNoiseModelBuilder` | Leakage, emission, seepage | Medium |
 | Custom `CompositeChannel` | Gate-specific, conditional | Advanced |
@@ -222,12 +222,12 @@ Complex configuration uses nested builders that compose naturally:
 // Top-level builder accepts nested builders
 sim_neo(circuit)
     .sampling(importance_sampling(10000)  // Nested builder
-        .with_p1(0.001)
-        .with_boost(10.0))
+        .with_p1(0.001)?
+        .with_boost(10.0)?)
     .quantum(sparse_stab())              // Another nested builder
     .noise(GeneralNoiseModelBuilder::new()  // And another
         .with_p1(0.001)
-        .with_p2(0.01))
+        .with_p2(0.01).build()?)
     .run();
 ```
 
@@ -385,7 +385,7 @@ each worker gets an independent clone of the noise model:
 
 ```rust
 sim_neo(circuit).auto()
-    .depolarizing(0.01)
+    .depolarizing(0.01)?
     .sampling(monte_carlo(10000).workers(4))     // Each worker clones the noise model
     .run();
 ```

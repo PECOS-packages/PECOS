@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_angle_source_resolution() {
         let mut registry = GateRegistry::new();
-        let fixed_angle = Angle64::from_turns(0.25);
+        let fixed_angle = Angle64::QUARTER_TURN;
         let def = GateDefinitionBuilder::new("CRZ_LIKE", 2)
             .angle_arity(1)
             .step_with_angles(GateType::RZ, &[1], &[AngleSource::Input(0)])
@@ -298,7 +298,7 @@ mod tests {
         registry.register(def);
 
         let qubits = [QubitId::from(0usize), QubitId::from(1usize)];
-        let input_angle = Angle64::from_turns(0.125);
+        let input_angle = Angle64::from_turn_ratio(1, 8);
         let result = registry
             .decompose("CRZ_LIKE", &qubits, &[input_angle])
             .unwrap();

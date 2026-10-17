@@ -498,6 +498,8 @@ class _DetectorErrorModelMixin:
                 ``":replace:XX"`` are replacement branches that omit the ideal
                 two-qubit gate before applying the Pauli. ``"~II"`` (or
                 ``":replace:II"``) omits the gate without applying a Pauli.
+                In a label ``"AB"``, ``A`` acts on the gate's first operand and
+                ``B`` on its second, whatever their qubit indices.
                 The two replacement spellings are equivalent and cannot both
                 name the same entry. Values must sum to 1.0; ``p2`` remains the
                 total two-qubit error rate.

@@ -31,7 +31,7 @@ SIMULATORS: tuple[tuple[str, SimulatorFactory], ...] = (
     ("Stabilizer", Stabilizer),
     ("StabVec", StabVec),
     ("StateVec", StateVec),
-    ("PauliProp", PauliProp),
+    ("PauliProp", lambda _num_qubits: PauliProp()),
 )
 
 

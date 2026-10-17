@@ -76,6 +76,7 @@ from pecos.qec.surface._check_plan import require_current_surface_check_plan_ren
 
 if TYPE_CHECKING:
     import stim
+    from pecos_rslib.qec import DetectorErrorModel
 
     from pecos import Array
     from pecos.decoders import DecoderSpec
@@ -4382,7 +4383,7 @@ def decode_native_samples(
     sampler: NativeSampler,
     num_shots: int,
     *,
-    dem: str | None = None,
+    dem: str | DetectorErrorModel | None = None,
     decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     pauli_masks: Any | None = None,
@@ -4391,13 +4392,17 @@ def decode_native_samples(
 
     ``decoder_type`` accepts a typed :class:`pecos.decoders.DecoderSpec` or a
     legacy decoder string. The de-masked records are decoded through the
-    unified ``SampleBatch.decode`` execution planner.
+    unified ``SampleBatch.decode`` execution planner. Pass a DetectorErrorModel
+    object to preserve fault-sector labels, or text with unlabelled detectors.
     """
     from pecos_rslib.qec import SampleBatch
 
-    dem_str = dem if dem is not None else sampler.dem_string
-    if dem_str is None:
-        msg = "decode_native_samples requires a DEM string; pass dem= or build the sampler with sampling_model='dem'"
+    decode_dem = dem if dem is not None else sampler.dem_string
+    if decode_dem is None:
+        msg = (
+            "decode_native_samples requires DEM text or a DetectorErrorModel; "
+            "pass dem= or build the sampler with sampling_model='dem'"
+        )
         raise ValueError(msg)
 
     masks_arr = _pauli_masks_as_int64(pauli_masks) if pauli_masks is not None else None
@@ -4421,7 +4426,7 @@ def decode_native_samples(
     uint64_mask = (1 << 64) - 1
     obs_masks = [sum(int(bit) << index for index, bit in enumerate(row)) & uint64_mask for row in obs_arr.tolist()]
     batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
-    return batch.decode(dem_str, decoder_type).num_errors
+    return batch.decode(decode_dem, decoder_type).num_errors
 
 
 def demask_pauli_frame_records(

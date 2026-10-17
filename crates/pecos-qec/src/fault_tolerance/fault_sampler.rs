@@ -57,6 +57,9 @@ use super::propagator::{
 /// Failure to build a fault catalog from circuit gates or definitions.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum FaultCatalogError {
+    /// Invalid Pauli support in a circuit operation.
+    #[error(transparent)]
+    InvalidPauli(#[from] pecos_core::ParsePauliStringError),
     /// A gate cannot be propagated by the catalog.
     #[error(transparent)]
     UnsupportedGate(#[from] UnsupportedGateError),
@@ -1143,7 +1146,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Faul
                             &tracked_pauli_annotations,
                         );
                         let effect = xor_fault_effects(&left, &right);
-                        let pauli = pauli_pair_to_string(p1, q1, p2, q2);
+                        let pauli = pauli_pair_to_string(p1, q1, p2, q2)?;
                         let (affected, dets, obs, tracked) =
                             catalog_effect_parts(effect, &record_effect_index);
                         faults.push(FaultAlternative {
@@ -1311,9 +1314,15 @@ fn pauli_type_to_string(pt: PauliType, qubit: usize) -> PauliString {
         pecos_core::QuarterPhase::PlusOne,
         vec![(pauli_type_to_pauli(pt), QubitId(qubit))],
     )
+    .expect("a single-qubit Pauli has no duplicate entries")
 }
 
-fn pauli_pair_to_string(p1: PauliType, q1: usize, p2: PauliType, q2: usize) -> PauliString {
+fn pauli_pair_to_string(
+    p1: PauliType,
+    q1: usize,
+    p2: PauliType,
+    q2: usize,
+) -> Result<PauliString, pecos_core::ParsePauliStringError> {
     PauliString::with_phase_and_paulis(
         pecos_core::QuarterPhase::PlusOne,
         vec![
@@ -1326,11 +1335,13 @@ fn pauli_pair_to_string(p1: PauliType, q1: usize, p2: PauliType, q2: usize) -> P
 fn parse_tracked_pauli_annotations(tc: &TickCircuit) -> Vec<PauliString> {
     tc.annotations()
         .iter()
-        .filter(|ann| matches!(ann.kind, AnnotationKind::TrackedPauli))
-        .map(|ann| {
-            let mut pauli = ann.pauli.clone();
-            pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
-            pauli
+        .filter_map(|ann| match &ann.kind {
+            AnnotationKind::TrackedPauli { pauli } => {
+                let mut pauli = pauli.clone();
+                pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+                Some(pauli)
+            }
+            _ => None,
         })
         .collect()
 }
@@ -3217,7 +3228,7 @@ mod tests {
         assert_eq!(round_tripped.annotations().len(), 1);
         assert!(matches!(
             round_tripped.annotations()[0].kind,
-            AnnotationKind::TrackedPauli
+            AnnotationKind::TrackedPauli { .. }
         ));
 
         let catalog = build_fault_catalog(
@@ -3812,7 +3823,8 @@ mod tests {
             PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::MinusOne,
                 vec![(Pauli::Z, QubitId(0))],
-            ),
+            )
+            .unwrap(),
         );
 
         let tracked_paulis = parse_tracked_pauli_annotations(&tc);

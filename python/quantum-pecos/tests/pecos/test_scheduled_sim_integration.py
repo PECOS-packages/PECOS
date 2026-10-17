@@ -47,7 +47,7 @@ def test_sim_ramsey_responds_to_synthetic_timing(timed_runtime: tuple[Path, int,
 
 
 def test_sim_rejects_scheduled_transport_without_capability(timed_runtime: tuple[Path, int, str]) -> None:
-    with pytest.raises(RuntimeError, match="scheduled idle capability required"):
+    with pytest.raises(ValueError, match="scheduled idle capability required"):
         simulation(timed_runtime[0], timed_runtime[2]).run(1)
 
 

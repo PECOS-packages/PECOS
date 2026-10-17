@@ -421,7 +421,7 @@ fn test_noisy_execution_statistics() {
     let mut ones_count = 0;
     for seed in 0..num_shots {
         let noise = ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(high_noise_rate));
+            .add_channel(SingleQubitChannel::depolarizing(high_noise_rate).unwrap());
         let mut program = StaticProgram::new(commands.clone(), 1);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, seed as u64))
             .with_noise(noise)
@@ -1122,7 +1122,9 @@ fn test_e2e_custom_gate_noise_limitation() {
     //
     // What we CAN do is apply noise to the decomposed gates (H):
     let noise = ComposableNoiseModel::new().add_channel(
-        GateDependentChannel::new().with_gate_error(pecos_neo::command::GateType::H, 0.0), // No noise for clarity
+        GateDependentChannel::new()
+            .with_gate_error(pecos_neo::command::GateType::H, 0.0)
+            .unwrap(), // No noise for clarity
     );
 
     // Execute with noise
@@ -1182,13 +1184,15 @@ fn test_e2e_gate_id_noise_config_infrastructure() {
     // GateIdNoiseConfig supports per-GateId noise configuration
     let mut noise_config = GateIdNoiseConfig::new()
         .with_category_default(GateCategory::SingleQubitUnitary, 0.001)
-        .with_category_default(GateCategory::TwoQubitUnitary, 0.01);
+        .unwrap()
+        .with_category_default(GateCategory::TwoQubitUnitary, 0.01)
+        .unwrap();
 
     // Set specific error rate for our custom gate
-    noise_config.set_gate(my_gate_id, GateNoiseParams::with_error(0.05));
+    noise_config.set_gate(my_gate_id, GateNoiseParams::with_error(0.05).unwrap());
 
     // Also set for some core gates
-    noise_config.set_gate_error(gates::T, 0.02); // T gates have higher error
+    noise_config.set_gate_error(gates::T, 0.02).unwrap(); // T gates have higher error
 
     // Query error rates
     let spec = GateSpec::new("NOISY_GATE")

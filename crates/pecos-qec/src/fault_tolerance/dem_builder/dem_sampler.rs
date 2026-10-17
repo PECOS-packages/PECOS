@@ -455,7 +455,7 @@ impl SamplingEngine {
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
     /// influence map, or a configuration error for an invalid replacement mode
-    /// or an invalid noise or signature channel.
+    /// or an invalid noise or signature channel, including repeated qubits at a gate location.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
@@ -497,6 +497,14 @@ impl SamplingEngine {
         let gate_locs = influence_map.gate_fault_locations();
 
         for loc in &gate_locs {
+            let duplicates =
+                pecos_core::duplicate_qubits(loc.qubits.iter().map(pecos_core::QubitId::index));
+            if !duplicates.is_empty() {
+                return Err(super::DemBuilderError::ConfigurationError(format!(
+                    "gate location node {} qubits {:?} contains duplicate qubits {duplicates:?}; use distinct qubits within each gate",
+                    loc.node, loc.qubits
+                )));
+            }
             let p = super::sampler::gate_location_prob_from_locations(
                 loc,
                 per_location_probs,
@@ -506,7 +514,9 @@ impl SamplingEngine {
                 continue;
             }
 
-            let events = loc.all_events();
+            let events = loc
+                .all_events()
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             if events.is_empty() {
                 continue;
             }
@@ -631,9 +641,10 @@ impl SamplingEngine {
                     .iter()
                     .map(|event| {
                         let weight = if n_qubits == 2 {
-                            weights.two_qubit_weight_for(
+                            weights.two_qubit_weight_for_on(
                                 loc.clifford,
                                 &event.pauli,
+                                [loc.qubits[0], loc.qubits[1]],
                                 noise.p2_replacement_approximation,
                             )
                         } else {
@@ -2207,7 +2218,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
     /// influence map, or a configuration error for an invalid replacement mode
-    /// or an invalid noise or signature channel. Invalid record ranges
+    /// or an invalid noise or signature channel, including repeated qubits at a gate location. Invalid record ranges
     /// are rejected for non-empty maps. On an
     /// empty map, records remain opaque coordinates and bounds are not checked.
     pub fn build(mut self) -> Result<SamplingEngine, super::DemBuilderError> {
@@ -2985,6 +2996,7 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
         paulis.push((pa2, pecos_core::QubitId::from(1usize)));
     }
     pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+        .expect("pair weights use distinct fixed qubits 0 and 1")
 }
 
 /// XORs two [`DemMechanism`]s (symmetric difference of detectors and standard observables).

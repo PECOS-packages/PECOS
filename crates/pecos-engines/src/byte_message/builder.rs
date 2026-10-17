@@ -187,7 +187,8 @@ impl ByteMessageBuilder {
         );
         let payload_size = size_of::<GateHeader>()
             + num_qubits * size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -206,7 +207,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -242,7 +243,8 @@ impl ByteMessageBuilder {
     ) -> &mut Self {
         let payload_size = size_of::<GateHeader>()
             + size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -259,7 +261,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -280,7 +282,8 @@ impl ByteMessageBuilder {
     ) -> &mut Self {
         let payload_size = size_of::<GateHeader>()
             + 2 * size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -299,7 +302,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -915,6 +918,36 @@ impl ByteMessageBuilder {
         self.msg_count
     }
 
+    /// Check that an append fits the protocol's message-count and byte-size fields.
+    /// `additional_bytes` includes message headers, payloads and alignment padding.
+    ///
+    /// # Errors
+    /// Returns an input error when the requested append exceeds a u32 field or
+    /// the platform slice-size limit. Split such input across smaller batches.
+    pub fn validate_append_capacity(
+        &self,
+        messages: usize,
+        additional_bytes: usize,
+    ) -> Result<(), pecos_core::errors::PecosError> {
+        let count_fits = u32::try_from(messages)
+            .ok()
+            .and_then(|count| self.msg_count.checked_add(count))
+            .is_some();
+        let size_fits = self
+            .buffer
+            .len()
+            .checked_add(additional_bytes)
+            .is_some_and(|size| u32::try_from(size).is_ok() && isize::try_from(size).is_ok());
+        if !count_fits || !size_fits {
+            return Err(pecos_core::errors::PecosError::Input(format!(
+                "cannot append {messages} messages and {additional_bytes} bytes to a batch containing {} messages and {} bytes: protocol u32 or platform slice-size limit exceeded; split the input into smaller batches",
+                self.msg_count,
+                self.buffer.len()
+            )));
+        }
+        Ok(())
+    }
+
     /// Clear the builder and start fresh
     ///
     /// This method completely replaces the builder with a new instance,
@@ -1110,8 +1143,8 @@ mod tests {
     #[test]
     fn strict_all_parameterized_gates_round_trip() {
         let mut builder = ByteMessageBuilder::new();
-        let theta = Angle64::from_radians(0.25);
-        let phi = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.25);
+        let phi = pecos_core::radians!(0.5);
         builder.idle(0.75, &[0]);
         builder.rx(theta, &[0]);
         builder.ry(theta, &[0]);
@@ -1228,7 +1261,7 @@ mod tests {
         // Add gates using new GateCommand interface
         let gate = Gate::h(&[0]);
         builder.add_gate_command(&gate);
-        let gate = Gate::rz(Angle64::from_radians(0.5), &[1]);
+        let gate = Gate::rz(pecos_core::radians!(0.5), &[1]);
         builder.add_gate_command(&gate);
 
         // Test multiple gates at once
@@ -1240,7 +1273,7 @@ mod tests {
             message.quantum_ops().unwrap(),
             [
                 Gate::h(&[0]),
-                Gate::rz(Angle64::from_radians(0.5), &[1]),
+                Gate::rz(pecos_core::radians!(0.5), &[1]),
                 Gate::x(&[2]),
                 Gate::cx(&[(0, 1)]),
             ]
@@ -1347,8 +1380,8 @@ mod tests {
         builder.x(&[1]);
         builder.y(&[2]);
         builder.z(&[3]);
-        builder.rz(Angle64::from_radians(0.5), &[4]);
-        builder.rxy1q(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.rz(pecos_core::radians!(0.5), &[4]);
+        builder.rxy1q(pecos_core::radians!(0.1), pecos_core::radians!(0.2), &[5]);
         builder.mz(&[6]);
 
         // Build the message
@@ -1379,12 +1412,12 @@ mod tests {
 
     #[test]
     fn test_single_item_fast_paths_match_generic_gate_encoding() {
-        let theta_rx = Angle64::from_radians(0.3);
-        let theta_ry = Angle64::from_radians(0.4);
-        let theta_rz = Angle64::from_radians(0.5);
-        let theta_rxy1q = Angle64::from_radians(0.6);
-        let phi_rxy1q = Angle64::from_radians(0.7);
-        let theta_rzz = Angle64::from_radians(0.8);
+        let theta_rx = pecos_core::radians!(0.3);
+        let theta_ry = pecos_core::radians!(0.4);
+        let theta_rz = pecos_core::radians!(0.5);
+        let theta_rxy1q = pecos_core::radians!(0.6);
+        let phi_rxy1q = pecos_core::radians!(0.7);
+        let theta_rzz = pecos_core::radians!(0.8);
 
         let mut generic_builder = ByteMessageBuilder::new();
         let _ = generic_builder.for_quantum_operations();

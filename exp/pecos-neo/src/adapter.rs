@@ -47,19 +47,20 @@
 //!     measure q[1];
 //! "#;
 //!
-//! let engine = QASMEngine::from_str(qasm).unwrap();
+//! let engine = QASMEngine::from_str(qasm)?;
 //!
 //! // Wrap in adapter to get CommandSource interface
 //! let mut program = ClassicalEngineAdapter::new(engine);
 //!
 //! // Run with pecos-neo infrastructure (composable noise, etc.)
 //! let noise = ComposableNoiseModel::new()
-//!     .add_channel(SingleQubitChannel::depolarizing(0.01));
+//!     .add_channel(SingleQubitChannel::depolarizing(0.01)?);
 //!
 //! let mut runner = ProgramRunner::new(SparseStab::new(2))
 //!     .with_noise(noise);
 //!
 //! let result = runner.run_shot(&mut program).expect("shot should succeed");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType as NeoGateType};
@@ -543,7 +544,7 @@ mod tests {
     #[test]
     fn test_parameterized_gate_conversion() {
         // Create an RZ gate with angle
-        let angle = Angle64::from_radians(std::f64::consts::PI / 2.0);
+        let angle = Angle64::QUARTER_TURN;
         let gate = Gate::new(CoreGateType::RZ, vec![angle], vec![], vec![QubitId(0)]);
 
         let cmd = gate_to_command(&gate).expect("should convert");

@@ -248,7 +248,9 @@ impl GeneralNoiseModelBuilder {
     /// A `GeneralNoiseModel`
     ///
     /// # Panics
-    /// Panics if the configuration contains invalid probabilities or scale factors.
+    /// Panics if the configuration contains invalid probabilities, scale factors,
+    /// or overflowing idle-rate products at `idle_after_2q`. Use [`Self::try_build`]
+    /// to report invalid caller configuration without panicking.
     #[must_use]
     pub fn build(self) -> GeneralNoiseModel {
         self.validate_configuration()
@@ -1489,26 +1491,41 @@ impl GeneralNoiseModelBuilder {
         let linear_rate = self
             .p_idle_linear_rate
             .unwrap_or(default.p_idle_linear_rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         let sine_rate = self
             .p_idle_sin_squared
             .as_ref()
             .map_or(default.p_idle_sin_squared_rate, |(rate, _)| *rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         let coherent_rate = self
             .p_idle_coherent
             .as_ref()
             .map_or(default.p_idle_coherent_rate, |(rate, _)| *rate)
-            * idle_scale
-            * scale;
+            * (scale * idle_scale);
         if ![linear_rate, sine_rate, coherent_rate]
             .into_iter()
             .all(finite_non_negative)
         {
             return Err("scaled idle rates must be finite and non-negative".to_string());
         }
+        let duration = self.idle_after_2q.unwrap_or(default.idle_after_2q);
+        let coherent_model = self
+            .p_idle_coherent
+            .as_ref()
+            .map_or(&default.p_idle_coherent_model, |(_, model)| model);
+        let sine_model = self
+            .p_idle_sin_squared
+            .as_ref()
+            .map_or(&default.p_idle_sin_squared_model, |(_, model)| model);
+        GeneralNoiseModel::validate_idle_products(
+            duration,
+            "idle_after_2q",
+            linear_rate,
+            sine_rate,
+            sine_model,
+            coherent_rate,
+            coherent_model,
+        )?;
         Ok(())
     }
 

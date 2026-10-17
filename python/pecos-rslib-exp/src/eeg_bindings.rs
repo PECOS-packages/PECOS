@@ -1260,8 +1260,11 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                         gate.getattr("angles")?
                             .extract::<Vec<f64>>()?
                             .into_iter()
-                            .map(Angle64::from_radians)
-                            .collect::<Vec<_>>()
+                            .map(Angle64::try_from_radians)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?
                     } else {
                         Vec::new()
                     };
@@ -1377,7 +1380,6 @@ fn extract_definitions(
             kind,
             measurement_ids,
             label,
-            pauli: None,
         });
     }
     let definitions = resolve_definitions(

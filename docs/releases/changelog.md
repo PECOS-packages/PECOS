@@ -8,6 +8,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
+- Graph decoders project raw hyperedges using `fault_sector` labels, with
+  `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
+  `^` input whose components are all graphlike is used as given.
+- Perturbed ensembles keep zero-probability errors at exactly zero in every
+  perturbed copy; previously they were raised to `1e-15`.
+- Rust: `DecoderFactory::decode_model` returns `Result<PreparedModel, _>` and
+  `DecodeResult` carries `projection`. The `AStar` and `PecosUf` spec variants
+  take config structs; `StructuredDem::try_new` takes detector fault sectors.
+  `DetectorErrorModel::to_structured_decoder_dem` now parses the model's standard
+  text and overlays labels: probabilities are those of the text (rounded, see
+  #1260) rather than exact, and tracked-Pauli outputs are omitted rather than
+  rejected.
+
 - `windowed` specs with a buffer previously returned the result of a monolithic
   decode by `sandwich_phase2` (correlated PyMatching by default). Callers who want
   that result should request the monolithic decoder directly. `windowed` is now
@@ -22,6 +35,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python additions
+
+- Decode APIs and `build_decoder` accept a `DetectorErrorModel` object as standard
+  text plus labels. Graph specs accept the `irreducible` keyword, and results
+  expose a `ProjectionReport` via `.projection` when preparation shares a projection.
 
 - Rendered surface-code SZ teleportation uses `correction="physical"` by default
   to execute the conditional logical Z (the Guppy/Helios idiom), or
@@ -46,6 +63,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   first decision from program results.
 
 ### Python breaking changes
+
+- Removed `pecos.execute_llvm`; use `pecos_rslib.hugr_lowering.compile_hugr_to_qis`
+  for lowering and `pecos.sim` for execution.
+- Removed `pecos.compilation_pipeline.compile_guppy_to_llvm`; compose
+  `compile_guppy_to_hugr` with `compile_hugr_to_qis` instead.
+- Removed `pecos.engines.compile_hugr_to_qis`; use
+  `pecos_rslib.hugr_lowering.compile_hugr_to_qis` instead.
+- Removed `pecos.engines.get_compilation_backends`; use `compile_hugr_to_qis`
+  directly to compile with the required compiler.
+- Removed `pecos.get_guppy_backends`; use `pecos.sim` directly to run programs.
+- Removed the HUGR converters from `pecos.circuit_converters`: `hugr_to_dag`,
+  `guppy_to_dag`, `dag_to_gate_sequence`, `UnsupportedHugrStructureError`,
+  `hugr_to_ast` and `guppy_to_ast`. For a DAG, use the QIS trace route
+  `trace_program_to_tick_circuit(...).to_dag_circuit()`; to run a program, use
+  `pecos.sim`. SLR AST conversion is unchanged.
+- Guppy compilation (`compile_guppy_to_hugr`, `pecos.Guppy`, `pecos.sim`) accepts
+  only `@guppy` function definitions (`guppylang.defs.GuppyFunctionDefinition`) and
+  raises `ValueError` for anything else. Objects returned by `with_opt_level(...)`
+  or `with_minimal_opt()` are no longer accepted.
+- Removed `pecos.protocols.GuppyCallable`; annotate Guppy definitions with
+  `guppylang.defs.GuppyFunctionDefinition` and use `compile_guppy_to_hugr` or `pecos.sim`.
 
 - Seeded samples change for every engine on the shared Monte Carlo loop (including
   QIS/Guppy, QASM and PHIR). A seed now determines each shot from its global index,
@@ -141,6 +179,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `WindowedLogicalSubgraphDecoder(dem, stab_coords, step, buffer)` now requires
   `step` and `buffer`; they previously defaulted to 8 and 4.
 
+- Python bindings that turn a float into an angle raise `ValueError` for NaN or
+  infinite input, including `QuantumCircuit.append`, which stays atomic.
+- Detector and observable annotations no longer carry a derived Pauli string:
+  `annotations()` dicts drop `"pauli"` for detectors and observables, and the
+  observable `pauli` field is removed from `circuit_definitions()`. Use
+  `measured_pauli(meas_id)` / `measured_paulis(meas_ids)` on `DagCircuit` and
+  `TickCircuit` for each measurement's basis and qubit. The plural method returns
+  `(basis, qubit)` pairs aligned with its input IDs.
+- `PauliProp` no longer has a fixed width; its constructor takes only
+  `track_sign`. Pickles of `PauliProp` objects from earlier versions do not load.
+- A qubit listed twice in a Pauli string is rejected by every constructor and
+  parser, and `to_dense_str(n)` raises when the support does not fit in `n`.
+- `QuantumCircuit` raises `QubitConflictError` when a different gate is added on
+  a qubit already used in the same tick, instead of dropping the gate.
+- `StateVecEngine` keeps the qubit count it was constructed with; addressing a
+  higher qubit raises instead of resizing the simulator.
+
+- Simulation `build()` and `run()` map input errors to `ValueError`, with the
+  message as `"<context>: <detail>"` (no `Input error:` prefix); genuine
+  execution failures remain `RuntimeError`.
+
 ### Python bug fixes
 
 - Fixed Guppy result tags binding to the wrong measurement when HUGR node order
@@ -148,6 +207,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   the lowered program that is executed. Errors for uncertifiable `result_tags` /
   `result_ref` programs have changed text: they previously mentioned runtime loops
   and now explain how to use positional records or measurement IDs instead.
+
+- `StateVecEngine` no longer resets every qubit mid-shot when a later batch
+  addresses a higher qubit (#1252).
+- Weighted two-qubit noise labels (`p2_weights`) apply `"AB"` as `A` on the
+  gate's first operand and `B` on its second; the sampling engine previously
+  read them by absolute qubit index and dropped weighted two-qubit noise for
+  gates not on qubits 0 and 1.
+- `PauliStabilizerGroup` rejects generator sets that generate -I, and group
+  membership, order and element enumeration account for dependent generators.
+- A single-qubit PHIR-JSON gate listing several qubits applies to every listed
+  qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
 
@@ -230,6 +300,61 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   trait. Projective backends with `*_up_to_phase` reads retain the no-op
   default; backends exposing exact amplitudes must implement it.
 
+- Float-to-angle conversion is fallible only: `Angle::from_radians`,
+  `from_turns`, `epsilon_from_radians`, `epsilon_from_turns`,
+  `abs_diff_eq_radians`, `abs_diff_eq_turns` and `impl From<f64> for Angle` are
+  removed in favour of `try_from_radians` / `try_from_turns` (which return
+  `NonFiniteAngleError`) and the compile-time `radians!` / `turns!` macros.
+  `from_turn_ratio` rejects ratios above one full turn at every width.
+- ByteMessage gate payloads encode angles as exact `u64` fractions (protocol
+  version 5); scheduled batches and events use versions 6 and 7. Older versions
+  are rejected with an error naming the expected version. A `Custom` gate with
+  non-angle parameters is rejected by `Gate::validate`.
+- Every simulator has a fixed qubit count: `StateVectorEngine` no longer grows,
+  `StateVectorSimulator::create_with_rng` is removed, and `QuantumEngineBuilder`
+  has a required `num_qubits()` accessor. `SimBuilder` and the `MonteCarloEngine`
+  convenience constructors return an error when a dynamic classical engine
+  reports 0 qubits before execution, and `SimBuilder` rejects a simulation qubit
+  count that differs from the quantum builder's. `pecos run` takes `--qubits N`,
+  required for QIS programs.
+- `MonteCarloEngine::new_with_defaults` / `new_with_depolarizing_noise` and the
+  `with_depolarizing_noise` setters of `MonteCarloEngineBuilder` and
+  `HybridEngineBuilder` return `Result`. Hybrid and Monte Carlo builder setters
+  replace only the component they name; `HybridEngineBuilder` composes a fresh
+  `QuantumSystem` at build (`QuantumSystem::into_components` is new).
+- `PauliString` stores sorted, identity-free, distinct-qubit entries.
+  `with_phase_and_paulis` and `from_decomposed` return `Result`;
+  `ParsePauliStringError` is an enum with `DuplicateQubit`;
+  `pauli_str(Option<usize>)` / `to_dense_str(Option<usize>)` become `pauli_str()`
+  / `to_dense_str()` plus fallible `*_width(n)` forms. Pauli group order,
+  element and centralizer queries, generator removal and multiplication,
+  `StabilizerCode::distance` / `logical_operators` and controlled-rotation
+  lowerings (including `TickHandle::crz`) are fallible.
+  `PauliString::to_flat_matrix` returns `Result`, rejecting unsupported widths
+  and support outside the width.
+- `PauliAnnotation.pauli` is removed (`AnnotationKind::TrackedPauli { pauli }`
+  carries a tracked Pauli), and `DemOutputMetadata.pauli` is
+  `Option<PauliString>`.
+- pecos-neo probability-, weight-, angle- and rate-valued constructors, setters
+  and builders return `ValidationResult` and reject out-of-range or NaN values
+  instead of clamping them; `clamp_probability` is removed. `OverRotation`
+  scales the gate's signed principal rotation; angle-dependent probabilities
+  use its signed principal magnitude. A positive `p_meas_crosstalk_local` without
+  a neighbour function now returns a build `ValidationError` instead of warning
+  and ignoring the setting. At-most-one Pauli rate sums allow only accumulated
+  floating-point rounding (`n * f64::EPSILON` for `n` terms), replacing the
+  previous `1e-9` tolerance; individual rates remain strictly validated.
+- pecos-engines depolarizing and biased-depolarizing probability errors name the
+  invalid parameter and its value, including uniform probabilities.
+- Foreign C API: all `pecos_circuit_*` gate appenders
+  return `int32_t` (`0` on success, `-1` on invalid input).
+- `try_asin` / `try_acos` return `InverseTrigError`, distinguishing non-finite
+  input from finite values outside [-1, 1]. Parsing integer multiples of pi
+  wraps exactly, including multiples greater than a full turn.
+- QuiZX export uses a 2^61 half-turn grid to keep simplifier arithmetic in range.
+  Fractions divisible by four are exact; others round by at most two ticks,
+  with ties away from zero on the signed principal representative.
+
 ### Rust bug fixes
 
 - Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
@@ -264,6 +389,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   fraction instead of a rounded floating-point value. Exactly `HALF_TURN`
   remains positive and maps to `+pi`, `+0.5`, and `+1.0`, respectively; stored
   fractions strictly above it map to the negative representative.
+
+- Angle conversion from floats is exact (correctly rounded) for every width and
+  both signs; negative inputs were less precise than positive ones (#1304).
+  Internal QASM, PHIR and scheduled-transport pipelines no longer round-trip
+  angles through `f64`.
+- NaN or infinite angles at QASM, PHIR-JSON, textual IR, QIS, scheduled-noise
+  and Selene ingress return errors instead of panicking (#1296).
+- pecos-neo idle-noise configurations whose rate could overflow over an idle
+  duration are rejected (#1298), and out-of-range probabilities raise instead of
+  being clamped (#1299).
+- Builders seeded from an existing `HybridEngine` kept only its classical engine,
+  replacing the quantum engine with a state vector and dropping the noise model.
 
 ### Python batch decoding
 

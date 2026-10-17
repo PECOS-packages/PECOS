@@ -18,6 +18,8 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights};
 use crate::command::GateCommand;
+use crate::noise::validation::ValidationResult;
+use crate::noise::validation::validate_probability;
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -44,20 +46,20 @@ use smallvec::SmallVec;
 /// use pecos_neo::noise::CorrelatedNoiseChannel;
 ///
 /// // 1% base error rate, 50% correlation
-/// let channel = CorrelatedNoiseChannel::new(0.01, 0.5);
+/// let channel = CorrelatedNoiseChannel::new(0.01, 0.5).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct CorrelatedNoiseChannel {
     /// Base error probability (before correlation effects).
-    pub base_error_probability: f64,
+    base_error_probability: f64,
     /// Correlation factor: how much errors on one qubit affect others.
     /// Range: [0.0, 1.0] where 0.0 = independent, 1.0 = fully correlated.
-    pub correlation: f64,
+    correlation: f64,
     /// Pauli weight distribution for errors.
-    pub pauli_weights: PauliWeights,
+    pauli_weights: PauliWeights,
     /// Whether to apply correlated errors to single-qubit gates.
     /// When true, multiple consecutive 1Q gates can have correlated errors.
-    pub single_qubit_correlation: bool,
+    single_qubit_correlation: bool,
 }
 
 impl Default for CorrelatedNoiseChannel {
@@ -72,25 +74,57 @@ impl Default for CorrelatedNoiseChannel {
 }
 
 impl CorrelatedNoiseChannel {
+    /// Return the configured `base_error_probability`.
+    #[must_use]
+    pub fn base_error_probability(&self) -> f64 {
+        self.base_error_probability
+    }
+
+    /// Return the configured `correlation`.
+    #[must_use]
+    pub fn correlation(&self) -> f64 {
+        self.correlation
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> &PauliWeights {
+        &self.pauli_weights
+    }
+
+    /// Return the configured `single_qubit_correlation`.
+    #[must_use]
+    pub fn single_qubit_correlation(&self) -> bool {
+        self.single_qubit_correlation
+    }
+
     /// Create a new correlated noise channel.
     ///
     /// # Arguments
     /// * `base_error_probability` - Base error rate per qubit
     /// * `correlation` - How much errors spread (0.0 = independent, 1.0 = fully correlated)
-    #[must_use]
-    pub fn new(base_error_probability: f64, correlation: f64) -> Self {
-        Self {
-            base_error_probability,
-            correlation: correlation.clamp(0.0, 1.0),
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(base_error_probability: f64, correlation: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            base_error_probability: validate_probability(
+                base_error_probability,
+                "base_error_probability",
+            )?,
+            correlation: validate_probability(correlation, "correlation")?,
             ..Default::default()
-        }
+        })
     }
 
     /// Set custom Pauli weights for the error distribution.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Enable correlation for single-qubit gates.
@@ -103,10 +137,14 @@ impl CorrelatedNoiseChannel {
     /// Create a Z-correlated dephasing channel.
     ///
     /// Errors are Z (dephasing) only, with spatial correlation.
-    #[must_use]
-    pub fn correlated_dephasing(base_error_probability: f64, correlation: f64) -> Self {
-        Self::new(base_error_probability, correlation)
-            .with_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0))
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn correlated_dephasing(
+        base_error_probability: f64,
+        correlation: f64,
+    ) -> ValidationResult<Self> {
+        Self::new(base_error_probability, correlation)?.with_pauli_weights(PauliWeights::z_only())
     }
 
     /// Calculate the conditional error probability given whether a correlated qubit had an error.
@@ -259,24 +297,22 @@ mod tests {
 
     #[test]
     fn test_correlated_channel_creation() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 0.5);
+        let channel = CorrelatedNoiseChannel::new(0.1, 0.5).unwrap();
         assert!((channel.base_error_probability - 0.1).abs() < 1e-10);
         assert!((channel.correlation - 0.5).abs() < 1e-10);
     }
 
     #[test]
-    fn test_correlated_channel_clamping() {
-        // Correlation should be clamped to [0, 1]
-        let channel = CorrelatedNoiseChannel::new(0.1, 1.5);
-        assert!((channel.correlation - 1.0).abs() < 1e-10);
-
-        let channel = CorrelatedNoiseChannel::new(0.1, -0.5);
-        assert!(channel.correlation.abs() < 1e-10);
+    fn test_correlated_channel_rejects_invalid_correlation() {
+        for correlation in [f64::NAN, -0.5, 1.5] {
+            let error = CorrelatedNoiseChannel::new(0.1, correlation).err().unwrap();
+            assert_eq!(error.field, "correlation");
+        }
     }
 
     #[test]
     fn test_correlated_responds_to_two_qubit_gates() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 0.5);
+        let channel = CorrelatedNoiseChannel::new(0.1, 0.5).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];
@@ -293,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_correlated_ignores_single_qubit_by_default() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 0.5);
+        let channel = CorrelatedNoiseChannel::new(0.1, 0.5).unwrap();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -310,7 +346,9 @@ mod tests {
 
     #[test]
     fn test_correlated_single_qubit_when_enabled() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 0.5).with_single_qubit_correlation();
+        let channel = CorrelatedNoiseChannel::new(0.1, 0.5)
+            .unwrap()
+            .with_single_qubit_correlation();
 
         let qubits = [QubitId(0)];
         let angles = [];
@@ -327,7 +365,7 @@ mod tests {
 
     #[test]
     fn test_conditional_probability() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 0.5);
+        let channel = CorrelatedNoiseChannel::new(0.1, 0.5).unwrap();
 
         // When no previous error
         let prob_no_error = channel.conditional_probability(false);
@@ -340,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_zero_correlation_is_independent() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 0.0);
+        let channel = CorrelatedNoiseChannel::new(0.1, 0.0).unwrap();
 
         // With zero correlation, probability should be the same regardless of other errors
         let prob_no_error = channel.conditional_probability(false);
@@ -352,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_full_correlation() {
-        let channel = CorrelatedNoiseChannel::new(0.1, 1.0);
+        let channel = CorrelatedNoiseChannel::new(0.1, 1.0).unwrap();
 
         // With full correlation:
         // - If first had error, second is certain to have error
@@ -381,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_correlated_skips_leaked_qubits() {
-        let channel = CorrelatedNoiseChannel::new(1.0, 0.5);
+        let channel = CorrelatedNoiseChannel::new(1.0, 0.5).unwrap();
 
         let qubits = [QubitId(0), QubitId(1)];
         let angles = [];

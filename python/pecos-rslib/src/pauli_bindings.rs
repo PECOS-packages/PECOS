@@ -24,8 +24,69 @@ use std::hash::{Hash, Hasher};
 use crate::prelude::{
     Pauli as RustPauli, PauliOperator, PauliString as RustPauliString, QuarterPhase, QubitId,
 };
-use pecos_core::{Xs as RustXs, Ys as RustYs, Zs as RustZs};
 use pyo3::prelude::*;
+
+/// Extract an unsigned integer through Python's index protocol, excluding bool.
+pub(crate) fn extract_unsigned_index(
+    value: &Bound<'_, PyAny>,
+    label: impl std::fmt::Display,
+) -> PyResult<u64> {
+    use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
+    if value.is_instance_of::<pyo3::types::PyBool>() {
+        let supplied = value.repr()?.to_string();
+        return Err(PyTypeError::new_err(format!(
+            "{label} must be an integer, got bool {supplied}; supply an integer instead"
+        )));
+    }
+    value.extract::<u64>().or_else(|err| {
+        if err.is_instance_of::<PyOverflowError>(value.py()) {
+            let supplied = value.repr()?.to_string();
+            Err(PyValueError::new_err(format!(
+                "{label} must be a nonnegative unsigned 64-bit integer, got {supplied}; use a value from 0 through 18446744073709551615"
+            )))
+        } else if err.is_instance_of::<PyTypeError>(value.py()) {
+            let supplied = value.repr()?.to_string();
+            let type_name = value.get_type().name()?.to_string();
+            Err(PyTypeError::new_err(format!("{label} must be an integer, got {type_name} {supplied}; supply an integer")))
+        } else {
+            Err(err)
+        }
+    })
+}
+
+pub(crate) fn extract_usize_index(
+    value: &Bound<'_, PyAny>,
+    label: impl std::fmt::Display,
+) -> PyResult<usize> {
+    let index = extract_unsigned_index(value, &label)?;
+    usize::try_from(index).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{label} {index} exceeds the platform index range; use an index at most {}",
+            usize::MAX
+        ))
+    })
+}
+
+fn extract_qubits(qubits: &[Bound<'_, PyAny>]) -> PyResult<Vec<usize>> {
+    qubits
+        .iter()
+        .enumerate()
+        .map(|(index, value)| extract_usize_index(value, format_args!("qubits item {index}")))
+        .collect()
+}
+
+/// Build `pauli` on each qubit, rejecting invalid indices and repeated qubits.
+fn uniform_pauli_string(pauli: RustPauli, qubits: &[Bound<'_, PyAny>]) -> PyResult<PauliString> {
+    RustPauliString::with_phase_and_paulis(
+        QuarterPhase::PlusOne,
+        extract_qubits(qubits)?
+            .into_iter()
+            .map(|q| (pauli, QubitId::new(q)))
+            .collect(),
+    )
+    .map(PauliString::from_rust)
+    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+}
 
 /// Single-qubit Pauli operator (I, X, Y, Z)
 ///
@@ -98,7 +159,7 @@ impl Pauli {
     }
 
     /// String representation
-    fn __str__(&self) -> &'static str {
+    pub(crate) fn __str__(&self) -> &'static str {
         match self.0 {
             RustPauli::I => "I",
             RustPauli::X => "X",
@@ -177,6 +238,8 @@ unsafe impl Sync for PauliString {}
 impl PauliString {
     /// Create a new `PauliString`
     ///
+    /// Raises ValueError if a qubit is listed twice, including identity entries.
+    ///
     /// Args:
     ///     paulis: Either:
     ///         - List of (Pauli, `qubit_index`) tuples for explicit qubit numbering
@@ -207,7 +270,7 @@ impl PauliString {
         };
 
         // Build PauliString from input
-        let mut rust_paulis = if let Some(pauli_input) = paulis {
+        let rust_paulis = if let Some(pauli_input) = paulis {
             use pyo3::types::PyList;
 
             // Try to extract as a list - using cast() per PyO3 0.27 API
@@ -223,18 +286,23 @@ impl PauliString {
                 // Check first element to determine format
                 let first = list.get_item(0)?;
 
-                // Try to extract as tuple (explicit qubit indices)
-                if first.extract::<(Pauli, usize)>().is_ok() {
+                // Choose explicit indices by shape, independently of index validity.
+                if first.is_instance_of::<pyo3::types::PyTuple>() {
                     // Format: [(Pauli, qubit_id), ...]
                     list.iter()
-                        .map(|item| {
-                            let (pauli, qubit): (Pauli, usize) = item.extract()?;
+                        .enumerate()
+                        .map(|(index, item)| {
+                            let (pauli, qubit): (Pauli, Bound<'_, PyAny>) = item.extract()?;
+                            let qubit = extract_usize_index(
+                                &qubit,
+                                format_args!("paulis item {index} qubit"),
+                            )?;
                             Ok((pauli.0, QubitId::new(qubit)))
                         })
                         .collect::<PyResult<Vec<_>>>()?
                 }
                 // Try to extract as Pauli (implicit sequential indices)
-                else if first.extract::<Pauli>().is_ok() {
+                else if first.is_instance_of::<Pauli>() {
                     // Format: [Pauli, ...] with implicit 0, 1, 2, ...
                     list.iter()
                         .enumerate()
@@ -253,20 +321,8 @@ impl PauliString {
             Vec::new()
         };
 
-        rust_paulis.retain(|(pauli, _)| *pauli != RustPauli::I);
-        rust_paulis.sort_by_key(|(_, qubit)| *qubit);
-        for window in rust_paulis.windows(2) {
-            if window[0].1 == window[1].1 {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "multiple non-identity Pauli operators were specified for qubit {}; \
-                     use multiplication (*) if you intend to compose Paulis on the same qubit",
-                    window[0].1.index()
-                )));
-            }
-        }
-
-        // Construct RustPauliString using the new constructor
-        let inner = RustPauliString::with_phase_and_paulis(rust_phase, rust_paulis);
+        let inner = RustPauliString::with_phase_and_paulis(rust_phase, rust_paulis)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         Ok(PauliString { inner })
     }
@@ -330,15 +386,7 @@ impl PauliString {
         // Build sparse representation showing only non-identity operators
         let pauli_str: String = paulis
             .iter()
-            .map(|(p, q)| {
-                let p_char = match p {
-                    RustPauli::I => 'I',
-                    RustPauli::X => 'X',
-                    RustPauli::Y => 'Y',
-                    RustPauli::Z => 'Z',
-                };
-                format!("{}_{}", p_char, q.index())
-            })
+            .map(|(p, q)| format!("{p:?}_{}", q.index()))
             .collect::<Vec<_>>()
             .join(" ");
 
@@ -348,9 +396,18 @@ impl PauliString {
     /// Dense string representation with an explicit phase prefix.
     ///
     /// Example: `+XIZ` for X on qubit 0 and Z on qubit 2.
+    /// Raises `ValueError` if a non-identity qubit index is >= `num_qubits`.
     #[pyo3(signature = (num_qubits=None))]
-    fn to_dense_str(&self, num_qubits: Option<usize>) -> String {
-        self.inner.to_dense_str(num_qubits)
+    fn to_dense_str(&self, num_qubits: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+        let num_qubits = num_qubits
+            .map(|value| extract_usize_index(value, "num_qubits"))
+            .transpose()?;
+        num_qubits
+            .map_or_else(
+                || Ok(self.inner.to_dense_str()),
+                |n| self.inner.to_dense_str_width(n),
+            )
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Sparse string representation with an explicit phase prefix.
@@ -421,15 +478,25 @@ impl PauliString {
     ///     num_qubits: Number of qubits for the matrix dimension (default: auto)
     #[allow(clippy::doc_markdown)]
     #[pyo3(signature = (num_qubits=None))]
-    fn to_matrix(&self, num_qubits: Option<usize>) -> PyResult<Vec<Vec<(f64, f64)>>> {
-        let n = num_qubits
-            .unwrap_or_else(|| self.inner.qubits().into_iter().max().map_or(1, |m| m + 1));
-        if n > 12 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "to_matrix supports at most 12 qubits",
-            ));
-        }
-        let (flat, dim) = self.inner.to_flat_matrix(n);
+    fn to_matrix(&self, num_qubits: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Vec<(f64, f64)>>> {
+        let num_qubits = num_qubits
+            .map(|value| extract_usize_index(value, "num_qubits"))
+            .transpose()?;
+        let n = match num_qubits {
+            Some(width) => width,
+            None => match self.inner.qubits().into_iter().max() {
+                Some(index) => index.checked_add(1).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "qubit index {index} exceeds the representable matrix width; use a sparse representation or lower qubit indices"
+                    ))
+                })?,
+                None => 1,
+            },
+        };
+        let (flat, dim) = self
+            .inner
+            .to_flat_matrix(n)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         let rows = (0..dim)
             .map(|r| {
                 flat[r * dim..(r + 1) * dim]
@@ -449,6 +516,11 @@ impl PauliString {
         self.inner.commutes_with(&other.inner)
     }
 
+    /// Check commutation on every qubit, ignoring phases and absent qubits.
+    fn qubitwise_commutes_with(&self, other: &PauliString) -> bool {
+        self.inner.qubitwise_commutes_with(&other.inner)
+    }
+
     /// Check if this `PauliString` anticommutes with another.
     fn anticommutes_with(&self, other: &PauliString) -> bool {
         !self.inner.commutes_with(&other.inner)
@@ -459,28 +531,22 @@ impl PauliString {
     /// Create X on a single qubit: `PauliString.X(3)`
     #[staticmethod]
     #[allow(non_snake_case)]
-    fn X(qubit: usize) -> Self {
-        PauliString {
-            inner: RustPauliString::x(qubit),
-        }
+    fn X(qubit: &Bound<'_, PyAny>) -> PyResult<Self> {
+        X(qubit)
     }
 
     /// Create Y on a single qubit: `PauliString.Y(3)`
     #[staticmethod]
     #[allow(non_snake_case)]
-    fn Y(qubit: usize) -> Self {
-        PauliString {
-            inner: RustPauliString::y(qubit),
-        }
+    fn Y(qubit: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Y(qubit)
     }
 
     /// Create Z on a single qubit: `PauliString.Z(3)`
     #[staticmethod]
     #[allow(non_snake_case)]
-    fn Z(qubit: usize) -> Self {
-        PauliString {
-            inner: RustPauliString::z(qubit),
-        }
+    fn Z(qubit: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Z(qubit)
     }
 
     /// Create identity: `PauliString.I()`
@@ -496,38 +562,10 @@ impl PauliString {
 
     /// Tensor product: `PauliString.X(0) & PauliString.Z(1)`
     fn __and__(&self, other: &PauliString) -> PyResult<Self> {
-        let mut lhs_qubits = self.inner.qubits();
-        lhs_qubits.sort_unstable();
-        lhs_qubits.dedup();
-
-        let mut rhs_qubits = other.inner.qubits();
-        rhs_qubits.sort_unstable();
-        rhs_qubits.dedup();
-
-        let mut overlap = Vec::new();
-        let mut lhs_idx = 0;
-        let mut rhs_idx = 0;
-        while lhs_idx < lhs_qubits.len() && rhs_idx < rhs_qubits.len() {
-            match lhs_qubits[lhs_idx].cmp(&rhs_qubits[rhs_idx]) {
-                std::cmp::Ordering::Less => lhs_idx += 1,
-                std::cmp::Ordering::Greater => rhs_idx += 1,
-                std::cmp::Ordering::Equal => {
-                    overlap.push(lhs_qubits[lhs_idx]);
-                    lhs_idx += 1;
-                    rhs_idx += 1;
-                }
-            }
-        }
-
-        if !overlap.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "tensor product requires disjoint Pauli support; overlapping qubits: {overlap:?}"
-            )));
-        }
-
-        Ok(PauliString {
-            inner: self.inner.clone() & other.inner.clone(),
-        })
+        self.inner
+            .tensor(&other.inner)
+            .map(Self::from_rust)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Pauli multiplication: `PauliString.X(0) * PauliString.Y(0)`
@@ -572,49 +610,49 @@ impl PauliString {
 /// Create a single-qubit X `PauliString`: `X(3)`
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn X(qubit: usize) -> PauliString {
-    PauliString {
-        inner: RustPauliString::x(qubit),
-    }
+pub fn X(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+    Ok(PauliString {
+        inner: RustPauliString::x(extract_usize_index(qubit, "qubit")?),
+    })
 }
 
 /// Create a single-qubit Y `PauliString`: `Y(3)`
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Y(qubit: usize) -> PauliString {
-    PauliString {
-        inner: RustPauliString::y(qubit),
-    }
+pub fn Y(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+    Ok(PauliString {
+        inner: RustPauliString::y(extract_usize_index(qubit, "qubit")?),
+    })
 }
 
 /// Create a single-qubit Z `PauliString`: `Z(3)`
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Z(qubit: usize) -> PauliString {
-    PauliString {
-        inner: RustPauliString::z(qubit),
-    }
+pub fn Z(qubit: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+    Ok(PauliString {
+        inner: RustPauliString::z(extract_usize_index(qubit, "qubit")?),
+    })
 }
 
 /// Create a multi-qubit X `PauliString`: `Xs([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Xs(qubits: Vec<usize>) -> PauliString {
-    PauliString::from_rust(RustXs(qubits))
+pub fn Xs(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
+    uniform_pauli_string(RustPauli::X, &qubits)
 }
 
 /// Create a multi-qubit Y `PauliString`: `Ys([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Ys(qubits: Vec<usize>) -> PauliString {
-    PauliString::from_rust(RustYs(qubits))
+pub fn Ys(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
+    uniform_pauli_string(RustPauli::Y, &qubits)
 }
 
 /// Create a multi-qubit Z `PauliString`: `Zs([0, 2, 5])`.
 #[pyfunction]
 #[allow(non_snake_case)]
-pub fn Zs(qubits: Vec<usize>) -> PauliString {
-    PauliString::from_rust(RustZs(qubits))
+pub fn Zs(qubits: Vec<Bound<'_, PyAny>>) -> PyResult<PauliString> {
+    uniform_pauli_string(RustPauli::Z, &qubits)
 }
 
 /// Register Pauli types with Python module

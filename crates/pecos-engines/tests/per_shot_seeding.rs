@@ -14,6 +14,7 @@ fn engine(extra_gates: bool, stab_vec: bool) -> MonteCarloEngine {
             circuit.build(),
         )))
         .with_depolarizing_noise(0.1)
+        .unwrap()
         .with_seed(42);
     if stab_vec {
         builder = builder.with_quantum_engine(Box::new(StabVecEngine::new(2)));

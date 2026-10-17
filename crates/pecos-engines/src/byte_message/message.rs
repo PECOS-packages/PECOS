@@ -175,8 +175,29 @@ impl ByteMessage {
         let batch_header =
             *bytemuck::from_bytes::<BatchHeader>(&self.as_bytes()[0..size_of::<BatchHeader>()]);
 
-        if !batch_header.is_valid() {
-            return Err(PecosError::Input("Invalid batch header".to_string()));
+        if batch_header.magic != super::protocol::BATCH_MAGIC {
+            return Err(PecosError::Input(format!(
+                "Invalid batch magic {:#x}; use a ByteMessage builder with magic {:#x}",
+                batch_header.magic,
+                super::protocol::BATCH_MAGIC
+            )));
+        }
+        if batch_header.version != super::protocol::PROTOCOL_VERSION {
+            let remedy = match batch_header.version {
+                super::protocol::SCHEDULED_FRAME_VERSION
+                | super::protocol::SCHEDULED_EVENT_VERSION => {
+                    "scheduled versions 6 and 7 need the scheduled-idle path, not an ordinary batch consumer"
+                }
+                1 | 3 | 4 => {
+                    "rebuild legacy f64-angle batches with the current encoder for the ordinary or scheduled path"
+                }
+                _ => "encode an ordinary batch with the current ByteMessage builder",
+            };
+            return Err(PecosError::Input(format!(
+                "Invalid ordinary batch version {}; expected version {}; {remedy}",
+                batch_header.version,
+                super::protocol::PROTOCOL_VERSION
+            )));
         }
 
         Ok(batch_header)
@@ -398,10 +419,10 @@ impl ByteMessage {
         params_offset: usize,
         gate_type: GateType,
         param_count: usize,
-    ) -> Result<(GateAngles, GateParams), PecosError> {
+    ) -> (GateAngles, GateParams) {
         let trace_enabled = log::log_enabled!(Level::Trace);
         if param_count == 0 {
-            return Ok((GateAngles::new(), GateParams::new()));
+            return (GateAngles::new(), GateParams::new());
         }
 
         if trace_enabled {
@@ -417,17 +438,20 @@ impl ByteMessage {
         let mut params = GateParams::with_capacity(param_count.saturating_sub(angle_count));
         for i in 0..param_count {
             let param_offset = params_offset + i * size_of::<f64>();
-            let param = Self::parse_f64_param(payload, param_offset);
-            if trace_enabled {
-                trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
-            }
             if i < angle_count {
-                if !param.is_finite() {
-                    return Err(PecosError::Input("gate angle must be finite".into()));
+                let fraction =
+                    u64::from_le_bytes(Self::parse_parameter_bytes(payload, param_offset));
+                angles.push(Angle64::new(fraction));
+                if trace_enabled {
+                    trace!(
+                        "parse_gate_parameters: Angle {i} at offset {param_offset}: fraction {fraction}"
+                    );
                 }
-                angles.push(Angle64::from_radians(param));
             } else {
-                params.push(param);
+                params.push(f64::from_le_bytes(Self::parse_parameter_bytes(
+                    payload,
+                    param_offset,
+                )));
             }
         }
 
@@ -440,7 +464,7 @@ impl ByteMessage {
             );
         }
 
-        Ok((angles, params))
+        (angles, params)
     }
 
     /// Validate that the payload has exactly the parameter bytes required by the gate.
@@ -454,7 +478,7 @@ impl ByteMessage {
         if gate_type == GateType::Custom {
             if !received_size.is_multiple_of(size_of::<f64>()) {
                 return Err(PecosError::Input(format!(
-                    "Gate Custom received {received_size} parameter bytes, which is not a whole number of f64 parameters"
+                    "Gate Custom received {received_size} parameter bytes, which is not a whole number of u64 angle fractions"
                 )));
             }
             return Ok(received_size / size_of::<f64>());
@@ -469,16 +493,11 @@ impl ByteMessage {
         Ok(gate_type.classical_arity())
     }
 
-    /// Parse an f64 parameter from the payload
-    fn parse_f64_param(payload: &[u8], offset: usize) -> f64 {
-        let param_bytes = &payload[offset..offset + size_of::<f64>()];
-        // Performance critical path during simulation - slice to array conversion should never fail
-        // when we already verified the buffer size (8 bytes for f64)
-        f64::from_le_bytes(
-            param_bytes[..8]
-                .try_into()
-                .expect("Byte buffer has incorrect length for f64 conversion"),
-        )
+    /// Read one validated eight-byte angle or classical parameter word
+    fn parse_parameter_bytes(payload: &[u8], offset: usize) -> [u8; 8] {
+        payload[offset..offset + 8]
+            .try_into()
+            .expect("validate_params_size checked the complete eight-byte parameter word")
     }
 
     /// Parse a quantum gate message payload to `Gate`
@@ -523,10 +542,11 @@ impl ByteMessage {
         }
 
         // Parse parameters if present
-        // The wire format stores all classical parameters as f64, with angles first (in radians)
+        // Leading angle words are exact little-endian u64 fractions; remaining
+        // classical parameter words are little-endian f64 values.
         let (angles, params) = if has_params || (gate_type == GateType::Custom && param_count > 0) {
             let parsed =
-                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count)?;
+                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count);
             if trace_enabled {
                 trace!(
                     "parse_gate_command: Parsed parameters: angles={:?}, params={:?}",
@@ -677,6 +697,22 @@ mod tests {
     }
 
     #[test]
+    fn angle_words_precede_unchanged_classical_parameters() {
+        // No native gate currently mixes angles and non-angle parameters. Test
+        // the shared word decoder directly so future mixed gates keep the layout.
+        for fraction in [0, 1, u64::MAX] {
+            for param in [0.0_f64, -0.0, 1.25, f64::MAX, f64::INFINITY, f64::NAN] {
+                let mut payload = Vec::from(fraction.to_le_bytes());
+                payload.extend_from_slice(&param.to_le_bytes());
+                let (angles, params) =
+                    ByteMessage::parse_gate_parameters(&payload, 0, GateType::RZ, 2);
+                assert_eq!(angles.as_slice(), &[Angle64::new(fraction)]);
+                assert_eq!(params[0].to_bits(), param.to_bits());
+            }
+        }
+    }
+
+    #[test]
     fn strict_unaligned_payload_headers() {
         let mut storage = [0_u64; 2];
         let bytes = bytemuck::cast_slice_mut::<u64, u8>(&mut storage);
@@ -711,13 +747,13 @@ mod tests {
         bytes[0] = 0;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid batch header",
+            "Invalid batch magic 0x50454300; use a ByteMessage builder with magic 0x50454353",
         );
         bytes = ByteMessage::create_empty().into_bytes();
         bytes[4] = 255;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid batch header",
+            "Invalid ordinary batch version 255; expected version 5; encode an ordinary batch with the current ByteMessage builder",
         );
     }
 
@@ -989,8 +1025,8 @@ mod tests {
         let mut payload = Vec::new();
         payload.extend_from_slice(bytemuck::bytes_of(&header));
         payload.extend_from_slice(&0_u32.to_le_bytes());
-        payload.extend_from_slice(&0.5_f64.to_le_bytes());
-        payload.extend_from_slice(&0.25_f64.to_le_bytes());
+        payload.extend_from_slice(&pecos_core::radians!(0.5).fraction().to_le_bytes());
+        payload.extend_from_slice(&pecos_core::radians!(0.25).fraction().to_le_bytes());
 
         let mut builder = ByteMessageBuilder::new();
         builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
@@ -1035,7 +1071,7 @@ mod tests {
     fn quantum_ops_round_trips_custom_gate_angles() {
         let original = Gate::new(
             GateType::Custom,
-            vec![Angle64::from_radians(0.5), Angle64::from_radians(0.25)],
+            vec![pecos_core::radians!(0.5), pecos_core::radians!(0.25)],
             Vec::<f64>::new(),
             vec![QubitId(0), QubitId(1)],
         );

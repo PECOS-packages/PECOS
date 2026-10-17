@@ -810,14 +810,11 @@ fn metadata_preserves_consecutive_measurement_sampling() {
 }
 
 #[test]
-fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
+fn frame_rejects_angle_fields_without_unwinding_or_mutation() {
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[
-            Gate::x(&[0]),
-            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
-        ])
-        .as_bytes()
-        .to_vec();
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::radians!(0.5), &[0])])
+            .as_bytes()
+            .to_vec();
         let end = bytes.len();
         bytes[end - 8..].copy_from_slice(&invalid.to_le_bytes());
         let mut system = setup(GeneralNoiseModel::builder().with_p1(0.5), 17);
@@ -826,7 +823,14 @@ fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
             system.process(ByteMessage::new(&bytes))
         }));
         assert!(result.is_ok(), "admission must return an error, not unwind");
-        assert!(result.unwrap().is_err());
+        assert!(
+            result
+                .unwrap()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("unsupported frame gate fields")
+        );
         assert_rng_equal(&system, &before);
         assert_eq!(
             system
@@ -1018,18 +1022,19 @@ fn failed_host_readmission_requires_whole_host_reset() {
 }
 
 #[test]
-fn shared_parser_rejects_nonfinite_angles_without_panicking() {
-    for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        let mut bytes = message(&[
-            Gate::x(&[0]),
-            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
-        ])
-        .as_bytes()
-        .to_vec();
+fn shared_parser_preserves_all_angle_bit_patterns() {
+    for fraction in [
+        f64::NAN.to_bits(),
+        f64::INFINITY.to_bits(),
+        f64::NEG_INFINITY.to_bits(),
+    ] {
+        let mut bytes = message(&[Gate::x(&[0]), Gate::rz(pecos_core::Angle64::ZERO, &[0])])
+            .as_bytes()
+            .to_vec();
         let end = bytes.len();
-        bytes[end - 8..].copy_from_slice(&angle.to_le_bytes());
-        let result = std::panic::catch_unwind(|| ByteMessage::new(&bytes).quantum_ops());
-        assert!(matches!(result, Ok(Err(PecosError::Input(_)))));
+        bytes[end - 8..].copy_from_slice(&fraction.to_le_bytes());
+        let gates = ByteMessage::new(&bytes).quantum_ops().unwrap();
+        assert_eq!(gates[1].angles[0].fraction(), fraction);
     }
 }
 
@@ -1623,7 +1628,7 @@ fn sim_builder_reports_depolarizing_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+        matches!(error, PecosError::Input(message) if message == "uniform depolarizing probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1636,7 +1641,7 @@ fn sim_builder_reports_biased_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+        matches!(error, PecosError::Input(message) if message == "uniform biased depolarizing probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1675,7 +1680,7 @@ fn sim_builder_reports_depolarizing_builder_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+        matches!(error, PecosError::Input(message) if message == "uniform depolarizing probability must be between 0.0 and 1.0, got NaN; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1691,6 +1696,6 @@ fn sim_builder_reports_biased_builder_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability must be between 0.0 and 1.0")
+        matches!(error, PecosError::Input(message) if message == "uniform biased depolarizing probability must be between 0.0 and 1.0, got inf; supply a finite probability in 0.0..=1.0")
     );
 }

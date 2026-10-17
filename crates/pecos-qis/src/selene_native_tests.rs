@@ -1235,7 +1235,7 @@ mod measurement_followups {
         }
     }
 
-    fn assert_forced_native_drain_at_v3_bound(extra: usize) {
+    fn assert_forced_native_drain_at_v6_bound(extra: usize) {
         use crate::scheduled_transport::{ScheduledTransport, encode_mode};
         use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
         let count = (MAX_SCHEDULE_BYTES - 16) / 40;
@@ -1248,7 +1248,7 @@ mod measurement_followups {
             if extra == 0 {
                 let batches = result.unwrap();
                 assert_eq!(batches.len(), count);
-                let (wire, _) = encode_mode(batches, 0, ScheduledTransport::V3).unwrap();
+                let (wire, _) = encode_mode(batches, 0, ScheduledTransport::V6).unwrap();
                 assert_eq!(wire.as_bytes().len(), 16 + count * 40);
             } else {
                 let Err(error) = result else {
@@ -1264,18 +1264,18 @@ mod measurement_followups {
                     error
                 );
             }
-            assert_eq!(PAD.get(), 0, "must reach the V3 boundary");
+            assert_eq!(PAD.get(), 0, "must reach the V6 boundary");
         });
     }
 
     #[test]
-    fn forced_native_drain_just_under_v3_bound_succeeds() {
-        assert_forced_native_drain_at_v3_bound(0);
+    fn forced_native_drain_just_under_v6_bound_succeeds() {
+        assert_forced_native_drain_at_v6_bound(0);
     }
 
     #[test]
     fn forced_native_drain_has_aggregate_budget() {
-        assert_forced_native_drain_at_v3_bound(1);
+        assert_forced_native_drain_at_v6_bound(1);
     }
 
     #[test]

@@ -57,9 +57,9 @@ struct ObservablePropagationWork<'a> {
 /// to create complete influence maps suitable for noisy sampling.
 /// Re-export `PauliString` as the type used for Pauli operator tracking.
 ///
-/// All circuit annotations (detectors, observables, tracked Paulis) are Pauli
-/// strings tracked for flipping via backward propagation. The difference
-/// is role and readout:
+/// Detectors and observables are measurement parities. Each observable term
+/// propagates its measured Pauli from its own measurement node. Tracked Paulis
+/// instead specify one operator at a circuit point:
 ///
 /// | Kind | Meaning | Readout | API |
 /// |------|---------|---------|-----|
@@ -220,33 +220,51 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Add a tracked X Pauli (X on all specified qubits).
-    #[must_use]
-    pub fn with_x(mut self, qubits: &[usize]) -> Self {
-        self.push_single_term_output(
-            DemOutputMetadata::tracked_pauli(PauliString::xs(qubits)),
-            None,
-        );
-        self
+    ///
+    /// # Errors
+    /// Returns an error if `qubits` contains a repeated qubit.
+    pub fn with_x(mut self, qubits: &[usize]) -> Result<Self, pecos_core::ParsePauliStringError> {
+        let pauli = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            qubits
+                .iter()
+                .map(|&q| (pecos_core::Pauli::X, pecos_core::QubitId(q)))
+                .collect(),
+        )?;
+        self.push_single_term_output(pauli, None);
+        Ok(self)
     }
 
     /// Add a tracked Z Pauli (Z on all specified qubits).
-    #[must_use]
-    pub fn with_z(mut self, qubits: &[usize]) -> Self {
-        self.push_single_term_output(
-            DemOutputMetadata::tracked_pauli(PauliString::zs(qubits)),
-            None,
-        );
-        self
+    ///
+    /// # Errors
+    /// Returns an error if `qubits` contains a repeated qubit.
+    pub fn with_z(mut self, qubits: &[usize]) -> Result<Self, pecos_core::ParsePauliStringError> {
+        let pauli = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            qubits
+                .iter()
+                .map(|&q| (pecos_core::Pauli::Z, pecos_core::QubitId(q)))
+                .collect(),
+        )?;
+        self.push_single_term_output(pauli, None);
+        Ok(self)
     }
 
     /// Add a tracked Y Pauli (Y on all specified qubits).
-    #[must_use]
-    pub fn with_y(mut self, qubits: &[usize]) -> Self {
-        self.push_single_term_output(
-            DemOutputMetadata::tracked_pauli(PauliString::ys(qubits)),
-            None,
-        );
-        self
+    ///
+    /// # Errors
+    /// Returns an error if `qubits` contains a repeated qubit.
+    pub fn with_y(mut self, qubits: &[usize]) -> Result<Self, pecos_core::ParsePauliStringError> {
+        let pauli = PauliString::with_phase_and_paulis(
+            pecos_core::QuarterPhase::PlusOne,
+            qubits
+                .iter()
+                .map(|&q| (pecos_core::Pauli::Y, pecos_core::QubitId(q)))
+                .collect(),
+        )?;
+        self.push_single_term_output(pauli, None);
+        Ok(self)
     }
 
     /// Add a Pauli check: track whether this Pauli string flips due to faults.
@@ -270,16 +288,15 @@ impl<'a> InfluenceBuilder<'a> {
     /// ```
     #[must_use]
     pub fn with_tracked_pauli(mut self, pauli: PauliString) -> Self {
-        self.push_single_term_output(DemOutputMetadata::tracked_pauli(pauli), None);
+        self.push_single_term_output(pauli, None);
         self
     }
 
-    fn push_single_term_output(&mut self, metadata: DemOutputMetadata, start_node: Option<usize>) {
+    fn push_single_term_output(&mut self, mut pauli: PauliString, start_node: Option<usize>) {
+        pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+        let metadata = DemOutputMetadata::tracked_pauli(pauli.clone());
         self.non_detector_outputs.push(NonDetectorOutputTarget {
-            terms: vec![PauliPropagationTerm {
-                pauli: metadata.pauli.clone(),
-                start_node,
-            }],
+            terms: vec![PauliPropagationTerm { pauli, start_node }],
             metadata,
         });
     }
@@ -288,7 +305,7 @@ impl<'a> InfluenceBuilder<'a> {
     ///
     /// Observable annotations define logical observables via measurement records.
     /// For backward propagation, each referenced measurement contributes its
-    /// own Z-type propagation term starting at that measurement node. The terms
+    /// own measured-Pauli propagation term starting at that measurement node. The terms
     /// accumulate into the same observable `L<n>` output.
     ///
     /// Tracked-Pauli annotations have a corresponding `TrackedPauliMeta` node
@@ -311,9 +328,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// terms.
     ///
     /// # Panics
-    ///
-    /// Panics if a resolved measurement names a missing gate, violating
-    /// `DagCircuit::find_measurement`'s measurement-reference invariant.
+    /// Panics if an internally constructed single-qubit Pauli contains duplicate entries.
     pub fn with_circuit_annotations(mut self) -> Result<Self, AnnotationIngestError> {
         let circuit = self.dag;
         // Meta gates are inserted when their annotations are added, so on an
@@ -335,42 +350,43 @@ impl<'a> InfluenceBuilder<'a> {
                     for &meas_id in measurement_ids {
                         // Each id seeds its measurement basis on its own qubit,
                         // including when it belongs to a batched node.
-                        let mref = circuit.find_measurement(meas_id).map_err(|source| {
-                            AnnotationIngestError::ObservableRefUnresolved {
-                                annotation_index,
-                                meas_id,
-                                source,
-                            }
-                        })?;
-                        let gate = circuit.gate(mref.node).expect("resolved measurement node");
-                        let pauli = if gate.gate_type == pecos_quantum::GateType::MX {
-                            PauliString::xs(&[mref.qubit.index()])
-                        } else {
-                            PauliString::zs(&[mref.qubit.index()])
+                        let unresolved = |source| AnnotationIngestError::ObservableRefUnresolved {
+                            annotation_index,
+                            meas_id,
+                            source,
                         };
+                        let mref = circuit.find_measurement(meas_id).map_err(unresolved)?;
+                        let (basis, qubit) = circuit.measurement_basis(mref).map_err(unresolved)?;
+                        let pauli = PauliString::with_phase_and_paulis(
+                            pecos_core::QuarterPhase::PlusOne,
+                            vec![(basis, qubit)],
+                        )
+                        .expect("a single measured Pauli has exactly one qubit");
                         terms.push(PauliPropagationTerm {
                             pauli,
                             start_node: Some(mref.node),
                         });
                     }
                     ingested.push(NonDetectorOutputTarget {
-                        metadata: DemOutputMetadata::observable(ann.pauli.clone())
+                        metadata: DemOutputMetadata::observable()
                             .with_optional_label(ann.label.clone()),
                         terms,
                     });
                 }
-                pecos_quantum::AnnotationKind::TrackedPauli => {
+                pecos_quantum::AnnotationKind::TrackedPauli { pauli } => {
                     let Some(meta_node) = meta_nodes.get(operator_idx).copied() else {
                         return Err(AnnotationIngestError::TrackedPauliWithoutMetaNode {
                             annotation_index,
                         });
                     };
                     operator_idx += 1;
-                    let metadata = DemOutputMetadata::tracked_pauli(ann.pauli.clone())
+                    let mut pauli = pauli.clone();
+                    pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
+                    let metadata = DemOutputMetadata::tracked_pauli(pauli.clone())
                         .with_optional_label(ann.label.clone());
                     ingested.push(NonDetectorOutputTarget {
                         terms: vec![PauliPropagationTerm {
-                            pauli: metadata.pauli.clone(),
+                            pauli,
                             start_node: Some(meta_node),
                         }],
                         metadata,
@@ -1387,7 +1403,7 @@ mod tests {
         dag.cx(&[(0, 2)]);
         dag.mz(&[2]);
 
-        let builder = InfluenceBuilder::new(&dag).unwrap().with_z(&[0]); // Track Z logical on qubit 0
+        let builder = InfluenceBuilder::new(&dag).unwrap().with_z(&[0]).unwrap(); // Track Z logical on qubit 0
 
         let map = builder.build().expect("circuit is replayable");
 
@@ -1401,12 +1417,34 @@ mod tests {
 
         let pauli =
             PauliString::from_paulis_with_phase(QuarterPhase::MinusI, &[Pauli::X, Pauli::Z]);
-        let metadata = DemOutputMetadata::tracked_pauli(pauli).with_label("xz");
+        let metadata = DemOutputMetadata::tracked_pauli(pauli.clone()).with_label("xz");
 
         assert_eq!(metadata.kind, DemOutputKind::TrackedPauli);
         assert_eq!(metadata.label.as_deref(), Some("xz"));
-        assert_eq!(metadata.pauli.phase(), QuarterPhase::PlusOne);
-        assert_eq!(metadata.pauli.to_sparse_str(), "+X0 Z1");
+        assert_eq!(
+            metadata.pauli.as_ref().unwrap().phase(),
+            QuarterPhase::PlusOne
+        );
+        assert_eq!(metadata.pauli.as_ref().unwrap().to_sparse_str(), "+X0 Z1");
+
+        let mut dag = DagCircuit::new();
+        dag.add_annotation(pecos_quantum::PauliAnnotation {
+            kind: pecos_quantum::AnnotationKind::TrackedPauli {
+                pauli: pauli.clone(),
+            },
+            label: None,
+        });
+        let builder = InfluenceBuilder::new(&dag)
+            .unwrap()
+            .with_tracked_pauli(pauli)
+            .with_circuit_annotations()
+            .unwrap();
+        assert_eq!(builder.non_detector_outputs.len(), 2);
+        for target in &builder.non_detector_outputs {
+            assert_eq!(target.terms[0].pauli.phase(), QuarterPhase::PlusOne);
+            assert_eq!(target.terms[0].pauli.to_sparse_str(), "+X0 Z1");
+            assert_eq!(target.metadata.pauli.as_ref(), Some(&target.terms[0].pauli));
+        }
     }
 
     #[test]
@@ -1443,7 +1481,20 @@ mod tests {
         // Tracked Pauli second
         assert_eq!(map.dem_output_metadata[1].kind, DemOutputKind::TrackedPauli);
         assert_eq!(map.dem_output_metadata[1].label.as_deref(), Some("track_x"));
-        assert_eq!(map.dem_output_metadata[1].pauli.to_sparse_str(), "+X0");
+        assert!(map.dem_output_metadata[0].pauli.is_none());
+        assert!(
+            super::super::dem_builder::DemOutput::from_metadata(0, &map.dem_output_metadata[0])
+                .pauli
+                .is_none()
+        );
+        assert_eq!(
+            map.dem_output_metadata[1]
+                .pauli
+                .as_ref()
+                .unwrap()
+                .to_sparse_str(),
+            "+X0"
+        );
     }
 
     #[test]
@@ -1704,7 +1755,6 @@ mod tests {
         dag.pz(&[0]);
         dag.mz(&[0]);
         dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
                 measurement_ids: vec![pecos_core::MeasId::from_raw(99)],
             },
@@ -1739,7 +1789,6 @@ mod tests {
         dag.try_add_gate(leaked).expect("gate is valid");
         dag.mz(&[1]);
         dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
                 measurement_ids: vec![pecos_core::MeasId::from_raw(7)],
             },

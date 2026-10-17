@@ -22,11 +22,11 @@
 //! use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 //!
 //! let noise = CompositeNoiseModelBuilder::new()
-//!     .with_p1(0.001)                    // 0.1% single-qubit gate error
-//!     .with_p2(0.01)                     // 1% two-qubit gate error
-//!     .with_p_meas(0.02, 0.03)           // Asymmetric measurement error
-//!     .with_leakage(0.001, 0.1)          // Leakage and seepage
-//!     .build();
+//!     .with_p1(0.001).unwrap()                    // 0.1% single-qubit gate error
+//!     .with_p2(0.01).unwrap()                     // 1% two-qubit gate error
+//!     .with_p_meas(0.02, 0.03).unwrap()           // Asymmetric measurement error
+//!     .with_leakage(0.001, 0.1).unwrap()          // Leakage and seepage
+//!     .build().unwrap();
 //! ```
 //!
 //! # Advantages over `GeneralNoiseModelBuilder`
@@ -42,47 +42,15 @@ use super::channel::{
 use super::prelude::*;
 use crate::command::GateType;
 use crate::noise::two_qubit::AngleScaling;
+use crate::noise::validation::{
+    ValidationError, ValidationResult, validate_angle_rate, validate_duration,
+    validate_probability, validate_rate as checked_rate, validate_scaled_angle_rate,
+};
 use crate::noise::{
     ComposableNoiseModel, CrosstalkTransitions, IdleChannel, SingleQubitEmissionWeights,
     TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use pecos_core::TimeScale;
-
-// --- Validation helpers ---
-
-/// Validate that a probability is in [0.0, 1.0] and warn if not.
-/// Returns the clamped value.
-fn validate_probability(value: f64, param_name: &str) -> f64 {
-    if value < 0.0 {
-        eprintln!("Warning: {param_name} = {value} is negative, clamping to 0.0");
-        0.0
-    } else if value > 1.0 {
-        eprintln!("Warning: {param_name} = {value} exceeds 1.0, clamping to 1.0");
-        1.0
-    } else if value.is_nan() {
-        eprintln!("Warning: {param_name} is NaN, setting to 0.0");
-        0.0
-    } else {
-        value
-    }
-}
-
-/// Validate that a rate is non-negative and warn if not.
-/// Returns the clamped value.
-fn validate_rate(value: f64, param_name: &str) -> f64 {
-    if value < 0.0 {
-        eprintln!("Warning: {param_name} = {value} is negative, clamping to 0.0");
-        0.0
-    } else if value.is_nan() {
-        eprintln!("Warning: {param_name} is NaN, setting to 0.0");
-        0.0
-    } else if value.is_infinite() {
-        eprintln!("Warning: {param_name} is infinite, clamping to f64::MAX");
-        f64::MAX
-    } else {
-        value
-    }
-}
 
 /// Builder for creating composite-based noise models.
 ///
@@ -95,14 +63,17 @@ fn validate_rate(value: f64, param_name: &str) -> f64 {
 /// You can mix composite channels with traditional channels using [`with_channel`]:
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 /// use pecos_neo::noise::MeasurementChannel;
 ///
 /// let model = CompositeNoiseModelBuilder::new()
-///     .with_p1(0.001)                              // Flow 1Q channel
-///     .with_p2(0.01)                               // Flow 2Q channel
-///     .with_channel(MeasurementChannel::symmetric(0.02))  // Traditional channel
-///     .build();
+///     .with_p1(0.001)?                              // Flow 1Q channel
+///     .with_p2(0.01)?                               // Flow 2Q channel
+///     .with_channel(MeasurementChannel::symmetric(0.02)?)  // Traditional channel
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// [`with_channel`]: Self::with_channel
@@ -214,10 +185,12 @@ impl CompositeNoiseModelBuilder {
     ///
     /// With probability `p`, a random Pauli error is applied after each
     /// single-qubit gate.
-    #[must_use]
-    pub fn with_p1(mut self, p: f64) -> Self {
-        self.p1 = validate_probability(p, "p1");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p1(mut self, p: f64) -> ValidationResult<Self> {
+        self.p1 = validate_probability(p, "p1")?;
+        Ok(self)
     }
 
     /// Set the fraction of single-qubit errors that cause leakage (emission).
@@ -225,30 +198,37 @@ impl CompositeNoiseModelBuilder {
     /// When an error occurs:
     /// - With probability `ratio`, the qubit leaks
     /// - With probability `1 - ratio`, a Pauli error is applied
-    #[must_use]
-    pub fn with_p1_emission_ratio(mut self, ratio: f64) -> Self {
-        self.p1_emission_ratio = validate_probability(ratio, "p1_emission_ratio");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p1_emission_ratio(mut self, ratio: f64) -> ValidationResult<Self> {
+        self.p1_emission_ratio = validate_probability(ratio, "p1_emission_ratio")?;
+        Ok(self)
     }
 
     /// Set the seepage probability for leaked qubits during single-qubit gates.
     ///
     /// When a leaked qubit undergoes a single-qubit gate, with probability `p`
     /// it seeps back to the computational basis (with a random Pauli applied).
-    #[must_use]
-    pub fn with_p1_seepage(mut self, p: f64) -> Self {
-        self.p1_seepage = validate_probability(p, "p1_seepage");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p1_seepage(mut self, p: f64) -> ValidationResult<Self> {
+        self.p1_seepage = validate_probability(p, "p1_seepage")?;
+        Ok(self)
     }
 
     /// Set custom Pauli weights for single-qubit gate errors.
     ///
     /// By default, uniform weights (1/3, 1/3, 1/3) are used.
     /// Use this to bias towards specific error types.
-    #[must_use]
-    pub fn with_p1_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p1_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.normalized()?;
         self.p1_pauli_weights = Some(weights);
-        self
+        Ok(self)
     }
 
     /// Set custom emission model for single-qubit gate emission errors.
@@ -263,22 +243,31 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::SingleQubitEmissionWeights;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // 25% each for X, Y, Z Pauli errors, 25% leakage
-    /// let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25);
+    /// let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25)?;
     ///
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p1(0.01)
-    ///     .with_p1_emission_ratio(0.5)  // 50% of errors are emission
-    ///     .with_p1_emission_model(emission)
-    ///     .build();
+    ///     .with_p1(0.01)?
+    ///     .with_p1_emission_ratio(0.5)?  // 50% of errors are emission
+    ///     .with_p1_emission_model(emission)?
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn with_p1_emission_model(mut self, model: SingleQubitEmissionWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p1_emission_model(
+        mut self,
+        model: SingleQubitEmissionWeights,
+    ) -> ValidationResult<Self> {
+        model.validate()?;
         self.p1_emission_model = Some(model);
-        self
+        Ok(self)
     }
 
     // --- Two-qubit gate parameters ---
@@ -287,24 +276,30 @@ impl CompositeNoiseModelBuilder {
     ///
     /// With probability `p`, a random two-qubit Pauli error is applied after
     /// each two-qubit gate. The error is applied independently to each qubit.
-    #[must_use]
-    pub fn with_p2(mut self, p: f64) -> Self {
-        self.p2 = validate_probability(p, "p2");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p2(mut self, p: f64) -> ValidationResult<Self> {
+        self.p2 = validate_probability(p, "p2")?;
+        Ok(self)
     }
 
     /// Set the fraction of two-qubit errors that cause leakage (emission).
-    #[must_use]
-    pub fn with_p2_emission_ratio(mut self, ratio: f64) -> Self {
-        self.p2_emission_ratio = validate_probability(ratio, "p2_emission_ratio");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p2_emission_ratio(mut self, ratio: f64) -> ValidationResult<Self> {
+        self.p2_emission_ratio = validate_probability(ratio, "p2_emission_ratio")?;
+        Ok(self)
     }
 
     /// Set the seepage probability for leaked qubits during two-qubit gates.
-    #[must_use]
-    pub fn with_p2_seepage(mut self, p: f64) -> Self {
-        self.p2_seepage = validate_probability(p, "p2_seepage");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p2_seepage(mut self, p: f64) -> ValidationResult<Self> {
+        self.p2_seepage = validate_probability(p, "p2_seepage")?;
+        Ok(self)
     }
 
     /// Set custom Pauli weights for two-qubit gate errors (independent per qubit).
@@ -314,10 +309,13 @@ impl CompositeNoiseModelBuilder {
     ///
     /// For correlated two-qubit Pauli errors (e.g., XX, ZZ), use
     /// `with_p2_pauli_model()` instead.
-    #[must_use]
-    pub fn with_p2_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p2_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.normalized()?;
         self.p2_pauli_weights = Some(weights);
-        self
+        Ok(self)
     }
 
     /// Set correlated two-qubit Pauli model for two-qubit gate errors.
@@ -330,19 +328,25 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::TwoQubitPauliWeights;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // ZZ-biased errors (common in certain gate implementations)
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p2(0.01)
-    ///     .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.5))
-    ///     .build();
+    ///     .with_p2(0.01)?
+    ///     .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.5)?)?
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn with_p2_pauli_model(mut self, model: TwoQubitPauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p2_pauli_model(mut self, model: TwoQubitPauliWeights) -> ValidationResult<Self> {
+        model.validate()?;
         self.p2_pauli_model = Some(model);
-        self
+        Ok(self)
     }
 
     /// Set custom emission model for two-qubit gate emission errors.
@@ -357,20 +361,29 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::TwoQubitEmissionWeights;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
     /// // Use uniform weights with leakage
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p2(0.01)
-    ///     .with_p2_emission_ratio(0.5)
-    ///     .with_p2_emission_model(TwoQubitEmissionWeights::uniform_with_leakage())
-    ///     .build();
+    ///     .with_p2(0.01)?
+    ///     .with_p2_emission_ratio(0.5)?
+    ///     .with_p2_emission_model(TwoQubitEmissionWeights::uniform_with_leakage())?
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn with_p2_emission_model(mut self, model: TwoQubitEmissionWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p2_emission_model(
+        mut self,
+        model: TwoQubitEmissionWeights,
+    ) -> ValidationResult<Self> {
+        model.validate()?;
         self.p2_emission_model = Some(model);
-        self
+        Ok(self)
     }
 
     /// Set angle-dependent scaling for two-qubit gates.
@@ -381,13 +394,16 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_neo::noise::two_qubit::AngleScaling;
     ///
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p2(0.01)
+    ///     .with_p2(0.01)?
     ///     .with_p2_angle_scaling(AngleScaling::linear())  // Error ~ |theta/pi|
-    ///     .build();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_p2_angle_scaling(mut self, scaling: AngleScaling) -> Self {
@@ -399,10 +415,13 @@ impl CompositeNoiseModelBuilder {
     ///
     /// A duration of zero disables these sites. Nonzero sites receive all
     /// configured linear and quadratic idle mechanisms.
-    #[must_use]
-    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
-        self.idle_after_2q = validate_rate(duration, "idle_after_2q");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_after_2q(mut self, duration: f64) -> ValidationResult<Self> {
+        validate_duration(duration, "duration")?;
+        self.idle_after_2q = duration;
+        Ok(self)
     }
 
     // --- Preparation parameters ---
@@ -410,27 +429,33 @@ impl CompositeNoiseModelBuilder {
     /// Set the preparation error probability.
     ///
     /// With probability `p`, an X error is applied after preparation.
-    #[must_use]
-    pub fn with_p_prep(mut self, p: f64) -> Self {
-        self.p_prep = validate_probability(p, "p_prep");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_prep(mut self, p: f64) -> ValidationResult<Self> {
+        self.p_prep = validate_probability(p, "p_prep")?;
+        Ok(self)
     }
 
     /// Set the fraction of preparation errors that cause leakage.
-    #[must_use]
-    pub fn with_p_prep_leak_ratio(mut self, ratio: f64) -> Self {
-        self.p_prep_leak_ratio = validate_probability(ratio, "p_prep_leak_ratio");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_prep_leak_ratio(mut self, ratio: f64) -> ValidationResult<Self> {
+        self.p_prep_leak_ratio = validate_probability(ratio, "p_prep_leak_ratio")?;
+        Ok(self)
     }
 
     /// Set preparation crosstalk probability.
     ///
     /// With probability `p`, each other active qubit receives a random Pauli
     /// error during preparation.
-    #[must_use]
-    pub fn with_p_prep_crosstalk(mut self, p: f64) -> Self {
-        self.p_prep_crosstalk = validate_probability(p, "p_prep_crosstalk");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_prep_crosstalk(mut self, p: f64) -> ValidationResult<Self> {
+        self.p_prep_crosstalk = validate_probability(p, "p_prep_crosstalk")?;
+        Ok(self)
     }
 
     // --- Measurement parameters ---
@@ -439,20 +464,24 @@ impl CompositeNoiseModelBuilder {
     ///
     /// - `p_0_to_1`: Probability of reading 1 when the state is 0
     /// - `p_1_to_0`: Probability of reading 0 when the state is 1
-    #[must_use]
-    pub fn with_p_meas(mut self, p_0_to_1: f64, p_1_to_0: f64) -> Self {
-        self.p_meas_0 = validate_probability(p_0_to_1, "p_meas_0");
-        self.p_meas_1 = validate_probability(p_1_to_0, "p_meas_1");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_meas(mut self, p_0_to_1: f64, p_1_to_0: f64) -> ValidationResult<Self> {
+        self.p_meas_0 = validate_probability(p_0_to_1, "p_meas_0")?;
+        self.p_meas_1 = validate_probability(p_1_to_0, "p_meas_1")?;
+        Ok(self)
     }
 
     /// Set symmetric measurement error probability.
-    #[must_use]
-    pub fn with_p_meas_symmetric(mut self, p: f64) -> Self {
-        let validated = validate_probability(p, "p_meas");
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_meas_symmetric(mut self, p: f64) -> ValidationResult<Self> {
+        let validated = validate_probability(p, "p_meas")?;
         self.p_meas_0 = validated;
         self.p_meas_1 = validated;
-        self
+        Ok(self)
     }
 
     // --- Crosstalk parameters ---
@@ -461,10 +490,12 @@ impl CompositeNoiseModelBuilder {
     ///
     /// With probability `p`, each other active qubit receives a random Pauli error.
     /// This is a convenience method equivalent to `with_p_meas_crosstalk(p, 0.0)`.
-    #[must_use]
-    pub fn with_p_crosstalk(mut self, p: f64) -> Self {
-        self.p_meas_crosstalk_global = validate_probability(p, "p_meas_crosstalk_global");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_crosstalk(mut self, p: f64) -> ValidationResult<Self> {
+        self.p_meas_crosstalk_global = validate_probability(p, "p_meas_crosstalk_global")?;
+        Ok(self)
     }
 
     /// Set measurement crosstalk probabilities.
@@ -474,11 +505,13 @@ impl CompositeNoiseModelBuilder {
     ///
     /// Note: Local crosstalk requires a neighbor function to be provided
     /// via `with_p_meas_crosstalk_local_fn`.
-    #[must_use]
-    pub fn with_p_meas_crosstalk(mut self, global: f64, local: f64) -> Self {
-        self.p_meas_crosstalk_global = validate_probability(global, "p_meas_crosstalk_global");
-        self.p_meas_crosstalk_local = validate_probability(local, "p_meas_crosstalk_local");
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_p_meas_crosstalk(mut self, global: f64, local: f64) -> ValidationResult<Self> {
+        self.p_meas_crosstalk_global = validate_probability(global, "p_meas_crosstalk_global")?;
+        self.p_meas_crosstalk_local = validate_probability(local, "p_meas_crosstalk_local")?;
+        Ok(self)
     }
 
     /// Set the neighbor function for local measurement crosstalk.
@@ -502,9 +535,9 @@ impl CompositeNoiseModelBuilder {
     /// }
     ///
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p_meas_crosstalk(0.001, 0.01)
+    ///     .with_p_meas_crosstalk(0.001, 0.01).unwrap()
     ///     .with_p_meas_crosstalk_local_fn(linear_neighbors)
-    ///     .build();
+    ///     .build().unwrap();
     /// ```
     #[must_use]
     pub fn with_p_meas_crosstalk_local_fn(mut self, neighbor_fn: NeighborFn) -> Self {
@@ -525,6 +558,7 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::CrosstalkTransitions;
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     ///
@@ -532,17 +566,25 @@ impl CompositeNoiseModelBuilder {
     /// let transitions = CrosstalkTransitions::custom(
     ///     0.3, 0.2, 0.5,  // from 0: 30% stay, 20% flip, 50% leak
     ///     0.4, 0.5, 0.1,  // from 1: 40% stay, 50% flip, 10% leak
-    /// );
+    /// )?;
     ///
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p_crosstalk(0.01)
-    ///     .with_p_meas_crosstalk_model(transitions)
-    ///     .build();
+    ///     .with_p_crosstalk(0.01)?
+    ///     .with_p_meas_crosstalk_model(transitions)?
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn with_p_meas_crosstalk_model(mut self, transitions: CrosstalkTransitions) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p_meas_crosstalk_model(
+        mut self,
+        transitions: CrosstalkTransitions,
+    ) -> ValidationResult<Self> {
+        transitions.validate()?;
         self.p_meas_crosstalk_model = Some(transitions);
-        self
+        Ok(self)
     }
 
     // --- MeasureLeaked handling ---
@@ -568,10 +610,13 @@ impl CompositeNoiseModelBuilder {
     /// `p = rate * duration`
     ///
     /// Units depend on the simulation's time units.
-    #[must_use]
-    pub fn with_p_idle_linear(mut self, rate_per_time_unit: f64) -> Self {
-        self.p_idle_linear_rate = validate_rate(rate_per_time_unit, "p_idle_linear_rate");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_p_idle_linear(mut self, rate_per_time_unit: f64) -> ValidationResult<Self> {
+        checked_rate(rate_per_time_unit, "rate_per_time_unit")?;
+        self.p_idle_linear_rate = rate_per_time_unit;
+        Ok(self)
     }
 
     /// Set the quadratic idle noise rate (T2-like dephasing).
@@ -581,10 +626,20 @@ impl CompositeNoiseModelBuilder {
     ///
     /// This models coherent dephasing converted to stochastic errors.
     /// Use `with_p_idle_coherent(true)` to use actual coherent RZ rotations instead.
-    #[must_use]
-    pub fn with_p_idle_quadratic(mut self, rate_per_time_unit: f64) -> Self {
-        self.p_idle_quadratic_rate = validate_rate(rate_per_time_unit, "p_idle_quadratic_rate");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_p_idle_quadratic(mut self, rate_per_time_unit: f64) -> ValidationResult<Self> {
+        validate_angle_rate(rate_per_time_unit, "rate_per_time_unit")?;
+        validate_scaled_angle_rate(
+            rate_per_time_unit,
+            self.p_idle_coherent_to_incoherent_factor,
+            "rate_per_time_unit",
+            "coherent_to_incoherent_factor",
+        )?;
+        self.p_idle_quadratic_rate = rate_per_time_unit;
+        Ok(self)
     }
 
     /// Set whether to use coherent dephasing for quadratic idle noise.
@@ -605,31 +660,54 @@ impl CompositeNoiseModelBuilder {
     ///
     /// When modeling coherent dephasing using stochastic errors, this factor
     /// scales the effective rate. Default is 1.0 (no adjustment).
-    #[must_use]
-    pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> Self {
-        self.p_idle_coherent_to_incoherent_factor =
-            validate_rate(factor, "coherent_to_incoherent_factor");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_coherent_to_incoherent_factor(mut self, factor: f64) -> ValidationResult<Self> {
+        checked_rate(factor, "factor")?;
+        validate_scaled_angle_rate(
+            self.p_idle_quadratic_rate,
+            factor,
+            "rate_per_time_unit",
+            "coherent_to_incoherent_factor",
+        )?;
+        self.p_idle_coherent_to_incoherent_factor = factor;
+        Ok(self)
     }
 
     /// Set both T1 and T2 idle noise rates.
     ///
     /// Convenience method for setting both linear (T1) and quadratic (T2) rates.
-    #[must_use]
-    pub fn with_idle_noise(mut self, t1_rate: f64, t2_rate: f64) -> Self {
-        self.p_idle_linear_rate = validate_rate(t1_rate, "p_idle_linear_rate");
-        self.p_idle_quadratic_rate = validate_rate(t2_rate, "p_idle_quadratic_rate");
-        self
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_idle_noise(mut self, t1_rate: f64, t2_rate: f64) -> ValidationResult<Self> {
+        checked_rate(t1_rate, "t1_rate")?;
+        validate_angle_rate(t2_rate, "t2_rate")?;
+        self.p_idle_linear_rate = t1_rate;
+        validate_scaled_angle_rate(
+            t2_rate,
+            self.p_idle_coherent_to_incoherent_factor,
+            "t2_rate",
+            "coherent_to_incoherent_factor",
+        )?;
+        self.p_idle_quadratic_rate = t2_rate;
+        Ok(self)
     }
 
     /// Set custom Pauli weights for linear (T1) idle noise.
     ///
     /// By default, T1 noise applies random Pauli errors with uniform distribution.
     /// Use this to bias towards specific error types (e.g., Z-only for pure dephasing).
-    #[must_use]
-    pub fn with_p_idle_linear_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p_idle_linear_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.normalized()?;
         self.p_idle_linear_pauli_weights = Some(weights);
-        self
+        Ok(self)
     }
 
     // --- Leakage convenience methods ---
@@ -638,15 +716,17 @@ impl CompositeNoiseModelBuilder {
     ///
     /// - `p_leak`: Fraction of errors that cause leakage
     /// - `p_seep`: Probability of seepage when a leaked qubit is gated
-    #[must_use]
-    pub fn with_leakage(mut self, p_leak: f64, p_seep: f64) -> Self {
-        let leak = validate_probability(p_leak, "p_leak");
-        let seep = validate_probability(p_seep, "p_seep");
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_leakage(mut self, p_leak: f64, p_seep: f64) -> ValidationResult<Self> {
+        let leak = validate_probability(p_leak, "p_leak")?;
+        let seep = validate_probability(p_seep, "p_seep")?;
         self.p1_emission_ratio = leak;
         self.p2_emission_ratio = leak;
         self.p1_seepage = seep;
         self.p2_seepage = seep;
-        self
+        Ok(self)
     }
 
     /// Set the leakage scale factor.
@@ -659,10 +739,12 @@ impl CompositeNoiseModelBuilder {
     ///
     /// This is useful for comparing circuit performance with and without leakage
     /// effects while maintaining the same overall error rate.
-    #[must_use]
-    pub fn with_leakage_scale(mut self, scale: f64) -> Self {
-        self.leakage_scale = scale.clamp(0.0, 1.0);
-        self
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn with_leakage_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        self.leakage_scale = validate_probability(scale, "leakage_scale")?;
+        Ok(self)
     }
 
     // --- Noiseless gates ---
@@ -696,8 +778,8 @@ impl CompositeNoiseModelBuilder {
     ///
     /// let noise = CompositeNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us
-    ///     .build();
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1=50us, T2=30us
+    ///     .build().unwrap();
     /// ```
     #[must_use]
     pub fn with_time_scale(mut self, scale: TimeScale) -> Self {
@@ -713,11 +795,6 @@ impl CompositeNoiseModelBuilder {
     /// and numerical compatibility note are documented by [`IdleChannel::from_t1_t2`]. The
     /// convenience configures the linear family and leaves the quadratic family unused.
     ///
-    /// # Panics
-    ///
-    /// Panics if `with_time_scale()` has not been called first, if either time is non-finite or not
-    /// greater than zero, or if `t2_seconds > 2 * t1_seconds`.
-    ///
     /// # Example
     ///
     /// ```
@@ -726,24 +803,29 @@ impl CompositeNoiseModelBuilder {
     ///
     /// let noise = CompositeNoiseModelBuilder::new()
     ///     .with_time_scale(TimeScale::NANOSECONDS)
-    ///     .with_idle_t1_t2(50e-6, 30e-6)  // T1=50us, T2=30us in seconds
-    ///     .build();
+    ///     .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1=50us, T2=30us in seconds
+    ///     .build().unwrap();
     /// ```
-    #[must_use]
-    pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> Self {
-        let scale = self
-            .time_scale
-            .expect("with_time_scale() must be called before with_idle_t1_t2()");
+    ///
+    /// # Errors
+    /// Rejects non-finite or non-positive times, T2 > 2 * T1, or a missing time scale.
+    pub fn with_idle_t1_t2(mut self, t1_seconds: f64, t2_seconds: f64) -> ValidationResult<Self> {
+        let scale = self.time_scale.ok_or_else(|| {
+            ValidationError::new(
+                "time_scale",
+                "with_time_scale() must be called before with_idle_t1_t2()",
+            )
+        })?;
 
-        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale);
+        let channel = IdleChannel::from_t1_t2_seconds(t1_seconds, t2_seconds, scale)?;
         self.p_idle_linear_rate = channel.linear_rate;
         self.p_idle_linear_pauli_weights = Some(PauliWeights::custom(
             channel.linear_weights.x,
             channel.linear_weights.y,
             channel.linear_weights.z,
-        ));
+        )?);
         self.p_idle_quadratic_rate = channel.quadratic_rate;
-        self
+        Ok(self)
     }
 
     // --- Custom channels ---
@@ -756,13 +838,16 @@ impl CompositeNoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
     /// use pecos_neo::noise::MeasurementChannel;
     ///
     /// let model = CompositeNoiseModelBuilder::new()
-    ///     .with_p1(0.001)  // Flow single-qubit noise
-    ///     .with_channel(MeasurementChannel::symmetric(0.02))  // Traditional channel
-    ///     .build();
+    ///     .with_p1(0.001)?  // Flow single-qubit noise
+    ///     .with_channel(MeasurementChannel::symmetric(0.02)?)  // Traditional channel
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_channel(mut self, channel: impl crate::noise::NoiseChannel + 'static) -> Self {
@@ -775,8 +860,13 @@ impl CompositeNoiseModelBuilder {
     /// Build the configured noise model.
     ///
     /// Returns a `ComposableNoiseModel` with composite-based channels.
-    #[must_use]
-    pub fn build(self) -> ComposableNoiseModel {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn build(self) -> ValidationResult<ComposableNoiseModel> {
+        if let Some(scaling) = self.p2_angle_scaling {
+            scaling.validate_for_probability(self.p2)?;
+        }
         let mut model = ComposableNoiseModel::new();
 
         // Set time scale if configured
@@ -791,28 +881,28 @@ impl CompositeNoiseModelBuilder {
 
         // Single-qubit gate noise
         if self.p1 > 0.0 {
-            let sq_noise = self.build_single_qubit_noise();
+            let sq_noise = self.build_single_qubit_noise()?;
             let channel = CompositeChannelBuilder::single_qubit("flow_sq", sq_noise);
             model = model.add_channel(channel);
         }
 
         // Two-qubit gate noise
         if self.p2 > 0.0 {
-            let tq_noise = self.build_two_qubit_noise();
+            let tq_noise = self.build_two_qubit_noise()?;
             let channel = CompositeChannelBuilder::two_qubit("flow_tq", tq_noise);
             model = model.add_channel(channel);
         }
 
         // Preparation noise
         if self.p_prep > 0.0 {
-            let prep_noise = self.build_preparation_noise();
+            let prep_noise = self.build_preparation_noise()?;
             let channel = CompositeChannelBuilder::preparation("flow_prep", prep_noise);
             model = model.add_channel(channel);
         }
 
         // Measurement noise
         if self.p_meas_0 > 0.0 || self.p_meas_1 > 0.0 {
-            let meas_noise = self.build_measurement_noise();
+            let meas_noise = self.build_measurement_noise()?;
             let channel = CompositeChannel::new("flow_meas", meas_noise)
                 .with_filter(CompositeEventFilter::AfterMeasurement);
             model = model.add_channel(channel);
@@ -820,7 +910,7 @@ impl CompositeNoiseModelBuilder {
 
         // Measurement crosstalk (global)
         if self.p_meas_crosstalk_global > 0.0 {
-            let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_global);
+            let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_global)?;
             let channel =
                 CompositeCrosstalkChannel::new("flow_meas_crosstalk_global", crosstalk_noise)
                     .responds_to_measurement()
@@ -831,25 +921,27 @@ impl CompositeNoiseModelBuilder {
         // Measurement crosstalk (local)
         if self.p_meas_crosstalk_local > 0.0 {
             if let Some(neighbor_fn) = self.p_meas_crosstalk_local_fn {
-                let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_local);
+                let crosstalk_noise = self.build_crosstalk_noise(self.p_meas_crosstalk_local)?;
                 let channel =
                     CompositeCrosstalkChannel::new("flow_meas_crosstalk_local", crosstalk_noise)
                         .responds_to_measurement()
                         .local(neighbor_fn);
                 model = model.add_channel(channel);
             } else {
-                eprintln!(
-                    "Warning: p_meas_crosstalk_local = {} is set but no neighbor function \
-                     was provided via with_p_meas_crosstalk_local_fn(). \
-                     Local crosstalk will be ignored.",
-                    self.p_meas_crosstalk_local
-                );
+                return Err(crate::noise::validation::ValidationError::new(
+                    "p_meas_crosstalk_local",
+                    "local measurement crosstalk requires a neighbor function",
+                )
+                .with_value(&self.p_meas_crosstalk_local)
+                .with_suggestion(
+                    "Set with_p_meas_crosstalk_local_fn() or set p_meas_crosstalk_local to 0",
+                ));
             }
         }
 
         // Preparation crosstalk
         if self.p_prep_crosstalk > 0.0 {
-            let crosstalk_noise = prob(self.p_prep_crosstalk, pauli());
+            let crosstalk_noise = prob(self.p_prep_crosstalk, pauli())?;
             let channel = CompositeCrosstalkChannel::new("flow_prep_crosstalk", crosstalk_noise)
                 .responds_to_preparation()
                 .global();
@@ -864,13 +956,13 @@ impl CompositeNoiseModelBuilder {
             let composite_weights = self
                 .p_idle_linear_pauli_weights
                 .unwrap_or_else(PauliWeights::uniform)
-                .normalized();
+                .normalized()?;
             let total = composite_weights.x + composite_weights.y + composite_weights.z;
             let linear_weights = crate::noise::PauliWeights::custom(
                 composite_weights.x / total,
                 composite_weights.y / total,
                 composite_weights.z / total,
-            );
+            )?;
             let channel = IdleChannel {
                 linear_rate: self.p_idle_linear_rate,
                 linear_weights,
@@ -908,7 +1000,7 @@ impl CompositeNoiseModelBuilder {
             model = model.add_boxed_channel(channel);
         }
 
-        model
+        Ok(model)
     }
 
     /// Check if any leakage is configured (accounting for `leakage_scale`).
@@ -923,15 +1015,15 @@ impl CompositeNoiseModelBuilder {
     /// Build crosstalk noise primitive.
     ///
     /// Uses the transition model if configured, otherwise uses uniform Pauli errors.
-    fn build_crosstalk_noise(&self, probability: f64) -> BoxSeq {
-        match self.p_meas_crosstalk_model {
+    fn build_crosstalk_noise(&self, probability: f64) -> ValidationResult<BoxSeq> {
+        Ok(match self.p_meas_crosstalk_model {
             Some(transitions) => {
-                seq![prob(probability, crosstalk_transitions(transitions)),]
+                seq![prob(probability, crosstalk_transitions(transitions)?)?,]
             }
             None => {
-                seq![prob(probability, pauli()),]
+                seq![prob(probability, pauli())?,]
             }
-        }
+        })
     }
 
     /// Build `MeasureLeaked` noise primitive.
@@ -946,23 +1038,23 @@ impl CompositeNoiseModelBuilder {
     }
 
     /// Build single-qubit gate noise primitive.
-    fn build_single_qubit_noise(&self) -> BoxSeq {
+    fn build_single_qubit_noise(&self) -> ValidationResult<BoxSeq> {
         use super::action::{Emission, Leak};
 
-        let pauli_action = self.make_p1_pauli();
+        let pauli_action = self.make_p1_pauli()?;
 
         // Apply leakage scale: effective_leak = emission_ratio * leakage_scale
         // When leakage_scale < 1.0, some emission events become depolarizing instead
         let effective_leak = self.p1_emission_ratio * self.leakage_scale;
 
         // Dispatch based on emission model configuration
-        match self.p1_emission_model {
+        Ok(match self.p1_emission_model {
             Some(weights) => {
-                let emission_action = Emission::with_weights(weights);
-                self.build_single_qubit_noise_inner(pauli_action, emission_action, effective_leak)
+                let emission_action = Emission::with_weights(weights)?;
+                self.build_single_qubit_noise_inner(pauli_action, emission_action, effective_leak)?
             }
-            None => self.build_single_qubit_noise_inner(pauli_action, Leak, effective_leak),
-        }
+            None => self.build_single_qubit_noise_inner(pauli_action, Leak, effective_leak)?,
+        })
     }
 
     /// Inner helper for building single-qubit noise with concrete types.
@@ -971,92 +1063,102 @@ impl CompositeNoiseModelBuilder {
         pauli_action: Pauli,
         emission_action: E,
         effective_leak: f64,
-    ) -> BoxSeq
+    ) -> ValidationResult<BoxSeq>
     where
         E: crate::noise::composite::Primitive + 'static,
     {
-        if self.p1_seepage > 0.0 || effective_leak > 0.0 {
+        Ok(if self.p1_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage: complex decision tree
             seq![prob(
                 self.p1,
                 when_leaked(
                     // Leaked qubit: seepage with probability
-                    prob(self.p1_seepage, seep()),
+                    prob(self.p1_seepage, seep())?,
                     // Not leaked: emission (scaled) or pauli
                     if effective_leak > 0.0 {
                         sample![
                             (effective_leak, emission_action),
                             (1.0 - effective_leak, pauli_action),
-                        ]
+                        ]?
                     } else {
-                        sample![(1.0, pauli_action),]
+                        sample![(1.0, pauli_action),]?
                     },
                 ),
-            ),]
+            )?,]
         } else {
             // Simple depolarizing
-            seq![prob(self.p1, pauli_action),]
-        }
+            seq![prob(self.p1, pauli_action)?,]
+        })
     }
 
     /// Create Pauli action for single-qubit gates.
-    fn make_p1_pauli(&self) -> Pauli {
-        match self.p1_pauli_weights {
-            Some(w) => Pauli::new(w),
+    fn make_p1_pauli(&self) -> ValidationResult<Pauli> {
+        Ok(match self.p1_pauli_weights {
+            Some(w) => Pauli::new(w)?,
             None => Pauli::uniform(),
-        }
+        })
     }
 
     /// Build two-qubit gate noise primitive.
     ///
     /// When angle scaling is configured, uses `prob_fn` for dynamic probability.
     /// Otherwise, uses constant `prob`.
-    fn build_two_qubit_noise(&self) -> BoxSeq {
-        if let Some(scaling) = self.p2_angle_scaling {
-            self.build_two_qubit_noise_angle_scaled(scaling)
+    fn build_two_qubit_noise(&self) -> ValidationResult<BoxSeq> {
+        Ok(if let Some(scaling) = self.p2_angle_scaling {
+            self.build_two_qubit_noise_angle_scaled(scaling)?
         } else {
-            self.build_two_qubit_noise_constant()
-        }
+            self.build_two_qubit_noise_constant()?
+        })
     }
 
     /// Build two-qubit noise with constant error probability.
-    fn build_two_qubit_noise_constant(&self) -> BoxSeq {
+    fn build_two_qubit_noise_constant(&self) -> ValidationResult<BoxSeq> {
         use super::action::{Leak, Pauli, TwoQubitEmission, TwoQubitPauli};
 
         // Apply leakage scale: effective_leak = emission_ratio * leakage_scale
         let effective_leak = self.p2_emission_ratio * self.leakage_scale;
 
         // Build based on which models are configured
-        match (self.p2_pauli_model.clone(), self.p2_emission_model.clone()) {
-            // Both correlated models
-            (Some(pauli_model), Some(emission_model)) => {
-                let pauli_action = TwoQubitPauli::with_weights(pauli_model);
-                let emission_action = TwoQubitEmission::with_weights(emission_model);
-                self.build_two_qubit_constant_inner(pauli_action, emission_action, effective_leak)
-            }
-            // Correlated pauli, default emission (leak)
-            (Some(pauli_model), None) => {
-                let pauli_action = TwoQubitPauli::with_weights(pauli_model);
-                self.build_two_qubit_constant_inner(pauli_action, Leak, effective_leak)
-            }
-            // Default pauli, correlated emission
-            (None, Some(emission_model)) => {
-                let pauli_action = match self.p2_pauli_weights {
-                    Some(w) => Pauli::new(w),
-                    None => Pauli::uniform(),
-                };
-                let emission_action = TwoQubitEmission::with_weights(emission_model);
-                self.build_two_qubit_constant_inner(pauli_action, emission_action, effective_leak)
-            }
-            // Both default (independent per-qubit Pauli, leak for emission)
-            (None, None) => {
-                let pauli_action = match self.p2_pauli_weights {
-                    Some(w) => Pauli::new(w),
-                    None => Pauli::uniform(),
-                };
-                self.build_two_qubit_constant_inner(pauli_action, Leak, effective_leak)
-            }
-        }
+        Ok(
+            match (self.p2_pauli_model.clone(), self.p2_emission_model.clone()) {
+                // Both correlated models
+                (Some(pauli_model), Some(emission_model)) => {
+                    let pauli_action = TwoQubitPauli::with_weights(pauli_model)?;
+                    let emission_action = TwoQubitEmission::with_weights(emission_model)?;
+                    self.build_two_qubit_constant_inner(
+                        pauli_action,
+                        emission_action,
+                        effective_leak,
+                    )?
+                }
+                // Correlated pauli, default emission (leak)
+                (Some(pauli_model), None) => {
+                    let pauli_action = TwoQubitPauli::with_weights(pauli_model)?;
+                    self.build_two_qubit_constant_inner(pauli_action, Leak, effective_leak)?
+                }
+                // Default pauli, correlated emission
+                (None, Some(emission_model)) => {
+                    let pauli_action = match self.p2_pauli_weights {
+                        Some(w) => Pauli::new(w)?,
+                        None => Pauli::uniform(),
+                    };
+                    let emission_action = TwoQubitEmission::with_weights(emission_model)?;
+                    self.build_two_qubit_constant_inner(
+                        pauli_action,
+                        emission_action,
+                        effective_leak,
+                    )?
+                }
+                // Both default (independent per-qubit Pauli, leak for emission)
+                (None, None) => {
+                    let pauli_action = match self.p2_pauli_weights {
+                        Some(w) => Pauli::new(w)?,
+                        None => Pauli::uniform(),
+                    };
+                    self.build_two_qubit_constant_inner(pauli_action, Leak, effective_leak)?
+                }
+            },
+        )
     }
 
     /// Inner helper for building two-qubit constant noise.
@@ -1065,81 +1167,86 @@ impl CompositeNoiseModelBuilder {
         pauli_action: P,
         emission_action: E,
         effective_leak: f64,
-    ) -> BoxSeq
+    ) -> ValidationResult<BoxSeq>
     where
         P: crate::noise::composite::Primitive + 'static,
         E: crate::noise::composite::Primitive + 'static,
     {
-        if self.p2_seepage > 0.0 || effective_leak > 0.0 {
+        Ok(if self.p2_seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage
             seq![prob(
                 self.p2,
                 when_leaked(
-                    prob(self.p2_seepage, seep()),
+                    prob(self.p2_seepage, seep())?,
                     if effective_leak > 0.0 {
                         sample![
                             (effective_leak, emission_action),
                             (1.0 - effective_leak, pauli_action),
-                        ]
+                        ]?
                     } else {
-                        sample![(1.0, pauli_action),]
+                        sample![(1.0, pauli_action),]?
                     },
                 ),
-            ),]
+            )?,]
         } else {
             // Simple depolarizing
-            seq![prob(self.p2, pauli_action),]
-        }
+            seq![prob(self.p2, pauli_action)?,]
+        })
     }
 
     /// Build two-qubit noise with angle-dependent error probability.
-    fn build_two_qubit_noise_angle_scaled(&self, scaling: AngleScaling) -> BoxSeq {
+    fn build_two_qubit_noise_angle_scaled(
+        &self,
+        scaling: AngleScaling,
+    ) -> ValidationResult<BoxSeq> {
         use super::action::{Leak, Pauli, TwoQubitEmission, TwoQubitPauli};
 
         // Apply leakage scale: effective_leak = emission_ratio * leakage_scale
         let effective_leak = self.p2_emission_ratio * self.leakage_scale;
 
         // Build based on which models are configured
-        match (self.p2_pauli_model.clone(), self.p2_emission_model.clone()) {
-            // Both correlated models
-            (Some(pauli_model), Some(emission_model)) => {
-                let pauli_action = TwoQubitPauli::with_weights(pauli_model);
-                let emission_action = TwoQubitEmission::with_weights(emission_model);
-                self.build_two_qubit_angle_inner(
-                    scaling,
-                    pauli_action,
-                    emission_action,
-                    effective_leak,
-                )
-            }
-            // Correlated pauli, default emission (leak)
-            (Some(pauli_model), None) => {
-                let pauli_action = TwoQubitPauli::with_weights(pauli_model);
-                self.build_two_qubit_angle_inner(scaling, pauli_action, Leak, effective_leak)
-            }
-            // Default pauli, correlated emission
-            (None, Some(emission_model)) => {
-                let pauli_action = match self.p2_pauli_weights {
-                    Some(w) => Pauli::new(w),
-                    None => Pauli::uniform(),
-                };
-                let emission_action = TwoQubitEmission::with_weights(emission_model);
-                self.build_two_qubit_angle_inner(
-                    scaling,
-                    pauli_action,
-                    emission_action,
-                    effective_leak,
-                )
-            }
-            // Both default (independent per-qubit Pauli, leak for emission)
-            (None, None) => {
-                let pauli_action = match self.p2_pauli_weights {
-                    Some(w) => Pauli::new(w),
-                    None => Pauli::uniform(),
-                };
-                self.build_two_qubit_angle_inner(scaling, pauli_action, Leak, effective_leak)
-            }
-        }
+        Ok(
+            match (self.p2_pauli_model.clone(), self.p2_emission_model.clone()) {
+                // Both correlated models
+                (Some(pauli_model), Some(emission_model)) => {
+                    let pauli_action = TwoQubitPauli::with_weights(pauli_model)?;
+                    let emission_action = TwoQubitEmission::with_weights(emission_model)?;
+                    self.build_two_qubit_angle_inner(
+                        scaling,
+                        pauli_action,
+                        emission_action,
+                        effective_leak,
+                    )?
+                }
+                // Correlated pauli, default emission (leak)
+                (Some(pauli_model), None) => {
+                    let pauli_action = TwoQubitPauli::with_weights(pauli_model)?;
+                    self.build_two_qubit_angle_inner(scaling, pauli_action, Leak, effective_leak)?
+                }
+                // Default pauli, correlated emission
+                (None, Some(emission_model)) => {
+                    let pauli_action = match self.p2_pauli_weights {
+                        Some(w) => Pauli::new(w)?,
+                        None => Pauli::uniform(),
+                    };
+                    let emission_action = TwoQubitEmission::with_weights(emission_model)?;
+                    self.build_two_qubit_angle_inner(
+                        scaling,
+                        pauli_action,
+                        emission_action,
+                        effective_leak,
+                    )?
+                }
+                // Both default (independent per-qubit Pauli, leak for emission)
+                (None, None) => {
+                    let pauli_action = match self.p2_pauli_weights {
+                        Some(w) => Pauli::new(w)?,
+                        None => Pauli::uniform(),
+                    };
+                    self.build_two_qubit_angle_inner(scaling, pauli_action, Leak, effective_leak)?
+                }
+            },
+        )
     }
 
     /// Inner helper for building two-qubit angle-scaled noise.
@@ -1149,31 +1256,34 @@ impl CompositeNoiseModelBuilder {
         pauli_action: P,
         emission_action: E,
         effective_leak: f64,
-    ) -> BoxSeq
+    ) -> ValidationResult<BoxSeq>
     where
         P: crate::noise::composite::Primitive + 'static,
         E: crate::noise::composite::Primitive + 'static,
     {
         let base_p2 = self.p2;
+        scaling.validate_for_probability(base_p2)?;
         let seepage = self.p2_seepage;
 
         // Different code paths based on whether we have leakage/seepage
-        if seepage > 0.0 || effective_leak > 0.0 {
+        Ok(if seepage > 0.0 || effective_leak > 0.0 {
             // With leakage/seepage: use complex inner structure
             seq![prob_fn(
                 move |gate| {
-                    gate.and_then(crate::noise::GateInfo::angle)
-                        .map_or(base_p2, |angle| base_p2 * scaling.scale(angle))
+                    Probability(
+                        gate.and_then(crate::noise::GateInfo::angle)
+                            .map_or(base_p2, |angle| base_p2 * scaling.scale(angle)),
+                    )
                 },
                 when_leaked(
-                    prob(seepage, seep()),
+                    prob(seepage, seep())?,
                     if effective_leak > 0.0 {
                         sample![
                             (effective_leak, emission_action),
                             (1.0 - effective_leak, pauli_action),
-                        ]
+                        ]?
                     } else {
-                        sample![(1.0, pauli_action),]
+                        sample![(1.0, pauli_action),]?
                     },
                 ),
             ),]
@@ -1181,41 +1291,43 @@ impl CompositeNoiseModelBuilder {
             // Simple depolarizing with angle scaling
             seq![prob_fn(
                 move |gate| {
-                    gate.and_then(crate::noise::GateInfo::angle)
-                        .map_or(base_p2, |angle| base_p2 * scaling.scale(angle))
+                    Probability(
+                        gate.and_then(crate::noise::GateInfo::angle)
+                            .map_or(base_p2, |angle| base_p2 * scaling.scale(angle)),
+                    )
                 },
                 pauli_action,
             ),]
-        }
+        })
     }
 
     /// Build preparation noise primitive.
-    fn build_preparation_noise(&self) -> BoxSeq {
-        if self.p_prep_leak_ratio > 0.0 {
+    fn build_preparation_noise(&self) -> ValidationResult<BoxSeq> {
+        Ok(if self.p_prep_leak_ratio > 0.0 {
             seq![prob(
                 self.p_prep,
                 sample![
                     (self.p_prep_leak_ratio, leak()),
                     (1.0 - self.p_prep_leak_ratio, inject_x()),
-                ],
-            ),]
+                ]?,
+            )?,]
         } else {
-            seq![prob(self.p_prep, inject_x()),]
-        }
+            seq![prob(self.p_prep, inject_x())?,]
+        })
     }
 
     /// Build measurement noise primitive.
-    fn build_measurement_noise(&self) -> BoxSeq {
-        if (self.p_meas_0 - self.p_meas_1).abs() < 1e-10 {
+    fn build_measurement_noise(&self) -> ValidationResult<BoxSeq> {
+        Ok(if (self.p_meas_0 - self.p_meas_1).abs() < 1e-10 {
             // Symmetric measurement error
-            seq![prob(self.p_meas_0, flip_outcome()),]
+            seq![prob(self.p_meas_0, flip_outcome())?,]
         } else {
             // Asymmetric measurement error
             seq![
-                on_zero(prob(self.p_meas_0, flip_outcome())),
-                on_one(prob(self.p_meas_1, flip_outcome())),
+                on_zero(prob(self.p_meas_0, flip_outcome())?),
+                on_one(prob(self.p_meas_1, flip_outcome())?),
             ]
-        }
+        })
     }
 }
 
@@ -1242,7 +1354,7 @@ mod tests {
 
     #[test]
     fn test_empty_builder() {
-        let model = CompositeNoiseModelBuilder::new().build();
+        let model = CompositeNoiseModelBuilder::new().build().unwrap();
         assert_eq!(model.channel_count(), 0);
     }
 
@@ -1250,8 +1362,11 @@ mod tests {
     fn test_simple_depolarizing() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
+            .unwrap()
             .with_p2(0.02)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have single-qubit and two-qubit channels
         assert_eq!(model.channel_count(), 2);
@@ -1261,8 +1376,11 @@ mod tests {
     fn test_with_leakage() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
+            .unwrap()
             .with_leakage(0.1, 0.2)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have: SQ channel + skip channel
         assert_eq!(model.channel_count(), 2);
@@ -1272,12 +1390,19 @@ mod tests {
     fn test_full_configuration() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
+            .unwrap()
             .with_p2(0.02)
+            .unwrap()
             .with_p_prep(0.005)
+            .unwrap()
             .with_p_meas(0.03, 0.04)
+            .unwrap()
             .with_p_crosstalk(0.001)
+            .unwrap()
             .with_leakage(0.1, 0.2)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // SQ + TQ + Prep + Meas + Crosstalk + Skip = 6 channels
         assert_eq!(model.channel_count(), 6);
@@ -1287,9 +1412,11 @@ mod tests {
     fn test_noiseless_gates() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
+            .unwrap()
             .with_noiseless_gate(GateType::I)
             .with_noiseless_gates(&[GateType::SX, GateType::SXdg])
-            .build();
+            .build()
+            .unwrap();
 
         assert!(model.context().is_noiseless(GateType::I));
         assert!(model.context().is_noiseless(GateType::SX));
@@ -1315,7 +1442,11 @@ mod tests {
         let mut errors = 0;
 
         for seed in 0..shots {
-            let model = CompositeNoiseModelBuilder::new().with_p1(p1).build();
+            let model = CompositeNoiseModelBuilder::new()
+                .with_p1(p1)
+                .unwrap()
+                .build()
+                .unwrap();
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
@@ -1348,7 +1479,9 @@ mod tests {
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new()
                 .with_p_meas(p_0_to_1, p_1_to_0)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
@@ -1375,8 +1508,11 @@ mod tests {
         // Test that idle noise channels are created
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
+            .unwrap()
             .with_p_idle_quadratic(0.01)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have 1 idle channel
         assert_eq!(model.channel_count(), 1);
@@ -1386,7 +1522,9 @@ mod tests {
     fn test_idle_noise_t1_only() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         assert_eq!(model.channel_count(), 1);
     }
@@ -1395,8 +1533,11 @@ mod tests {
     fn test_idle_noise_t2_only() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.01)
+            .unwrap()
             .with_coherent_to_incoherent_factor(2.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         assert_eq!(model.channel_count(), 1);
     }
@@ -1405,7 +1546,9 @@ mod tests {
     fn test_idle_noise_convenience() {
         let model = CompositeNoiseModelBuilder::new()
             .with_idle_noise(0.001, 0.01)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         assert_eq!(model.channel_count(), 1);
     }
@@ -1414,11 +1557,17 @@ mod tests {
     fn test_full_model_with_idle() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
+            .unwrap()
             .with_p2(0.02)
+            .unwrap()
             .with_p_prep(0.005)
+            .unwrap()
             .with_p_meas_symmetric(0.03)
+            .unwrap()
             .with_idle_noise(0.001, 0.01)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // SQ + TQ + Prep + Meas + Idle = 5 channels
         assert_eq!(model.channel_count(), 5);
@@ -1429,10 +1578,15 @@ mod tests {
         // Create model with Z-only errors
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
-            .with_p1_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0))
+            .unwrap()
+            .with_p1_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0).unwrap())
+            .unwrap()
             .with_p2(0.01)
-            .with_p2_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0))
-            .build();
+            .unwrap()
+            .with_p2_pauli_weights(PauliWeights::custom(0.0, 0.0, 1.0).unwrap())
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have SQ + TQ channels
         assert_eq!(model.channel_count(), 2);
@@ -1442,8 +1596,11 @@ mod tests {
     fn test_preparation_crosstalk() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p_prep(0.01)
+            .unwrap()
             .with_p_prep_crosstalk(0.001)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have Prep + Prep crosstalk = 2 channels
         assert_eq!(model.channel_count(), 2);
@@ -1454,8 +1611,11 @@ mod tests {
         // Test with_p_crosstalk
         let model1 = CompositeNoiseModelBuilder::new()
             .with_p_meas_symmetric(0.01)
+            .unwrap()
             .with_p_crosstalk(0.001)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Meas + Crosstalk = 2 channels
         assert_eq!(model1.channel_count(), 2);
@@ -1463,8 +1623,11 @@ mod tests {
         // Test with_p_meas_crosstalk
         let model2 = CompositeNoiseModelBuilder::new()
             .with_p_meas_symmetric(0.01)
+            .unwrap()
             .with_p_meas_crosstalk(0.001, 0.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Meas + Global Crosstalk = 2 channels
         assert_eq!(model2.channel_count(), 2);
@@ -1474,9 +1637,13 @@ mod tests {
     fn after_2q_idle_uses_idle_channel_without_p2() {
         let mut model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(1.0)
-            .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0))
+            .unwrap()
+            .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap()
             .with_idle_after_2q(1.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
@@ -1496,8 +1663,11 @@ mod tests {
     fn quadratic_only_after_2q_noise_uses_the_idle_channel() {
         let mut model = CompositeNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_idle_after_2q(1.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
@@ -1517,7 +1687,9 @@ mod tests {
     fn after_2q_duration_without_rates_builds_only_the_idle_channel() {
         let model = CompositeNoiseModelBuilder::new()
             .with_idle_after_2q(2.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
         assert_eq!(model.channel_names(), ["IdleChannel"]);
     }
 
@@ -1531,8 +1703,10 @@ mod tests {
         // Build model with linear angle scaling
         let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
+            .unwrap()
             .with_p2_angle_scaling(AngleScaling::linear())
-            .build();
+            .build()
+            .unwrap();
 
         // Should have TQ channel
         assert_eq!(model.channel_count(), 1);
@@ -1565,8 +1739,10 @@ mod tests {
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new()
                 .with_p2(base_p2)
+                .unwrap()
                 .with_p2_angle_scaling(AngleScaling::linear())
-                .build();
+                .build()
+                .unwrap();
 
             let mut state = StateVec::with_seed(2, seed);
             let mut runner = CircuitRunner::<StateVec>::rotations()
@@ -1604,8 +1780,10 @@ mod tests {
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new()
                 .with_p2(base_p2)
+                .unwrap()
                 .with_p2_angle_scaling(AngleScaling::linear())
-                .build();
+                .build()
+                .unwrap();
 
             let mut state = StateVec::with_seed(2, seed);
             let mut runner = CircuitRunner::<StateVec>::rotations()
@@ -1636,10 +1814,14 @@ mod tests {
         // Build model with angle scaling AND leakage
         let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
+            .unwrap()
             .with_p2_angle_scaling(AngleScaling::linear())
-            .with_p2_emission_ratio(0.2) // 20% of errors cause leakage
+            .with_p2_emission_ratio(0.2)
+            .unwrap() // 20% of errors cause leakage
             .with_p2_seepage(0.1)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have TQ channel + skip channel (for leakage)
         assert_eq!(model.channel_count(), 2);
@@ -1650,8 +1832,11 @@ mod tests {
         // With leakage_scale = 1.0 (default), leakage is enabled
         let model_full_leak = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
+            .unwrap()
             .with_p1_emission_ratio(0.5)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have SQ channel + skip channel (for leakage)
         assert_eq!(model_full_leak.channel_count(), 2);
@@ -1659,9 +1844,13 @@ mod tests {
         // With leakage_scale = 0.0, no leakage (emission becomes depolarizing)
         let model_no_leak = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
+            .unwrap()
             .with_p1_emission_ratio(0.5)
+            .unwrap()
             .with_leakage_scale(0.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have only SQ channel (no skip channel needed)
         assert_eq!(model_no_leak.channel_count(), 1);
@@ -1672,9 +1861,13 @@ mod tests {
         // With leakage_scale = 0.5, half of emission events become leakage
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
+            .unwrap()
             .with_p1_emission_ratio(0.5)
-            .with_leakage_scale(0.5) // Half become leakage, half depolarizing
-            .build();
+            .unwrap()
+            .with_leakage_scale(0.5)
+            .unwrap() // Half become leakage, half depolarizing
+            .build()
+            .unwrap();
 
         // Should have SQ channel + skip channel (some leakage exists)
         assert_eq!(model.channel_count(), 2);
@@ -1685,8 +1878,11 @@ mod tests {
         // Test with Z-only idle noise (typical for T2 dephasing)
         let model = CompositeNoiseModelBuilder::new()
             .with_p_idle_linear(0.001)
-            .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0)) // Z-only
-            .build();
+            .unwrap()
+            .with_p_idle_linear_weights(PauliWeights::custom(0.0, 0.0, 1.0).unwrap())
+            .unwrap() // Z-only
+            .build()
+            .unwrap();
 
         // Should have 1 idle channel
         assert_eq!(model.channel_count(), 1);
@@ -1696,10 +1892,14 @@ mod tests {
     fn test_idle_linear_weights_with_t2() {
         // Combined T1 (custom weights) and T2
         let model = CompositeNoiseModelBuilder::new()
-            .with_idle_noise(0.001, 0.01) // Both T1 and T2
-            .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0)) // X-only for T1
+            .with_idle_noise(0.001, 0.01)
+            .unwrap() // Both T1 and T2
+            .with_p_idle_linear_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap() // X-only for T1
             .with_coherent_to_incoherent_factor(2.0)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have 1 idle channel
         assert_eq!(model.channel_count(), 1);
@@ -1737,7 +1937,8 @@ mod tests {
             let general_model = GeneralNoiseModelBuilder::new()
                 .with_p1(p1)
                 .with_p2(p2)
-                .build();
+                .build()
+                .unwrap();
 
             let mut state_general = SparseStab::with_seed(2, seed);
             let mut runner_general = CircuitRunner::<SparseStab>::new()
@@ -1756,8 +1957,11 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p1(p1)
+                .unwrap()
                 .with_p2(p2)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state_flow = SparseStab::with_seed(2, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
@@ -1804,7 +2008,8 @@ mod tests {
             // GeneralNoiseModelBuilder
             let general_model = GeneralNoiseModelBuilder::new()
                 .with_p_meas(p_meas_0, p_meas_1)
-                .build();
+                .build()
+                .unwrap();
 
             let mut state_general = SparseStab::with_seed(1, seed);
             let mut runner_general = CircuitRunner::<SparseStab>::new()
@@ -1820,7 +2025,9 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p_meas(p_meas_0, p_meas_1)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state_flow = SparseStab::with_seed(1, seed);
             let mut runner_flow = CircuitRunner::<SparseStab>::new()
@@ -1866,7 +2073,10 @@ mod tests {
 
         for seed in 0..shots {
             // GeneralNoiseModelBuilder
-            let general_model = GeneralNoiseModelBuilder::new().with_p_prep(p_prep).build();
+            let general_model = GeneralNoiseModelBuilder::new()
+                .with_p_prep(p_prep)
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -1884,7 +2094,9 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p_prep(p_prep)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -1936,22 +2148,26 @@ mod tests {
 
         let model = CompositeNoiseModelBuilder::new()
             .with_p_meas_crosstalk(0.001, 0.01)
+            .unwrap()
             .with_p_meas_crosstalk_local_fn(linear_neighbors)
-            .build();
+            .build()
+            .unwrap();
 
         // Should have: global crosstalk + local crosstalk = 2 channels
         assert_eq!(model.channel_count(), 2);
     }
 
     #[test]
-    fn test_local_crosstalk_without_fn_is_ignored() {
-        // If local crosstalk probability is set but no neighbor function, it's ignored
-        let model = CompositeNoiseModelBuilder::new()
-            .with_p_meas_crosstalk(0.001, 0.01) // local is 0.01 but no fn
-            .build();
-
-        // Should have only global crosstalk = 1 channel
-        assert_eq!(model.channel_count(), 1);
+    fn test_local_crosstalk_without_fn_is_rejected() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_p_meas_crosstalk(0.001, 0.01)
+            .unwrap()
+            .build()
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("p_meas_crosstalk_local"), "{error}");
+        assert!(error.contains("neighbor"), "{error}");
     }
 
     #[test]
@@ -1962,12 +2178,16 @@ mod tests {
         let transitions = CrosstalkTransitions::custom(
             0.3, 0.5, 0.2, // from 0: 30% stay, 50% flip, 20% leak
             0.4, 0.4, 0.2, // from 1: 40% stay, 40% flip, 20% leak
-        );
+        )
+        .unwrap();
 
         let model = CompositeNoiseModelBuilder::new()
             .with_p_crosstalk(0.1)
+            .unwrap()
             .with_p_meas_crosstalk_model(transitions)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have 1 crosstalk channel
         assert_eq!(model.channel_count(), 1);
@@ -1977,7 +2197,8 @@ mod tests {
     fn test_measure_leaked_handling_builder() {
         let model = CompositeNoiseModelBuilder::new()
             .with_measure_leaked_handling(true)
-            .build();
+            .build()
+            .unwrap();
 
         // Should have 1 channel for MeasureLeaked handling
         assert_eq!(model.channel_count(), 1);
@@ -1987,9 +2208,12 @@ mod tests {
     fn test_measure_leaked_with_leakage() {
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
-            .with_p1_emission_ratio(0.5) // 50% of errors cause leakage
+            .unwrap()
+            .with_p1_emission_ratio(0.5)
+            .unwrap() // 50% of errors cause leakage
             .with_measure_leaked_handling(true)
-            .build();
+            .build()
+            .unwrap();
 
         // Should have: SQ channel + skip channel + MeasureLeaked channel = 3 channels
         assert_eq!(model.channel_count(), 3);
@@ -2011,13 +2235,19 @@ mod tests {
 
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.01)
+            .unwrap()
             .with_p2(0.02)
+            .unwrap()
             .with_p_meas(0.03, 0.04)
+            .unwrap()
             .with_p_meas_crosstalk(0.001, 0.005)
+            .unwrap()
             .with_p_meas_crosstalk_local_fn(neighbors)
             .with_p_meas_crosstalk_model(transitions)
+            .unwrap()
             .with_measure_leaked_handling(true)
-            .build();
+            .build()
+            .unwrap();
 
         // SQ + TQ + Meas + Global Crosstalk + Local Crosstalk + MeasureLeaked = 6 channels
         assert_eq!(model.channel_count(), 6);
@@ -2030,7 +2260,9 @@ mod tests {
         let model = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
             .with_p1(0.01)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Time scale should be passed through to the model
         assert!(model.time_scale().is_some());
@@ -2042,8 +2274,9 @@ mod tests {
         // T1=50us, T2=30us with nanosecond time units
         let builder = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
-            .with_idle_t1_t2(50e-6, 30e-6);
-        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0);
+            .with_idle_t1_t2(50e-6, 30e-6)
+            .unwrap();
+        let expected = IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap();
         let actual_weights = builder
             .p_idle_linear_pauli_weights
             .expect("T1/T2 convenience must set linear Pauli weights");
@@ -2055,7 +2288,7 @@ mod tests {
         assert!((builder.p_idle_quadratic_rate - expected.quadratic_rate).abs() < f64::EPSILON);
 
         // Should have created an idle channel
-        let model = builder.build();
+        let model = builder.build().unwrap();
         assert_eq!(model.channel_count(), 1);
         // Should have time scale set
         assert!(model.time_scale().is_some());
@@ -2066,9 +2299,13 @@ mod tests {
         let model = CompositeNoiseModelBuilder::new()
             .with_time_scale(TimeScale::NANOSECONDS)
             .with_p1(0.01)
+            .unwrap()
             .with_p2(0.02)
+            .unwrap()
             .with_idle_t1_t2(50e-6, 30e-6)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // SQ + TQ + Idle = 3 channels
         assert_eq!(model.channel_count(), 3);
@@ -2076,52 +2313,58 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "with_time_scale() must be called before with_idle_t1_t2()")]
-    fn test_idle_t1_t2_without_time_scale_panics() {
-        let _ = CompositeNoiseModelBuilder::new()
-            .with_idle_t1_t2(50e-6, 30e-6) // Should panic - no time scale set
-            .build();
+    fn test_idle_t1_t2_without_time_scale_returns_error() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_idle_t1_t2(50e-6, 30e-6)
+            .err()
+            .expect("missing time scale must fail");
+        assert_eq!(error.field, "time_scale");
+        assert_eq!(
+            error.message,
+            "with_time_scale() must be called before with_idle_t1_t2()"
+        );
     }
 
     // --- Validation Tests ---
 
     #[test]
-    fn test_validation_clamps_negative_probability() {
-        // Negative probability should be clamped to 0.0
-        let model = CompositeNoiseModelBuilder::new().with_p1(-0.5).build();
-
-        // Model should build successfully (clamped to 0.0)
-        // No channels since p1=0.0 after clamping
-        assert_eq!(model.channel_count(), 0);
+    fn test_validation_rejects_negative_probability() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_p1(-0.5)
+            .err()
+            .unwrap();
+        assert_eq!(error.field, "p1");
     }
 
     #[test]
-    fn test_validation_clamps_probability_over_one() {
-        // Probability > 1.0 should be clamped to 1.0
-        let model = CompositeNoiseModelBuilder::new().with_p1(1.5).build();
-
-        // Model should build successfully (clamped to 1.0)
-        assert_eq!(model.channel_count(), 1);
+    fn test_validation_rejects_probability_over_one() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_p1(1.5)
+            .err()
+            .unwrap();
+        assert_eq!(error.field, "p1");
     }
 
     #[test]
-    fn test_validation_handles_nan() {
-        // NaN should be set to 0.0
-        let model = CompositeNoiseModelBuilder::new().with_p1(f64::NAN).build();
-
-        // Model should build successfully (set to 0.0)
-        assert_eq!(model.channel_count(), 0);
+    fn test_validation_rejects_nan() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_p1(f64::NAN)
+            .err()
+            .unwrap();
+        assert_eq!(error.field, "p1");
     }
 
     #[test]
-    fn test_local_crosstalk_without_neighbor_fn_warns() {
-        // This should print a warning but still build successfully
-        let model = CompositeNoiseModelBuilder::new()
-            .with_p_meas_crosstalk(0.0, 0.05) // Local rate set but no neighbor fn
-            .build();
-
-        // No crosstalk channel should be created (only global would be, and that's 0.0)
-        assert_eq!(model.channel_count(), 0);
+    fn test_local_crosstalk_without_neighbor_fn_errors() {
+        let error = CompositeNoiseModelBuilder::new()
+            .with_p_meas_crosstalk(0.0, 0.1)
+            .unwrap()
+            .build()
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("p_meas_crosstalk_local"), "{error}");
+        assert!(error.contains("with_p_meas_crosstalk_local_fn"), "{error}");
     }
 
     // --- Emission Model Tests ---
@@ -2131,13 +2374,17 @@ mod tests {
         use crate::noise::SingleQubitEmissionWeights;
 
         // Create model with custom emission weights
-        let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25);
+        let emission = SingleQubitEmissionWeights::custom(0.25, 0.25, 0.25, 0.25).unwrap();
 
         let model = CompositeNoiseModelBuilder::new()
             .with_p1(0.1)
+            .unwrap()
             .with_p1_emission_ratio(0.5)
+            .unwrap()
             .with_p1_emission_model(emission)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have SQ channel + skip channel (for leakage)
         assert_eq!(model.channel_count(), 2);
@@ -2152,9 +2399,13 @@ mod tests {
 
         let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
+            .unwrap()
             .with_p2_emission_ratio(0.5)
+            .unwrap()
             .with_p2_emission_model(emission)
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have TQ channel + skip channel (for leakage)
         assert_eq!(model.channel_count(), 2);
@@ -2183,10 +2434,14 @@ mod tests {
 
         for seed in 0..shots {
             let model = CompositeNoiseModelBuilder::new()
-                .with_p1(0.5) // 50% error rate
-                .with_p1_emission_ratio(1.0) // All errors are emission
+                .with_p1(0.5)
+                .unwrap() // 50% error rate
+                .with_p1_emission_ratio(1.0)
+                .unwrap() // All errors are emission
                 .with_p1_emission_model(emission)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2215,8 +2470,11 @@ mod tests {
         // Create model with ZZ-biased errors
         let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
-            .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.8))
-            .build();
+            .unwrap()
+            .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(0.8).unwrap())
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have TQ channel
         assert_eq!(model.channel_count(), 1);
@@ -2229,10 +2487,15 @@ mod tests {
         // Create model with both correlated Pauli and emission models
         let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
+            .unwrap()
             .with_p2_pauli_model(TwoQubitPauliWeights::uniform())
+            .unwrap()
             .with_p2_emission_ratio(0.3)
+            .unwrap()
             .with_p2_emission_model(TwoQubitEmissionWeights::uniform_with_leakage())
-            .build();
+            .unwrap()
+            .build()
+            .unwrap();
 
         // Should have TQ channel + skip channel (for leakage)
         assert_eq!(model.channel_count(), 2);
@@ -2245,9 +2508,13 @@ mod tests {
         // When both are set, p2_pauli_model takes precedence
         let model = CompositeNoiseModelBuilder::new()
             .with_p2(0.1)
-            .with_p2_pauli_weights(PauliWeights::custom(1.0, 0.0, 0.0)) // X-only
-            .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(1.0)) // ZZ-only
-            .build();
+            .unwrap()
+            .with_p2_pauli_weights(PauliWeights::custom(1.0, 0.0, 0.0).unwrap())
+            .unwrap() // X-only
+            .with_p2_pauli_model(TwoQubitPauliWeights::zz_biased(1.0).unwrap())
+            .unwrap() // ZZ-only
+            .build()
+            .unwrap();
 
         // Model should build successfully
         assert_eq!(model.channel_count(), 1);
@@ -2282,7 +2549,9 @@ mod tests {
                 .with_p1(p1)
                 .with_p1_emission_ratio(emission_ratio)
                 .with_p1_emission_weights(emission)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2296,9 +2565,13 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p1(p1)
+                .unwrap()
                 .with_p1_emission_ratio(emission_ratio)
+                .unwrap()
                 .with_p1_emission_model(emission)
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(1, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2345,7 +2618,9 @@ mod tests {
             let general_model = GeneralNoiseModelBuilder::new()
                 .with_p2(p2)
                 .with_p2_pauli_weights(TwoQubitPauliWeights::uniform())
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(2, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2361,8 +2636,11 @@ mod tests {
             // CompositeNoiseModelBuilder
             let flow_model = CompositeNoiseModelBuilder::new()
                 .with_p2(p2)
+                .unwrap()
                 .with_p2_pauli_model(TwoQubitPauliWeights::uniform())
-                .build();
+                .unwrap()
+                .build()
+                .unwrap();
 
             let mut state = SparseStab::with_seed(2, seed);
             let mut runner = CircuitRunner::<SparseStab>::new()

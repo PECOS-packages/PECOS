@@ -71,6 +71,7 @@ use super::builder::MonteCarloEngineBuilder;
 /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
 /// use pecos_engines::quantum::StateVecEngine;
 ///
+/// # fn main() -> Result<(), pecos_core::errors::PecosError> {
 /// // Create sample engines
 /// let classical_engine = Box::new(ExternalClassicalEngine::new());
 /// let quantum_engine = Box::new(StateVecEngine::new(2));
@@ -79,14 +80,16 @@ use super::builder::MonteCarloEngineBuilder;
 /// let mut engine = MonteCarloEngine::builder()
 ///     .with_classical_engine(classical_engine)
 ///     .with_quantum_engine(quantum_engine)
-///     .with_depolarizing_noise(0.01)
+///     .with_depolarizing_noise(0.01)?
 ///     .build();
 ///
 /// // For reproducibility
 /// engine.set_seed(42);
 ///
-/// let results = engine.run(10).unwrap();
+/// let results = engine.run(10)?;
 /// assert_eq!(results.len(), 10);
+/// # Ok(())
+/// # }
 /// ```
 pub struct MonteCarloEngine {
     /// Template `HybridEngine` that is cloned for each worker
@@ -128,7 +131,8 @@ impl MonteCarloEngine {
     /// Convenience method to create a Monte Carlo engine with a classical engine and default components.
     ///
     /// This is the simplest way to create a Monte Carlo engine when you only have a classical engine.
-    /// It will automatically create a state vector quantum engine and a pass-through noise model.
+    /// It creates a fixed-size state-vector engine from a known classical count
+    /// and a pass-through noise model. Unknown dynamic zero requires an explicit count.
     ///
     /// # Parameters
     /// - `classical_engine`: The classical engine to use for the simulation.
@@ -143,23 +147,35 @@ impl MonteCarloEngine {
     /// use pecos_engines::monte_carlo::MonteCarloEngine;
     /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
     /// // Create a Monte Carlo engine with default settings
+    /// # fn main() -> Result<(), pecos_core::errors::PecosError> {
     /// let classical_engine = Box::new(ExternalClassicalEngine::new());
-    /// let engine = MonteCarloEngine::new_with_defaults(classical_engine);
+    /// let engine = MonteCarloEngine::new_with_defaults(classical_engine)?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn new_with_defaults(classical_engine: Box<dyn ClassicalControlEngine>) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error when a dynamic engine reports an unknown count of zero;
+    /// use `MonteCarloEngineBuilder::with_num_qubits` to supply a fixed capacity.
+    pub fn new_with_defaults(
+        classical_engine: Box<dyn ClassicalControlEngine>,
+    ) -> Result<Self, PecosError> {
         // Use the builder pattern
-        let num_qubits = classical_engine.num_qubits();
-        Self::builder()
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            None,
+            "build with MonteCarloEngine::builder() and set MonteCarloEngineBuilder::with_num_qubits(n)",
+        )?;
+        Ok(Self::builder()
             .with_classical_engine(classical_engine)
             .with_quantum_engine(Box::new(StateVecEngine::new(num_qubits)))
-            .build()
+            .build())
     }
 
     /// Create a Monte Carlo engine with a classical engine and uniform depolarizing noise.
     ///
     /// This convenience method creates a state-vector quantum engine sized from
-    /// [`ClassicalEngine::num_qubits`] and applies `p` uniformly to preparation,
+    /// a known [`ClassicalEngine::num_qubits`] and applies `p` uniformly to preparation,
     /// measurement, single-qubit, and two-qubit errors.
     ///
     /// # Parameters
@@ -177,6 +193,7 @@ impl MonteCarloEngine {
     /// use pecos_engines::monte_carlo::MonteCarloEngine;
     /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
     ///
+    /// # fn main() -> Result<(), pecos_core::errors::PecosError> {
     /// // Prepare |+> on qubit 0, then measure it in the Z basis.
     /// let circuit = ByteMessage::quantum_operations_builder()
     ///     .pz(&[0])
@@ -186,27 +203,32 @@ impl MonteCarloEngine {
     /// let classical_engine = Box::new(ExternalClassicalEngine::new_with_circuit(circuit));
     ///
     /// let mut engine =
-    ///     MonteCarloEngine::new_with_depolarizing_noise(classical_engine, 0.1);
+    ///     MonteCarloEngine::new_with_depolarizing_noise(classical_engine, 0.1)?;
     /// engine.set_seed(42);
-    /// let results = engine.run(10).unwrap();
+    /// let results = engine.run(10)?;
     /// assert_eq!(results.len(), 10);
+    /// # Ok(())
+    /// # }
     /// ```
     ///
-    /// # Panics
-    ///
-    /// Panics if `p` is outside `0.0..=1.0` or is not a number.
-    #[must_use]
+    /// # Errors
+    /// Returns an error for a non-finite `p` or one outside `0.0..=1.0`, or an
+    /// unknown dynamic qubit count. Supply an explicit count with the builder.
     pub fn new_with_depolarizing_noise(
         classical_engine: Box<dyn ClassicalControlEngine>,
         p: f64,
-    ) -> Self {
+    ) -> Result<Self, PecosError> {
         // Use the builder pattern
-        let num_qubits = classical_engine.num_qubits();
-        Self::builder()
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            None,
+            "build with MonteCarloEngine::builder() and set MonteCarloEngineBuilder::with_num_qubits(n)",
+        )?;
+        Ok(Self::builder()
             .with_classical_engine(classical_engine)
             .with_quantum_engine(Box::new(StateVecEngine::new(num_qubits)))
-            .with_depolarizing_noise(p)
-            .build()
+            .with_depolarizing_noise(p)?
+            .build())
     }
 
     /// Set a specific seed for the random number generator.
@@ -602,7 +624,8 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `PecosError` if any part of the simulation fails.
+    /// Returns an error for an unknown dynamic count of zero or a simulation failure.
+    /// Use [`Self::run_with_noise_model_and_max_qubits`] to supply a fixed capacity.
     pub fn run_with_noise_model(
         classical_engine: Box<dyn ClassicalControlEngine>,
         noise_model: Box<dyn NoiseModel>,
@@ -611,7 +634,11 @@ impl MonteCarloEngine {
         seed: Option<u64>,
     ) -> Result<ShotVec, PecosError> {
         // Create a hybrid engine with the state vector quantum engine
-        let num_qubits = classical_engine.num_qubits();
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            None,
+            "use MonteCarloEngine::run_with_noise_model_and_max_qubits with an explicit count",
+        )?;
         debug!(
             "MonteCarloEngine::run_with_noise_model: Creating StateVecEngine with {num_qubits} qubits"
         );
@@ -649,7 +676,7 @@ impl MonteCarloEngine {
     /// # Errors
     /// Returns a `PecosError` if any part of the simulation fails.
     pub fn run_with_noise_model_and_max_qubits(
-        classical_engine: Box<dyn ClassicalControlEngine>,
+        mut classical_engine: Box<dyn ClassicalControlEngine>,
         noise_model: Box<dyn NoiseModel>,
         num_qubits: usize,
         num_shots: usize,
@@ -659,6 +686,7 @@ impl MonteCarloEngine {
         debug!(
             "MonteCarloEngine::run_with_noise_model_and_max_qubits: Creating StateVecEngine with {num_qubits} qubits"
         );
+        classical_engine.set_num_qubits_hint(num_qubits);
         let quantum_engine = Box::new(StateVecEngine::new(num_qubits));
         let mut hybrid_engine = HybridEngineBuilder::new()
             .with_classical_engine(classical_engine)
@@ -691,11 +719,10 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `PecosError` if `config` cannot be parsed as an `f64` or if the
-    /// simulation fails.
+    /// Returns a `PecosError` if `config` cannot be parsed as an `f64`, the
+    /// probability is non-finite or outside `0.0..=1.0`, or the simulation fails.
     ///
     /// # Panics
-    /// - If the parsed probability is outside `0.0..=1.0` or is not a number.
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
     pub fn run_with_config(
@@ -706,11 +733,13 @@ impl MonteCarloEngine {
     ) -> Result<ShotVec, PecosError> {
         // Parse the configuration string as a noise probability
         let p = config.parse::<f64>().map_err(|e| {
-            PecosError::Input(format!("Failed to parse config string as float: {e}"))
+            PecosError::Input(format!(
+                "invalid depolarizing config {config:?}: {e}; supply a finite probability in 0.0..=1.0"
+            ))
         })?;
 
         // Create and seed a depolarizing noise model
-        let mut noise_model = crate::noise::DepolarizingNoiseModel::new_uniform(p);
+        let mut noise_model = crate::noise::DepolarizingNoiseModel::try_new_uniform(p)?;
 
         if let Some(s) = seed {
             noise_model.set_seed(derive_seed(s, "noise_model"));

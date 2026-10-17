@@ -1347,7 +1347,7 @@ def test_shift_rule_parity_boundaries() -> None:
 
 
 def test_shift_rule_parity_negative() -> None:
-    """Compatibility pin: both raise on signed negative literal/register counts."""
+    """Both interpreters raise ValueError on signed negative literal/register counts."""
     for count in (-1, "count"):
         phir = _make_classical_program(
             [("x", "u64", 64), ("count", "i64", 63)],
@@ -1358,7 +1358,7 @@ def test_shift_rule_parity_negative() -> None:
         )
         for interpreter, error in [
             (PhirClassicalInterpreter(), ValueError),
-            (RustPhirClassicalInterpreter(), RuntimeError),
+            (RustPhirClassicalInterpreter(), ValueError),
         ]:
             with pytest.raises(error, match="Negative shift amount: -1"):
                 HybridEngine(cinterp=interpreter, qsim="stabilizer").run(phir)

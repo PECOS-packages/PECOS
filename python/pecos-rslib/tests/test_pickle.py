@@ -238,16 +238,17 @@ class TestPauliPropPickle:
 
     def test_roundtrip_empty(self) -> None:
         """Verify pickle roundtrip preserves an empty PauliProp as identity."""
-        sim = PauliProp(num_qubits=4, track_sign=True)
+        sim = PauliProp(track_sign=True)
         data = pickle.dumps(sim)
         restored = pickle.loads(data)
-        assert restored.num_qubits == 4
+        assert restored.to_dense_string() == "+I"
+        assert restored.to_dense_string(4) == "+IIII"
         assert restored.track_sign is True
         assert restored.is_identity()
 
     def test_roundtrip_with_faults(self) -> None:
         """Verify pickle roundtrip preserves PauliProp Pauli fault locations."""
-        sim = PauliProp(num_qubits=4, track_sign=True)
+        sim = PauliProp(track_sign=True)
         sim.track_x([0])
         sim.track_z([2])
         sim.track_y([3])
@@ -261,7 +262,7 @@ class TestPauliPropPickle:
 
     def test_roundtrip_preserves_sign(self) -> None:
         """Verify pickle roundtrip preserves the PauliProp sign flag."""
-        sim = PauliProp(num_qubits=2, track_sign=True)
+        sim = PauliProp(track_sign=True)
         sim.track_x([0])
         sim.flip_sign()  # sign is now negative
 
@@ -270,7 +271,7 @@ class TestPauliPropPickle:
 
     def test_roundtrip_preserves_img(self) -> None:
         """Verify pickle roundtrip preserves the PauliProp imaginary component."""
-        sim = PauliProp(num_qubits=2, track_sign=True)
+        sim = PauliProp(track_sign=True)
         sim.track_x([0])
         sim.flip_img(1)  # imaginary component
 
@@ -290,11 +291,12 @@ class TestPauliPropPickle:
 
     def test_deepcopy(self) -> None:
         """Verify deepcopy produces an independent copy of PauliProp with matching faults."""
-        sim = PauliProp(num_qubits=3, track_sign=True)
+        sim = PauliProp(track_sign=True)
         sim.track_x([0])
         sim.track_z([1])
 
         copied = copy.deepcopy(sim)
         assert copied.contains_x(0)
         assert copied.contains_z(1)
-        assert copied.num_qubits == 3
+        assert copied.to_dense_string() == "+XZ"
+        assert copied.to_dense_string(3) == "+XZI"

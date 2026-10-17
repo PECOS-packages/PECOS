@@ -470,7 +470,7 @@ fn scheduled_midshot_reset_discards_aborted_shot_and_reuses_worker() {
     }
 
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+    for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
         let mut engine = reset_fixture(mode);
         let stage = engine.start(()).unwrap();
         assert_waiting(&mut engine, &stage);
@@ -489,7 +489,7 @@ fn scheduled_midshot_reset_discards_aborted_shot_and_reuses_worker() {
             .unwrap();
         engine.operation_trace_collector = None;
         let profile = ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap();
-        let noise = if mode == ScheduledTransport::V4 {
+        let noise = if mode == ScheduledTransport::V7 {
             ScheduledEventIdleZ::new(profile, |_| Ok(Box::new(GatesOnly)))
                 .into_noise_model()
                 .unwrap()
@@ -1142,8 +1142,8 @@ fn unsatisfiable_measured_request_fails_from_start_and_continue() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         for after_first_read in [false, true] {
             assert_unsatisfiable_read_fails(
@@ -1163,11 +1163,11 @@ fn non_measurement_drains_cannot_keep_an_unsatisfiable_read_alive() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for (mode, padding) in [
         (ScheduledTransport::Off, DrainPadding::Idle),
-        (ScheduledTransport::V3, DrainPadding::Idle),
-        (ScheduledTransport::V3, DrainPadding::Empty),
-        (ScheduledTransport::V4, DrainPadding::Idle),
-        (ScheduledTransport::V4, DrainPadding::Custom),
-        (ScheduledTransport::V4, DrainPadding::Empty),
+        (ScheduledTransport::V6, DrainPadding::Idle),
+        (ScheduledTransport::V6, DrainPadding::Empty),
+        (ScheduledTransport::V7, DrainPadding::Idle),
+        (ScheduledTransport::V7, DrainPadding::Custom),
+        (ScheduledTransport::V7, DrainPadding::Empty),
     ] {
         for after_first_read in [false, true] {
             assert_unsatisfiable_read_fails(
@@ -1211,13 +1211,13 @@ fn deferred_read_quantum(mode: ScheduledTransport) -> pecos_engines::quantum_sys
             Ok(())
         }
     }
-    let noise = if mode == ScheduledTransport::V4 {
+    let noise = if mode == ScheduledTransport::V7 {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::new(Gates))
         })
         .into_noise_model()
         .unwrap()
-    } else if mode == ScheduledTransport::V3 {
+    } else if mode == ScheduledTransport::V6 {
         ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
             .unwrap()
             .into_noise_model()
@@ -1295,8 +1295,8 @@ fn deferred_measurement_reads_and_final_tail_share_the_runtime_drain() {
     "#;
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let mut engine = QisEngine::new(
             Box::new(crate::QisHeliosInterface::new()),
@@ -1347,8 +1347,8 @@ fn earlier_measurement_does_not_signal_ready_for_the_outstanding_read() {
     "#;
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let mut engine = QisEngine::new(
             Box::new(crate::QisHeliosInterface::new()),
@@ -1430,8 +1430,8 @@ fn assert_deferred_same_slot_delivery(read: bool) {
     );
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let deliveries = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut engine = QisEngine::new(
@@ -1519,8 +1519,8 @@ fn forced_drain_measurement_feedback_releases_the_requested_measurement() {
     "#;
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let mut engine = QisEngine::new(
             Box::new(crate::QisHeliosInterface::new()),
@@ -1565,8 +1565,8 @@ fn forced_drain_measurement_feedback_releases_the_requested_measurement() {
 fn pending_measurement_counts_preserve_leakage_and_reset_each_shot() {
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let mut engine = QisEngine::with_runtime(Box::new(DeferredReadRuntime {
             release_measurement_zero: true,
@@ -1616,8 +1616,8 @@ fn pending_measurement_counts_preserve_leakage_and_reset_each_shot() {
 fn unimported_measurement_emissions_latch_a_terminal_error() {
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let mut engine = QisEngine::with_runtime(Box::new(DeferredReadRuntime {
             discard: Some(7),
@@ -1673,8 +1673,8 @@ fn generated_measurement_drains_cannot_keep_an_unsatisfiable_read_alive() {
     "#;
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let mut engine = QisEngine::new(
             Box::new(crate::QisHeliosInterface::new()),
@@ -1758,8 +1758,8 @@ fn dropped_imported_measurements_prevent_shot_certification() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let (mut engine, result) = dropped_measurement_shot(mode);
         let retry = engine.continue_processing(ByteMessage::outcomes_builder().build());
@@ -1784,8 +1784,8 @@ fn start_discards_measurement_credits_from_the_previous_shot() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     for mode in [
         ScheduledTransport::Off,
-        ScheduledTransport::V3,
-        ScheduledTransport::V4,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
     ] {
         let (mut engine, previous) = dropped_measurement_shot(mode);
         assert!(previous.is_err());
@@ -1972,7 +1972,7 @@ fn scheduled_remeasured_slot_reads_and_records_latest_outcome() {
             ret i64 %status
         }
     ";
-    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+    for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
         let mut engine = dynamic_read_engine(source);
         engine.scheduled_transport = mode;
         for _ in 0..2 {
@@ -2003,7 +2003,7 @@ fn soft_rz_large_scheduled_gate_only_tail_completes() {
             ret i64 0
         }
     ";
-    for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+    for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
         let mut engine = QisEngine::new(
             Box::new(crate::QisHeliosInterface::new()),
             Box::new(crate::selene_soft_rz_runtime().unwrap()),
@@ -2019,4 +2019,75 @@ fn soft_rz_large_scheduled_gate_only_tail_completes() {
         assert_eq!(engine.scheduled_drain_round, 2);
         assert!(engine.get_results().is_ok());
     }
+}
+
+fn allocation_hint_controller() -> Box<QisEngine> {
+    let mut engine = QisEngine::new(
+        Box::new(crate::QisHeliosInterface::new()),
+        Box::new(super::tests::DummyRuntime::default()),
+    );
+    // Use the existing direct-lowering runtime fixture: Selene validates capacity
+    // earlier, while this test observes QisEngine's own physical-slot limit.
+    // Two runtime allocations, but quantum commands only address qubit 0.
+    // Without hint forwarding the shot succeeds with capacity 1, so an ordinary
+    // simulator capacity error cannot satisfy these tests.
+    let source = program("", true, false);
+    engine.set_dynamic_config(Box::new(crate::helios_interface_builder()), &source);
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    Box::new(engine)
+}
+
+fn assert_allocation_hint_error(result: Result<pecos_engines::shot_results::ShotVec, PecosError>) {
+    let error = result
+        .expect_err("the second runtime allocation must exceed the forwarded hint")
+        .to_string();
+    assert!(
+        error.contains("more than the configured 1 physical qubit slots"),
+        "{error}"
+    );
+    assert!(error.contains("--qubits N"), "{error}");
+}
+
+#[test]
+fn monte_carlo_max_qubits_forwards_allocation_hint() {
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_allocation_hint_error(
+        pecos_engines::MonteCarloEngine::run_with_noise_model_and_max_qubits(
+            allocation_hint_controller(),
+            Box::new(pecos_engines::noise::PassThroughNoiseModel::new()),
+            1,
+            1,
+            1,
+            Some(42),
+        ),
+    );
+}
+
+#[test]
+fn monte_carlo_build_forwards_allocation_hint() {
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut engine = pecos_engines::MonteCarloEngine::builder()
+        .with_classical_engine(allocation_hint_controller())
+        .with_num_qubits(1)
+        .build();
+    assert_allocation_hint_error(engine.run(1));
+}
+
+#[test]
+fn monte_carlo_build_with_seed_forwards_allocation_hint() {
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut engine = pecos_engines::MonteCarloEngine::builder()
+        .with_classical_engine(allocation_hint_controller())
+        .with_num_qubits(1)
+        .with_seed(42)
+        .build_with_seed();
+    assert_allocation_hint_error(engine.run(1));
 }

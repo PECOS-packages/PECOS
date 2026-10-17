@@ -137,15 +137,16 @@ impl SimulationResults {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Repetition Code Example ===\n");
 
     let code = RepetitionCode::new();
 
     example_noiseless(&code);
-    example_with_noise(&code);
-    example_error_scaling(&code);
-    example_round_scaling(&code);
+    example_with_noise(&code)?;
+    example_error_scaling(&code)?;
+    example_round_scaling(&code)?;
+    Ok(())
 }
 
 /// Run the code without noise (sanity check)
@@ -177,16 +178,16 @@ fn example_noiseless(code: &RepetitionCode) {
 }
 
 /// Run with depolarizing noise
-fn example_with_noise(code: &RepetitionCode) {
+fn example_with_noise(code: &RepetitionCode) -> Result<(), Box<dyn std::error::Error>> {
     println!("--- With Depolarizing Noise ---");
 
     let p_error = 0.02; // 2% error rate
 
     let noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(p_error))
-        .add_channel(TwoQubitChannel::depolarizing(p_error * 2.0))
-        .add_channel(MeasurementChannel::symmetric(p_error));
+        .add_channel(SingleQubitChannel::depolarizing(p_error)?)
+        .add_channel(TwoQubitChannel::depolarizing(p_error * 2.0)?)
+        .add_channel(MeasurementChannel::symmetric(p_error)?);
 
     let commands = code.build_circuit(3);
 
@@ -254,10 +255,11 @@ fn example_with_noise(code: &RepetitionCode) {
         );
     }
     println!();
+    Ok(())
 }
 
 /// Show how logical error rate scales with physical error rate
-fn example_error_scaling(code: &RepetitionCode) {
+fn example_error_scaling(code: &RepetitionCode) -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Error Rate Scaling ---");
     println!("  Physical vs Logical error rates (3 rounds):\n");
     println!("  {:>10} {:>15} {:>12}", "Physical", "Logical", "Reduction");
@@ -268,9 +270,9 @@ fn example_error_scaling(code: &RepetitionCode) {
     for p_phys in [0.005, 0.01, 0.02, 0.03, 0.05] {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(SingleQubitChannel::depolarizing(p_phys))
-            .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
-            .add_channel(MeasurementChannel::symmetric(p_phys));
+            .add_channel(SingleQubitChannel::depolarizing(p_phys)?)
+            .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0)?)
+            .add_channel(MeasurementChannel::symmetric(p_phys)?);
 
         let mut state = SparseStab::new(RepetitionCode::num_qubits());
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -309,10 +311,11 @@ fn example_error_scaling(code: &RepetitionCode) {
         );
     }
     println!();
+    Ok(())
 }
 
 /// Show how logical error rate changes with number of rounds
-fn example_round_scaling(code: &RepetitionCode) {
+fn example_round_scaling(code: &RepetitionCode) -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Round Scaling ---");
     println!("  Logical error rate vs number of syndrome rounds:\n");
     println!("  Physical error rate: 2%\n");
@@ -326,9 +329,9 @@ fn example_round_scaling(code: &RepetitionCode) {
 
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(SingleQubitChannel::depolarizing(p_phys))
-            .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0))
-            .add_channel(MeasurementChannel::symmetric(p_phys));
+            .add_channel(SingleQubitChannel::depolarizing(p_phys)?)
+            .add_channel(TwoQubitChannel::depolarizing(p_phys * 2.0)?)
+            .add_channel(MeasurementChannel::symmetric(p_phys)?);
 
         let mut state = SparseStab::new(RepetitionCode::num_qubits());
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -357,4 +360,5 @@ fn example_round_scaling(code: &RepetitionCode) {
 
     println!("\n  (More rounds = more opportunities for errors, but also better correction)");
     println!();
+    Ok(())
 }

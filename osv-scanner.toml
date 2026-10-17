@@ -132,3 +132,27 @@ id = "RUSTSEC-2026-0197"
 #         cgmath -> tket (dev-dependency) -> zlup.
 # Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2.
 reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.29.3/tket 0.21.2 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0367"
+# zip@2.4.2 -- SUID/SGID bits preserved by extract().
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (opt-in relay-bp feature;
+# pecos-rslib enables it for the Python RelayBpDecoder).
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0368"
+# zip@2.4.2 -- extract() creates symlinks with attacker-chosen targets.
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (opt-in relay-bp feature;
+# pecos-rslib enables it for the Python RelayBpDecoder).
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0369"
+# zip@2.4.2 -- extract() applies permissions through symlinks.
+# Chain: relay-bp 0.2.2 -> ndarray-npy 0.9.1 -> zip ^2 (opt-in relay-bp feature;
+# pecos-rslib enables it for the Python RelayBpDecoder).
+# Upstream owners: https://github.com/trmue/relay and https://github.com/jturner314/ndarray-npy.
+reason = "Transitive via relay-bp/ndarray-npy, which read .npz entries by name and never call ZipArchive::extract or ZipStreamReader::extract, the affected APIs."

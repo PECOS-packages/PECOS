@@ -144,6 +144,12 @@ impl PecosError {
     }
 }
 
+impl From<crate::angle::NonFiniteAngleError> for PecosError {
+    fn from(error: crate::angle::NonFiniteAngleError) -> Self {
+        Self::Input(error.to_string())
+    }
+}
+
 #[cfg(feature = "anyhow")]
 impl From<anyhow::Error> for PecosError {
     fn from(error: anyhow::Error) -> Self {

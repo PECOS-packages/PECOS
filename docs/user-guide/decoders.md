@@ -470,6 +470,18 @@ standalone faults in the model, preserving probabilities and observable effects.
 A DetectorErrorModel object decodes its standard text plus its `fault_sector` labels.
 Those labels guide the choice of graphlike components.
 Use `batch.decode(dem, spec)` or `dem.build_decoder(spec)` to preserve them.
+Saving with `batch.save(path, dem=dem)` also preserves the object's labels in
+corpus format v2. `SampleBatch.load(path).decode(None, spec)` uses the stored
+text and labels. A labelled embedded model has object semantics, including
+provider refusal; passing `loaded.dem` explicitly decodes unlabelled text.
+All-null labels (including v1 corpora) retain text semantics and provider support.
+`loaded.dem_fault_sectors` returns a fresh, dense list of labels or `None` entries;
+batches without an embedded model return `None`. Corpus identity checks only text.
+Resaving with equal embedded text preserves labels, including with
+`allow_dem_mismatch=True`; different text writes all-null labels. An object
+always supplies its own labels. Saving never changes the source batch.
+Every save writes v2; new readers accept v1 and v2, while older installations
+reject v2 files. `loaded.format_version` reports the version actually loaded.
 Both results expose `.projection`. It is `None` when no projection was needed or
 when a composition without a shared policy projects inside its members and has
 no shared report. Text input has no fault-sector labels.

@@ -3267,6 +3267,12 @@ fn create_observable_decoder(
     spec.build(&model).map_err(decoder_build_error_to_py)
 }
 
+/// A loaded corpus's exact DEM text and its dense detector fault-sector labels.
+struct EmbeddedDem {
+    text: String,
+    fault_sectors: Vec<Option<String>>,
+}
+
 /// Pre-generated sample batch held in Rust memory.
 ///
 /// Created by `DemSampler.sample_batch()`. Can be decoded by multiple
@@ -3293,7 +3299,7 @@ pub struct PySampleBatch {
     samples: SampleBatch,
     raw_measurements: bool,
     seed: Option<u64>,
-    dem: Option<String>,
+    embedded: Option<EmbeddedDem>,
     metadata_json: Option<String>,
     generator: Option<String>,
     format_version: Option<u32>,
@@ -3341,7 +3347,7 @@ impl PySampleBatch {
             samples,
             raw_measurements: false,
             seed,
-            dem: None,
+            embedded: None,
             metadata_json: None,
             generator: None,
             format_version: None,
@@ -3430,7 +3436,7 @@ impl PySampleBatch {
             .expect("Python constructor validated rows and observable masks"),
             raw_measurements: false,
             seed: None,
-            dem: None,
+            embedded: None,
             metadata_json: None,
             generator: None,
             format_version: None,
@@ -3447,10 +3453,32 @@ impl PySampleBatch {
             .expect("corpus loader validated packed columns"),
             raw_measurements: false,
             seed: corpus.seed,
-            dem: Some(corpus.dem),
+            embedded: Some(EmbeddedDem {
+                text: corpus.dem,
+                fault_sectors: corpus.detector_fault_sectors,
+            }),
             metadata_json: corpus.metadata_json,
             generator: Some(corpus.generator),
             format_version: Some(corpus.format_version),
+        }
+    }
+
+    fn embedded_dem(&self) -> PyResult<DemInput> {
+        let embedded = self.embedded.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "dem is required because this SampleBatch has no embedded DEM",
+            )
+        })?;
+        let text = embedded.text.clone();
+        if embedded.fault_sectors.iter().any(Option::is_some) {
+            let structured = pecos_decoder_core::window::StructuredDem::from_dem_str(&text)
+                .and_then(|parsed| {
+                    parsed.with_detector_fault_sectors(embedded.fault_sectors.clone())
+                })
+                .map_err(decoder_build_error_to_py)?;
+            Ok(DemInput::Object { text, structured })
+        } else {
+            Ok(DemInput::Text(text))
         }
     }
 
@@ -3459,8 +3487,8 @@ impl PySampleBatch {
         if allow_dem_mismatch {
             return Ok(());
         }
-        if let Some(embedded_dem) = &self.dem
-            && embedded_dem != dem
+        if let Some(embedded) = &self.embedded
+            && embedded.text != dem
         {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "supplied DEM differs from the DEM embedded in this loaded SampleBatch; pass \
@@ -3577,7 +3605,17 @@ impl PySampleBatch {
     /// Exact detector error model stored with a loaded corpus, if any.
     #[getter]
     fn dem(&self) -> Option<&str> {
-        self.dem.as_deref()
+        self.embedded
+            .as_ref()
+            .map(|embedded| embedded.text.as_str())
+    }
+
+    /// Dense detector labels stored with a loaded corpus, returned as a fresh list.
+    #[getter]
+    fn dem_fault_sectors(&self) -> Option<Vec<Option<String>>> {
+        self.embedded
+            .as_ref()
+            .map(|embedded| embedded.fault_sectors.clone())
     }
 
     /// Opaque caller metadata JSON stored with a loaded corpus, if any.
@@ -3600,9 +3638,14 @@ impl PySampleBatch {
 
     /// Save this serially captured shot batch as a self-describing corpus.
     ///
+    /// Every save writes format v2; new readers accept v1 and v2, but older PECOS
+    /// installations reject v2. Objects supply their own labels. Equal embedded
+    /// text preserves stored labels, even with the mismatch override; other text
+    /// writes all-null labels. Saving does not attach a model to this batch.
+    ///
     /// Args:
     ///     path: Destination file path.
-    ///     dem: DEM text associated with the samples. For a generated or
+    ///     dem: DEM text or a DetectorErrorModel object associated with the samples. For a generated or
     ///         Python-constructed batch, only detector and observable dimensions
     ///         can be checked. This catches gross mismatches, but cannot prove DEM
     ///         identity or detect a different model with the same dimensions. For
@@ -3619,12 +3662,20 @@ impl PySampleBatch {
     fn save(
         &self,
         path: std::path::PathBuf,
-        dem: &str,
+        dem: &Bound<'_, PyAny>,
         metadata_json: Option<&str>,
         clear_metadata: bool,
         allow_dem_mismatch: bool,
     ) -> PyResult<()> {
-        self.ensure_dem_matches(dem, allow_dem_mismatch)?;
+        let dem = DemInput::extract(dem)?;
+        self.ensure_dem_matches(dem.text(), allow_dem_mismatch)?;
+        let labels = match &dem {
+            DemInput::Object { structured, .. } => structured.detector_fault_sectors.clone(),
+            DemInput::Text(text) => match &self.embedded {
+                Some(embedded) if embedded.text == *text => embedded.fault_sectors.clone(),
+                _ => vec![None; self.samples.num_detectors()],
+            },
+        };
         if clear_metadata && metadata_json.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "metadata_json and clear_metadata=True are mutually exclusive",
@@ -3642,14 +3693,17 @@ impl PySampleBatch {
                 obs_columns: self.samples.obs_columns(),
                 num_shots: self.samples.num_shots(),
                 seed: self.seed,
-                dem,
+                dem: dem.text(),
+                detector_fault_sectors: &labels,
                 metadata_json,
             },
         )
         .map_err(|error| Self::map_corpus_error(error, &path))
     }
 
-    /// Load and validate a self-describing shot corpus.
+    /// Load and validate a v1 or v2 shot corpus, reporting its on-disk version.
+    /// Version 1 loads unlabelled. Version 2 preserves detector fault-sector labels.
+    /// Every save writes v2, which older PECOS installations reject.
     #[staticmethod]
     fn load(path: std::path::PathBuf) -> PyResult<Self> {
         sample_corpus::load(&path)
@@ -3713,10 +3767,10 @@ impl PySampleBatch {
     /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
-    /// batches require an explicit DEM. Embedded text does not persist fault-sector
-    /// labels: every detector is unlabelled. Pass a DetectorErrorModel object to
-    /// decode its standard text plus its `fault_sector` labels; text input always
-    /// treats detectors as unlabelled.
+    /// batches require an explicit DEM. Stored labels use object semantics; providers
+    /// refuse labelled embedded models. All-null labels retain text semantics.
+    /// Explicit objects use their own labels. Explicit text (including loaded.dem)
+    /// is unlabelled. Corpus identity compares standard text only, never labels.
     /// Automatic execution honors decoder
     /// statefulness, uses native batching where available, and otherwise chooses
     /// sequential or bounded parallel per-shot execution. Set `workers` to opt
@@ -3736,11 +3790,7 @@ impl PySampleBatch {
     ) -> PyResult<batch_decode::PyDecodeResult> {
         let resolved_dem = match dem {
             Some(dem) => DemInput::extract(dem)?,
-            None => DemInput::Text(self.dem.clone().ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "dem is required because this SampleBatch has no embedded DEM",
-                )
-            })?),
+            None => self.embedded_dem()?,
         };
 
         // Preserve the legacy validation precedence: reject raw rows and an
@@ -3770,6 +3820,18 @@ impl PySampleBatch {
             .predictions(predictions)
             .timing(timing);
         options.workers = explicit_workers;
+        if dem.is_none()
+            && matches!(resolved_dem, DemInput::Object { .. })
+            && matches!(
+                spec,
+                crate::batch_decoder_spec::BatchDecoderSpec::Provider { .. }
+            )
+        {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "decoder providers require DEM text by protocol; the embedded model carries fault-sector labels; passing loaded.dem text decodes without them",
+            ));
+        }
+
         let output = py
             .detach(|| match &resolved_dem {
                 DemInput::Text(text) => self.samples.decode_with(text, &spec, &options),
@@ -8302,4 +8364,38 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     modules.set_item("pecos_rslib.qec", &qec)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod corpus_sector_tests {
+    use super::*;
+
+    #[test]
+    fn embedded_labels_change_prepared_projection_components() {
+        let dem = "error(0.01) D0 D1\nerror(0.01) D0 D1 D2 D3\nerror(0.01) D0 D2\nerror(0.01) D1 D3\nerror(0.01) D2 D3\n";
+        let batch = PySampleBatch::from_corpus(LoadedCorpus {
+            det_columns: vec![vec![0]; 4],
+            obs_columns: vec![],
+            num_shots: 1,
+            seed: None,
+            dem: dem.into(),
+            detector_fault_sectors: ["X", "Z", "X", "Z"].map(|s| Some(s.into())).to_vec(),
+            metadata_json: None,
+            generator: "test".into(),
+            format_version: 2,
+        });
+        let spec = pecos_decoders::DecoderSpec::parse("pymatching").unwrap();
+        let labelled = batch.embedded_dem().unwrap().prepare(&spec).unwrap();
+        let text = DemInput::Text(dem.into()).prepare(&spec).unwrap();
+        let pecos_decoders::DecodeModel::StructuredDem(labelled) = labelled.model else {
+            panic!("expected prepared graphlike model");
+        };
+        let pecos_decoders::DecodeModel::StructuredDem(text) = text.model else {
+            panic!("expected prepared graphlike model");
+        };
+        assert_eq!(labelled.errors[1].components[0].detectors, vec![0, 2]);
+        assert_eq!(labelled.errors[1].components[1].detectors, vec![1, 3]);
+        assert_eq!(text.errors[1].components[0].detectors, vec![0, 1]);
+        assert_eq!(text.errors[1].components[1].detectors, vec![2, 3]);
+    }
 }

@@ -91,3 +91,23 @@ def test_corpus_rejects_observables_beyond_result_abi(tmp_path: Path) -> None:
     SampleBatch([[1]], [1 << 128], num_observables=129).save(corpus, dem=dem)
     with pytest.raises(ValueError, match="128-observable"):
         BUILDER.pack_replay(corpus, tmp_path / "wide.fwr", dem)
+
+
+def test_labelled_v2_corpus_exports_only_shots(tmp_path: Path) -> None:
+    from pecos_rslib.qec import DetectorErrorModel
+    from pecos_rslib.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz([0])
+    circuit.add_detector([-1], detector_id=0, fault_sector="opaque")
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.01, p_prep=0)
+    batch = SampleBatch([[1], [0]], [0, 0], num_observables=0)
+    labelled = tmp_path / "labelled.pecos"
+    text = tmp_path / "text.pecos"
+    batch.save(labelled, dem=dem)
+    batch.save(text, dem=str(dem))
+    assert SampleBatch.load(labelled).dem_fault_sectors == ["opaque"]
+    first, second = tmp_path / "first.fwr", tmp_path / "second.fwr"
+    assert BUILDER.pack_replay(labelled, first, str(dem)) == BUILDER.pack_replay(text, second, str(dem))
+    assert first.read_bytes() == second.read_bytes()

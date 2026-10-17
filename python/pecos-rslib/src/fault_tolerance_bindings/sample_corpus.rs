@@ -12,7 +12,8 @@
 
 //! Versioned, self-describing shot-corpus serialization.
 
-use pecos_decoder_core::dem::SparseDem;
+use pecos_decoder_core::dem::utils::parse_dem_metadata;
+use pecos_decoder_core::window::{StructuredDem, validate_fault_sectors};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -31,7 +32,7 @@ use std::path::Path;
 // which bounds the slack to that one word but cannot remove it.
 
 const MAGIC: &[u8; 12] = b"PECOSCORPUS\0";
-pub(super) const FORMAT_VERSION: u32 = 1;
+pub(super) const FORMAT_VERSION: u32 = 2;
 const SHA256_LEN: usize = 32;
 const HEADER_LEN_END: usize = MAGIC.len() + size_of::<u32>();
 const PREFIX_LEN: usize = HEADER_LEN_END + SHA256_LEN;
@@ -62,6 +63,7 @@ pub(super) struct CorpusToSave<'a> {
     pub num_shots: usize,
     pub seed: Option<u64>,
     pub dem: &'a str,
+    pub detector_fault_sectors: &'a [Option<String>],
     pub metadata_json: Option<&'a str>,
 }
 
@@ -72,6 +74,7 @@ pub(super) struct LoadedCorpus {
     pub num_shots: usize,
     pub seed: Option<u64>,
     pub dem: String,
+    pub detector_fault_sectors: Vec<Option<String>>,
     pub metadata_json: Option<String>,
     pub generator: String,
     pub format_version: u32,
@@ -166,19 +169,19 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
         corpus.det_columns.len(),
         corpus.obs_columns.len(),
     )?;
-    let parsed_dem = SparseDem::from_dem_str(corpus.dem)
+    let (dem_detectors, dem_observables) = parse_dem_metadata(corpus.dem)
         .map_err(|error| invalid(format!("invalid DEM supplied to SampleBatch.save: {error}")))?;
-    if parsed_dem.num_detectors != corpus.det_columns.len()
-        || parsed_dem.num_observables != corpus.obs_columns.len()
-    {
+    if dem_detectors != corpus.det_columns.len() || dem_observables != corpus.obs_columns.len() {
         return Err(invalid(format!(
             "DEM dimensions do not match SampleBatch: DEM has {} detector(s) and {} observable(s), batch has {} detector(s) and {} observable(s)",
-            parsed_dem.num_detectors,
-            parsed_dem.num_observables,
+            dem_detectors,
+            dem_observables,
             corpus.det_columns.len(),
             corpus.obs_columns.len()
         )));
     }
+
+    validate_labels(corpus.dem, corpus.detector_fault_sectors, dem_detectors)?;
 
     if let Some(metadata) = corpus.metadata_json {
         serde_json::from_str::<Value>(metadata)
@@ -213,6 +216,7 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
         "words_per_column": words_per_column,
         "seed": corpus.seed,
         "dem": corpus.dem,
+        "detector_fault_sectors": corpus.detector_fault_sectors,
         "dem_sha256": sha256_hex(corpus.dem.as_bytes()),
         "metadata_json": corpus.metadata_json,
         "generator": concat!("pecos-rslib ", env!("CARGO_PKG_VERSION")),
@@ -240,6 +244,26 @@ pub(super) fn save(path: &Path, corpus: CorpusToSave<'_>) -> Result<(), CorpusEr
     bytes.extend_from_slice(&header_bytes);
     bytes.extend_from_slice(&payload);
     std::fs::write(path, bytes)?;
+    Ok(())
+}
+
+/// Labelled corpora decode as structured models, so their DEM must be one.
+fn validate_labels(
+    dem: &str,
+    labels: &[Option<String>],
+    num_detectors: usize,
+) -> Result<(), CorpusError> {
+    validate_fault_sectors(labels, num_detectors)
+        .map_err(|error| invalid(format!("invalid detector_fault_sectors: {error}")))?;
+    if labels.iter().any(Option::is_some) {
+        StructuredDem::from_dem_str(dem)
+            .and_then(|parsed| parsed.with_detector_fault_sectors(labels.to_vec()))
+            .map_err(|error| {
+                invalid(format!(
+                    "labelled corpus DEM is not a valid structured model: {error}"
+                ))
+            })?;
+    }
     Ok(())
 }
 
@@ -350,9 +374,9 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
         .ok_or_else(|| invalid("invalid corpus header JSON: top-level value must be an object"))?;
 
     let version = required_u64(header, "format_version")?;
-    if version != u64::from(FORMAT_VERSION) {
+    if version != 1 && version != u64::from(FORMAT_VERSION) {
         return Err(invalid(format!(
-            "unsupported corpus format_version {version}; this PECOS build supports version {FORMAT_VERSION}"
+            "unsupported corpus format_version {version}; this PECOS build supports versions 1 and 2"
         )));
     }
 
@@ -392,14 +416,41 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
         serde_json::from_str::<Value>(metadata)
             .map_err(|error| invalid(format!("corpus metadata_json is not valid JSON: {error}")))?;
     }
-    let parsed_dem = SparseDem::from_dem_str(&dem)
+    let (dem_detectors, dem_observables) = parse_dem_metadata(&dem)
         .map_err(|error| invalid(format!("corpus contains an invalid DEM: {error}")))?;
-    if parsed_dem.num_detectors != num_detectors || parsed_dem.num_observables != num_observables {
+    if dem_detectors != num_detectors || dem_observables != num_observables {
         return Err(invalid(format!(
-            "corpus DEM dimensions disagree with its header: DEM has {} detector(s) and {} observable(s), header declares {num_detectors} detector(s) and {num_observables} observable(s)",
-            parsed_dem.num_detectors, parsed_dem.num_observables
+            "corpus DEM dimensions disagree with its header: DEM has {dem_detectors} detector(s) and {dem_observables} observable(s), header declares {num_detectors} detector(s) and {num_observables} observable(s)"
         )));
     }
+
+    let detector_fault_sectors = if version == 1 {
+        vec![None; num_detectors]
+    } else {
+        let value = header.get("detector_fault_sectors").ok_or_else(|| {
+            invalid("corpus header is missing required field detector_fault_sectors")
+        })?;
+        let entries = value
+            .as_array()
+            .ok_or_else(|| invalid("corpus detector_fault_sectors must be an array"))?;
+        if entries.len() != num_detectors {
+            return Err(invalid(format!(
+                "invalid detector_fault_sectors: entry count {} does not match detector count {num_detectors}",
+                entries.len()
+            )));
+        }
+        entries
+            .iter()
+            .map(|entry| match entry {
+                Value::Null => Ok(None),
+                Value::String(label) => Ok(Some(label.clone())),
+                _ => Err(invalid(
+                    "corpus detector_fault_sectors entries must be strings or null",
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    validate_labels(&dem, &detector_fault_sectors, num_detectors)?;
 
     if words_per_column != 0 {
         let padding_mask = !final_word_mask(num_shots);
@@ -442,9 +493,10 @@ pub(super) fn load(path: &Path) -> Result<LoadedCorpus, CorpusError> {
         num_shots,
         seed,
         dem,
+        detector_fault_sectors,
         metadata_json,
         generator,
-        format_version: FORMAT_VERSION,
+        format_version: u32::try_from(version).expect("supported version fits u32"),
     })
 }
 
@@ -470,6 +522,7 @@ mod tests {
                 num_shots: 2,
                 seed: Some(42),
                 dem: DEM,
+                detector_fault_sectors: &[None],
                 metadata_json: Some(r#"{ "decoder": "pymatching" }"#),
             },
         )
@@ -539,6 +592,149 @@ mod tests {
     }
 
     #[test]
+    fn v2_labels_round_trip_including_null() {
+        let (_directory, path) = corpus_path();
+        let labels = vec![Some("opaque sector".into()), None];
+        save(
+            &path,
+            CorpusToSave {
+                det_columns: &[vec![1], vec![0]],
+                obs_columns: &[vec![1]],
+                num_shots: 1,
+                seed: None,
+                dem: "error(0.125) D0 L0\ndetector D1\n",
+                detector_fault_sectors: &labels,
+                metadata_json: None,
+            },
+        )
+        .unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.detector_fault_sectors, labels);
+        assert_eq!(loaded.format_version, 2);
+    }
+
+    #[test]
+    fn v1_ignores_labels_even_when_present() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        for field in [
+            None,
+            Some(serde_json::json!(["X"])),
+            Some(Value::Bool(true)),
+        ] {
+            let updated = with_valid_content_sha(replace_header(&bytes, |header| {
+                header.insert("format_version".into(), Value::from(1));
+                header.remove("detector_fault_sectors");
+                if let Some(value) = field {
+                    header.insert("detector_fault_sectors".into(), value);
+                }
+            }));
+            std::fs::write(&path, updated).unwrap();
+            let loaded = load(&path).unwrap();
+            assert_eq!(loaded.detector_fault_sectors, vec![None]);
+            assert_eq!(loaded.format_version, 1);
+        }
+    }
+
+    #[test]
+    fn v2_rejects_invalid_label_fields() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        for (field, expected) in [
+            (None, "missing required field"),
+            (Some(serde_json::json!([])), "does not match detector count"),
+            (Some(serde_json::json!([""])), "empty"),
+            (Some(serde_json::json!([7])), "strings or null"),
+            (Some(Value::Null), "must be an array"),
+            (Some(serde_json::json!("X")), "must be an array"),
+            (Some(serde_json::json!({})), "must be an array"),
+        ] {
+            let updated = with_valid_content_sha(replace_header(&bytes, |header| {
+                header.remove("detector_fault_sectors");
+                if let Some(value) = field {
+                    header.insert("detector_fault_sectors".into(), value);
+                }
+            }));
+            std::fs::write(&path, updated).unwrap();
+            let message = invalid_message(load(&path));
+            assert!(message.contains(expected), "{message}");
+        }
+    }
+
+    fn save_targetless_corpus(path: &Path, labels: &[Option<String>]) -> Result<(), CorpusError> {
+        save(
+            path,
+            CorpusToSave {
+                det_columns: &[vec![0]],
+                obs_columns: &[],
+                num_shots: 1,
+                seed: None,
+                dem: "error(0.1)\nerror(0.1) D0\n",
+                detector_fault_sectors: labels,
+                metadata_json: None,
+            },
+        )
+    }
+
+    #[test]
+    fn labelled_corpora_must_be_valid_structured_models() {
+        let (_directory, path) = corpus_path();
+        let message = match save_targetless_corpus(&path, &[Some("X".into())]) {
+            Err(CorpusError::Invalid(message)) => message,
+            other => panic!("expected an invalid-corpus error, got {other:?}"),
+        };
+        assert!(
+            message.contains("not a valid structured model"),
+            "{message}"
+        );
+
+        save_targetless_corpus(&path, &[None]).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = with_valid_content_sha(replace_header(&bytes, |header| {
+            header.insert("detector_fault_sectors".into(), serde_json::json!(["X"]));
+        }));
+        std::fs::write(&path, updated).unwrap();
+        let message = invalid_message(load(&path));
+        assert!(
+            message.contains("not a valid structured model"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn targetless_text_errors_round_trip() {
+        let (_directory, path) = corpus_path();
+        save(
+            &path,
+            CorpusToSave {
+                det_columns: &[],
+                obs_columns: &[],
+                num_shots: 1,
+                seed: None,
+                dem: "error(0.125)\n",
+                detector_fault_sectors: &[],
+                metadata_json: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(load(&path).unwrap().dem, "error(0.125)\n");
+    }
+
+    #[test]
+    fn editing_only_a_label_fails_integrity() {
+        let (_directory, path) = corpus_path();
+        save_test_corpus(&path);
+        let bytes = std::fs::read(&path).unwrap();
+        let updated = replace_header(&bytes, |header| {
+            header.insert("detector_fault_sectors".into(), serde_json::json!(["X"]));
+        });
+        std::fs::write(&path, updated).unwrap();
+        assert!(invalid_message(load(&path)).contains("content SHA-256 mismatch"));
+    }
+
+    #[test]
     fn wide_observable_column_round_trips_without_narrowing() {
         let (_directory, path) = corpus_path();
         let mut observables = vec![vec![0]; 65];
@@ -551,6 +747,7 @@ mod tests {
                 num_shots: 1,
                 seed: None,
                 dem: "error(0.125) D0 L64\n",
+                detector_fault_sectors: &[None],
                 metadata_json: None,
             },
         )
@@ -652,7 +849,8 @@ mod tests {
 
         let message = invalid_message(load(&path));
         assert!(
-            message.contains("unsupported corpus format_version 999"),
+            message.contains("unsupported corpus format_version 999")
+                && message.contains("supports versions 1 and 2"),
             "{message}"
         );
     }
@@ -801,6 +999,7 @@ mod tests {
                 num_shots: 1,
                 seed: None,
                 dem: DEM,
+                detector_fault_sectors: &[None],
                 metadata_json: None,
             },
         )
@@ -836,6 +1035,7 @@ mod tests {
                 num_shots: 1,
                 seed: None,
                 dem: "error(0.125) D1 L0\n",
+                detector_fault_sectors: &[None, None],
                 metadata_json: None,
             },
         );
@@ -858,6 +1058,7 @@ mod tests {
                 num_shots: 1,
                 seed: None,
                 dem: DEM,
+                detector_fault_sectors: &[None],
                 metadata_json: Some("{"),
             },
         );

@@ -247,6 +247,24 @@ impl StructuredDem {
         })
     }
 
+    /// Replace the full detector label vector and revalidate this model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if the model or labels fail [`Self::try_new`] validation.
+    pub fn with_detector_fault_sectors(
+        self,
+        detector_fault_sectors: Vec<Option<String>>,
+    ) -> Result<Self, DecoderError> {
+        Self::try_new(
+            self.errors,
+            self.detector_coords,
+            detector_fault_sectors,
+            self.num_detectors,
+            self.num_observables,
+        )
+    }
+
     /// Return each detector's time coordinate, defaulting missing time to zero.
     #[must_use]
     pub fn detector_times(&self) -> Vec<f64> {
@@ -407,7 +425,12 @@ impl StructuredDem {
     }
 }
 
-fn validate_fault_sectors(
+/// Check a dense detector label vector: one entry per detector, labels non-empty.
+///
+/// # Errors
+///
+/// Returns [`DecoderError`] if the length differs from `num_detectors` or a label is empty.
+pub fn validate_fault_sectors(
     sectors: &[Option<String>],
     num_detectors: usize,
 ) -> Result<(), DecoderError> {

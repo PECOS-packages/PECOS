@@ -185,6 +185,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- `quantum-pecos` now requires `tket~=0.15.9` and `selene-hugr-qis-compiler~=0.4.3`
+  (also the floor of `pecos-rslib`'s `hugr` extra). Earlier tket releases fail to
+  compile some Guppy programs that convert a measurement result to a number and use
+  it as a gate parameter, such as `rz(q, angle(0.5 * float(int(measure(a).read()))))`,
+  with a `PyTK1DecodeError` while decoding a pytket `Barrier`. The fixed tket needs a
+  newer `hugr`, whose float operations `selene-hugr-qis-compiler` 0.4.2 cannot load.
+
 - Fixed Guppy result tags binding to the wrong measurement when HUGR node order
   differed from runtime order, such as with inlined helpers. Tags now bind from
   the lowered program that is executed. Errors for uncertifiable `result_tags` /

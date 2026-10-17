@@ -3,18 +3,15 @@ yanked = "deny"
 unmaintained = "none"
 unsound = "none"
 ignore = [
-    # Every zip release before 9.0 is yanked. relay-bp 0.2.2 (the latest) reads
-    # and writes .npz files through ndarray-npy 0.9, which requires zip ^2, and
-    # no newer ndarray-npy or relay-bp release moves to zip 9. Relay-BP is an
-    # opt-in feature (`relay-bp` on pecos-decoders and pecos), so default builds
-    # and downstream users do not depend on it; pecos-rslib enables it for the
-    # Python RelayBpDecoder and builds from Cargo.lock. Remove this entry when
-    # relay-bp releases on a non-yanked zip.
-    { crate = "zip@2.4.2", reason = "only reachable through the opt-in relay-bp feature; no non-yanked zip ^2 exists" },
-    # The same zip@2.4.2 has advisories against ZipArchive::extract and
-    # ZipStreamReader::extract only. ndarray-npy reads .npz entries by name and
-    # relay-bp never extracts archives, so neither affected API is called. Remove
-    # these with the zip@2.4.2 entry above.
+    # zip@2.4.2 is reachable only through the opt-in relay-bp feature
+    # (`relay-bp` on pecos-decoders and pecos; pecos-rslib enables it for the
+    # Python RelayBpDecoder): relay-bp 0.2.2 (the latest) reads .npz files
+    # through ndarray-npy 0.9, which requires zip ^2. That zip has advisories
+    # against ZipArchive::extract and ZipStreamReader::extract only;
+    # ndarray-npy reads .npz entries by name and relay-bp never extracts
+    # archives, so neither affected API is called. These ids are not
+    # version-scoped, but only zip < 9.0 is affected and the workspace's own zip
+    # is 9.x. Remove them when relay-bp moves to zip 9 or is replaced.
     { id = "RUSTSEC-2026-0367", reason = "zip@2.4.2 via relay-bp -> ndarray-npy; extract() SUID/SGID handling is never called" },
     { id = "RUSTSEC-2026-0368", reason = "zip@2.4.2 via relay-bp -> ndarray-npy; extract() symlink targets are never created" },
     { id = "RUSTSEC-2026-0369", reason = "zip@2.4.2 via relay-bp -> ndarray-npy; extract() permissions through symlinks are never applied" },

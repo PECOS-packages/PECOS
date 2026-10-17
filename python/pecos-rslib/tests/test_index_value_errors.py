@@ -44,3 +44,14 @@ def test_dense_matrix_rejects_unrepresentable_natural_width():
     index = 2 * sys.maxsize + 1
     with pytest.raises(ValueError, match=f"qubit index {index}.*matrix width"):
         rust.X(index).to_matrix()
+
+
+@pytest.mark.parametrize(
+    ("mode", "gate_indices", "message"),
+    [("replace", [], "circuit has no ticks"), ("update", [0], "request has no gates")],
+)
+def test_empty_tick_request_index_advice(mode, gate_indices, message):
+    request = rust.TickCircuit()
+    request.tick()
+    with pytest.raises(IndexError, match=message):
+        rust.TickCircuit()._apply_tick(request, 0, mode, gate_indices)

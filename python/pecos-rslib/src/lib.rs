@@ -47,6 +47,7 @@ mod dtypes;
 mod engine_bindings;
 mod engine_builders;
 mod engines_module;
+mod errors;
 mod experimental_bindings;
 mod fault_tolerance_bindings;
 mod gate_registry_bindings;

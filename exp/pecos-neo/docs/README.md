@@ -3,7 +3,6 @@
 Build a circuit, add noise, run it:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_neo::command::CommandBuilder;
 
@@ -18,8 +17,6 @@ let results = sim_neo(circuit).auto()
     .sampling(monte_carlo(1000))
     .seed(42)
     .run();
-# Ok(())
-# }
 ```
 
 Everything chains off `sim_neo()`. The sections below show what you can plug in.
@@ -33,16 +30,12 @@ Everything chains off `sim_neo()`. The sections below show what you can plug in.
 The simplest option -- uniform depolarizing noise:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(1000)).run();
-# Ok(())
-# }
 ```
 
 Need per-channel control (single-qubit, two-qubit, measurement)?
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 sim_neo(circuit).auto()
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
@@ -50,8 +43,6 @@ sim_neo(circuit).auto()
         .with_p_meas_symmetric(0.005).build()?)
     .sampling(monte_carlo(1000))
     .run();
-# Ok(())
-# }
 ```
 
 Noise is [event-driven](user-guides/events.md) -- channels respond to gate and
@@ -74,10 +65,7 @@ sim_neo(circuit).quantum(state_vector()).sampling(monte_carlo(1000)).run();
 Add `.workers(n)` on the sampler -- works with or without noise:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(10000).workers(4)).seed(42).run();
-# Ok(())
-# }
 ```
 
 ### Estimate rare event probabilities

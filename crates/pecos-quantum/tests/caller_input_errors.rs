@@ -147,3 +147,26 @@ fn merge_still_validates_phases_after_custom_clifford_images() {
     ));
     assert_eq!(target.num_generators(), 1);
 }
+
+#[test]
+fn generator_index_advice_handles_empty_groups() {
+    let mut group = PauliGroup::new(Vec::new()).unwrap();
+    let mut stabilizers = PauliStabilizerGroup::new(Vec::new()).unwrap();
+    for message in [
+        group.generator_order(0).unwrap_err().to_string(),
+        group.remove_generator(0).unwrap_err().to_string(),
+        stabilizers.remove_generator(0).unwrap_err().to_string(),
+    ] {
+        assert!(message.contains("generator index 0"));
+        assert!(message.contains("group has no generators"));
+        assert!(!message.contains("less than 0") && !message.contains("below 0"));
+    }
+    let group = PauliGroup::new(vec![PauliString::z(0)]).unwrap();
+    assert!(
+        group
+            .generator_order(1)
+            .unwrap_err()
+            .to_string()
+            .contains("use an index below 1")
+    );
+}

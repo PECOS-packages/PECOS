@@ -169,9 +169,10 @@ pub fn validate_probability_sum_at_most_one(rates: &[f64], field: &str) -> Valid
         validate_probability(rate, &format!("{field}[{index}]"))?;
     }
     let total: f64 = rates.iter().sum();
-    // Each addition contributes at most EPSILON relative error. For a total near
-    // one, n * EPSILON bounds accumulated rounding without accepting extra rate.
-    let roundoff = rates.iter().fold(0.0, |bound, _| bound + f64::EPSILON);
+    // Unit roundoff is EPSILON/2. For nonnegative rates totaling near one,
+    // n * EPSILON conservatively bounds accumulated addition roundoff.
+    let count: f64 = num_traits::AsPrimitive::as_(rates.len());
+    let roundoff = count * f64::EPSILON;
     if total - 1.0 > roundoff {
         return Err(ValidationError::new(
             format!("{field} total"),

@@ -145,7 +145,8 @@ def test_output_contract_rejects(event_runtime, output, message):
                 return []
             return gates
 
-    with pytest.raises(RuntimeError, match=message):
+    error = ValueError if output in {"too_many", "remove_measurement", "unsupported_gate"} else RuntimeError
+    with pytest.raises(error, match=message):
         simulation(event_runtime, lambda _: Invalid()).run(1)
 
 

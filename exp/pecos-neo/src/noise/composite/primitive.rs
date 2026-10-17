@@ -1663,7 +1663,7 @@ pub mod primitives {
     /// ```
     ///
     /// # Errors
-    /// Rejects invalid probabilities, powers, or a probability exceeding one at any angle.
+    /// Rejects non-finite or out-of-range base probabilities and non-finite or negative powers.
     pub fn prob_angle_scaled<P: Primitive>(
         base_probability: f64,
         power: f64,
@@ -1689,7 +1689,7 @@ pub mod primitives {
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 1.0, inner)`.
     ///
     /// # Errors
-    /// Rejects invalid probabilities, powers, or a probability exceeding one at any angle.
+    /// Rejects non-finite base probabilities or values outside [0, 1].
     pub fn prob_angle_linear<P: Primitive>(
         base_probability: f64,
         inner: P,
@@ -1702,7 +1702,7 @@ pub mod primitives {
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 2.0, inner)`.
     ///
     /// # Errors
-    /// Rejects invalid probabilities, powers, or a probability exceeding one at any angle.
+    /// Rejects non-finite base probabilities or values outside [0, 1].
     pub fn prob_angle_quadratic<P: Primitive>(
         base_probability: f64,
         inner: P,

@@ -153,11 +153,7 @@ impl PyQisEngineBuilder {
                 .inner
                 .clone()
                 .try_program(qis_prog.inner)
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to load QIS program: {e}"
-                    ))
-                })?;
+                .map_err(|e| crate::errors::simulation_error(e, "Failed to load QIS program"))?;
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                 "program must be a Qis instance",
@@ -373,7 +369,7 @@ impl PyQasmSimulation {
         // Use workers from builder config or default (1)
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+            Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
         }
     }
 
@@ -382,7 +378,7 @@ impl PyQasmSimulation {
         let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+            Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
         }
     }
 
@@ -394,7 +390,7 @@ impl PyQasmSimulation {
             let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+                .map_err(|e| crate::errors::simulation_error(e, "Reset failed"))?;
         }
         Ok(slf)
     }
@@ -414,7 +410,7 @@ impl PyPhirJsonSimulation {
         // Use workers from builder config or default (1)
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+            Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
         }
     }
 
@@ -423,7 +419,7 @@ impl PyPhirJsonSimulation {
         let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+            Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
         }
     }
 
@@ -435,7 +431,7 @@ impl PyPhirJsonSimulation {
             let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+                .map_err(|e| crate::errors::simulation_error(e, "Reset failed"))?;
         }
         Ok(slf)
     }
@@ -496,9 +492,10 @@ impl PyQisControlSimBuilder {
             .try_program(program.clone())
             .map_err(|e| {
                 log::error!("Failed to load QIS program: {e}");
-                PyRuntimeError::new_err(format!(
-                    "Failed to load QIS program with Selene runtime and Helios interface: {e}"
-                ))
+                crate::errors::simulation_error(
+                    e,
+                    "Failed to load QIS program with Selene runtime and Helios interface",
+                )
             })?;
         log::info!("QIS program loaded successfully");
         Ok(self
@@ -540,7 +537,7 @@ impl PyQisControlSimulation {
             engine
                 .run(shots)
                 .map(PyShotVec::new)
-                .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
+                .map_err(|e| crate::errors::simulation_error(e, "Simulation failed"))
         })
     }
 
@@ -560,7 +557,7 @@ impl PyQisControlSimulation {
             engine
                 .run_with_workers(shots, workers)
                 .map(PyShotVec::new)
-                .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
+                .map_err(|e| crate::errors::simulation_error(e, "Simulation failed"))
         })
     }
 
@@ -589,7 +586,7 @@ impl PyQisControlSimulation {
             engine
                 .reset()
                 .map(|_| ())
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))
+                .map_err(|e| crate::errors::simulation_error(e, "Reset failed"))
         })?;
         Ok(slf)
     }
@@ -672,7 +669,7 @@ impl PyPhirSimulation {
         let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run(shots) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+            Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
         }
     }
 
@@ -681,7 +678,7 @@ impl PyPhirSimulation {
         let mut engine = self.inner.lock().expect("lock poisoned");
         match engine.run_with_workers(shots, workers) {
             Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+            Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
         }
     }
 
@@ -693,7 +690,7 @@ impl PyPhirSimulation {
             let mut engine = slf.inner.lock().expect("lock poisoned");
             engine
                 .reset()
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
+                .map_err(|e| crate::errors::simulation_error(e, "Reset failed"))?;
         }
         Ok(slf)
     }
@@ -2053,11 +2050,7 @@ impl PyGeneralNoiseModelBuilder {
 }
 
 pub(crate) fn noise_configuration_error(error: pecos_core::errors::PecosError) -> PyErr {
-    let message = match error {
-        pecos_core::errors::PecosError::Input(message) => message,
-        error => error.to_string(),
-    };
-    pyo3::exceptions::PyValueError::new_err(message)
+    crate::errors::simulation_error(error, "Invalid noise configuration")
 }
 
 /// Python wrapper for `DepolarizingNoiseModelBuilder`

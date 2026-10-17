@@ -1628,7 +1628,7 @@ fn sim_builder_reports_depolarizing_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "uniform depolarizing probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1641,7 +1641,7 @@ fn sim_builder_reports_biased_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "uniform biased depolarizing probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1680,7 +1680,7 @@ fn sim_builder_reports_depolarizing_builder_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability p_prep must be between 0.0 and 1.0, got NaN; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "p_prep must be between 0.0 and 1.0, got NaN; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -1696,6 +1696,6 @@ fn sim_builder_reports_biased_builder_probability() {
         .err()
         .expect("invalid noise must fail to build");
     assert!(
-        matches!(error, PecosError::Input(message) if message == "Probability p_prep must be between 0.0 and 1.0, got inf; supply a finite probability in 0.0..=1.0")
+        matches!(error, PecosError::Input(message) if message == "p_prep must be between 0.0 and 1.0, got inf; supply a finite probability in 0.0..=1.0")
     );
 }

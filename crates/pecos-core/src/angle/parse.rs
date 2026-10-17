@@ -245,15 +245,27 @@ where
             1
         };
 
-        // Pi fractions wrap exactly before entering the one-turn ratio constructor.
+        // Normalize and reduce in i128: twice any nonzero i64 denominator fits.
         if has_pi {
-            let denominator = den_val
-                .checked_mul(2)
-                .and_then(i64::checked_abs)
-                .ok_or_else(|| ParseAngleError::Overflow { value: s.clone() })?;
-            let numerator = num_val % denominator;
+            let denominator = (i128::from(den_val) * 2).abs();
+            let numerator = i128::from(num_val) % denominator;
             let numerator = if den_val < 0 { -numerator } else { numerator };
-            Ok(Self::from_turn_ratio(numerator, denominator))
+            let bits = u64::from(T::zero().count_zeros());
+            let magnitude = super::rounded_scaled_ratio(
+                numerator.unsigned_abs(),
+                denominator.unsigned_abs(),
+                bits,
+            );
+            let fraction = if numerator < 0 {
+                magnitude.wrapping_neg()
+            } else {
+                magnitude
+            };
+            let fraction = fraction & (u128::MAX >> (128 - bits));
+            Ok(Self {
+                fraction: T::try_from(fraction)
+                    .map_err(|_| ParseAngleError::Overflow { value: s.clone() })?,
+            })
         } else {
             let radians = num_val as f64 / den_val as f64;
             Self::try_from_radians(radians).map_err(|error| ParseAngleError::Overflow {

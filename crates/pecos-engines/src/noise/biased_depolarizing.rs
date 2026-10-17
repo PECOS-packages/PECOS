@@ -133,7 +133,7 @@ impl BiasedDepolarizingNoiseModel {
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
-        Self::try_validate_probability(probability, "probability")?;
+        Self::try_validate_probability(probability, "uniform biased depolarizing probability")?;
         Self::try_new(
             probability,
             probability,
@@ -173,7 +173,7 @@ impl BiasedDepolarizingNoiseModel {
 
     /// Set a uniform probability for all error types
     pub fn set_uniform_probability(&mut self, probability: f64) {
-        Self::validate_probability(probability, "probability");
+        Self::validate_probability(probability, "uniform biased depolarizing probability");
         self.set_probabilities(
             probability,
             probability,
@@ -865,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Probability p_meas_1 must be between 0.0 and 1.0")]
+    #[should_panic(expected = "p_meas_1 must be between 0.0 and 1.0")]
     fn test_invalid_probability_panics() {
         let mut noise = BiasedDepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4, 0.5);
         noise.set_probabilities(0.1, 0.2, 1.1, 0.4, 0.5); // Should panic

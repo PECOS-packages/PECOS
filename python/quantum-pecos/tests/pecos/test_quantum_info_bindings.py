@@ -436,5 +436,5 @@ def test_remove_generator_accepts_numpy_index() -> None:
     assert group.stabilizers() == [first]
     assert group.remove_generator(np.uint64(0)) == first
     assert group.stabilizers() == []
-    with pytest.raises(IndexError, match="index 0 out of range"):
+    with pytest.raises(IndexError, match=r"generator index 0.*group has no generators"):
         group.remove_generator(0)

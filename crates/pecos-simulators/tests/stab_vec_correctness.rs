@@ -27,7 +27,7 @@ use std::fmt::Write as _;
 mod matrix_cow;
 
 const ORACLE_TOLERANCE: f64 = 1e-12;
-// Negative-angle float pins moved with exact radians! conversion; dense StateVec comparisons below independently check amplitudes.
+// Pins refreshed in 918a256a1 after exact try_from_radians significand rounding; dense StateVecSoA comparisons below check amplitudes.
 const REFERENCE_DATA: &str = include_str!("data/stab_vec_correctness_bits.txt");
 const REGENERATE_CONFIRMATION: &str = "I_UNDERSTAND_THIS_REPLACES_PINNED_RESULTS";
 

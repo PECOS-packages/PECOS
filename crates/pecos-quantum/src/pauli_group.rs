@@ -79,9 +79,13 @@ impl fmt::Display for PauliGroupError {
                 f,
                 "expected {expected} exponents, got {actual}; supply one exponent per generator"
             ),
+            Self::GeneratorIndex { index, count: 0 } => write!(
+                f,
+                "generator index {index} is invalid: the group has no generators; add a generator before indexing"
+            ),
             Self::GeneratorIndex { index, count } => write!(
                 f,
-                "generator index {index} is outside {count} generators; use an index less than {count}"
+                "generator index {index} is outside {count} generators; use an index below {count}"
             ),
             Self::OrderTooLarge { exponent, maximum } => write!(
                 f,

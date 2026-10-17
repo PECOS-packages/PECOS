@@ -53,7 +53,6 @@ Need to run a quantum circuit simulation?
 ### sim_neo() - The Recommended Entry Point
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use pecos_neo::tool::{importance_sampling, monte_carlo, sim_neo};
 
 // Simple case
@@ -115,8 +114,6 @@ let results = sim_neo(circuit).auto()
     .gate_overrides(overrides)
     .sampling(monte_carlo(1000))
     .run();
-# Ok(())
-# }
 ```
 
 ### Event Handlers via sim_neo()
@@ -152,7 +149,6 @@ Use `CircuitRunner` directly when you need:
 - Custom execution logic beyond what `sim_neo()` provides
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use pecos_neo::prelude::*;
 
 let mut state = SparseStab::new(1);
@@ -161,8 +157,6 @@ let mut runner = CircuitRunner::<SparseStab>::new()
     .with_seed(42);
 
 let outcomes = runner.apply_circuit(&mut state, &commands)?;
-# Ok(())
-# }
 ```
 
 ### When to Use Lower-Level APIs
@@ -174,7 +168,6 @@ Use `CircuitRunner` or `ProgramRunner` when:
 - You're integrating with existing infrastructure
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 // CircuitRunner for direct control
 let mut state = SparseStab::new(n);
 let mut runner = CircuitRunner::<SparseStab>::new()
@@ -182,8 +175,6 @@ let mut runner = CircuitRunner::<SparseStab>::new()
     .with_seed(42);
 
 let outcomes = runner.apply_circuit(&mut state, &commands)?;
-# Ok(())
-# }
 ```
 
 ## Noise Model Selection
@@ -228,7 +219,6 @@ Need noise modeling?
 Complex configuration uses nested builders that compose naturally:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 // Top-level builder accepts nested builders
 sim_neo(circuit)
     .sampling(importance_sampling(10000)  // Nested builder
@@ -239,8 +229,6 @@ sim_neo(circuit)
         .with_p1(0.001)
         .with_p2(0.01).build()?)
     .run();
-# Ok(())
-# }
 ```
 
 ### When to Use Each Pattern
@@ -396,13 +384,10 @@ trait objects. This enables parallel Monte Carlo execution for noisy circuits --
 each worker gets an independent clone of the noise model:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 sim_neo(circuit).auto()
     .depolarizing(0.01)?
     .sampling(monte_carlo(10000).workers(4))     // Each worker clones the noise model
     .run();
-# Ok(())
-# }
 ```
 
 ## Trait Bounds as Source of Truth

@@ -23,9 +23,7 @@ def test_invalid_noise_builder_raises_value_error(factory, probability, route) -
         noise = noise.with_uniform_probability(probability)
     program = Qasm.from_string("OPENQASM 2.0; qreg q[1];")
     simulation = sim(program) if route == "facade" else qasm_engine().program(program).to_sim()
-    message = (
-        "Preparation probability must be set" if probability is None else r"Probability must be between 0\.0 and 1\.0"
-    )
+    message = "Preparation probability must be set" if probability is None else r"p_prep must be between 0\.0 and 1\.0"
     if route == "phir":
         run = partial(
             run_phir_sim,
@@ -46,7 +44,7 @@ class GenericErrorModel:
 @pytest.mark.parametrize("probability", [1.5, -0.1, float("nan"), float("inf")])
 @pytest.mark.parametrize("generic", [False, True])
 def test_phir_noise_shortcuts_raise_value_error(probability: float, generic: bool) -> None:
-    with pytest.raises(ValueError, match=r"Probability must be between 0\.0 and 1\.0"):
+    with pytest.raises(ValueError, match=r"uniform depolarizing probability must be between 0\.0 and 1\.0"):
         run_phir_sim(
             json.dumps({"format": "PHIR/JSON", "version": "0.1.0", "ops": []}),
             noise_model=GenericErrorModel(probability) if generic else probability,

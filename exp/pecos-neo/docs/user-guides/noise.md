@@ -5,10 +5,7 @@
 One-liner on `sim_neo`:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(1000)).run();
-# Ok(())
-# }
 ```
 
 ## Per-Channel Control
@@ -16,7 +13,6 @@ sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(1000)).run();
 Set different rates for single-qubit, two-qubit, and measurement errors:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 sim_neo(circuit).auto()
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
@@ -24,8 +20,6 @@ sim_neo(circuit).auto()
         .with_p_meas_symmetric(0.005).build()?)
     .sampling(monte_carlo(1000))
     .run();
-# Ok(())
-# }
 ```
 
 ## How It Works
@@ -46,7 +40,6 @@ crosstalk, and more. It and the presets below require the `composite-noise`
 Cargo feature on `pecos-neo`:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 use pecos_core::QubitId;
 
@@ -75,43 +68,32 @@ let noise = CompositeNoiseModelBuilder::new()
     .with_p_meas_crosstalk_local_fn(neighbors)
 
     .build()?;
-# Ok(())
-# }
 ```
 
 ## Common Presets
 
 **Ion trap style:**
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 CompositeNoiseModelBuilder::new()
     .with_p1(0.0001)?.with_p2(0.001)?
     .with_p1_emission_ratio(0.1)?.with_p2_emission_ratio(0.1)?
     .with_leakage(0.0001, 0.1)?
     .with_p_meas(0.001, 0.01)?
     .build()?;
-# Ok(())
-# }
 ```
 
 **Superconducting style:**
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 CompositeNoiseModelBuilder::new()
     .with_p1(0.001)?.with_p2(0.01)?
     .with_idle_t1_t2(50e-6, 30e-6)?
     .with_p_meas_symmetric(0.02)?
     .build()?;
-# Ok(())
-# }
 ```
 
 **Pure depolarizing (testing):**
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 CompositeNoiseModelBuilder::new().with_p1(p)?.with_p2(p)?.build()?;
-# Ok(())
-# }
 ```
 
 ## Going Deeper

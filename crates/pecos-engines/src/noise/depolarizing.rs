@@ -153,7 +153,7 @@ impl DepolarizingNoiseModel {
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
-        Self::try_validate_probability(probability, "probability")?;
+        Self::try_validate_probability(probability, "uniform depolarizing probability")?;
         Self::try_new(probability, probability, probability, probability)
     }
 
@@ -184,7 +184,7 @@ impl DepolarizingNoiseModel {
 
     /// Set a uniform probability for all error types
     pub fn set_uniform_probability(&mut self, probability: f64) {
-        Self::validate_probability(probability, "probability");
+        Self::validate_probability(probability, "uniform depolarizing probability");
         self.set_probabilities(probability, probability, probability, probability);
     }
 
@@ -860,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Probability p1 must be between 0.0 and 1.0")]
+    #[should_panic(expected = "p1 must be between 0.0 and 1.0")]
     fn test_invalid_probability_panics() {
         let mut noise = DepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4);
         noise.set_probabilities(0.1, 0.2, 1.1, 0.4); // Should panic

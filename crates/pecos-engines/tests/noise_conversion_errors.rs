@@ -12,12 +12,12 @@ fn assert_input<T>(result: Result<T, PecosError>, expected: &str) {
 fn fallible_constructors_check_every_probability() {
     for invalid in [-0.1, 1.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let expected = &format!(
-            "Probability probability must be between 0.0 and 1.0, got {invalid}; supply a finite probability in 0.0..=1.0"
+            "uniform depolarizing probability must be between 0.0 and 1.0, got {invalid}; supply a finite probability in 0.0..=1.0"
         );
         assert_input(DepolarizingNoiseModel::try_new_uniform(invalid), expected);
         assert_input(
             BiasedDepolarizingNoiseModel::try_new_uniform(invalid),
-            expected,
+            &expected.replace("uniform depolarizing", "uniform biased depolarizing"),
         );
         for (index, name) in ["p_prep", "p_meas", "p1", "p2"].into_iter().enumerate() {
             let mut values = [0.0; 4];
@@ -25,7 +25,7 @@ fn fallible_constructors_check_every_probability() {
             let [prep, meas, p1, p2] = values;
             assert_input(
                 DepolarizingNoiseModel::try_new(prep, meas, p1, p2),
-                &expected.replace("Probability probability", &format!("Probability {name}")),
+                &expected.replace("uniform depolarizing probability", name),
             );
         }
         for (index, name) in ["p_prep", "p_meas_0", "p_meas_1", "p1", "p2"]
@@ -37,7 +37,7 @@ fn fallible_constructors_check_every_probability() {
             let [prep, meas0, meas1, p1, p2] = values;
             assert_input(
                 BiasedDepolarizingNoiseModel::try_new(prep, meas0, meas1, p1, p2),
-                &expected.replace("Probability probability", &format!("Probability {name}")),
+                &expected.replace("uniform depolarizing probability", name),
             );
         }
     }
@@ -88,19 +88,19 @@ fn depolarizing_builder_reports_each_missing_field() {
 }
 
 #[test]
-#[should_panic(expected = "Probability p_prep must be between 0.0 and 1.0")]
+#[should_panic(expected = "p_prep must be between 0.0 and 1.0")]
 fn depolarizing_new_keeps_panic_message() {
     let _ = DepolarizingNoiseModel::new(1.5, 0.0, 0.0, 0.0);
 }
 
 #[test]
-#[should_panic(expected = "Probability probability must be between 0.0 and 1.0")]
+#[should_panic(expected = "uniform depolarizing probability must be between 0.0 and 1.0")]
 fn depolarizing_uniform_keeps_panic_message() {
     let _ = DepolarizingNoiseModel::new_uniform(-0.1);
 }
 
 #[test]
-#[should_panic(expected = "Probability p_prep must be between 0.0 and 1.0")]
+#[should_panic(expected = "p_prep must be between 0.0 and 1.0")]
 fn depolarizing_build_invalid_keeps_panic_message() {
     let _ = DepolarizingNoiseModelBuilder::new()
         .with_uniform_probability(f64::NAN)
@@ -174,19 +174,19 @@ fn biased_builder_reports_each_missing_field() {
 }
 
 #[test]
-#[should_panic(expected = "Probability p_prep must be between 0.0 and 1.0")]
+#[should_panic(expected = "p_prep must be between 0.0 and 1.0")]
 fn biased_new_keeps_panic_message() {
     let _ = BiasedDepolarizingNoiseModel::new(1.5, 0.0, 0.0, 0.0, 0.0);
 }
 
 #[test]
-#[should_panic(expected = "Probability probability must be between 0.0 and 1.0")]
+#[should_panic(expected = "uniform biased depolarizing probability must be between 0.0 and 1.0")]
 fn biased_uniform_keeps_panic_message() {
     let _ = BiasedDepolarizingNoiseModel::new_uniform(-0.1);
 }
 
 #[test]
-#[should_panic(expected = "Probability p_prep must be between 0.0 and 1.0")]
+#[should_panic(expected = "p_prep must be between 0.0 and 1.0")]
 fn biased_build_invalid_keeps_panic_message() {
     let _ = BiasedDepolarizingNoiseModelBuilder::new()
         .with_uniform_probability(f64::NAN)

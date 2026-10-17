@@ -52,7 +52,7 @@ pub trait ProbabilityValidator {
     fn try_validate_probability(probability: f64, name: &str) -> Result<(), PecosError> {
         if !(0.0..=1.0).contains(&probability) {
             return Err(PecosError::Input(format!(
-                "Probability {name} must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
+                "{name} must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
             )));
         }
         Ok(())
@@ -69,7 +69,7 @@ pub trait ProbabilityValidator {
     fn validate_named_probability(probability: f64, name: &str) {
         assert!(
             (0.0..=1.0).contains(&probability),
-            "Probability {name} must be between 0.0 and 1.0, but was {probability}"
+            "{name} must be between 0.0 and 1.0, but was {probability}"
         );
     }
 }

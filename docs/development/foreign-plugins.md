@@ -236,15 +236,15 @@ Foreign code can create and run PECOS quantum engines via the C ABI:
 
 | Function | Gate | Parameters |
 |----------|------|------------|
-| `pecos_circuit_h` | Hadamard | qubits |
-| `pecos_circuit_x` | Pauli X | qubits |
-| `pecos_circuit_z` | Pauli Z | qubits |
-| `pecos_circuit_sz` | S (phase) | qubits |
-| `pecos_circuit_cx` | CNOT | pairs |
+| `int32_t pecos_circuit_h` | Hadamard | qubits |
+| `int32_t pecos_circuit_x` | Pauli X | qubits |
+| `int32_t pecos_circuit_z` | Pauli Z | qubits |
+| `int32_t pecos_circuit_sz` | S (phase) | qubits |
+| `int32_t pecos_circuit_cx` | CNOT | pairs |
 | `int32_t pecos_circuit_rx` | RX rotation | theta (radians), qubits |
 | `int32_t pecos_circuit_rz` | RZ rotation | theta (radians), qubits |
 | `int32_t pecos_circuit_rzz` | RZZ rotation | theta (radians), pairs |
-| `pecos_circuit_mz` | Z measurement | qubits |
+| `int32_t pecos_circuit_mz` | Z measurement | qubits |
 
 All gate appenders return `0` on success and `-1` if the qubit count (or
 twice the pair count for CX/RZZ) exceeds the slice size limit. The three

@@ -41,3 +41,34 @@ fn decimal_overflow_has_decimal_remedy() {
         }
     }
 }
+
+#[test]
+fn pi_fractions_accept_every_i64_denominator() {
+    // Exact ticks: 2^bits/(2*d), rounded once. For d=2^63-1,
+    // 2^127/d = 2^64+2 + 2/(2^63-1), so the 128-bit result is 2^64+2.
+    for (denominator, expected64, expected128) in [
+        (1_i64 << 62, 2_u64, 1_u128 << 65),
+        (i64::MAX, 1, (1_u128 << 64) + 2),
+        (i64::MIN, u64::MAX, (1_u128 << 64).wrapping_neg()),
+    ] {
+        for (numerator, negative) in [("", false), ("-", true)] {
+            let text = format!("{numerator}pi/{denominator}");
+            assert_eq!(
+                Angle64::from_str_radians(&text).unwrap().fraction(),
+                if negative {
+                    expected64.wrapping_neg()
+                } else {
+                    expected64
+                }
+            );
+            assert_eq!(
+                Angle128::from_str_radians(&text).unwrap().fraction(),
+                if negative {
+                    expected128.wrapping_neg()
+                } else {
+                    expected128
+                }
+            );
+        }
+    }
+}

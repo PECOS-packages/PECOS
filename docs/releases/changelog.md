@@ -158,6 +158,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `StateVecEngine` keeps the qubit count it was constructed with; addressing a
   higher qubit raises instead of resizing the simulator.
 
+- Simulation `build()` and `run()` map input errors to `ValueError`; genuine
+  execution failures remain `RuntimeError`.
+
 ### Python bug fixes
 
 - Fixed Guppy result tags binding to the wrong measurement when HUGR node order
@@ -297,7 +300,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and builders return `ValidationResult` and reject out-of-range or NaN values
   instead of clamping them; `clamp_probability` is removed. `OverRotation`
   scales the gate's signed principal rotation; angle-dependent probabilities
-  use its signed principal magnitude.
+  use its signed principal magnitude. A positive `p_meas_crosstalk_local` without
+  a neighbour function now returns a build `ValidationError` instead of warning
+  and ignoring the setting. At-most-one Pauli rate sums allow only accumulated
+  floating-point rounding (`n * f64::EPSILON` for `n` terms), replacing the
+  previous `1e-9` tolerance; individual rates remain strictly validated.
+- pecos-engines depolarizing and biased-depolarizing probability errors name the
+  invalid parameter and its value, including uniform probabilities.
 - Foreign C API: all `pecos_circuit_*` gate appenders
   return `int32_t` (`0` on success, `-1` on invalid input).
 - `try_asin` / `try_acos` return `InverseTrigError`, distinguishing non-finite

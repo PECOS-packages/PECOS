@@ -93,7 +93,7 @@ def test_unknown_stack_is_rejected() -> None:
 
 
 def test_neo_stack_rejects_explicit_quantum_backend() -> None:
-    with pytest.raises(RuntimeError, match="not yet routed to the neo stack"):
+    with pytest.raises(ValueError, match="not yet routed to the neo stack"):
         sim(Qasm.from_string(X_MEASURE)).stack("neo").quantum(state_vector()).run(5)
 
 
@@ -108,7 +108,7 @@ def test_missing_qasm_source_reports_the_real_problem() -> None:
     from pecos_rslib import qasm_engine
 
     for stack in ["engines", "neo"]:
-        with pytest.raises(RuntimeError, match="No QASM source specified"):
+        with pytest.raises(ValueError, match="No QASM source specified"):
             qasm_engine().to_sim().stack(stack).run(2)
 
 
@@ -135,7 +135,7 @@ def test_missing_source_wins_over_classical_override_on_neo() -> None:
     from pecos_rslib import qasm_engine
 
     for stack in ["engines", "neo"]:
-        with pytest.raises(RuntimeError, match="No QASM source specified"):
+        with pytest.raises(ValueError, match="No QASM source specified"):
             qasm_engine().to_sim().classical(qasm_engine()).stack(stack).run(1)
 
 

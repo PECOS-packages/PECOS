@@ -152,26 +152,7 @@ const fn float_fraction(value: f64, units_per_turn: f64, fraction_bits: u64) -> 
             0
         }
     } else {
-        // Exact division of n * 2^shift by d in base-2^64 digits. Since d is
-        // at most 53 bits, each remainder shifted by <=64 fits in u128. The
-        // reduced input bounds shift by 128, so at most two steps are needed.
-        let mut shift = scaled_exponent - period_exponent;
-        let mut quotient = numerator / denominator;
-        let mut residual = numerator % denominator;
-        while shift > 0 {
-            let step = if shift > 64 { 64 } else { shift };
-            let dividend = residual << step;
-            quotient = (quotient << step) | (dividend / denominator);
-            residual = dividend % denominator;
-            shift -= step;
-        }
-        // Round once, nearest with ties away from zero. At width128 a rounded
-        // full turn wraps here; smaller widths wrap in the final mask below.
-        if residual * 2 >= denominator {
-            quotient.wrapping_add(1)
-        } else {
-            quotient
-        }
+        rounded_scaled_ratio(numerator, denominator, scaled_exponent - period_exponent)
     };
     let signed = if remainder.is_sign_negative() {
         magnitude.wrapping_neg()
@@ -179,6 +160,26 @@ const fn float_fraction(value: f64, units_per_turn: f64, fraction_bits: u64) -> 
         magnitude
     };
     signed & (u128::MAX >> (128 - fraction_bits))
+}
+
+// Exact rounded division of numerator * 2^shift by denominator, modulo 2^128.
+// Callers supply a nonzero denominator <= 2^64 and a shift <= 128. Each
+// remainder therefore fits in 64 bits before the next base-2^64 division step.
+const fn rounded_scaled_ratio(numerator: u128, denominator: u128, mut shift: u64) -> u128 {
+    let mut quotient = numerator / denominator;
+    let mut residual = numerator % denominator;
+    while shift > 0 {
+        let step = if shift > 64 { 64 } else { shift };
+        let dividend = residual << step;
+        quotient = (quotient << step) | (dividend / denominator);
+        residual = dividend % denominator;
+        shift -= step;
+    }
+    if residual * 2 >= denominator {
+        quotient.wrapping_add(1)
+    } else {
+        quotient
+    }
 }
 
 // Return the unsigned significand and biased exponent, with subnormals sharing

@@ -244,9 +244,10 @@ impl PySimBuilder {
                         let mut inner = qis_engine.inner;
                         if let Some(program) = &sim_builder.qis_program {
                             inner = inner.try_program(program.clone()).map_err(|e| {
-                                PyRuntimeError::new_err(format!(
-                                    "Failed to re-attach QIS program to the new engine builder: {e}"
-                                ))
+                                crate::errors::simulation_error(
+                                    e,
+                                    "Failed to re-attach QIS program to the new engine builder",
+                                )
                             })?;
                         }
                         sim_builder.engine_builder = Arc::new(Mutex::new(Some(inner)));
@@ -664,7 +665,7 @@ impl PySimBuilder {
                     ));
                 }
                 sim_builder.run(shots).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Trace capture simulation failed: {e}"))
+                    crate::errors::simulation_error(e, "Trace capture simulation failed")
                 })?;
 
                 let trace = collector.lock().expect("lock poisoned").clone();
@@ -853,7 +854,7 @@ impl PySimBuilder {
 
                 match Python::attach(|py| py.detach(move || sim_builder.run(shots))) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                    Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
             }
             SimBuilderInner::PhirJson(builder) => {
@@ -879,7 +880,7 @@ impl PySimBuilder {
 
                 match sim_builder.run(shots) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                    Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
             }
             SimBuilderInner::Phir(builder) => {
@@ -902,7 +903,7 @@ impl PySimBuilder {
 
                 match sim_builder.run(shots) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
-                    Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+                    Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
                 }
             }
             SimBuilderInner::Empty => Err(PyRuntimeError::new_err(
@@ -1068,11 +1069,8 @@ impl PySimBuilder {
                     }
 
                     // Build the MonteCarloEngine
-                    let engine = sim_builder.build().map_err(|e| match e {
-                        pecos_core::errors::PecosError::Input(_) => {
-                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
-                        }
-                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
+                    let engine = sim_builder.build().map_err(|e| {
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     Ok(Py::new(
@@ -1104,11 +1102,8 @@ impl PySimBuilder {
 
                     // TODO: Add quantum and noise builder support for PHIR JSON
 
-                    let engine = sim_builder.build().map_err(|e| match e {
-                        pecos_core::errors::PecosError::Input(_) => {
-                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
-                        }
-                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
+                    let engine = sim_builder.build().map_err(|e| {
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     Ok(Py::new(
@@ -1137,11 +1132,8 @@ impl PySimBuilder {
                         sim_builder = sim_builder.qubits(n);
                     }
 
-                    let engine = sim_builder.build().map_err(|e| match e {
-                        pecos_core::errors::PecosError::Input(_) => {
-                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
-                        }
-                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
+                    let engine = sim_builder.build().map_err(|e| {
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     Ok(Py::new(
@@ -1280,11 +1272,8 @@ impl PySimBuilder {
                     }
 
                     // Build the MonteCarloEngine
-                    let engine = sim_builder.build().map_err(|e| match e {
-                        pecos_core::errors::PecosError::Input(_) => {
-                            PyValueError::new_err(format!("Failed to build simulation: {e}"))
-                        }
-                        _ => PyRuntimeError::new_err(format!("Failed to build simulation: {e}")),
+                    let engine = sim_builder.build().map_err(|e| {
+                        crate::errors::simulation_error(e, "Failed to build simulation")
                     })?;
 
                     // Handle intermediate file saving if requested
@@ -1379,7 +1368,7 @@ fn run_qasm_via_facade(
     // rejections below — otherwise a sourceless `.classical()` + neo would
     // misreport the missing source as an unrouted classical override.
     let program = engine_builder.get_program().ok_or_else(|| {
-        PyRuntimeError::new_err("No QASM source specified. Use .qasm() or .qasm_file()")
+        PyValueError::new_err("No QASM source specified. Use .qasm() or .qasm_file()")
     })?;
 
     if builder.stack == Some(PySimStack::Neo) && engine_builder.has_wasm() {
@@ -1432,7 +1421,7 @@ fn run_qasm_via_facade(
     }
     match facade.shots(shots).run() {
         Ok(shot_vec) => Ok(crate::shot_results_bindings::PyShotVec::new(shot_vec)),
-        Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        Err(e) => Err(crate::errors::simulation_error(e, "Simulation failed")),
     }
 }
 

@@ -241,10 +241,17 @@ Broadcast quantum operations become one instruction per qubit or qubit pair,
 including preparations and measurements. Each instruction receives the same
 rotation angles; measurement destinations retain their argument order.
 The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
-Two-qubit argument groups must contain exactly two qubits in both input paths.
+Two-qubit argument groups must contain exactly two qubits in the native engine,
+Rust classical interpreter and converter. They share validation of group shapes,
+qubit uniqueness and gate signatures. RXYXY2Q requires paired arguments; its gate
+validation runs during execution/conversion, after structural AST decoding.
 
 JSON-to-module conversion currently supports register declarations, quantum
-operations and Result exports. It rejects blocks such as `qparallel` and `if`,
+operations and Result exports with string variable names. `cvar_export` remains
+unsupported: the native engine currently ignores it and exports all classical
+registers unless Result mappings select them. Lowering it to module Result
+instructions would select different registers. It rejects blocks such as
+`qparallel` and `if`,
 machine/meta operations, unsupported data/classical operations and unrecognized
 operations with a named error. Use the native PHIR-JSON engine for supported PHIR
 programs containing these constructs. Although the module IR has structural

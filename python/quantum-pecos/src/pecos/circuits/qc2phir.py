@@ -128,7 +128,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
     """Creates a json str representation of the QuantumCircuit listing all the gates.
 
     It does not preserve ticks or parallel gating of different gate types.
-    Consecutive identical quantum operations compact only across disjoint qubits.
+    Consecutive identical quantum operations compact only across disjoint qubits,
+    tracking accumulated targets in linear time.
     """
     prog = {
         "format": "PHIR/JSON",
@@ -179,11 +180,14 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                 qs.append(qsym)
         return qs
 
+    last_qop_qubits: set[tuple[str, int]] = set()
+
     def flush_ops_buffer(
         ops: list[dict[str, Any]],
         ops_buffer: list[dict[str, Any]],
         current_cond: dict[str, Any] | None,
     ) -> None:
+        last_qop_qubits.clear()
         if current_cond is None:
             ops.extend(ops_buffer)
         else:
@@ -219,6 +223,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         *,
         compact_gates: bool = True,
     ) -> list[dict[str, Any]]:
+        nonlocal last_qop_qubits
+        current_qubits = _qop_qubits(current_op) if "qop" in current_op else set()
         if ops_buffer and compact_gates:
             last_op = ops_buffer[-1]
             same_qop = (
@@ -226,15 +232,17 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                 and last_op.get("qop") == current_op["qop"]
                 and last_op.get("angles") == current_op.get("angles")
                 and ("returns" in last_op) == ("returns" in current_op)
-                and _qop_qubits(last_op).isdisjoint(_qop_qubits(current_op))
+                and last_qop_qubits.isdisjoint(current_qubits)
             )
             same_export = last_op.get("data") == current_op.get("data") == "cvar_export"
             if (same_qop or same_export) and last_op.get("metadata") == current_op.get("metadata"):
                 for field in ("args", "variables", "returns"):
                     if field in current_op:
                         last_op[field].extend(current_op[field])
+                last_qop_qubits.update(current_qubits)
                 return ops_buffer
 
+        last_qop_qubits = current_qubits
         ops_buffer.append(current_op)
         return ops_buffer
 

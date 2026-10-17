@@ -154,3 +154,38 @@ fn every_converted_gate_has_canonical_broadcast_arity() {
         );
     }
 }
+
+#[test]
+fn cvar_export_and_result_have_different_native_selection_semantics() {
+    // The specification makes cvar_export selective; the current native engine
+    // ignores it. Replacing it with Result changes the observable result keys.
+    let source = |export| {
+        json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","data_type":"qubits","variable":"q","size":4},
+            {"data":"cvar_define","data_type":"u32","variable":"m","size":1},
+            {"data":"cvar_define","data_type":"u32","variable":"scratch","size":1},
+            {"qop":"X","args":[["q",0]]},
+            {"qop":"Measure","args":[["q",0]],"returns":[["m",0]]},
+            export
+        ]})
+        .to_string()
+    };
+    let with_export = source(json!({"data":"cvar_export","variables":["m"]}));
+    let with_result = source(json!({"cop":"Result","args":["m"],"returns":["m"]}));
+    let exported = run(&mut PhirJsonEngine::from_json(&with_export).unwrap());
+    let mapped = run(&mut PhirJsonEngine::from_json(&with_result).unwrap());
+    let converted = run(&mut PhirEngine::new(phir_json_to_module(&with_result).unwrap()).unwrap());
+    assert_eq!(exported.data["m"].as_u32(), Some(1));
+    assert!(exported.data.contains_key("scratch"));
+    assert_eq!(
+        mapped.data.keys().collect::<Vec<_>>(),
+        vec!["_width_m", "m"]
+    );
+    assert_eq!(converted.data.keys().collect::<Vec<_>>(), vec!["m"]);
+    assert_eq!(mapped.data["m"].as_u32(), converted.data["m"].as_u32());
+    let error = phir_json_to_module(&with_export).unwrap_err().to_string();
+    assert!(
+        error.contains("data cvar_export") && error.contains("JSON-to-module"),
+        "{error}"
+    );
+}

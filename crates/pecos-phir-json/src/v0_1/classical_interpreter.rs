@@ -388,10 +388,8 @@ impl PhirClassicalInterpreter {
         returns: &[(String, usize)],
         metadata: &Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<YieldedQOp, PecosError> {
-        if qop_name == "RXYXY2Q" {
-            crate::v0_1::ast::validate_rxyxy2q_args(angles.as_deref(), args)
-                .map_err(PecosError::ValidationInvalidGateParameters)?;
-        }
+        let gate = super::operations::quantum_gate_type(qop_name)?;
+        super::operations::validate_quantum_args(qop_name, gate.quantum_arity(), args)?;
 
         // Resolve qubit args to integer IDs
         let mut is_multi = false;
@@ -415,6 +413,18 @@ impl PhirClassicalInterpreter {
             }
             QOpArgs::Single(flat)
         };
+
+        let qubits: Vec<_> = match &resolved_args {
+            QOpArgs::Single(ids) => ids.clone(),
+            QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
+        };
+        super::operations::validate_quantum_signature(
+            qop_name,
+            gate,
+            qubits.len(),
+            angles.as_ref().map_or(0, Vec::len),
+        )?;
+        super::operations::validate_quantum_qubits(qop_name, &qubits)?;
 
         // Build metadata
         let mut meta = metadata.clone().unwrap_or_default();

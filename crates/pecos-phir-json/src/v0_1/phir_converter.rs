@@ -390,7 +390,11 @@ impl ImprovedConverter {
 
         for kind in ["block", "mop", "meta"] {
             if let Some(name) = obj.get(kind) {
-                return Err(Self::unsupported_operation(kind, &name.to_string()));
+                let name = match name {
+                    Value::String(name) => name.clone(),
+                    value => value.to_string(),
+                };
+                return Err(Self::unsupported_operation(kind, &name));
             }
         }
         // A PHIR comment carries no execution semantics.
@@ -502,6 +506,27 @@ impl ImprovedConverter {
         let JsonOperation::QuantumOp { angles, args, .. } = ast else {
             unreachable!("convert_quantum_operation receives a qop object")
         };
+        let arity = if qop == "CPhase" {
+            2
+        } else {
+            super::operations::quantum_gate_type(qop)?.quantum_arity()
+        };
+        super::operations::validate_quantum_args(qop, arity, &args)?;
+        if qop != "CPhase" {
+            let qubit_count = args
+                .iter()
+                .map(|arg| match arg {
+                    QubitArg::SingleQubit(_) => 1,
+                    QubitArg::MultipleQubits(qubits) => qubits.len(),
+                })
+                .sum();
+            super::operations::validate_quantum_signature(
+                qop,
+                super::operations::quantum_gate_type(qop)?,
+                qubit_count,
+                angles.as_ref().map_or(0, Vec::len),
+            )?;
+        }
         let angle = |count: usize, index: usize| -> Result<Angle64, PecosError> {
             let values = angles.as_deref().unwrap_or_default();
             if values.len() != count {
@@ -517,13 +542,6 @@ impl ImprovedConverter {
             QuantumOp::CPhase(angle(1, 0)?)
         } else {
             let gate = super::operations::quantum_gate_type(qop)?;
-            let count = angles.as_ref().map_or(0, Vec::len);
-            if count != gate.angle_arity() {
-                return Err(PecosError::Input(format!(
-                    "{qop}: angle count {count} is invalid; supply exactly {} angles",
-                    gate.angle_arity()
-                )));
-            }
             match gate {
                 GateType::I => QuantumOp::I,
                 GateType::H => QuantumOp::H,
@@ -578,10 +596,7 @@ impl ImprovedConverter {
         for arg in args {
             let qubits = match arg {
                 QubitArg::SingleQubit(qubit) => vec![qubit],
-                QubitArg::MultipleQubits(qubits) => {
-                    super::operations::validate_quantum_arg_group(qop, arity, &qubits)?;
-                    qubits
-                }
+                QubitArg::MultipleQubits(qubits) => qubits,
             };
             for (var, index) in qubits {
                 operands.push(SSAValue::new(self.resolve_qubit(&var, index as u64)?));
@@ -702,34 +717,37 @@ impl ImprovedConverter {
             "Result" => {
                 let classical_op = ClassicalOp::Result;
 
-                // Convert operands (source variables)
-                let mut operands = Vec::new();
-                if let Some(args) = obj.get("args").and_then(|v| v.as_array()) {
-                    for arg in args {
-                        if let Some(var_name) = arg.as_str() {
-                            // Use the current SSA ID for this variable
-                            // It may have been updated by bit-combining operations
-                            let ssa_id = self.get_ssa_id(var_name)?;
-                            operands.push(SSAValue {
-                                id: ssa_id,
-                                version: 0,
-                            });
-                        }
-                    }
-                }
+                let names = |field: &str| -> Result<Vec<&str>, PecosError> {
+                    let value = obj.get(field).ok_or_else(|| {
+                        PecosError::Input(format!(
+                            "Result: missing {field}; supply an array of variable names"
+                        ))
+                    })?;
+                    let values = value.as_array().ok_or_else(|| {
+                        PecosError::Input(format!(
+                            "Result: invalid {field} {value}; supply an array of variable names"
+                        ))
+                    })?;
+                    values
+                        .iter()
+                        .map(|value| {
+                            value.as_str().ok_or_else(|| PecosError::Input(format!(
+                        "Result: invalid {field} entry {value}; supply a variable name as a string"
+                    )))
+                        })
+                        .collect()
+                };
+                let args = names("args")?;
+                let returns = names("returns")?;
 
-                // Convert results (destination variables)
+                // Resolve sources using mappings updated by bit-combining operations.
+                let mut operands = Vec::new();
+                for name in args {
+                    operands.push(SSAValue::new(self.get_ssa_id(name)?));
+                }
                 let mut results = Vec::new();
-                if let Some(returns) = obj.get("returns").and_then(|v| v.as_array()) {
-                    for ret in returns {
-                        if let Some(var_name) = ret.as_str() {
-                            let ssa_id = self.get_ssa_id(var_name)?;
-                            results.push(SSAValue {
-                                id: ssa_id,
-                                version: 0,
-                            });
-                        }
-                    }
+                for name in returns {
+                    results.push(SSAValue::new(self.get_ssa_id(name)?));
                 }
 
                 // Create attributes to store the export names

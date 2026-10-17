@@ -50,11 +50,34 @@ pub(crate) fn quantum_gate_type(name: &str) -> Result<GateType, PecosError> {
         "U" => GateType::U,
         "RXYXY2Q" => GateType::RXYXY2Q,
         _ => {
-            return Err(PecosError::Processing(format!(
+            return Err(PecosError::Input(format!(
                 "Unsupported quantum gate {name:?}; use a PHIR v0.1 gate name or a supported native extension"
             )));
         }
     })
+}
+
+/// Validate PHIR grouping before any path flattens or resolves its arguments.
+pub(crate) fn validate_quantum_args(
+    name: &str,
+    arity: usize,
+    args: &[QubitArg],
+) -> Result<(), PecosError> {
+    if args.is_empty() {
+        return Err(PecosError::Input(format!(
+            "Invalid quantum operation {name:?} has 0 arguments; supply at least one qubit or complete qubit pair"
+        )));
+    }
+    for arg in args {
+        match arg {
+            QubitArg::MultipleQubits(qubits) => validate_quantum_arg_group(name, arity, qubits)?,
+            QubitArg::SingleQubit(qubit) if name == "RXYXY2Q" => {
+                validate_quantum_arg_group(name, arity, std::slice::from_ref(qubit))?;
+            }
+            QubitArg::SingleQubit(_) => {}
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_quantum_arg_group(
@@ -73,7 +96,7 @@ pub(crate) fn validate_quantum_arg_group(
 pub(crate) fn validate_quantum_qubits(name: &str, qubits: &[usize]) -> Result<(), PecosError> {
     let duplicates = pecos_core::duplicate_qubits(qubits.iter().copied());
     if !duplicates.is_empty() {
-        return Err(PecosError::ValidationInvalidGateParameters(format!(
+        return Err(PecosError::Input(format!(
             "gate {name:?} repeats qubit IDs {duplicates:?}; use distinct qubits within one PHIR quantum operation"
         )));
     }
@@ -86,7 +109,7 @@ pub(crate) fn validate_quantum_qubits(name: &str, qubits: &[usize]) -> Result<()
     Ok(())
 }
 
-fn validate_quantum_signature(
+pub(crate) fn validate_quantum_signature(
     name: &str,
     gate: GateType,
     qubits: usize,
@@ -95,7 +118,7 @@ fn validate_quantum_signature(
     let arity = gate.quantum_arity();
     let angle_arity = gate.angle_arity();
     if qubits == 0 || !qubits.is_multiple_of(arity) || angles != angle_arity {
-        return Err(PecosError::ValidationInvalidGateParameters(format!(
+        return Err(PecosError::Input(format!(
             "gate {name:?} got {qubits} qubits and {angles} angles; supply the expected nonzero multiple of {arity} qubits and exactly {angle_arity} angles"
         )));
     }
@@ -1597,19 +1620,8 @@ impl OperationProcessor {
         angles: Option<&Vec<f64>>, // Now just Vec<f64> in radians, no unit string
         args: &[QubitArg],
     ) -> Result<(String, Vec<usize>, Vec<f64>), PecosError> {
-        // Validate that we have at least one qubit argument
-        if args.is_empty() {
-            return Err(PecosError::Input(format!(
-                "Invalid quantum operation {qop:?} has 0 arguments; supply at least one qubit or complete qubit pair"
-            )));
-        }
-
-        if qop == "RXYXY2Q" {
-            crate::v0_1::ast::validate_rxyxy2q_args(angles.map(Vec::as_slice), args)
-                .map_err(PecosError::ValidationInvalidGateParameters)?;
-        }
-
         let gate = quantum_gate_type(qop)?;
+        validate_quantum_args(qop, gate.quantum_arity(), args)?;
         // Validate and extract qubit arguments
         let mut qubit_args = Vec::new();
 
@@ -1621,7 +1633,6 @@ impl OperationProcessor {
                     qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 QubitArg::MultipleQubits(qubits) => {
-                    validate_quantum_arg_group(qop, gate.quantum_arity(), qubits)?;
                     for (var, idx) in qubits {
                         // Validate each qubit
                         self.validate_variable_access(var, *idx)?;

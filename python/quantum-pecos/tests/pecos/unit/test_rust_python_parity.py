@@ -1381,3 +1381,33 @@ def test_shift_rule_fuzzer_coverage() -> None:
     assert {31, 32, 33, 63, 64, 65, 65535, 65536, 2**63, 2**64 - 1, -1, "negative_count", "unsigned_count"} <= set(
         counts,
     )
+
+
+@pytest.mark.parametrize(
+    ("op", "message"),
+    [
+        ({"qop": "H", "args": [["q", 0], ["q", 0]]}, "repeats qubit IDs"),
+        ({"qop": "CX", "args": [[["q", 0], ["q", 1], ["q", 2]]]}, "supply groups of 2 qubits"),
+        (
+            {"qop": "RXYXY2Q", "args": [["q", 0], ["q", 1]], "angles": [[0.2, 0.3], "rad"]},
+            "supply groups of 2 qubits",
+        ),
+        ({"qop": "H", "args": [["q", 0]], "angles": [[0.2], "rad"]}, "exactly 0 angles"),
+        ({"qop": "UnknownGate", "args": [["q", 0]]}, "Unsupported quantum gate"),
+    ],
+)
+def test_rust_interpreter_rejects_invalid_quantum_arguments(op: dict, message: str) -> None:
+    """HybridEngine's default interpreter validates qops before yielding them."""
+    source = json.dumps(
+        {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [{"data": "qvar_define", "variable": "q", "size": 3}, op],
+        },
+    )
+    interpreter = RustPhirClassicalInterpreter()
+    # Runtime invariants must hold even when optional schema checking is disabled.
+    interpreter.phir_validate = False
+    interpreter.init(source)
+    with pytest.raises(ValueError, match=message):
+        list(interpreter.execute(None))

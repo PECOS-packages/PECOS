@@ -84,7 +84,13 @@ fn rxyxy2q_json_units_and_execution() {
 fn rxyxy2q_json_rejects_wrong_counts() {
     for values in [json!([]), json!([-0.73]), json!([-0.73, 0.41, 0.2])] {
         let json = program(json!([values, "rad"]), json!([[["q", 2], ["q", 0]]]));
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
     }
     for args in [
@@ -93,7 +99,13 @@ fn rxyxy2q_json_rejects_wrong_counts() {
         json!([[["q", 2], ["q", 0], ["q", 1]]]),
     ] {
         let json = program(json!([[-0.73, 0.41], "rad"]), args);
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
     }
     let processor = OperationProcessor::new();
@@ -180,7 +192,13 @@ fn rxyxy2q_json_rejects_mixed_or_flat_grouping() {
     ] {
         let mut json = program(json!([[-0.73, 0.41], "rad"]), args.clone());
         json["ops"][0]["size"] = json!(4);
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
         let args: Vec<pecos_phir_json::v0_1::ast::QubitArg> = serde_json::from_value(args).unwrap();
         let mut processor = OperationProcessor::new();

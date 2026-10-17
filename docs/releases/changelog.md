@@ -50,7 +50,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `sim(PhirJson(...))` and `PhirJsonEngine` reject repeated qubit IDs within
   one qop and incorrect angle counts, including angles on gates that take none
   (for example, H with angles). Put sequential uses of a qubit in separate qops
-  and supply only the angles specified for that gate.
+  and supply only the angles specified for that gate. Two-qubit argument groups
+  must be pairs. These checks also apply to HybridEngine's default Rust classical
+  interpreter and raise `ValueError` for invalid gate names, counts or targets.
+- Seeded noisy samples change for QuantumCircuits with consecutive same-type
+  gates on overlapping qubits: qc2phir now keeps them in separate operations.
+  Previously, noise was applied after the whole merged operation.
 
 - PyPHIR rejects unknown angle units with `ValueError` (and nonstring units with
   `TypeError`); use `rad`, `pi`, or `deg`.
@@ -180,8 +185,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - `QuantumCircuit.to_phir_json()` merges consecutive quantum operations only
   when all targets are disjoint. Repeated H/Measure operations and CX ladders
-  retain their order and measurement destinations across ticks. An export no
-  longer absorbs a following quantum operation during compaction.
+  retain their order and measurement destinations across ticks. Compaction no
+  longer crashes with `KeyError('args')` when an export precedes a quantum
+  operation, or `KeyError('returns')` when an unnamed measurement precedes a named
+  one. Tracking accumulated qubits makes compaction linear in the number of targets.
 
 - The legacy PHIR-JSON bridge now uses the native command generator, preserving
   all targets and pairs in broadcast gates and all measurement destinations.
@@ -223,6 +230,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   reject incorrect arity.
 - The PHIR processor rejects incorrect operand and result counts, including
   previously ignored extra operands on Measure, Reset, preparations and Dealloc.
+  Custom, ControlFlow and Parsing operations retain their lowering-stage skip
+  contract and do not consume operands or results.
 
 - Seeded samples change for every engine on the shared Monte Carlo loop. Each shot
   is reseeded from the run seed and its global index before resetting the engine.
@@ -360,11 +369,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
-- Native PHIR-JSON and JSON-to-module conversion now report the same actionable
-  error for malformed two-qubit argument groups.
-- `PhirProcessor::process_instruction` again skips Custom, ControlFlow and Parsing
-  operations without consuming operands or results, preserving its lowering-stage
-  contract. Arity validation applies to the operations it executes.
+- Native PHIR-JSON, the Rust classical interpreter, and JSON-to-module conversion
+  share validation and actionable errors for malformed two-qubit argument groups
+  (including RXYXY2Q) and repeated qubit IDs. RXYXY2Q gate validation now runs at
+  execution/conversion, like other gates, rather than during AST deserialization.
+- JSON-to-module Result conversion rejects nonstring argument and destination
+  entries instead of silently dropping them, and requires args/returns arrays.
+  Unsupported block, machine and meta
+  operation names are printed without JSON quotes.
+- `cvar_export` remains unsupported by JSON-to-module conversion: the native
+  engine currently ignores it, whereas module Result instructions select named
+  exports. Lowering one to the other would change the returned registers.
 
 - The native PHIR-JSON engine and JSON-to-module converter now support every
   quantum gate and alias in PHIR v0.1, including CZ, RZZ/ZZPhase, CY, SWAP,

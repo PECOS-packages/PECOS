@@ -97,3 +97,40 @@ def test_export_compaction_does_not_absorb_a_quantum_operation() -> None:
         {"data": "cvar_export", "variables": ["a", "b"]},
         {"qop": "H", "args": [["q", 0]]},
     ]
+
+
+def test_compaction_visits_each_qubit_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compacting many ticks must not rescan the accumulated operation."""
+    from pecos.circuits import qc2phir
+    from pecos.circuits.qc2phir import _qop_qubits as original
+
+    visits = 0
+
+    def count_qubits(op):
+        nonlocal visits
+        qubits = original(op)
+        visits += len(qubits)
+        return qubits
+
+    monkeypatch.setattr(qc2phir, "_qop_qubits", count_qubits)
+    count = 2000
+    qc = pc.QuantumCircuit()
+    for qubit in range(count):
+        qc.append("H", {qubit})
+    operations = [op for op in qc2phir.to_phir_dict(qc)["ops"] if "qop" in op]
+    assert len(operations) == 1
+    assert len(operations[0]["args"]) == count
+    assert visits == count
+
+
+def test_compaction_resets_qubits_when_a_new_operation_starts() -> None:
+    """A different gate starts a fresh set of occupied targets."""
+    qc = pc.QuantumCircuit()
+    qc.append("H", {0})
+    qc.append("X", {1})
+    qc.append("X", {0})
+    operations = [op for op in json.loads(qc.to_phir_json())["ops"] if "qop" in op]
+    assert operations == [
+        {"qop": "H", "args": [["q", 0]]},
+        {"qop": "X", "args": [["q", 1], ["q", 0]]},
+    ]

@@ -1,0 +1,99 @@
+"""QuantumCircuit compaction preserves sequential gates and measurement destinations."""
+
+import json
+
+import pecos as pc
+import pytest
+
+
+@pytest.mark.parametrize("case", ["repeated_h", "repeated_measure", "cx_ladder"])
+def test_round_trip_matches_direct_circuit(case: str) -> None:
+    """Overlapping gates in consecutive ticks remain executable in native PHIR."""
+    qc = pc.QuantumCircuit(cvar_spec={"m": 3})
+    if case == "repeated_h":
+        qc.append("H", {0})
+        qc.append("H", {0})
+        qc.append("measure Z", {0}, var=("m", 0))
+        expected = 0
+    elif case == "repeated_measure":
+        qc.append("X", {0})
+        qc.append("measure Z", {0}, var=("m", 0))
+        qc.append("measure Z", {0}, var=("m", 1))
+        expected = 3
+    else:
+        qc.append("X", {0})
+        qc.append("CX", {(0, 1)})
+        qc.append("CX", {(1, 2)})
+        qc.append("measure Z", {0, 1, 2}, var_output={q: ("m", 2 - q) for q in range(3)})
+        expected = 7
+
+    output, _ = pc.circuit_runners.Standard(seed=1314).run(pc.simulators.SparseStabPy(3), qc)
+    direct = 0
+    for tick, (name, qubits, metadata) in enumerate(qc.items()):
+        if name == "measure Z":
+            for qubit in qubits:
+                destination = metadata["var"] if "var" in metadata else metadata["var_output"][qubit]
+                direct |= output.get(tick, {}).get(qubit, 0) << destination[1]
+    assert direct == expected
+    results = pc.sim(pc.PhirJson(qc.to_phir_json())).quantum(pc.state_vector()).seed(1314).run(4).to_dict()
+    assert results["m"] == [direct] * 4
+
+
+@pytest.mark.parametrize(
+    ("name", "first", "second", "third"),
+    [("H", {0}, {1}, {0}), ("CX", {(0, 1)}, {(2, 3)}, {(3, 4)})],
+)
+def test_compaction_checks_every_qubit_in_the_accumulated_op(name, first, second, third) -> None:
+    """Disjoint gates compact; overlap with any earlier target starts a new op."""
+    qc = pc.QuantumCircuit()
+    for targets in [first, second, third]:
+        qc.append(name, targets)
+    operations = [op for op in json.loads(qc.to_phir_json())["ops"] if "qop" in op]
+    assert len(operations) == 2
+    assert len(operations[0]["args"]) == 2
+    assert len(operations[1]["args"]) == 1
+
+
+def test_compacted_measurement_returns_stay_in_argument_order() -> None:
+    """A later overlapping measurement keeps its own return destination."""
+    qc = pc.QuantumCircuit(cvar_spec={"m": 3})
+    for qubit, bit in [(0, 2), (1, 0), (0, 1)]:
+        qc.append("measure Z", {qubit}, var=("m", bit))
+    operations = [op for op in json.loads(qc.to_phir_json())["ops"] if "qop" in op]
+    assert operations == [
+        {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 2], ["m", 0]]},
+        {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 1]]},
+    ]
+
+
+def test_partial_measurement_destinations_are_not_merged() -> None:
+    """Named and unnamed measurements must keep their different return shapes."""
+    qc = pc.QuantumCircuit(cvar_spec={"m": 1})
+    qc.append("measure Z", {0})
+    qc.append("measure Z", {1}, var=("m", 0))
+    operations = [op for op in json.loads(qc.to_phir_json())["ops"] if "qop" in op]
+    assert len(operations) == 2
+    assert "returns" not in operations[0]
+    assert operations[1]["returns"] == [["m", 0]]
+
+
+def test_register_names_are_part_of_the_qubit_identity() -> None:
+    """Equal indices in distinct quantum registers are disjoint targets."""
+    qc = pc.QuantumCircuit(qvar_spec={"a": 1, "b": 1}, qvars={0: ("a", 0), 1: ("b", 0)})
+    qc.append("H", {0})
+    qc.append("H", {1})
+    operations = [op for op in json.loads(qc.to_phir_json())["ops"] if "qop" in op]
+    assert operations == [{"qop": "H", "args": [["a", 0], ["b", 0]]}]
+
+
+def test_export_compaction_does_not_absorb_a_quantum_operation() -> None:
+    """Only consecutive exports can share their variables list."""
+    qc = pc.QuantumCircuit(cvar_spec={"a": 1, "b": 1})
+    qc.append("cop", set(), cop_type="ExportCVar", export="a")
+    qc.append("cop", set(), cop_type="ExportCVar", export="b")
+    qc.append("H", {0})
+    operations = json.loads(qc.to_phir_json())["ops"]
+    assert operations[-2:] == [
+        {"data": "cvar_export", "variables": ["a", "b"]},
+        {"qop": "H", "args": [["q", 0]]},
+    ]

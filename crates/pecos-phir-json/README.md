@@ -241,6 +241,16 @@ Broadcast quantum operations become one instruction per qubit or qubit pair,
 including preparations and measurements. Each instruction receives the same
 rotation angles; measurement destinations retain their argument order.
 The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
+Two-qubit argument groups must contain exactly two qubits in both input paths.
+
+JSON-to-module conversion currently supports register declarations, quantum
+operations and Result exports. It rejects blocks such as `qparallel` and `if`,
+machine/meta operations, unsupported data/classical operations and unrecognized
+operations with a named error. Use the native PHIR-JSON engine for supported PHIR
+programs containing these constructs. Although the module IR has structural
+parallel and conditional forms, its current execution path does not execute
+those regions; the converter does not emit programs that would lose their work.
+PHIR comments carry no execution semantics and are ignored.
 
 The legacy Python `pecos_rslib.PhirJsonEngine` (also exported through
 `pecos.engines`) delegates command generation, register updates, exports, and

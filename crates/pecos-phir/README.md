@@ -41,3 +41,8 @@ The PHIR-JSON converter represents every PHIR v0.1 quantum gate and alias,
 including CZ, RZZ, identity, square roots of Y, face gates, XX/YY rotations and
 combined XX/YY/ZZ rotations. The processor emits their existing exact native
 byte-message gates. Conversion retains gate angles and target order.
+
+`PhirProcessor::process_instruction` leaves Custom, ControlFlow and Parsing
+operations to their lowering passes: it returns `false` without consuming their
+operands or traversing nested regions. Lower these operations before execution;
+this processor does not implement general region/control-flow execution.

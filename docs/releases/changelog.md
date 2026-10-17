@@ -47,11 +47,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- `sim(PhirJson(...))` and `PhirJsonEngine` reject repeated qubit IDs within
+  one qop and incorrect angle counts, including angles on gates that take none
+  (for example, H with angles). Put sequential uses of a qubit in separate qops
+  and supply only the angles specified for that gate.
+
 - PyPHIR rejects unknown angle units with `ValueError` (and nonstring units with
   `TypeError`); use `rad`, `pi`, or `deg`.
 - The legacy `PhirJsonEngine` uses native validation and execution exclusively.
   Python interpreter fallbacks and pytest-dependent outcome rewriting are removed.
-  Deliver all outcomes from `process_program()` before requesting the next batch.
+  Scalar measurement outcomes are buffered until the whole native batch is
+  available. Deliver all outcomes from `process_program()` before requesting
+  the next batch.
   Results that cannot fit its u32 dictionary API now raise `ValueError`.
 
 - Seeded samples change for every engine on the shared Monte Carlo loop (including
@@ -171,6 +178,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- `QuantumCircuit.to_phir_json()` merges consecutive quantum operations only
+  when all targets are disjoint. Repeated H/Measure operations and CX ladders
+  retain their order and measurement destinations across ticks. An export no
+  longer absorbs a following quantum operation during compaction.
+
 - The legacy PHIR-JSON bridge now uses the native command generator, preserving
   all targets and pairs in broadcast gates and all measurement destinations.
 - PyPHIR converts degree angles to radians consistently with the native engine.
@@ -193,6 +205,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
+
+- The native PHIR-JSON engine rejects repeated qubit IDs within one qop,
+  incorrect angle counts (including H with angles), and two-qubit argument
+  groups that are not pairs. Split sequential qubit uses into separate qops,
+  provide the specified angles, and use one two-qubit pair per argument group.
+- The Rust-backed Python `PhirJsonEngine` has no Python fallback interpreter;
+  its scalar measurement adapter buffers outcomes per native batch. Supply every
+  outcome before advancing `process_program()`.
+- `phir_json_to_module` errors on unsupported blocks (including qparallel and
+  if), machine/meta operations, data directives and classical operations instead
+  of silently dropping them. Use the native PHIR-JSON engine for supported PHIR
+  programs that need these operations.
 
 - `phir_to_mlir` returns errors for unsupported operations and terminators instead
   of emitting TODO comments or silently omitting operations. Supported operations
@@ -335,6 +359,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- Native PHIR-JSON and JSON-to-module conversion now report the same actionable
+  error for malformed two-qubit argument groups.
+- `PhirProcessor::process_instruction` again skips Custom, ControlFlow and Parsing
+  operations without consuming operands or results, preserving its lowering-stage
+  contract. Arity validation applies to the operations it executes.
 
 - The native PHIR-JSON engine and JSON-to-module converter now support every
   quantum gate and alias in PHIR v0.1, including CZ, RZZ/ZZPhase, CY, SWAP,

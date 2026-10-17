@@ -147,7 +147,10 @@ impl PhirProcessor {
         Ok(has_quantum_ops)
     }
 
-    /// Process a single instruction
+    /// Process a single instruction.
+    ///
+    /// Custom, control-flow and parsing operations are left to their lowering
+    /// passes and skipped without reading operands or traversing nested regions.
     ///
     /// # Errors
     ///
@@ -170,12 +173,11 @@ impl PhirProcessor {
                 self.process_builtin_operation(builtin_op, instruction, message_builder)
             }
             Operation::Custom(_) => {
-                // For now, skip custom/dialect operations
-                // TODO: Implement custom operation processing
+                // Custom dialects must be lowered before execution.
                 Ok(false)
             }
             Operation::ControlFlow(_) => {
-                // Control flow is handled at the engine level, not here
+                // Control-flow regions are not executed by this processor.
                 Ok(false)
             }
             Operation::Memory(mem_op) => {
@@ -437,11 +439,9 @@ impl PhirProcessor {
                 ),
                 exact(0),
             ),
-            _ => {
-                return Err(PhirError::internal(format!(
-                    "Unsupported operation {}; use an operation supported by the PHIR processor",
-                    instruction.operation.name()
-                )));
+            Operation::Custom(_) | Operation::ControlFlow(_) | Operation::Parsing(_) => {
+                // These operations consume no operands or results in this processor.
+                return Ok(());
             }
         };
         for (kind, count, expected) in [

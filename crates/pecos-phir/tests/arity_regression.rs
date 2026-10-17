@@ -105,3 +105,42 @@ fn two_qubit_operations_reject_aliased_physical_operands() {
         );
     }
 }
+
+#[test]
+fn unlowered_operations_are_skipped_without_consuming_operands() {
+    use pecos_phir::{
+        ops::{ControlFlowOp, CustomOp},
+        parsing_ops::{ParsingOp, ScopeHint, UnresolvedRef},
+    };
+    for operation in [
+        pecos_phir::slr_helpers::comment("kept for tooling").operation,
+        Operation::Custom(CustomOp::new(
+            "qis",
+            "qalloc",
+            vec![],
+            std::collections::BTreeMap::new(),
+        )),
+        Operation::ControlFlow(ControlFlowOp::Parallel),
+        Operation::Parsing(ParsingOp::UnresolvedRef(UnresolvedRef {
+            name: "q".to_string(),
+            scope_hint: ScopeHint::Local,
+            expected_type: None,
+        })),
+    ] {
+        let instruction = Instruction::new(
+            operation,
+            vec![SSAValue::new(7)],
+            vec![SSAValue::new(8)],
+            vec![],
+        );
+        let mut processor = PhirProcessor::new();
+        let mut builder = ByteMessage::quantum_operations_builder();
+        assert!(
+            !processor
+                .process_instruction(&instruction, &mut builder)
+                .unwrap()
+        );
+        assert!(processor.ssa_values.is_empty());
+        assert!(builder.build().is_empty().unwrap());
+    }
+}

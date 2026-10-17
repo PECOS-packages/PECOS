@@ -57,6 +57,19 @@ pub(crate) fn quantum_gate_type(name: &str) -> Result<GateType, PecosError> {
     })
 }
 
+pub(crate) fn validate_quantum_arg_group(
+    name: &str,
+    arity: usize,
+    qubits: &[(String, usize)],
+) -> Result<(), PecosError> {
+    if arity > 1 && qubits.len() != arity {
+        return Err(PecosError::Input(format!(
+            "{name}: argument group {qubits:?} has invalid size; supply groups of {arity} qubits"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_quantum_qubits(name: &str, qubits: &[usize]) -> Result<(), PecosError> {
     let duplicates = pecos_core::duplicate_qubits(qubits.iter().copied());
     if !duplicates.is_empty() {
@@ -1596,6 +1609,7 @@ impl OperationProcessor {
                 .map_err(PecosError::ValidationInvalidGateParameters)?;
         }
 
+        let gate = quantum_gate_type(qop)?;
         // Validate and extract qubit arguments
         let mut qubit_args = Vec::new();
 
@@ -1607,6 +1621,7 @@ impl OperationProcessor {
                     qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 QubitArg::MultipleQubits(qubits) => {
+                    validate_quantum_arg_group(qop, gate.quantum_arity(), qubits)?;
                     for (var, idx) in qubits {
                         // Validate each qubit
                         self.validate_variable_access(var, *idx)?;
@@ -1616,7 +1631,6 @@ impl OperationProcessor {
             }
         }
 
-        let gate = quantum_gate_type(qop)?;
         let angle_args = angles.map_or(&[][..], Vec::as_slice);
         validate_quantum_signature(qop, gate, qubit_args.len(), angle_args.len())?;
         validate_quantum_qubits(qop, &qubit_args)?;

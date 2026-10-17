@@ -119,10 +119,16 @@ def conv_expr(expr: dict[str, Any]) -> dict[str, Any]:
     return new_expr
 
 
+def _qop_qubits(op: dict[str, Any]) -> set[tuple[str, int]]:
+    """Collect register/index identities from single targets and every pair."""
+    return {tuple(qubit) for arg in op["args"] for qubit in ([arg] if isinstance(arg[0], str) else arg)}
+
+
 def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
     """Creates a json str representation of the QuantumCircuit listing all the gates.
 
     It does not preserve ticks or parallel gating of different gate types.
+    Consecutive identical quantum operations compact only across disjoint qubits.
     """
     prog = {
         "format": "PHIR/JSON",
@@ -213,29 +219,23 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         *,
         compact_gates: bool = True,
     ) -> list[dict[str, Any]]:
-        # TODO: When you do that make sure gates don't overlap
-
         if ops_buffer and compact_gates:
             last_op = ops_buffer[-1]
-            if (
-                ("qop" in last_op and "qop" in current_op and last_op["qop"] == current_op["qop"])
-                or (last_op.get("data") == last_op.get("data") == "cvar_export")
-            ) and last_op.get("metadata") == current_op.get("metadata"):
-                if "args" in current_op:
-                    # TODO: Check no overlap!
-                    last_op["args"].extend(current_op["args"])
+            same_qop = (
+                "qop" in current_op
+                and last_op.get("qop") == current_op["qop"]
+                and last_op.get("angles") == current_op.get("angles")
+                and ("returns" in last_op) == ("returns" in current_op)
+                and _qop_qubits(last_op).isdisjoint(_qop_qubits(current_op))
+            )
+            same_export = last_op.get("data") == current_op.get("data") == "cvar_export"
+            if (same_qop or same_export) and last_op.get("metadata") == current_op.get("metadata"):
+                for field in ("args", "variables", "returns"):
+                    if field in current_op:
+                        last_op[field].extend(current_op[field])
+                return ops_buffer
 
-                if "variables" in current_op:
-                    last_op["variables"].extend(current_op["variables"])
-
-                if "returns" in current_op:
-                    last_op["returns"].extend(current_op["returns"])
-            else:
-                ops_buffer.append(current_op)
-
-        else:
-            ops_buffer.append(current_op)
-
+        ops_buffer.append(current_op)
         return ops_buffer
 
     ops = prog["ops"]

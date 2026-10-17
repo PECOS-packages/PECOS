@@ -360,10 +360,18 @@ impl ImprovedConverter {
         Ok(current_value)
     }
 
+    fn unsupported_operation(kind: &str, name: &str) -> PecosError {
+        PecosError::Input(format!(
+            "PHIR {kind} {name}: the JSON-to-module path does not support it yet; use the native PHIR-JSON engine for supported PHIR operations"
+        ))
+    }
+
     fn convert_operation(&mut self, op: &Value) -> Result<Option<Instruction>, PecosError> {
-        let obj = op
-            .as_object()
-            .ok_or_else(|| PecosError::Input("Operation must be an object".to_string()))?;
+        let obj = op.as_object().ok_or_else(|| {
+            PecosError::Input(format!(
+                "Invalid PHIR operation {op}; supply a JSON object with a supported operation key"
+            ))
+        })?;
 
         // Variable definition
         if let Some(data) = obj.get("data").and_then(|v| v.as_str()) {
@@ -380,8 +388,18 @@ impl ImprovedConverter {
             return self.convert_classical_operation(obj, cop);
         }
 
-        // Skip unknown operations
-        Ok(None)
+        for kind in ["block", "mop", "meta"] {
+            if let Some(name) = obj.get(kind) {
+                return Err(Self::unsupported_operation(kind, &name.to_string()));
+            }
+        }
+        // A PHIR comment carries no execution semantics.
+        if obj.contains_key("//") {
+            return Ok(None);
+        }
+        Err(PecosError::Input(format!(
+            "Unrecognized PHIR operation {op}; supply a supported data, qop or cop operation, or use the native PHIR-JSON engine"
+        )))
     }
 
     fn convert_variable_definition(
@@ -390,7 +408,7 @@ impl ImprovedConverter {
         data: &str,
     ) -> Result<Option<Instruction>, PecosError> {
         if data != "qvar_define" && data != "cvar_define" {
-            return Ok(None);
+            return Err(Self::unsupported_operation("data", data));
         }
         let variable = obj.get("variable").and_then(Value::as_str).unwrap_or("");
         let data_type = obj
@@ -466,7 +484,7 @@ impl ImprovedConverter {
 
                 Ok(Some(instruction))
             }
-            _ => Ok(None), // Skip unknown variable definitions
+            _ => Err(Self::unsupported_operation("data", data)),
         }
     }
 
@@ -561,11 +579,7 @@ impl ImprovedConverter {
             let qubits = match arg {
                 QubitArg::SingleQubit(qubit) => vec![qubit],
                 QubitArg::MultipleQubits(qubits) => {
-                    if arity > 1 && qubits.len() != arity {
-                        return Err(PecosError::Input(format!(
-                            "{qop}: argument group {qubits:?} has invalid size; supply groups of {arity} qubits"
-                        )));
-                    }
+                    super::operations::validate_quantum_arg_group(qop, arity, &qubits)?;
                     qubits
                 }
             };
@@ -741,7 +755,7 @@ impl ImprovedConverter {
 
                 Ok(Some(instruction))
             }
-            _ => Ok(None), // Skip unknown classical operations
+            _ => Err(Self::unsupported_operation("cop", cop)),
         }
     }
 }
@@ -986,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_classical_op_skipped() {
+    fn test_unsupported_classical_op_rejected() {
         let json = r#"{
             "format": "PHIR/JSON",
             "version": "0.1.0",
@@ -995,14 +1009,12 @@ mod tests {
                 {"cop": "=", "args": [1], "returns": [["x", 0]]}
             ]
         }"#;
-        // Unknown classical ops should be silently skipped, not error
-        let module = phir_json_to_module(json).unwrap();
-        // Should have the variable definition but the cop="=" should be skipped
-        assert_eq!(module.body.blocks[0].operations.len(), 1);
+        let error = phir_json_to_module(json).unwrap_err().to_string();
+        assert!(error.contains("cop =") && error.contains("JSON-to-module"));
     }
 
     #[test]
-    fn test_unknown_data_type_skipped() {
+    fn test_unknown_data_directive_rejected() {
         let json = r#"{
             "format": "PHIR/JSON",
             "version": "0.1.0",
@@ -1010,9 +1022,8 @@ mod tests {
                 {"data": "unknown_define", "data_type": "qubits", "variable": "x", "size": 1}
             ]
         }"#;
-        // Unknown data definitions should be skipped
-        let module = phir_json_to_module(json).unwrap();
-        assert_eq!(module.body.blocks[0].operations, []);
+        let error = phir_json_to_module(json).unwrap_err().to_string();
+        assert!(error.contains("unknown_define") && error.contains("JSON-to-module"));
     }
 
     #[test]

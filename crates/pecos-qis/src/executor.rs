@@ -1165,7 +1165,7 @@ impl QisHeliosInterface {
     /// QIR programs can use one of two entry-point signatures:
     /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. Selene's HUGR-to-QIS
     ///   compiler (the Python boundary) emits this entry point; a test asserts its name
-    ///   in `python/quantum-pecos/tests/guppy/test_guppy_execute_llvm.py`.
+    ///   in `python/quantum-pecos/tests/guppy/test_compilation_boundary.py`.
     ///   The pecos-phir RON pipeline fixtures (`ron_support.rs`,
     ///   `qis_pipeline_tests`) use it. The return value is an error code.
     /// - `void @main()` -- the "base profile" form. pecos-phir's MLIR/QIR text

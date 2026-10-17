@@ -276,7 +276,7 @@ from pecos._engine_builders import (
 )
 
 # Simulation entry point
-from pecos._sim import get_guppy_backends, sim
+from pecos._sim import sim
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
 from pecos.engines.cvm import (
@@ -431,7 +431,6 @@ __all__ = [
     "f64",
     "floor",
     "general_noise",
-    "get_guppy_backends",
     "graph",
     "guppy",  # Deprecated alias for guppy_gen, resolved lazily via __getattr__
     "guppy_gen",

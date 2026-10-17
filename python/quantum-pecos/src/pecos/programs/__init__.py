@@ -99,6 +99,11 @@ class HugrPackage(Protocol):
 # =============================================================================
 
 
+def _hugr_to_program(data: bytes) -> "CompiledQis":
+    """Lower a HUGR envelope to the shared executable program representation."""
+    return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data))
+
+
 class Guppy:
     """Wrapper for Guppy functions.
 
@@ -141,7 +146,7 @@ class Guppy:
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(self.hugr_bytes))
+            self._program = _hugr_to_program(self.hugr_bytes)
         return self._program
 
 
@@ -189,7 +194,7 @@ class Hugr:
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(self._data))
+            self._program = _hugr_to_program(self._data)
         return self._program
 
 

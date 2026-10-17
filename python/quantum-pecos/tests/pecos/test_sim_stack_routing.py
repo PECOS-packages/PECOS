@@ -98,7 +98,7 @@ def test_neo_stack_rejects_explicit_quantum_backend() -> None:
 
 
 def test_neo_stack_rejects_build() -> None:
-    with pytest.raises(RuntimeError, match="build"):
+    with pytest.raises(ValueError, match="build"):
         sim(Qasm.from_string(X_MEASURE)).stack("neo").build()
 
 
@@ -120,7 +120,7 @@ def test_neo_stack_rejects_explicit_classical_engine() -> None:
 
     explicit = qasm_engine().program(Qasm.from_string(X_MEASURE))
 
-    with pytest.raises(RuntimeError, match="not routed to the neo stack"):
+    with pytest.raises(ValueError, match="not routed to the neo stack"):
         sim(Qasm.from_string(X_MEASURE)).classical(explicit).stack("neo").run(5)
 
     # Same configuration is fine on the engines stack.

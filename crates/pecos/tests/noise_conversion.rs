@@ -30,7 +30,7 @@ fn neo_reports_invalid_depolarizing_builder() {
     .expect_err("invalid noise must fail");
     assert!(
         matches!(error, pecos_core::errors::PecosError::Input(message)
-        if message == "p_prep must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
+        if message == "uniform depolarizing probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0")
     );
 }
 
@@ -67,7 +67,7 @@ fn neo_reports_invalid_biased_builder() {
     .expect_err("invalid noise must fail");
     assert!(
         matches!(error, pecos_core::errors::PecosError::Input(message)
-        if message == "p_prep must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
+        if message == "uniform biased depolarizing probability must be between 0.0 and 1.0, got -0.1; supply a finite probability in 0.0..=1.0")
     );
 }
 

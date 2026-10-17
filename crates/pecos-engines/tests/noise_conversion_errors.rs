@@ -100,7 +100,7 @@ fn depolarizing_uniform_keeps_panic_message() {
 }
 
 #[test]
-#[should_panic(expected = "p_prep must be between 0.0 and 1.0")]
+#[should_panic(expected = "uniform depolarizing probability must be between 0.0 and 1.0")]
 fn depolarizing_build_invalid_keeps_panic_message() {
     let _ = DepolarizingNoiseModelBuilder::new()
         .with_uniform_probability(f64::NAN)
@@ -186,7 +186,7 @@ fn biased_uniform_keeps_panic_message() {
 }
 
 #[test]
-#[should_panic(expected = "p_prep must be between 0.0 and 1.0")]
+#[should_panic(expected = "uniform biased depolarizing probability must be between 0.0 and 1.0")]
 fn biased_build_invalid_keeps_panic_message() {
     let _ = BiasedDepolarizingNoiseModelBuilder::new()
         .with_uniform_probability(f64::NAN)
@@ -222,5 +222,24 @@ fn probability_errors_name_each_parameter() {
         .unwrap()
         .to_string();
         assert!(error.contains(name) && error.contains("1.5"), "{error}");
+    }
+}
+
+#[test]
+fn uniform_builders_preserve_the_callers_parameter_name() {
+    for invalid in [-0.1, 1.5, f64::NAN, f64::INFINITY] {
+        let expected = format!(
+            "uniform depolarizing probability must be between 0.0 and 1.0, got {invalid}; supply a finite probability in 0.0..=1.0"
+        );
+        let builder = DepolarizingNoiseModelBuilder::new().with_uniform_probability(invalid);
+        assert_input(builder.validate_configuration(), &expected);
+        assert_input(builder.clone().try_build(), &expected);
+        // A later setter must not erase an invalid earlier configuration.
+        assert_input(builder.with_uniform_probability(0.1).try_build(), &expected);
+        let expected = expected.replace("uniform depolarizing", "uniform biased depolarizing");
+        let builder = BiasedDepolarizingNoiseModelBuilder::new().with_uniform_probability(invalid);
+        assert_input(builder.validate_configuration(), &expected);
+        assert_input(builder.clone().try_build(), &expected);
+        assert_input(builder.with_uniform_probability(0.1).try_build(), &expected);
     }
 }

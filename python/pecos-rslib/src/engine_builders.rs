@@ -2050,7 +2050,12 @@ impl PyGeneralNoiseModelBuilder {
 }
 
 pub(crate) fn noise_configuration_error(error: pecos_core::errors::PecosError) -> PyErr {
-    crate::errors::simulation_error(error, "Invalid noise configuration")
+    match error {
+        pecos_core::errors::PecosError::Input(message) => pyo3::exceptions::PyValueError::new_err(
+            format!("Invalid noise configuration: {message}"),
+        ),
+        error => crate::errors::simulation_error(error, "Invalid noise configuration"),
+    }
 }
 
 /// Python wrapper for `DepolarizingNoiseModelBuilder`
@@ -2528,4 +2533,29 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::coin_toss, m)?)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod noise_error_tests {
+    use super::noise_configuration_error;
+    use pecos_core::errors::PecosError;
+    use pyo3::exceptions::{PyRuntimeError, PyValueError};
+
+    #[test]
+    fn noise_configuration_errors_have_one_prefix_and_the_correct_type() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let error = noise_configuration_error(PecosError::Input(
+                "uniform depolarizing probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0".into(),
+            ));
+            assert!(error.is_instance_of::<PyValueError>(py));
+            assert_eq!(
+                error.to_string(),
+                "ValueError: Invalid noise configuration: uniform depolarizing probability must be between 0.0 and 1.0, got 1.5; supply a finite probability in 0.0..=1.0"
+            );
+            let error =
+                noise_configuration_error(PecosError::Processing("noise execution failed".into()));
+            assert!(error.is_instance_of::<PyRuntimeError>(py));
+        });
+    }
 }

@@ -1218,14 +1218,11 @@ This is useful when:
 3. **Parsing from floats**: When reading angles from files, convert early to Angle64
    ```rust
    // Parse floating-point, convert to fixed-point immediately
-   # fn main() -> Result<(), Box<dyn std::error::Error>> {
    let angle_f64: f64 = parse_from_file()?;
    let angle = Angle64::try_from_turns(angle_f64)?;  // Now it's exact
 
    // All subsequent comparisons are exact
    if angle == Angle64::QUARTER_TURN { ... }
-   # Ok(())
-   # }
    ```
 
 4. **Multi-angle gates**: For gates with multiple angles (e.g., U gate), check all
@@ -1947,7 +1944,6 @@ Different circuit types may have different constraints on what gates and angle v
 When parsing from floating-point input, there's a precision boundary:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 // User writes in file: angle = 0.25 (meaning 1/4 turn, π/2)
 let angle_f64: f64 = "0.25".parse()?;  // Parsed runtime input, exact in f64
 
@@ -1956,8 +1952,6 @@ let angle = Angle64::try_from_turns(angle_f64)?;
 
 // Is this EXACTLY Angle64::QUARTER_TURN?
 // It should be, but floating-point conversion could introduce error
-# Ok(())
-# }
 ```
 
 With Angle64's fixed-point representation, `0.25` turns converts exactly. But for unusual values like `0.12345678901234567`, the conversion may not round-trip.

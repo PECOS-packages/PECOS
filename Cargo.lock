@@ -4403,7 +4403,6 @@ version = "0.2.0-dev.0"
 dependencies = [
  "criterion 0.8.2",
  "num-complex 0.4.6",
- "num-traits",
  "num_cpus",
  "pecos-core",
  "pecos-engines",

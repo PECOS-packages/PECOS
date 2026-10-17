@@ -57,21 +57,6 @@ pub trait ProbabilityValidator {
         }
         Ok(())
     }
-
-    /// Validate a named probability
-    ///
-    /// # Arguments
-    /// * `probability` - The probability value to validate
-    /// * `name` - Name of the probability for error message
-    ///
-    /// # Panics
-    /// Panics if the probability is not between 0.0 and 1.0
-    fn validate_named_probability(probability: f64, name: &str) {
-        assert!(
-            (0.0..=1.0).contains(&probability),
-            "{name} must be between 0.0 and 1.0, but was {probability}"
-        );
-    }
 }
 
 /// Helper functions for working with quantum gates and noise

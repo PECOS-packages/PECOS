@@ -25,7 +25,6 @@ rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
 num_cpus = "1.16"
-num-traits.workspace = true
 
 pecos-engines.workspace = true
 pecos-results.workspace = true

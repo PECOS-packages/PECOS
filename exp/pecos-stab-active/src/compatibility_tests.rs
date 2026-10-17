@@ -56,7 +56,7 @@ fn fixed_seed_trait_bits() {
         .map(|a| (a.re.to_bits(), a.im.to_bits()))
         .collect();
     assert_eq!(records, [false, false, false, false]);
-    // Pins refreshed in f574abf08 for exact input-angle quantization; explicit mx/mpx tracking supplies the dense oracle above.
+    // Inputs switched from from_radians to radians! in d0728f735; exact-input pins were refreshed in f574abf08 and checked by the dense oracle above.
     assert_eq!(
         bits,
         [

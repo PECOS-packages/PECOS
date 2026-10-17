@@ -498,6 +498,7 @@ pub struct DepolarizingNoiseModelBuilder {
     p1: Option<f64>,
     p2: Option<f64>,
     seed: Option<u64>,
+    setter_error: Option<String>,
 }
 
 impl Default for DepolarizingNoiseModelBuilder {
@@ -516,17 +517,29 @@ impl DepolarizingNoiseModelBuilder {
             p1: None,
             p2: None,
             seed: None,
+            setter_error: None,
         }
     }
 
     /// Set the same probability for all error types
     ///
+    /// Invalid values are recorded and reported by `validate_configuration` or `try_build`.
     /// This is a convenience method to set all probabilities to the same value.
     ///
     /// # Arguments
     /// * `probability` - The probability value to set for all error types
     #[must_use]
     pub fn with_uniform_probability(mut self, probability: f64) -> Self {
+        if let Err(error) = DepolarizingNoiseModel::try_validate_probability(
+            probability,
+            "uniform depolarizing probability",
+        ) {
+            let PecosError::Input(message) = error else {
+                unreachable!("probability validation only returns PecosError::Input");
+            };
+            self.setter_error.get_or_insert(message);
+            return self;
+        }
         self.p_prep = Some(probability);
         self.p_meas = Some(probability);
         self.p1 = Some(probability);
@@ -583,6 +596,9 @@ impl DepolarizingNoiseModelBuilder {
     }
 
     fn configured_probabilities(&self) -> Result<[f64; 4], PecosError> {
+        if let Some(error) = &self.setter_error {
+            return Err(PecosError::Input(error.clone()));
+        }
         Ok([
             self.p_prep.ok_or_else(|| {
                 PecosError::Input("Preparation probability must be set".to_string())

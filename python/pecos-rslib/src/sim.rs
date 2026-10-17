@@ -569,7 +569,7 @@ impl PySimBuilder {
                     sim_builder = sim_builder.workers(workers);
                 }
                 let n = builder.explicit_num_qubits.ok_or_else(|| {
-                    PyRuntimeError::new_err(
+                    PyValueError::new_err(
                         "QIS programs require explicit qubit specification. \
                         Please call .qubits(N) before capture_operation_trace().",
                     )
@@ -745,7 +745,7 @@ impl PySimBuilder {
                 }
                 // QIS programs require explicit qubit specification since they don't inherently specify qubit count
                 let n = builder.explicit_num_qubits.ok_or_else(|| {
-                    PyRuntimeError::new_err(
+                    PyValueError::new_err(
                         "QIS programs require explicit qubit specification. \
                         Please call .qubits(N) to specify the number of qubits.\n\
                         \n\
@@ -931,7 +931,7 @@ impl PySimBuilder {
             _ => false,
         };
         if neo_selected {
-            return Err(PyRuntimeError::new_err(
+            return Err(PyValueError::new_err(
                 "build() is not available on the neo stack (it has no reusable \
                  MonteCarloEngine); call run(shots) directly or use the engines stack",
             ));
@@ -1164,7 +1164,7 @@ impl PySimBuilder {
                     }
                     // QIS programs require explicit qubit specification
                     let n = builder.explicit_num_qubits.ok_or_else(|| {
-                        PyRuntimeError::new_err(
+                        PyValueError::new_err(
                             "QIS programs require explicit qubit specification. \
                             Please call .qubits(N) to specify the number of qubits.",
                         )
@@ -1372,7 +1372,7 @@ fn run_qasm_via_facade(
     })?;
 
     if builder.stack == Some(PySimStack::Neo) && engine_builder.has_wasm() {
-        return Err(PyRuntimeError::new_err(
+        return Err(PyValueError::new_err(
             "WASM foreign objects are not routed to the neo stack; \
              remove .wasm()/.foreign_object() or use the engines stack",
         ));
@@ -1382,7 +1382,7 @@ fn run_qasm_via_facade(
         // stack (the Rust sim().stack(Neo) path rejects it the same way).
         // Refuse rather than silently dropping the explicit engine and
         // running with only its program.
-        return Err(PyRuntimeError::new_err(
+        return Err(PyValueError::new_err(
             "Explicit .classical() engine builders are not routed to the neo stack; \
              remove .classical() or use the engines stack",
         ));
@@ -1554,4 +1554,72 @@ pub fn register_sim_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::sim, m)?)?;
     m.add_function(wrap_pyfunction!(self::sim_builder, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    fn assert_input_error<T>(py: Python<'_>, result: PyResult<T>, message: &str) {
+        let error = result
+            .err()
+            .expect("preflight must reject the configuration");
+        assert!(error.is_instance_of::<PyValueError>(py), "{error}");
+        assert!(error.to_string().contains(message), "{error}");
+    }
+
+    #[test]
+    fn qis_missing_count_is_value_error_on_every_entry_point() {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
+            let builder = PySimBuilder {
+                inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
+                    engine_builder: Arc::new(Mutex::new(Some(pecos_qis::qis_engine()))),
+                    seed: None,
+                    workers: None,
+                    shots: None,
+                    quantum_engine_builder: None,
+                    noise_builder: None,
+                    explicit_num_qubits: None,
+                    keep_intermediate_files: false,
+                    qis_program: None,
+                    operation_trace_dir: None,
+                }),
+            };
+            assert_input_error(py, builder.run(Some(1)), ".qubits(N)");
+            assert_input_error(py, builder.build(), ".qubits(N)");
+            assert_input_error(py, builder.capture_operation_trace(py, 1), ".qubits(N)");
+        });
+    }
+
+    #[test]
+    fn unsupported_neo_configuration_is_value_error() {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
+            for wasm in [false, true] {
+                let engine = pecos_qasm::qasm_engine().qasm("OPENQASM 2.0; qreg q[1];");
+                let engine = if wasm {
+                    engine.wasm(QasmEngineWasm::from_bytes(Vec::new()))
+                } else {
+                    engine
+                };
+                let builder = PySimBuilder {
+                    inner: SimBuilderInner::Qasm(PyQasmSimBuilder {
+                        engine_builder: Arc::new(Mutex::new(Some(engine))),
+                        seed: None,
+                        workers: None,
+                        shots: None,
+                        quantum_engine_builder: None,
+                        noise_builder: None,
+                        explicit_num_qubits: None,
+                        foreign_object: None,
+                        stack: Some(PySimStack::Neo),
+                        classical_override: !wasm,
+                    }),
+                };
+                assert_input_error(py, builder.build(), "call run(shots)");
+                assert_input_error(py, builder.run(Some(1)), "not routed to the neo stack");
+            }
+        });
+    }
 }

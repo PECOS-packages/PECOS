@@ -171,7 +171,11 @@ pub fn validate_probability_sum_at_most_one(rates: &[f64], field: &str) -> Valid
     let total: f64 = rates.iter().sum();
     // Unit roundoff is EPSILON/2. For nonnegative rates totaling near one,
     // n * EPSILON conservatively bounds accumulated addition roundoff.
-    let count: f64 = num_traits::AsPrimitive::as_(rates.len());
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "Rate counts are far below 2^53, so conversion to f64 is exact"
+    )]
+    let count = rates.len() as f64;
     let roundoff = count * f64::EPSILON;
     if total - 1.0 > roundoff {
         return Err(ValidationError::new(

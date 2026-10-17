@@ -150,6 +150,7 @@ pub unsafe extern "C" fn pecos_engine_create(
         }
     }
 
+    // On 32-bit targets, these array layouts can exceed isize::MAX despite the u32 index bound.
     let arrays_fit = match type_str {
         "sparse_stab" | "stabilizer" => {
             std::alloc::Layout::array::<pecos_core::BitSet>(num_qubits).is_ok()

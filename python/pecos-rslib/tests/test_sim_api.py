@@ -226,3 +226,13 @@ def test_conflicting_qubit_counts_build_is_value_error():
     program = Qasm.from_string("OPENQASM 2.0; qreg q[1];")
     with pytest.raises(ValueError, match=r"qubit.*2.*3|qubit.*3.*2"):
         sim(program).qubits(2).quantum(state_vector().qubits(3)).build()
+
+
+@pytest.mark.parametrize("method", ["run", "build", "capture_operation_trace"])
+def test_qis_requires_explicit_qubits_as_value_error(method) -> None:
+    from pecos_rslib.programs import Qis
+
+    builder = sim(Qis.from_string("define void @main() { ret void }"))
+    args = () if method == "build" else (1,)
+    with pytest.raises(ValueError, match=r"QIS programs require explicit qubit specification.*\.qubits\(N\)"):
+        getattr(builder, method)(*args)

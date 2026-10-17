@@ -19,10 +19,8 @@ pub fn check_qubit(index: usize, num_qubits: usize, simulator: &str) {
 pub fn qubit_index_remedy(index: usize, num_qubits: usize) -> String {
     if num_qubits == 0 {
         match index.checked_add(1) {
-            Some(required) => format!(
-                "the simulator has no qubits; construct it with at least {required} qubits"
-            ),
-            None => "the simulator has no qubits; use a smaller qubit index and construct it with enough qubits to contain that index".to_owned(),
+            Some(required) => format!("construct it with at least {required} qubits"),
+            None => "use a smaller qubit index and construct it with enough qubits to contain that index".to_owned(),
         }
     } else {
         format!("use a qubit index below {num_qubits}, or construct the simulator with more qubits")

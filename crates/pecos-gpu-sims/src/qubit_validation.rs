@@ -41,8 +41,8 @@ pub(crate) mod gpu_free_tests {
             .expect("panic must have a message");
         let remedy = if capacity == 0 {
             match index.checked_add(1) {
-                Some(required) => format!("the simulator has no qubits; construct it with at least {required} qubits"),
-                None => "the simulator has no qubits; use a smaller qubit index and construct it with enough qubits to contain that index".to_owned(),
+                Some(required) => format!("construct it with at least {required} qubits"),
+                None => "use a smaller qubit index and construct it with enough qubits to contain that index".to_owned(),
             }
         } else {
             format!(

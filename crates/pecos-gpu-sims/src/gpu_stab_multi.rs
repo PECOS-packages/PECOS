@@ -1794,8 +1794,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
 
     /// Check if there are measurements still waiting to be executed on the
     /// current state. Does NOT count measurements that have already been
-    /// eagerly executed (by a subsequent `mz_queue` or flush) but not yet
-    /// fetched -- those are always returned in full on the next `mz_fetch`.
+    /// executed (by a subsequent `mz_queue`, an explicit flush, or an automatic
+    /// gate capacity flush) but not yet fetched. Those results are returned in
+    /// full on the next `mz_fetch`.
     pub fn has_queued_measurements(&self) -> bool {
         !self.meas_queue.is_empty()
     }
@@ -1803,14 +1804,19 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// Number of measurements currently waiting to be executed on the current
     /// state. With the mid-circuit semantics, each `mz_queue` call eagerly
     /// executes all previously-queued measurements before appending new
-    /// qubits; this count therefore reflects only the latest batch.
+    /// qubits; this count therefore reflects only the latest batch. An explicit
+    /// flush or automatic gate capacity flush also executes queued measurements,
+    /// reducing this count to zero while retaining the results for `mz_fetch`.
     pub fn queued_measurement_count(&self) -> usize {
         self.meas_queue.len()
     }
 
     /// Clear queued measurements without executing them.
     ///
-    /// Use this to discard pending measurements if you decide you don't need them.
+    /// Use this to discard measurements still waiting to execute. A subsequent
+    /// `mz_queue`, an explicit flush, or an automatic gate capacity flush may
+    /// already have executed them. This does not undo executed measurements or
+    /// discard their results, which remain available through `mz_fetch`.
     pub fn mz_clear_queue(&mut self) {
         self.meas_queue.clear();
         self.meas_queue_random_bits.clear();

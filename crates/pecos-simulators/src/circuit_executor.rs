@@ -455,7 +455,7 @@ mod capacity_tests {
         };
         assert_eq!(
             error,
-            "Gate X targets qubit 3 but the simulator holds 0 qubits; the simulator has no qubits; construct it with at least 4 qubits"
+            "Gate X targets qubit 3 but the simulator holds 0 qubits; construct it with at least 4 qubits"
         );
     }
 

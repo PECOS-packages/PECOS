@@ -700,7 +700,7 @@ mod tests {
             .expect_err("empty registers reject operands before GPU work");
         assert_eq!(
             error,
-            "GpuNoisySampler: Gate(X(3)) targets qubit 3 outside a 0-qubit register; the simulator has no qubits; construct it with at least 4 qubits"
+            "GpuNoisySampler: Gate(X(3)) targets qubit 3 outside a 0-qubit register; construct it with at least 4 qubits"
         );
     }
 

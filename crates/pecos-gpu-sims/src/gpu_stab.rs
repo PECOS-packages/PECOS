@@ -69,7 +69,10 @@ fn gate_qubits(packed: u32) -> (u32, Option<u32>) {
 }
 
 /// Partition gates into independent batches for parallel processing.
-/// Gates in the same batch don't share any qubits and can be processed in parallel.
+/// Gates in the same batch share neither qubits nor a read/update of `sign_i`:
+/// at most one S or Sdg gate is allowed, even on disjoint qubits. Other gates
+/// only toggle `sign_minus` atomically or leave signs unchanged, so they can
+/// execute alongside that phase gate when their qubits are disjoint.
 /// Returns a list of (`start_idx`, `end_idx`) ranges into the gate queue.
 fn partition_gates_into_batches(gate_queue: &[u32]) -> Vec<(usize, usize)> {
     if gate_queue.len() <= 1 {
@@ -84,13 +87,17 @@ fn partition_gates_into_batches(gate_queue: &[u32]) -> Vec<(usize, usize)> {
     let mut batches = Vec::new();
     let mut batch_start = 0;
     let mut used_qubits = std::collections::HashSet::new();
+    let mut has_phase_gate = false;
 
     for (i, &packed) in gates.iter().enumerate() {
         let (q1, q2_opt) = gate_qubits(packed);
 
-        // Check if this gate conflicts with current batch
-        let conflicts =
-            used_qubits.contains(&q1) || q2_opt.is_some_and(|q2| used_qubits.contains(&q2));
+        // S/Sdg are the parallel shader's only sign_i readers and writers.
+        // Atomic loads and XORs do not make their combined phase update atomic.
+        let reads_shared_phase = matches!(packed & 0xF, GATE_S | GATE_SDG);
+        let conflicts = used_qubits.contains(&q1)
+            || q2_opt.is_some_and(|q2| used_qubits.contains(&q2))
+            || (reads_shared_phase && has_phase_gate);
 
         if conflicts {
             // End current batch, start new one
@@ -99,8 +106,10 @@ fn partition_gates_into_batches(gate_queue: &[u32]) -> Vec<(usize, usize)> {
             }
             batch_start = i;
             used_qubits.clear();
+            has_phase_gate = false;
         }
 
+        has_phase_gate |= reads_shared_phase;
         // Add qubits to current batch
         used_qubits.insert(q1);
         if let Some(q2) = q2_opt {
@@ -114,6 +123,19 @@ fn partition_gates_into_batches(gate_queue: &[u32]) -> Vec<(usize, usize)> {
     }
 
     batches
+}
+
+// One aligned uniform record per partition, all uploaded once per CPU chunk.
+// The gate buffer itself stays immutable while these ranges are dispatched.
+fn parallel_dispatch_parameters(batches: &[(usize, usize)], alignment: u32) -> (u32, Vec<u32>) {
+    let stride = 8_u32.next_multiple_of(alignment);
+    let words = stride as usize / size_of::<u32>();
+    let mut parameters = vec![0; batches.len() * words];
+    for (&(start, end), record) in batches.iter().zip(parameters.chunks_mut(words)) {
+        record[0] = start as u32;
+        record[1] = (end - start) as u32;
+    }
+    (stride, parameters)
 }
 
 /// Sort runs of single-qubit gates by target qubit for better cache locality.
@@ -153,6 +175,38 @@ fn sort_gate_queue(gate_queue: &mut [u32]) {
 
 // Size of gate queue buffer - supports up to this many gates per sync
 const GATE_QUEUE_BUFFER_SIZE: usize = 256 * 1024; // 256K gates
+
+// Bound retained uploads/commands even when callers sync partial queues or
+// repeatedly execute compiled circuits instead of filling the gate buffer.
+const MAX_PENDING_DISPATCHES: usize = 16;
+
+// wgpu records native command buffers per compute pass, not per public encoder.
+// Bound both passes in flight and the number of dispatch commands in each pass.
+const MAX_PARALLEL_DISPATCHES_PER_PASS: usize = 256;
+
+#[cfg(test)]
+#[derive(Default)]
+struct DispatchStats {
+    retained_passes: std::cell::Cell<usize>,
+    peak_retained_passes: std::cell::Cell<usize>,
+    retained_dispatches: std::cell::Cell<usize>,
+    peak_retained_dispatches: std::cell::Cell<usize>,
+    dispatches_in_pass: std::cell::Cell<usize>,
+    peak_dispatches_in_pass: std::cell::Cell<usize>,
+    parallel_buffers_created: std::cell::Cell<usize>,
+    parallel_bind_groups_created: std::cell::Cell<usize>,
+}
+
+#[cfg(test)]
+impl DispatchStats {
+    fn record_pass(&self) {
+        let passes = self.retained_passes.get() + 1;
+        self.retained_passes.set(passes);
+        self.peak_retained_passes
+            .set(self.peak_retained_passes.get().max(passes));
+        self.dispatches_in_pass.set(0);
+    }
+}
 
 // The leading word is the shader's gate-count header. Return whether this
 // complete packed gate filled the upload buffer; callers dispatch before reuse.
@@ -238,9 +292,12 @@ pub struct GpuStab<R: Rng + SeedableRng = PecosRng> {
     pending_measurement_count: usize,
     completed_measurements: Vec<MeasurementResult>,
 
-    // Batched command mode - accumulates command buffers for single submit
+    // Batched command mode - bounded command accumulation before submission
     batched_commands: Vec<wgpu::CommandBuffer>,
     batch_mode: bool,
+    pending_dispatches: usize,
+    #[cfg(test)]
+    dispatch_stats: DispatchStats,
 
     // Gate fusion support
     fuser: Option<CliffordFuser>,
@@ -255,6 +312,7 @@ pub struct GpuStab<R: Rng + SeedableRng = PecosRng> {
     // Gate-parallel processing support
     parallel_bind_group: wgpu::BindGroup,
     parallel_pipeline: wgpu::ComputePipeline,
+    parallel_range_layout: wgpu::BindGroupLayout,
     parallel_enabled: bool,
 }
 
@@ -708,9 +766,30 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             source: wgpu::ShaderSource::Wgsl(include_str!("stab_gate_shader_parallel.wgsl").into()),
         });
 
+        let parallel_range_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Parallel partition range layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(8),
+                    },
+                    count: None,
+                }],
+            });
+        let parallel_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Parallel pipeline layout"),
+                bind_group_layouts: &[Some(&main_bind_group_layout), Some(&parallel_range_layout)],
+                immediate_size: 0,
+            });
+
         let parallel_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Parallel Gate Pipeline"),
-            layout: Some(&main_pipeline_layout),
+            layout: Some(&parallel_pipeline_layout),
             module: &parallel_shader,
             entry_point: Some("process_gates_parallel"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -1119,6 +1198,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             completed_measurements: Vec::new(),
             batched_commands: Vec::new(),
             batch_mode: false,
+            pending_dispatches: 0,
+            #[cfg(test)]
+            dispatch_stats: DispatchStats::default(),
             fuser: None,
             fusion_enabled: false,
             compiled_bind_group,
@@ -1127,6 +1209,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             circuit_compiler: CircuitCompiler::new(),
             parallel_bind_group,
             parallel_pipeline,
+            parallel_range_layout,
             parallel_enabled: false,
         };
 
@@ -1245,9 +1328,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         self.add_two_qubit_gate(gate_type, control, target);
     }
 
-    /// Submit all pending gates to the GPU and execute them.
-    /// This is non-blocking; call `wait()` before reading results.
-    /// Full gate buffers are dispatched automatically while gates are queued.
+    /// Dispatch all pending gates, deferring submission in batch mode.
+    /// Call `wait()` before reading results. Dispatches normally defer waiting,
+    /// but periodically wait to bound retained commands and uploads.
+    /// Full gate buffers are dispatched and waited on automatically while gates are queued.
     pub fn sync(&mut self) {
         self.flush_fused_gates();
         self.dispatch_gate_queue();
@@ -1274,6 +1358,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     fn enqueue_packed_gate(&mut self, gate: u32) {
         if push_gate(&mut self.gate_queue, gate) {
             self.dispatch_gate_queue();
+            // Submit batched chunks in order and reclaim completed uploads.
+            // Waiting once per full chunk also bounds in-flight GPU resources.
+            self.wait();
         }
     }
 
@@ -1313,75 +1400,167 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         self.upload_gate_queue(&mut encoder, &self.gate_queue);
 
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
+            let mut pass = Self::begin_gate_pass(
+                &mut encoder,
+                #[cfg(test)]
+                || self.dispatch_stats.record_pass(),
+            );
             pass.set_pipeline(&self.process_queue_pipeline);
             pass.set_bind_group(0, &self.main_bind_group, &[]);
-            pass.dispatch_workgroups(self.gen_words.div_ceil(256), 1, 1);
+            Self::dispatch_gate_workgroups(
+                &mut pass,
+                self.gen_words.div_ceil(256),
+                #[cfg(test)]
+                &self.dispatch_stats,
+            );
         }
 
-        let cmd_buffer = encoder.finish();
-        if self.batch_mode {
-            self.batched_commands.push(cmd_buffer);
-        } else {
-            self.queue.submit(std::iter::once(cmd_buffer));
-        }
+        self.finish_dispatch(encoder.finish());
     }
 
-    /// Parallel sync - partitions gates into independent batches and processes in parallel.
-    /// Each batch contains gates that don't share any qubits, allowing parallel execution.
-    fn sync_parallel_internal(&mut self) {
-        // Partition gates into independent batches
-        let batches = partition_gates_into_batches(&self.gate_queue);
+    // Instrument the actual resource/recording calls in tests, rather than
+    // inferring native resource usage from the number of public command buffers.
+    fn begin_gate_pass(
+        encoder: &mut wgpu::CommandEncoder,
+        #[cfg(test)] record_pass: impl FnOnce(),
+    ) -> wgpu::ComputePass<'_> {
+        #[cfg(test)]
+        record_pass();
+        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        })
+    }
 
+    fn dispatch_gate_workgroups(
+        pass: &mut wgpu::ComputePass<'_>,
+        workgroups: u32,
+        #[cfg(test)] stats: &DispatchStats,
+    ) {
+        #[cfg(test)]
+        {
+            let retained = stats.retained_dispatches.get() + 1;
+            let in_pass = stats.dispatches_in_pass.get() + 1;
+            stats.retained_dispatches.set(retained);
+            stats
+                .peak_retained_dispatches
+                .set(stats.peak_retained_dispatches.get().max(retained));
+            stats.dispatches_in_pass.set(in_pass);
+            stats
+                .peak_dispatches_in_pass
+                .set(stats.peak_dispatches_in_pass.get().max(in_pass));
+        }
+        pass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    fn create_parallel_buffer(
+        &self,
+        label: &str,
+        data: &[u32],
+        usage: wgpu::BufferUsages,
+    ) -> wgpu::Buffer {
+        #[cfg(test)]
+        self.dispatch_stats
+            .parallel_buffers_created
+            .set(self.dispatch_stats.parallel_buffers_created.get() + 1);
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(data),
+                usage,
+            })
+    }
+
+    fn create_parallel_range_bind_group(&self, parameters: &wgpu::Buffer) -> wgpu::BindGroup {
+        #[cfg(test)]
+        self.dispatch_stats
+            .parallel_bind_groups_created
+            .set(self.dispatch_stats.parallel_bind_groups_created.get() + 1);
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Parallel partition ranges"),
+            layout: &self.parallel_range_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: parameters,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(8),
+                }),
+            }],
+        })
+    }
+
+    /// Parallel sync - each partition has disjoint qubits and at most one S/Sdg.
+    /// Each bounded encoder records one pass with multiple ordered dispatches.
+    fn sync_parallel_internal(&mut self) {
+        let batches = partition_gates_into_batches(&self.gate_queue);
         if batches.is_empty() {
             return;
         }
+        let alignment = self.device.limits().min_uniform_buffer_offset_alignment;
+        let (stride, parameters) = parallel_dispatch_parameters(&batches, alignment);
+        let upload = self.create_parallel_buffer(
+            "Parallel gate chunk upload",
+            &self.gate_queue,
+            wgpu::BufferUsages::COPY_SRC,
+        );
+        let parameter_buffer = self.create_parallel_buffer(
+            "Parallel partition parameters",
+            &parameters,
+            wgpu::BufferUsages::UNIFORM,
+        );
+        drop(parameters);
+        let ranges = self.create_parallel_range_bind_group(&parameter_buffer);
 
-        // Process each batch separately - we need to submit between batches because
-        // write_buffer happens immediately on the CPU, so later writes would overwrite
-        // earlier batches before the GPU processes them.
-        for (batch_start, batch_end) in batches {
-            let batch_gates = &self.gate_queue[batch_start..batch_end];
-            let num_gates_in_batch = batch_gates.len() as u32;
-
-            // Create a temporary gate queue with just this batch
-            let mut batch_queue = Vec::with_capacity(batch_gates.len() + 1);
-            batch_queue.push(num_gates_in_batch);
-            batch_queue.extend_from_slice(batch_gates);
-
-            // Dispatch with num_gates * gen_words threads
-            let total_threads = num_gates_in_batch * self.gen_words;
-            let workgroups = total_threads.div_ceil(256);
-
+        for (window, partitions) in batches.chunks(MAX_PARALLEL_DISPATCHES_PER_PASS).enumerate() {
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Parallel Gate Encoder"),
+                    label: Some("Bounded parallel gate encoder"),
                 });
-
-            self.upload_gate_queue(&mut encoder, &batch_queue);
-
+            if window == 0 {
+                encoder.copy_buffer_to_buffer(
+                    &upload,
+                    0,
+                    &self.gate_queue_buffer,
+                    0,
+                    upload.size(),
+                );
+            }
             {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: None,
-                    timestamp_writes: None,
-                });
+                let mut pass = Self::begin_gate_pass(
+                    &mut encoder,
+                    #[cfg(test)]
+                    || self.dispatch_stats.record_pass(),
+                );
                 pass.set_pipeline(&self.parallel_pipeline);
                 pass.set_bind_group(0, &self.parallel_bind_group, &[]);
-                pass.dispatch_workgroups(workgroups, 1, 1);
+                for (index, &(start, end)) in partitions.iter().enumerate() {
+                    let partition = window * MAX_PARALLEL_DISPATCHES_PER_PASS + index;
+                    pass.set_bind_group(1, &ranges, &[partition as u32 * stride]);
+                    // Compute dispatches have individual usage scopes: wgpu
+                    // inserts storage barriers between dependent partitions.
+                    Self::dispatch_gate_workgroups(
+                        &mut pass,
+                        ((end - start) as u32 * self.gen_words).div_ceil(256),
+                        #[cfg(test)]
+                        &self.dispatch_stats,
+                    );
+                }
             }
+            self.finish_dispatch(encoder.finish());
+        }
+    }
 
-            let cmd_buffer = encoder.finish();
-            if self.batch_mode {
-                self.batched_commands.push(cmd_buffer);
-            } else {
-                self.queue.submit(std::iter::once(cmd_buffer));
-                // Wait for this batch to complete before writing the next one
-                let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            }
+    fn finish_dispatch(&mut self, commands: wgpu::CommandBuffer) {
+        if self.batch_mode {
+            self.batched_commands.push(commands);
+        } else {
+            self.queue.submit(std::iter::once(commands));
+        }
+        self.pending_dispatches += 1;
+        if self.pending_dispatches == MAX_PENDING_DISPATCHES {
+            self.wait();
         }
     }
 
@@ -1393,6 +1572,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
                 .submit(std::mem::take(&mut self.batched_commands));
         }
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        self.pending_dispatches = 0;
+        #[cfg(test)]
+        {
+            self.dispatch_stats.retained_passes.set(0);
+            self.dispatch_stats.retained_dispatches.set(0);
+        }
     }
 
     /// Submit pending gates and wait for completion (sync + wait).
@@ -1411,16 +1596,18 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Begin batched command mode.
     ///
     /// Gate dispatches accumulate until `wait()`, a measurement, or `end_batch()`
-    /// submits them. Each dispatch retains its own gate upload, including when
-    /// the gate queue fills. Calling this again keeps already accumulated work.
+    /// submits them. Parallel partitions use at most 256 dispatches per compute
+    /// pass. A full gate queue or 16 accumulated passes also submits
+    /// and waits, bounding retained commands and uploads. Calling this again
+    /// keeps already accumulated work.
     pub fn begin_batch(&mut self) {
         self.batch_mode = true;
     }
 
     /// End batched command mode and submit all accumulated commands.
     ///
-    /// This submits all accumulated command buffers in one go, then
-    /// waits for the GPU to complete all work.
+    /// This dispatches the remaining CPU gate queue, including pending fused
+    /// gates, submits accumulated commands, and waits for all GPU work to finish.
     pub fn end_batch(&mut self) {
         if !self.batch_mode {
             return;
@@ -1459,15 +1646,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     /// Enable gate-parallel processing.
     ///
     /// When enabled, gates are partitioned into independent batches where no two
-    /// gates share a qubit. Each batch is processed with `num_gates * gen_words`
-    /// threads instead of just `gen_words` threads.
+    /// gates share a qubit and at most one gate reads/updates the shared i phase
+    /// (S or Sdg). Each batch is processed with `num_gates * gen_words` threads
+    /// instead of just `gen_words` threads.
     ///
     /// This can significantly increase GPU utilization for circuits with many
     /// independent gates (e.g., when H gates are applied to all data qubits).
-    ///
-    /// **Note**: This uses atomic sign updates which may have correctness issues
-    /// with SDG gates if multiple SDG gates are in the same batch. For circuits
-    /// using only H, S, X, Y, Z, CX, CZ, SWAP (surface code), this is safe.
     pub fn enable_parallel(&mut self) {
         self.parallel_enabled = true;
     }
@@ -1567,15 +1751,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     pub fn execute_compiled(&mut self, hash: u64) {
         // Pipelines are private and can only be inserted after compile_circuit validates
         // all operands against this immutable register size.
-        assert!(
-            self.compiled_pipelines.contains_key(&hash),
-            "GpuStab: circuit hash {hash:#x} is not compiled; call compile_circuit on this simulator first"
-        );
         self.sync();
-        let pipeline = self
-            .compiled_pipelines
-            .get(&hash)
-            .expect("compiled pipeline remains cached while queued gates are dispatched");
+        let Some(pipeline) = self.compiled_pipelines.get(&hash) else {
+            panic!(
+                "GpuStab: circuit hash {hash:#x} is not compiled; call compile_circuit on this simulator first"
+            );
+        };
 
         // Create and submit command buffer
         let mut encoder = self
@@ -1583,21 +1764,22 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
+            let mut pass = Self::begin_gate_pass(
+                &mut encoder,
+                #[cfg(test)]
+                || self.dispatch_stats.record_pass(),
+            );
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.compiled_bind_group, &[]);
-            pass.dispatch_workgroups(self.gen_words.div_ceil(256), 1, 1);
+            Self::dispatch_gate_workgroups(
+                &mut pass,
+                self.gen_words.div_ceil(256),
+                #[cfg(test)]
+                &self.dispatch_stats,
+            );
         }
 
-        let cmd_buffer = encoder.finish();
-        if self.batch_mode {
-            self.batched_commands.push(cmd_buffer);
-        } else {
-            self.queue.submit(std::iter::once(cmd_buffer));
-        }
+        self.finish_dispatch(encoder.finish());
     }
 
     /// Execute a compiled circuit and wait for completion.
@@ -2163,10 +2345,11 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
-    /// Queue measurements without syncing - results accumulate on GPU.
+    /// Execute measurements and retain their results for `mz_fetch()`.
     ///
-    /// This is the deferred measurement API. Measurements are dispatched to GPU
-    /// but results are not read back until `mz_fetch()` is called.
+    /// Pending gates are dispatched and waited on before measuring. Results
+    /// accumulate in a 32768-result GPU buffer; when full, it drains to CPU
+    /// storage. `mz_fetch()` returns all retained results in measurement order.
     ///
     /// Non-deterministic measurements are handled correctly with full tableau updates.
     /// Note: Measurements are processed sequentially to ensure correctness when
@@ -4362,6 +4545,446 @@ mod queue_capacity_tests {
         assert_eq!(queue.len(), 18);
         dispatched.extend_from_slice(&queue[1..]);
         assert_eq!(dispatched, (0..total as u32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn gpu_free_partitions_serialize_shared_phase_updates() {
+        for first in [GATE_S, GATE_SDG] {
+            for second in [GATE_S, GATE_SDG] {
+                let gates = [
+                    0,
+                    pack_single_gate(first, 0, 4),
+                    pack_single_gate(GATE_X, 2, 4),
+                    pack_single_gate(second, 1, 4),
+                    pack_single_gate(GATE_H, 3, 4),
+                ];
+                assert_eq!(
+                    partition_gates_into_batches(&gates),
+                    [(1, 3), (3, 5)],
+                    "phase gates {first}, {second} must serialize across disjoint qubits"
+                );
+            }
+        }
+
+        // Qubit conflicts must also reset the shared-phase occupancy when they
+        // start a new partition. The last phase gate then conflicts globally.
+        let gates = [
+            0,
+            pack_single_gate(GATE_S, 0, 4),
+            pack_single_gate(GATE_H, 0, 4),
+            pack_single_gate(GATE_SDG, 1, 4),
+            pack_single_gate(GATE_S, 2, 4),
+        ];
+        assert_eq!(
+            partition_gates_into_batches(&gates),
+            [(1, 2), (2, 4), (4, 5)]
+        );
+    }
+
+    #[test]
+    fn gpu_free_partitions_keep_disjoint_toggle_only_gates_parallel() {
+        // Every other native shader gate either leaves signs alone or only
+        // atomically XORs sign_minus without reading sign_i. Both orders are safe.
+        for phase in [GATE_S, GATE_SDG] {
+            for other in [GATE_H, GATE_X, GATE_Y, GATE_Z, GATE_CX, GATE_CZ, GATE_SWAP] {
+                let phase = pack_single_gate(phase, 0, 3);
+                let other = if is_single_qubit_gate(other) {
+                    pack_single_gate(other, 1, 3)
+                } else {
+                    pack_two_qubit_gate(other, 1, 2, 3)
+                };
+                for gates in [[0, phase, other], [0, other, phase]] {
+                    assert_eq!(partition_gates_into_batches(&gates), [(1, 3)]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gpu_free_parallel_parameters_preserve_ranges_and_alignment() {
+        let gates = [
+            0,
+            pack_single_gate(GATE_H, 0, 4),
+            pack_single_gate(GATE_X, 1, 4),
+            pack_two_qubit_gate(GATE_CX, 0, 1, 4),
+            pack_single_gate(GATE_S, 2, 4),
+            pack_single_gate(GATE_Z, 3, 4),
+            pack_two_qubit_gate(GATE_CX, 1, 2, 4),
+        ];
+        let batches = partition_gates_into_batches(&gates);
+        assert_eq!(batches, [(1, 3), (3, 6), (6, 7)]);
+        for alignment in [1, 4, 16, 256, 512] {
+            let (stride, parameters) = parallel_dispatch_parameters(&batches, alignment);
+            assert!(stride >= 8);
+            assert_eq!(stride % alignment, 0);
+            let words = stride as usize / 4;
+            assert_eq!(parameters.len(), 3 * words);
+            for (index, expected) in [[1, 2], [3, 3], [6, 1]].iter().enumerate() {
+                assert_eq!(&parameters[index * words..index * words + 2], expected);
+                assert!(
+                    parameters[index * words + 2..(index + 1) * words]
+                        .iter()
+                        .all(|word| *word == 0)
+                );
+            }
+        }
+        assert_eq!(parallel_dispatch_parameters(&[], 256).1, [] as [u32; 0]);
+
+        let cx = pack_two_qubit_gate(GATE_CX, 0, 1, 2);
+        let mut chain = vec![cx; GATE_QUEUE_BUFFER_SIZE + 1];
+        chain[0] = 0;
+        let batches = partition_gates_into_batches(&chain);
+        assert_eq!(batches.len(), GATE_QUEUE_BUFFER_SIZE);
+        let (stride, parameters) = parallel_dispatch_parameters(&batches, 256);
+        assert_eq!(parameters.len() * 4, GATE_QUEUE_BUFFER_SIZE * 256);
+        for (index, record) in parameters.chunks(stride as usize / 4).enumerate() {
+            assert_eq!(&record[..2], &[index as u32 + 1, 1]);
+        }
+    }
+
+    #[test]
+    fn gpu_free_parallel_shader_validates_dynamic_partition_binding() {
+        let module =
+            wgpu::naga::front::wgsl::parse_str(include_str!("stab_gate_shader_parallel.wgsl"))
+                .expect("parallel gate WGSL must parse");
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("parallel gate WGSL must validate");
+        let range = module
+            .global_variables
+            .iter()
+            .find(|(_, var)| {
+                var.binding
+                    .as_ref()
+                    .is_some_and(|binding| binding.group == 1 && binding.binding == 0)
+            })
+            .expect("parallel shader must expose partition parameters at group 1 binding 0")
+            .1;
+        assert_eq!(range.space, wgpu::naga::AddressSpace::Uniform);
+        let wgpu::naga::TypeInner::Struct { members, span } = &module.types[range.ty].inner else {
+            panic!("partition parameters must be a struct");
+        };
+        assert_eq!(*span, 8);
+        assert_eq!(
+            members
+                .iter()
+                .map(|member| member.name.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("start"), Some("count")]
+        );
+        assert_eq!(
+            members
+                .iter()
+                .map(|member| member.offset)
+                .collect::<Vec<_>>(),
+            [0, 4]
+        );
+    }
+
+    fn assert_bounded_recording(sim: &GpuStab) {
+        let stats = &sim.dispatch_stats;
+        assert!(
+            stats.peak_retained_passes.get() <= MAX_PENDING_DISPATCHES,
+            "retained {} compute passes",
+            stats.peak_retained_passes.get()
+        );
+        assert!(
+            stats.peak_dispatches_in_pass.get() <= MAX_PARALLEL_DISPATCHES_PER_PASS,
+            "recorded {} dispatches in one pass",
+            stats.peak_dispatches_in_pass.get()
+        );
+        assert!(
+            stats.peak_retained_dispatches.get()
+                <= MAX_PENDING_DISPATCHES * MAX_PARALLEL_DISPATCHES_PER_PASS,
+            "retained {} dispatches",
+            stats.peak_retained_dispatches.get()
+        );
+    }
+
+    fn packed_generators(generators: impl Iterator<Item = usize>, words: usize) -> Vec<u32> {
+        let mut packed = vec![0; words];
+        for generator in generators {
+            packed[generator / 32] |= 1 << (generator % 32);
+        }
+        packed
+    }
+
+    // Read the GPU tableau without sync(), so a later measurement cannot hide
+    // missing end_batch dispatches. Include all packed words and sign bits.
+    fn assert_tableau_matches_cpu(gpu: &GpuStab, cpu: &SparseStab) {
+        let words = gpu.gen_words as usize;
+        for (buffer, columns) in [
+            (&gpu.stab_x_buffer, &cpu.stabs().col_x),
+            (&gpu.stab_z_buffer, &cpu.stabs().col_z),
+            (&gpu.destab_x_buffer, &cpu.destabs().col_x),
+            (&gpu.destab_z_buffer, &cpu.destabs().col_z),
+        ] {
+            let expected: Vec<u32> = columns
+                .iter()
+                .flat_map(|column| packed_generators(column.iter(), words))
+                .collect();
+            assert_eq!(
+                gpu.read_buffer(
+                    buffer,
+                    u64::from(gpu.num_qubits) * u64::from(gpu.gen_words) * 4
+                ),
+                expected
+            );
+        }
+        for (buffer, signs) in [
+            (&gpu.sign_minus_buffer, &cpu.stabs().signs_minus),
+            (&gpu.sign_i_buffer, &cpu.stabs().signs_i),
+        ] {
+            let expected = packed_generators(signs.iter(), words);
+            assert_eq!(
+                gpu.read_buffer(buffer, u64::from(gpu.gen_words) * 4),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn batch_parallel_long_chain_has_bounded_dispatches() {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP bounded batch parallel chain: {error}");
+                return;
+            }
+        };
+        let mut cpu = SparseStab::new(2);
+        sim.enable_parallel();
+        sim.begin_batch();
+        sim.x(&[QubitId(0)]);
+        cpu.x(&[QubitId(0)]);
+        for _ in 0..5000 {
+            sim.cx(&[(QubitId(0), QubitId(1))]);
+            cpu.cx(&[(QubitId(0), QubitId(1))]);
+        }
+        sim.sync();
+        // Count actual pass/dispatch/resource creation calls. One public command
+        // buffer can hide thousands of native passes, as the old path did.
+        assert_bounded_recording(&sim);
+        assert!(sim.batched_commands.len() < MAX_PENDING_DISPATCHES);
+        assert_eq!(sim.dispatch_stats.parallel_buffers_created.get(), 2);
+        assert_eq!(sim.dispatch_stats.parallel_bind_groups_created.get(), 1);
+        for i in 0..GATE_QUEUE_BUFFER_SIZE + 5001 {
+            sim.cx(&[(QubitId(0), QubitId(1))]);
+            cpu.cx(&[(QubitId(0), QubitId(1))]);
+            if i + 1 == GATE_QUEUE_BUFFER_SIZE {
+                assert!(sim.batched_commands.is_empty());
+                assert_eq!(sim.pending_dispatches, 0);
+                assert_eq!(sim.gate_queue, [0]);
+            }
+        }
+        sim.end_batch();
+        assert_eq!(sim.gate_queue, [0]);
+        assert!(sim.batched_commands.is_empty());
+        assert_bounded_recording(&sim);
+        assert_eq!(sim.dispatch_stats.parallel_buffers_created.get(), 6);
+        assert_eq!(sim.dispatch_stats.parallel_bind_groups_created.get(), 3);
+        assert_tableau_matches_cpu(&sim, &cpu);
+        assert_eq!(
+            sim.mz(&[QubitId(0), QubitId(1)])
+                .iter()
+                .map(|result| (result.outcome, result.is_deterministic))
+                .collect::<Vec<_>>(),
+            cpu.mz(&[QubitId(0), QubitId(1)])
+                .iter()
+                .map(|result| (result.outcome, result.is_deterministic))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn check_parallel_random_circuits(batch: bool, num_gates: usize) {
+        use pecos_simulators::stabilizer_test_utils::{
+            apply_circuit, generate_random_clifford_circuit,
+        };
+        let mut sim = match GpuStab::new(4) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!(
+                    "SKIP parallel random circuits (batch={batch}, gates={num_gates}): {error}"
+                );
+                return;
+            }
+        };
+        sim.enable_parallel();
+        for seed in [1302, 42, 12354] {
+            eprintln!("parallel random circuit: batch={batch}, gates={num_gates}, seed={seed}");
+            sim.reset();
+            let mut cpu = SparseStab::new(4);
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let circuit = generate_random_clifford_circuit(&mut rng, 4, num_gates);
+            if batch {
+                sim.begin_batch();
+            }
+            apply_circuit(&mut sim, &circuit);
+            apply_circuit(&mut cpu, &circuit);
+            if batch {
+                sim.end_batch();
+            } else {
+                sim.sync_wait();
+            }
+            assert_eq!(sim.gate_queue, [0]);
+            assert!(sim.batched_commands.is_empty());
+            assert_bounded_recording(&sim);
+            assert_eq!(
+                sim.dispatch_stats.parallel_buffers_created.get(),
+                2 * sim.dispatch_stats.parallel_bind_groups_created.get()
+            );
+            assert_tableau_matches_cpu(&sim, &cpu);
+        }
+    }
+
+    #[test]
+    fn batch_parallel_random_circuit_matches_cpu() {
+        check_parallel_random_circuits(true, 300_000);
+    }
+
+    #[test]
+    fn parallel_random_circuit_matches_cpu() {
+        check_parallel_random_circuits(false, 300_000);
+    }
+
+    #[test]
+    fn batch_parallel_short_random_circuits_match_cpu() {
+        check_parallel_random_circuits(true, 1000);
+    }
+
+    #[test]
+    fn parallel_short_random_circuits_match_cpu() {
+        check_parallel_random_circuits(false, 1000);
+    }
+
+    #[test]
+    fn parallel_phase_pairs_match_cpu_across_sign_words() {
+        use pecos_simulators::stabilizer_test_utils::{CliffordGate, apply_circuit};
+        let mut sim = match GpuStab::new(33) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP parallel phase pairs: {error}");
+                return;
+            }
+        };
+        sim.enable_parallel();
+        for batch in [false, true] {
+            for initial_i in [false, true] {
+                for first in [CliffordGate::S(0), CliffordGate::Sdg(0)] {
+                    for second in [CliffordGate::S(32), CliffordGate::Sdg(32)] {
+                        sim.reset();
+                        let mut cpu = SparseStab::new(33);
+                        eprintln!(
+                            "parallel phase pair: batch={batch}, initial_i={initial_i}, {first:?}, {second:?}"
+                        );
+                        // A GHZ stabilizer has overlapping X support on disjoint
+                        // qubits. Exercise the shared bit in both packed words.
+                        let anchor = if initial_i { 32 } else { 0 };
+                        sim.h(&[QubitId(anchor)]);
+                        cpu.h(&[QubitId(anchor)]);
+                        for q in (0..33).filter(|q| *q != anchor) {
+                            sim.cx(&[(QubitId(anchor), QubitId(q))]);
+                            cpu.cx(&[(QubitId(anchor), QubitId(q))]);
+                        }
+                        if initial_i {
+                            sim.sz(&[QubitId(0)]);
+                            cpu.sz(&[QubitId(0)]);
+                        }
+                        sim.sync_wait();
+                        if batch {
+                            sim.begin_batch();
+                        }
+                        // X toggles sign_minus between the phase updates but
+                        // does not read or write sign_i, so it may share a pass.
+                        let gates = [first, CliffordGate::X(16), second];
+                        apply_circuit(&mut sim, &gates);
+                        apply_circuit(&mut cpu, &gates);
+                        if batch {
+                            sim.end_batch();
+                        } else {
+                            sim.sync_wait();
+                        }
+                        assert_tableau_matches_cpu(&sim, &cpu);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batch_explicit_dispatches_remain_bounded_in_every_mode() {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP bounded explicit dispatches: {error}");
+                return;
+            }
+        };
+        let compiled = sim.compile_circuit(&[CompiledGate::cx(0, 1)]);
+        for parallel in [false, true] {
+            if parallel {
+                sim.enable_parallel();
+            }
+            for batch in [false, true] {
+                sim.reset();
+                let mut cpu = SparseStab::new(2);
+                if batch {
+                    sim.begin_batch();
+                }
+                for _ in 0..3 * MAX_PENDING_DISPATCHES {
+                    sim.x(&[QubitId(0)]);
+                    cpu.x(&[QubitId(0)]);
+                    sim.sync();
+                    sim.execute_compiled(compiled);
+                    cpu.cx(&[(QubitId(0), QubitId(1))]);
+                    assert!(sim.pending_dispatches < MAX_PENDING_DISPATCHES);
+                    assert!(sim.batched_commands.len() < MAX_PENDING_DISPATCHES);
+                }
+                sim.sync_wait();
+                sim.end_batch();
+                assert_tableau_matches_cpu(&sim, &cpu);
+            }
+        }
+    }
+
+    #[test]
+    fn end_batch_dispatches_remaining_cpu_and_fused_gates() {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP end_batch CPU tail: {error}");
+                return;
+            }
+        };
+        for parallel in [false, true] {
+            if parallel {
+                sim.enable_parallel();
+            }
+            for fusion in [false, true] {
+                sim.reset();
+                if fusion {
+                    sim.enable_fusion();
+                } else {
+                    sim.disable_fusion();
+                }
+                let mut cpu = SparseStab::new(2);
+                sim.begin_batch();
+                sim.x(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+                cpu.x(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+                sim.sync();
+                // These last gates live only in the CPU queue/fuser. Do not
+                // sync or measure before checking the GPU state after end_batch.
+                sim.h(&[QubitId(0)]).sz(&[QubitId(1)]);
+                cpu.h(&[QubitId(0)]).sz(&[QubitId(1)]);
+                sim.end_batch();
+                assert_eq!(sim.gate_queue, [0]);
+                assert!(sim.batched_commands.is_empty());
+                assert_tableau_matches_cpu(&sim, &cpu);
+            }
+        }
     }
 
     fn check_long_queue(fusion: bool, batch: bool) {

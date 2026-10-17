@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-hugr = ["selene-hugr-qis-compiler~=0.4.2"]
+hugr = ["selene-hugr-qis-compiler~=0.4.3"]
 
 [build-system]
 requires = ["maturin>=1.13.1,<2.0"]

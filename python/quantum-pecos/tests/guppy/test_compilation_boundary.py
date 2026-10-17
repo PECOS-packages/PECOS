@@ -5,7 +5,9 @@ import re
 import pytest
 import selene_hugr_qis_compiler
 from guppylang import guppy
-from guppylang.std.quantum import h, measure, qubit
+from guppylang.std.angles import angle
+from guppylang.std.builtins import result
+from guppylang.std.quantum import h, measure, qubit, rz
 from pecos import compilation_pipeline
 
 
@@ -189,6 +191,22 @@ def test_compile_hugr_to_qis_emits_executable_calls() -> None:
     assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
     for operation in ("___qalloc", "___lazy_measure", "___qfree"):
         assert re.search(rf"\bcall\b[^\n]*@{operation}\(", llvm_ir), operation
+
+
+@guppy
+def measured_angle() -> None:
+    a = qubit()
+    b = qubit()
+    h(a)
+    bit = int(measure(a).read())
+    rz(b, angle(0.5 * float(bit)))
+    result("b", measure(b).read())
+
+
+def test_measurement_derived_angle_compiles() -> None:
+    """tket before 0.15.9 failed to decode this program in guppylang's default optimizer."""
+    data = compilation_pipeline.compile_guppy_to_hugr(measured_angle)
+    assert re.search(r"\bcall\b[^\n]*@___rz\(", compilation_pipeline.compile_hugr_to_qis(data))
 
 
 @guppy

@@ -47,6 +47,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- PyPHIR rejects unknown angle units with `ValueError` (and nonstring units with
+  `TypeError`); use `rad`, `pi`, or `deg`.
+- The legacy `PhirJsonEngine` uses native validation and execution exclusively.
+  Python interpreter fallbacks and pytest-dependent outcome rewriting are removed.
+  Deliver all outcomes from `process_program()` before requesting the next batch.
+  Results that cannot fit its u32 dictionary API now raise `ValueError`.
+
 - Seeded samples change for every engine on the shared Monte Carlo loop (including
   QIS/Guppy, QASM and PHIR). A seed now determines each shot from its global index,
   independently of the worker count and random draws in earlier shots.
@@ -164,6 +171,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- The legacy PHIR-JSON bridge now uses the native command generator, preserving
+  all targets and pairs in broadcast gates and all measurement destinations.
+- PyPHIR converts degree angles to radians consistently with the native engine.
+
 - Fixed Guppy result tags binding to the wrong measurement when HUGR node order
   differed from runtime order, such as with inlined helpers. Tags now bind from
   the lowered program that is executed. Errors for uncertifiable `result_tags` /
@@ -182,6 +193,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
+
+- `phir_to_mlir` returns errors for unsupported operations and terminators instead
+  of emitting TODO comments or silently omitting operations. Supported operations
+  reject incorrect arity.
+- The PHIR processor rejects incorrect operand and result counts, including
+  previously ignored extra operands on Measure, Reset, preparations and Dealloc.
 
 - Seeded samples change for every engine on the shared Monte Carlo loop. Each shot
   is reseeded from the run seed and its global index before resetting the engine.
@@ -318,6 +335,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- The native PHIR-JSON engine and JSON-to-module converter now support every
+  quantum gate and alias in PHIR v0.1, including CZ, RZZ/ZZPhase, CY, SWAP,
+  RX/RY, RXX/RYY, SY/SYdg, SZ/SZdg, F/Fdg, T/Tdg and identity. Broadcasts
+  preserve all targets and pairs, including across byte-message payload limits.
+  Quantum operations reject repeated qubit IDs and incorrect angle counts.
+
+- PHIR-JSON conversion splits broadcast gates, preparations and measurements into
+  instructions of canonical arity, preserving angles, pair order and classical
+  measurement destinations. RZ and preparation conversion are now supported.
 
 - Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
   a `TickCircuit`, could be placed before existing gates on the same qubit.

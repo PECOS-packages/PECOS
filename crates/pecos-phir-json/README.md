@@ -162,10 +162,23 @@ helper in `tests/common/phir_test_utils.rs`, which adds noise-model and worker o
 
 ### Quantum Operations
 
-- Single-qubit gates: `H`, `X`, `Y`, `Z`
-- Rotations: `RZ`, `R1XY`
-- Two-qubit gates: `CX` (CNOT), `SZZ` (ZZ interaction)
-- Measurement: `Measure`
+The native engine and JSON-to-module converter support every quantum operation
+and alias in [PHIR v0.1 Table II](specification/v0.1/spec.md#table-ii---quantum-operations):
+
+- Single-qubit gates: `I`, `X`, `Y`, `Z`, `H`, `SX`, `SXdg`, `SY`, `SYdg`,
+  `SZ` (`S`), `SZdg` (`Sdg`), `F`, `Fdg`, `T`, `Tdg`
+- Single-qubit rotations: `RX`, `RY`, `RZ`, `R1XY` (`U1q`)
+- Two-qubit gates: `CX` (`CNOT`), `CY`, `CZ`, `SXX`, `SXXdg`, `SYY`, `SYYdg`,
+  `SZZ` (`ZZ`, `ZZMax`), `SZZdg`, `SWAP`
+- Two-qubit rotations: `RXX`, `RYY`, `RZZ` (`ZZPhase`), `R2XXYYZZ` (`RXXYYZZ`)
+- Preparation and measurement: `Init`, `Measure`
+
+Each operation broadcasts in argument order over its qubits or pairs. Qubit IDs
+must be unique within an operation, and its angle count must match Table II.
+Angles use `rad`, `pi`, or `deg`; every broadcast target receives the same angles.
+Compatibility spellings `Prep`, `RXY1Q`, `RXXRYYRZZ` and the extensions `U` and
+`RXYXY2Q` are also available. Gates use the existing exact byte-message representation;
+backend support still determines which simulators can execute a given gate.
 
 ### Classical Operations
 
@@ -223,6 +236,27 @@ The conversion paths are:
 2. **Debug/Export**: PHIR Module → PHIR-RON (Rusty Object Notation for inspection)
 
 ### Converting PHIR-JSON to PHIR Module
+
+Broadcast quantum operations become one instruction per qubit or qubit pair,
+including preparations and measurements. Each instruction receives the same
+rotation angles; measurement destinations retain their argument order.
+The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
+
+The legacy Python `pecos_rslib.PhirJsonEngine` (also exported through
+`pecos.engines`) delegates command generation, register updates, exports, and
+execution state to this native engine. It no longer invokes a Python interpreter
+fallback or changes outcomes when pytest is installed. `process_program()` returns
+the next batch as command dictionaries. Supply every measurement outcome in order
+using `handle_measurement(0)` or `handle_measurement(1)` before requesting the next
+batch. `get_results()` and `results_dict` expose native results as u32 dictionaries;
+values outside that representation raise `ValueError` instead of being truncated.
+Use the simulation results API for wider values. The compatibility constructor
+`create_with_validation_disabled()` bypasses no native validation; neither
+constructor uses the Python schema validator.
+
+PyPHIR also interprets `rad` unchanged, `pi` as multiples of pi, and `deg` as
+multiples of pi/180. Unknown unit strings raise `ValueError`; nonstring units raise
+`TypeError`.
 
 ```rust
 use pecos_engines::PecosError;

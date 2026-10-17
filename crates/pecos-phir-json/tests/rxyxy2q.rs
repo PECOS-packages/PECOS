@@ -109,10 +109,11 @@ fn rxyxy2q_json_rejects_wrong_counts() {
 
 #[test]
 fn rxyxy2q_json_preserves_multiple_pairs() {
-    let json = program(
+    let mut json = program(
         serde_json::json!([[-0.73, 0.41], "rad"]),
-        serde_json::json!([[["q", 2], ["q", 0]], [["q", 0], ["q", 1]]]),
+        serde_json::json!([[["q", 2], ["q", 0]], [["q", 3], ["q", 1]]]),
     );
+    json["ops"][0]["size"] = serde_json::json!(4);
     let source = json.to_string();
     let theta = THETA_RAD;
     let phi = PHI;
@@ -161,7 +162,7 @@ fn rxyxy2q_json_preserves_multiple_pairs() {
             .all(|instruction| !instruction.results.is_empty())
     );
     let mut engine = PhirEngine::new(module).unwrap();
-    let expected: Vec<_> = [(2, 0), (0, 1)]
+    let expected: Vec<_> = [(2, 0), (3, 1)]
         .into_iter()
         .map(|pair| Gate::rxyxy2q(theta, phi, &[pair]))
         .collect();

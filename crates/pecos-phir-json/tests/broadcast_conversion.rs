@@ -1,0 +1,156 @@
+use pecos_engines::{ClassicalEngine, Engine, StateVecEngine};
+use pecos_phir::{
+    PhirEngine,
+    ops::{Operation, QuantumOp},
+};
+use pecos_phir_json::{PhirJsonEngine, phir_json_to_module};
+use serde_json::{Value, json};
+
+fn program(ops: Vec<Value>) -> String {
+    let mut all = vec![
+        json!({"data":"qvar_define","data_type":"qubits","variable":"q","size":4}),
+        json!({"data":"cvar_define","data_type":"u32","variable":"m","size":4}),
+    ];
+    all.extend(ops);
+    // Reversed destinations make loss of result/target correspondence visible.
+    all.push(json!({"qop":"Measure","args":[["q",0],["q",1],["q",2],["q",3]],"returns":[["m",3],["m",2],["m",1],["m",0]]}));
+    all.push(json!({"cop":"Result","args":["m"],"returns":["out"]}));
+    json!({"format":"PHIR/JSON","version":"0.1.0","ops":all}).to_string()
+}
+fn run(engine: &mut dyn ClassicalEngine) -> pecos_engines::Shot {
+    let mut quantum = StateVecEngine::new(4);
+    for _ in 0..20 {
+        let commands = engine.generate_commands().unwrap();
+        if commands.is_empty().unwrap() {
+            return engine.get_results().unwrap();
+        }
+        let outcomes = quantum.process(commands).unwrap();
+        engine.handle_measurements(outcomes).unwrap();
+    }
+    panic!("program did not terminate")
+}
+#[test]
+fn broadcast_execution_matches_native() {
+    let targets = json!([["q", 0], ["q", 2]]);
+    let pairs = json!([[["q", 0], ["q", 1]], [["q", 2], ["q", 3]]]);
+    let cases = [
+        vec![json!({"qop":"X","args":targets})],
+        vec![
+            json!({"qop":"H","args":targets}),
+            json!({"qop":"Z","args":[["q",0]]}),
+            json!({"qop":"Z","args":[["q",2]]}),
+            json!({"qop":"H","args":targets}),
+        ],
+        vec![
+            json!({"qop":"H","args":[["q",0]]}),
+            json!({"qop":"H","args":[["q",2]]}),
+            json!({"qop":"RZ","args":targets,"angles":[[180.0],"deg"]}),
+            json!({"qop":"H","args":[["q",0]]}),
+            json!({"qop":"H","args":[["q",2]]}),
+        ],
+        vec![
+            json!({"qop":"X","args":targets}),
+            json!({"qop":"CX","args":pairs}),
+        ],
+        vec![
+            json!({"qop":"H","args":targets}),
+            json!({"qop":"SZZ","args":pairs}),
+            json!({"qop":"SZZ","args":pairs}),
+            json!({"qop":"H","args":targets}),
+        ],
+        vec![
+            json!({"qop":"X","args":targets}),
+            json!({"qop":"H","args":[["q",1],["q",3]]}),
+            json!({"qop":"CZ","args":pairs}),
+            json!({"qop":"H","args":[["q",1],["q",3]]}),
+        ],
+        vec![
+            json!({"qop":"X","args":targets}),
+            json!({"qop":"Init","args":targets}),
+        ],
+    ];
+    for ops in cases {
+        let source = program(ops);
+        let mut native = PhirJsonEngine::from_json(&source).unwrap();
+        let module = phir_json_to_module(&source).unwrap();
+        for inst in &module.body.blocks[0].operations {
+            if let Operation::Quantum(op) = &inst.operation {
+                assert_eq!(Some(inst.operands.len()), op.operand_count());
+            }
+        }
+        let mut converted = PhirEngine::new(module).unwrap();
+        assert_eq!(
+            run(&mut converted).data["out"].as_u32(),
+            run(&mut native).data["out"].as_u32(),
+            "{source}"
+        );
+    }
+}
+#[test]
+fn cz_splits_pairs_in_order() {
+    let source = program(vec![
+        json!({"qop":"CZ","args":[[["q",2],["q",0]],[["q",3],["q",1]]]}),
+    ]);
+    let module = phir_json_to_module(&source).unwrap();
+    let operands: Vec<_> = module.body.blocks[0]
+        .operations
+        .iter()
+        .filter(|i| i.operation == Operation::Quantum(QuantumOp::CZ))
+        .map(|i| i.operands.iter().map(|v| v.id).collect::<Vec<_>>())
+        .collect();
+    assert_eq!(operands, vec![vec![2, 0], vec![3, 1]]);
+}
+
+#[test]
+fn every_converted_gate_has_canonical_broadcast_arity() {
+    for (gate, arity, angles) in [
+        ("H", 1, vec![]),
+        ("X", 1, vec![]),
+        ("Y", 1, vec![]),
+        ("Z", 1, vec![]),
+        ("S", 1, vec![]),
+        ("Sdg", 1, vec![]),
+        ("T", 1, vec![]),
+        ("Tdg", 1, vec![]),
+        ("SX", 1, vec![]),
+        ("SXdg", 1, vec![]),
+        ("Init", 1, vec![]),
+        ("Prep", 1, vec![]),
+        ("RZ", 1, vec![0.3]),
+        ("R1XY", 1, vec![0.3, 0.1]),
+        ("U", 1, vec![0.3, 0.1, 0.2]),
+        ("CX", 2, vec![]),
+        ("CZ", 2, vec![]),
+        ("SXX", 2, vec![]),
+        ("SXXdg", 2, vec![]),
+        ("SYY", 2, vec![]),
+        ("SYYdg", 2, vec![]),
+        ("SZZ", 2, vec![]),
+        ("SZZdg", 2, vec![]),
+        ("CPhase", 2, vec![0.3]),
+        ("RXYXY2Q", 2, vec![0.3, 0.1]),
+    ] {
+        let args = if arity == 1 {
+            json!([["q", 2], ["q", 0]])
+        } else {
+            json!([[["q", 2], ["q", 0]], [["q", 3], ["q", 1]]])
+        };
+        let mut operation = json!({"qop":gate,"args":args});
+        if !angles.is_empty() {
+            operation["angles"] = json!([angles, "rad"]);
+        }
+        let module = phir_json_to_module(&program(vec![operation])).unwrap();
+        let instructions: Vec<_> = module.body.blocks[0].operations.iter().filter(|inst| matches!(inst.operation, Operation::Quantum(ref op) if *op != QuantumOp::Measure)).collect();
+        assert_eq!(instructions.len(), 2, "{gate}");
+        assert!(
+            instructions
+                .iter()
+                .all(|inst| inst.operands.len() == arity && inst.results.len() == arity),
+            "{gate}"
+        );
+        assert_eq!(
+            instructions[0].operation, instructions[1].operation,
+            "angles must be identical for {gate}"
+        );
+    }
+}

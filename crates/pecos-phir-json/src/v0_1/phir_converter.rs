@@ -212,20 +212,25 @@ impl ImprovedConverter {
             }
 
             if let Some(instruction) = self.convert_operation(op)? {
-                if matches!(
-                    instruction.operation,
-                    Operation::Quantum(QuantumOp::RXYXY2Q(..))
-                ) {
-                    for pair in instruction.operands.as_chunks::<2>().0 {
-                        let mut paired = instruction.clone();
-                        paired.operands = pair.to_vec();
-                        // Each pair defines its own SSA results, not the batch's results.
-                        paired.results = instruction
-                            .results
-                            .iter()
-                            .map(|_| self.new_ssa_id().map(SSAValue::new))
-                            .collect::<Result<Vec<_>, PecosError>>()?;
-                        instructions.push(paired);
+                if let Operation::Quantum(ref op) = instruction.operation {
+                    let arity = op
+                        .operand_count()
+                        .expect("converted quantum operations have fixed positive arity");
+                    for (index, operands) in instruction.operands.chunks_exact(arity).enumerate() {
+                        let mut split = instruction.clone();
+                        split.operands = operands.to_vec();
+                        let result_arity = if matches!(op, QuantumOp::Measure) {
+                            1
+                        } else {
+                            arity
+                        };
+                        if !instruction.results.is_empty() {
+                            let start = index * result_arity;
+                            let end = start + result_arity;
+                            split.results = instruction.results[start..end].to_vec();
+                            split.result_types = instruction.result_types[start..end].to_vec();
+                        }
+                        instructions.push(split);
                     }
                 } else {
                     instructions.push(instruction);
@@ -470,112 +475,120 @@ impl ImprovedConverter {
         obj: &serde_json::Map<String, Value>,
         qop: &str,
     ) -> Result<Option<Instruction>, PecosError> {
-        let quantum_op = match qop {
-            "H" => QuantumOp::H,
-            "X" => QuantumOp::X,
-            "Y" => QuantumOp::Y,
-            "Z" => QuantumOp::Z,
-            "S" => QuantumOp::S,
-            "T" => QuantumOp::T,
-            "CX" | "CNOT" => QuantumOp::CX,
-            "CZ" => QuantumOp::CZ,
-            "SXX" => QuantumOp::SXX,
-            "SXXdg" => QuantumOp::SXXdg,
-            "SYY" => QuantumOp::SYY,
-            "SYYdg" => QuantumOp::SYYdg,
-            "SZZ" | "ZZ" => QuantumOp::SZZ,
-            "SZZdg" => QuantumOp::SZZdg,
-            "RXYXY2Q" => {
-                let ast: crate::v0_1::ast::Operation =
-                    serde_json::from_value(Value::Object(obj.clone()))
-                        .map_err(|error| PecosError::Input(error.to_string()))?;
-                let crate::v0_1::ast::Operation::QuantumOp {
-                    angles: Some(angles),
-                    ..
-                } = ast
-                else {
-                    return Err(PecosError::Input("RXYXY2Q requires two angles".to_string()));
-                };
-                QuantumOp::RXYXY2Q(
-                    Angle64::try_from_radians(angles[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angles[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                )
-            }
-            "CPhase" => {
-                let angles = obj.get("angles").and_then(Value::as_array).ok_or_else(|| {
-                    PecosError::Input("CPhase requires an angles field".to_string())
-                })?;
-                let values = angles.first().and_then(Value::as_array).ok_or_else(|| {
-                    PecosError::Input("CPhase angles must contain a value list".to_string())
-                })?;
-                let value = values.first().and_then(Value::as_f64).ok_or_else(|| {
-                    PecosError::Input("CPhase requires one numeric angle".to_string())
-                })?;
-                let unit = angles
-                    .get(1)
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| PecosError::Input("CPhase angles require a unit".to_string()))?;
-                let radians = match unit {
-                    "rad" => value,
-                    "pi" => value * std::f64::consts::PI,
-                    "deg" => value.to_radians(),
-                    _ => {
-                        return Err(PecosError::Input(format!(
-                            "Unsupported CPhase angle unit: {unit}"
-                        )));
-                    }
-                };
-                QuantumOp::CPhase(Angle64::try_from_radians(radians).map_err(|error| {
-                    PecosError::ValidationInvalidGateParameters(error.to_string())
-                })?)
-            }
-            "Measure" => QuantumOp::Measure,
-            _ => {
+        use super::ast::{Operation as JsonOperation, QubitArg};
+        use pecos_core::gate_type::GateType;
+        let mut quantum_fields = obj.clone();
+        quantum_fields.remove("returns");
+        let ast: JsonOperation = serde_json::from_value(Value::Object(quantum_fields))
+            .map_err(|error| PecosError::Input(format!("Invalid {qop} operation {obj:?}: {error}; supply valid PHIR arguments and angles")))?;
+        let JsonOperation::QuantumOp { angles, args, .. } = ast else {
+            unreachable!("convert_quantum_operation receives a qop object")
+        };
+        let angle = |count: usize, index: usize| -> Result<Angle64, PecosError> {
+            let values = angles.as_deref().unwrap_or_default();
+            if values.len() != count {
                 return Err(PecosError::Input(format!(
-                    "Unknown quantum operation: {qop}"
+                    "{qop}: angle count {} is invalid; supply {count} angles",
+                    values.len()
                 )));
             }
+            Angle64::try_from_radians(values[index])
+                .map_err(|error| PecosError::Input(error.to_string()))
         };
-
-        // Convert operands
-        let mut operands = Vec::new();
-        if let Some(args) = obj.get("args").and_then(|v| v.as_array()) {
-            for arg in args {
-                let Some(arr) = arg.as_array() else {
-                    continue;
-                };
-                if let [Value::String(var), Value::Number(idx)] = arr.as_slice()
-                    && let Some(idx) = idx.as_u64()
-                {
-                    operands.push(SSAValue {
-                        id: self.resolve_qubit(var, idx)?,
-                        version: 0,
-                    });
-                    continue;
+        let quantum_op = if qop == "CPhase" {
+            QuantumOp::CPhase(angle(1, 0)?)
+        } else {
+            let gate = super::operations::quantum_gate_type(qop)?;
+            let count = angles.as_ref().map_or(0, Vec::len);
+            if count != gate.angle_arity() {
+                return Err(PecosError::Input(format!(
+                    "{qop}: angle count {count} is invalid; supply exactly {} angles",
+                    gate.angle_arity()
+                )));
+            }
+            match gate {
+                GateType::I => QuantumOp::I,
+                GateType::H => QuantumOp::H,
+                GateType::X => QuantumOp::X,
+                GateType::Y => QuantumOp::Y,
+                GateType::Z => QuantumOp::Z,
+                GateType::T => QuantumOp::T,
+                GateType::Tdg => QuantumOp::Tdg,
+                GateType::SX => QuantumOp::SX,
+                GateType::SXdg => QuantumOp::SXdg,
+                GateType::SY => QuantumOp::SY,
+                GateType::SYdg => QuantumOp::SYdg,
+                GateType::F => QuantumOp::F,
+                GateType::Fdg => QuantumOp::Fdg,
+                GateType::CX => QuantumOp::CX,
+                GateType::CY => QuantumOp::CY,
+                GateType::CZ => QuantumOp::CZ,
+                GateType::SWAP => QuantumOp::SWAP,
+                GateType::SXX => QuantumOp::SXX,
+                GateType::SXXdg => QuantumOp::SXXdg,
+                GateType::SYY => QuantumOp::SYY,
+                GateType::SYYdg => QuantumOp::SYYdg,
+                GateType::SZZ => QuantumOp::SZZ,
+                GateType::SZZdg => QuantumOp::SZZdg,
+                GateType::SZ => QuantumOp::S,
+                GateType::SZdg => QuantumOp::Sdg,
+                GateType::MZ => QuantumOp::Measure,
+                GateType::PZ => QuantumOp::Reset,
+                GateType::RX => QuantumOp::RX(angle(1, 0)?),
+                GateType::RY => QuantumOp::RY(angle(1, 0)?),
+                GateType::RZ => QuantumOp::RZ(angle(1, 0)?),
+                GateType::RXX => QuantumOp::RXX(angle(1, 0)?),
+                GateType::RYY => QuantumOp::RYY(angle(1, 0)?),
+                GateType::RZZ => QuantumOp::RZZ(angle(1, 0)?),
+                GateType::RXY1Q => QuantumOp::RXY1Q(angle(2, 0)?, angle(2, 1)?),
+                GateType::RXYXY2Q => QuantumOp::RXYXY2Q(angle(2, 0)?, angle(2, 1)?),
+                GateType::U => QuantumOp::U3(angle(3, 0)?, angle(3, 1)?, angle(3, 2)?),
+                GateType::RXXRYYRZZ => {
+                    QuantumOp::RXXRYYRZZ(angle(3, 0)?, angle(3, 1)?, angle(3, 2)?)
                 }
-                for nested in arr {
-                    if let Some([Value::String(var), Value::Number(idx)]) =
-                        nested.as_array().map(Vec::as_slice)
-                        && let Some(idx) = idx.as_u64()
-                    {
-                        operands.push(SSAValue {
-                            id: self.resolve_qubit(var, idx)?,
-                            version: 0,
-                        });
-                    }
+                _ => {
+                    return Err(PecosError::Input(format!(
+                        "Quantum operation {qop} has no PHIR module representation; use a representable gate"
+                    )));
                 }
             }
+        };
+        let arity = quantum_op
+            .operand_count()
+            .expect("converted quantum operations have fixed positive arity");
+        let mut operands = Vec::new();
+        for arg in args {
+            let qubits = match arg {
+                QubitArg::SingleQubit(qubit) => vec![qubit],
+                QubitArg::MultipleQubits(qubits) => {
+                    if arity > 1 && qubits.len() != arity {
+                        return Err(PecosError::Input(format!(
+                            "{qop}: argument group {qubits:?} has invalid size; supply groups of {arity} qubits"
+                        )));
+                    }
+                    qubits
+                }
+            };
+            for (var, index) in qubits {
+                operands.push(SSAValue::new(self.resolve_qubit(&var, index as u64)?));
+            }
         }
-
-        // Convert results
+        if operands.is_empty() || !operands.len().is_multiple_of(arity) {
+            return Err(PecosError::Input(format!(
+                "{qop}: operand count {} is invalid; supply a nonzero multiple of {arity} qubits",
+                operands.len()
+            )));
+        }
+        let qubit_ids: Vec<_> = operands.iter().map(|operand| operand.id as usize).collect();
+        super::operations::validate_quantum_qubits(qop, &qubit_ids)?;
         let mut results = Vec::new();
         let mut result_types = Vec::new();
-
-        if let Some(returns) = obj.get("returns").and_then(|v| v.as_array()) {
+        if let Some(raw_returns) = obj.get("returns") {
+            let returns = raw_returns.as_array().ok_or_else(|| {
+                PecosError::Input(format!(
+                    "{qop}: invalid returns {raw_returns}; supply an array of return destinations"
+                ))
+            })?;
             for ret in returns {
                 if let Some(arr) = ret.as_array() {
                     if arr.len() == 2
@@ -592,7 +605,11 @@ impl ImprovedConverter {
 
                             // Track this bit-indexed write
                             let write = BitIndexedWrite {
-                                bit_index: u32::try_from(idx).unwrap_or(0),
+                                bit_index: u32::try_from(idx).map_err(|_| {
+                                    PecosError::Input(format!(
+                                        "Measure: bit index {idx} is too large; use a u32 index"
+                                    ))
+                                })?,
                                 ssa_value: result_ssa,
                             };
                             self.bit_indexed_writes
@@ -607,42 +624,46 @@ impl ImprovedConverter {
                             });
                             result_types.push(Type::Qubit);
                         }
+                    } else {
+                        return Err(PecosError::Input(format!(
+                            "{qop}: invalid return {ret}; supply [register, nonnegative index]"
+                        )));
                     }
-                } else if let Some(_var) = ret.as_str() {
+                } else if let Some(_var) = ret.as_str().filter(|_| qop != "Measure") {
                     // Simple variable return
                     let result_ssa = SSAValue {
                         id: self.new_ssa_id()?,
                         version: 0,
                     };
                     results.push(result_ssa);
-                    result_types.push(if qop == "Measure" {
-                        Type::Bit
-                    } else {
-                        Type::Qubit
-                    });
+                    result_types.push(Type::Qubit);
+                } else {
+                    return Err(PecosError::Input(format!(
+                        "{qop}: invalid return {ret}; supply [register, nonnegative index]"
+                    )));
                 }
             }
         } else if qop != "Measure" {
             // Generate result for non-measurement operations
-            let result_id = self.new_ssa_id()?;
-            results.push(SSAValue {
-                id: result_id,
-                version: 0,
-            });
-            result_types.push(Type::Qubit);
+            for _ in &operands {
+                results.push(SSAValue::new(self.new_ssa_id()?));
+                result_types.push(Type::Qubit);
+            }
         }
 
-        let instruction = Instruction {
-            operation: Operation::Quantum(quantum_op),
+        if !results.is_empty() && results.len() != operands.len() {
+            return Err(PecosError::Input(format!(
+                "{qop}: result count {} does not match {} operands; supply one return per qubit or omit returns",
+                results.len(),
+                operands.len()
+            )));
+        }
+        Ok(Some(Instruction::new(
+            Operation::Quantum(quantum_op),
             operands,
             results,
             result_types,
-            regions: vec![],
-            attributes: BTreeMap::new(),
-            location: None,
-        };
-
-        Ok(Some(instruction))
+        )))
     }
 
     fn resolve_qubit(&mut self, var: &str, index: u64) -> Result<u32, PecosError> {

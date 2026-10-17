@@ -4,9 +4,90 @@ use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
 use pecos_core::errors::PecosError;
-use pecos_core::{Angle64, Gate};
+use pecos_core::{Angle64, Gate, gate_type::GateType};
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// PHIR v0.1 spellings and aliases, plus the existing native extensions.
+/// Keep format-specific aliases here; core gate names serve other formats too.
+pub(crate) fn quantum_gate_type(name: &str) -> Result<GateType, PecosError> {
+    Ok(match name {
+        "Init" | "Prep" => GateType::PZ,
+        "Measure" => GateType::MZ,
+        "R1XY" | "U1q" | "RXY1Q" => GateType::RXY1Q,
+        "SZ" | "S" => GateType::SZ,
+        "SZdg" | "Sdg" => GateType::SZdg,
+        "CX" | "CNOT" => GateType::CX,
+        "RZZ" | "ZZPhase" => GateType::RZZ,
+        "R2XXYYZZ" | "RXXYYZZ" | "RXXRYYRZZ" => GateType::RXXRYYRZZ,
+        "SZZ" | "ZZ" | "ZZMax" => GateType::SZZ,
+        "I" => GateType::I,
+        "X" => GateType::X,
+        "Y" => GateType::Y,
+        "Z" => GateType::Z,
+        "RX" => GateType::RX,
+        "RY" => GateType::RY,
+        "RZ" => GateType::RZ,
+        "SX" => GateType::SX,
+        "SXdg" => GateType::SXdg,
+        "SY" => GateType::SY,
+        "SYdg" => GateType::SYdg,
+        "H" => GateType::H,
+        "F" => GateType::F,
+        "Fdg" => GateType::Fdg,
+        "T" => GateType::T,
+        "Tdg" => GateType::Tdg,
+        "CY" => GateType::CY,
+        "CZ" => GateType::CZ,
+        "RXX" => GateType::RXX,
+        "RYY" => GateType::RYY,
+        "SXX" => GateType::SXX,
+        "SXXdg" => GateType::SXXdg,
+        "SYY" => GateType::SYY,
+        "SYYdg" => GateType::SYYdg,
+        "SZZdg" => GateType::SZZdg,
+        "SWAP" => GateType::SWAP,
+        "U" => GateType::U,
+        "RXYXY2Q" => GateType::RXYXY2Q,
+        _ => {
+            return Err(PecosError::Processing(format!(
+                "Unsupported quantum gate {name:?}; use a PHIR v0.1 gate name or a supported native extension"
+            )));
+        }
+    })
+}
+
+pub(crate) fn validate_quantum_qubits(name: &str, qubits: &[usize]) -> Result<(), PecosError> {
+    let duplicates = pecos_core::duplicate_qubits(qubits.iter().copied());
+    if !duplicates.is_empty() {
+        return Err(PecosError::ValidationInvalidGateParameters(format!(
+            "gate {name:?} repeats qubit IDs {duplicates:?}; use distinct qubits within one PHIR quantum operation"
+        )));
+    }
+    if let Some(qubit) = qubits.iter().find(|&&q| u32::try_from(q).is_err()) {
+        return Err(PecosError::Input(format!(
+            "gate {name:?} has qubit ID {qubit}; use an ID at most {} for ByteMessage",
+            u32::MAX
+        )));
+    }
+    Ok(())
+}
+
+fn validate_quantum_signature(
+    name: &str,
+    gate: GateType,
+    qubits: usize,
+    angles: usize,
+) -> Result<(), PecosError> {
+    let arity = gate.quantum_arity();
+    let angle_arity = gate.angle_arity();
+    if qubits == 0 || !qubits.is_multiple_of(arity) || angles != angle_arity {
+        return Err(PecosError::ValidationInvalidGateParameters(format!(
+            "gate {name:?} got {qubits} qubits and {angles} angles; supply the expected nonzero multiple of {arity} qubits and exactly {angle_arity} angles"
+        )));
+    }
+    Ok(())
+}
 
 /// Represents the result of processing a meta instruction
 #[derive(Debug, Clone)]
@@ -1506,7 +1587,7 @@ impl OperationProcessor {
         // Validate that we have at least one qubit argument
         if args.is_empty() {
             return Err(PecosError::Input(format!(
-                "Invalid quantum operation: Operation '{qop}' requires at least one qubit argument"
+                "Invalid quantum operation {qop:?} has 0 arguments; supply at least one qubit or complete qubit pair"
             )));
         }
 
@@ -1535,124 +1616,23 @@ impl OperationProcessor {
             }
         }
 
-        // Process based on gate type
-        match qop {
-            "U" => {
-                let angles = angles.filter(|angles| angles.len() == 3).ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(
-                        "U gate requires exactly three angles (theta, phi, lambda)".to_string(),
-                    )
-                })?;
-                Ok((qop.to_string(), qubit_args, angles.clone()))
-            }
-            // Single-qubit rotation gates
-            "RZ" => {
-                let theta = angles
-                    .as_ref()
-                    .and_then(|angles| angles.first().copied())
-                    .ok_or_else(|| {
-                        PecosError::ValidationInvalidGateParameters(format!(
-                            "Missing rotation angle for '{qop}' gate"
-                        ))
-                    })?;
-                Ok((qop.to_string(), qubit_args, vec![theta]))
-            }
-            "R1XY" => {
-                // Get angles safely
-                let angles_ref = angles.as_ref().ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires two angles (theta, phi)"
-                    ))
-                })?;
-
-                if angles_ref.len() < 2 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires two angles (theta, phi), but only {} provided",
-                        angles_ref.len()
-                    )));
-                }
-
-                // R1XY convention: angles[0] = theta (rotation angle), angles[1] = phi (axis angle)
-                // See: R1XY = RZ(-phi + pi/2) * RY(theta) * RZ(phi - pi/2) (the two Z angles sum to zero)
-                let theta = angles_ref[0];
-                let phi = angles_ref[1];
-                Ok((qop.to_string(), qubit_args, vec![theta, phi]))
-            }
-
-            "RXYXY2Q" => {
-                let angles = angles.ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(
-                        "RXYXY2Q requires two angles".to_string(),
-                    )
-                })?;
-                Ok((qop.to_string(), qubit_args, angles.clone()))
-            }
-
-            // Two-qubit rotation gate: RXXRYYRZZ (3 angles)
-            "RXXRYYRZZ" | "R2XXYYZZ" | "RXXYYZZ" => {
-                let angles_ref = angles.as_ref().ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(
-                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma)".to_string(),
-                    )
-                })?;
-                if angles_ref.len() < 3 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma), but only {} provided",
-                        angles_ref.len()
-                    )));
-                }
-                if qubit_args.len() < 2 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "RXXRYYRZZ gate requires exactly two qubits, but found {}",
-                        qubit_args.len()
-                    )));
-                }
-                // Always return canonical name
-                Ok((
-                    "RXXRYYRZZ".to_string(),
-                    qubit_args,
-                    vec![angles_ref[0], angles_ref[1], angles_ref[2]],
-                ))
-            }
-
-            // Two-qubit gates
-            "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg" | "ZZ" => {
-                if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires complete qubit pairs, but found {} qubits",
-                        qubit_args.len()
-                    )));
-                }
-                let canonical = if qop == "ZZ" { "SZZ" } else { qop };
-                Ok((canonical.to_string(), qubit_args, vec![]))
-            }
-            "CX" | "CNOT" => {
-                // Verify we have exactly 2 qubits
-                if qubit_args.len() < 2 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires control and target qubits (2 qubits total), but found {}",
-                        qubit_args.len()
-                    )));
-                }
-                // Always return the canonical name CX
-                Ok(("CX".to_string(), qubit_args, vec![]))
-            }
-
-            // Single-qubit Clifford gates, Initialization, and Measurement
-            "H" | "X" | "Y" | "Z" | "SX" | "SXdg" | "Measure" | "Init" => {
-                Ok((qop.to_string(), qubit_args, vec![]))
-            }
-
-            _ => Err(PecosError::Processing(format!(
-                "Unsupported quantum gate operation: Gate type '{qop}' is not implemented"
-            ))),
-        }
+        let gate = quantum_gate_type(qop)?;
+        let angle_args = angles.map_or(&[][..], Vec::as_slice);
+        validate_quantum_signature(qop, gate, qubit_args.len(), angle_args.len())?;
+        validate_quantum_qubits(qop, &qubit_args)?;
+        let name = match gate {
+            GateType::PZ => "Init".to_string(),
+            GateType::MZ => "Measure".to_string(),
+            GateType::RXY1Q => "R1XY".to_string(),
+            _ => gate.to_string(),
+        };
+        Ok((name, qubit_args, angle_args.to_vec()))
     }
 
-    /// Add quantum operation to byte message builder
+    /// Add a quantum operation using the existing native gate representation.
     ///
     /// # Errors
-    /// Returns an error if the gate type is not supported.
+    /// Returns an actionable error for unknown gates, invalid counts or angles.
     pub fn add_quantum_operation_to_builder(
         &self,
         builder: &mut ByteMessageBuilder,
@@ -1660,165 +1640,42 @@ impl OperationProcessor {
         qubit_args: &[usize],
         angle_args: &[f64],
     ) -> Result<(), PecosError> {
-        let signature = match gate_type {
-            "U" => Some((1, 3)),
-            "RZ" => Some((1, 1)),
-            "R1XY" => Some((1, 2)),
-            "RXYXY2Q" => Some((2, 2)),
-            "RXXRYYRZZ" => Some((2, 3)),
-            "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg" | "CX" => Some((2, 0)),
-            "H" | "X" | "Y" | "Z" | "SX" | "SXdg" | "Measure" | "Init" => Some((1, 0)),
-            _ => None,
+        let gate = quantum_gate_type(gate_type)?;
+        validate_quantum_signature(gate_type, gate, qubit_args.len(), angle_args.len())?;
+        validate_quantum_qubits(gate_type, qubit_args)?;
+        let angles = angle_args
+            .iter()
+            .map(|&angle| {
+                Angle64::try_from_radians(angle).map_err(|error| {
+                    PecosError::ValidationInvalidGateParameters(format!(
+                        "{gate_type}: {error}; supply finite angles in radians"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Preserve one command per preparation/measurement. Other broadcasts
+        // fit the wire header's u8 qubit count and split on gate boundaries.
+        let chunk_size = if matches!(gate, GateType::PZ | GateType::MZ) {
+            1
+        } else {
+            usize::from(u8::MAX) / gate.quantum_arity() * gate.quantum_arity()
         };
-        if let Some((arity, angles)) = signature {
-            let valid_qubits = !qubit_args.is_empty() && qubit_args.len().is_multiple_of(arity);
-            if !valid_qubits || angle_args.len() != angles {
-                return Err(PecosError::ValidationInvalidGateParameters(format!(
-                    "gate '{gate_type}' expected a nonzero multiple of {arity} qubits and {angles} angles, got {} qubits and {} angles; supply the expected counts",
-                    qubit_args.len(),
-                    angle_args.len()
-                )));
-            }
-        }
-        let pairs = || {
-            if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
-                return Err(PecosError::ValidationInvalidGateParameters(format!(
-                    "'{gate_type}' gate requires complete qubit pairs, but found {} qubits",
-                    qubit_args.len()
-                )));
-            }
-            Ok(qubit_args
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| (pair[0], pair[1]))
-                .collect::<Vec<_>>())
-        };
-        match gate_type {
-            "U" => {
-                let [theta, phi, lambda] = angle_args else {
-                    return Err(PecosError::ValidationInvalidGateParameters(
-                        "U gate requires exactly three angles (theta, phi, lambda)".to_string(),
-                    ));
-                };
-                builder.u(
-                    Angle64::try_from_radians(*theta).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(*phi).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(*lambda).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    qubit_args,
-                );
-            }
-            "SX" => {
-                builder.sx(qubit_args);
-            }
-            "SXdg" => {
-                builder.sxdg(qubit_args);
-            }
-            "RZ" => {
-                builder.rz(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    qubit_args,
-                );
-            }
-            "R1XY" => {
-                builder.rxy1q(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    qubit_args,
-                );
-            }
-            "RXYXY2Q" => {
-                crate::v0_1::ast::validate_rxyxy2q(Some(angle_args), qubit_args.len())
-                    .map_err(PecosError::ValidationInvalidGateParameters)?;
-                builder.rxyxy2q(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    &pairs()?,
-                );
-            }
-            "RXXRYYRZZ" => {
-                let pairs = pairs()?;
-                let gate = Gate::rxxryyrzz(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[2]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    &pairs,
-                );
-                builder.add_gate_command(&gate);
-            }
-            "SXX" => {
-                builder.sxx(&pairs()?);
-            }
-            "SXXdg" => {
-                builder.sxxdg(&pairs()?);
-            }
-            "SYY" => {
-                builder.syy(&pairs()?);
-            }
-            "SYYdg" => {
-                builder.syydg(&pairs()?);
-            }
-            "SZZ" => {
-                builder.szz(&pairs()?);
-            }
-            "SZZdg" => {
-                builder.szzdg(&pairs()?);
-            }
-            "CX" => {
-                builder.cx(&pairs()?);
-            }
-            "H" => {
-                builder.h(qubit_args);
-            }
-            "X" => {
-                builder.x(qubit_args);
-            }
-            "Y" => {
-                builder.y(qubit_args);
-            }
-            "Z" => {
-                builder.z(qubit_args);
-            }
-            "Measure" => {
-                // Measure every qubit in the op (one outcome per qubit, in
-                // order), not just the first, so multi-qubit Measure works and
-                // the outcomes align with the recorded return registers.
-                builder.mz(qubit_args);
-            }
-            "Init" => {
-                // Initialize qubit to |0⟩ state using the Prep gate
-                for &qubit in qubit_args {
-                    // The Prep gate initializes a qubit to the |0⟩ state
-                    builder.pz(&[qubit]);
-                }
-            }
-            _ => {
-                return Err(PecosError::Processing(format!(
-                    "Unsupported quantum gate operation: Gate type '{gate_type}' is not implemented"
-                )));
-            }
+        for chunk in qubit_args.chunks(chunk_size) {
+            use pecos_engines::byte_message::protocol::{GateHeader, MessageHeader};
+            // All fields and the starting batch header are aligned to four bytes.
+            let bytes = size_of::<MessageHeader>()
+                + size_of::<GateHeader>()
+                + chunk.len() * size_of::<u32>()
+                + angles.len() * size_of::<u64>();
+            builder.validate_append_capacity(1, bytes)?;
+            let qubits: Vec<_> = chunk.iter().copied().map(Into::into).collect();
+            let command = Gate::try_with_angles(gate, angles.clone(), qubits).map_err(|error| {
+                PecosError::ValidationInvalidGateParameters(format!(
+                    "{gate_type}: {error}; supply exactly {} angles",
+                    gate.angle_arity()
+                ))
+            })?;
+            builder.add_gate_command(&command);
         }
         Ok(())
     }

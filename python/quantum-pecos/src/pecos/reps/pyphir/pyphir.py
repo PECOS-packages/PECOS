@@ -147,7 +147,15 @@ class PyPHIR:
                     metadata = {} if o.get("metadata") is None else o["metadata"]
 
                     if o.get("angles"):
-                        angles = tuple(angle * (pc.f64.pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0])
+                        unit = o["angles"][1]
+                        if not isinstance(unit, str):
+                            msg = f"Angle unit must be a string, got {unit!r}; use rad, pi, or deg"
+                            raise TypeError(msg)
+                        scales = {"rad": 1, "pi": pc.f64.pi, "deg": pc.f64.pi / 180}
+                        if unit not in scales:
+                            msg = f"Unknown angle unit {unit!r}; use rad, pi, or deg"
+                            raise ValueError(msg)
+                        angles = tuple(angle * scales[unit] for angle in o["angles"][0])
                         for angle in angles:
                             if not math.isfinite(angle):
                                 value = "NaN" if math.isnan(angle) else str(angle)

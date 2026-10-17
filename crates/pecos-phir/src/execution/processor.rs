@@ -157,6 +157,7 @@ impl PhirProcessor {
         instruction: &crate::phir::Instruction,
         message_builder: &mut ByteMessageBuilder,
     ) -> Result<bool> {
+        Self::validate_arity(instruction)?;
         match &instruction.operation {
             Operation::Quantum(quantum_op) => {
                 self.process_quantum_operation(quantum_op, instruction, message_builder)
@@ -202,7 +203,19 @@ impl PhirProcessor {
         instruction: &crate::phir::Instruction,
         message_builder: &mut ByteMessageBuilder,
     ) -> Result<bool> {
+        Self::validate_arity(instruction)?;
         match quantum_op {
+            QuantumOp::I | QuantumOp::F | QuantumOp::Fdg => {
+                let qubit = self.extract_single_qubit(instruction, quantum_op.name())?;
+                let gate = match quantum_op {
+                    QuantumOp::I => Gate::i(&[qubit]),
+                    QuantumOp::F => Gate::f(&[qubit]),
+                    QuantumOp::Fdg => Gate::fdg(&[qubit]),
+                    _ => unreachable!("only I, F and Fdg enter this arm"),
+                };
+                message_builder.add_gate_command(&gate);
+                Ok(true)
+            }
             // Fixed single-qubit gates
             QuantumOp::H => self.process_single_qubit_gate("H", instruction, message_builder),
             QuantumOp::X => self.process_single_qubit_gate("X", instruction, message_builder),
@@ -214,6 +227,9 @@ impl PhirProcessor {
             QuantumOp::Tdg => self.process_single_qubit_gate("Tdg", instruction, message_builder),
             QuantumOp::SX => self.process_single_qubit_gate("SX", instruction, message_builder),
             QuantumOp::SXdg => self.process_single_qubit_gate("SXdg", instruction, message_builder),
+
+            QuantumOp::SY => self.process_single_qubit_gate("SY", instruction, message_builder),
+            QuantumOp::SYdg => self.process_single_qubit_gate("SYdg", instruction, message_builder),
 
             // Parameterized single-qubit gates
             QuantumOp::RX(angle) => {
@@ -244,6 +260,7 @@ impl PhirProcessor {
 
             // Two-qubit gates
             QuantumOp::CX => self.process_two_qubit_gate("CX", instruction, message_builder),
+            QuantumOp::CY => self.process_two_qubit_gate("CY", instruction, message_builder),
             QuantumOp::CZ => self.process_two_qubit_gate("CZ", instruction, message_builder),
             QuantumOp::SXX => self.process_two_qubit_gate("SXX", instruction, message_builder),
             QuantumOp::SXXdg => self.process_two_qubit_gate("SXXdg", instruction, message_builder),
@@ -255,6 +272,21 @@ impl PhirProcessor {
                 let (q1, q2) = self.extract_two_qubits(instruction, "SWAP")?;
                 let gate = Gate::swap(&[(q1, q2)]);
                 message_builder.add_gate_command(&gate);
+                Ok(true)
+            }
+            QuantumOp::RXX(angle) => {
+                let pair = self.extract_two_qubits(instruction, "RXX")?;
+                message_builder.rxx(*angle, &[pair]);
+                Ok(true)
+            }
+            QuantumOp::RYY(angle) => {
+                let pair = self.extract_two_qubits(instruction, "RYY")?;
+                message_builder.ryy(*angle, &[pair]);
+                Ok(true)
+            }
+            QuantumOp::RXXRYYRZZ(alpha, beta, gamma) => {
+                let pair = self.extract_two_qubits(instruction, "RXXRYYRZZ")?;
+                message_builder.add_gate_command(&Gate::rxxryyrzz(*alpha, *beta, *gamma, &[pair]));
                 Ok(true)
             }
             QuantumOp::RZZ(angle) => {
@@ -359,6 +391,80 @@ impl PhirProcessor {
         }
     }
 
+    /// Validate counts before any execution path consumes operands or results.
+    pub(crate) fn validate_arity(instruction: &crate::phir::Instruction) -> Result<()> {
+        use std::ops::RangeInclusive;
+        let exact = |n| n..=n;
+        let (operands, results): (RangeInclusive<usize>, RangeInclusive<usize>) = match &instruction
+            .operation
+        {
+            Operation::Quantum(QuantumOp::Alloc) => (0..=1, 0..=1),
+            Operation::Quantum(QuantumOp::Dealloc) => (exact(1), exact(0)),
+            Operation::Quantum(op) => {
+                let count = op.operand_count().ok_or_else(|| PhirError::internal(format!(
+                        "Unsupported operation {op:?}; use an operation supported by the PHIR processor"
+                    )))?;
+                (exact(count), 0..=count)
+            }
+            Operation::Classical(
+                ClassicalOp::Shl(_) | ClassicalOp::Shr(_) | ClassicalOp::LShr(_),
+            ) => (1..=2, exact(1)),
+            Operation::Classical(ClassicalOp::Result) => (exact(1), 0..=1),
+            Operation::Classical(op) => (
+                exact(
+                    op.operand_count()
+                        .expect("non-Result classical operations have fixed operand counts"),
+                ),
+                exact(1),
+            ),
+            Operation::Memory(op) => {
+                let count = op.operand_count().ok_or_else(|| PhirError::internal(format!(
+                        "Unsupported operation {op:?}; use an operation supported by the PHIR processor"
+                    )))?;
+                let results = usize::from(!matches!(
+                    op,
+                    MemoryOp::Store | MemoryOp::Copy | MemoryOp::ArraySet
+                ));
+                (exact(count), exact(results))
+            }
+            Operation::Builtin(BuiltinOp::VarDefine(_)) => (exact(0), 0..=1),
+            Operation::Builtin(_) => (
+                exact(
+                    instruction
+                        .operation
+                        .operand_count()
+                        .expect("builtin operations have fixed operand counts"),
+                ),
+                exact(0),
+            ),
+            _ => {
+                return Err(PhirError::internal(format!(
+                    "Unsupported operation {}; use an operation supported by the PHIR processor",
+                    instruction.operation.name()
+                )));
+            }
+        };
+        for (kind, count, expected) in [
+            ("operand", instruction.operands.len(), operands),
+            ("result", instruction.results.len(), results),
+        ] {
+            if !expected.contains(&count) {
+                let missing = if count < *expected.start() {
+                    format!(", missing {kind} {count}")
+                } else {
+                    String::new()
+                };
+                return Err(PhirError::internal(format!(
+                    "{}: {kind} count {count} is invalid{missing}; supply {}..={} {kind}s per instruction and split broadcasts",
+                    instruction.operation.name(),
+                    expected.start(),
+                    expected.end()
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve a physical qubit index from its integer operand value.
     fn qubit_index(
         &mut self,
@@ -419,6 +525,11 @@ impl PhirProcessor {
         }
         let q1 = self.qubit_index(instruction, 0)?;
         let q2 = self.qubit_index(instruction, 1)?;
+        if q1 == q2 {
+            return Err(PhirError::internal(format!(
+                "{gate_name}: both operands resolve to qubit {q1}; supply two distinct physical qubits"
+            )));
+        }
         Ok((q1, q2))
     }
 
@@ -462,6 +573,12 @@ impl PhirProcessor {
             "SXdg" => {
                 message_builder.sxdg(&[qubit_id]);
             }
+            "SY" => {
+                message_builder.sy(&[qubit_id]);
+            }
+            "SYdg" => {
+                message_builder.sydg(&[qubit_id]);
+            }
             _ => {
                 return Err(PhirError::internal(format!(
                     "Unknown single-qubit gate: {gate_name}"
@@ -484,6 +601,9 @@ impl PhirProcessor {
         match gate_name {
             "CX" => {
                 message_builder.cx(&[(q1, q2)]);
+            }
+            "CY" => {
+                message_builder.cy(&[(q1, q2)]);
             }
             "CZ" => {
                 message_builder.cz(&[(q1, q2)]);
@@ -556,6 +676,7 @@ impl PhirProcessor {
         classical_op: &crate::ops::ClassicalOp,
         instruction: &crate::phir::Instruction,
     ) -> Result<()> {
+        Self::validate_arity(instruction)?;
         if !matches!(
             classical_op,
             ClassicalOp::Assign
@@ -1134,6 +1255,7 @@ impl PhirProcessor {
         instruction: &crate::phir::Instruction,
         _message_builder: &mut ByteMessageBuilder,
     ) -> Result<bool> {
+        Self::validate_arity(instruction)?;
         match builtin_op {
             BuiltinOp::VarDefine(var_def) => {
                 // Handle variable definition
@@ -1377,6 +1499,7 @@ impl PhirProcessor {
                     var_def,
                 )) = &instruction.operation
                 {
+                    Self::validate_arity(instruction)?;
                     // Map PHIR type strings to DataType enum
                     let data_type = match var_def.var_type.as_str() {
                         "qubits" => DataType::Qubits,
@@ -1492,6 +1615,7 @@ impl PhirProcessor {
         mem_op: &MemoryOp,
         instruction: &crate::phir::Instruction,
     ) -> Result<()> {
+        Self::validate_arity(instruction)?;
         match mem_op {
             MemoryOp::Alloc(alloc_type) if !instruction.results.is_empty() => {
                 let ptr_id = instruction.results[0].id;

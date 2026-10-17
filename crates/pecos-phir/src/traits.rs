@@ -75,7 +75,8 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
 
     match q_op {
         // Pure quantum gates
-        QuantumOp::H
+        QuantumOp::I
+        | QuantumOp::H
         | QuantumOp::X
         | QuantumOp::Y
         | QuantumOp::Z
@@ -85,6 +86,10 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::Tdg
         | QuantumOp::SX
         | QuantumOp::SXdg
+        | QuantumOp::SY
+        | QuantumOp::SYdg
+        | QuantumOp::F
+        | QuantumOp::Fdg
         | QuantumOp::RX(_)
         | QuantumOp::RY(_)
         | QuantumOp::RZ(_)
@@ -102,7 +107,10 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::SZZ
         | QuantumOp::SZZdg
         | QuantumOp::CPhase(_)
+        | QuantumOp::RXX(_)
+        | QuantumOp::RYY(_)
         | QuantumOp::RZZ(_)
+        | QuantumOp::RXXRYYRZZ(..)
         | QuantumOp::RXYXY2Q(_, _) => {
             traits.insert(PureQuantum);
             traits.insert(NoSideEffect);

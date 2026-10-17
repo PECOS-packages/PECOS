@@ -60,6 +60,7 @@ mod measurement;
 mod quadratic;
 pub mod runner;
 pub mod tricycle_ccz;
+pub mod tricycle_ccz_noisy;
 pub use measurement::{IncompatibleMeasurement, XMeasurementCase};
 
 #[cfg(test)]

@@ -47,18 +47,18 @@ pub fn magic_state_circuit(
     build(code, p, target_scoring, &[])
 }
 
-struct Encoder {
-    stabilizers: Vec<Vec<u8>>,
-    stabilizer_pivots: Vec<usize>,
-    logicals: Vec<Vec<u8>>,
-    logical_pivots: Vec<usize>,
-    non_pivots: Vec<usize>,
+pub(crate) struct Encoder {
+    pub(crate) stabilizers: Vec<Vec<u8>>,
+    pub(crate) stabilizer_pivots: Vec<usize>,
+    pub(crate) logicals: Vec<Vec<u8>>,
+    pub(crate) logical_pivots: Vec<usize>,
+    pub(crate) non_pivots: Vec<usize>,
 }
 
 impl Encoder {
     // Systematic CSS preparation. Reduce S first, remove its pivots from L, and
     // only then reduce L within its quotient basis.
-    fn new(code: &BivariateTricycleCode) -> Self {
+    pub(crate) fn new(code: &BivariateTricycleCode) -> Self {
         let (reduced, stabilizer_pivots) = F2Matrix::from_rows(code.hx().rows()).row_reduce();
         let mut stabilizers = reduced.rows();
         stabilizers.truncate(stabilizer_pivots.len());
@@ -131,7 +131,7 @@ impl Encoder {
         Ok(())
     }
 
-    fn score(
+    pub(crate) fn score(
         &self,
         circuit: &mut TickCircuit,
         n: usize,
@@ -172,7 +172,7 @@ impl Encoder {
     }
 }
 
-fn stage(circuit: &mut TickCircuit, n: usize, rows: &[Vec<u8>], pivots: &[usize]) {
+pub(crate) fn stage(circuit: &mut TickCircuit, n: usize, rows: &[Vec<u8>], pivots: &[usize]) {
     // Unit pivot columns ensure no stage control is a target in this stage.
     // All these CNOTs commute; put each pair on a separate tick, parallel over blocks.
     for (row, &pivot) in rows.iter().zip(pivots) {

@@ -4444,11 +4444,14 @@ dependencies = [
 name = "pecos-phase-poly"
 version = "0.2.0-dev.0"
 dependencies = [
+ "ndarray 0.17.2",
  "num-complex 0.4.6",
  "pecos-core",
+ "pecos-num",
  "pecos-qec",
  "pecos-quantum",
  "pecos-random",
+ "pecos-relay-bp",
  "pecos-simulators",
  "pecos-stab-active",
  "serde_json",

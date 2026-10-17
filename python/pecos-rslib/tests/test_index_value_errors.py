@@ -10,22 +10,25 @@ import pecos_rslib as rust
 
 
 @pytest.mark.parametrize(("value", "error"), [(-1, ValueError), (True, TypeError)])
-@pytest.mark.parametrize("consumer", [
-    lambda n: rust.X(0).to_dense_str(n),
-    lambda n: rust.CliffordRep.identity(n),
-    lambda n: rust.CliffordRep.random(n),
-    lambda n: rust.quantum_info.Ptm.identity(n),
-    lambda n: rust.quantum_info.ProcessTomographyDesign.matrix_unit(n),
-    lambda n: rust.quantum_info.matrix_unit_basis(n),
-    lambda n: rust.X(0).to_matrix(n),
-    lambda n: rust.SymplecticMatrix.zeros(n, 1),
-    lambda n: rust.SymplecticMatrix.zeros(1, n),
-    lambda n: rust.ParityCheckMatrix.zeros(n, 1),
-    lambda n: rust.DagCircuit().measured_pauli(n),
-    lambda n: rust.DagCircuit().measured_paulis([n]),
-    lambda n: rust.TickCircuit().measured_pauli(n),
-    lambda n: rust.TickCircuit().measured_paulis([n]),
-])
+@pytest.mark.parametrize(
+    "consumer",
+    [
+        lambda n: rust.X(0).to_dense_str(n),
+        lambda n: rust.CliffordRep.identity(n),
+        lambda n: rust.CliffordRep.random(n),
+        lambda n: rust.quantum_info.Ptm.identity(n),
+        lambda n: rust.quantum_info.ProcessTomographyDesign.matrix_unit(n),
+        lambda n: rust.quantum_info.matrix_unit_basis(n),
+        lambda n: rust.X(0).to_matrix(n),
+        lambda n: rust.SymplecticMatrix.zeros(n, 1),
+        lambda n: rust.SymplecticMatrix.zeros(1, n),
+        lambda n: rust.ParityCheckMatrix.zeros(n, 1),
+        lambda n: rust.DagCircuit().measured_pauli(n),
+        lambda n: rust.DagCircuit().measured_paulis([n]),
+        lambda n: rust.TickCircuit().measured_pauli(n),
+        lambda n: rust.TickCircuit().measured_paulis([n]),
+    ],
+)
 def test_width_and_id_types(consumer, value, error):
     with pytest.raises(error):
         consumer(value)

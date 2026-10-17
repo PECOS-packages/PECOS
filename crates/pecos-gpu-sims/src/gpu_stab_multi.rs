@@ -752,9 +752,10 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         }
     }
 
-    /// Internal: Flush pending gates to GPU (without processing measurements)
+    /// Flush pending measurements at their call-time state, then dispatch later gates.
     #[allow(clippy::cast_possible_truncation)] // gate queue length fits in u32
     fn flush_gates(&mut self) {
+        self.flush_measurements();
         if self.gate_queue.is_empty() {
             return;
         }
@@ -802,10 +803,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// The quantum state persists after flushing, allowing you to queue
     /// more operations and call `flush()` again.
     pub fn flush(&mut self) {
-        // First, flush any pending gates
         self.flush_gates();
+    }
 
-        // Then process any queued measurements
+    // Pending measurements describe the state before the gates currently in
+    // gate_queue, including when that gate queue auto-flushes at capacity.
+    fn flush_measurements(&mut self) {
         if self.meas_queue.is_empty() {
             return;
         }
@@ -1353,7 +1356,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
             return vec![vec![]; self.shots_per_batch as usize];
         }
 
-        // Flush pending gates first (but not measurement queue - we're handling measurements here)
+        // Complete earlier queued operations before these immediate measurements.
         self.flush_gates();
 
         let batch_shots = self.shots_per_batch;
@@ -1742,29 +1745,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
         for q in qubits {
             self.check_qubit(q.index());
         }
-        // Mid-circuit semantics: each mz_queue call must observe the state at
-        // the TIME of the call. The queue is not drained until mz_fetch (or
-        // flush), but we must execute any previously-queued measurements
-        // BEFORE applying gates that arrived between then and now -- those
-        // prior measurements expect to see the state at their own call point.
-        //
-        // Order within this call:
-        //   1) execute any prior meas_queue items against the current
-        //      un-flushed state buffer (which still reflects the state at
-        //      their queue-time, modulo intervening non-measurement no-ops),
-        //   2) flush pending gates so the NEW measurements below will see
-        //      the state at this call point when later executed,
-        //   3) append the new qubits to meas_queue.
-        //
-        // Before the fix, mz_queue only appended qubit indices; mz_fetch
-        // later flushed every queued gate first, so every queued measurement
-        // saw the same final state regardless of when it was queued.
-        if !self.meas_queue.is_empty() {
-            let prev_qubits = std::mem::take(&mut self.meas_queue);
-            let prev_random = std::mem::take(&mut self.meas_queue_random_bits);
-            let prev_results = self.mz_gpu_sequential(&prev_qubits, &prev_random);
-            self.meas_pending_results.push(prev_results);
-        }
         self.flush_gates();
 
         let batch_shots = self.shots_per_batch;
@@ -1802,48 +1782,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStabMulti<R> {
     /// // results[shot] has 3 bools: outcomes for qubits 0, 1, 2
     /// ```
     pub fn mz_fetch(&mut self) -> Vec<Vec<bool>> {
-        if self.meas_queue.is_empty() {
-            // Return any previously accumulated results, or empty
-            if self.meas_pending_results.is_empty() {
-                return vec![vec![]; self.shots_per_batch as usize];
-            }
-            // Flatten accumulated results: Vec<Vec<Vec<bool>>> -> Vec<Vec<bool>>
-            // Each entry in pending_results is a batch of measurements
-            let mut combined: Vec<Vec<bool>> = vec![vec![]; self.shots_per_batch as usize];
-            for batch in self.meas_pending_results.drain(..) {
-                for (shot_id, shot_outcomes) in batch.into_iter().enumerate() {
-                    combined[shot_id].extend(shot_outcomes);
-                }
-            }
-            return combined;
-        }
-
-        // Flush pending gates first (but not measurement queue - we're handling it here)
-        self.flush_gates();
-
-        let batch_shots = self.shots_per_batch as usize;
-
-        // Take ownership of queue data
-        let qubits = std::mem::take(&mut self.meas_queue);
-        let all_random_bits = std::mem::take(&mut self.meas_queue_random_bits);
-
-        // Process measurements using the GPU implementation
-        // Note: mz_gpu_sequential already increments measurement_count
-        let results = self.mz_gpu_sequential(&qubits, &all_random_bits);
-
-        // Combine with any previously accumulated results
-        let mut combined: Vec<Vec<bool>> = vec![vec![]; batch_shots];
+        self.flush();
+        let mut combined = vec![Vec::new(); self.shots_per_batch as usize];
         for batch in self.meas_pending_results.drain(..) {
-            for (shot_id, shot_outcomes) in batch.into_iter().enumerate() {
-                combined[shot_id].extend(shot_outcomes);
+            for (shot_id, outcomes) in batch.into_iter().enumerate() {
+                combined[shot_id].extend(outcomes);
             }
         }
-
-        // Append new results
-        for (shot_id, shot_outcomes) in results.into_iter().enumerate() {
-            combined[shot_id].extend(shot_outcomes);
-        }
-
         combined
     }
 
@@ -4297,6 +4242,48 @@ mod tests {
 
         for shot in &results {
             assert!(shot[0], "X|0> should measure 1");
+        }
+    }
+}
+
+#[cfg(test)]
+mod queue_capacity_tests {
+    use super::*;
+    use pecos_simulators::{CliffordGateable, SparseStab};
+
+    #[test]
+    fn overflow_preserves_queued_measurement_order() {
+        let mut sim = match GpuStabMulti::<PecosRng>::new(2, 4) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP multi-shot queue overflow: {error}");
+                return;
+            }
+        };
+        let mut cpu = SparseStab::new(2);
+        sim.mz_queue(&[QubitId(0)]);
+        let mut expected = vec![cpu.mz(&[QubitId(0)])[0].outcome];
+        sim.x(&[QubitId(0)]);
+        cpu.x(&[QubitId(0)]);
+        for _ in 0..300_000 {
+            sim.cx(&[(QubitId(0), QubitId(1))]);
+            cpu.cx(&[(QubitId(0), QubitId(1))]);
+        }
+        sim.mz_queue(&[QubitId(0), QubitId(1)]);
+        expected.extend(cpu.mz(&[QubitId(0), QubitId(1)]).iter().map(|r| r.outcome));
+        // A later gate below the capacity must also follow the last measurement.
+        sim.x(&[QubitId(0)]);
+        cpu.x(&[QubitId(0)]);
+        for actual in sim.mz_fetch() {
+            assert_eq!(actual, expected);
+        }
+        let expected: Vec<bool> = cpu
+            .mz(&[QubitId(0), QubitId(1)])
+            .iter()
+            .map(|r| r.outcome)
+            .collect();
+        for actual in sim.mz(&[QubitId(0), QubitId(1)]) {
+            assert_eq!(actual, expected);
         }
     }
 }

@@ -8,8 +8,25 @@
 pub fn check_qubit(index: usize, num_qubits: usize, simulator: &str) {
     assert!(
         index < num_qubits,
-        "{simulator}: qubit {index} is out of range for a {num_qubits}-qubit register; use a qubit index below {num_qubits}, or construct the simulator with more qubits"
+        "{simulator}: qubit {index} is out of range for a {num_qubits}-qubit register; {}",
+        qubit_index_remedy(index, num_qubits)
     );
+}
+
+/// Explain how to correct an invalid operand for this register size.
+/// Called only when constructing an error, outside successful gate paths.
+#[must_use]
+pub fn qubit_index_remedy(index: usize, num_qubits: usize) -> String {
+    if num_qubits == 0 {
+        match index.checked_add(1) {
+            Some(required) => format!(
+                "the simulator has no qubits; construct it with at least {required} qubits"
+            ),
+            None => "the simulator has no qubits; use a smaller qubit index and construct it with enough qubits to contain that index".to_owned(),
+        }
+    } else {
+        format!("use a qubit index below {num_qubits}, or construct the simulator with more qubits")
+    }
 }
 
 #[cfg(test)]

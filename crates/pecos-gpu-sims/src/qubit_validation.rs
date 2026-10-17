@@ -39,10 +39,20 @@ pub(crate) mod gpu_free_tests {
             .map(String::as_str)
             .or_else(|| panic.downcast_ref::<&str>().copied())
             .expect("panic must have a message");
+        let remedy = if capacity == 0 {
+            match index.checked_add(1) {
+                Some(required) => format!("the simulator has no qubits; construct it with at least {required} qubits"),
+                None => "the simulator has no qubits; use a smaller qubit index and construct it with enough qubits to contain that index".to_owned(),
+            }
+        } else {
+            format!(
+                "use a qubit index below {capacity}, or construct the simulator with more qubits"
+            )
+        };
         assert_eq!(
             message,
             format!(
-                "{simulator}: qubit {index} is out of range for a {capacity}-qubit register; use a qubit index below {capacity}, or construct the simulator with more qubits"
+                "{simulator}: qubit {index} is out of range for a {capacity}-qubit register; {remedy}"
             )
         );
     }
@@ -59,6 +69,8 @@ pub(crate) mod gpu_free_tests {
         ] {
             for (index, capacity) in [
                 (0, 0),
+                (3, 0),
+                (usize::MAX, 0),
                 (100, 100),
                 (120, 100),
                 (16383, 16383),

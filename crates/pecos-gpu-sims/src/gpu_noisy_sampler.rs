@@ -555,8 +555,12 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
             for qubit in std::iter::once(a).chain(b) {
                 if qubit >= self.num_qubits {
                     return Err(format!(
-                        "GpuNoisySampler: {step:?} targets qubit {qubit} outside a {}-qubit register; use a qubit index below {}, or construct the simulator with more qubits",
-                        self.num_qubits, self.num_qubits
+                        "GpuNoisySampler: {step:?} targets qubit {qubit} outside a {}-qubit register; {}",
+                        self.num_qubits,
+                        pecos_simulators::qubit_validation::qubit_index_remedy(
+                            qubit,
+                            self.num_qubits
+                        )
                     ));
                 }
             }
@@ -684,6 +688,21 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpu_free_empty_register_remedy() {
+        let noise = DepolarizingNoiseSampler::with_seed(0.0, 0.0, 0.0, 42);
+        let mut sampler = GpuNoisySampler::with_seed(0, noise, 42);
+        let error = sampler
+            .sample(0, |c| {
+                c.x(&[3]);
+            })
+            .expect_err("empty registers reject operands before GPU work");
+        assert_eq!(
+            error,
+            "GpuNoisySampler: Gate(X(3)) targets qubit 3 outside a 0-qubit register; the simulator has no qubits; construct it with at least 4 qubits"
+        );
+    }
 
     #[test]
     fn gpu_free_invalid_operands_return_errors_before_adapter_creation() {

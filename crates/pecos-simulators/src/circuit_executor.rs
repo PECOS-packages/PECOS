@@ -91,9 +91,13 @@ impl<'a> CircuitExecutor<'a> {
                     for qubit in &gate.qubits {
                         if qubit.index() >= capacity {
                             return Err(format!(
-                                "Gate {:?} targets qubit {} but the simulator holds {capacity} qubits; use a qubit index below {capacity}, or construct the simulator with more qubits",
+                                "Gate {:?} targets qubit {} but the simulator holds {capacity} qubits; {}",
                                 gate.gate_type,
-                                qubit.index()
+                                qubit.index(),
+                                crate::qubit_validation::qubit_index_remedy(
+                                    qubit.index(),
+                                    capacity
+                                )
                             ));
                         }
                     }
@@ -440,6 +444,20 @@ mod tests {
 mod capacity_tests {
     use super::*;
     use crate::{QuantumSimulator, SparseStab, StabilizerTableauSimulator};
+
+    #[test]
+    fn empty_register_reports_constructible_remedy() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[3]);
+        let mut sim = crate::CoinToss::new(0);
+        let Err(error) = CircuitExecutor::new(&circuit).run(&mut sim) else {
+            panic!("empty fixed registers must reject operands");
+        };
+        assert_eq!(
+            error,
+            "Gate X targets qubit 3 but the simulator holds 0 qubits; the simulator has no qubits; construct it with at least 4 qubits"
+        );
+    }
 
     #[test]
     fn growing_pauli_tracker_accepts_circuits() {

@@ -16,6 +16,7 @@ use pecos_random::{PecosRng, Rng, SeedableRng};
 use pecos_simulators::{CliffordGateable, MeasurementResult, QuantumSimulator};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use wgpu::util::DeviceExt;
 
 // Gate type constants (must match shader)
 const GATE_H: u32 = 0;
@@ -153,6 +154,13 @@ fn sort_gate_queue(gate_queue: &mut [u32]) {
 // Size of gate queue buffer - supports up to this many gates per sync
 const GATE_QUEUE_BUFFER_SIZE: usize = 256 * 1024; // 256K gates
 
+// The leading word is the shader's gate-count header. Return whether this
+// complete packed gate filled the upload buffer; callers dispatch before reuse.
+fn push_gate(queue: &mut Vec<u32>, gate: u32) -> bool {
+    queue.push(gate);
+    queue.len() == GATE_QUEUE_BUFFER_SIZE + 1
+}
+
 /// GPU Stabilizer simulator using persistent kernel approach.
 ///
 /// Gates are queued and executed in batches to minimize dispatch overhead.
@@ -228,6 +236,7 @@ pub struct GpuStab<R: Rng + SeedableRng = PecosRng> {
     // Deferred measurement support - results accumulate on GPU
     deferred_results_buffer: wgpu::Buffer,
     pending_measurement_count: usize,
+    completed_measurements: Vec<MeasurementResult>,
 
     // Batched command mode - accumulates command buffers for single submit
     batched_commands: Vec<wgpu::CommandBuffer>,
@@ -1107,6 +1116,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             meas_finalize_pipeline,
             deferred_results_buffer,
             pending_measurement_count: 0,
+            completed_measurements: Vec::new(),
             batched_commands: Vec::new(),
             batch_mode: false,
             fuser: None,
@@ -1236,28 +1246,19 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     }
 
     /// Submit all pending gates to the GPU and execute them.
-    /// This is non-blocking - the GPU work may still be in progress when this returns.
-    /// Call `wait()` to ensure completion before reading results.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the gate queue exceeds the buffer capacity.
+    /// This is non-blocking; call `wait()` before reading results.
+    /// Full gate buffers are dispatched automatically while gates are queued.
     pub fn sync(&mut self) {
-        // Flush any pending fused gates first
         self.flush_fused_gates();
+        self.dispatch_gate_queue();
+    }
 
-        // gate_queue[0] is reserved for num_gates, actual gates start at index 1
+    // Drain only already-emitted gates. Never re-enter the fuser while its
+    // output is being appended: that would reorder gates across a full buffer.
+    fn dispatch_gate_queue(&mut self) {
         if self.gate_queue.len() <= 1 {
             return;
         }
-
-        // Check buffer capacity
-        assert!(
-            self.gate_queue.len() <= GATE_QUEUE_BUFFER_SIZE + 1,
-            "Gate queue overflow: {} gates exceeds buffer size {}",
-            self.gate_queue.len() - 1,
-            GATE_QUEUE_BUFFER_SIZE
-        );
 
         if self.parallel_enabled {
             self.sync_parallel_internal();
@@ -1270,6 +1271,31 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         self.gate_queue.push(0);
     }
 
+    fn enqueue_packed_gate(&mut self, gate: u32) {
+        if push_gate(&mut self.gate_queue, gate) {
+            self.dispatch_gate_queue();
+        }
+    }
+
+    // Deferred command buffers need their own immutable upload. Queue writes
+    // all execute before submitted commands, so reusing write_buffer in batch
+    // mode would make every dispatch read the last chunk's gates.
+    fn upload_gate_queue(&self, encoder: &mut wgpu::CommandEncoder, gates: &[u32]) {
+        let bytes = bytemuck::cast_slice(gates);
+        if self.batch_mode {
+            let upload = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Batched gate upload"),
+                    contents: bytes,
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                });
+            encoder.copy_buffer_to_buffer(&upload, 0, &self.gate_queue_buffer, 0, upload.size());
+        } else {
+            self.queue.write_buffer(&self.gate_queue_buffer, 0, bytes);
+        }
+    }
+
     /// Sequential sync - processes all gates with one thread per generator word.
     fn sync_sequential_internal(&mut self) {
         // Sort single-qubit gates by target qubit for better cache locality
@@ -1279,17 +1305,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         let num_gates = (self.gate_queue.len() - 1) as u32;
         self.gate_queue[0] = num_gates;
 
-        // Write all gates to GPU buffer
-        self.queue.write_buffer(
-            &self.gate_queue_buffer,
-            0,
-            bytemuck::cast_slice(&self.gate_queue),
-        );
-
         // Create and submit command buffer with single dispatch
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        self.upload_gate_queue(&mut encoder, &self.gate_queue);
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1331,13 +1352,6 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             batch_queue.push(num_gates_in_batch);
             batch_queue.extend_from_slice(batch_gates);
 
-            // Write batch to GPU buffer
-            self.queue.write_buffer(
-                &self.gate_queue_buffer,
-                0,
-                bytemuck::cast_slice(&batch_queue),
-            );
-
             // Dispatch with num_gates * gen_words threads
             let total_threads = num_gates_in_batch * self.gen_words;
             let workgroups = total_threads.div_ceil(256);
@@ -1347,6 +1361,8 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Parallel Gate Encoder"),
                 });
+
+            self.upload_gate_queue(&mut encoder, &batch_queue);
 
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1369,9 +1385,13 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         }
     }
 
-    /// Block until all submitted GPU work completes.
-    /// Call this before reading results or when timing GPU execution.
+    /// Submit accumulated batched dispatches and block until GPU work completes.
+    /// Call `sync_wait()` to also dispatch gates still in the CPU gate queue.
     pub fn wait(&mut self) {
+        if !self.batched_commands.is_empty() {
+            self.queue
+                .submit(std::mem::take(&mut self.batched_commands));
+        }
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
@@ -1382,24 +1402,19 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         self.wait();
     }
 
-    /// Flush is now a no-op - gates accumulate until `sync()` is called.
-    /// This enables batching multiple flushes into a single GPU dispatch.
+    /// Gates accumulate until `sync()` or the gate buffer fills.
+    /// This compatibility method does not force an early dispatch.
     pub fn flush(&mut self) {
-        // Gates stay in gate_queue until sync() is called
-        // This is intentional to reduce dispatch overhead
+        // Leave partial gate buffers queued to reduce dispatch overhead.
     }
 
     /// Begin batched command mode.
     ///
-    /// In batch mode, gate and measurement dispatches are accumulated
-    /// into a single command buffer submission. Call `end_batch()` to
-    /// submit all accumulated commands and wait for completion.
-    ///
-    /// This reduces CPU-GPU synchronization overhead for workloads with
-    /// many rounds of gates followed by measurements.
+    /// Gate dispatches accumulate until `wait()`, a measurement, or `end_batch()`
+    /// submits them. Each dispatch retains its own gate upload, including when
+    /// the gate queue fills. Calling this again keeps already accumulated work.
     pub fn begin_batch(&mut self) {
         self.batch_mode = true;
-        self.batched_commands.clear();
     }
 
     /// End batched command mode and submit all accumulated commands.
@@ -1410,14 +1425,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
         if !self.batch_mode {
             return;
         }
+        self.sync();
         self.batch_mode = false;
-
-        // Submit all accumulated command buffers at once
-        if !self.batched_commands.is_empty() {
-            self.queue
-                .submit(std::mem::take(&mut self.batched_commands));
-            self.wait();
-        }
+        self.wait();
     }
 
     /// Enable gate fusion to reduce single-qubit gate count.
@@ -1557,11 +1567,15 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     pub fn execute_compiled(&mut self, hash: u64) {
         // Pipelines are private and can only be inserted after compile_circuit validates
         // all operands against this immutable register size.
-        let Some(pipeline) = self.compiled_pipelines.get(&hash) else {
-            panic!(
-                "GpuStab: circuit hash {hash:#x} is not compiled; call compile_circuit on this simulator first"
-            );
-        };
+        assert!(
+            self.compiled_pipelines.contains_key(&hash),
+            "GpuStab: circuit hash {hash:#x} is not compiled; call compile_circuit on this simulator first"
+        );
+        self.sync();
+        let pipeline = self
+            .compiled_pipelines
+            .get(&hash)
+            .expect("compiled pipeline remains cached while queued gates are dispatched");
 
         // Create and submit command buffer
         let mut encoder = self
@@ -1620,9 +1634,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             let fused_gates = fuser.flush_all();
             // Add fused gates to gate queue (they're already packed)
             for packed_gate in fused_gates {
-                if self.gate_queue.len() < GATE_QUEUE_BUFFER_SIZE + 1 {
-                    self.gate_queue.push(packed_gate);
-                }
+                self.enqueue_packed_gate(packed_gate);
             }
         }
     }
@@ -1636,7 +1648,7 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             return;
         }
         // Direct path - add to gate queue
-        self.gate_queue.push(pack_single_gate(
+        self.enqueue_packed_gate(pack_single_gate(
             gate_type,
             target,
             self.num_qubits as usize,
@@ -1653,14 +1665,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             // Get any flushed gates and add to queue
             let fused_gates = fuser.flush_all();
             for packed_gate in fused_gates {
-                if self.gate_queue.len() < GATE_QUEUE_BUFFER_SIZE + 1 {
-                    self.gate_queue.push(packed_gate);
-                }
+                self.enqueue_packed_gate(packed_gate);
             }
             return;
         }
         // Direct path - add to gate queue
-        self.gate_queue.push(pack_two_qubit_gate(
+        self.enqueue_packed_gate(pack_two_qubit_gate(
             gate_type,
             control,
             target,
@@ -2191,16 +2201,25 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             results.push(u32::from(result.outcome));
         }
 
-        // Write results to deferred buffer at current offset
-        let offset = (self.pending_measurement_count * 4) as u64;
-        self.queue.write_buffer(
-            &self.deferred_results_buffer,
-            offset,
-            bytemuck::cast_slice(&results),
-        );
-
-        // Track pending measurements
-        self.pending_measurement_count += count;
+        let capacity = (self.deferred_results_buffer.size() / 4) as usize;
+        let mut remaining = results.as_slice();
+        while !remaining.is_empty() {
+            if self.pending_measurement_count == capacity {
+                let completed = self.read_deferred_results();
+                self.completed_measurements.extend(completed);
+            }
+            let chunk_len = remaining
+                .len()
+                .min(capacity - self.pending_measurement_count);
+            let (chunk, rest) = remaining.split_at(chunk_len);
+            self.queue.write_buffer(
+                &self.deferred_results_buffer,
+                (self.pending_measurement_count * 4) as u64,
+                bytemuck::cast_slice(chunk),
+            );
+            self.pending_measurement_count += chunk_len;
+            remaining = rest;
+        }
 
         count
     }
@@ -2218,6 +2237,12 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
             self.end_batch();
         }
 
+        let remaining = self.read_deferred_results();
+        self.completed_measurements.extend(remaining);
+        std::mem::take(&mut self.completed_measurements)
+    }
+
+    fn read_deferred_results(&mut self) -> Vec<MeasurementResult> {
         if self.pending_measurement_count == 0 {
             return Vec::new();
         }
@@ -2523,6 +2548,11 @@ impl<R: Rng + SeedableRng + Debug> QuantumSimulator for GpuStab<R> {
         self.wait();
         self.gate_queue.clear();
         self.gate_queue.push(0); // Placeholder for num_gates at index 0
+        if let Some(fuser) = &mut self.fuser {
+            *fuser = CliffordFuser::new(self.num_qubits as usize);
+        }
+        self.pending_measurement_count = 0;
+        self.completed_measurements.clear();
         self.initialize_state();
         self
     }
@@ -4304,5 +4334,196 @@ mod gpu_free_bounds {
                 pack_two_qubit_gate(GATE_CX, 0, bad, 2);
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod queue_capacity_tests {
+    use super::*;
+    use pecos_simulators::SparseStab;
+
+    #[test]
+    fn gpu_free_gate_queue_chunks_keep_header_and_order() {
+        let mut queue = vec![0];
+        let mut dispatched = Vec::new();
+        let total = 2 * GATE_QUEUE_BUFFER_SIZE + 17;
+        let mut flushes = 0;
+        for gate in 0..total as u32 {
+            if push_gate(&mut queue, gate) {
+                assert_eq!(queue.len(), GATE_QUEUE_BUFFER_SIZE + 1);
+                dispatched.extend_from_slice(&queue[1..]);
+                queue.clear();
+                queue.push(0);
+                flushes += 1;
+            }
+            assert!(queue.len() <= GATE_QUEUE_BUFFER_SIZE);
+        }
+        assert_eq!(flushes, 2);
+        assert_eq!(queue.len(), 18);
+        dispatched.extend_from_slice(&queue[1..]);
+        assert_eq!(dispatched, (0..total as u32).collect::<Vec<_>>());
+    }
+
+    fn check_long_queue(fusion: bool, batch: bool) {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP long gate queue (fusion={fusion}, batch={batch}): {error}");
+                return;
+            }
+        };
+        let mut cpu = SparseStab::new(2);
+        if fusion {
+            sim.enable_fusion();
+        }
+        if batch {
+            sim.begin_batch();
+        }
+        // The initial X must survive the first upload. Truncating at capacity
+        // retains an odd number of CXs, while the full circuit has even parity.
+        sim.x(&[QubitId(0)]);
+        cpu.x(&[QubitId(0)]);
+        for _ in 0..300_000 {
+            sim.cx(&[(QubitId(0), QubitId(1))]);
+            cpu.cx(&[(QubitId(0), QubitId(1))]);
+        }
+        sim.sync();
+        if batch {
+            sim.end_batch();
+        }
+        let expected = cpu.mz(&[QubitId(0), QubitId(1)]);
+        sim.mz_queue(&[QubitId(0), QubitId(1)]);
+        sim.x(&[QubitId(1)]);
+        cpu.x(&[QubitId(1)]);
+        sim.mz_queue(&[QubitId(0), QubitId(1)]);
+        let mut expected: Vec<bool> = expected.iter().map(|r| r.outcome).collect();
+        expected.extend(cpu.mz(&[QubitId(0), QubitId(1)]).iter().map(|r| r.outcome));
+        assert_eq!(
+            sim.mz_fetch().iter().map(|r| r.outcome).collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn overflow_direct_matches_cpu() {
+        check_long_queue(false, false);
+    }
+
+    #[test]
+    fn overflow_fused_matches_cpu() {
+        check_long_queue(true, false);
+    }
+
+    #[test]
+    fn overflow_direct_batched_matches_cpu() {
+        check_long_queue(false, true);
+    }
+
+    #[test]
+    fn overflow_fused_batched_matches_cpu() {
+        check_long_queue(true, true);
+    }
+
+    #[test]
+    fn overflow_fused_sequence_crosses_upload_boundary() {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP fused sequence boundary: {error}");
+                return;
+            }
+        };
+        sim.enable_fusion();
+        let mut cpu = SparseStab::new(2);
+        // Leave one slot, then emit a fused sequence longer than one gate.
+        // H S H |0> is a Y eigenstate; undo it after crossing the boundary.
+        for _ in 0..GATE_QUEUE_BUFFER_SIZE - 1 {
+            sim.cx(&[(QubitId(0), QubitId(1))]);
+            cpu.cx(&[(QubitId(0), QubitId(1))]);
+        }
+        sim.h(&[QubitId(0)]).sz(&[QubitId(0)]).h(&[QubitId(0)]);
+        cpu.h(&[QubitId(0)]).sz(&[QubitId(0)]).h(&[QubitId(0)]);
+        sim.disable_fusion();
+        sim.h(&[QubitId(0)]).szdg(&[QubitId(0)]).h(&[QubitId(0)]);
+        cpu.h(&[QubitId(0)]).szdg(&[QubitId(0)]).h(&[QubitId(0)]);
+        let actual = sim.mz(&[QubitId(0), QubitId(1)]);
+        let expected = cpu.mz(&[QubitId(0), QubitId(1)]);
+        assert!(actual.iter().all(|r| r.is_deterministic));
+        assert_eq!(
+            actual.iter().map(|r| r.outcome).collect::<Vec<_>>(),
+            expected.iter().map(|r| r.outcome).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn overflow_batched_parallel_upload_order() {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP batched parallel uploads: {error}");
+                return;
+            }
+        };
+        sim.enable_parallel();
+        sim.begin_batch();
+        sim.x(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+        sim.sync();
+        sim.begin_batch(); // Must not discard the first dispatches.
+        sim.x(&[QubitId(1)]);
+        sim.end_batch();
+        assert_eq!(
+            sim.mz(&[QubitId(0), QubitId(1)])
+                .iter()
+                .map(|r| r.outcome)
+                .collect::<Vec<_>>(),
+            [true, false]
+        );
+        sim.reset();
+        let compiled = sim.compile_circuit(&[CompiledGate::cx(0, 1)]);
+        sim.begin_batch();
+        sim.x(&[QubitId(0)]);
+        sim.execute_compiled(compiled);
+        sim.x(&[QubitId(1)]);
+        sim.end_batch();
+        assert_eq!(
+            sim.mz(&[QubitId(0), QubitId(1)])
+                .iter()
+                .map(|r| r.outcome)
+                .collect::<Vec<_>>(),
+            [true, false]
+        );
+    }
+
+    #[test]
+    fn overflow_deferred_results_and_reset() {
+        let mut sim = match GpuStab::new(2) {
+            Ok(sim) => sim,
+            Err(error) => {
+                eprintln!("SKIP deferred results overflow: {error}");
+                return;
+            }
+        };
+        // Exercise multiple drains without tens of thousands of GPU readbacks.
+        sim.deferred_results_buffer = sim.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Small deferred results test buffer"),
+            size: 8,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        sim.begin_batch();
+        sim.x(&[QubitId(0)]);
+        sim.mz_queue(&[QubitId(0), QubitId(1), QubitId(0)]);
+        sim.x(&[QubitId(1)]);
+        sim.mz_queue(&[QubitId(1), QubitId(0)]);
+        assert_eq!(
+            sim.mz_fetch().iter().map(|r| r.outcome).collect::<Vec<_>>(),
+            [true, false, true, true, true]
+        );
+        sim.enable_fusion();
+        sim.mz_queue(&[QubitId(0); 3]);
+        sim.x(&[QubitId(0)]);
+        sim.reset();
+        assert!(sim.mz_fetch().is_empty());
+        assert!(sim.mz(&[QubitId(0), QubitId(1)]).iter().all(|r| !r.outcome));
     }
 }

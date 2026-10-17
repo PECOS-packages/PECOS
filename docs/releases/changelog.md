@@ -8,6 +8,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
+- Graph decoders project raw hyperedges using `fault_sector` labels, with
+  `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
+  `^` input whose components are all graphlike is used as given.
+- Perturbed ensembles keep zero-probability errors at exactly zero in every
+  perturbed copy; previously they were raised to `1e-15`.
+- Rust: `DecoderFactory::decode_model` returns `Result<PreparedModel, _>` and
+  `DecodeResult` carries `projection`. The `AStar` and `PecosUf` spec variants
+  take config structs; `StructuredDem::try_new` takes detector fault sectors.
+  `DetectorErrorModel::to_structured_decoder_dem` now parses the model's standard
+  text and overlays labels: probabilities are those of the text (rounded, see
+  #1260) rather than exact, and tracked-Pauli outputs are omitted rather than
+  rejected.
+
 - `windowed` specs with a buffer previously returned the result of a monolithic
   decode by `sandwich_phase2` (correlated PyMatching by default). Callers who want
   that result should request the monolithic decoder directly. `windowed` is now
@@ -22,6 +35,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python additions
+
+- Decode APIs and `build_decoder` accept a `DetectorErrorModel` object as standard
+  text plus labels. Graph specs accept the `irreducible` keyword, and results
+  expose a `ProjectionReport` via `.projection` when preparation shares a projection.
 
 - Rendered surface-code SZ teleportation uses `correction="physical"` by default
   to execute the conditional logical Z (the Guppy/Helios idiom), or

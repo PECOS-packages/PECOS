@@ -24,6 +24,7 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -2942,10 +2943,16 @@ class qec:
         def to_sampler(self) -> qec.DemSampler: ...
 
     class StructuredDemDecoder:
-        """Decoder built directly from a structured PECOS DEM."""
+        """Decoder built from standard DEM text plus the object's fault_sector labels."""
 
         @property
+        def dem(self) -> str: ...
+        @property
         def num_detectors(self) -> int | None: ...
+        @property
+        def projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
         def decode_syndrome(self, syndrome: list[int]) -> decoders.ObservableFlips: ...
 
     class DemBuilder:
@@ -3006,7 +3013,7 @@ class qec:
         def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
         def decode(
             self,
-            dem: str | None = ...,
+            dem: str | qec.DetectorErrorModel | None = ...,
             decoder: decoders.DecoderSpec | str = ...,
             *,
             workers: int | None = ...,
@@ -3017,7 +3024,9 @@ class qec:
             """Decode all shots with planned native, sequential, or parallel execution.
 
             ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
-            requires a corpus-loaded batch with an embedded DEM. Explicit
+            requires a corpus-loaded batch with an embedded DEM. Embedded text
+            does not persist fault-sector labels: every detector is unlabelled.
+            An object decodes its standard text plus its fault_sector labels. Explicit
             ``workers`` requests that exact count; automatic execution respects
             stateful and wall-clock-limited decoder contracts. Predictions are
             wide Python integers, and timing forces per-shot dispatch.
@@ -3026,13 +3035,83 @@ class qec:
 
         def compare_decoders(
             self,
-            dem: str,
+            dem: str | qec.DetectorErrorModel,
             dut_decoder_type: str,
             reference_decoder_type: str,
             alpha: float = ...,
             *,
             allow_dem_mismatch: bool = ...,
         ) -> qec.DecoderComparisonResult: ...
+
+    class ProjectionReport:
+        """Immutable projection diagnostics. Pickling is not supported."""
+
+        __hash__: ClassVar[None]
+
+        @property
+        def input_hyperedges(self) -> int: ...
+        @property
+        def projected(self) -> int: ...
+        @property
+        def zero_probability_omitted(self) -> list[int]: ...
+        @property
+        def dropped_indices(self) -> list[int]: ...
+        @property
+        def cross_sector_components(self) -> int: ...
+        @property
+        def label_conflicts(self) -> int: ...
+        @property
+        def unlabelled_detectors(self) -> int: ...
+        @property
+        def distinct_sectors(self) -> int: ...
+        def __eq__(self, other: object) -> bool: ...
+        def __repr__(self) -> str: ...
+
+    class DecoderComparisonResult:
+        @property
+        def dut_projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
+        @property
+        def reference_projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
+        @property
+        def counts(self) -> list[list[int]]: ...
+        @property
+        def total_shots(self) -> int: ...
+        @property
+        def alpha(self) -> float: ...
+        @property
+        def dut_correct_reference_correct(self) -> int: ...
+        @property
+        def dut_correct_reference_mismatch(self) -> int: ...
+        @property
+        def dut_correct_reference_error(self) -> int: ...
+        @property
+        def dut_mismatch_reference_correct(self) -> int: ...
+        @property
+        def dut_mismatch_reference_mismatch(self) -> int: ...
+        @property
+        def dut_mismatch_reference_error(self) -> int: ...
+        @property
+        def dut_error_reference_correct(self) -> int: ...
+        @property
+        def dut_error_reference_mismatch(self) -> int: ...
+        @property
+        def dut_error_reference_error(self) -> int: ...
+        @property
+        def dut_only_failures(self) -> int: ...
+        @property
+        def dut_only_failure_proportion(self) -> float: ...
+        @property
+        def dut_only_failure_interval(self) -> tuple[float, float]: ...
+        @property
+        def both_failed(self) -> int: ...
+        @property
+        def both_failed_proportion(self) -> float: ...
+        @property
+        def both_failed_interval(self) -> tuple[float, float]: ...
 
     class DecodeStats:
         num_shots: int
@@ -3050,6 +3129,9 @@ class qec:
         quantiles: list[float]
 
     class DecodeResult:
+        @property
+        def projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
         num_shots: int
         num_errors: int
         logical_error_rate: float
@@ -3134,7 +3216,7 @@ class qec:
         def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
         def decode(
             self,
-            dem: str,
+            dem: str | qec.DetectorErrorModel,
             num_shots: int,
             decoder: decoders.DecoderSpec | str,
             *,
@@ -3405,7 +3487,9 @@ class decoders:
         def __eq__(self, other: object) -> bool: ...
 
     @staticmethod
-    def pymatching(*, correlated: bool, error_probability: float | None = ...) -> decoders.DecoderSpec: ...
+    def pymatching(
+        *, correlated: bool, error_probability: float | None = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def tesseract(
         *,
@@ -3450,7 +3534,9 @@ class decoders:
         random_schedule_seed: int | None = ...,
     ) -> decoders.DecoderSpec: ...
     @staticmethod
-    def fusion_blossom(*, correlated: bool = ..., solver: str = ...) -> decoders.DecoderSpec: ...
+    def fusion_blossom(
+        *, correlated: bool = ..., solver: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def relay_bp(
         *,
@@ -3471,9 +3557,11 @@ class decoders:
         *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
     ) -> decoders.DecoderSpec: ...
     @staticmethod
-    def pecos_uf(*, preset: str = ...) -> decoders.DecoderSpec: ...
+    def pecos_uf(*, preset: str = ..., irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
-    def belief_matching(*, mode: str = ...) -> decoders.DecoderSpec: ...
+    def belief_matching(
+        *, mode: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def windowed(
         *,
@@ -3518,9 +3606,9 @@ class decoders:
     @staticmethod
     def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
     @staticmethod
-    def k_mwpm(*, k: int = ...) -> decoders.DecoderSpec: ...
+    def k_mwpm(*, k: int = ..., irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
-    def astar() -> decoders.DecoderSpec: ...
+    def astar(*, irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
     def astar_full() -> decoders.DecoderSpec: ...
     @staticmethod
@@ -3528,7 +3616,9 @@ class decoders:
     @staticmethod
     def belief_find() -> decoders.DecoderSpec: ...
     @staticmethod
-    def perturbed_fb_corr(*, k: int = ..., sigma: float = ..., seed: int = ...) -> decoders.DecoderSpec: ...
+    def perturbed_fb_corr(
+        *, k: int = ..., sigma: float = ..., seed: int = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
 
     class BpResult:
         """Result from belief propagation decoders.

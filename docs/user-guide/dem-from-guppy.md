@@ -153,7 +153,6 @@ from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
-from pecos_rslib.decoders import PyMatchingDecoder
 
 # The abstract surface builder provides the detector/observable metadata.
 patch = SurfacePatch.create(distance=3)
@@ -180,10 +179,10 @@ sampler = dem.to_sampler()
 batch = sampler.sample_batch(1000, 0)
 assert batch.num_shots == 1000
 
-decoder = PyMatchingDecoder.from_dem(dem.to_string_decomposed())
+decoder = dem.build_decoder("pymatching")
 errors = 0
 for shot in range(batch.num_shots):
-    predicted = decoder.decode_syndrome(batch.get_syndrome(shot)).observable_flips[0]
+    predicted = decoder.decode_syndrome(batch.get_syndrome(shot))[0]
     actual = batch.get_observable_flips(shot)[0]
     errors += predicted != actual
 print(f"logical error rate: {errors / batch.num_shots:.4f}")
@@ -580,10 +579,12 @@ error model. The export itself has no extra dependency.
 `dem.to_string_decomposed()` uses decomposition components attached to the
 original fault source, writing `^`-separated components when that provenance
 is available. It preserves residual hyperedges when a true hyperedge has no
-source-attached decomposition. For graph matchers, prefer
-`dem.to_string_source_graphlike_decomposed()`: it uses source provenance to
-choose graphlike components. Any residual hyperedges still require a decoder
-that supports them.
+source-attached decomposition. These explicit renderers remain useful for
+exports to external tools such as Stim or external Tesseract, which consume
+text rather than PECOS objects. `dem.to_string_source_graphlike_decomposed()`
+uses source provenance to choose components; residual hyperedges require an
+external decoder that supports them. For PECOS graph specs, pass the raw object
+to `batch.decode(dem, spec)` or `dem.build_decoder(spec)` instead.
 
 `dem.to_string_terminal_graphlike_decomposed()` is a coordinate-based
 approximation. It invents graphlike components that need not be physical error
@@ -683,7 +684,7 @@ stim.DetectorErrorModel(dem.to_string_source_graphlike_decomposed())
 
 ## Decoding: PyMatching, Tesseract, and BP-OSD
 
-A sampled `SampleBatch` provides the uniform `batch.decode(dem_text, spec)`
+A sampled `SampleBatch` provides the uniform `batch.decode(dem, spec)`
 interface. Typed specs make choices such as correlated versus uncorrelated
 PyMatching explicit. Passing the same batch to each decoder compares them on
 identical shots rather than on three independently sampled experiments.
@@ -719,14 +720,14 @@ dem = DetectorErrorModel.from_guppy(
 batch = dem.to_sampler().sample_batch(1000, 0)
 error_counts = {
     "pymatching": batch.decode(
-        dem.to_string_source_graphlike_decomposed(),
+        dem,
         pymatching(correlated=True),
     ).num_errors,
     "tesseract": batch.decode(
-        dem.to_string_source_graphlike_decomposed(),
+        dem,
         tesseract_spec(preset="fast"),
     ).num_errors,
-    "bp_osd": batch.decode(dem.to_string(), bp_osd_spec()).num_errors,
+    "bp_osd": batch.decode(dem, bp_osd_spec()).num_errors,
 }
 assert all(0 <= count <= batch.num_shots for count in error_counts.values())
 print(error_counts)
@@ -743,14 +744,21 @@ bp_osd_result = bp_osd.decode_syndrome(syndrome)
 assert bp_osd_result.observable_flips.mask >= 0
 ```
 
-For direct PyMatching construction, use the
-`PyMatchingDecoder.from_dem(...)` pattern in the
-[surface-memory example](#surface-code-memory-dem). That DEM's source-attached
-decomposition is already graph-like. Prefer the source-informed graphlike
-decomposition for matching decoders, checking that no residual hyperedges remain.
-Tesseract and BP-OSD can consume the
-raw hyperedge DEM directly; the batch comparison above uses the established
-source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
+For direct construction with a graph spec, use `dem.build_decoder("pymatching")`
+as in the [surface-memory example](#surface-code-memory-dem). Graph specs project
+the raw model themselves and preserve fault-sector labels from the object.
+Both the built decoder and batch results expose `.projection`, with counts and
+input indices of any omitted faults. `None` means no projection was needed or a
+composition without a shared policy projected inside its members, with no shared
+report. Irreducible
+faults raise by default. Opt into `pymatching(correlated=True, irreducible="drop")` (legacy string
+`"pymatching:irreducible=drop"`) only when removing those faults from the decoder
+model is intended. Sampling continues to use the original model.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
+PECOS's built-in Tesseract and BP-OSD specs accept the raw object directly.
+The direct backend `from_dem` constructors above remain text-only.
 
 ## Limitations
 

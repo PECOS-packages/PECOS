@@ -1,7 +1,7 @@
 //! Pure graphlike projection using only standalone mechanisms of the raw DEM.
 //!
 //! Disjoint detector partitions preserve each hyperedge's complete XOR effect;
-//! family preference precedes likelihood so declared stabilizer families stay
+//! sector preference precedes likelihood so labelled fault sectors stay
 //! separate when possible. This module does not change sampling or decoders.
 
 use crate::correlation_table::bernoulli_xor;
@@ -9,58 +9,53 @@ use crate::dem::grammar::xor_indices;
 use crate::obs_mask::ObsMask;
 use crate::window::{StructuredDem, StructuredDemComponent, StructuredDemError};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 /// Exhaustive partitions are bounded explicitly, never silently truncated.
 pub const MAX_PROJECTION_DETECTORS: usize = 12;
 
-/// Stabilizer-family declarations, separate from an initialization basis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DetectorFamily {
-    /// Records from X stabilizers.
-    X,
-    /// Records from Z stabilizers.
-    Z,
-    /// Records spanning both families, for example across a transversal H.
-    Mixed,
-}
-
 /// Irreducible mechanisms require an explicit caller policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum IrreduciblePolicy {
     /// Report all irreducible lines after checking the entire input.
+    #[default]
     Refuse,
     /// Omit irreducible lines and record their input indices.
+    /// Shots that fire a dropped fault can make some graph decoders fail on
+    /// detectors left without edges (#1266).
     Drop,
 }
 
 /// Diagnostics retain input-line multiplicity, even when choices are cached.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectionReport {
-    /// Input errors with more than two detector targets.
+    /// Nonzero-probability input errors with more than two detector targets.
     pub input_hyperedges: usize,
     /// Hyperedges replaced by disjoint standalone components.
     pub projected: usize,
-    /// Omitted input error indices, in input order.
+    /// Zero-probability input error indices omitted exactly, in input order.
+    pub zero_probability_omitted: Vec<usize>,
+    /// Irreducible input error indices omitted under Drop, in input order.
     pub dropped_indices: Vec<usize>,
-    /// X/Z pairs in all emitted components, including passthrough errors.
-    pub cross_family_components: usize,
+    /// Pairs with two different known fault-sector labels in all emitted components,
+    /// including passthrough errors. Unset labels and boundary components never count.
+    pub cross_sector_components: usize,
     /// Standalone detector sets with multiple distinct observable sets.
     /// Labels may be fault IDs, so this is diagnostic rather than an error.
     pub label_conflicts: usize,
-    /// Detectors with no family declaration, including unused detectors.
-    pub undeclared_detectors: usize,
-    /// Detectors explicitly spanning both stabilizer families.
-    pub mixed_detectors: usize,
+    /// Detectors with no sector declaration, including unused detectors.
+    pub unlabelled_detectors: usize,
+    /// Number of distinct fault-sector labels present, including unused detectors.
+    pub distinct_sectors: usize,
 }
 
-/// Projected model and diagnostics; source dimensions and coordinates survive.
+/// Projected model and diagnostics; source dimensions, coordinates, and sectors survive.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphlikeProjection {
-    /// Graphlike errors in input order, excluding explicitly dropped errors.
+    /// Graphlike errors in input order, excluding zero-probability and explicitly dropped errors.
     pub model: StructuredDem,
-    /// Projection and family diagnostics.
+    /// Projection and sector diagnostics.
     pub report: ProjectionReport,
 }
 
@@ -68,18 +63,21 @@ pub struct GraphlikeProjection {
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum GraphlikeProjectionError {
     /// A model-wide mismatch has no associated error-line index.
-    #[error("family declaration count {actual} does not match detector count {expected}")]
-    FamiliesLength { expected: usize, actual: usize },
+    #[error("sector declaration count {actual} does not match detector count {expected}")]
+    SectorsLength { expected: usize, actual: usize },
+    /// A present fault-sector label must be non-empty.
+    #[error("detector D{detector} fault_sector is empty")]
+    EmptySector { detector: usize },
     /// Zero components are malformed; multiple components are already decomposed.
     #[error("error {error_index} has {count} components; projection requires exactly one")]
     ComponentCount { error_index: usize, count: usize },
-    /// Endpoints and nonfinite probabilities cannot define standalone weights.
-    #[error("error {error_index} has probability {probability}; expected finite 0 < p < 1")]
+    /// Probabilities outside [0, 1) or nonfinite probabilities are invalid.
+    #[error("error {error_index} has probability {probability}; expected finite 0 <= p < 1")]
     InvalidProbability {
         error_index: usize,
         probability: f64,
     },
-    /// Bounds are checked before any family lookup.
+    /// Bounds are checked before any sector lookup.
     #[error("error {error_index} detector D{detector} is outside detector count {num_detectors}")]
     DetectorOutOfRange {
         error_index: usize,
@@ -138,11 +136,12 @@ type Standalone = BTreeMap<Vec<u32>, BTreeMap<Vec<u32>, f64>>;
 
 /// Project raw errors using an exhaustive, cached search of disjoint partitions.
 ///
-/// Passthrough errors retain written target order and probability bits. Only
+/// Zero-probability errors are omitted exactly. Remaining passthrough errors
+/// retain written target order and probability bits. Only
 /// existing standalone detector/observable pairs may replace hyperedges.
 ///
 /// # Errors
-/// Checks family length, then validates all error lines before building the
+/// Checks sector length and non-empty labels, then validates all error lines before building the
 /// catalogue or searching. The first malformed line in input order takes
 /// precedence over every reduction outcome. Once validation succeeds, returns
 /// the first budget or overlap failure in input order. Under
@@ -150,14 +149,19 @@ type Standalone = BTreeMap<Vec<u32>, BTreeMap<Vec<u32>, f64>>;
 /// reduction scan completes.
 pub fn project_graphlike(
     dem: &StructuredDem,
-    families: &[Option<DetectorFamily>],
     policy: IrreduciblePolicy,
 ) -> Result<GraphlikeProjection, GraphlikeProjectionError> {
-    if families.len() != dem.num_detectors {
-        return Err(GraphlikeProjectionError::FamiliesLength {
+    let sectors = &dem.detector_fault_sectors;
+    if sectors.len() != dem.num_detectors {
+        return Err(GraphlikeProjectionError::SectorsLength {
             expected: dem.num_detectors,
-            actual: families.len(),
+            actual: sectors.len(),
         });
+    }
+    for (detector, sector) in sectors.iter().enumerate() {
+        if sector.as_ref().is_some_and(String::is_empty) {
+            return Err(GraphlikeProjectionError::EmptySector { detector });
+        }
     }
     // Malformed input takes precedence over unsupported reduction. Only build
     // the complete standalone catalogue after every line passes validation.
@@ -173,17 +177,18 @@ pub fn project_graphlike(
             .values()
             .filter(|labels| labels.len() > 1)
             .count(),
-        undeclared_detectors: families.iter().filter(|family| family.is_none()).count(),
-        mixed_detectors: families
-            .iter()
-            .filter(|&&family| family == Some(DetectorFamily::Mixed))
-            .count(),
+        unlabelled_detectors: sectors.iter().filter(|sector| sector.is_none()).count(),
+        distinct_sectors: sectors.iter().flatten().collect::<BTreeSet<_>>().len(),
         ..ProjectionReport::default()
     };
     let mut cache = BTreeMap::new();
     let mut errors = Vec::with_capacity(dem.errors.len());
     let mut replacements = Vec::new();
     for (index, (input, effect)) in dem.errors.iter().zip(effects).enumerate() {
+        if input.probability == 0.0 {
+            report.zero_probability_omitted.push(index);
+            continue;
+        }
         let output = if effect.0.len() <= 2 {
             input.clone()
         } else {
@@ -195,7 +200,7 @@ pub fn project_graphlike(
                 });
             }
             if !cache.contains_key(&effect) {
-                let blocks = local_blocks(&effect.0, &standalone, families);
+                let blocks = local_blocks(&effect.0, &standalone, sectors);
                 let choice = choose(&effect, &blocks);
                 if choice.is_none() && in_span(&effect, &blocks) {
                     return Err(GraphlikeProjectionError::OverlapOnly {
@@ -223,10 +228,10 @@ pub fn project_graphlike(
                     .collect(),
             }
         };
-        report.cross_family_components += output
+        report.cross_sector_components += output
             .components
             .iter()
-            .filter(|part| is_cross(&part.detectors, families))
+            .filter(|part| is_cross(&part.detectors, sectors))
             .count();
         errors.push(output);
     }
@@ -248,6 +253,7 @@ pub fn project_graphlike(
         model: StructuredDem {
             errors,
             detector_coords: dem.detector_coords.clone(),
+            detector_fault_sectors: dem.detector_fault_sectors.clone(),
             num_detectors: dem.num_detectors,
             num_observables: dem.num_observables,
         },
@@ -267,7 +273,7 @@ fn validate(
             count: error.components.len(),
         });
     }
-    if !error.probability.is_finite() || error.probability <= 0.0 || error.probability >= 1.0 {
+    if !error.probability.is_finite() || error.probability < 0.0 || error.probability >= 1.0 {
         return Err(E::InvalidProbability {
             error_index,
             probability: error.probability,
@@ -314,7 +320,7 @@ fn validate(
 fn standalone_mechanisms(dem: &StructuredDem, effects: &[Effect]) -> Standalone {
     let mut standalone = Standalone::new();
     for (error, (detectors, observables)) in dem.errors.iter().zip(effects) {
-        if (1..=2).contains(&detectors.len()) {
+        if error.probability != 0.0 && (1..=2).contains(&detectors.len()) {
             let probability = standalone
                 .entry(detectors.clone())
                 .or_default()
@@ -331,15 +337,14 @@ fn standalone_mechanisms(dem: &StructuredDem, effects: &[Effect]) -> Standalone 
     standalone
 }
 
-fn is_cross(detectors: &[u32], families: &[Option<DetectorFamily>]) -> bool {
-    use DetectorFamily::{X, Z};
+fn is_cross(detectors: &[u32], sectors: &[Option<String>]) -> bool {
     detectors.len() == 2
         && matches!(
             (
-                families[detectors[0] as usize],
-                families[detectors[1] as usize]
+                &sectors[detectors[0] as usize],
+                &sectors[detectors[1] as usize]
             ),
-            (Some(X), Some(Z)) | (Some(Z), Some(X))
+            (Some(left), Some(right)) if left != right
         )
 }
 
@@ -353,7 +358,7 @@ struct Block {
 fn local_blocks(
     detectors: &[u32],
     standalone: &Standalone,
-    families: &[Option<DetectorFamily>],
+    sectors: &[Option<String>],
 ) -> Vec<Vec<Block>> {
     detectors
         .iter()
@@ -370,7 +375,7 @@ fn local_blocks(
                     for (observables, &weight) in labels {
                         blocks.push(Block {
                             mask: (1 << i) | (1 << j),
-                            cross: usize::from(is_cross(&support, families)),
+                            cross: usize::from(is_cross(&support, sectors)),
                             effect: (support.clone(), observables.clone()),
                             weight,
                         });

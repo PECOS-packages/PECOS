@@ -1,12 +1,13 @@
 //! Python value-object bindings for typed decoder specifications.
 
+use pecos_decoder_core::graphlike_projection::IrreduciblePolicy;
 use pecos_decoders::spec::{
-    BeamSearchConfig, BeliefMatchingConfig, BeliefMatchingMode, BpLsdConfig, BpOsdConfig,
-    BpSchedule, EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig,
-    MinSumBpConfig, MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig,
-    PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig, RelayStoppingCriterion,
-    TesseractConfig, TesseractPreset, TesseractTrellisConfig, TesseractTrellisRankingMode,
-    WindowedConfig,
+    AStarConfig, BeamSearchConfig, BeliefMatchingConfig, BeliefMatchingMode, BpLsdConfig,
+    BpOsdConfig, BpSchedule, EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType,
+    KMwpmConfig, MinSumBpConfig, MwpfConfig, MwpfSolverType, PecosUfConfig, PecosUfPreset,
+    PerturbedConfig, PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig,
+    RelayStoppingCriterion, TesseractConfig, TesseractPreset, TesseractTrellisConfig,
+    TesseractTrellisRankingMode, WindowedConfig,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -291,10 +292,15 @@ fn cloned_or_default(
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, correlated, error_probability=None))]
-fn pymatching(correlated: bool, error_probability: Option<f64>) -> PyResult<PyDecoderSpec> {
+#[pyo3(signature = (*, correlated, error_probability=None, irreducible="refuse"))]
+fn pymatching(
+    correlated: bool,
+    error_probability: Option<f64>,
+    irreducible: &str,
+) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::PyMatching(
         PyMatchingConfig {
+            irreducible: irreducible_policy(irreducible)?,
             correlated,
             error_probability: optional_probability("error_probability", error_probability)?,
         },
@@ -440,10 +446,11 @@ fn bp_lsd(
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, correlated=false, solver="auto"))]
-fn fusion_blossom(correlated: bool, solver: &str) -> PyResult<PyDecoderSpec> {
+#[pyo3(signature = (*, correlated=false, solver="auto", irreducible="refuse"))]
+fn fusion_blossom(correlated: bool, solver: &str, irreducible: &str) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(
         pecos_decoders::DecoderSpec::FusionBlossom(FusionBlossomConfig {
+            irreducible: irreducible_policy(irreducible)?,
             correlated,
             solver_type: fusion_solver(solver)?,
         }),
@@ -513,19 +520,30 @@ fn min_sum_bp(
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, preset="fast"))]
-fn pecos_uf(preset: &str) -> PyResult<PyDecoderSpec> {
+#[pyo3(signature = (*, preset="fast", irreducible="refuse"))]
+fn pecos_uf(preset: &str, irreducible: &str) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::PecosUf(
-        pecos_uf_preset(preset)?,
+        PecosUfConfig {
+            preset: pecos_uf_preset(preset)?,
+            irreducible: irreducible_policy(irreducible)?,
+        },
     )))
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, mode="standard"))]
-fn belief_matching(mode: &str) -> PyResult<PyDecoderSpec> {
+#[pyo3(signature = (*, mode="standard", irreducible="refuse"))]
+fn belief_matching(mode: &str, irreducible: &str) -> PyResult<PyDecoderSpec> {
+    let mode = belief_matching_mode(mode)?;
+    let irreducible = irreducible_policy(irreducible)?;
+    if mode == BeliefMatchingMode::Hybrid && irreducible != IrreduciblePolicy::Refuse {
+        return Err(PyValueError::new_err(
+            "belief_matching_hybrid does not support an irreducible policy",
+        ));
+    }
     Ok(PyDecoderSpec::new(
         pecos_decoders::DecoderSpec::BeliefMatching(BeliefMatchingConfig {
-            mode: belief_matching_mode(mode)?,
+            irreducible,
+            mode,
             embedded_full_dem: None,
         }),
     ))
@@ -637,18 +655,24 @@ fn ensemble(members: &Bound<'_, PyTuple>) -> PyResult<PyDecoderSpec> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, k=10))]
-fn k_mwpm(k: i64) -> PyResult<PyDecoderSpec> {
+#[pyo3(signature = (*, k=10, irreducible="refuse"))]
+fn k_mwpm(k: i64, irreducible: &str) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::KMwpm(
         KMwpmConfig {
+            irreducible: irreducible_policy(irreducible)?,
             k: usize_value("k", k, false)?,
         },
     )))
 }
 
 #[pyfunction]
-fn astar() -> PyDecoderSpec {
-    PyDecoderSpec::new(pecos_decoders::DecoderSpec::AStar)
+#[pyo3(signature = (*, irreducible="refuse"))]
+fn astar(irreducible: &str) -> PyResult<PyDecoderSpec> {
+    Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::AStar(
+        AStarConfig {
+            irreducible: irreducible_policy(irreducible)?,
+        },
+    )))
 }
 
 #[pyfunction]
@@ -667,17 +691,34 @@ fn belief_find() -> PyDecoderSpec {
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, k=5, sigma=0.5, seed=42))]
-fn perturbed_fb_corr(k: i64, sigma: f64, seed: u64) -> PyResult<PyDecoderSpec> {
+#[pyo3(signature = (*, k=5, sigma=0.5, seed=42, irreducible="refuse"))]
+fn perturbed_fb_corr(k: i64, sigma: f64, seed: u64, irreducible: &str) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(
         pecos_decoders::DecoderSpec::PerturbedFusionBlossomCorrelated(
             PerturbedFusionBlossomConfig {
+                irreducible: irreducible_policy(irreducible)?,
                 k: usize_value("k", k, false)?,
                 sigma: non_negative("sigma", sigma)?,
                 seed,
             },
         ),
     ))
+}
+
+fn irreducible_policy(value: &str) -> PyResult<IrreduciblePolicy> {
+    match value {
+        "refuse" => Ok(IrreduciblePolicy::Refuse),
+        "drop" => Ok(IrreduciblePolicy::Drop),
+        _ => Err(PyValueError::new_err(format!(
+            "irreducible must be refuse|drop, got '{value}'"
+        ))),
+    }
+}
+
+fn push_irreducible(args: &mut Vec<String>, policy: IrreduciblePolicy) {
+    if policy != IrreduciblePolicy::Refuse {
+        args.push("irreducible=\"drop\"".into());
+    }
 }
 
 fn py_bool(value: bool) -> &'static str {
@@ -703,7 +744,7 @@ fn spec_family_name(spec: &pecos_decoders::DecoderSpec) -> &'static str {
         pecos_decoders::DecoderSpec::Tesseract(_) => "tesseract",
         pecos_decoders::DecoderSpec::TesseractTrellis(_) => "tesseract_trellis",
         pecos_decoders::DecoderSpec::KMwpm(_) => "k_mwpm",
-        pecos_decoders::DecoderSpec::AStar => "astar",
+        pecos_decoders::DecoderSpec::AStar(_) => "astar",
         pecos_decoders::DecoderSpec::AStarFull => "astar_full",
         pecos_decoders::DecoderSpec::FusionBlossom(_) => "fusion_blossom",
         pecos_decoders::DecoderSpec::PerturbedFusionBlossomCorrelated(_) => "perturbed_fb_corr",
@@ -729,6 +770,7 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
             // `correlated` is a required argument, so the repr always shows it.
             let mut args = vec![format!("correlated={}", py_bool(config.correlated))];
             push_option(&mut args, "error_probability", config.error_probability);
+            push_irreducible(&mut args, config.irreducible);
             finish_repr("pymatching", args)
         }
         pecos_decoders::DecoderSpec::TesseractTrellis(config) => {
@@ -791,13 +833,18 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
             finish_repr("tesseract", args)
         }
         pecos_decoders::DecoderSpec::KMwpm(config) => {
-            let args = (config.k != KMwpmConfig::default().k)
+            let mut args = (config.k != KMwpmConfig::default().k)
                 .then(|| format!("k={}", config.k))
                 .into_iter()
                 .collect();
+            push_irreducible(&mut args, config.irreducible);
             finish_repr("k_mwpm", args)
         }
-        pecos_decoders::DecoderSpec::AStar => finish_repr("astar", Vec::new()),
+        pecos_decoders::DecoderSpec::AStar(config) => {
+            let mut args = Vec::new();
+            push_irreducible(&mut args, config.irreducible);
+            finish_repr("astar", args)
+        }
         pecos_decoders::DecoderSpec::AStarFull => finish_repr("astar_full", Vec::new()),
         pecos_decoders::DecoderSpec::FusionBlossom(config) => {
             let mut args = Vec::new();
@@ -810,6 +857,7 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
                     fusion_solver_name(config.solver_type)
                 ));
             }
+            push_irreducible(&mut args, config.irreducible);
             finish_repr("fusion_blossom", args)
         }
         pecos_decoders::DecoderSpec::PerturbedFusionBlossomCorrelated(config) => {
@@ -824,6 +872,7 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
             if config.seed != default.seed {
                 args.push(format!("seed={}", config.seed));
             }
+            push_irreducible(&mut args, config.irreducible);
             finish_repr("perturbed_fb_corr", args)
         }
         pecos_decoders::DecoderSpec::BpOsd(config) => bp_osd_repr(config),
@@ -841,11 +890,12 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
             push_option(&mut args, "alpha", config.alpha);
             finish_repr("min_sum_bp", args)
         }
-        pecos_decoders::DecoderSpec::PecosUf(preset) => {
-            let args = (*preset != PecosUfPreset::Fast)
-                .then(|| format!("preset={:?}", pecos_uf_preset_name(*preset)))
+        pecos_decoders::DecoderSpec::PecosUf(config) => {
+            let mut args = (config.preset != PecosUfPreset::Fast)
+                .then(|| format!("preset={:?}", pecos_uf_preset_name(config.preset)))
                 .into_iter()
                 .collect();
+            push_irreducible(&mut args, config.irreducible);
             finish_repr("pecos_uf", args)
         }
         pecos_decoders::DecoderSpec::BeliefMatching(config) => {
@@ -857,6 +907,7 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
                 // The embedded DEM can be megabytes; never inline it in a repr.
                 args.push(format!("embedded_full_dem=<{} bytes>", full_dem.len()));
             }
+            push_irreducible(&mut args, config.irreducible);
             finish_repr("belief_matching", args)
         }
         pecos_decoders::DecoderSpec::Windowed(config) => windowed_repr(config),

@@ -344,10 +344,12 @@ The decoder-core crate owns the flattened `StructuredDem` input boundary used
 by streaming and windowed decoders. The type can retain independent-error
 grouping, decomposition components, hyperedges, standard observable columns,
 and detector coordinates. `DetectorErrorModel::to_structured_decoder_dem()`
-uses the same equal-effect grouping and XOR probability combination as
-`to_mechanisms()` and the default rendered model; this avoids introducing a
-second factorization policy at the decoder boundary. PECOS tracked-Pauli outputs
-are rejected explicitly because they are not standard DEM observables.
+parses exactly its standard `to_string()` text, then overlays each detector's
+opaque `fault_sector` label by ID. Probabilities use standard text formatting,
+including its rounding (issue #1260), rather than exact mechanism probabilities.
+Tracked-Pauli outputs are omitted by standard text rendering. Sparse detector
+IDs retain the dimensions declared by the text. This is also the definition used
+by all Python object decode paths; corpus identity certifies that same text.
 
 `StreamingWindowedDecoder::from_structured_dem` accepts the model directly;
 `from_dem` parses the flattened text once. Decoder specifications also accept

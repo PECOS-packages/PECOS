@@ -25,11 +25,11 @@ from guppylang.std.quantum import (
     tdg,
     x,
 )
-from pecos import Guppy, get_guppy_backends, sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 if TYPE_CHECKING:
-    from pecos.protocols import GuppyCallable
+    from guppylang.defs import GuppyFunctionDefinition
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -44,19 +44,14 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
 class ExtendedGuppyTester:
     """Extended helper class for testing advanced Guppy features."""
 
-    def __init__(self) -> None:
-        """Initialize extended tester with available backends."""
-        self.backends = get_guppy_backends()
-
     def test_function(
         self,
-        func: "GuppyCallable",
+        func: "GuppyFunctionDefinition",
         shots: int = 100,
         seed: int = 42,
         **kwargs: object,
     ) -> dict[str, Any]:
         """Test a Guppy function and return results."""
-        assert self.backends["rust_backend"], "Rust backend not available"
 
         try:
             # Use sim() API
@@ -811,7 +806,6 @@ def generate_extended_feature_report() -> None:
 
     result = tester.test_function(simple_test, shots=10)
 
-    # print(f"  Rust Backend Available: {tester.backends.get('rust_backend', False)}")
     # print(f"  Basic Test Success: {result['success']}")
     if not result["success"]:
         # print(f"  Error: {result['error']}")

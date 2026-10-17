@@ -346,3 +346,48 @@ def test_provider_per_shot_exception_keeps_shot_context():
 
     with pytest.raises(RuntimeError, match="decoder failed on shot 0:.*KeyError.*boom"):
         SampleBatch([[0]], [0]).decode(DEM, FailingProvider())
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_unlabelled_embedded_corpus_keeps_provider_support(tmp_path, version):
+    import hashlib
+    import json
+    import struct
+
+    path = tmp_path / "provider.pecos"
+    SampleBatch([[1], [0]], [1 << 70, 0], num_observables=71).save(path, dem=DEM)
+    if version == 1:
+        data = path.read_bytes()
+        end = 48 + struct.unpack("<I", data[12:16])[0]
+        header = json.loads(data[48:end])
+        header["format_version"] = 1
+        header["detector_fault_sectors"] = ["ignored"]
+        encoded = json.dumps(header).encode()
+        length = struct.pack("<I", len(encoded))
+        payload = data[end:]
+        path.write_bytes(data[:12] + length + hashlib.sha256(length + encoded + payload).digest() + encoded + payload)
+    loaded = SampleBatch.load(path)
+    assert loaded.format_version == version
+    assert loaded.dem_fault_sectors == [None]
+    assert loaded.decode(None, Provider()).num_errors == 0
+    loaded.save(path, dem=loaded.dem)
+    assert loaded.format_version == version
+    assert SampleBatch.load(path).format_version == 2
+
+
+def test_labelled_embedded_corpus_refuses_provider(tmp_path):
+    from pecos_rslib.qec import DetectorErrorModel
+    from pecos_rslib.quantum import TickCircuit
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz([0])
+    circuit.add_detector([-1], detector_id=0, fault_sector="X")
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.01, p_prep=0)
+    path = tmp_path / "labelled.pecos"
+    SampleBatch([[0]], [0], num_observables=0).save(path, dem=dem)
+    with pytest.raises(
+        RuntimeError,
+        match="embedded model carries fault-sector labels.*passing loaded.dem text decodes without them",
+    ):
+        SampleBatch.load(path).decode(None, Provider())

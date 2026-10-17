@@ -379,7 +379,8 @@ impl PhirClassicalInterpreter {
     ///
     /// # Errors
     ///
-    /// Returns `PecosError` for unknown quantum variables or out-of-bounds qubit indices.
+    /// Returns `PecosError` for invalid gate names, argument grouping, signatures,
+    /// duplicate qubits, unknown quantum registers or out-of-bounds indices.
     pub fn make_qop(
         &self,
         qop_name: &str,
@@ -414,17 +415,17 @@ impl PhirClassicalInterpreter {
             QOpArgs::Single(flat)
         };
 
-        let qubits: Vec<_> = match &resolved_args {
+        let flat_args: Vec<_> = match &resolved_args {
             QOpArgs::Single(ids) => ids.clone(),
             QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
         };
         super::operations::validate_quantum_signature(
             qop_name,
             gate,
-            qubits.len(),
+            flat_args.len(),
             angles.as_ref().map_or(0, Vec::len),
         )?;
-        super::operations::validate_quantum_qubits(qop_name, &qubits)?;
+        super::operations::validate_quantum_qubits(qop_name, &flat_args)?;
 
         // Build metadata
         let mut meta = metadata.clone().unwrap_or_default();
@@ -438,10 +439,6 @@ impl PhirClassicalInterpreter {
 
         // Build var_output for measurement compatibility
         if !returns.is_empty() {
-            let flat_args: Vec<usize> = match &resolved_args {
-                QOpArgs::Single(ids) => ids.clone(),
-                QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
-            };
             let mut var_output = serde_json::Map::new();
             for (q, r) in flat_args.iter().zip(returns.iter()) {
                 var_output.insert(q.to_string(), serde_json::json!([r.0, r.1]));
@@ -597,6 +594,7 @@ impl PhirClassicalInterpreter {
                 }
             }
             "Result" => {
+                super::operations::validate_result_counts(args.len(), returns.len())?;
                 // Map source register to destination register
                 for (src_arg, dst_arg) in args.iter().zip(returns.iter()) {
                     let src_name = match src_arg {
@@ -774,7 +772,7 @@ impl<'a> ExecuteIter<'a> {
                     metadata,
                 } => {
                     let yielded = self.interp.make_qop(qop, angles, args, returns, metadata)?;
-                    let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
+                    let is_measure = qop == "Measure";
                     self.buffer.push(YieldedOp::QOp(yielded));
 
                     if is_measure {

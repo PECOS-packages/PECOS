@@ -4323,3 +4323,15 @@ def scheduled_event_local_noise(
     profile: ScheduledLocalNoise,
     adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
 ) -> ScheduledEventLocalNoise: ...
+def validate_phir_qop(
+    name: str,
+    args_json: str,
+    angles: Sequence[float] | None,
+    registers: Sequence[tuple[str, int]],
+) -> None:
+    """Validate a quantum operation with the native PHIR rules."""
+    ...
+
+def validate_phir_result_counts(args: int, returns: int) -> None:
+    """Require equal, nonzero Result argument and destination counts."""
+    ...

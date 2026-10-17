@@ -661,14 +661,15 @@ impl Environment {
     /// # Errors
     /// Returns an error for an unknown quantum register or an out-of-bounds index.
     pub fn resolve_qubit(&self, name: &str, index: usize) -> Result<usize, PecosError> {
-        let range = self
-            .quantum_registers
-            .get(name)
-            .ok_or_else(|| PecosError::Input(format!("Unknown quantum register '{name}'")))?;
+        let range = self.quantum_registers.get(name).ok_or_else(|| {
+            PecosError::Input(format!(
+                "Unknown quantum register '{name}'; declare it with qvar_define before use"
+            ))
+        })?;
         let size = range.end - range.start;
         if index >= size {
             return Err(PecosError::Input(format!(
-                "Index {index} out of bounds for quantum register '{name}' of size {size}"
+                "Index {index} out of bounds for quantum register '{name}' of size {size}; use an index below {size}"
             )));
         }
         Ok(range.start + index)

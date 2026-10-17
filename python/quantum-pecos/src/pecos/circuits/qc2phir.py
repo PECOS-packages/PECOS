@@ -187,7 +187,6 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         ops_buffer: list[dict[str, Any]],
         current_cond: dict[str, Any] | None,
     ) -> None:
-        last_qop_qubits.clear()
         if current_cond is None:
             ops.extend(ops_buffer)
         else:
@@ -324,6 +323,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                 print("!!!!!", qubits, metadata)
 
         else:  # qop
+            if not qubits:
+                continue
             op.update(
                 {
                     "qop": qsym_conv.get(sym, sym),

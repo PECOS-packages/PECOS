@@ -17,8 +17,11 @@ circuit compilation, execution, and representation in the PECOS framework.
 
 from __future__ import annotations
 
+import json
 import math
 from typing import TYPE_CHECKING, Any, TypeVar
+
+from pecos_rslib import validate_phir_qop
 
 import pecos as pc
 from pecos._phir_declarations import validate_declaration_names
@@ -174,6 +177,12 @@ class PyPHIR:
                         else:
                             metadata["angles"] = angles
 
+                    validate_phir_qop(
+                        o["qop"],
+                        json.dumps(o.get("args", [])),
+                        angles,
+                        [(name, register.size) for name, register in p.qvar_meta.items()],
+                    )
                     args = cls.get_qargs(o, p)
 
                     # TODO: Added to satisfy old-style error models. Remove when they not longer need this...

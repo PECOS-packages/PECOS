@@ -8,6 +8,19 @@ use pecos_core::{Angle64, Gate, gate_type::GateType};
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Validate the one-to-one, nonempty mapping of a PHIR Result operation.
+///
+/// # Errors
+/// Returns an input error naming both counts when they differ or are zero.
+pub fn validate_result_counts(args: usize, returns: usize) -> Result<(), PecosError> {
+    if args == 0 || args != returns {
+        return Err(PecosError::Input(format!(
+            "Result: invalid counts {args} args and {returns} returns; supply equally sized nonempty arrays"
+        )));
+    }
+    Ok(())
+}
+
 /// PHIR v0.1 spellings and aliases, plus the existing native extensions.
 /// Keep format-specific aliases here; core gate names serve other formats too.
 pub(crate) fn quantum_gate_type(name: &str) -> Result<GateType, PecosError> {
@@ -1142,6 +1155,7 @@ impl OperationProcessor {
 
         // For most operations, validate all variable accesses
         if cop == "Result" {
+            validate_result_counts(args.len(), returns.len())?;
             // For Result operation, only validate the source variables (args)
             // The return variables are outputs and don't need to be defined
             for arg in args {
@@ -1251,7 +1265,7 @@ impl OperationProcessor {
             // Use our improved method that handles bit indexing and uses the environment
             self.process_result_op(args, returns)?;
 
-            // Return true to indicate we've handled this operation
+            // Return true to indicate this operation was handled.
             return Ok(true);
         } else if cop == "ffcall" {
             // Process foreign function call
@@ -1628,14 +1642,10 @@ impl OperationProcessor {
         for qubit_arg in args {
             match qubit_arg {
                 QubitArg::SingleQubit((var, idx)) => {
-                    // Validate the qubit
-                    self.validate_variable_access(var, *idx)?;
                     qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 QubitArg::MultipleQubits(qubits) => {
                     for (var, idx) in qubits {
-                        // Validate each qubit
-                        self.validate_variable_access(var, *idx)?;
                         qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                     }
                 }

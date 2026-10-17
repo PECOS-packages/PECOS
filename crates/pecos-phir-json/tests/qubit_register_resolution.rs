@@ -359,8 +359,6 @@ fn ssa_exhaustion_at_instruction_emission() {
         json!({"qop":"X", "args":[["q",0]]}),
         json!({"qop":"X", "args":[["q",0]], "returns":["result"]}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
-        json!({"cop":"Result", "args":["source"], "returns":[]}),
-        json!({"cop":"Result", "args":[], "returns":["destination"]}),
     ] {
         // The qvar declaration consumes the last available allocation.
         assert_ssa_exhausted(&program(&[("q", max - 1)], vec![op]));
@@ -374,19 +372,19 @@ fn ssa_exhaustion_at_measurement_combining_emission() {
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
     ];
-    // Two declarations and one measurement fit, but the combining zero constant does not.
+    // Two declarations and one measurement fit, but the combining bitcast does not.
     assert_ssa_exhausted(&program(&[("q", max - 3)], single));
 
     let multiple = vec![
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0],["q",1]], "returns":[["m",0],["m",1]]}),
     ];
-    // After two declarations and two measurement results, exhaust at each
-    // generated constant, cast, shift, and OR (including the bit-zero branch).
-    for available in 4..10 {
+    // Two declarations, two measurement results, five replacement operations
+    // per bit, then the export bitcast: exhaust at each allocation boundary.
+    for available in 4..15 {
         assert_ssa_exhausted(&program(&[("q", max - available)], multiple.clone()));
     }
-    assert!(phir_json_to_module(&program(&[("q", max - 10)], multiple).to_string()).is_ok());
+    assert!(phir_json_to_module(&program(&[("q", max - 15)], multiple).to_string()).is_ok());
 }
 
 #[test]

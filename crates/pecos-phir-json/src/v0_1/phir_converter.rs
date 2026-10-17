@@ -131,6 +131,7 @@ struct ImprovedConverter {
     resolved_qubits: BTreeSet<u32>,
     variable_map: BTreeMap<String, u32>,
     variable_types: BTreeMap<String, Type>,
+    variable_widths: BTreeMap<String, usize>,
     bit_indexed_writes: BTreeMap<String, Vec<BitIndexedWrite>>,
 }
 
@@ -143,6 +144,7 @@ impl ImprovedConverter {
             resolved_qubits: BTreeSet::new(),
             variable_map: BTreeMap::new(),
             variable_types: BTreeMap::new(),
+            variable_widths: BTreeMap::new(),
             bit_indexed_writes: BTreeMap::new(),
         }
     }
@@ -196,7 +198,7 @@ impl ImprovedConverter {
             .map_err(|_| PecosError::Input("Too many qubits for PHIR SSA IDs".to_string()))?;
 
         let mut instructions = Vec::new();
-        let mut result_operations = Vec::new();
+        let mut export_names = Vec::new();
 
         // First pass: convert all operations except Result operations
         for op in ops {
@@ -206,8 +208,8 @@ impl ImprovedConverter {
                 .and_then(|v| v.as_str())
                 && cop == "Result"
             {
-                // Save Result operations for later
-                result_operations.push(op.clone());
+                self.combine_pending_measurements(&mut instructions)?;
+                export_names.extend(self.convert_result_operation(op, &mut instructions)?);
                 continue;
             }
 
@@ -238,126 +240,118 @@ impl ImprovedConverter {
             }
         }
 
-        // Second pass: generate bit-combining operations for variables with bit-indexed writes
-        let bit_indexed_writes = self.bit_indexed_writes.clone();
-        for (var_name, writes) in &bit_indexed_writes {
-            let combined_ssa =
-                self.generate_bit_combining_operations(var_name, writes, &mut instructions)?;
-
-            // Update the variable's SSA mapping to point to the combined value
-            self.variable_map.insert(var_name.clone(), combined_ssa.id);
+        self.combine_pending_measurements(&mut instructions)?;
+        if export_names.is_empty() {
+            export_names.extend(self.variable_widths.keys().cloned());
         }
-
-        // Third pass: now process Result operations with updated variable mappings
-        for result_op in &result_operations {
-            if let Some(instruction) = self.convert_operation(result_op)? {
-                instructions.push(instruction);
-            }
+        for name in export_names {
+            let source = self.classical_value(&name)?;
+            let width = if self.variable_widths[&name] <= 32 {
+                IntWidth::I32
+            } else {
+                IntWidth::I64
+            };
+            let source = self.append_classical(
+                ClassicalOp::Bitcast,
+                vec![source],
+                &Type::UInt(width),
+                &mut instructions,
+            )?;
+            let mut instruction = Instruction::new(
+                Operation::Classical(ClassicalOp::Result),
+                vec![source],
+                vec![],
+                vec![],
+            );
+            instruction.attributes.insert(
+                "export_name".to_string(),
+                pecos_phir::phir::AttributeValue::String(name),
+            );
+            instructions.push(instruction);
         }
 
         Ok(instructions)
     }
 
-    fn generate_bit_combining_operations(
+    fn classical_value(&self, name: &str) -> Result<SSAValue, PecosError> {
+        if self.variable_widths.contains_key(name)
+            && let Some(&id) = self.variable_map.get(name)
+        {
+            return Ok(SSAValue::new(id));
+        }
+        Err(PecosError::Input(format!(
+            "Result or measurement: unknown classical variable {name:?}; declare it with cvar_define before use"
+        )))
+    }
+
+    fn append_classical(
         &mut self,
-        _var_name: &str,
-        writes: &[BitIndexedWrite],
+        op: ClassicalOp,
+        operands: Vec<SSAValue>,
+        value_type: &Type,
         instructions: &mut Vec<Instruction>,
     ) -> Result<SSAValue, PecosError> {
-        // Sort writes by bit index
-        let mut sorted_writes = writes.to_vec();
-        sorted_writes.sort_by_key(|w| w.bit_index);
+        let result = SSAValue::new(self.new_ssa_id()?);
+        instructions.push(Instruction::new(
+            Operation::Classical(op),
+            operands,
+            vec![result],
+            vec![value_type.clone()],
+        ));
+        Ok(result)
+    }
 
-        // Start with zero
-        let zero_ssa = SSAValue {
-            id: self.new_ssa_id()?,
-            version: 0,
-        };
-        let zero_instruction = Instruction {
-            operation: Operation::Classical(ClassicalOp::ConstInt(0)),
-            operands: vec![],
-            results: vec![zero_ssa],
-            result_types: vec![Type::UInt(IntWidth::I32)],
-            regions: vec![],
-            attributes: BTreeMap::new(),
-            location: None,
-        };
-        instructions.push(zero_instruction);
-
-        let mut current_value = zero_ssa;
-
-        // For each bit write, shift and OR
-        for write in &sorted_writes {
-            // Convert bool to int if needed
-            let bit_as_int = SSAValue {
-                id: self.new_ssa_id()?,
-                version: 0,
-            };
-            let cast_instruction = Instruction {
-                operation: Operation::Classical(ClassicalOp::Bitcast),
-                operands: vec![write.ssa_value],
-                results: vec![bit_as_int],
-                result_types: vec![Type::UInt(IntWidth::I32)],
-                regions: vec![],
-                attributes: BTreeMap::new(),
-                location: None,
-            };
-            instructions.push(cast_instruction);
-
-            if write.bit_index > 0 {
-                // Shift the bit to its position
-                let shifted_ssa = SSAValue {
-                    id: self.new_ssa_id()?,
-                    version: 0,
-                };
-                let shift_instruction = Instruction {
-                    operation: Operation::Classical(ClassicalOp::Shl(write.bit_index)),
-                    operands: vec![bit_as_int],
-                    results: vec![shifted_ssa],
-                    result_types: vec![Type::UInt(IntWidth::I32)],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                };
-                instructions.push(shift_instruction);
-
-                // OR with current value
-                let or_ssa = SSAValue {
-                    id: self.new_ssa_id()?,
-                    version: 0,
-                };
-                let or_instruction = Instruction {
-                    operation: Operation::Classical(ClassicalOp::Or),
-                    operands: vec![current_value, shifted_ssa],
-                    results: vec![or_ssa],
-                    result_types: vec![Type::UInt(IntWidth::I32)],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                };
-                instructions.push(or_instruction);
-                current_value = or_ssa;
-            } else {
-                // Bit 0 - just OR with current value
-                let or_ssa = SSAValue {
-                    id: self.new_ssa_id()?,
-                    version: 0,
-                };
-                let or_instruction = Instruction {
-                    operation: Operation::Classical(ClassicalOp::Or),
-                    operands: vec![current_value, bit_as_int],
-                    results: vec![or_ssa],
-                    result_types: vec![Type::UInt(IntWidth::I32)],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                };
-                instructions.push(or_instruction);
-                current_value = or_ssa;
+    fn combine_pending_measurements(
+        &mut self,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), PecosError> {
+        for (name, writes) in std::mem::take(&mut self.bit_indexed_writes) {
+            let mut current = self.classical_value(&name)?;
+            let value_type = self.variable_types[&name].clone();
+            let width = self.variable_widths[&name];
+            for write in writes {
+                if write.bit_index as usize >= width {
+                    return Err(PecosError::Input(format!(
+                        "Measure: bit index {} is invalid for register {name:?} of width {width}; use an index below {width}",
+                        write.bit_index
+                    )));
+                }
+                let bit = self.append_classical(
+                    ClassicalOp::Bitcast,
+                    vec![write.ssa_value],
+                    &value_type,
+                    instructions,
+                )?;
+                let shifted = self.append_classical(
+                    ClassicalOp::Shl(write.bit_index),
+                    vec![bit],
+                    &value_type,
+                    instructions,
+                )?;
+                // Replace the bit, including when a later measurement writes zero.
+                let mask = i64::from_ne_bytes((!(1_u64 << write.bit_index)).to_ne_bytes());
+                let mask = self.append_classical(
+                    ClassicalOp::ConstInt(mask),
+                    vec![],
+                    &value_type,
+                    instructions,
+                )?;
+                let cleared = self.append_classical(
+                    ClassicalOp::And,
+                    vec![current, mask],
+                    &value_type,
+                    instructions,
+                )?;
+                current = self.append_classical(
+                    ClassicalOp::Or,
+                    vec![cleared, shifted],
+                    &value_type,
+                    instructions,
+                )?;
             }
+            self.variable_map.insert(name, current.id);
         }
-
-        Ok(current_value)
+        Ok(())
     }
 
     fn unsupported_operation(kind: &str, name: &str) -> PecosError {
@@ -385,7 +379,7 @@ impl ImprovedConverter {
 
         // Classical operation
         if let Some(cop) = obj.get("cop").and_then(|v| v.as_str()) {
-            return self.convert_classical_operation(obj, cop);
+            return Err(Self::unsupported_operation("cop", cop));
         }
 
         for kind in ["block", "mop", "meta"] {
@@ -469,6 +463,20 @@ impl ImprovedConverter {
                     _ => Type::Unknown,
                 };
 
+                if data == "cvar_define" {
+                    let explicit_size =
+                        raw_size.map(usize::try_from).transpose().map_err(|_| {
+                            PecosError::Input(format!(
+                                "Register '{variable}' has size {raw_size:?}; use at most 64 bits"
+                            ))
+                        })?;
+                    let size = super::ast::infer_size(data_type, explicit_size);
+                    let native_type: super::environment::DataType = data_type.parse()?;
+                    self.environment
+                        .add_classical_variable(variable, native_type.clone(), size)?;
+                    let width = size + usize::from(native_type.is_signed());
+                    self.variable_widths.insert(variable.to_string(), width);
+                }
                 // Store the type for later use
                 self.variable_types
                     .insert(variable.to_string(), result_type.clone());
@@ -506,27 +514,26 @@ impl ImprovedConverter {
         let JsonOperation::QuantumOp { angles, args, .. } = ast else {
             unreachable!("convert_quantum_operation receives a qop object")
         };
-        let arity = if qop == "CPhase" {
-            2
-        } else {
-            super::operations::quantum_gate_type(qop)?.quantum_arity()
-        };
-        super::operations::validate_quantum_args(qop, arity, &args)?;
-        if qop != "CPhase" {
-            let qubit_count = args
-                .iter()
-                .map(|arg| match arg {
-                    QubitArg::SingleQubit(_) => 1,
-                    QubitArg::MultipleQubits(qubits) => qubits.len(),
-                })
-                .sum();
-            super::operations::validate_quantum_signature(
-                qop,
-                super::operations::quantum_gate_type(qop)?,
-                qubit_count,
-                angles.as_ref().map_or(0, Vec::len),
-            )?;
+        let gate = super::operations::quantum_gate_type(qop)?;
+        super::operations::validate_quantum_args(qop, gate.quantum_arity(), &args)?;
+        let mut operands = Vec::new();
+        for arg in args {
+            let qubits = match arg {
+                QubitArg::SingleQubit(qubit) => vec![qubit],
+                QubitArg::MultipleQubits(qubits) => qubits,
+            };
+            for (var, index) in qubits {
+                operands.push(SSAValue::new(self.resolve_qubit(&var, index as u64)?));
+            }
         }
+        super::operations::validate_quantum_signature(
+            qop,
+            gate,
+            operands.len(),
+            angles.as_ref().map_or(0, Vec::len),
+        )?;
+        let qubit_ids: Vec<_> = operands.iter().map(|operand| operand.id as usize).collect();
+        super::operations::validate_quantum_qubits(qop, &qubit_ids)?;
         let angle = |count: usize, index: usize| -> Result<Angle64, PecosError> {
             let values = angles.as_deref().unwrap_or_default();
             if values.len() != count {
@@ -538,78 +545,50 @@ impl ImprovedConverter {
             Angle64::try_from_radians(values[index])
                 .map_err(|error| PecosError::Input(error.to_string()))
         };
-        let quantum_op = if qop == "CPhase" {
-            QuantumOp::CPhase(angle(1, 0)?)
-        } else {
-            let gate = super::operations::quantum_gate_type(qop)?;
-            match gate {
-                GateType::I => QuantumOp::I,
-                GateType::H => QuantumOp::H,
-                GateType::X => QuantumOp::X,
-                GateType::Y => QuantumOp::Y,
-                GateType::Z => QuantumOp::Z,
-                GateType::T => QuantumOp::T,
-                GateType::Tdg => QuantumOp::Tdg,
-                GateType::SX => QuantumOp::SX,
-                GateType::SXdg => QuantumOp::SXdg,
-                GateType::SY => QuantumOp::SY,
-                GateType::SYdg => QuantumOp::SYdg,
-                GateType::F => QuantumOp::F,
-                GateType::Fdg => QuantumOp::Fdg,
-                GateType::CX => QuantumOp::CX,
-                GateType::CY => QuantumOp::CY,
-                GateType::CZ => QuantumOp::CZ,
-                GateType::SWAP => QuantumOp::SWAP,
-                GateType::SXX => QuantumOp::SXX,
-                GateType::SXXdg => QuantumOp::SXXdg,
-                GateType::SYY => QuantumOp::SYY,
-                GateType::SYYdg => QuantumOp::SYYdg,
-                GateType::SZZ => QuantumOp::SZZ,
-                GateType::SZZdg => QuantumOp::SZZdg,
-                GateType::SZ => QuantumOp::S,
-                GateType::SZdg => QuantumOp::Sdg,
-                GateType::MZ => QuantumOp::Measure,
-                GateType::PZ => QuantumOp::Reset,
-                GateType::RX => QuantumOp::RX(angle(1, 0)?),
-                GateType::RY => QuantumOp::RY(angle(1, 0)?),
-                GateType::RZ => QuantumOp::RZ(angle(1, 0)?),
-                GateType::RXX => QuantumOp::RXX(angle(1, 0)?),
-                GateType::RYY => QuantumOp::RYY(angle(1, 0)?),
-                GateType::RZZ => QuantumOp::RZZ(angle(1, 0)?),
-                GateType::RXY1Q => QuantumOp::RXY1Q(angle(2, 0)?, angle(2, 1)?),
-                GateType::RXYXY2Q => QuantumOp::RXYXY2Q(angle(2, 0)?, angle(2, 1)?),
-                GateType::U => QuantumOp::U3(angle(3, 0)?, angle(3, 1)?, angle(3, 2)?),
-                GateType::RXXRYYRZZ => {
-                    QuantumOp::RXXRYYRZZ(angle(3, 0)?, angle(3, 1)?, angle(3, 2)?)
-                }
-                _ => {
-                    return Err(PecosError::Input(format!(
-                        "Quantum operation {qop} has no PHIR module representation; use a representable gate"
-                    )));
-                }
+        let quantum_op = match gate {
+            GateType::I => QuantumOp::I,
+            GateType::H => QuantumOp::H,
+            GateType::X => QuantumOp::X,
+            GateType::Y => QuantumOp::Y,
+            GateType::Z => QuantumOp::Z,
+            GateType::T => QuantumOp::T,
+            GateType::Tdg => QuantumOp::Tdg,
+            GateType::SX => QuantumOp::SX,
+            GateType::SXdg => QuantumOp::SXdg,
+            GateType::SY => QuantumOp::SY,
+            GateType::SYdg => QuantumOp::SYdg,
+            GateType::F => QuantumOp::F,
+            GateType::Fdg => QuantumOp::Fdg,
+            GateType::CX => QuantumOp::CX,
+            GateType::CY => QuantumOp::CY,
+            GateType::CZ => QuantumOp::CZ,
+            GateType::SWAP => QuantumOp::SWAP,
+            GateType::SXX => QuantumOp::SXX,
+            GateType::SXXdg => QuantumOp::SXXdg,
+            GateType::SYY => QuantumOp::SYY,
+            GateType::SYYdg => QuantumOp::SYYdg,
+            GateType::SZZ => QuantumOp::SZZ,
+            GateType::SZZdg => QuantumOp::SZZdg,
+            GateType::SZ => QuantumOp::S,
+            GateType::SZdg => QuantumOp::Sdg,
+            GateType::MZ => QuantumOp::Measure,
+            GateType::PZ => QuantumOp::Reset,
+            GateType::RX => QuantumOp::RX(angle(1, 0)?),
+            GateType::RY => QuantumOp::RY(angle(1, 0)?),
+            GateType::RZ => QuantumOp::RZ(angle(1, 0)?),
+            GateType::RXX => QuantumOp::RXX(angle(1, 0)?),
+            GateType::RYY => QuantumOp::RYY(angle(1, 0)?),
+            GateType::RZZ => QuantumOp::RZZ(angle(1, 0)?),
+            GateType::RXY1Q => QuantumOp::RXY1Q(angle(2, 0)?, angle(2, 1)?),
+            GateType::RXYXY2Q => QuantumOp::RXYXY2Q(angle(2, 0)?, angle(2, 1)?),
+            GateType::U => QuantumOp::U3(angle(3, 0)?, angle(3, 1)?, angle(3, 2)?),
+            GateType::RXXRYYRZZ => QuantumOp::RXXRYYRZZ(angle(3, 0)?, angle(3, 1)?, angle(3, 2)?),
+            _ => {
+                return Err(PecosError::Input(format!(
+                    "Quantum operation {qop} has no PHIR module representation; use a representable gate"
+                )));
             }
         };
-        let arity = quantum_op
-            .operand_count()
-            .expect("converted quantum operations have fixed positive arity");
-        let mut operands = Vec::new();
-        for arg in args {
-            let qubits = match arg {
-                QubitArg::SingleQubit(qubit) => vec![qubit],
-                QubitArg::MultipleQubits(qubits) => qubits,
-            };
-            for (var, index) in qubits {
-                operands.push(SSAValue::new(self.resolve_qubit(&var, index as u64)?));
-            }
-        }
-        if operands.is_empty() || !operands.len().is_multiple_of(arity) {
-            return Err(PecosError::Input(format!(
-                "{qop}: operand count {} is invalid; supply a nonzero multiple of {arity} qubits",
-                operands.len()
-            )));
-        }
-        let qubit_ids: Vec<_> = operands.iter().map(|operand| operand.id as usize).collect();
-        super::operations::validate_quantum_qubits(qop, &qubit_ids)?;
         let mut results = Vec::new();
         let mut result_types = Vec::new();
         if let Some(raw_returns) = obj.get("returns") {
@@ -708,73 +687,82 @@ impl ImprovedConverter {
         Ok(id)
     }
 
-    fn convert_classical_operation(
+    fn convert_result_operation(
         &mut self,
-        obj: &serde_json::Map<String, Value>,
-        cop: &str,
-    ) -> Result<Option<Instruction>, PecosError> {
-        match cop {
-            "Result" => {
-                let classical_op = ClassicalOp::Result;
-
-                let names = |field: &str| -> Result<Vec<&str>, PecosError> {
-                    let value = obj.get(field).ok_or_else(|| {
+        op: &Value,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<Vec<String>, PecosError> {
+        let names = |field: &str| -> Result<Vec<&str>, PecosError> {
+            let value = op.get(field).ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Result: missing {field}; supply an array of variable names"
+                ))
+            })?;
+            let values = value.as_array().ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Result: invalid {field} {value}; supply an array of variable names"
+                ))
+            })?;
+            values
+                .iter()
+                .map(|value| {
+                    value.as_str().ok_or_else(|| {
                         PecosError::Input(format!(
-                            "Result: missing {field}; supply an array of variable names"
+                            "Result: invalid {field} entry {value}; \
+                         supply a variable name as a string"
                         ))
-                    })?;
-                    let values = value.as_array().ok_or_else(|| {
-                        PecosError::Input(format!(
-                            "Result: invalid {field} {value}; supply an array of variable names"
-                        ))
-                    })?;
-                    values
-                        .iter()
-                        .map(|value| {
-                            value.as_str().ok_or_else(|| PecosError::Input(format!(
-                        "Result: invalid {field} entry {value}; supply a variable name as a string"
-                    )))
-                        })
-                        .collect()
-                };
-                let args = names("args")?;
-                let returns = names("returns")?;
-
-                // Resolve sources using mappings updated by bit-combining operations.
-                let mut operands = Vec::new();
-                for name in args {
-                    operands.push(SSAValue::new(self.get_ssa_id(name)?));
-                }
-                let mut results = Vec::new();
-                for name in returns {
-                    results.push(SSAValue::new(self.get_ssa_id(name)?));
-                }
-
-                // Create attributes to store the export names
-                let mut attributes = BTreeMap::new();
-                if let Some(returns) = obj.get("returns").and_then(|v| v.as_array())
-                    && let Some(export_name) = returns.first().and_then(|v| v.as_str())
-                {
-                    attributes.insert(
-                        "export_name".to_string(),
-                        pecos_phir::phir::AttributeValue::String(export_name.to_string()),
-                    );
-                }
-
-                let instruction = Instruction {
-                    operation: Operation::Classical(classical_op),
-                    operands,
-                    results,
-                    result_types: vec![Type::UInt(IntWidth::I32)], // Result operations typically return integers
-                    regions: vec![],
-                    attributes,
-                    location: None,
-                };
-
-                Ok(Some(instruction))
-            }
-            _ => Err(Self::unsupported_operation("cop", cop)),
+                    })
+                })
+                .collect()
+        };
+        let args = names("args")?;
+        let returns = names("returns")?;
+        super::operations::validate_result_counts(args.len(), returns.len())?;
+        // Validate every source before copying, as the native processor does.
+        for name in &args {
+            self.classical_value(name)?;
         }
+        for destination in &returns {
+            if self.variable_types.contains_key(*destination)
+                && !self.variable_widths.contains_key(*destination)
+            {
+                return Err(PecosError::Input(format!(
+                    "Result: destination {destination:?} is quantum; use a classical variable or a new export name"
+                )));
+            }
+        }
+        for (source, destination) in args.into_iter().zip(&returns) {
+            let mut value = self.classical_value(source)?;
+            let source_type = self.variable_types[source].clone();
+            let source_width = self.variable_widths[source];
+            let value_type = self
+                .variable_types
+                .entry((*destination).to_string())
+                .or_insert(source_type)
+                .clone();
+            let width = *self
+                .variable_widths
+                .entry((*destination).to_string())
+                .or_insert(source_width);
+            if width < source_width {
+                let mask = i64::from_ne_bytes(((1_u64 << width) - 1).to_ne_bytes());
+                let mask = self.append_classical(
+                    ClassicalOp::ConstInt(mask),
+                    vec![],
+                    &value_type,
+                    instructions,
+                )?;
+                value = self.append_classical(
+                    ClassicalOp::And,
+                    vec![value, mask],
+                    &value_type,
+                    instructions,
+                )?;
+            }
+            self.variable_map
+                .insert((*destination).to_string(), value.id);
+        }
+        Ok(returns.into_iter().map(str::to_string).collect())
     }
 }
 

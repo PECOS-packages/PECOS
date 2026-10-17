@@ -127,7 +127,6 @@ fn every_converted_gate_has_canonical_broadcast_arity() {
         ("SYYdg", 2, vec![]),
         ("SZZ", 2, vec![]),
         ("SZZdg", 2, vec![]),
-        ("CPhase", 2, vec![0.3]),
         ("RXYXY2Q", 2, vec![0.3, 0.1]),
     ] {
         let args = if arity == 1 {
@@ -188,4 +187,89 @@ fn cvar_export_and_result_have_different_native_selection_semantics() {
         error.contains("data cvar_export") && error.contains("JSON-to-module"),
         "{error}"
     );
+}
+
+#[test]
+fn result_pairs_preserve_values_names_and_order() {
+    for result in [
+        json!({"cop":"Result","args":["a"],"returns":["x"]}),
+        json!({"cop":"Result","args":["a","b"],"returns":["x","y"]}),
+        json!({"cop":"Result","args":["a","b"],"returns":["b","x"]}),
+    ] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","data_type":"qubits","variable":"q","size":4},
+            {"data":"cvar_define","data_type":"u32","variable":"a","size":2},
+            {"data":"cvar_define","data_type":"u32","variable":"b","size":2},
+            {"qop":"X","args":[["q",0]]},
+            {"qop":"Measure","args":[["q",0],["q",1]],"returns":[["a",1],["b",0]]}, result
+        ]})
+        .to_string();
+        let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+        let module = phir_json_to_module(&source).unwrap();
+        let results: Vec<_> = module.body.blocks[0]
+            .operations
+            .iter()
+            .filter(|i| i.operation == Operation::Classical(pecos_phir::ops::ClassicalOp::Result))
+            .collect();
+        assert_eq!(results.len(), result["args"].as_array().unwrap().len());
+        assert!(results.iter().all(|i| i.operands.len() == 1));
+        let converted = run(&mut PhirEngine::new(module).unwrap());
+        for name in result["returns"].as_array().unwrap() {
+            let name = name.as_str().unwrap();
+            assert_eq!(
+                converted.data[name].as_u32(),
+                native.data[name].as_u32(),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn result_snapshots_do_not_move_past_later_measurements() {
+    let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+        {"data":"qvar_define","data_type":"qubits","variable":"q","size":4},
+        {"data":"cvar_define","data_type":"u32","variable":"a","size":2},
+        {"qop":"X","args":[["q",0]]},
+        {"qop":"Measure","args":[["q",0]],"returns":[["a",0]]},
+        {"cop":"Result","args":["a"],"returns":["before"]},
+        {"qop":"X","args":[["q",0]]},
+        {"qop":"Measure","args":[["q",0]],"returns":[["a",0]]},
+        {"cop":"Result","args":["a"],"returns":["after"]}
+    ]})
+    .to_string();
+    let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+    let converted = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+    for (name, expected) in [("before", 1), ("after", 0)] {
+        assert_eq!(native.data[name].as_u32(), Some(expected));
+        assert_eq!(converted.data[name].as_u32(), Some(expected));
+    }
+}
+
+#[test]
+fn result_copies_preserve_widths_and_later_bit_writes() {
+    for (dtype, bit, size) in [("u32", 1, 4), ("u64", 40, 64)] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"qvar_define","data_type":"qubits","variable":"q","size":4},
+            {"data":"cvar_define","data_type":dtype,"variable":"a","size":size},
+            {"data":"cvar_define","data_type":"u32","variable":"small","size":1},
+            {"qop":"X","args":[["q",0]]},
+            {"qop":"Measure","args":[["q",0]],"returns":[["a",bit]]},
+            {"cop":"Result","args":["a","a"],"returns":["saved","small"]},
+            {"qop":"Measure","args":[["q",0]],"returns":[["saved",0]]}
+        ]})
+        .to_string();
+        let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+        let converted = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+        let expected = (1_u64 << bit) | 1;
+        let actual = match converted.data["saved"] {
+            pecos_engines::Data::U32(value) => u64::from(value),
+            pecos_engines::Data::U64(value) => value,
+            ref other => panic!("expected unsigned register, got {other:?}"),
+        };
+        assert_eq!(actual, expected);
+        let native_bits = native.register_to_binary_string("saved").unwrap();
+        assert_eq!(u64::from_str_radix(&native_bits, 2).unwrap(), expected);
+        assert_eq!(converted.data["small"].as_u32(), Some(0));
+    }
 }

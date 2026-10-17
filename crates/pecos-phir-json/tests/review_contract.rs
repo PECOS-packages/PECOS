@@ -228,3 +228,45 @@ fn all_quantum_paths_reject_invalid_signatures_identically() {
         );
     }
 }
+
+#[test]
+fn resolution_errors_precede_signature_errors_on_all_paths() {
+    let source = program(&json!({"qop":"H","args":[["q",9]],"angles":[[0.2],"rad"]}));
+    let error = native_error(&source);
+    assert_eq!(error, interpreter_error(&source));
+    assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
+    assert!(error.contains('9') && error.contains("size 4"), "{error}");
+}
+
+#[test]
+fn cphase_is_not_a_phir_json_gate() {
+    let source =
+        program(&json!({"qop":"CPhase","args":[[["q",0],["q",1]]],"angles":[[0.2],"rad"]}));
+    let error = native_error(&source);
+    assert_eq!(error, interpreter_error(&source));
+    assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
+    assert!(error.contains("CPhase") && error.contains("Unsupported quantum gate"));
+}
+
+#[test]
+fn result_counts_are_validated_before_conversion_or_execution() {
+    for (args, returns) in [
+        (json!(["a"]), json!([])),
+        (json!([]), json!([])),
+        (json!(["a", "a"]), json!(["x"])),
+        (json!(["a"]), json!(["x", "y"])),
+    ] {
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":"cvar_define","data_type":"u32","variable":"a","size":2},
+            {"cop":"Result","args":args,"returns":returns}
+        ]})
+        .to_string();
+        let error = phir_json_to_module(&source).unwrap_err().to_string();
+        assert_eq!(error, native_error(&source));
+        assert_eq!(error, interpreter_error(&source));
+        assert!(
+            error.contains("Result") && error.contains("supply") && error.contains("counts"),
+            "{error}"
+        );
+    }
+}

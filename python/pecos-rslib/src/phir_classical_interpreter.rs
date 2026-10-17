@@ -754,7 +754,7 @@ impl PyPhirExecuteIter {
                     let yielded = interp
                         .make_qop(qop, angles, args, returns, metadata)
                         .map_err(pecos_error_to_pyerr)?;
-                    let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
+                    let is_measure = qop == "Measure";
                     self.buffer.push(YieldedOp::QOp(yielded));
 
                     if is_measure {
@@ -1162,4 +1162,67 @@ pub fn run_phir_sim(
     }
 
     Ok(result_dict.into_any().unbind())
+}
+
+/// Validate a PHIR qop using the native processor, for the Python interpreter.
+#[pyfunction]
+pub fn validate_phir_qop(
+    name: &str,
+    args_json: &str,
+    angles: Option<Vec<f64>>,
+    registers: Vec<(String, usize)>,
+) -> PyResult<()> {
+    let args: Vec<pecos_phir_json::v0_1::ast::QubitArg> = serde_json::from_str(args_json).map_err(|error| {
+        pyo3::exceptions::PyTypeError::new_err(format!(
+            "{name}: invalid arguments {args_json}: {error}; supply PHIR register/index arguments"
+        ))
+    })?;
+    let mut processor = pecos_phir_json::v0_1::operations::OperationProcessor::new();
+    for (name, size) in registers {
+        processor
+            .add_quantum_variable(&name, size)
+            .map_err(pecos_error_to_pyerr)?;
+    }
+    let angles = angles.unwrap_or_default();
+    processor
+        .process_quantum_op(name, Some(&angles), &args)
+        .map(|_| ())
+        .map_err(pecos_error_to_pyerr)
+}
+
+/// Validate Result mapping counts using the shared PHIR rule.
+#[pyfunction]
+pub fn validate_phir_result_counts(args: usize, returns: usize) -> PyResult<()> {
+    pecos_phir_json::v0_1::operations::validate_result_counts(args, returns)
+        .map_err(pecos_error_to_pyerr)
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn shared_phir_validation_maps_bad_values_and_types() {
+        Python::initialize();
+        Python::attach(|py| {
+            let duplicate =
+                validate_phir_qop("H", r#"[["q",0],["q",0]]"#, None, vec![("q".into(), 2)])
+                    .unwrap_err();
+            assert!(duplicate.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(duplicate.to_string().contains("repeats qubit IDs [0]"));
+            let wrong_type = validate_phir_qop("H", "42", None, vec![("q".into(), 2)]).unwrap_err();
+            assert!(wrong_type.is_instance_of::<pyo3::exceptions::PyTypeError>(py));
+            assert!(
+                wrong_type.to_string().contains("42") && wrong_type.to_string().contains("supply")
+            );
+            let result = validate_phir_result_counts(1, 0).unwrap_err();
+            assert!(result.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(
+                result
+                    .to_string()
+                    .contains("Result: invalid counts 1 args and 0 returns")
+            );
+            validate_phir_qop("H", r#"[["q",0],["q",1]]"#, None, vec![("q".into(), 2)]).unwrap();
+        });
+    }
 }

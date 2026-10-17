@@ -134,3 +134,20 @@ def test_compaction_resets_qubits_when_a_new_operation_starts() -> None:
         {"qop": "H", "args": [["q", 0]]},
         {"qop": "X", "args": [["q", 1], ["q", 0]]},
     ]
+
+
+@pytest.mark.parametrize("cinterp", ["rust", "python"])
+def test_zero_target_quantum_operations_are_omitted(cinterp: str) -> None:
+    """Empty circuit operations do nothing on either HybridEngine path."""
+    from pecos.engines.hybrid_engine import HybridEngine
+
+    qc = pc.QuantumCircuit(cvar_spec={"m": 1})
+    qc.append("H", set())
+    qc.append("X", {0})
+    qc.append("measure Z", set())
+    qc.append("measure Z", {0}, var=("m", 0))
+    qc.append("CX", set())
+    source = qc.to_phir_dict()
+    assert all(op["args"] for op in source["ops"] if "qop" in op)
+    result = HybridEngine(cinterp=cinterp, qsim="stabilizer").run(qc, return_int=True)
+    assert result["m"] == [1]

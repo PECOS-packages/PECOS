@@ -22,6 +22,8 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from pecos_rslib import validate_phir_result_counts
+
 from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
 from pecos.reps.pyphir import types as pt
 from pecos.typing import PhirModel
@@ -495,6 +497,7 @@ class PhirClassicalInterpreter:
                 self.assign_int(r, a)
 
         elif op.name == "Result":
+            validate_phir_result_counts(len(op.args), len(op.returns or []))
             # The "Result" instruction maps internal register names to external ones
             # For example: {"cop": "Result", "args": ["m"], "returns": ["c"]}
             # maps the "m" register to "c" for user-facing results

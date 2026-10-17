@@ -242,18 +242,24 @@ including preparations and measurements. Each instruction receives the same
 rotation angles; measurement destinations retain their argument order.
 The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
 Two-qubit argument groups must contain exactly two qubits in the native engine,
-Rust classical interpreter and converter. They share validation of group shapes,
+Rust and Python classical interpreters and converter. They share validation of group shapes,
 qubit uniqueness and gate signatures. RXYXY2Q requires paired arguments; its gate
 validation runs during execution/conversion, after structural AST decoding.
 
-JSON-to-module conversion currently supports register declarations, quantum
-operations and Result exports with string variable names. `cvar_export` remains
-unsupported: the native engine currently ignores it and exports all classical
-registers unless Result mappings select them. Lowering it to module Result
-instructions would select different registers. It rejects blocks such as
-`qparallel` and `if`,
-machine/meta operations, unsupported data/classical operations and unrecognized
-operations with a named error. Use the native PHIR-JSON engine for supported PHIR
+JSON-to-module conversion supports register declarations, quantum operations
+and Result exports with string variable names. Result args and returns must have
+matching nonzero lengths. Each pair becomes a named Result instruction; copies
+retain their source-order values even when subsequent measurements overwrite a
+register. Without Result mappings, all declared classical registers are exported.
+CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
+
+Known limitation ([#1323](https://github.com/PECOS-packages/PECOS/issues/1323)):
+`cvar_export` remains unsupported. The native engine currently ignores it and
+exports all classical registers unless Result mappings select them. Lowering it
+to module Result instructions would select different registers.
+
+The converter rejects blocks such as `qparallel` and `if`, machine/meta operations,
+unsupported data/classical operations and unrecognized operations with a named error. Use the native PHIR-JSON engine for supported PHIR
 programs containing these constructs. Although the module IR has structural
 parallel and conditional forms, its current execution path does not execute
 those regions; the converter does not emit programs that would lose their work.

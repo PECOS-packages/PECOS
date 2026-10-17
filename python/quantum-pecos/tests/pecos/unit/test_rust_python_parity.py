@@ -1386,6 +1386,9 @@ def test_shift_rule_fuzzer_coverage() -> None:
 @pytest.mark.parametrize(
     ("op", "message"),
     [
+        ({"qop": "H", "args": []}, "has 0 arguments"),
+        ({"qop": "H", "args": [["q", 9]], "angles": [[0.2], "rad"]}, "Index 9 out of bounds"),
+        ({"qop": "CPhase", "args": [[["q", 0], ["q", 1]]], "angles": [[0.2], "rad"]}, "Unsupported quantum gate"),
         ({"qop": "H", "args": [["q", 0], ["q", 0]]}, "repeats qubit IDs"),
         ({"qop": "CX", "args": [[["q", 0], ["q", 1], ["q", 2]]]}, "supply groups of 2 qubits"),
         (
@@ -1396,7 +1399,7 @@ def test_shift_rule_fuzzer_coverage() -> None:
         ({"qop": "UnknownGate", "args": [["q", 0]]}, "Unsupported quantum gate"),
     ],
 )
-def test_rust_interpreter_rejects_invalid_quantum_arguments(op: dict, message: str) -> None:
+def test_interpreters_reject_invalid_quantum_arguments_identically(op: dict, message: str) -> None:
     """HybridEngine's default interpreter validates qops before yielding them."""
     source = json.dumps(
         {
@@ -1405,9 +1408,27 @@ def test_rust_interpreter_rejects_invalid_quantum_arguments(op: dict, message: s
             "ops": [{"data": "qvar_define", "variable": "q", "size": 3}, op],
         },
     )
-    interpreter = RustPhirClassicalInterpreter()
-    # Runtime invariants must hold even when optional schema checking is disabled.
-    interpreter.phir_validate = False
-    interpreter.init(source)
-    with pytest.raises(ValueError, match=message):
-        list(interpreter.execute(None))
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        # Runtime invariants must hold even when optional schema checking is disabled.
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match=message) as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]
+
+
+@pytest.mark.parametrize(("args", "returns"), [(["a"], []), ([], []), (["a", "a"], ["x"])])
+def test_interpreters_reject_invalid_result_counts_identically(args, returns) -> None:
+    """Neither interpreter silently truncates a Result mapping."""
+    source = _make_classical_program(
+        [("a", "u32", 2)],
+        [{"cop": "Result", "args": args, "returns": returns}],
+    )
+    messages = []
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = False
+        with pytest.raises(ValueError, match="Result: invalid counts") as error:
+            HybridEngine(cinterp=interpreter, qsim="stabilizer").run(source)
+        messages.append(str(error.value))
+    assert messages[0] == messages[1]

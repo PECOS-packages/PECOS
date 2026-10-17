@@ -341,7 +341,7 @@ impl PhirJsonEngine {
                         return Ok(Some(self.message_builder.build()));
                     }
                     // Pass the op itself so an ffcall can find its function name.
-                    let ended = self.processor.handle_classical_op(
+                    self.processor.handle_classical_op(
                         cop,
                         args,
                         returns,
@@ -349,9 +349,6 @@ impl PhirJsonEngine {
                         0,
                     )?;
                     self.advance_cursor();
-                    if ended {
-                        return Ok(Some(self.message_builder.build()));
-                    }
                 }
                 Operation::Block {
                     block,

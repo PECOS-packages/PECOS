@@ -51,8 +51,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   one qop and incorrect angle counts, including angles on gates that take none
   (for example, H with angles). Put sequential uses of a qubit in separate qops
   and supply only the angles specified for that gate. Two-qubit argument groups
-  must be pairs. These checks also apply to HybridEngine's default Rust classical
-  interpreter and raise `ValueError` for invalid gate names, counts or targets.
+  must be pairs. HybridEngine's default Rust interpreter and `cinterp="python"`
+  reject empty qop args and repeated qubits, even with `phir_validate=False`.
+  Both use native validation and raise the same `ValueError` messages for invalid
+  gate names, grouping, counts or targets. Omit zero-target qops.
+- Result operations require equally sized, nonempty args and returns arrays;
+  mismatched or empty mappings raise `ValueError` instead of silently truncating.
 - Seeded noisy samples change for QuantumCircuits with consecutive same-type
   gates on overlapping qubits: qc2phir now keeps them in separate operations.
   Previously, noise was applied after the whole merged operation.
@@ -189,6 +193,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   longer crashes with `KeyError('args')` when an export precedes a quantum
   operation, or `KeyError('returns')` when an unnamed measurement precedes a named
   one. Tracking accumulated qubits makes compaction linear in the number of targets.
+  Zero-target quantum gates are omitted so both HybridEngine interpreter paths
+  accept the exported circuit.
 
 - The legacy PHIR-JSON bridge now uses the native command generator, preserving
   all targets and pairs in broadcast gates and all measurement destinations.
@@ -224,6 +230,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   if), machine/meta operations, data directives and classical operations instead
   of silently dropping them. Use the native PHIR-JSON engine for supported PHIR
   programs that need these operations.
+  Known limitation ([#1323](https://github.com/PECOS-packages/PECOS/issues/1323)):
+  `cvar_export` remains unsupported by this converter. The native engine currently
+  ignores it; lowering it to Result would change which registers are returned.
+- JSON-to-module conversion rejects CPhase, matching the other PHIR paths;
+  lower it to supported gates before emitting PHIR JSON. Lower-level PHIR IR
+  CPhase support is unchanged.
+- All PHIR execution paths reject empty or mismatched Result argument/return
+  arrays. Supply one destination for each source, with at least one pair.
 
 - `phir_to_mlir` returns errors for unsupported operations and terminators instead
   of emitting TODO comments or silently omitting operations. Supported operations
@@ -369,6 +383,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
+- JSON-to-module conversion splits multi-entry Results into individual named
+  exports, preserving copy order, register widths and values captured before
+  later measurements. Repeated bit writes replace earlier bits, including zero.
+  Native Result processing continues to subsequent operations instead of emitting
+  an empty batch that could signal premature completion.
+- Quantum register resolution precedes signature checks on all PHIR paths, so
+  inputs with both an invalid index and invalid angle count report the same error.
+
 - Native PHIR-JSON, the Rust classical interpreter, and JSON-to-module conversion
   share validation and actionable errors for malformed two-qubit argument groups
   (including RXYXY2Q) and repeated qubit IDs. RXYXY2Q gate validation now runs at
@@ -377,9 +399,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   entries instead of silently dropping them, and requires args/returns arrays.
   Unsupported block, machine and meta
   operation names are printed without JSON quotes.
-- `cvar_export` remains unsupported by JSON-to-module conversion: the native
-  engine currently ignores it, whereas module Result instructions select named
-  exports. Lowering one to the other would change the returned registers.
 
 - The native PHIR-JSON engine and JSON-to-module converter now support every
   quantum gate and alias in PHIR v0.1, including CZ, RZZ/ZZPhase, CY, SWAP,

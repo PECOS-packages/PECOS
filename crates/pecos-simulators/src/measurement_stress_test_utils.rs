@@ -114,7 +114,7 @@ pub fn verify_measure_gate_measure_3qubit<S: ArbitraryRotationGateable>(sim: &mu
 /// content. Tests the X/Y/Z gate destab sign tracking.
 pub fn verify_rx_pi_after_nonclifford<S: ArbitraryRotationGateable>(sim: &mut S) {
     let t = Angle64::QUARTER_TURN / 2u64;
-    let pi = Angle64::from_radians(std::f64::consts::PI);
+    let pi = Angle64::HALF_TURN;
 
     // H, T, RX(pi) on single qubit
     sim.reset();
@@ -229,7 +229,7 @@ pub fn verify_rx_measurement_probabilities<S: ArbitraryRotationGateable>(
     sim: &mut S,
     num_trials: usize,
 ) {
-    let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_3);
+    let theta = pecos_core::radians!(std::f64::consts::FRAC_PI_3);
     let expected_p0 = 0.75;
     let mut count_0 = 0u32;
 

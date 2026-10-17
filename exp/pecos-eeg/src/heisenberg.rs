@@ -2816,22 +2816,22 @@ mod tests {
         let q1 = [QubitId(1)];
         let pair = [(QubitId(0), QubitId(1))];
         state.h(&q0);
-        state.ry(Angle64::from_radians(2.0 * 0.23), &q0);
+        state.ry(pecos_core::radians!(2.0 * 0.23), &q0);
         state.cx(&pair);
-        state.rx(Angle64::from_radians(2.0 * -0.31), &q1);
+        state.rx(pecos_core::radians!(2.0 * -0.31), &q1);
         state.h(&q1);
-        state.rz(Angle64::from_radians(2.0 * 0.41), &q0);
+        state.rz(pecos_core::radians!(2.0 * 0.41), &q0);
         state.cx(&[(QubitId(1), QubitId(0))]);
         // RX(pi/2) maps Y to Z; undo it after the ZZ rotation.
-        state.rx(Angle64::from_radians(std::f64::consts::FRAC_PI_2), &q0);
-        state.rzz(Angle64::from_radians(2.0 * -0.19), &pair);
-        state.rx(Angle64::from_radians(-std::f64::consts::FRAC_PI_2), &q0);
+        state.rx(Angle64::QUARTER_TURN, &q0);
+        state.rzz(pecos_core::radians!(2.0 * -0.19), &pair);
+        state.rx(Angle64::THREE_QUARTERS_TURN, &q0);
         state.h(&q0);
-        state.rxx(Angle64::from_radians(2.0 * 0.27), &pair);
+        state.rxx(pecos_core::radians!(2.0 * 0.27), &pair);
         state.cx(&pair);
-        state.rz(Angle64::from_radians(2.0 * -0.37), &q1);
+        state.rz(pecos_core::radians!(2.0 * -0.37), &q1);
         state.h(&q1);
-        state.ryy(Angle64::from_radians(2.0 * 0.17), &pair);
+        state.ryy(pecos_core::radians!(2.0 * 0.17), &pair);
 
         for (detector, expected) in [
             (vec![0], state.probability(1) + state.probability(3)),

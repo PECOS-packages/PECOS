@@ -215,6 +215,8 @@ impl NamedGate {
 /// Invalid phase operands or an unsupported direct hardware lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhaseGateError {
+    /// Original IEEE bits of a non-finite radians input (preserves Eq).
+    NonFiniteAngle { bits: u64 },
     /// A gate list has no carrier for a nontrivial global phase.
     UnrepresentableGlobalPhase { phase: Angle64 },
     /// Direct hardware lowering supports at most two phase operands, except CCZ.
@@ -228,6 +230,11 @@ pub enum PhaseGateError {
 impl std::fmt::Display for PhaseGateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NonFiniteAngle { bits } => crate::NonFiniteAngleError {
+                value: f64::from_bits(*bits),
+                unit: "radians",
+            }
+            .fmt(f),
             Self::UnrepresentableGlobalPhase { phase } => write!(
                 f,
                 "Cannot decompose global phase {:?}: a Gate list has no global-phase carrier; retain the UnitaryRep to preserve the operator",
@@ -252,6 +259,14 @@ impl std::fmt::Display for PhaseGateError {
 }
 
 impl std::error::Error for PhaseGateError {}
+
+impl From<crate::NonFiniteAngleError> for PhaseGateError {
+    fn from(error: crate::NonFiniteAngleError) -> Self {
+        Self::NonFiniteAngle {
+            bits: error.value.to_bits(),
+        }
+    }
+}
 
 pub(crate) fn validate_phase_qubits(qubits: &[usize]) -> Result<(), PhaseGateError> {
     if let Some(&qubit) = duplicate_qubits(qubits.iter().copied()).first() {
@@ -1208,7 +1223,9 @@ impl FromStr for UnitaryRep {
             // This handles: "X0 Z1", "XYZZ", "-i X2 Z4", "X 0", "Z 3", etc.
             _ => PauliString::from_str(s)
                 .map(UnitaryRep::Pauli)
-                .map_err(|e| ParseUnitaryRepError { message: e.message }),
+                .map_err(|e| ParseUnitaryRepError {
+                    message: e.to_string(),
+                }),
         }
     }
 }
@@ -1372,10 +1389,9 @@ impl UnitaryRep {
             // Pauli adjoint: Paulis are Hermitian, but phase conjugates
             Self::Pauli(ps) => {
                 let conj_phase = ps.phase().conjugate();
-                Self::Pauli(PauliString::with_phase_and_paulis(
-                    conj_phase,
-                    ps.iter_pairs().collect(),
-                ))
+                let mut adjoint = ps.clone();
+                adjoint.set_phase(conj_phase);
+                Self::Pauli(adjoint)
             }
             // Gate adjoint: negate angle for rotations, wrap for non-self-adjoint named gates
             Self::Gate(
@@ -1496,10 +1512,9 @@ impl UnitaryRep {
         if let Self::Pauli(ps) = self {
             if let Some(quarter_phase) = angle_to_quarter_phase(phase) {
                 let new_phase = ps.phase().multiply(&quarter_phase);
-                return Self::Pauli(PauliString::with_phase_and_paulis(
-                    new_phase,
-                    ps.iter_pairs().collect(),
-                ));
+                let mut result = ps;
+                result.set_phase(new_phase);
+                return Self::Pauli(result);
             }
             return Self::Compose(vec![
                 Self::phase_gate(phase, smallvec::smallvec![]),
@@ -1749,7 +1764,8 @@ impl UnitaryRep {
     /// - Named Pauli gates (`X`, `Y`, `Z`) → corresponding single-qubit `PauliString`
     /// - Half-turn Pauli rotations → corresponding `PauliString` with phase `-i`
     ///
-    /// Returns `None` if the operator cannot be represented as a `PauliString`.
+    /// Returns `None` if the operator cannot be represented as a `PauliString`,
+    /// including half-turn rotations with repeated operands.
     ///
     /// # Example
     ///
@@ -1810,10 +1826,11 @@ impl UnitaryRep {
                     RotationType::RY | RotationType::RYY => Pauli::Y,
                     RotationType::RZ | RotationType::RZZ => Pauli::Z,
                 };
-                Some(PauliString::with_phase_and_paulis(
+                PauliString::with_phase_and_paulis(
                     QuarterPhase::MinusI,
                     qubits.into_iter().map(|q| (pauli, QubitId(q))).collect(),
-                ))
+                )
+                .ok()
             }
 
             Self::Adjoint(inner) => {
@@ -1829,7 +1846,7 @@ impl UnitaryRep {
                 match (num_qubits, gamma) {
                     (0, angle) => {
                         let phase = angle_to_quarter_phase(angle)?;
-                        Some(PauliString::with_phase_and_paulis(phase, Vec::new()))
+                        Some(PauliString::from_paulis_with_phase(phase, &[]))
                     }
                     (1 | 2, Angle64::ZERO) => Some(PauliString::identity()),
                     (1, Angle64::HALF_TURN) => Some(PauliString::z(qubits[0])),
@@ -3011,8 +3028,12 @@ fn extend_clifford(
 
     // Copy the generator images from the original
     for q in 0..cliff.num_qubits() {
-        result.set_x_image(q, cliff.x_image(q).clone());
-        result.set_z_image(q, cliff.z_image(q).clone());
+        result
+            .set_x_image(q, cliff.x_image(q).clone())
+            .expect("generator index and image lie within the allocated tableau width");
+        result
+            .set_z_image(q, cliff.z_image(q).clone())
+            .expect("generator index and image lie within the allocated tableau width");
     }
     // Additional qubits remain as identity (already set by CliffordRep::identity)
 
@@ -4459,6 +4480,20 @@ mod tests {
     use crate::{GlobalPhase, Pauli};
 
     #[test]
+    fn repeated_rotation_operands_are_not_a_pauli_string() {
+        let invalid = UnitaryRep::Gate(
+            Unitary::Rotation {
+                rotation_type: RotationType::RXX,
+                angle: Angle64::HALF_TURN,
+            },
+            smallvec::smallvec![0, 0],
+        );
+        assert_eq!(invalid.clone().try_to_pauli_string(), None);
+        assert_eq!(invalid.clone().try_to_pauli(), None);
+        assert!(!UnitaryRep::Compose(vec![invalid]).is_pauli_equivalent());
+    }
+
+    #[test]
     fn phase_identity_and_z_agree_in_both_pauli_views() {
         for (gamma, pauli, gate_type, expected) in [
             (Angle64::ZERO, Pauli::I, GateType::I, I(7)),
@@ -4485,7 +4520,7 @@ mod tests {
 
     #[test]
     fn phase_construction_accepts_arbitrary_arity_and_rejects_duplicates() {
-        let gamma = Angle64::from_radians(0.37);
+        let gamma = crate::radians!(0.37);
         for num_qubits in [0, 1, 2, 3, 4, 200, 256, usize::MAX] {
             let mut unitary = Unitary::Phase { gamma, num_qubits };
             assert_eq!(unitary.num_qubits(), num_qubits);
@@ -4613,7 +4648,7 @@ mod tests {
 
     #[test]
     fn phase_control_extends_arity_and_reports_caller_errors() {
-        let gamma = Angle64::from_radians(0.37);
+        let gamma = crate::radians!(0.37);
 
         assert_eq!(
             UnitaryRep::phase_gate(gamma, smallvec::smallvec![1usize]).control(1),
@@ -5126,7 +5161,7 @@ mod tests {
     #[test]
     fn phase_accumulates_through_nested_composition_and_adjoint() {
         let scalar = |angle| UnitaryRep::phase_gate(angle, smallvec::smallvec![]);
-        let angle = Angle64::from_radians(0.37);
+        let angle = crate::radians!(0.37);
         let inner = UnitaryRep::Compose(vec![scalar(angle), -X(0)]);
         let nested = UnitaryRep::Compose(vec![scalar(Angle64::QUARTER_TURN), inner]);
         let expected = GlobalPhase::from(angle + Angle64::THREE_QUARTERS_TURN);
@@ -5160,7 +5195,7 @@ mod tests {
             Some(i * UnitaryRep::Pauli(PauliString::identity()))
         );
         assert!(
-            X(0).with_phase(Angle64::from_radians(0.37))
+            X(0).with_phase(crate::radians!(0.37))
                 .try_to_pauli_string()
                 .is_none()
         );
@@ -5170,11 +5205,7 @@ mod tests {
     #[test]
     fn composed_scalar_phases_preserve_qubit_collection_and_diagram_columns() {
         for inner in [H(0), CX(0, 2) * H(0), H(0) & Z(2)] {
-            for angle in [
-                Angle64::ZERO,
-                Angle64::HALF_TURN,
-                Angle64::from_radians(0.37),
-            ] {
+            for angle in [Angle64::ZERO, Angle64::HALF_TURN, crate::radians!(0.37)] {
                 let phased = UnitaryRep::Compose(vec![
                     UnitaryRep::phase_gate(angle, smallvec::smallvec![]),
                     inner.clone(),
@@ -5197,7 +5228,7 @@ mod tests {
     #[test]
     fn phased_expression_equality_remains_structural() {
         let scalar = |angle| UnitaryRep::phase_gate(angle, smallvec::smallvec![]);
-        let angle = Angle64::from_radians(0.37);
+        let angle = crate::radians!(0.37);
         assert_eq!(
             H(0).with_phase(angle),
             UnitaryRep::Compose(vec![scalar(angle), H(0)])
@@ -6210,7 +6241,7 @@ mod tests {
         for gamma in [
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
-            Angle64::from_radians(0.37),
+            crate::radians!(0.37),
             Angle64::new(1),
             Angle64::new(u64::MAX),
         ] {

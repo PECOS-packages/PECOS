@@ -182,8 +182,8 @@ let runner = CircuitRunner::<SparseStab>::with_definitions(definitions)
 use pecos_neo::prelude::*;
 
 let noise = ComposableNoiseModel::new()
-    .add_channel(SingleQubitChannel::depolarizing(0.001))
-    .add_channel(TwoQubitChannel::depolarizing(0.01));
+    .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+    .add_channel(TwoQubitChannel::depolarizing(0.01)?);
 
 let mut state = SparseStab::new(2);
 let mut runner = CircuitRunner::<SparseStab>::with_definitions(definitions)

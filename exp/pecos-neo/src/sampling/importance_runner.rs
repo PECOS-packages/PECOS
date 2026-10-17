@@ -32,6 +32,7 @@
 //! ## Example
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::sampling::ImportanceSamplingRunner;
 //! use pecos_neo::sampling::weight::WeightedStatistics;
 //! use pecos_neo::prelude::*;
@@ -41,8 +42,8 @@
 //!
 //! // True error rate: 0.001, boost by 10x for proposal
 //! let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-//!     .with_single_qubit_boost(0.001, 10.0)
-//!     .with_two_qubit_boost(0.01, 5.0)
+//!     .with_single_qubit_boost(0.001, 10.0)?
+//!     .with_two_qubit_boost(0.01, 5.0)?
 //!     .with_seed(42);
 //!
 //! let mut stats = WeightedStatistics::new();
@@ -54,9 +55,12 @@
 //! }
 //!
 //! println!("Estimated logical error rate: {}", stats.mean());
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType};
+use crate::noise::validation::{ValidationError, ValidationResult, validate_probability};
 use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::importance::ImportanceConfig;
@@ -83,39 +87,53 @@ use rand_core::SeedableRng;
 /// use pecos_neo::sampling::OutcomeBiasConfig;
 ///
 /// // Bias toward outcome 1 with 80% probability (for exploring rare branches)
-/// let config = OutcomeBiasConfig::bias_toward_one(0.8);
+/// let config = OutcomeBiasConfig::bias_toward_one(0.8).unwrap();
 ///
 /// // Or bias toward outcome 0 with 90% probability
-/// let config = OutcomeBiasConfig::bias_toward_zero(0.9);
+/// let config = OutcomeBiasConfig::bias_toward_zero(0.9).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct OutcomeBiasConfig {
     /// Probability of choosing outcome 1 in the proposal distribution.
     /// 0.5 = no bias (true distribution), 1.0 = always 1, 0.0 = always 0.
-    pub p_one_proposal: f64,
+    p_one_proposal: f64,
 }
 
 impl OutcomeBiasConfig {
+    /// Return the configured `p_one_proposal`.
+    #[must_use]
+    pub fn p_one_proposal(&self) -> f64 {
+        self.p_one_proposal
+    }
+
     /// Create a config that biases toward outcome 1.
     ///
     /// # Arguments
     /// * `p` - Probability of choosing outcome 1 in proposal (0.5 = no bias)
-    #[must_use]
-    pub fn bias_toward_one(p: f64) -> Self {
-        Self {
-            p_one_proposal: p.clamp(0.01, 0.99), // Avoid 0/1 to prevent infinite weights
+    ///
+    /// # Errors
+    /// Returns an error unless both proposal outcome probabilities are strictly between 0 and 1.
+    pub fn bias_toward_one(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        if p <= 0.0 || p >= 1.0 {
+            return Err(ValidationError::new(
+                "p",
+                "proposal probability must be strictly between 0 and 1",
+            ));
         }
+        Ok(Self { p_one_proposal: p })
     }
 
     /// Create a config that biases toward outcome 0.
     ///
     /// # Arguments
     /// * `p` - Probability of choosing outcome 0 in proposal (0.5 = no bias)
-    #[must_use]
-    pub fn bias_toward_zero(p: f64) -> Self {
-        Self {
-            p_one_proposal: (1.0 - p).clamp(0.01, 0.99),
-        }
+    ///
+    /// # Errors
+    /// Returns an error unless both proposal outcome probabilities are strictly between 0 and 1.
+    pub fn bias_toward_zero(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Self::bias_toward_one(1.0 - p)
     }
 
     /// Sample an outcome from the proposal distribution.
@@ -181,7 +199,7 @@ pub struct ImportanceSampledShot {
 /// use pecos_simulators::SparseStab;
 ///
 /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
 ///     .with_seed(42);
 /// ```
 ///
@@ -286,24 +304,42 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// # Arguments
     /// * `p_true` - True error probability
     /// * `boost_factor` - How much to multiply the error rate for the proposal
-    #[must_use]
-    pub fn with_single_qubit_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.single_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_single_qubit_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.single_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure importance sampling for two-qubit gates.
-    #[must_use]
-    pub fn with_two_qubit_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.two_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_two_qubit_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.two_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure importance sampling for measurement errors.
-    #[must_use]
-    pub fn with_measurement_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.measurement_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_measurement_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.measurement_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure biasing of measurement outcomes for branch exploration.
@@ -320,7 +356,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// // Bias toward measuring 1 (80% of the time for non-deterministic measurements)
     /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
     ///     .with_seed(42);
     /// ```
     ///
@@ -921,7 +957,7 @@ where
     ///
     /// let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     /// let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
     ///     .with_seed(42);
     ///
     /// // This will bias non-deterministic measurements toward outcome 1
@@ -1180,7 +1216,7 @@ mod tests {
                 GateCommand::with_angles(
                     gate_type,
                     qubits,
-                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                    vec![pecos_core::radians!(0.3); angle_arity],
                 ),
             ),
         ]
@@ -1242,6 +1278,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_single_qubit_boost(0.001, 10.0)
+            .unwrap()
             .with_seed(42);
 
         let result = runner.run_shot(&commands);
@@ -1292,8 +1329,10 @@ mod tests {
     fn coherent_idle_is_rejected_by_importance_runner_during_configuration() {
         let noise = crate::noise::GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.25)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_noise(noise);
@@ -1390,6 +1429,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 12345))
             .with_single_qubit_boost(true_rate, boost)
+            .unwrap()
             .with_seed(12345);
 
         let mut stats = WeightedStatistics::new();
@@ -1423,6 +1463,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42))
             .with_two_qubit_boost(0.01, 5.0)
+            .unwrap()
             .with_seed(42);
 
         let result = runner.run_shot(&commands);
@@ -1435,6 +1476,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_measurement_boost(0.001, 100.0)
+            .unwrap()
             .with_seed(42);
 
         // Run many shots to see measurement flips
@@ -1461,23 +1503,27 @@ mod tests {
 
     #[test]
     fn test_outcome_bias_config() {
-        let config = OutcomeBiasConfig::bias_toward_one(0.8);
+        let config = OutcomeBiasConfig::bias_toward_one(0.8).unwrap();
         assert!((config.p_one_proposal - 0.8).abs() < 1e-10);
 
-        let config = OutcomeBiasConfig::bias_toward_zero(0.9);
+        let config = OutcomeBiasConfig::bias_toward_zero(0.9).unwrap();
         assert!((config.p_one_proposal - 0.1).abs() < 1e-10);
 
-        // Test clamping
-        let config = OutcomeBiasConfig::bias_toward_one(1.0);
-        assert!(config.p_one_proposal < 1.0, "Should be clamped below 1.0");
-
-        let config = OutcomeBiasConfig::bias_toward_one(0.0);
-        assert!(config.p_one_proposal > 0.0, "Should be clamped above 0.0");
+        for p in [f64::NAN, -0.1, 1.1, 0.0, 1.0] {
+            assert_eq!(
+                OutcomeBiasConfig::bias_toward_one(p).err().unwrap().field,
+                "p"
+            );
+            assert_eq!(
+                OutcomeBiasConfig::bias_toward_zero(p).err().unwrap().field,
+                "p"
+            );
+        }
     }
 
     #[test]
     fn test_outcome_bias_sample() {
-        let config = OutcomeBiasConfig::bias_toward_one(0.9);
+        let config = OutcomeBiasConfig::bias_toward_one(0.9).unwrap();
         let mut rng = PecosRng::seed_from_u64(42);
 
         let mut ones = 0;
@@ -1531,7 +1577,7 @@ mod tests {
 
         for seed in 0..num_shots {
             let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
-                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
                 .with_seed(seed);
 
             let result = runner.run_shot_biased(&commands);
@@ -1575,7 +1621,7 @@ mod tests {
         let mut ones = 0;
         for seed in 0..num_shots {
             let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
-                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9))
+                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9).unwrap())
                 .with_seed(seed);
 
             let result = runner.run_shot_biased(&commands);
@@ -1603,7 +1649,7 @@ mod tests {
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
-            .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99))
+            .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99).unwrap())
             .with_seed(42);
 
         // Should always get 0 regardless of bias (deterministic measurement)

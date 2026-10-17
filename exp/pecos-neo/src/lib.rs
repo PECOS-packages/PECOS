@@ -36,9 +36,10 @@
 //!
 //! let noise = ComposableNoiseModel::new()
 //!     .add_plugin(&CorePlugin)
-//!     .add_channel(SingleQubitChannel::depolarizing(0.001))
-//!     .add_channel(TwoQubitChannel::depolarizing(0.01))
-//!     .add_channel(MeasurementChannel::asymmetric(0.02, 0.03));
+//!     .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+//!     .add_channel(TwoQubitChannel::depolarizing(0.01)?)
+//!     .add_channel(MeasurementChannel::asymmetric(0.02, 0.03)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ### 2. Convenience Builders (Familiar API)
@@ -50,7 +51,8 @@
 //!     .with_p1(0.001)
 //!     .with_p2(0.01)
 //!     .with_p_meas(0.02, 0.03)
-//!     .build();
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ### 3. Mixed Approach (Best of Both)
@@ -62,9 +64,10 @@
 //! let noise = GeneralNoiseModelBuilder::new()
 //!     .with_p1(0.001)
 //!     .with_p2(0.01)
-//!     .build()
+//!     .build()?
 //!     .add_channel(CrosstalkChannel::new()
-//!         .with_global_rate(0.001));
+//!         .with_global_rate(0.001)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Running Simulations
@@ -110,15 +113,16 @@
 //!
 //! // Add depolarizing noise
 //! let noise = ComposableNoiseModel::new()
-//!     .add_channel(SingleQubitChannel::depolarizing(0.01))
-//!     .add_channel(MeasurementChannel::symmetric(0.005));
+//!     .add_channel(SingleQubitChannel::depolarizing(0.01)?)
+//!     .add_channel(MeasurementChannel::symmetric(0.005)?);
 //!
 //! let mut state = SparseStab::new(1);
 //! let mut runner = CircuitRunner::<SparseStab>::new()
 //!     .with_noise(noise)
 //!     .with_seed(42);
 //!
-//! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
+//! let outcomes = runner.apply_circuit(&mut state, &commands)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## With Rotation Gates (Universal Simulation)
@@ -329,7 +333,7 @@ pub mod prelude {
     pub use crate::runner::{CircuitRunner, EventHandlers, ExecutionError, GateOverrides};
 
     // Re-export commonly used types from dependencies
-    pub use pecos_core::{Angle64, QubitId};
+    pub use pecos_core::{Angle64, NonFiniteAngleError, QubitId};
 }
 
 #[cfg(test)]
@@ -362,8 +366,8 @@ mod tests {
             .build();
 
         let noise = ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(0.0))
-            .add_channel(TwoQubitChannel::depolarizing(0.0));
+            .add_channel(SingleQubitChannel::depolarizing(0.0).unwrap())
+            .add_channel(TwoQubitChannel::depolarizing(0.0).unwrap());
 
         let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -391,8 +395,8 @@ mod tests {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
             .add_plugin(&LeakagePlugin::new())
-            .add_plugin(&DepolarizingPlugin::new(0.0, 0.0))
-            .add_plugin(&MeasurementNoisePlugin::symmetric(0.0));
+            .add_plugin(&DepolarizingPlugin::new(0.0, 0.0).unwrap())
+            .add_plugin(&MeasurementNoisePlugin::symmetric(0.0).unwrap());
 
         let mut state = SparseStab::with_seed(2, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()

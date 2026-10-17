@@ -223,3 +223,20 @@ impl Engine for Box<dyn ClassicalControlEngine> {
         ClassicalEngine::reset(&mut **self)
     }
 }
+
+/// Resolve a fixed simulator capacity, distinguishing unknown dynamic zero from static zero.
+///
+/// `remedy` names the caller's own way to supply an explicit count.
+pub(crate) fn resolve_qubit_count(
+    engine: &dyn ClassicalControlEngine,
+    explicit: Option<usize>,
+    remedy: &str,
+) -> Result<usize, PecosError> {
+    let count = explicit.unwrap_or_else(|| engine.num_qubits());
+    if explicit.is_none() && count == 0 && engine.has_dynamic_qubit_count() {
+        return Err(PecosError::Input(format!(
+            "A dynamic classical engine reports 0 qubits before execution, which is not a known capacity; {remedy} to cover runtime allocations"
+        )));
+    }
+    Ok(count)
+}

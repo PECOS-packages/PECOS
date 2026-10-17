@@ -44,6 +44,8 @@
 //! let w = weight.weight();
 //! ```
 
+use crate::noise::validation::{ValidationError, ValidationResult};
+
 /// Sample weight for importance sampling.
 ///
 /// Stores the log of the importance weight to handle extreme values.
@@ -76,14 +78,17 @@ impl SampleWeight {
 
     /// Create a weight from a linear value.
     ///
-    /// # Panics
-    /// Panics if weight is not positive.
-    #[must_use]
-    pub fn from_linear(weight: f64) -> Self {
-        assert!(weight > 0.0, "Weight must be positive");
-        Self {
-            log_weight: weight.ln(),
+    /// # Errors
+    /// Rejects non-positive or non-finite weights, naming the value and remedy.
+    pub fn from_linear(weight: f64) -> ValidationResult<Self> {
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(ValidationError::new("weight", "linear weight must be finite and positive")
+                .with_value(&weight)
+                .with_suggestion("Use a finite weight greater than zero; use from_log for weights outside the linear floating-point range"));
         }
+        Ok(Self {
+            log_weight: weight.ln(),
+        })
     }
 
     /// Get the log of the weight.
@@ -153,6 +158,65 @@ impl SampleWeight {
     /// Reset to weight = 1.
     pub fn reset(&mut self) {
         self.log_weight = 0.0;
+    }
+}
+
+/// Max-shifted weights for categorical resampling. Finite log weights never
+/// require exponentiating their absolute scale; at least one shifted weight is 1.
+pub(crate) struct ResamplingWeights {
+    pub(crate) cdf: Vec<f64>,
+    max_log_weight: f64,
+    shifted_total: f64,
+}
+
+impl ResamplingWeights {
+    pub(crate) fn from_log_weights(log_weights: &[f64]) -> ValidationResult<Self> {
+        let mut max_log_weight = f64::NEG_INFINITY;
+        for (index, &log_weight) in log_weights.iter().enumerate() {
+            if log_weight.is_nan() || log_weight == f64::INFINITY {
+                return Err(ValidationError::new("entity sampling weights", format!("log weight[{index}] must be finite or negative infinity (zero weight)"))
+                    .with_value(&log_weight)
+                    .with_suggestion("Supply finite log weights; use negative infinity only for zero-weight entities"));
+            }
+            max_log_weight = max_log_weight.max(log_weight);
+        }
+        if max_log_weight == f64::NEG_INFINITY {
+            return Err(ValidationError::new("entity sampling weights", "at least one entity must have positive weight")
+                .with_value(&format!("log weights {log_weights:?}"))
+                .with_suggestion("Supply at least one finite log weight; all negative-infinity log weights represent zero total weight"));
+        }
+        let shifted: Vec<f64> = log_weights
+            .iter()
+            .map(|w| (w - max_log_weight).exp())
+            .collect();
+        let shifted_total: f64 = shifted.iter().sum();
+        let mut cumulative = 0.0;
+        let mut cdf: Vec<f64> = shifted
+            .iter()
+            .map(|weight| {
+                cumulative += weight;
+                cumulative / shifted_total
+            })
+            .collect();
+        // The normalized CDF ends exactly at one, including rounding of the sum.
+        if let Some(last) = cdf.last_mut() {
+            *last = 1.0;
+        }
+        Ok(Self {
+            cdf,
+            max_log_weight,
+            shifted_total,
+        })
+    }
+
+    /// Count is positive at both resampling entry points. Divide in the shifted
+    /// scale before taking the log to avoid subtracting nearly equal logarithms.
+    pub(crate) fn equal_weight(&self, count: f64) -> SampleWeight {
+        SampleWeight::from_log(self.max_log_weight + (self.shifted_total / count).ln())
+    }
+
+    pub(crate) fn total_weight(&self) -> f64 {
+        (self.max_log_weight + self.shifted_total.ln()).exp()
     }
 }
 
@@ -371,6 +435,43 @@ impl WeightedStatistics {
 mod tests {
     use super::*;
 
+    #[test]
+    fn resampling_log_normalization_preserves_ratios_and_mean() {
+        for weights in [
+            [1.0_f64, 2.0, 3.0],
+            [0.34, 0.56, 0.10],
+            [1e-300, 2e-300, 3e-300],
+            [1e300, 2e300, 3e300],
+        ] {
+            let logs: Vec<_> = weights.iter().map(|w| w.ln()).collect();
+            let normalized = ResamplingWeights::from_log_weights(&logs).unwrap();
+            let total: f64 = weights.iter().sum();
+            let mut cumulative = 0.0;
+            for (weight, actual) in weights.iter().zip(&normalized.cdf) {
+                cumulative += weight / total;
+                // Taking logs of extreme linear inputs itself rounds the ratios.
+                assert!((actual - cumulative).abs() < 2e-13);
+            }
+            let expected = total / 7.0;
+            let actual = normalized.equal_weight(7.0).weight();
+            assert!(
+                (actual / expected - 1.0).abs() < 2e-13,
+                "{actual} versus {expected}"
+            );
+        }
+        for offset in [-1e300, -1000.0, 0.0, 1000.0, 1e300] {
+            let normalized = ResamplingWeights::from_log_weights(&[offset, offset]).unwrap();
+            assert_eq!(normalized.cdf, vec![0.5, 1.0]);
+            assert!((normalized.equal_weight(2.0).log_weight() - offset).abs() < f64::EPSILON);
+        }
+        let normalized =
+            ResamplingWeights::from_log_weights(&[f64::NEG_INFINITY, 0.0, f64::NEG_INFINITY])
+                .unwrap();
+        // A zero RNG draw must skip leading zero-mass entries.
+        assert_eq!(normalized.cdf.partition_point(|&x| x <= 0.0), 1);
+        assert_eq!(normalized.cdf.partition_point(|&x| x <= 0.999), 1);
+    }
+
     fn assert_equal_weight_scale_invariance(log_weight: f64, merge: bool) {
         let mut stats = WeightedStatistics::new();
         let weight = SampleWeight::from_log(log_weight);
@@ -415,7 +516,7 @@ mod tests {
     fn standard_error_accounts_for_unequal_weights() {
         let mut stats = WeightedStatistics::new();
         for (value, weight) in [(0.0, 9.0), (1.0, 9.0), (0.0, 1.0), (1.0, 1.0)] {
-            stats.add(value, &SampleWeight::from_linear(weight));
+            stats.add(value, &SampleWeight::from_linear(weight).unwrap());
         }
         assert!((stats.mean() - 0.5).abs() < 1e-14);
         assert!((stats.variance() - 0.25).abs() < 1e-14);
@@ -426,7 +527,7 @@ mod tests {
     #[test]
     fn standard_error_accounts_for_weight_value_dependence() {
         let mut stats = WeightedStatistics::new();
-        stats.add(0.0, &SampleWeight::from_linear(9.0));
+        stats.add(0.0, &SampleWeight::from_linear(9.0).unwrap());
         stats.add(1.0, &SampleWeight::one());
         // mean = 0.1; SE² = (9² * 0.1² + 1² * 0.9²) / 10².
         assert!((stats.standard_error() - 0.0162_f64.sqrt()).abs() < 1e-14);
@@ -560,7 +661,7 @@ mod tests {
             for (i, &w) in weights.iter().enumerate() {
                 stats.add(
                     f64::from(u8::try_from(i % 2).unwrap()),
-                    &SampleWeight::from_linear(w),
+                    &SampleWeight::from_linear(w).unwrap(),
                 );
             }
             let expected = ess_of(&weights);
@@ -636,7 +737,7 @@ mod tests {
 
     #[test]
     fn test_sample_weight_split() {
-        let w = SampleWeight::from_linear(1.0);
+        let w = SampleWeight::from_linear(1.0).unwrap();
         let split = w.split(4);
         assert!((split.weight() - 0.25).abs() < 1e-10);
     }
@@ -660,10 +761,10 @@ mod tests {
         let mut stats = WeightedStatistics::new();
 
         // Sample 1: value=1.0, weight=0.1
-        stats.add(1.0, &SampleWeight::from_linear(0.1));
+        stats.add(1.0, &SampleWeight::from_linear(0.1).unwrap());
 
         // Sample 2: value=0.0, weight=0.9
-        stats.add(0.0, &SampleWeight::from_linear(0.9));
+        stats.add(0.0, &SampleWeight::from_linear(0.9).unwrap());
 
         // Weighted mean = (1.0 * 0.1 + 0.0 * 0.9) / (0.1 + 0.9) = 0.1
         assert!((stats.mean() - 0.1).abs() < 1e-10);

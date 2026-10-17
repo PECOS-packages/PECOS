@@ -393,7 +393,7 @@ impl PyPhirClassicalInterpreter {
 
         inner
             .receive_results(&results)
-            .map_err(|e| pecos_error_to_pyerr(&e))
+            .map_err(pecos_error_to_pyerr)
     }
 
     /// Extract measurement bits, optionally filtering private variables.
@@ -687,12 +687,12 @@ impl PyPhirExecuteIter {
 /// so the Rust interpreter's runtime errors match the Python interpreter's (e.g.
 /// a division by zero raises `ZeroDivisionError`, and an undefined reference
 /// raises `KeyError`, rather than a generic `RuntimeError`).
-fn pecos_error_to_pyerr(err: &PecosError) -> PyErr {
+fn pecos_error_to_pyerr(err: PecosError) -> PyErr {
     let msg = err.to_string();
     match err {
         PecosError::RuntimeDivisionByZero => pyo3::exceptions::PyZeroDivisionError::new_err(msg),
         PecosError::RuntimeUndefinedVariable { .. } => pyo3::exceptions::PyKeyError::new_err(msg),
-        _ => pyo3::exceptions::PyRuntimeError::new_err(msg),
+        _ => crate::errors::simulation_error(err, "PHIR interpreter failed"),
     }
 }
 
@@ -753,7 +753,7 @@ impl PyPhirExecuteIter {
                 } => {
                     let yielded = interp
                         .make_qop(qop, angles, args, returns, metadata)
-                        .map_err(|e| pecos_error_to_pyerr(&e))?;
+                        .map_err(pecos_error_to_pyerr)?;
                     let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
                     self.buffer.push(YieldedOp::QOp(yielded));
 
@@ -770,7 +770,7 @@ impl PyPhirExecuteIter {
                 } => {
                     let yielded = interp
                         .make_mop(mop, args, duration, metadata)
-                        .map_err(|e| pecos_error_to_pyerr(&e))?;
+                        .map_err(pecos_error_to_pyerr)?;
                     self.buffer.push(YieldedOp::MOp(yielded));
                 }
 
@@ -783,7 +783,7 @@ impl PyPhirExecuteIter {
                 } => {
                     interp
                         .handle_cop(cop, args, returns, function)
-                        .map_err(|e| pecos_error_to_pyerr(&e))?;
+                        .map_err(pecos_error_to_pyerr)?;
                 }
 
                 Operation::Block {
@@ -801,9 +801,7 @@ impl PyPhirExecuteIter {
                         let cond = condition.as_ref().ok_or_else(|| {
                             pyo3::exceptions::PyValueError::new_err("If block missing condition")
                         })?;
-                        let cond_val = interp
-                            .eval_expr(cond)
-                            .map_err(|e| pecos_error_to_pyerr(&e))?;
+                        let cond_val = interp.eval_expr(cond).map_err(pecos_error_to_pyerr)?;
                         if cond_val != 0 {
                             if let Some(tb) = true_branch {
                                 self.stack.push((0, OpsRef::Owned(tb.clone())));
@@ -1151,7 +1149,7 @@ pub fn run_phir_sim(
 
     let shot_vec = mc
         .run(shots)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Simulation error: {e}")))?;
+        .map_err(|e| crate::errors::simulation_error(e, "Simulation error"))?;
 
     // Convert ShotVec to Python dict matching HybridEngine.run() format
     // {register_name: [bitstring, bitstring, ...]}

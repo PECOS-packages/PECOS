@@ -225,11 +225,23 @@ impl SurfaceCode {
             .x_stabilizers
             .iter()
             .chain(self.z_stabilizers.iter())
-            .map(StabilizerCheck::to_pauli_string)
+            .map(|check| {
+                check
+                    .to_pauli_string()
+                    .expect("surface-code construction emits distinct support in each check")
+            })
             .collect();
 
-        let logical_zs = vec![self.logical_z.to_pauli_string()];
-        let logical_xs = vec![self.logical_x.to_pauli_string()];
+        let logical_zs = vec![
+            self.logical_z
+                .to_pauli_string()
+                .expect("surface-code logical Z follows distinct data qubits"),
+        ];
+        let logical_xs = vec![
+            self.logical_x
+                .to_pauli_string()
+                .expect("surface-code logical X follows distinct data qubits"),
+        ];
 
         let mut code = StabilizerCodeSpec::new(self.num_data, stabilizers, logical_zs, logical_xs)
             .expect("Surface code should always produce valid stabilizer code");
@@ -435,7 +447,8 @@ fn generate_rotated_layout(
             qubits.sort_unstable();
 
             if is_x_type {
-                let check = StabilizerCheck::x_check(x_idx, &qubits);
+                let check = StabilizerCheck::x_check(x_idx, &qubits)
+                    .expect("surface check construction visits distinct neighboring data qubits");
                 let check = if is_boundary {
                     check.as_boundary()
                 } else {
@@ -444,7 +457,8 @@ fn generate_rotated_layout(
                 x_stabs.push(check);
                 x_idx += 1;
             } else {
-                let check = StabilizerCheck::z_check(z_idx, &qubits);
+                let check = StabilizerCheck::z_check(z_idx, &qubits)
+                    .expect("surface check construction visits distinct neighboring data qubits");
                 let check = if is_boundary {
                     check.as_boundary()
                 } else {
@@ -497,7 +511,8 @@ fn generate_standard_layout(
                 let q = row * d + col;
                 let qubits = vec![q, q + 1];
                 let is_boundary = row == 0 || row == d - 1;
-                let check = StabilizerCheck::x_check(x_idx, &qubits);
+                let check = StabilizerCheck::x_check(x_idx, &qubits)
+                    .expect("surface check construction visits distinct neighboring data qubits");
                 let check = if is_boundary {
                     check.as_boundary()
                 } else {
@@ -516,7 +531,8 @@ fn generate_standard_layout(
                 let q = row * d + col;
                 let qubits = vec![q, q + d];
                 let is_boundary = col == 0 || col == d - 1;
-                let check = StabilizerCheck::z_check(z_idx, &qubits);
+                let check = StabilizerCheck::z_check(z_idx, &qubits)
+                    .expect("surface check construction visits distinct neighboring data qubits");
                 let check = if is_boundary {
                     check.as_boundary()
                 } else {

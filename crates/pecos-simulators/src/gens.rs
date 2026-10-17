@@ -185,6 +185,7 @@ impl GensHybrid {
             phase = phase.multiply(&QuarterPhase::MinusI);
         }
         PauliString::with_phase_and_paulis(phase, paulis)
+            .expect("tableau conversion emits one Pauli per qubit")
     }
 
     /// Extracts all generators as a `Vec<PauliString>`.
@@ -426,6 +427,7 @@ impl<S: IndexSet> GensGeneric<S> {
         }
 
         PauliString::with_phase_and_paulis(phase, paulis)
+            .expect("tableau conversion emits one Pauli per qubit")
     }
 
     /// Extracts all generators as a `Vec<PauliString>`.

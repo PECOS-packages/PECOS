@@ -78,7 +78,6 @@ def test_resolved_definition_shape(scrambled, references, positions):
                 "id": 3,
                 "measurements": positions,
                 "label": "readout",
-                "pauli": None,
                 "reference": None,
             }
         ],
@@ -96,7 +95,6 @@ def test_annotation_only_and_agreeing_metadata(scrambled):
                 "id": 0,
                 "measurements": [0],
                 "label": "logical",
-                "pauli": "+Z",
                 "reference": None,
             }
         ],

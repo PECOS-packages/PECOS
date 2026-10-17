@@ -74,7 +74,7 @@ def test_multiple_indexed_results_accumulate() -> None:
 
 def test_out_of_range_result_bit_fails_fast() -> None:
     """A Result bit index that exceeds the 64-bit backing type errors, not panics/drops."""
-    with pytest.raises(RuntimeError, match=r"does not fit|backing type|out of range"):
+    with pytest.raises(ValueError, match=r"does not fit|backing type|out of range"):
         _run(
             [
                 {"data": "cvar_define", "data_type": "u64", "variable": "m", "size": 2},

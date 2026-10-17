@@ -806,7 +806,7 @@ impl QisEngine {
                 && self.num_physical_slots >= limit
             {
                 return Err(PecosError::Generic(format!(
-                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}"
+                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}; raise the simulator capacity with .qubits(n) in Rust/Python or --qubits N on the CLI to cover all runtime allocations"
                 )));
             }
             self.num_physical_slots
@@ -911,29 +911,29 @@ impl QisEngine {
                         }
                         QuantumOp::RX(angle, qubit) => {
                             builder.rx(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RY(angle, qubit) => {
                             builder.ry(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RZ(angle, qubit) => {
                             builder.rz(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RXY(theta, phi, qubit) => {
                             builder.rxy1q(
-                                Angle64::from_radians(*theta),
-                                Angle64::from_radians(*phi),
+                                Angle64::try_from_radians(*theta)?,
+                                Angle64::try_from_radians(*phi)?,
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
@@ -968,8 +968,8 @@ impl QisEngine {
                         }
                         QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
                             builder.rxyxy2q(
-                                Angle64::from_radians(*theta),
-                                Angle64::from_radians(*phi),
+                                Angle64::try_from_radians(*theta)?,
+                                Angle64::try_from_radians(*phi)?,
                                 &[(
                                     self.mapped_qubit(*qubit1, qop)?,
                                     self.mapped_qubit(*qubit2, qop)?,
@@ -979,7 +979,7 @@ impl QisEngine {
                         }
                         QuantumOp::RZZ(angle, qubit1, qubit2) => {
                             builder.rzz(
-                                Angle64::from_radians(*angle),
+                                Angle64::try_from_radians(*angle)?,
                                 &[(
                                     self.mapped_qubit(*qubit1, qop)?,
                                     self.mapped_qubit(*qubit2, qop)?,
@@ -988,13 +988,14 @@ impl QisEngine {
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::CRZ(angle, control, target) => {
+                            Angle64::try_from_radians(*angle)?;
                             let control = self.mapped_qubit(*control, qop)?;
                             let target = self.mapped_qubit(*target, qop)?;
                             let gates = pecos_core::controlled_rotations::lower_crz(
                                 *angle,
                                 control.into(),
                                 target.into(),
-                            );
+                            )?;
                             builder.add_gate_commands(&gates);
                             let metadata = std::mem::take(&mut pending_metadata);
                             gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
@@ -1177,21 +1178,21 @@ impl QisEngine {
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RX(angle, qubit) => {
-                        builder.rx(Angle64::from_radians(angle), &[qubit]);
+                        builder.rx(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RY(angle, qubit) => {
-                        builder.ry(Angle64::from_radians(angle), &[qubit]);
+                        builder.ry(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZ(angle, qubit) => {
-                        builder.rz(Angle64::from_radians(angle), &[qubit]);
+                        builder.rz(Angle64::try_from_radians(angle)?, &[qubit]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RXY(theta, phi, qubit) => {
                         builder.rxy1q(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
+                            Angle64::try_from_radians(theta)?,
+                            Angle64::try_from_radians(phi)?,
                             &[qubit],
                         );
                         gate_metadata.push(metadata);
@@ -1220,22 +1221,23 @@ impl QisEngine {
                     }
                     QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
                         builder.rxyxy2q(
-                            Angle64::from_radians(theta),
-                            Angle64::from_radians(phi),
+                            Angle64::try_from_radians(theta)?,
+                            Angle64::try_from_radians(phi)?,
                             &[(qubit1, qubit2)],
                         );
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZZ(angle, qubit1, qubit2) => {
-                        builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
+                        builder.rzz(Angle64::try_from_radians(angle)?, &[(qubit1, qubit2)]);
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::CRZ(angle, control, target) => {
+                        Angle64::try_from_radians(angle)?;
                         let gates = pecos_core::controlled_rotations::lower_crz(
                             angle,
                             control.into(),
                             target.into(),
-                        );
+                        )?;
                         builder.add_gate_commands(&gates);
                         gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
                     }
@@ -2224,6 +2226,10 @@ impl Engine for QisEngine {
 }
 
 impl ClassicalEngine for QisEngine {
+    fn has_dynamic_qubit_count(&self) -> bool {
+        self.num_qubits_hint.is_none()
+    }
+
     fn num_qubits(&self) -> usize {
         // The trait contract asks for the number of simulator slots required,
         // not the count of live program handles: freed handles shrink
@@ -2639,7 +2645,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[derive(Clone, Default)]
-    struct DummyRuntime {
+    pub(super) struct DummyRuntime {
         state: ClassicalState,
         delivered: Arc<Mutex<Vec<(usize, bool)>>>,
     }
@@ -3501,7 +3507,7 @@ mod tests {
         use pecos_core::gate_type::GateType::{PZ, RZ};
         use pecos_engines::scheduled_events::{ScheduledEventOp, decode_event_batches};
         let mut engine = prep_test_engine(true);
-        engine.scheduled_transport = ScheduledTransport::V4;
+        engine.scheduled_transport = ScheduledTransport::V7;
         let lowered = engine
             .lower_operations_to_commands(&[
                 Operation::AllocateQubit { id: 7 },
@@ -3593,6 +3599,28 @@ mod tests {
         let in_memory = collector.lock().expect("collector lock");
         assert_eq!(in_memory[1].stage, "trace_complete");
         assert_eq!(in_memory[1].measurement_results, BTreeMap::from([(7, 1)]));
+    }
+
+    #[test]
+    fn nonfinite_runtime_rotations_are_errors() {
+        for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for op in [
+                QuantumOp::RX(angle, 0),
+                QuantumOp::RY(angle, 0),
+                QuantumOp::RZ(angle, 0),
+                QuantumOp::RXY(0.0, angle, 0),
+                QuantumOp::RZZ(angle, 0, 1),
+                QuantumOp::RXYXY2Q(0.0, angle, 0, 1),
+                QuantumOp::CRZ(angle, 0, 1),
+            ] {
+                let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+                let error = engine
+                    .quantum_ops_to_lowered_commands(vec![op.into()])
+                    .err()
+                    .expect("nonfinite runtime angle must fail");
+                assert!(error.to_string().contains(&angle.to_string()));
+            }
+        }
     }
 
     #[test]
@@ -3751,7 +3779,7 @@ mod tests {
             assert_eq!(gates[0].qubits.as_slice(), &qubits.map(pecos_core::QubitId));
             assert_eq!(
                 gates[0].angles.as_slice(),
-                &[Angle64::from_radians(-0.73), Angle64::from_radians(0.41)]
+                &[pecos_core::radians!(-0.73), pecos_core::radians!(0.41)]
             );
             assert_eq!(batch.gate_metadata, vec![metadata.clone()]);
         }
@@ -3797,11 +3825,7 @@ mod tests {
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
-        builder.rxy1q(
-            Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-            Angle64::from_radians(3.0 * std::f64::consts::FRAC_PI_2),
-            &[0],
-        );
+        builder.rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &[0]);
         builder.rz(Angle64::HALF_TURN, &[0]);
         builder.measure_leakages(&[0]);
 
@@ -4014,6 +4038,16 @@ mod tests {
             err.to_string().contains("not currently active"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn qubit_count_is_dynamic_until_a_hint_is_set() {
+        let mut engine: Box<dyn pecos_engines::ClassicalControlEngine> =
+            Box::new(QisEngine::with_runtime(Box::new(DummyRuntime::default())));
+        assert!(engine.has_dynamic_qubit_count());
+        engine.set_num_qubits_hint(2);
+        assert!(!engine.has_dynamic_qubit_count());
+        assert_eq!(engine.num_qubits(), 2);
     }
 
     #[test]
@@ -4797,6 +4831,14 @@ mod tests {
             err.to_string().contains("more than the configured 1"),
             "unexpected error: {err}"
         );
+        for text in [
+            "program qubit 105",
+            "simulator capacity",
+            ".qubits(n)",
+            "--qubits N",
+        ] {
+            assert!(err.to_string().contains(text), "unexpected error: {err}");
+        }
     }
 }
 
@@ -4862,7 +4904,7 @@ mod scheduled_completion_tests {
         Feedback,
         Padding,
         FeedbackThenPadding,
-        OversizedV4,
+        OversizedV7,
     }
 
     #[derive(Clone, Default)]
@@ -4929,14 +4971,14 @@ mod scheduled_completion_tests {
                     "drain after shot completion".into(),
                 ));
             }
-            if matches!(self.output, TerminalOutput::OversizedV4) {
+            if matches!(self.output, TerminalOutput::OversizedV7) {
                 use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
                 use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
                 if self.stage != 0 {
                     return Ok(vec![]);
                 }
                 self.stage = 1;
-                // One byte over V4's limit, but below the collection lower bound.
+                // One byte over V7's limit, but below the collection lower bound.
                 let tail = MAX_SCHEDULE_BYTES + 1 - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
                 return Ok((0..256)
                     .map(|index| ScheduledBatch {
@@ -5032,10 +5074,10 @@ mod scheduled_completion_tests {
         }
     }
     #[test]
-    fn oversized_v4_drain_fails_at_encode_and_latches() {
+    fn oversized_v7_drain_fails_at_encode_and_latches() {
         use crate::scheduled_transport::EventBudget;
         let mut runtime = FeedbackTail {
-            output: TerminalOutput::OversizedV4,
+            output: TerminalOutput::OversizedV7,
             ..Default::default()
         };
         let batches = runtime.drain_pending_scheduled_operations().unwrap();
@@ -5048,9 +5090,9 @@ mod scheduled_completion_tests {
         drop(batches);
         runtime.stage = 0;
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
-        engine.scheduled_transport = ScheduledTransport::V4;
+        engine.scheduled_transport = ScheduledTransport::V7;
         let Err(error) = engine.drain_terminal_commands() else {
-            panic!("oversized V4 encoding must fail");
+            panic!("oversized V7 encoding must fail");
         };
         let error = error.to_string();
         assert!(
@@ -5074,7 +5116,7 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_terminal_padding_without_feedback_fails_promptly() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 output: TerminalOutput::Padding,
                 ..Default::default()
@@ -5112,7 +5154,7 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_feedback_permits_only_one_more_terminal_drain() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 output: TerminalOutput::FeedbackThenPadding,
                 ..Default::default()
@@ -5186,7 +5228,7 @@ mod scheduled_completion_tests {
     }
 
     fn assert_scheduled_drain_progress_cleared(reset: bool) {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let gate = Arc::new(std::sync::Barrier::new(2));
             let mut engine = QisEngine::new(
                 Box::new(GatedTerminalInterface(Arc::clone(&gate))),
@@ -5252,7 +5294,7 @@ mod scheduled_completion_tests {
 
     #[test]
     fn scheduled_gate_only_final_tail_completes_without_feedback() {
-        for mode in [ScheduledTransport::V3, ScheduledTransport::V4] {
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
             let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
                 stage: 3,
                 ..Default::default()
@@ -5290,7 +5332,7 @@ mod scheduled_completion_tests {
         use pecos_engines::scheduled_frame::ScheduledIdleZ;
         use pecos_engines::{StateVecEngine, quantum_system::QuantumSystem};
         let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail::default()));
-        engine.scheduled_transport = ScheduledTransport::V3;
+        engine.scheduled_transport = ScheduledTransport::V6;
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
@@ -5376,11 +5418,9 @@ mod scheduled_completion_tests {
                 for op in &b.operations {
                     out.push(match op {
                         ScheduledEventOp::Gate(g) => g.as_ref().clone(),
-                        ScheduledEventOp::Custom { .. } => Gate::rxy1q(
-                            Angle64::from_radians(std::f64::consts::PI),
-                            Angle64::from_radians(0.0),
-                            &[0],
-                        ),
+                        ScheduledEventOp::Custom { .. } => {
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])
+                        }
                     })?;
                 }
                 Ok(())
@@ -5454,7 +5494,7 @@ mod scheduled_completion_tests {
             fail_tail: true,
             ..FeedbackTail::default()
         }));
-        engine.scheduled_transport = ScheduledTransport::V3;
+        engine.scheduled_transport = ScheduledTransport::V6;
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,

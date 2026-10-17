@@ -650,7 +650,7 @@ mod tests {
         comp.h(&[QubitId(0)]);
         comp.rz(t, &[QubitId(0), QubitId(1), QubitId(2)]);
         comp.rz(tdg, &[QubitId(3)]);
-        comp.rz(Angle64::from_radians(0.3), &[QubitId(4), QubitId(5)]);
+        comp.rz(pecos_core::radians!(0.3), &[QubitId(4), QubitId(5)]);
         comp.sz(&[QubitId(6)]);
 
         assert_eq!(comp.injectable_clifford_correction(), 4);
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_advise_no_injectables_uses_direct_application() {
         let mut comp = StabMpsCompile::new(20);
-        comp.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+        comp.rz(pecos_core::radians!(0.3), &[QubitId(0)]);
 
         let advice = comp.advise(Some(4));
         assert_eq!(advice.simulator, SimulatorKind::StabMps);
@@ -692,7 +692,7 @@ mod tests {
         // two ancillas. A budget covering only the injectable gate must not
         // be reported feasible for deferred execution.
         let mut comp = compile_t_gates(1);
-        comp.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+        comp.rz(pecos_core::radians!(0.3), &[QubitId(0)]);
 
         let advice = comp.advise(Some(1));
         assert_eq!(advice.injectable_count, 1);
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn test_advise_warns_about_arbitrary_angle_corrections() {
         let mut comp = compile_t_gates(1);
-        comp.rz(Angle64::from_radians(0.3), &[QubitId(1)]);
+        comp.rz(pecos_core::radians!(0.3), &[QubitId(1)]);
 
         let advice = comp.advise(Some(1));
         assert!(advice.warnings.iter().any(|warning| {

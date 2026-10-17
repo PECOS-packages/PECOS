@@ -256,7 +256,7 @@ fn css_memory_annotation_metadata_json(
                     "reference": 0,
                 }));
             }
-            AnnotationKind::TrackedPauli => {}
+            AnnotationKind::TrackedPauli { .. } => {}
         }
     }
     let num_detectors = detectors.len();

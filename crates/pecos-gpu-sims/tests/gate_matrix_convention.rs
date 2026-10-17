@@ -230,10 +230,10 @@ fn prepare_two_qubit_kernel_input<S: CliffordGateable + ArbitraryRotationGateabl
     sim: &mut S,
     pair: (QubitId, QubitId),
 ) {
-    sim.ry(Angle64::from_radians(0.731), &[pair.0])
-        .rz(Angle64::from_radians(-0.417), &[pair.0])
-        .rx(Angle64::from_radians(-0.293), &[pair.1])
-        .ry(Angle64::from_radians(0.619), &[pair.1])
+    sim.ry(pecos_core::radians!(0.731), &[pair.0])
+        .rz(pecos_core::radians!(-0.417), &[pair.0])
+        .rx(pecos_core::radians!(-0.293), &[pair.1])
+        .ry(pecos_core::radians!(0.619), &[pair.1])
         .cx(&[pair]);
 }
 
@@ -500,8 +500,8 @@ fn gpu_clifford_matrix(gate: Clifford) -> Matrix2 {
 fn prepare_f64_kernel_input() -> (StateVecSoA, [Complex64; 2]) {
     let mut sim = StateVecSoA::new(1);
     let qubit = [QubitId(0)];
-    sim.ry(Angle64::from_radians(0.731), &qubit)
-        .rz(Angle64::from_radians(-0.417), &qubit);
+    sim.ry(pecos_core::radians!(0.731), &qubit)
+        .rz(pecos_core::radians!(-0.417), &qubit);
     sim.flush();
     let input = [sim.get_amplitude(0), sim.get_amplitude(1)];
     sim.set_fusion(false);
@@ -511,8 +511,8 @@ fn prepare_f64_kernel_input() -> (StateVecSoA, [Complex64; 2]) {
 fn prepare_f32_kernel_input() -> (StateVecSoA32, [Complex64; 2]) {
     let mut sim = StateVecSoA32::new(1);
     let qubit = [QubitId(0)];
-    sim.ry(Angle64::from_radians(0.731), &qubit)
-        .rz(Angle64::from_radians(-0.417), &qubit);
+    sim.ry(pecos_core::radians!(0.731), &qubit)
+        .rz(pecos_core::radians!(-0.417), &qubit);
     sim.flush();
     let first = sim.get_amplitude(0);
     let second = sim.get_amplitude(1);
@@ -687,7 +687,7 @@ fn single_qubit_simulator_tables_match_canonical_phase_exactly() {
 #[test]
 fn gpu_f64_rotations_match_definition_at_f64_precision() {
     for radians in [0.731, -0.417, 1e-3, -2.5, std::f64::consts::FRAC_PI_3] {
-        let theta = Angle64::from_radians(radians);
+        let theta = Angle64::try_from_radians(radians).unwrap();
         for axis in ['x', 'y', 'z'] {
             let Some(actual) = gpu64_simulator_matrix(|sim| {
                 let qubit = [QubitId(0)];

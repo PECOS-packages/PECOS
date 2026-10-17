@@ -695,8 +695,9 @@ impl PyGate {
         let angles: Vec<Angle64> = params
             .iter()
             .take(angle_count)
-            .map(|&r| Angle64::from_radians(r))
-            .collect();
+            .map(|&r| Angle64::try_from_radians(r))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let other_params: Vec<f64> = params.into_iter().skip(angle_count).collect();
         let inner = Gate::try_new(gate_type.inner, angles, other_params, qubits)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
@@ -1600,22 +1601,64 @@ impl PyDagCircuit {
         tracked_id
     }
 
+    /// Resolve a measurement id to ("X" or "Z", qubit).
+    /// Raises ValueError if the identity cannot be resolved to a measurement record.
+    fn measured_pauli(&self, meas_id: &Bound<'_, PyAny>) -> PyResult<(String, usize)> {
+        let meas_id = crate::pauli_bindings::extract_usize_index(meas_id, "meas_id")?;
+        self.inner
+            .measured_pauli(pecos_core::MeasId::from_raw(meas_id))
+            .map(|(pauli, qubit)| {
+                (
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Resolve IDs in one circuit scan to ("X" or "Z", qubit), aligned with the input.
+    /// Preserves input order and duplicates; raises ValueError for the first unresolved ID.
+    fn measured_paulis(&self, meas_ids: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<(String, usize)>> {
+        let meas_ids: Vec<_> = meas_ids
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                crate::pauli_bindings::extract_usize_index(value, format_args!("meas_ids[{i}]"))
+            })
+            .collect::<PyResult<_>>()?;
+        let ids: Vec<_> = meas_ids
+            .iter()
+            .copied()
+            .map(pecos_core::MeasId::from_raw)
+            .collect();
+        let measured = self
+            .inner
+            .measured_paulis(&ids)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(measured
+            .into_iter()
+            .map(|(pauli, qubit)| {
+                (
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .collect())
+    }
+
     /// Get all annotations as a list of dicts.
     ///
-    /// Each dict has keys: "pauli" (`PauliString`), "kind" (str), "label" (str or None).
+    /// Each dict has "kind" and "label". Tracked Paulis have "pauli";
+    /// readouts have stored "measurement_ids". This method does not resolve IDs.
     fn annotations(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyList>> {
         let list = pyo3::types::PyList::empty(py);
 
         for ann in self.inner.annotations() {
             let dict = pyo3::types::PyDict::new(py);
-            let ps = crate::pauli_bindings::PauliString {
-                inner: ann.pauli.clone(),
-            };
-            dict.set_item("pauli", ps.into_pyobject(py)?)?;
             let kind_str = match &ann.kind {
                 pecos_quantum::AnnotationKind::Detector { .. } => "detector",
                 pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-                pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+                pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
             };
             dict.set_item("kind", kind_str)?;
             match &ann.kind {
@@ -1626,7 +1669,12 @@ impl PyDagCircuit {
                     let ids: Vec<usize> = measurement_ids.iter().map(|id| id.index()).collect();
                     dict.set_item("measurement_ids", ids)?;
                 }
-                pecos_quantum::AnnotationKind::TrackedPauli => {}
+                pecos_quantum::AnnotationKind::TrackedPauli { pauli } => {
+                    let ps = crate::pauli_bindings::PauliString {
+                        inner: pauli.clone(),
+                    };
+                    dict.set_item("pauli", ps.into_pyobject(py)?)?;
+                }
             }
             dict.set_item("label", &ann.label)?;
             list.append(dict)?;
@@ -1850,6 +1898,23 @@ pyo3::create_exception!(
     QubitConflictError,
     pyo3::exceptions::PyValueError
 );
+
+// Keep generic broadcasting and Python request preparation on the same arity rules.
+fn gate_qubit_chunks(gate_type: GateType, qubits: &[usize]) -> PyResult<Vec<&[usize]>> {
+    let arity = gate_type.quantum_arity();
+    let variable = gate_type.is_crosstalk_payload()
+        || matches!(gate_type, GateType::Channel | GateType::TrackedPauliMeta);
+    if variable || arity == 0 {
+        return Ok(vec![qubits]);
+    }
+    if qubits.is_empty() || !qubits.len().is_multiple_of(arity) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Gate '{gate_type:?}' requires {arity} qubit(s), got {} (not a valid multiple)",
+            qubits.len()
+        )));
+    }
+    Ok(qubits.chunks(arity).collect())
+}
 
 fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyErr {
     match err {
@@ -2366,7 +2431,6 @@ impl PyTickCircuit {
             entry.set_item("id", observable.id)?;
             entry.set_item("measurements", observable.measurements)?;
             entry.set_item("label", observable.label)?;
-            entry.set_item("pauli", observable.pauli.map(|pauli| pauli.to_string()))?;
             entry.set_item("reference", observable.reference)?;
             observables.append(entry)?;
         }
@@ -2384,6 +2448,136 @@ impl PyTickCircuit {
         self.inner
             .get_tick(idx)
             .map(|t: &Tick| PyTick { inner: t.clone() })
+    }
+
+    /// Split a named gate's qubits into the applications used by generic insertion.
+    /// Custom and variable-arity payload gates retain their complete qubit list.
+    #[staticmethod]
+    fn gate_locations(name: &str, qubits: Vec<usize>) -> PyResult<Vec<Vec<usize>>> {
+        use std::str::FromStr;
+        match GateType::from_str(name) {
+            Ok(gate_type) => Ok(gate_qubit_chunks(gate_type, &qubits)?
+                .into_iter()
+                .map(<[usize]>::to_vec)
+                .collect()),
+            Err(_) => Ok(vec![qubits]),
+        }
+    }
+
+    /// Commit a prepared tick after Python has classified all its batches.
+    ///
+    /// Updates insert only selected free batches. Other modes publish the complete
+    /// prepared tick; replacement retains unrelated target tick attributes.
+    /// Payload, conflict, bounds and signature checks precede mutation.
+    fn _apply_tick(
+        &mut self,
+        request: &Self,
+        index: usize,
+        mode: &str,
+        gate_indices: Vec<usize>,
+    ) -> PyResult<()> {
+        let tick_count = self.inner.num_ticks();
+        let source = request.inner.get_tick(0).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "request has 0 ticks; supply a request containing one tick",
+            )
+        })?;
+        for (name, signature) in request.inner.gate_signatures() {
+            self.inner
+                .validate_gate_signature(name, signature.quantum_arity, signature.angle_arity)
+                .map_err(|err| PyErr::new::<GateSignatureMismatchError, _>(err.to_string()))?;
+        }
+        let tick_index_error = || {
+            let advice = if tick_count == 0 {
+                "the circuit has no ticks; append or insert a tick before indexing".to_string()
+            } else {
+                format!("use an index below {tick_count}")
+            };
+            pyo3::exceptions::PyIndexError::new_err(format!(
+                "tick index {index} is out of bounds for {tick_count} ticks; {advice}"
+            ))
+        };
+        match mode {
+            "append" => {
+                let idx = self.inner.tick().index();
+                *self.inner.get_tick_mut(idx).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("created tick is missing")
+                })? = source.clone();
+            }
+            "insert" => {
+                if index > self.inner.num_ticks() {
+                    return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                        "tick insertion index {index} is out of bounds for {tick_count} ticks; insert at an index at most {tick_count}"
+                    )));
+                }
+                let _ = self.inner.insert_tick(index);
+                *self.inner.get_tick_mut(index).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("created tick is missing")
+                })? = source.clone();
+            }
+            "replace" => {
+                let tick = self
+                    .inner
+                    .get_tick_mut(index)
+                    .ok_or_else(tick_index_error)?;
+                let mut replacement = source.clone();
+                for (key, value) in tick.tick_attrs() {
+                    if key != "_symbol" && key != "_params" {
+                        replacement.set_attr(key, value.clone());
+                    }
+                }
+                *tick = replacement;
+            }
+            "update" => {
+                let gates = gate_indices
+                    .iter()
+                    .map(|&idx| {
+                        source.gate_batches().get(idx).cloned().ok_or_else(|| {
+                            let count = source.gate_batches().len();
+                            let advice = if count == 0 {
+                                "the request has no gates; add a gate before indexing".to_string()
+                            } else {
+                                format!("use an index below {count}")
+                            };
+                            pyo3::exceptions::PyIndexError::new_err(format!(
+                                "gate index {idx} is out of bounds for {count} gates; {advice}"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                let tick = self
+                    .inner
+                    .get_tick_mut(index)
+                    .ok_or_else(tick_index_error)?;
+                let inserted = tick
+                    .try_add_gates(gates)
+                    .map_err(|err| tick_gate_error_to_pyerr(err, Some(index)))?;
+                for (from, to) in gate_indices.into_iter().zip(inserted) {
+                    tick.set_gate_attrs(
+                        to,
+                        source
+                            .gate_attrs(from)
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect(),
+                    );
+                }
+                // Python preflight has checked an occupied operation slot for
+                // identity. Preserve its raw metadata on an identical repeat.
+                if tick.get_attr("_symbol").is_none() {
+                    for (key, value) in source.tick_attrs() {
+                        tick.set_attr(key, value.clone());
+                    }
+                }
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown tick commit mode {mode:?}; use append, insert, replace, or update"
+                )));
+            }
+        }
+        self.inner
+            .import_signatures(request.inner.gate_signatures());
+        Ok(())
     }
 
     /// Create a new tick and return a handle for adding gates.
@@ -2549,7 +2743,7 @@ impl PyTickCircuit {
         Ok(PyTickHandle {
             circuit: slf,
             tick_idx: idx,
-            last_gate_idx: None,
+            last_gate_indices: Vec::new(),
         })
     }
 
@@ -2575,7 +2769,7 @@ impl PyTickCircuit {
         Ok(PyTickHandle {
             circuit: slf,
             tick_idx: idx,
-            last_gate_idx: None,
+            last_gate_indices: Vec::new(),
         })
     }
 
@@ -2643,6 +2837,16 @@ impl PyTickCircuit {
     }
 
     // --- Tick-level and gate-level metadata setters (by index) ---
+
+    /// Clear QuantumCircuit operations while retaining unrelated tick metadata.
+    fn _clear_tick(&mut self, tick_idx: usize) {
+        if let Some(tick) = self.inner.get_tick_mut(tick_idx) {
+            let indices: Vec<_> = (0..tick.len()).collect();
+            tick.remove_gates(&indices);
+            tick.remove_attr("_symbol");
+            tick.remove_attr("_params");
+        }
+    }
 
     /// Set tick-level metadata on a specific tick by index.
     ///
@@ -3092,7 +3296,7 @@ impl PyTickCircuit {
             .inner
             .annotations()
             .iter()
-            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::TrackedPauli))
+            .filter(|a| matches!(a.kind, pecos_quantum::AnnotationKind::TrackedPauli { .. }))
             .count();
         if let Some(l) = label {
             self.inner.tracked_pauli_labeled(&l, pauli.inner.clone());
@@ -3102,19 +3306,62 @@ impl PyTickCircuit {
         tracked_id
     }
 
-    /// Get all annotations.
+    /// Resolve a measurement id to ("X" or "Z", qubit).
+    /// Raises ValueError if the identity cannot be resolved to a measurement record.
+    fn measured_pauli(&self, meas_id: &Bound<'_, PyAny>) -> PyResult<(String, usize)> {
+        let meas_id = crate::pauli_bindings::extract_usize_index(meas_id, "meas_id")?;
+        self.inner
+            .measured_pauli(pecos_core::MeasId::from_raw(meas_id))
+            .map(|(pauli, qubit)| {
+                (
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Resolve IDs in one circuit scan to ("X" or "Z", qubit), aligned with the input.
+    /// Preserves input order and duplicates; raises ValueError for the first unresolved ID.
+    /// Tick circuits have no removal record: removed IDs report "does not name a measurement".
+    fn measured_paulis(&self, meas_ids: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<(String, usize)>> {
+        let meas_ids: Vec<_> = meas_ids
+            .iter()
+            .enumerate()
+            .map(|(i, value)| {
+                crate::pauli_bindings::extract_usize_index(value, format_args!("meas_ids[{i}]"))
+            })
+            .collect::<PyResult<_>>()?;
+        let ids: Vec<_> = meas_ids
+            .iter()
+            .copied()
+            .map(pecos_core::MeasId::from_raw)
+            .collect();
+        let measured = self
+            .inner
+            .measured_paulis(&ids)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(measured
+            .into_iter()
+            .map(|(pauli, qubit)| {
+                (
+                    crate::pauli_bindings::Pauli(pauli).__str__().to_owned(),
+                    qubit.index(),
+                )
+            })
+            .collect())
+    }
+
+    /// Get annotations with "kind" and "label", plus "pauli" for tracked Paulis
+    /// or stored "measurement_ids" for readouts. This method does not resolve IDs.
     fn annotations(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyList>> {
         let list = pyo3::types::PyList::empty(py);
         for ann in self.inner.annotations() {
             let dict = pyo3::types::PyDict::new(py);
-            let ps = crate::pauli_bindings::PauliString {
-                inner: ann.pauli.clone(),
-            };
-            dict.set_item("pauli", ps.into_pyobject(py)?)?;
             let kind_str = match &ann.kind {
                 pecos_quantum::AnnotationKind::Detector { .. } => "detector",
                 pecos_quantum::AnnotationKind::Observable { .. } => "observable",
-                pecos_quantum::AnnotationKind::TrackedPauli => "tracked_pauli",
+                pecos_quantum::AnnotationKind::TrackedPauli { .. } => "tracked_pauli",
             };
             dict.set_item("kind", kind_str)?;
             match &ann.kind {
@@ -3125,7 +3372,12 @@ impl PyTickCircuit {
                     let ids: Vec<usize> = measurement_ids.iter().map(|id| id.index()).collect();
                     dict.set_item("measurement_ids", ids)?;
                 }
-                pecos_quantum::AnnotationKind::TrackedPauli => {}
+                pecos_quantum::AnnotationKind::TrackedPauli { pauli } => {
+                    let ps = crate::pauli_bindings::PauliString {
+                        inner: pauli.clone(),
+                    };
+                    dict.set_item("pauli", ps.into_pyobject(py)?)?;
+                }
             }
             dict.set_item("label", &ann.label)?;
             list.append(dict)?;
@@ -3169,7 +3421,7 @@ fn extract_tick_meas_refs(
 pub struct PyTickHandle {
     circuit: Py<PyTickCircuit>,
     tick_idx: usize,
-    last_gate_idx: Option<usize>,
+    last_gate_indices: Vec<usize>,
 }
 
 impl PyTickHandle {
@@ -3183,7 +3435,7 @@ impl PyTickHandle {
         Self {
             circuit,
             tick_idx,
-            last_gate_idx: None,
+            last_gate_indices: Vec::new(),
         }
     }
 
@@ -3192,7 +3444,7 @@ impl PyTickHandle {
         if let Some(tick) = circuit.inner.get_tick_mut(self.tick_idx) {
             match tick.try_add_gate(gate) {
                 Ok(idx) => {
-                    self.last_gate_idx = Some(idx);
+                    self.last_gate_indices = vec![idx];
                     Ok(())
                 }
                 Err(err) => Err(tick_gate_error_to_pyerr(err, Some(self.tick_idx))),
@@ -3207,7 +3459,7 @@ impl PyTickHandle {
         if let Some(tick) = circuit.inner.get_tick_mut(self.tick_idx) {
             match tick.try_add_gate(gate) {
                 Ok(idx) => {
-                    self.last_gate_idx = Some(idx);
+                    self.last_gate_indices = vec![idx];
                     Ok(idx)
                 }
                 Err(err) => Err(tick_gate_error_to_pyerr(err, Some(self.tick_idx))),
@@ -3307,7 +3559,56 @@ impl PyTickHandle {
         self.tick_idx
     }
 
-    /// Set metadata on the last added gate, or tick-level metadata if no gate added yet.
+    /// Look up a qubit's stored batch without copying the tick.
+    fn gate_on_qubit(&self, py: Python<'_>, qubit: usize) -> Option<usize> {
+        self.circuit
+            .borrow(py)
+            .inner
+            .get_tick(self.tick_idx)?
+            .gate_on_qubit(QubitId::from(qubit))
+    }
+
+    /// Copy just one stored batch, leaving the rest of the tick untouched.
+    fn get_gate(&self, py: Python<'_>, index: usize) -> Option<PyGate> {
+        self.circuit
+            .borrow(py)
+            .inner
+            .get_tick(self.tick_idx)?
+            .gate_batches()
+            .get(index)
+            .map(|gate| PyGate {
+                inner: gate.clone(),
+            })
+    }
+
+    /// Read one gate attribute directly from the tick.
+    fn get_gate_attr(&self, py: Python<'_>, index: usize, key: &str) -> Option<Py<PyAny>> {
+        self.circuit
+            .borrow(py)
+            .inner
+            .get_tick(self.tick_idx)?
+            .get_gate_attr(index, key)
+            .map(|attr| attribute_to_py(py, attr))
+    }
+
+    /// Copy the gate batches of this tick for request classification.
+    fn gate_batches(&self, py: Python<'_>) -> Vec<PyGate> {
+        self.circuit
+            .borrow(py)
+            .inner
+            .get_tick(self.tick_idx)
+            .map(|tick| {
+                tick.gate_batches()
+                    .iter()
+                    .map(|gate| PyGate {
+                        inner: gate.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Set metadata on every batch of the last insertion, or on an empty tick.
     fn meta(
         slf: Py<Self>,
         py: Python<'_>,
@@ -3318,36 +3619,38 @@ impl PyTickHandle {
         {
             let handle = slf.borrow_mut(py);
             let tick_idx = handle.tick_idx;
-            let last_gate_idx = handle.last_gate_idx;
+            let last_gate_indices = &handle.last_gate_indices;
 
             let mut circuit = handle.circuit.borrow_mut(py);
             if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
-                if let Some(gate_idx) = last_gate_idx {
-                    tick.set_gate_attr(gate_idx, key, attr);
-                } else {
-                    // No gate yet - set tick-level metadata
+                if last_gate_indices.is_empty() {
                     tick.set_attr(key, attr);
+                } else {
+                    for &gate_idx in last_gate_indices {
+                        tick.set_gate_attr(gate_idx, key, attr.clone());
+                    }
                 }
             }
         }
         Ok(slf)
     }
 
-    /// Set multiple metadata attributes on the last added gate, or tick-level if no gate added yet.
+    /// Set attributes on every batch of the last insertion, or on an empty tick.
     fn metas(slf: Py<Self>, py: Python<'_>, attrs: &Bound<'_, PyDict>) -> PyResult<Py<Self>> {
         let attrs_map = py_dict_to_attrs(py, attrs)?;
         {
             let handle = slf.borrow_mut(py);
             let tick_idx = handle.tick_idx;
-            let last_gate_idx = handle.last_gate_idx;
+            let last_gate_indices = &handle.last_gate_indices;
 
             let mut circuit = handle.circuit.borrow_mut(py);
             if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
-                if let Some(gate_idx) = last_gate_idx {
-                    tick.set_gate_attrs(gate_idx, attrs_map);
-                } else {
-                    // No gate yet - set tick-level metadata
+                if last_gate_indices.is_empty() {
                     tick.set_attrs(attrs_map);
+                } else {
+                    for &gate_idx in last_gate_indices {
+                        tick.set_gate_attrs(gate_idx, attrs_map.clone());
+                    }
                 }
             }
         }
@@ -3621,7 +3924,7 @@ impl PyTickHandle {
             tick.last_gate_index()
         };
         if let Some(last_gate_idx) = last_gate_idx {
-            slf.borrow_mut(py).last_gate_idx = Some(last_gate_idx);
+            slf.borrow_mut(py).last_gate_indices = vec![last_gate_idx];
         }
         Ok(slf)
     }
@@ -3709,15 +4012,15 @@ impl PyTickHandle {
 
         match GateType::from_str(name) {
             Ok(gate_type) => {
-                let arity = gate_type.quantum_arity();
                 let angle_arity = gate_type.angle_arity();
 
                 // Validate angle count for parameterized gates
                 let angle_vals: Vec<Angle64> = angles
                     .unwrap_or_default()
                     .into_iter()
-                    .map(Angle64::from_radians)
-                    .collect();
+                    .map(Angle64::try_from_radians)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
                 if angle_arity > 0 && angle_vals.len() != angle_arity {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "Gate '{name}' requires {angle_arity} angle(s), got {}",
@@ -3725,24 +4028,7 @@ impl PyTickHandle {
                     )));
                 }
 
-                let variable_arity_payload = gate_type.is_crosstalk_payload()
-                    || matches!(gate_type, GateType::Channel | GateType::TrackedPauliMeta);
-
-                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits).
-                // Payload/meta gates carry their qubit list as data and must remain a single gate.
-                let needs_broadcast = !variable_arity_payload
-                    && arity > 0
-                    && qubits.len() > arity
-                    && qubits.len().is_multiple_of(arity);
-
-                if !variable_arity_payload && arity > 0 && qubits.len() != arity && !needs_broadcast
-                {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Gate '{name}' requires {} qubit(s), got {} (not a valid multiple)",
-                        arity,
-                        qubits.len()
-                    )));
-                }
+                let chunks = gate_qubit_chunks(gate_type, &qubits)?;
 
                 let handle = slf.borrow_mut(py);
                 let tick_idx = handle.tick_idx;
@@ -3755,48 +4041,25 @@ impl PyTickHandle {
                     ))
                 })?;
 
-                if needs_broadcast {
-                    // Broadcast: create one gate per arity-chunk of qubits
-                    let mut last_idx = None;
-                    for chunk in qubits.chunks(arity) {
+                let gates = chunks
+                    .into_iter()
+                    .map(|chunk| {
                         let qubit_ids: GateQubits =
                             chunk.iter().copied().map(QubitId::from).collect();
-                        let gate = Gate::try_new(gate_type, angle_vals.clone(), vec![], qubit_ids)
-                            .map_err(|err| {
-                                pyo3::exceptions::PyValueError::new_err(err.to_string())
-                            })?;
-                        match tick.try_add_gate(gate) {
-                            Ok(idx) => {
-                                tick.set_gate_attr(
-                                    idx,
-                                    "_symbol",
-                                    Attribute::String(name.to_string()),
-                                );
-                                last_idx = Some(idx);
-                            }
-                            Err(err) => return Err(tick_gate_error_to_pyerr(err, Some(tick_idx))),
-                        }
-                    }
-                    drop(circuit);
-                    drop(handle);
-                    slf.borrow_mut(py).last_gate_idx = last_idx;
-                    Ok(slf)
-                } else {
-                    // Normal: create single gate
-                    let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
-                    let gate = Gate::try_new(gate_type, angle_vals, vec![], qubit_ids)
-                        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-                    match tick.try_add_gate(gate) {
-                        Ok(idx) => {
-                            tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
-                            drop(circuit);
-                            drop(handle);
-                            slf.borrow_mut(py).last_gate_idx = Some(idx);
-                            Ok(slf)
-                        }
-                        Err(err) => Err(tick_gate_error_to_pyerr(err, Some(tick_idx))),
-                    }
+                        Gate::try_new(gate_type, angle_vals.clone(), vec![], qubit_ids)
+                            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                let indices = tick
+                    .try_add_gates(gates)
+                    .map_err(|err| tick_gate_error_to_pyerr(err, Some(tick_idx)))?;
+                for &idx in &indices {
+                    tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
                 }
+                drop(circuit);
+                drop(handle);
+                slf.borrow_mut(py).last_gate_indices = indices;
+                Ok(slf)
             }
             Err(_) => {
                 // Unknown gate name - fall through to custom_gate
@@ -3839,18 +4102,21 @@ impl PyTickHandle {
         let angle_vals: Vec<Angle64> = angles
             .unwrap_or_default()
             .into_iter()
-            .map(Angle64::from_radians)
-            .collect();
+            .map(Angle64::try_from_radians)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         let handle = slf.borrow_mut(py);
         let tick_idx = handle.tick_idx;
         let circuit_py = handle.circuit.clone_ref(py);
 
-        // Validate/register and add gate
+        // Validate first; register only after successful insertion.
+        let quantum_arity = qubits.len();
+        let angle_arity = angle_vals.len();
         let mut circuit = circuit_py.borrow_mut(py);
         match circuit
             .inner
-            .validate_or_register_gate(name, qubits.len(), angle_vals.len())
+            .validate_gate_signature(name, quantum_arity, angle_arity)
         {
             Ok(()) => {}
             Err(e) => {
@@ -3863,13 +4129,20 @@ impl PyTickHandle {
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
-            match tick.try_add_gate(gate) {
-                Ok(idx) => {
+            match tick.try_add_gates(vec![gate]) {
+                Ok(indices) => {
+                    let idx = indices[0];
                     tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
+                    circuit
+                        .inner
+                        .validate_or_register_gate(name, quantum_arity, angle_arity)
+                        .map_err(|err| {
+                            PyErr::new::<GateSignatureMismatchError, _>(err.to_string())
+                        })?;
                     drop(circuit);
                     drop(handle);
                     // Update last_gate_idx through a fresh borrow
-                    slf.borrow_mut(py).last_gate_idx = Some(idx);
+                    slf.borrow_mut(py).last_gate_indices = vec![idx];
                     Ok(slf)
                 }
                 Err(err) => Err(tick_gate_error_to_pyerr(err, Some(tick_idx))),

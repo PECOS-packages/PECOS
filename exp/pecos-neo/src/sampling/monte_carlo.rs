@@ -434,8 +434,8 @@ mod tests {
             &commands,
             &config,
             || {
-                let noise =
-                    ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
+                let noise = ComposableNoiseModel::new()
+                    .add_channel(SingleQubitChannel::depolarizing(0.0).unwrap());
                 (
                     CircuitRunner::new().with_noise(noise),
                     SparseStab::with_seed(1, 42),
@@ -464,6 +464,7 @@ mod tests {
             || {
                 ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
                     .with_single_qubit_boost(0.001, 10.0)
+                    .unwrap()
             },
             |outcomes| {
                 if outcomes.get_bit(QubitId(0)).unwrap_or(false) {

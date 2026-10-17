@@ -177,7 +177,7 @@ class TestQasmSimStructuredConfig:
     def test_missing_qasm_raises_error(self) -> None:
         from pecos import qasm_engine
 
-        with pytest.raises(RuntimeError, match="No QASM source specified"):
+        with pytest.raises(ValueError, match="No QASM source specified"):
             qasm_engine().to_sim().build()
 
     @pytest.mark.parametrize("invalid", ["invalid", object()], ids=["string", "python-object"])

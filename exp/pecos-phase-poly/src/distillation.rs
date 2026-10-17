@@ -306,6 +306,39 @@ pub struct PatternPrediction {
     pub logical_w: Option<Vec<f64>>,
 }
 
+/// Failure to execute a distillation shot.
+#[derive(Debug)]
+pub enum ShotError {
+    /// An X measurement is not supported by the phase representation.
+    Measurement(IncompatibleMeasurement),
+    /// A logical output repeats a qubit.
+    InvalidOutput(pecos_core::ParsePauliStringError),
+}
+
+impl std::fmt::Display for ShotError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Measurement(error) => write!(f, "{error}"),
+            Self::InvalidOutput(error) => write!(f, "invalid logical output: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ShotError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Measurement(error) => Some(error),
+            Self::InvalidOutput(error) => Some(error),
+        }
+    }
+}
+
+impl From<IncompatibleMeasurement> for ShotError {
+    fn from(error: IncompatibleMeasurement) -> Self {
+        Self::Measurement(error)
+    }
+}
+
 /// A simulated shot, retaining measurement determinism as well as outcomes.
 pub struct ShotResult {
     /// Syndrome results, in circuit order; false denotes eigenvalue +1.
@@ -316,11 +349,12 @@ pub struct ShotResult {
     pub logical_w: Option<Vec<f64>>,
 }
 
-fn logical_paulis(support: &[QubitId]) -> (PauliString, PauliString) {
+fn logical_paulis(support: &[QubitId]) -> Result<(PauliString, PauliString), ShotError> {
     let x = PauliString::with_phase_and_paulis(
         QuarterPhase::PlusOne,
         support.iter().map(|&q| (Pauli::X, q)).collect(),
-    );
+    )
+    .map_err(ShotError::InvalidOutput)?;
     // Ybar = i Xbar Zbar = i (-i)^weight Y(support), for odd weight.
     let sign = if support.len() % 4 == 1 {
         QuarterPhase::PlusOne
@@ -328,6 +362,7 @@ fn logical_paulis(support: &[QubitId]) -> (PauliString, PauliString) {
         QuarterPhase::MinusOne
     };
     let y =
-        PauliString::with_phase_and_paulis(sign, support.iter().map(|&q| (Pauli::Y, q)).collect());
-    (x, y)
+        PauliString::with_phase_and_paulis(sign, support.iter().map(|&q| (Pauli::Y, q)).collect())
+            .expect("the same support was validated by the preceding X constructor");
+    Ok((x, y))
 }

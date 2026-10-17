@@ -30,7 +30,7 @@ fn cx_materializes_x_negated_pending_rz_with_its_frame() {
     dense.cx(&[(QubitId(3), QubitId(1))]);
     stab.cx(&[(QubitId(1), QubitId(2))]);
     dense.cx(&[(QubitId(1), QubitId(2))]);
-    let angle = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
+    let angle = Angle64::from_turn_ratio(1, 8);
     stab.rz(angle, &qid(2)).x(&qid(2));
     dense.rz(angle, &qid(2)).x(&qid(2));
 
@@ -72,8 +72,8 @@ fn prepare_negated_pending_rotations(stab: &mut StabVec, dense: &mut StateVecSoA
         "two-qubit pending-RZ test input",
     );
 
-    let x_angle = Angle64::from_radians(0.37);
-    let y_angle = Angle64::from_radians(-0.53);
+    let x_angle = pecos_core::radians!(0.37);
+    let y_angle = pecos_core::radians!(-0.53);
     stab.rz(x_angle, &qid(0))
         .x(&qid(0))
         .rz(y_angle, &qid(1))
@@ -110,7 +110,7 @@ fn cy_materializes_target_rz_even_with_an_identity_or_z_frame() {
         let mut dense = StateVecSoA::with_seed(2, 7);
         stab.h(&qid(0)).h(&qid(1));
         dense.h(&qid(0)).h(&qid(1));
-        let angle = Angle64::from_radians(0.37);
+        let angle = pecos_core::radians!(0.37);
         stab.rz(angle, &qid(1));
         dense.rz(angle, &qid(1));
         if z_frame {
@@ -256,24 +256,28 @@ where
             simulator.gdg(&pair);
         }
         TwoQubitGate::Rxx => {
-            simulator.rxx(Angle64::from_radians(0.31), &pair);
+            simulator.rxx(pecos_core::radians!(0.31), &pair);
         }
         TwoQubitGate::Ryy => {
-            simulator.ryy(Angle64::from_radians(0.31), &pair);
+            simulator.ryy(pecos_core::radians!(0.31), &pair);
         }
         TwoQubitGate::Rzz => {
-            simulator.rzz(Angle64::from_radians(0.31), &pair);
+            simulator.rzz(pecos_core::radians!(0.31), &pair);
         }
         TwoQubitGate::Rxxryyrzz => {
             simulator.rxxryyrzz(
-                Angle64::from_radians(0.31),
-                Angle64::from_radians(-0.47),
-                Angle64::from_radians(0.23),
+                pecos_core::radians!(0.31),
+                pecos_core::radians!(-0.47),
+                pecos_core::radians!(0.23),
                 &pair,
             );
         }
         TwoQubitGate::U2q => {
-            let angles = [0.31, -0.47, 0.23].map(Angle64::from_radians);
+            let angles = [
+                pecos_core::radians!(0.31),
+                pecos_core::radians!(-0.47),
+                pecos_core::radians!(0.23),
+            ];
             simulator.u2q([angles; 2], angles, [angles; 2], &pair);
         }
     }
@@ -341,7 +345,7 @@ fn yy_roots_propagate_unflushed_partner_frames_once() {
                     TOLERANCE,
                     "YY root input",
                 );
-                let angle = Angle64::from_radians(0.37);
+                let angle = pecos_core::radians!(0.37);
                 stab.rz(angle, &qid(rotated)).x(&qid(rotated));
                 dense.rz(angle, &qid(rotated)).x(&qid(rotated));
                 apply_gate(&mut stab, pauli);

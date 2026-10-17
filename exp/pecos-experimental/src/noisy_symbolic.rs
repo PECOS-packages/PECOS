@@ -1898,7 +1898,7 @@ mod tests {
 
         let mut circuit = DagCircuit::new();
         circuit.h(&[0]);
-        let gate_index = circuit.add_gate_auto_wire(Gate::rz(Angle64::from_turns(0.125), &[0]));
+        let gate_index = circuit.add_gate_auto_wire(Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]));
         for noise in [
             DepolarizingNoiseModel::default(),
             DepolarizingNoiseModel::uniform(0.01),

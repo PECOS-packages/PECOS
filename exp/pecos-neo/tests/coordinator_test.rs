@@ -188,8 +188,8 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
         &commands,
         &mc_config,
         || {
-            let noise =
-                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p1));
+            let noise = ComposableNoiseModel::new()
+                .add_channel(SingleQubitChannel::depolarizing(p1).unwrap());
             (
                 CircuitRunner::new().with_noise(noise),
                 SparseStab::with_seed(1, 42),
@@ -221,7 +221,7 @@ fn test_coordinator_vs_monte_carlo_with_noise() {
                     let rng_comp = world.rngs.get(entity).unwrap();
 
                     let noise = ComposableNoiseModel::new()
-                        .add_channel(SingleQubitChannel::depolarizing(p1));
+                        .add_channel(SingleQubitChannel::depolarizing(p1).unwrap());
                     let mut sim = sim_comp.simulator.clone();
                     let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)

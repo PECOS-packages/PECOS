@@ -33,7 +33,7 @@ fn run_pecos(
 
     // Add --jit flag for LLVM files (when Selene is not available)
     if file_path.extension().and_then(|s| s.to_str()) == Some("ll") {
-        cmd.arg("--jit");
+        cmd.arg("--jit").args(["--qubits", "2"]);
     }
 
     let output = cmd

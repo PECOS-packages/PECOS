@@ -12,13 +12,13 @@ Enable the `composite-noise` Cargo feature on `pecos-neo` to use composite noise
 use pecos_neo::noise::prelude::*;
 
 // Simple: just set error rates
-let model = depolarizing_with_measurement(0.001, 0.01, 0.02);
+let model = depolarizing_with_measurement(0.001, 0.01, 0.02)?;
 
 // Or use the builder for more control
 let model = NoiseModelBuilder::new()
     .with_depolarizing(0.001, 0.01)
     .with_measurement_error(0.02)
-    .build();
+    .build()?;
 ```
 
 ## Choosing Your Approach
@@ -33,22 +33,22 @@ Use ready-made noise configurations for common scenarios:
 use pecos_neo::noise::prelude::*;
 
 // Simple depolarizing noise
-let model = depolarizing_only(0.001, 0.01);
+let model = depolarizing_only(0.001, 0.01)?;
 
 // With measurement errors
-let model = depolarizing_with_measurement(0.001, 0.01, 0.02);
+let model = depolarizing_with_measurement(0.001, 0.01, 0.02)?;
 
 // Realistic device noise with all parameters
 let model = realistic_device_noise(
     &DeviceNoiseParams::new()
-        .with_p1(0.001)
-        .with_p2(0.01)
-        .with_measurement_error(0.02)
-        .with_t1(0.0001)
-);
+        .with_p1(0.001)?
+        .with_p2(0.01)?
+        .with_measurement_error(0.02)?
+        .with_t1(0.0001)?
+)?;
 
 // Surface code optimized noise
-let model = surface_code_noise(0.001, true);
+let model = surface_code_noise(0.001, true)?;
 ```
 
 ### 2. Builder API (Flexible)
@@ -62,8 +62,8 @@ let model = NoiseModelBuilder::new()
     .with_depolarizing(0.001, 0.01)
     .with_measurement_error(0.02)
     .with_preparation_error(0.001)
-    .with_idle_noise(0.0001, 0.0005)  // T1 and T2 rates
-    .build();
+    .with_idle_noise(0.0001, 0.0005)?  // T1 and T2 rates
+    .build()?;
 ```
 
 ### 3. Composed Primitives (Full Control)
@@ -82,14 +82,14 @@ let sq_noise = seq![
             sample![
                 (0.1, leak()),           // 10% of errors cause leakage
                 (0.9, pauli()),          // 90% are Pauli errors
-            ]
+            ]?
         )
-    ),
+    )?,
 ];
 
 let model = NoiseModelBuilder::new()
     .with_single_qubit_noise(sq_noise)
-    .build();
+    .build()?;
 ```
 
 ## Common Recipes
@@ -102,11 +102,11 @@ Random Pauli errors after gates:
 use pecos_neo::noise::prelude::*;
 
 // Using pattern
-let model = depolarizing_only(0.001, 0.01);
+let model = depolarizing_only(0.001, 0.01)?;
 
 // Using primitives
-let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli()));
-let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli()));
+let sq = CompositeChannelBuilder::single_qubit("sq", prob(0.001, pauli())?);
+let tq = CompositeChannelBuilder::two_qubit("tq", prob(0.01, pauli())?);
 ```
 
 ### Measurement Noise
@@ -117,15 +117,15 @@ Bit-flip errors on measurement outcomes:
 use pecos_neo::noise::prelude::*;
 
 // Symmetric (same error rate for 0->1 and 1->0)
-let model = measurement_only(0.02, 0.02);
+let model = measurement_only(0.02, 0.02)?;
 
 // Asymmetric
-let model = measurement_only(0.01, 0.03);  // p(0->1)=1%, p(1->0)=3%
+let model = measurement_only(0.01, 0.03)?;  // p(0->1)=1%, p(1->0)=3%
 
 // Using primitives for outcome-dependent noise
 let meas_noise = seq![
-    on_zero(prob(0.01, flip_outcome())),  // 1% flip when measuring 0
-    on_one(prob(0.03, flip_outcome())),   // 3% flip when measuring 1
+    on_zero(prob(0.01, flip_outcome())?),  // 1% flip when measuring 0
+    on_one(prob(0.03, flip_outcome())?),   // 3% flip when measuring 1
 ];
 ```
 
@@ -141,7 +141,7 @@ let model = with_leakage(
     0.01,   // p2: two-qubit error rate
     0.1,    // 10% of errors cause leakage
     0.5,    // 50% seepage rate (return from leaked state)
-);
+)?;
 ```
 
 ### Idle/Decoherence Noise
@@ -153,12 +153,12 @@ use pecos_neo::noise::prelude::*;
 
 // Using builder
 let model = NoiseModelBuilder::new()
-    .with_idle_noise(0.0001, 0.0005)  // T1 rate, T2 rate
-    .build();
+    .with_idle_noise(0.0001, 0.0005)?  // T1 rate, T2 rate
+    .build()?;
 
 // Using primitives for custom idle behavior
-let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli()));
-let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z()));
+let t1 = CompositeChannelBuilder::idle("t1", prob_linear(0.0001, pauli())?);
+let t2 = CompositeChannelBuilder::idle("t2", prob_linear(0.0005, inject_z())?);
 ```
 
 ### Crosstalk
@@ -169,13 +169,13 @@ Operations affecting neighboring qubits:
 use pecos_neo::noise::prelude::*;
 
 // 1D chain crosstalk during measurement
-let model = chain_measurement_crosstalk(0.01);
+let model = chain_measurement_crosstalk(0.01)?;
 
 // 2D grid crosstalk (5 columns)
-let model = grid_measurement_crosstalk(5, 0.01);
+let model = grid_measurement_crosstalk(5, 0.01)?;
 
 // Custom crosstalk with composite primitives
-let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z()))
+let crosstalk = CompositeCrosstalkChannel::new("custom", prob(0.01, inject_z())?)
     .responds_to_measurement()
     .local(chain_neighbors);  // Only affect adjacent qubits
 ```
@@ -188,10 +188,10 @@ Errors that spread between qubits:
 use pecos_neo::noise::prelude::*;
 
 // Chain-correlated errors
-let model = chain_correlated(0.01, 0.5);  // 50% correlation factor
+let model = chain_correlated(0.01, 0.5)?;  // 50% correlation factor
 
 // Using CorrelatedNoiseChannel directly
-let channel = CorrelatedNoiseChannel::new(0.01, 0.5);
+let channel = CorrelatedNoiseChannel::new(0.01, 0.5)?;
 ```
 
 ## Topology Helpers

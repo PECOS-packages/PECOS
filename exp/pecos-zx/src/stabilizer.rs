@@ -62,7 +62,10 @@ pub fn gens_to_pauli_strings(gens: &Gens, num_qubits: usize) -> Vec<PauliString>
             QuarterPhase::PlusOne
         };
 
-        result.push(PauliString::with_phase_and_paulis(phase, paulis));
+        result.push(
+            PauliString::with_phase_and_paulis(phase, paulis)
+                .expect("tableau conversion emits one Pauli per enumerated qubit"),
+        );
     }
 
     result

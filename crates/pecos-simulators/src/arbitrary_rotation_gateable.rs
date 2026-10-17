@@ -119,8 +119,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ) -> &mut Self {
         // Use the signed principal values independently. Adding the fixed-point
         // angles before halving can wrap at 2*pi and lose a compensating pi.
-        let phase =
-            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
+        let phase = lambda.signed_half() + phi.signed_half();
         self.rz(lambda, qubits)
             .ry(theta, qubits)
             .rz(phi, qubits)
@@ -452,8 +451,25 @@ mod tests {
         recorder.u(Angle64::ZERO, Angle64::ZERO, lambda, &target);
         assert_eq!(recorder.global_phase_calls.len(), 1);
         let (actual_phase, actual_targets) = &recorder.global_phase_calls[0];
-        assert!(actual_phase.abs_diff_eq_radians(&expected_half_phase, 1e-14));
+        assert!(actual_phase.abs_diff_eq(
+            &expected_half_phase,
+            Angle64::try_epsilon_from_radians(1e-14).unwrap()
+        ));
         assert_eq!(actual_targets, &target);
+    }
+
+    #[test]
+    fn default_u_odd_phase_halves_cancel_exactly() {
+        let target = [QubitId(0)];
+        for fraction in [1, 2, 3, 5, Angle64::HALF_TURN.fraction() - 1] {
+            let angle = Angle64::new(fraction);
+            let mut recorder = RecordingSimulator::default();
+            recorder.u(Angle64::ZERO, angle, -angle, &target);
+            assert_eq!(
+                recorder.global_phase_calls,
+                vec![(Angle64::ZERO, target.to_vec())]
+            );
+        }
     }
 
     #[test]
@@ -500,9 +516,9 @@ mod tests {
         use crate::StateVecSoA32;
         use num_complex::Complex64;
 
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
-        let lambda = Angle64::from_radians(1.17);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
+        let lambda = pecos_core::radians!(1.17);
         let theta_rad = theta.to_radians_signed();
         let phi_rad = phi.to_radians_signed();
         let lambda_rad = lambda.to_radians_signed();
@@ -541,8 +557,8 @@ mod tests {
 
         let angles = [
             Angle64::ZERO,
-            Angle64::from_radians(0.73),
-            Angle64::from_radians(-0.41),
+            pecos_core::radians!(0.73),
+            pecos_core::radians!(-0.41),
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
             Angle64::THREE_QUARTERS_TURN,
@@ -592,8 +608,8 @@ mod tests {
     fn default_rxyxy2q_batches_match_sequential_pairs() {
         use crate::StateVecSoA32;
 
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
         // Include disjoint, overlapping and reversed pairs, as well as an
         // empty batch. Qubit 4 is a spectator in every case.
         let batches: &[&[(QubitId, QubitId)]] = &[
@@ -628,8 +644,8 @@ mod tests {
         use crate::StateVecSoA32;
         use num_complex::Complex64;
 
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(0.31);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(0.31);
         let theta_rad = theta.to_radians_signed();
         let phi_rad = phi.to_radians_signed();
         let c = (theta_rad / 2.0).cos();

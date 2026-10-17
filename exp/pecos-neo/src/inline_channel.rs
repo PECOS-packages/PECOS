@@ -63,6 +63,10 @@ pub enum InlineChannelError {
     #[error("channel probabilities must be non-negative and sum to 1")]
     InvalidProbabilities,
 
+    /// An invalid caller-supplied sampling probability or total.
+    #[error("{0}")]
+    InvalidSamplingWeights(#[from] crate::noise::validation::ValidationError),
+
     /// Probability validation passed, but random sampling still missed every term.
     #[error("Pauli channel sampling failed after probability validation")]
     SamplingMiss,
@@ -390,9 +394,17 @@ fn sample_pauli_channel(
         _ => return Err(InlineChannelError::NonPauliMixedUnitaryChannel),
     };
 
-    let total: f64 = ops.iter().map(|(p, _)| *p).sum();
+    let probabilities: Vec<f64> = ops.iter().map(|(p, _)| *p).collect();
+    crate::noise::validation::validate_weights_sum(&probabilities, "inline channel probabilities")?;
+    let total: f64 = probabilities.iter().sum();
     if (total - 1.0).abs() > PROBABILITY_SUM_TOLERANCE || ops.iter().any(|(p, _)| *p < 0.0) {
-        return Err(InlineChannelError::InvalidProbabilities);
+        return Err(crate::noise::validation::ValidationError::new(
+            "inline channel probabilities",
+            "probabilities must sum to one",
+        )
+        .with_value(&total)
+        .with_suggestion("Normalize the probabilities so they sum to one")
+        .into());
     }
 
     let mut threshold = rng.random::<f64>() * total;
@@ -531,6 +543,20 @@ fn apply_gate_to_stabilizer_with_pauli_channels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_sampling_rejects_nonfinite_probability_with_value_and_fix() {
+        let channel = ChannelExpr::MixedUnitary(vec![(f64::NAN, pecos_core::unitary::X(0))]);
+        let mut rng = PecosRng::seed_from_u64(42);
+        let error = sample_pauli_channel(&channel, &mut rng).unwrap_err();
+        assert!(matches!(
+            error,
+            InlineChannelError::InvalidSamplingWeights(_)
+        ));
+        let message = error.to_string();
+        assert!(message.contains("NaN"), "{message}");
+        assert!(message.contains("finite"), "{message}");
+    }
 
     #[test]
     fn density_matrix_inline_bit_flip_channel_flips_measurement() {

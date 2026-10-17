@@ -275,7 +275,7 @@ fn test_depolarizing_noise_rate_validation() {
             &commands,
             &mc_config,
             || {
-                let noise = GeneralNoiseModelBuilder::new().with_p1(p1).build();
+                let noise = GeneralNoiseModelBuilder::new().with_p1(p1).build().unwrap();
                 (
                     CircuitRunner::new().with_noise(noise),
                     SparseStab::with_seed(1, 42),
@@ -335,7 +335,8 @@ fn test_measurement_error_rate_validation() {
             || {
                 let noise = GeneralNoiseModelBuilder::new()
                     .with_p_meas(p_meas, 0.0) // Only 0->1 flip
-                    .build();
+                    .build()
+                    .unwrap();
                 (
                     CircuitRunner::new().with_noise(noise),
                     SparseStab::with_seed(1, 42),
@@ -532,7 +533,8 @@ fn test_neo_vs_engines_noisy_comparison() {
             let noise = GeneralNoiseModelBuilder::new()
                 .with_p1(p1)
                 .with_p2(p2)
-                .build();
+                .build()
+                .unwrap();
             (
                 CircuitRunner::new().with_noise(noise),
                 SparseStab::with_seed(2, 42),

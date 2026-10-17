@@ -175,9 +175,9 @@ fn preparation_and_asymmetric_readout_are_applied_once() {
 #[test]
 fn local_gate_faults_match_explicit_general_noise_and_rng_per_native_batch() {
     let gates = vec![
-        Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0]),
-        Gate::rzz(Angle64::from_radians(-0.3), &[(0, 1)]),
-        Gate::rz(Angle64::from_radians(0.4), &[0]),
+        Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0]),
+        Gate::rzz(pecos_core::radians!(-0.3), &[(0, 1)]),
+        Gate::rz(pecos_core::radians!(0.4), &[0]),
     ];
     let batches = [
         batch(0, 0, 0, vec![Gate::pz(&[0]), Gate::pz(&[1])]),
@@ -246,7 +246,7 @@ fn zero_local_faults_preserve_idle_results_rng_and_input_grouping() {
             1,
             1_000_000_000,
             0,
-            vec![Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0])],
+            vec![Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0])],
         ),
         batch(2, 2_000_000_000, 0, vec![Gate::mz(&[0])]),
     ];
@@ -309,8 +309,8 @@ fn same_batch_reuse_preserves_gate_order_readout_and_rng() {
         Gate::pz(&[0]),
         Gate::mz(&[0]),
         Gate::mz(&[0]),
-        Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0]),
-        Gate::rzz(Angle64::from_radians(-0.3), &[(0, 1)]),
+        Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0]),
+        Gate::rzz(pecos_core::radians!(-0.3), &[(0, 1)]),
         Gate::mz(&[1]),
         Gate::pz(&[0]),
         Gate::measure_leaked(&[0]),
@@ -638,7 +638,7 @@ fn ordered_pauli_pairs_act_on_emitted_operands_in_all_measurement_bases() {
             let pair = if reverse { (1, 0) } else { (0, 1) };
             for interaction in [
                 Gate::rzz(Angle64::ZERO, &[pair]),
-                Gate::rxyxy2q(Angle64::ZERO, Angle64::from_radians(0.4), &[pair]),
+                Gate::rxyxy2q(Angle64::ZERO, pecos_core::radians!(0.4), &[pair]),
             ] {
                 for a in ['I', 'X', 'Y', 'Z'] {
                     for b in ['I', 'X', 'Y', 'Z'] {
@@ -667,8 +667,8 @@ fn ordered_pauli_pairs_act_on_emitted_operands_in_all_measurement_bases() {
                             if basis != 'Z' {
                                 for q in [0, 1] {
                                     gates.push(Gate::rxy1q(
-                                        Angle64::from_radians(std::f64::consts::FRAC_PI_2),
-                                        Angle64::from_radians(phi),
+                                        Angle64::QUARTER_TURN,
+                                        Angle64::try_from_radians(phi).unwrap(),
                                         &[q],
                                     ));
                                 }
@@ -677,8 +677,8 @@ fn ordered_pauli_pairs_act_on_emitted_operands_in_all_measurement_bases() {
                             if basis != 'Z' {
                                 for q in [0, 1] {
                                     gates.push(Gate::rxy1q(
-                                        Angle64::from_radians(-std::f64::consts::FRAC_PI_2),
-                                        Angle64::from_radians(phi),
+                                        Angle64::THREE_QUARTERS_TURN,
+                                        Angle64::try_from_radians(phi).unwrap(),
                                         &[q],
                                     ));
                                 }
@@ -717,13 +717,13 @@ fn nonuniform_pairs_match_whole_batch_general_model_results_and_rng() {
             0,
             0,
             vec![
-                Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0]),
-                Gate::rzz(Angle64::from_radians(0.3), &[(1, 0)]),
+                Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0]),
+                Gate::rzz(pecos_core::radians!(0.3), &[(1, 0)]),
                 Gate::mz(&[0]),
                 Gate::pz(&[0]),
                 Gate::rxyxy2q(
-                    Angle64::from_radians(-0.6),
-                    Angle64::from_radians(0.2),
+                    pecos_core::radians!(-0.6),
+                    pecos_core::radians!(0.2),
                     &[(0, 1)],
                 ),
                 Gate::measure_leaked(&[1]),

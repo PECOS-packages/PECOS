@@ -3831,7 +3831,7 @@ mod tests {
     #[test]
     fn test_disentangle_single_site_case() {
         use pecos_simulators::DenseStateVec;
-        let theta = Angle64::from_radians(0.7);
+        let theta = pecos_core::radians!(0.7);
         let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
@@ -3865,7 +3865,7 @@ mod tests {
     #[test]
     fn test_disentangle_multi_site_bell_plus_rz() {
         use pecos_simulators::DenseStateVec;
-        let theta = Angle64::from_radians(0.7);
+        let theta = pecos_core::radians!(0.7);
         let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
@@ -3904,7 +3904,7 @@ mod tests {
     #[test]
     fn test_disentangle_yy_rotation() {
         use pecos_simulators::DenseStateVec;
-        let theta = Angle64::from_radians(0.3);
+        let theta = pecos_core::radians!(0.3);
         let mut stn = StabMps::builder(2).merge_rz(false).build();
         let mut ref_sim = DenseStateVec::new(2);
 
@@ -3984,12 +3984,12 @@ mod tests {
                 r.h(&[q(1)]);
             }
             3 => {
-                stn.rz(Angle64::from_radians(0.0691), &[q(3)]);
-                r.rz(Angle64::from_radians(0.0691), &[q(3)]);
+                stn.rz(pecos_core::radians!(0.0691), &[q(3)]);
+                r.rz(pecos_core::radians!(0.0691), &[q(3)]);
             }
             4 => {
-                stn.rz(Angle64::from_radians(0.3330), &[q(2)]);
-                r.rz(Angle64::from_radians(0.3330), &[q(2)]);
+                stn.rz(pecos_core::radians!(0.3330), &[q(2)]);
+                r.rz(pecos_core::radians!(0.3330), &[q(2)]);
             }
             5 => {
                 stn.cx(&[(q(2), q(3))]);
@@ -4008,24 +4008,24 @@ mod tests {
                 r.sz(&[q(1)]);
             }
             10 => {
-                stn.rx(Angle64::from_radians(0.8608), &[q(2)]);
-                r.rx(Angle64::from_radians(0.8608), &[q(2)]);
+                stn.rx(pecos_core::radians!(0.8608), &[q(2)]);
+                r.rx(pecos_core::radians!(0.8608), &[q(2)]);
             }
             11 => {
                 stn.x(&[q(2)]);
                 r.x(&[q(2)]);
             }
             12 => {
-                stn.rx(Angle64::from_radians(3.2610), &[q(1)]);
-                r.rx(Angle64::from_radians(3.2610), &[q(1)]);
+                stn.rx(pecos_core::radians!(3.2610), &[q(1)]);
+                r.rx(pecos_core::radians!(3.2610), &[q(1)]);
             }
             13 => {
                 stn.sz(&[q(2)]);
                 r.sz(&[q(2)]);
             }
             14 => {
-                stn.rz(Angle64::from_radians(3.4558), &[q(2)]);
-                r.rz(Angle64::from_radians(3.4558), &[q(2)]);
+                stn.rz(pecos_core::radians!(3.4558), &[q(2)]);
+                r.rz(pecos_core::radians!(3.4558), &[q(2)]);
             }
             _ => panic!("bad step {step}"),
         };
@@ -4233,7 +4233,7 @@ mod tests {
     fn test_amplitude_iterative_up_to_phase_h_rz_h_regression() {
         let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.9), &[QubitId(0)]);
         stn.h(&[QubitId(0)]);
 
         let amplitude = stn.amplitude_iterative_up_to_phase(&[true]);
@@ -4302,7 +4302,10 @@ mod tests {
         for rotation_qubit in 0..n {
             let theta = 0.17 + (random(&mut rng_state) % 101) as f64 * 0.011;
             stn.h(&[QubitId(rotation_qubit)]);
-            stn.rz(Angle64::from_radians(theta), &[QubitId(rotation_qubit)]);
+            stn.rz(
+                Angle64::try_from_radians(theta).unwrap(),
+                &[QubitId(rotation_qubit)],
+            );
             let neighbour = (rotation_qubit + 1) % n;
             match rotation_qubit % 3 {
                 0 => {
@@ -4384,10 +4387,10 @@ mod tests {
             .max_truncation_error(0.0)
             .build();
         stn.y(&[QubitId(1), QubitId(0)]);
-        stn.rx(Angle64::from_radians(0.61), &[QubitId(0)]);
+        stn.rx(pecos_core::radians!(0.61), &[QubitId(0)]);
         stn.sz(&[QubitId(0)]).szdg(&[QubitId(0)]);
-        stn.rx(Angle64::from_radians(0.61), &[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.37), &[QubitId(1), QubitId(0)]);
+        stn.rx(pecos_core::radians!(0.61), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.37), &[QubitId(1), QubitId(0)]);
         let measurement = stn.mz(&[QubitId(0)]).remove(0);
         assert!(!measurement.outcome && !measurement.is_deterministic);
         stn.flush();
@@ -4407,7 +4410,7 @@ mod tests {
             .build();
         stn.h(&[QubitId(1)]);
         stn.szdg(&[QubitId(0)]).szdg(&[QubitId(0)]);
-        stn.rx(Angle64::from_radians(0.61), &[QubitId(0)]);
+        stn.rx(pecos_core::radians!(0.61), &[QubitId(0)]);
         stn.y(&[QubitId(1)]).h(&[QubitId(0)]).sz(&[QubitId(0)]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[QubitId(0)]);
         let measurement = stn.mz(&[QubitId(0)]).remove(0);
@@ -4429,7 +4432,7 @@ mod tests {
                 for q in 0..n {
                     stn.h(&[QubitId(q)]);
                     let theta = 0.19 + 0.07 * (seed * n as u64 + q as u64) as f64;
-                    stn.rz(Angle64::from_radians(theta), &[QubitId(q)]);
+                    stn.rz(Angle64::try_from_radians(theta).unwrap(), &[QubitId(q)]);
                     stn.h(&[QubitId(q)]);
                     if q + 1 < n {
                         stn.cx(&[(QubitId(q), QubitId(q + 1))]);
@@ -4671,16 +4674,18 @@ mod tests {
                 }
                 6 => {
                     let angle_bits = next_rng(&mut rng_state);
-                    let angle = Angle64::from_radians(
+                    let angle = Angle64::try_from_radians(
                         (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                    );
+                    )
+                    .unwrap();
                     stn.rz(angle, &[QubitId(q0)]);
                 }
                 _ => {
                     let angle_bits = next_rng(&mut rng_state);
-                    let angle = Angle64::from_radians(
+                    let angle = Angle64::try_from_radians(
                         (angle_bits % 1000) as f64 * 0.001 * std::f64::consts::TAU,
-                    );
+                    )
+                    .unwrap();
                     stn.rx(angle, &[QubitId(q0)]);
                 }
             }
@@ -6287,12 +6292,12 @@ mod tests {
                 r.h(&[q(1)]);
             }),
             Box::new(|s, r| {
-                s.rz(Angle64::from_radians(0.0691), &[q(3)]);
-                r.rz(Angle64::from_radians(0.0691), &[q(3)]);
+                s.rz(pecos_core::radians!(0.0691), &[q(3)]);
+                r.rz(pecos_core::radians!(0.0691), &[q(3)]);
             }),
             Box::new(|s, r| {
-                s.rz(Angle64::from_radians(0.3330), &[q(2)]);
-                r.rz(Angle64::from_radians(0.3330), &[q(2)]);
+                s.rz(pecos_core::radians!(0.3330), &[q(2)]);
+                r.rz(pecos_core::radians!(0.3330), &[q(2)]);
             }),
             Box::new(|s, r| {
                 s.cx(&[(q(2), q(3))]);
@@ -6315,28 +6320,28 @@ mod tests {
                 r.sz(&[q(1)]);
             }),
             Box::new(|s, r| {
-                s.rx(Angle64::from_radians(0.8608), &[q(2)]);
-                r.rx(Angle64::from_radians(0.8608), &[q(2)]);
+                s.rx(pecos_core::radians!(0.8608), &[q(2)]);
+                r.rx(pecos_core::radians!(0.8608), &[q(2)]);
             }),
             Box::new(|s, r| {
                 s.x(&[q(2)]);
                 r.x(&[q(2)]);
             }),
             Box::new(|s, r| {
-                s.rx(Angle64::from_radians(3.2610), &[q(1)]);
-                r.rx(Angle64::from_radians(3.2610), &[q(1)]);
+                s.rx(pecos_core::radians!(3.2610), &[q(1)]);
+                r.rx(pecos_core::radians!(3.2610), &[q(1)]);
             }),
             Box::new(|s, r| {
                 s.sz(&[q(2)]);
                 r.sz(&[q(2)]);
             }),
             Box::new(|s, r| {
-                s.rz(Angle64::from_radians(3.4558), &[q(2)]);
-                r.rz(Angle64::from_radians(3.4558), &[q(2)]);
+                s.rz(pecos_core::radians!(3.4558), &[q(2)]);
+                r.rz(pecos_core::radians!(3.4558), &[q(2)]);
             }),
             Box::new(|s, r| {
-                s.rx(Angle64::from_radians(1.3195), &[q(2)]);
-                r.rx(Angle64::from_radians(1.3195), &[q(2)]);
+                s.rx(pecos_core::radians!(1.3195), &[q(2)]);
+                r.rx(pecos_core::radians!(1.3195), &[q(2)]);
             }),
             Box::new(|s, r| {
                 s.x(&[q(1)]);
@@ -6355,8 +6360,8 @@ mod tests {
                 r.h(&[q(1)]);
             }),
             Box::new(|s, r| {
-                s.rx(Angle64::from_radians(5.3596), &[q(0)]);
-                r.rx(Angle64::from_radians(5.3596), &[q(0)]);
+                s.rx(pecos_core::radians!(5.3596), &[q(0)]);
+                r.rx(pecos_core::radians!(5.3596), &[q(0)]);
             }),
             Box::new(|s, r| {
                 s.rz(Angle64::QUARTER_TURN / 2u64, &[q(2)]);
@@ -6396,11 +6401,11 @@ mod tests {
         let mut stn = StabMps::builder(2).merge_rz(false).build();
         stn.cx(&[(q0, q1)]);
         stn.sz(&[q1]);
-        stn.rz(Angle64::from_radians(4.8946), &[q1]);
+        stn.rz(pecos_core::radians!(4.8946), &[q1]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
         stn.cz(&[(q0, q1)]);
         stn.x(&[q0]);
-        stn.rz(Angle64::from_radians(6.0633), &[q1]);
+        stn.rz(pecos_core::radians!(6.0633), &[q1]);
         stn.sz(&[q1]);
         stn.x(&[q1]);
         stn.h(&[q0]);
@@ -6430,7 +6435,7 @@ mod tests {
         );
         eprintln!("flags: {:?}", stn.disent_flags);
 
-        stn.rz(Angle64::from_radians(1.4326), &[q0]);
+        stn.rz(pecos_core::radians!(1.4326), &[q0]);
 
         eprintln!("\n=== After inner RZ(1.4326, 0) ===");
         for k in 0..2 {
@@ -6488,16 +6493,16 @@ mod tests {
         ref_sim.cx(&[(q0, q1)]);
         stn.sz(&[q1]);
         ref_sim.sz(&[q1]);
-        stn.rz(Angle64::from_radians(4.8946), &[q1]);
-        ref_sim.rz(Angle64::from_radians(4.8946), &[q1]);
+        stn.rz(pecos_core::radians!(4.8946), &[q1]);
+        ref_sim.rz(pecos_core::radians!(4.8946), &[q1]);
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
         ref_sim.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
         stn.cz(&[(q0, q1)]);
         ref_sim.cz(&[(q0, q1)]);
         stn.x(&[q0]);
         ref_sim.x(&[q0]);
-        stn.rz(Angle64::from_radians(6.0633), &[q1]);
-        ref_sim.rz(Angle64::from_radians(6.0633), &[q1]);
+        stn.rz(pecos_core::radians!(6.0633), &[q1]);
+        ref_sim.rz(pecos_core::radians!(6.0633), &[q1]);
         stn.sz(&[q1]);
         ref_sim.sz(&[q1]);
         stn.x(&[q1]);
@@ -6509,8 +6514,8 @@ mod tests {
         for i in 0..stn.disent_flags.len() {
             stn.disent_flags[i] = None;
         }
-        stn.rz(Angle64::from_radians(1.4326), &[q0]);
-        ref_sim.rz(Angle64::from_radians(1.4326), &[q0]);
+        stn.rz(pecos_core::radians!(1.4326), &[q0]);
+        ref_sim.rz(pecos_core::radians!(1.4326), &[q0]);
 
         let sv_stn = stn.state_vector_up_to_phase();
         let sv_ref: Vec<Complex64> = (0..4).map(|i| ref_sim.get_amplitude(i)).collect();
@@ -6548,7 +6553,7 @@ mod tests {
     /// it equals std path).
     #[test]
     fn test_yy_setup_disent_vs_std() {
-        let theta = Angle64::from_radians(0.3);
+        let theta = pecos_core::radians!(0.3);
         let build = || -> StabMps {
             let mut s = StabMps::new(2);
             s.cx(&[(QubitId(0), QubitId(1))]);
@@ -6594,11 +6599,11 @@ mod tests {
             let mut s = StabMps::new(2);
             s.cx(&[(q0, q1)]);
             s.sz(&[q1]);
-            s.rz(Angle64::from_radians(4.8946), &[q1]); // non-Clifford to get MPS nontrivial
+            s.rz(pecos_core::radians!(4.8946), &[q1]); // non-Clifford to get MPS nontrivial
             s.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
             s.cz(&[(q0, q1)]);
             s.x(&[q0]);
-            s.rz(Angle64::from_radians(6.0633), &[q1]);
+            s.rz(pecos_core::radians!(6.0633), &[q1]);
             s.sz(&[q1]);
             s.x(&[q1]);
             s.h(&[q0]);
@@ -6723,11 +6728,11 @@ mod tests {
             let mut s = StabMps::new(2);
             s.cx(&[(q0, q1)]);
             s.sz(&[q1]);
-            s.rz(Angle64::from_radians(4.8946), &[q1]);
+            s.rz(pecos_core::radians!(4.8946), &[q1]);
             s.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
             s.cz(&[(q0, q1)]);
             s.x(&[q0]);
-            s.rz(Angle64::from_radians(6.0633), &[q1]);
+            s.rz(pecos_core::radians!(6.0633), &[q1]);
             s.sz(&[q1]);
             s.x(&[q1]);
             // Start of rx(0, 1.4326): apply inner H(q0).
@@ -6737,7 +6742,7 @@ mod tests {
 
         // Run 1: standard flags -> disentangle fires.
         let mut s_disent = build();
-        s_disent.rz(Angle64::from_radians(1.4326), &[q0]);
+        s_disent.rz(pecos_core::radians!(1.4326), &[q0]);
         let sv_disent = s_disent.state_vector_up_to_phase();
 
         // Run 2: flags cleared -> uses multi-site CNOT cascade path.
@@ -6745,7 +6750,7 @@ mod tests {
         for i in 0..s_std.disent_flags.len() {
             s_std.disent_flags[i] = None;
         }
-        s_std.rz(Angle64::from_radians(1.4326), &[q0]);
+        s_std.rz(pecos_core::radians!(1.4326), &[q0]);
         let sv_std = s_std.state_vector_up_to_phase();
 
         let overlap: Complex64 = sv_disent
@@ -6818,8 +6823,8 @@ mod tests {
         stn.sz(&[q1]);
         ref_sim.sz(&[q1]);
         assert!(check(&stn, &mut ref_sim, "step 1 sz(1)"));
-        stn.rz(Angle64::from_radians(4.8946), &[q1]);
-        ref_sim.rz(Angle64::from_radians(4.8946), &[q1]);
+        stn.rz(pecos_core::radians!(4.8946), &[q1]);
+        ref_sim.rz(pecos_core::radians!(4.8946), &[q1]);
         assert!(check(&stn, &mut ref_sim, "step 2 rz(1) 4.89"));
         stn.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
         ref_sim.rz(Angle64::QUARTER_TURN / 2u64, &[q0]);
@@ -6830,8 +6835,8 @@ mod tests {
         stn.x(&[q0]);
         ref_sim.x(&[q0]);
         assert!(check(&stn, &mut ref_sim, "step 5 x(0)"));
-        stn.rz(Angle64::from_radians(6.0633), &[q1]);
-        ref_sim.rz(Angle64::from_radians(6.0633), &[q1]);
+        stn.rz(pecos_core::radians!(6.0633), &[q1]);
+        ref_sim.rz(pecos_core::radians!(6.0633), &[q1]);
         assert!(check(&stn, &mut ref_sim, "step 6 rz(1) 6.06"));
         stn.sz(&[q1]);
         ref_sim.sz(&[q1]);
@@ -6839,8 +6844,8 @@ mod tests {
         stn.x(&[q1]);
         ref_sim.x(&[q1]);
         assert!(check(&stn, &mut ref_sim, "step 8 x(1)"));
-        stn.rx(Angle64::from_radians(1.4326), &[q0]);
-        ref_sim.rx(Angle64::from_radians(1.4326), &[q0]);
+        stn.rx(pecos_core::radians!(1.4326), &[q0]);
+        ref_sim.rx(pecos_core::radians!(1.4326), &[q0]);
         assert!(check(&stn, &mut ref_sim, "step 9 rx(0) 1.43"));
     }
 
@@ -6849,7 +6854,7 @@ mod tests {
         // H(0), H(1), Rz(theta, 0), Rz(theta, 1)
         // Each Rz has a single flip site (no entangling gate between them).
         // Disentangling fires on both, recording single-site patterns.
-        let theta = Angle64::from_radians(0.3);
+        let theta = pecos_core::radians!(0.3);
         let mut stn = StabMps::builder(2).merge_rz(false).build();
 
         stn.h(&[QubitId(0)]);
@@ -6934,9 +6939,9 @@ mod tests {
 
     #[test]
     fn test_stn_u_matches_documented_matrix() {
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
-        let lambda = Angle64::from_radians(1.17);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
+        let lambda = pecos_core::radians!(1.17);
         let theta_rad = theta.to_radians_signed();
         let phi_rad = phi.to_radians_signed();
         let lambda_rad = lambda.to_radians_signed();
@@ -6985,7 +6990,7 @@ mod tests {
             stn.h(&[QubitId(0)]);
             let tableau_outcome = stn.mz(&[QubitId(0)])[0].outcome;
             stn.h(&[QubitId(1)]);
-            stn.rz(Angle64::from_radians(0.7), &[QubitId(1)]);
+            stn.rz(pecos_core::radians!(0.7), &[QubitId(1)]);
             stn.h(&[QubitId(1)]);
             let mps_outcome = stn.mz(&[QubitId(1)])[0].outcome;
             [tableau_outcome, mps_outcome]
@@ -7119,7 +7124,7 @@ mod tests {
     #[test]
     fn test_cross_validate_rz_arbitrary_angle() {
         // RZ at non-Clifford, non-T angle
-        let theta = Angle64::from_radians(1.234);
+        let theta = pecos_core::radians!(1.234);
         let mut stn = StabMps::builder(1).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
         stn.rz(theta, &[QubitId(0)]);
@@ -7247,7 +7252,7 @@ mod tests {
     fn test_measurement_rx_probabilities() {
         // RX(pi/3)|0> has prob(0) = cos^2(pi/6) = 3/4
         let expected_p0 = 0.75;
-        let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_3);
+        let theta = pecos_core::radians!(std::f64::consts::FRAC_PI_3);
 
         let n_trials: u32 = 2000;
         let mut count_0 = 0;
@@ -7435,7 +7440,7 @@ mod tests {
         // Deeper T-heavy circuit with rotating qubits + interleaved CXs
         // so the disent flag mechanism can't absorb the T's into the
         // tableau cheaply. Forces real MPS bond growth.
-        let small = Angle64::from_radians(0.37);
+        let small = pecos_core::radians!(0.37);
         for layer in 0..6 {
             for q in 0..n {
                 stn.rz(small, &[QubitId((q + layer) % n)]);
@@ -7528,8 +7533,8 @@ mod tests {
     fn test_pauli_frame_with_merge_rz() {
         // RZ(0.3)|+> is not an X eigenstate, so the later H exposes the
         // rotation sign through interference in the Z-basis probabilities.
-        let initial = Angle64::from_radians(0.3);
-        let theta = Angle64::from_radians(0.7);
+        let initial = pecos_core::radians!(0.3);
+        let theta = pecos_core::radians!(0.7);
         let mut stn_frame = StabMps::builder(1)
             .merge_rz(true)
             .pauli_frame_tracking(true)
@@ -7565,7 +7570,7 @@ mod tests {
 
         // Pending merged RZ makes it non-exact.
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.5), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.5), &[QubitId(0)]);
         assert!(!stn.is_state_exact(), "pending merged RZ → not exact");
         stn.flush();
         assert!(stn.is_state_exact(), "after flush() → exact again");
@@ -7664,7 +7669,7 @@ mod tests {
             .build();
         let mut dense = DenseStateVec::new(4);
         for q in 0..4 {
-            let angle = Angle64::from_radians(0.23 + 0.07 * q as f64);
+            let angle = Angle64::try_from_radians(0.23 + 0.07 * q as f64).unwrap();
             stn.h(&[QubitId(q)]);
             dense.h(&[QubitId(q)]);
             stn.rz(angle, &[QubitId(q)]);
@@ -7721,7 +7726,7 @@ mod tests {
         dense.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(1), QubitId(0))]);
         dense.cx(&[(QubitId(1), QubitId(0))]);
-        let angle = Angle64::from_radians(0.67);
+        let angle = pecos_core::radians!(0.67);
         stn.rz(angle, &[QubitId(0)]);
         dense.rz(angle, &[QubitId(0)]);
 
@@ -8575,11 +8580,11 @@ mod tests {
 
         let mut stn = StabMps::builder(3).merge_rz(false).build();
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.9), &[QubitId(0)]);
         stn.h(&[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.h(&[QubitId(2)]);
-        stn.rz(Angle64::from_radians(0.37), &[QubitId(2)]);
+        stn.rz(pecos_core::radians!(0.37), &[QubitId(2)]);
         stn.h(&[QubitId(2)]);
         stn.cx(&[(QubitId(1), QubitId(2))]);
 
@@ -8684,7 +8689,7 @@ mod tests {
         // RZ(t, q); Z(q); RZ(t, q); S(q); RZ(t, q) should merge to one
         // non-Clifford at flush time, because Z and S commute with RZ.
         // Compare vs eager (no commute optimization, same physics).
-        let t = Angle64::from_radians(0.12345);
+        let t = pecos_core::radians!(0.12345);
 
         let mut merged = StabMps::builder(2).seed(7).merge_rz(true).build();
         merged.h(&[QubitId(0)]); // make MPS non-trivial
@@ -8725,7 +8730,7 @@ mod tests {
         // applying x then rz(t) (since net = identity for +t−t... wait
         // actually: X·RZ(θ) = RZ(-θ)·X. So rz(t); x; rz(t) = x; rz(-t); rz(t) = x.
         // Verify equality with just x applied.
-        let t = Angle64::from_radians(0.7);
+        let t = pecos_core::radians!(0.7);
 
         let mut merged = StabMps::builder(2).seed(5).merge_rz(true).build();
         merged.h(&[QubitId(0)]); // non-trivial MPS
@@ -8863,7 +8868,7 @@ mod tests {
         use pecos_simulators::DenseStateVec;
 
         let t = Angle64::QUARTER_TURN / 2u64;
-        let final_angle = Angle64::from_radians(0.37);
+        let final_angle = pecos_core::radians!(0.37);
         let mut stn = StabMps::builder(2)
             .merge_rz(false)
             .numerical_flag_redetection(true)
@@ -9070,7 +9075,7 @@ mod tests {
     #[test]
     fn test_builder_lazy_measure_rx_statistics() {
         // Lazy path must give correct RX(pi/3) measurement statistics.
-        let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_3);
+        let theta = pecos_core::radians!(std::f64::consts::FRAC_PI_3);
         let num_trials: u32 = 400;
         let mut count_0 = 0;
         for trial in 0..num_trials {
@@ -9157,7 +9162,10 @@ mod tests {
                                 }
                                 _ => {
                                     let radians = if step & 1 == 0 { 0.37 } else { -0.61 };
-                                    stn.rz(Angle64::from_radians(radians), &[QubitId(q)]);
+                                    stn.rz(
+                                        Angle64::try_from_radians(radians).unwrap(),
+                                        &[QubitId(q)],
+                                    );
                                 }
                             }
                         }
@@ -9274,7 +9282,7 @@ mod tests {
                     dense.cz(&pair);
                 }
                 Op::Rz(q, radians) => {
-                    let angle = Angle64::from_radians(radians);
+                    let angle = Angle64::try_from_radians(radians).unwrap();
                     stn.rz(angle, &[QubitId(q)]);
                     dense.rz(angle, &[QubitId(q)]);
                 }
@@ -9462,7 +9470,7 @@ mod tests {
                 for q in 1..4 {
                     stn.cx(&[(QubitId(0), QubitId(q))]);
                 }
-                stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                stn.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
                 stn.flush();
                 assert!(!measure::is_mps_trivial(&stn.mps));
                 if retry {
@@ -9526,7 +9534,7 @@ mod tests {
             for round in 0..8 {
                 for q in 0..4 {
                     stn.h(&[QubitId(q)]);
-                    stn.rz(Angle64::from_radians(0.37), &[QubitId(q)]);
+                    stn.rz(pecos_core::radians!(0.37), &[QubitId(q)]);
                     stn.cx(&[(QubitId(q), QubitId((q + 1) % 4))]);
                 }
                 saw_entanglement |= stn.max_bond_dim() > 1;
@@ -9629,7 +9637,7 @@ mod tests {
             let mut stn = StabMps::builder(4).seed(9).merge_rz(false).build();
             stn.mps.set_config(config.clone());
             stn.h(&[QubitId(0)]);
-            stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+            stn.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
             let before = EXACT_MEASUREMENT_TRANSACTIONS.get();
             measure::inject_projection_vanishes(1);
             stn.mz(&[QubitId(0)]);
@@ -9650,7 +9658,7 @@ mod tests {
             .max_truncation_error(0.0)
             .build();
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
         stn.flush();
         assert!(!measure::is_mps_trivial(&stn.mps));
         measure::inject_projection_vanishes(1);
@@ -9667,7 +9675,7 @@ mod tests {
             .max_truncation_error(0.0)
             .build();
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
         stn.flush();
         assert!(!measure::is_mps_trivial(&stn.mps));
         measure::inject_zero_projection_probabilities(1);
@@ -9689,15 +9697,15 @@ mod tests {
         stn.mz(&[QubitId(0)]);
         assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 0);
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
         assert!(!measure::is_mps_trivial(&stn.mps));
         assert_eq!(stn.mps.config().max_bond_dim, 1);
         stn.mz(&[QubitId(0)]);
         assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 1);
         stn.h(&[QubitId(0), QubitId(1)]);
-        stn.rz(Angle64::from_radians(0.37), &[QubitId(0), QubitId(1)]);
+        stn.rz(pecos_core::radians!(0.37), &[QubitId(0), QubitId(1)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
-        stn.rz(Angle64::from_radians(0.29), &[QubitId(1)]);
+        stn.rz(pecos_core::radians!(0.29), &[QubitId(1)]);
         assert_eq!(stn.mps.config().max_bond_dim, 2);
         assert!(stn.bond_cap_hits() > 0);
         stn.mz(&[QubitId(0)]);
@@ -9803,7 +9811,7 @@ mod tests {
         assert!(exact().is_state_exact());
 
         let mut pending_rz = StabMps::builder(2).merge_rz(true).build();
-        pending_rz.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        pending_rz.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
         assert!(!pending_rz.is_state_exact());
 
         let mut frame = StabMps::builder(2).pauli_frame_tracking(true).build();

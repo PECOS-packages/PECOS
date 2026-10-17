@@ -302,6 +302,7 @@ fn test_phir_engine_builder_to_sim() {
         .from_qis_llvm_ir(SINGLE_H_IR)
         .expect("parse")
         .to_sim()
+        .qubits(1)
         .quantum(StateVectorEngineBuilder::default())
         .run(20);
     assert!(result.is_ok(), "to_sim().run() failed: {:?}", result.err());
@@ -316,6 +317,7 @@ fn test_phir_engine_builder_to_sim_bell() {
         .from_qis_llvm_ir(SELENE_BELL_IR)
         .expect("parse")
         .to_sim()
+        .qubits(2)
         .quantum(StateVectorEngineBuilder::default())
         .seed(123)
         .run(50);

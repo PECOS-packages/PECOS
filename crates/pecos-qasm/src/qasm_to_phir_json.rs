@@ -25,7 +25,14 @@ use crate::parser::{Program, QASMParser};
 ///
 /// Returns an error if parsing or conversion fails.
 pub fn qasm_to_phir_json(qasm_str: &str) -> Result<Value, String> {
-    let program = QASMParser::parse_str(qasm_str).map_err(|e| format!("QASM parse error: {e}"))?;
+    let config = crate::parser::ParseConfig {
+        expand_gates: false,
+        ..Default::default()
+    };
+    let mut program = QASMParser::parse_with_config(qasm_str, &config)
+        .map_err(|e| format!("QASM parse error: {e}"))?;
+    crate::parser::utils::expand_gates_for_export(&mut program)
+        .map_err(|e| format!("QASM expansion error: {e}"))?;
     program_to_phir_json(&program)
 }
 
@@ -169,7 +176,8 @@ fn convert_op(
 
             let mut qop = json!({"qop": phir_name, "args": args});
             if !gate.angles.is_empty() {
-                let radians: Vec<f64> = gate.angles.iter().map(Angle64::to_radians).collect();
+                let radians: Vec<f64> =
+                    gate.angles.iter().map(Angle64::to_radians_signed).collect();
                 qop["angles"] = json!([radians, "rad"]);
             }
             ops.push(qop);
@@ -315,6 +323,9 @@ fn convert_expr(expr: &Expression) -> Result<Value, String> {
 
 /// Map a QASM gate name string to PHIR gate name.
 fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
+    if let Some(native) = crate::parser::native_gates::parse_native_gate(name) {
+        return gate_type_to_phir(native);
+    }
     let phir = match name.to_lowercase().as_str() {
         "h" => "H",
         "x" => "X",

@@ -4,7 +4,7 @@
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_1() {
+fn test_user_guide_stabilizer_codes_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
 
@@ -26,11 +26,12 @@ assert!(x0.commutes_with(&z3));
 // X and Z on the SAME qubit anticommute:
 assert!(!X(0).commutes_with(&Z(0)));
 
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_2() {
+fn test_user_guide_stabilizer_codes_rust_2() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
@@ -46,11 +47,12 @@ let code = StabilizerCode::from_group(group);
 // Or use the built-in constructor:
 let code = StabilizerCode::repetition(3);
 
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_3() {
+fn test_user_guide_stabilizer_codes_rust_3() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
@@ -61,17 +63,18 @@ println!("n = {}", code.num_qubits());          // 7
 println!("k = {}", code.num_logical_qubits());   // 1
 println!("{}", code.code_parameters());           // [[7, 1]]
 
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_4() {
+fn test_user_guide_stabilizer_codes_rust_4() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
 let code = StabilizerCode::steane();
-let logicals = code.logical_operators();
+let logicals = code.logical_operators()?;
 
 // [[7, 1]] code has 2k = 2 independent logical directions
 assert_eq!(logicals.len(), 2);
@@ -79,30 +82,32 @@ assert_eq!(logicals.len(), 2);
 for (i, op) in logicals.iter().enumerate() {
     println!("Logical {i}: {op}");
 }
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_5() {
+fn test_user_guide_stabilizer_codes_rust_5() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
 
 let code = StabilizerCode::five_qubit();
-assert_eq!(code.distance(), Some(3));
+assert_eq!(code.distance()?, Some(3));
 
 let code = StabilizerCode::steane();
-assert_eq!(code.distance(), Some(3));
+assert_eq!(code.distance()?, Some(3));
 
 // Returns None if there are no logical qubits
 let trivial = StabilizerCode::repetition(2);
 // (still has distance for this case)
-assert_eq!(trivial.distance(), Some(1));
+assert_eq!(trivial.distance()?, Some(1));
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_6() {
+fn test_user_guide_stabilizer_codes_rust_6() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
@@ -117,11 +122,12 @@ assert_eq!(code.syndrome(&X(1)), vec![true, true]);
 
 // Z error: commutes with all Z-stabilizers (undetectable)
 assert_eq!(code.syndrome(&Z(0)), vec![false, false]);
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_7() {
+fn test_user_guide_stabilizer_codes_rust_7() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
@@ -129,12 +135,13 @@ fn test_user_guide_stabilizer_codes_rust_7() {
 let toric = StabilizerCode::toric(2);
 assert_eq!(toric.num_qubits(), 8);        // 2 * 2^2
 assert_eq!(toric.num_logical_qubits(), 2);
-assert_eq!(toric.distance(), Some(2));
+assert_eq!(toric.distance()?, Some(2));
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_8() {
+fn test_user_guide_stabilizer_codes_rust_8() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCode;
@@ -149,11 +156,12 @@ let code = StabilizerCode::new(group, 4);
 
 // k = n - rank = 4 - 1 = 3 logical qubits (not 1!)
 assert_eq!(code.num_logical_qubits(), 3);
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_9() {
+fn test_user_guide_stabilizer_codes_rust_9() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::StabilizerCodeSpec;
@@ -172,11 +180,12 @@ code.verify().unwrap();
 
 assert_eq!(code.num_qubits(), 3);
 assert_eq!(code.num_logical_qubits(), 1);
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_10() {
+fn test_user_guide_stabilizer_codes_rust_10() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::{StabilizerCode, StabilizerCodeSpec};
@@ -190,11 +199,12 @@ assert_eq!(spec.logical_zs().len(), 1);
 
 // Full verification passes
 spec.verify().unwrap();
+    Ok(())
 }
 
 
 #[test]
-fn test_user_guide_stabilizer_codes_rust_11() {
+fn test_user_guide_stabilizer_codes_rust_11() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_core::PauliOperator;
     use pecos_qec::{StabilizerCodeSpec, StabilizerFlipChecker};
@@ -215,4 +225,5 @@ let code = StabilizerCodeSpec::builder(7)
 let checker = StabilizerFlipChecker::new(&code);
 let analysis = checker.analyze_weight_with_types(1, true, true, true);
 assert_eq!(analysis.undetectable_logical, 0);  // distance-3: safe against weight-1
+    Ok(())
 }

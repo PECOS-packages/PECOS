@@ -384,8 +384,8 @@ fn sim_matches_matrix_1q_rotations() {
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
         Angle64::THREE_QUARTERS_TURN,
-        Angle64::from_radians(0.7),
-        Angle64::from_radians(2.3),
+        pecos_core::radians!(0.7),
+        pecos_core::radians!(2.3),
     ];
 
     for &angle in &angles {
@@ -419,7 +419,7 @@ fn sim_matches_matrix_2q_rotations() {
     let angles = [
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
-        Angle64::from_radians(1.1),
+        pecos_core::radians!(1.1),
     ];
 
     for &angle in &angles {
@@ -458,8 +458,8 @@ fn sim_matches_matrix_1q_rotations_on_plus() {
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
         Angle64::THREE_QUARTERS_TURN,
-        Angle64::from_radians(0.7),
-        Angle64::from_radians(2.3),
+        pecos_core::radians!(0.7),
+        pecos_core::radians!(2.3),
     ];
 
     // Get |+> from simulator
@@ -503,8 +503,8 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
     let angles = [
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
-        Angle64::from_radians(1.1),
-        Angle64::from_radians(0.3),
+        pecos_core::radians!(1.1),
+        pecos_core::radians!(0.3),
     ];
 
     // Get |++> from simulator

@@ -382,21 +382,24 @@ impl ScheduledExecutor {
                 match op {
                     RuntimeScheduledOp::Rxy { theta, phi, .. } => {
                         builder.rxy1q(
-                            Angle64::from_radians(*theta),
-                            Angle64::from_radians(*phi),
+                            Angle64::try_from_radians(*theta).unwrap(),
+                            Angle64::try_from_radians(*phi).unwrap(),
                             &targets,
                         );
                     }
                     RuntimeScheduledOp::Rz { theta, .. } => {
-                        builder.rz(Angle64::from_radians(*theta), &targets);
+                        builder.rz(Angle64::try_from_radians(*theta).unwrap(), &targets);
                     }
                     RuntimeScheduledOp::Rzz { theta, .. } => {
-                        builder.rzz(Angle64::from_radians(*theta), &[(targets[0], targets[1])]);
+                        builder.rzz(
+                            Angle64::try_from_radians(*theta).unwrap(),
+                            &[(targets[0], targets[1])],
+                        );
                     }
                     RuntimeScheduledOp::Rpp { theta, phi, .. } => {
                         builder.rxyxy2q(
-                            Angle64::from_radians(*theta),
-                            Angle64::from_radians(*phi),
+                            Angle64::try_from_radians(*theta).unwrap(),
+                            Angle64::try_from_radians(*phi).unwrap(),
                             &[(targets[0], targets[1])],
                         );
                     }

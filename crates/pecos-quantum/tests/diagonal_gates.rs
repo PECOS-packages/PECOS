@@ -97,7 +97,7 @@ fn adjoint_angle_cases(gt: GateType, rng: &mut PecosRng) -> Vec<Vec<Angle64>> {
     let mut cases: Vec<Vec<_>> = (0..8)
         .map(|_| {
             (0..count)
-                .map(|_| Angle64::from_radians(rng.random_range(0.1..6.1)))
+                .map(|_| Angle64::try_from_radians(rng.random_range(0.1..6.1)).unwrap())
                 .collect()
         })
         .collect();

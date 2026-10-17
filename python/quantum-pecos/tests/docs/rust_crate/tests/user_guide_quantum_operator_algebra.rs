@@ -79,7 +79,7 @@ fn test_user_guide_quantum_operator_algebra_rust_4() {
     assert_eq!(sparse, explicit_sparse);
     assert_eq!(dense, explicit_dense);
     assert_eq!(sparse.to_sparse_str(), "+X0 Z3");
-    assert_eq!(sparse.to_dense_str(None), "+XIIZ");
+    assert_eq!(sparse.to_dense_str(), "+XIIZ");
 }
 
 
@@ -249,7 +249,7 @@ fn test_user_guide_quantum_operator_algebra_rust_13() {
     // Commutativity check
     assert!(seq.is_abelian());  // all Z-type, so commute
 
-    // Row reduction to independent generators
+    // Row reduction to independent bodies (dependency phases are discarded)
     let reduced = seq.row_reduce();
     assert_eq!(reduced.len(), 2);
 }
@@ -332,14 +332,14 @@ fn test_user_guide_quantum_operator_algebra_rust_17() {
     use pecos_core::pauli::*;
     use pecos_quantum::{PauliGroup, PauliSequence, PauliSet, PauliStabilizerGroup};
     let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
-    let group: PauliGroup = stab.clone().into();        // drop phase constraint
+    let group: PauliGroup = stab.clone().into();        // drop stabilizer constraints
     let seq: PauliSequence = group.into();               // drop commutativity constraint
     let set: PauliSet = PauliSet::from_iter(vec![Zs([0, 1])]);
 
     // Downward (narrowing) -- validates constraints
     let seq = PauliSequence::new(vec![Zs([0, 1]), Zs([1, 2])]);
     let group: PauliGroup = seq.try_into().unwrap();     // checks commutativity
-    let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases
+    let stab: PauliStabilizerGroup = group.try_into().unwrap(); // checks real phases and absence of -I
 
     // From strings
     let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
@@ -351,7 +351,7 @@ fn test_user_guide_quantum_operator_algebra_rust_17() {
 // Build a stabilizer group
 
 #[test]
-fn test_user_guide_quantum_operator_algebra_rust_18() {
+fn test_user_guide_quantum_operator_algebra_rust_18() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_core::pauli::*;
     use pecos_qec::StabilizerCode;
     use pecos_quantum::PauliStabilizerGroup;
@@ -363,9 +363,10 @@ fn test_user_guide_quantum_operator_algebra_rust_18() {
     // Wrap in a StabilizerCode for QEC analysis
     let code = StabilizerCode::from_group(group);
     assert_eq!(code.num_logical_qubits(), 1);
-    assert_eq!(code.distance(), Some(1));
+    assert_eq!(code.distance()?, Some(1));
 
     // Or use standard constructors directly
     let steane = StabilizerCode::steane();
-    assert_eq!(steane.distance(), Some(3));
+    assert_eq!(steane.distance()?, Some(3));
+    Ok(())
 }

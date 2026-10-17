@@ -1021,7 +1021,7 @@ mod tests {
                         simulator.h(&[QubitId(0)]);
                         simulator.cx(&[(QubitId(0), QubitId(1))]);
                         if round == 1 {
-                            simulator.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                            simulator.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
                         }
                     }
                     for q in [0, 1, 1] {
@@ -1065,9 +1065,9 @@ mod tests {
 
     #[test]
     fn u_matches_documented_matrix() {
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
-        let lambda = Angle64::from_radians(1.17);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
+        let lambda = pecos_core::radians!(1.17);
         let theta_rad = theta.to_radians_signed();
         let phi_rad = phi.to_radians_signed();
         let lambda_rad = lambda.to_radians_signed();
@@ -1096,10 +1096,10 @@ mod tests {
     fn pending_rz_before_u_matches_dense_without_injection() {
         let mut mast = Mast::with_seed(2, 2, 952).with_merge_rz(true);
         let mut dense = DenseStateVec::new(2);
-        let pending = Angle64::from_radians(0.37);
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
-        let lambda = Angle64::from_radians(1.17);
+        let pending = pecos_core::radians!(0.37);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
+        let lambda = pecos_core::radians!(1.17);
         mast.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
         dense.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
         mast.rz(pending, &[QubitId(0)]);
@@ -1343,7 +1343,7 @@ mod tests {
                     Angle64::QUARTER_TURN,
                     Angle64::HALF_TURN,
                     Angle64::THREE_QUARTERS_TURN,
-                    Angle64::from_radians(0.37),
+                    pecos_core::radians!(0.37),
                 ] {
                     for q in 0..2 {
                         for repetitions in [1, 2] {
@@ -1468,7 +1468,7 @@ mod tests {
                     dense.cz(&pair);
                 }
                 Op::Rz(q, radians) => {
-                    let angle = Angle64::from_radians(radians);
+                    let angle = Angle64::try_from_radians(radians).unwrap();
                     mast.rz(angle, &[QubitId(q)]);
                     dense.rz(angle, &[QubitId(q)]);
                 }
@@ -2359,7 +2359,7 @@ mod tests {
         let mut mast = Mast::with_seed(2, 1, 17).with_mps_config(config);
         mast.h(&[QubitId(0), QubitId(1)]);
         mast.cx(&[(QubitId(0), QubitId(1))]);
-        mast.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        mast.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
         let before = super::super::EXACT_MEASUREMENT_TRANSACTIONS.get();
         mast.mz(&[QubitId(0)]);
         assert_eq!(super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(), before);

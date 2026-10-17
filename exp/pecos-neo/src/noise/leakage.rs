@@ -22,6 +22,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -53,7 +54,7 @@ pub struct LeakageChannel {
     /// Scale leakage events to depolarizing events.
     ///
     /// 0.0 = all leakage becomes depolarizing, 1.0 = all leakage remains leakage.
-    pub leakage_scale: f64,
+    leakage_scale: f64,
 }
 
 impl Default for LeakageChannel {
@@ -63,6 +64,12 @@ impl Default for LeakageChannel {
 }
 
 impl LeakageChannel {
+    /// Return the configured `leakage_scale`.
+    #[must_use]
+    pub fn leakage_scale(&self) -> f64 {
+        self.leakage_scale
+    }
+
     /// Create a leakage channel with full leakage (no scaling).
     #[must_use]
     pub fn new() -> Self {
@@ -76,10 +83,13 @@ impl LeakageChannel {
     }
 
     /// Set the leakage scale factor.
-    #[must_use]
-    pub fn with_scale(mut self, scale: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_scale(mut self, scale: f64) -> ValidationResult<Self> {
+        validate_probability(scale, "scale")?;
         self.leakage_scale = scale;
-        self
+        Ok(self)
     }
 }
 

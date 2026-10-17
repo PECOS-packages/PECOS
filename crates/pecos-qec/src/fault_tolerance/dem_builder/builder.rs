@@ -2502,32 +2502,11 @@ fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {
 }
 
 fn two_qubit_label_for_replay(pauli: &pecos_core::PauliString) -> Result<String, DemBuilderError> {
-    let mut label = String::with_capacity(2);
-    for qubit in [0, 1] {
-        label.push(pauli_index_to_label(match pauli.get(qubit) {
-            pecos_core::Pauli::I => 0,
-            pecos_core::Pauli::X => 1,
-            pecos_core::Pauli::Y => 2,
-            pecos_core::Pauli::Z => 3,
-        }));
-    }
-    if pauli.qubits().into_iter().any(|qubit| qubit > 1) {
-        return Err(DemBuilderError::ConfigurationError(format!(
-            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path",
+    super::types::two_qubit_pauli_label(pauli, [pecos_core::QubitId(0), pecos_core::QubitId(1)])
+        .map_err(|_| DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path; use a Pauli supported on the gate operands",
             pauli.to_sparse_str()
-        )));
-    }
-    Ok(label)
-}
-
-fn pauli_index_to_label(index: u8) -> char {
-    match index {
-        0 => 'I',
-        1 => 'X',
-        2 => 'Y',
-        3 => 'Z',
-        _ => unreachable!("Pauli index must be 0-3"),
-    }
+        )))
 }
 
 fn pauli_label_to_index(label: char) -> Option<u8> {
@@ -4850,7 +4829,7 @@ mod tests {
     #[test]
     fn crosstalk_unsupported_rotation_diagnostic_preserves_angles() {
         let mut sim = SymbolicSparseStab::new(1);
-        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turns(0.125), &[0]);
+        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
         let error = DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate)
             .unwrap_err();
         assert!(error.to_string().contains("RZ(0.125000 turns)"));

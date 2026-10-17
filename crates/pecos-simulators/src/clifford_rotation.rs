@@ -42,7 +42,7 @@ use pecos_core::{Angle64, QubitId};
 /// // pi/2 rotation is a Clifford angle -- succeeds
 /// assert!(sim.try_rz(Angle64::QUARTER_TURN, &qid(0)).is_ok());
 /// // Arbitrary angle -- fails
-/// assert!(sim.try_rz(Angle64::from_radians(0.123), &qid(0)).is_err());
+/// assert!(sim.try_rz(pecos_core::radians!(0.123), &qid(0)).is_err());
 /// ```
 pub trait CliffordRotation: CliffordGateable {
     /// Try to apply RZ(angle). Succeeds for Clifford angles.
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn try_rz_non_clifford_fails() {
         let mut sim = SparseStab::new(1);
-        assert!(sim.try_rz(Angle64::from_radians(0.123), &qid(0)).is_err());
+        assert!(sim.try_rz(pecos_core::radians!(0.123), &qid(0)).is_err());
     }
 
     #[test]
@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn try_rx_non_clifford_fails() {
         let mut sim = SparseStab::new(1);
-        assert!(sim.try_rx(Angle64::from_radians(0.5), &qid(0)).is_err());
+        assert!(sim.try_rx(pecos_core::radians!(0.5), &qid(0)).is_err());
     }
 
     #[test]
@@ -592,7 +592,7 @@ mod tests {
     fn try_rzz_non_clifford_fails() {
         let mut sim = SparseStab::new(2);
         assert!(
-            sim.try_rzz(Angle64::from_radians(0.5), &[(QubitId(0), QubitId(1))])
+            sim.try_rzz(pecos_core::radians!(0.5), &[(QubitId(0), QubitId(1))])
                 .is_err()
         );
     }
@@ -654,10 +654,10 @@ mod tests {
         // reject an axis that would require non-Clifford basis changes. A
         // theta within the Clifford snapping tolerance counts as no rotation,
         // exactly as `try_rxx` treats it.
-        for theta in [Angle64::ZERO, Angle64::from_radians(1e-12)] {
+        for theta in [Angle64::ZERO, pecos_core::radians!(1e-12)] {
             sim.try_rxyxy2q(
                 theta,
-                Angle64::from_radians(0.123),
+                pecos_core::radians!(0.123),
                 &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],
             )
             .unwrap();
@@ -671,8 +671,8 @@ mod tests {
         for (theta, phi) in [
             (eighth, Angle64::QUARTER_TURN),
             (Angle64::QUARTER_TURN, eighth),
-            (Angle64::from_radians(0.123), Angle64::HALF_TURN),
-            (Angle64::HALF_TURN, Angle64::from_radians(0.123)),
+            (pecos_core::radians!(0.123), Angle64::HALF_TURN),
+            (Angle64::HALF_TURN, pecos_core::radians!(0.123)),
         ] {
             let mut sim = SparseStab::new(3);
             sim.h(&qid(0)).sz(&qid(1)).cx(&[(QubitId(0), QubitId(2))]);
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn lower_crz_pi_matches_sz_then_szzdg_tableau() {
         let mut lowered = SparseStab::new(2);
-        for gate in lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1)) {
+        for gate in lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1)).unwrap() {
             match gate.gate_type {
                 pecos_core::gate_type::GateType::Z => {
                     lowered.z(&gate.qubits);
@@ -800,7 +800,7 @@ mod tests {
         let mut sim = SparseStab::new(1);
         // Non-Clifford theta
         assert!(
-            sim.try_rxy1q(Angle64::from_radians(0.123), Angle64::ZERO, &qid(0))
+            sim.try_rxy1q(pecos_core::radians!(0.123), Angle64::ZERO, &qid(0))
                 .is_err()
         );
         // Non-axis phi (pi/4 is not along X or Y)
@@ -815,7 +815,7 @@ mod tests {
         for offset in [-0.9e-9, 0.9e-9] {
             let mut sim = SparseStab::new(1);
             assert!(
-                sim.try_rz(Angle64::from_turns(0.25 + offset), &qid(0))
+                sim.try_rz(Angle64::try_from_turns(0.25 + offset).unwrap(), &qid(0))
                     .is_ok(),
                 "offset {offset} turns should snap"
             );
@@ -824,7 +824,7 @@ mod tests {
         for offset in [-1.1e-9, 1.1e-9] {
             let mut sim = SparseStab::new(1);
             assert!(
-                sim.try_rz(Angle64::from_turns(0.25 + offset), &qid(0))
+                sim.try_rz(Angle64::try_from_turns(0.25 + offset).unwrap(), &qid(0))
                     .is_err(),
                 "offset {offset} turns must not snap"
             );
@@ -887,7 +887,7 @@ mod tests {
         let mut sim = SparseStab::new(1);
         assert!(
             sim.try_u(
-                Angle64::from_radians(0.123),
+                pecos_core::radians!(0.123),
                 Angle64::ZERO,
                 Angle64::ZERO,
                 &qid(0),
@@ -903,7 +903,7 @@ mod tests {
             sim.try_u(
                 Angle64::ZERO,
                 Angle64::ZERO,
-                Angle64::from_radians(0.5),
+                pecos_core::radians!(0.5),
                 &qid(0),
             )
             .is_err()
@@ -917,7 +917,7 @@ mod tests {
 
         assert!(
             sim.try_u(
-                Angle64::from_radians(0.5),
+                pecos_core::radians!(0.5),
                 Angle64::ZERO,
                 Angle64::QUARTER_TURN,
                 &qid(0),
@@ -935,7 +935,7 @@ mod tests {
         assert!(
             sim.try_rxxryyrzz(
                 Angle64::QUARTER_TURN,
-                Angle64::from_radians(0.5),
+                pecos_core::radians!(0.5),
                 Angle64::ZERO,
                 &[(QubitId(0), QubitId(1))],
             )
@@ -953,7 +953,7 @@ mod tests {
         assert!(
             sim.try_u2q(
                 [zero_u; 2],
-                [Angle64::ZERO, Angle64::from_radians(0.5), Angle64::ZERO,],
+                [Angle64::ZERO, pecos_core::radians!(0.5), Angle64::ZERO,],
                 [
                     [Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN,],
                     zero_u,

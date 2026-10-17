@@ -15,6 +15,10 @@
 //! Primitives are the building blocks of noise decision trees. They compose
 //! together to form complex noise models while maintaining a simple, fixed API.
 
+use crate::noise::validation::{
+    ValidationResult, validate_probability, validate_rate, validate_scaled_angle_rate,
+    validate_weights_sum,
+};
 use std::fmt::Write as _;
 
 use super::action::GateAction;
@@ -252,7 +256,7 @@ pub trait TwoStagePrimitive: Send + Sync {
 ///
 /// // Two-stage emission with partner depolarizing
 /// let noise = two_stage(
-///     prob(0.01, sample_emission()),           // Stage 1: sample emission
+///     prob(0.01, sample_emission()).unwrap(),           // Stage 1: sample emission
 ///     when(partner_only_fired(), pauli(), nothing())  // Stage 2: partner depolarizing
 /// );
 /// ```
@@ -448,12 +452,14 @@ impl<P: Primitive> Prob<P> {
     /// # Arguments
     /// * `probability` - Probability of executing inner (0.0 to 1.0)
     /// * `inner` - Primitive to execute if probability check passes
-    #[must_use]
-    pub fn new(probability: f64, inner: P) -> Self {
-        Self {
-            probability: probability.clamp(0.0, 1.0),
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn new(probability: f64, inner: P) -> ValidationResult<Self> {
+        Ok(Self {
+            probability: validate_probability(probability, "probability")?,
             inner,
-        }
+        })
     }
 
     /// Get the probability value.
@@ -507,6 +513,26 @@ impl<P: Primitive> Primitive for Prob<P> {
     }
 }
 
+/// A finite probability in [0, 1], suitable for dynamic probability callbacks.
+#[derive(Debug, Clone, Copy)]
+pub struct Probability(pub(super) f64);
+
+impl Probability {
+    /// Validate a caller-supplied probability.
+    ///
+    /// # Errors
+    /// Rejects NaN or values outside [0, 1], naming the value and remedy.
+    pub fn new(value: f64) -> ValidationResult<Self> {
+        Ok(Self(validate_probability(value, "probability")?))
+    }
+
+    /// Return the validated probability.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
+    }
+}
+
 /// Dynamic probability gate: compute probability from gate context.
 ///
 /// This primitive allows angle-dependent or gate-type-dependent error rates.
@@ -516,22 +542,22 @@ impl<P: Primitive> Primitive for Prob<P> {
 /// # Example
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Angle-dependent two-qubit noise
+/// let low = Probability::new(0.01)?;
+/// let high = Probability::new(0.02)?;
 /// let tq_noise = prob_fn(
-///     |gate| {
-///         // Higher error rate for larger rotation angles
-///         gate.and_then(|g| g.angle())
-///             .map(|a| 0.01 * a.to_radians().abs())
-///             .unwrap_or(0.01)
-///     },
+///     move |gate| if gate.is_some_and(|g| g.angle().is_some()) { high } else { low },
 ///     pauli(),
 /// );
+/// # Ok(())
+/// # }
 /// ```
 pub struct ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync,
     P: Primitive,
 {
     probability_fn: F,
@@ -540,7 +566,7 @@ where
 
 impl<F, P> Clone for ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync + Clone,
     P: Primitive + Clone,
 {
     fn clone(&self) -> Self {
@@ -553,7 +579,7 @@ where
 
 impl<F, P> ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync,
     P: Primitive,
 {
     /// Create a new dynamic probability gate.
@@ -572,7 +598,7 @@ where
 
 impl<F, P> Primitive for ProbFn<F, P>
 where
-    F: Fn(Option<&crate::noise::GateInfo>) -> f64 + Send + Sync + Clone + 'static,
+    F: Fn(Option<&crate::noise::GateInfo>) -> Probability + Send + Sync + Clone + 'static,
     P: Primitive,
 {
     fn apply(
@@ -581,7 +607,7 @@ where
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> CompositeResponse {
-        let probability = (self.probability_fn)(ctx.current_gate()).clamp(0.0, 1.0);
+        let probability = (self.probability_fn)(ctx.current_gate()).get();
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
@@ -616,7 +642,7 @@ where
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // 0.001 error rate per time unit, applying Z error
-/// let idle_noise = prob_linear(0.001, pauli());
+/// let idle_noise = prob_linear(0.001, pauli()).unwrap();
 /// ```
 pub struct ProbLinear<P: Primitive> {
     rate_per_time_unit: f64,
@@ -638,12 +664,14 @@ impl<P: Primitive> ProbLinear<P> {
     /// # Arguments
     /// * `rate_per_time_unit` - Error rate per time unit
     /// * `inner` - Primitive to execute if probability check passes
-    #[must_use]
-    pub fn new(rate_per_time_unit: f64, inner: P) -> Self {
-        Self {
-            rate_per_time_unit: rate_per_time_unit.max(0.0),
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn new(rate_per_time_unit: f64, inner: P) -> ValidationResult<Self> {
+        Ok(Self {
+            rate_per_time_unit: validate_rate(rate_per_time_unit, "rate_per_time_unit")?,
             inner,
-        }
+        })
     }
 }
 
@@ -695,7 +723,7 @@ impl<P: Primitive> Primitive for ProbLinear<P> {
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Quadratic dephasing with 0.01 rate
-/// let dephasing = prob_quadratic(0.01, inject_z());
+/// let dephasing = prob_quadratic(0.01, inject_z()).unwrap();
 /// ```
 pub struct ProbQuadratic<P: Primitive> {
     rate_per_time_unit: f64,
@@ -719,23 +747,37 @@ impl<P: Primitive> ProbQuadratic<P> {
     /// # Arguments
     /// * `rate_per_time_unit` - Dephasing rate per time unit
     /// * `inner` - Primitive to execute if probability check passes
-    #[must_use]
-    pub fn new(rate_per_time_unit: f64, inner: P) -> Self {
-        Self {
-            rate_per_time_unit: rate_per_time_unit.max(0.0),
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn new(rate_per_time_unit: f64, inner: P) -> ValidationResult<Self> {
+        crate::noise::validation::validate_angle_rate(rate_per_time_unit, "rate_per_time_unit")?;
+        Ok(Self {
+            rate_per_time_unit,
             coherent_to_incoherent_factor: 1.0,
             inner,
-        }
+        })
     }
 
     /// Set the coherent-to-incoherent scaling factor.
     ///
     /// This factor adjusts the effective rate when modeling coherent dephasing
     /// using stochastic errors. Default is 1.0 (no adjustment).
-    #[must_use]
-    pub fn with_factor(mut self, factor: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_factor(mut self, factor: f64) -> ValidationResult<Self> {
+        validate_rate(factor, "factor")?;
+        validate_scaled_angle_rate(
+            self.rate_per_time_unit,
+            factor,
+            "rate_per_time_unit",
+            "factor",
+        )?;
         self.coherent_to_incoherent_factor = factor;
-        self
+        Ok(self)
     }
 }
 
@@ -751,7 +793,7 @@ impl<P: Primitive> Primitive for ProbQuadratic<P> {
             .map_or(0.0, crate::noise::IdleInfo::duration_f64);
         let angle = self.rate_per_time_unit * self.coherent_to_incoherent_factor * duration;
         // sin^2(angle) gives probability of dephasing
-        let probability = angle.sin().powi(2).clamp(0.0, 1.0);
+        let probability = angle.sin().powi(2);
         if rng.random::<f64>() < probability {
             self.inner.apply(qubit, ctx, rng)
         } else {
@@ -873,8 +915,14 @@ impl<P: Primitive> Sample<P> {
     /// Create a new weighted sample primitive.
     ///
     /// Weights are normalized to sum to 1.0.
-    #[must_use]
-    pub fn new(branches: Vec<(f64, P)>) -> Self {
+    ///
+    /// # Errors
+    /// Rejects non-finite or negative weights and a non-finite or non-positive total.
+    pub fn new(branches: Vec<(f64, P)>) -> ValidationResult<Self> {
+        validate_weights_sum(
+            &branches.iter().map(|(w, _)| *w).collect::<Vec<_>>(),
+            "sample weights",
+        )?;
         let total: f64 = branches.iter().map(|(w, _)| w).sum();
         let normalized: Vec<f64> = branches.iter().map(|(w, _)| w / total).collect();
 
@@ -885,10 +933,10 @@ impl<P: Primitive> Sample<P> {
             cumulative.push(sum);
         }
 
-        Self {
+        Ok(Self {
             branches,
             cumulative_weights: cumulative,
-        }
+        })
     }
 }
 
@@ -948,12 +996,14 @@ impl<P: Primitive> Primitive for Sample<P> {
     }
 
     fn clone_box(&self) -> Box<dyn Primitive> {
-        Box::new(BoxSample::new(
-            self.branches
+        Box::new(BoxSample {
+            branches: self
+                .branches
                 .iter()
                 .map(|(w, p)| (*w, p.clone_box()))
                 .collect(),
-        ))
+            cumulative_weights: self.cumulative_weights.clone(),
+        })
     }
 
     fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
@@ -1182,7 +1232,7 @@ impl<C: Condition + Clone + 'static> Primitive for SkipIf<C> {
 ///
 /// let noise = seq![
 ///     skip_if_leaked(),
-///     prob(0.01, pauli()),
+///     prob(0.01, pauli()).unwrap(),
 /// ];
 /// ```
 #[macro_export]
@@ -1206,7 +1256,8 @@ macro_rules! seq {
 /// let noise = sample![
 ///     (0.25, leak()),
 ///     (0.75, pauli()),
-/// ];
+/// ]?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[macro_export]
 macro_rules! sample {
@@ -1243,8 +1294,14 @@ impl BoxSample {
     /// Create a new boxed weighted sample primitive.
     ///
     /// Weights are normalized to sum to 1.0.
-    #[must_use]
-    pub fn new(branches: Vec<(f64, Box<dyn Primitive>)>) -> Self {
+    ///
+    /// # Errors
+    /// Rejects non-finite or negative weights and a non-finite or non-positive total.
+    pub fn new(branches: Vec<(f64, Box<dyn Primitive>)>) -> ValidationResult<Self> {
+        validate_weights_sum(
+            &branches.iter().map(|(w, _)| *w).collect::<Vec<_>>(),
+            "sample weights",
+        )?;
         let total: f64 = branches.iter().map(|(w, _)| w).sum();
         let normalized: Vec<f64> = branches.iter().map(|(w, _)| w / total).collect();
 
@@ -1255,10 +1312,10 @@ impl BoxSample {
             cumulative.push(sum);
         }
 
-        Self {
+        Ok(Self {
             branches,
             cumulative_weights: cumulative,
-        }
+        })
     }
 }
 
@@ -1332,16 +1389,19 @@ impl Primitive for BoxSample {
 /// Convenience functions for creating primitives.
 pub mod primitives {
     use super::{
-        Condition, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Sample, Seq, SkipIf,
-        TwoStage, When,
+        Condition, Primitive, Prob, ProbFn, ProbLinear, ProbQuadratic, Probability, Sample, Seq,
+        SkipIf, TwoStage, When,
     };
     use crate::noise::GateInfo;
     use crate::noise::composite::action::Nothing;
     use crate::noise::composite::condition::{Always, GateTypeIs, Leaked, NotLeaked, OutcomeIs};
+    use crate::noise::validation::{ValidationResult, validate_probability};
 
     /// Probability gate.
-    #[must_use]
-    pub fn prob<P: Primitive>(probability: f64, inner: P) -> Prob<P> {
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn prob<P: Primitive>(probability: f64, inner: P) -> ValidationResult<Prob<P>> {
         Prob::new(probability, inner)
     }
 
@@ -1353,22 +1413,23 @@ pub mod primitives {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Angle-dependent error: p = 0.01 * |angle|
+    /// let low = Probability::new(0.01)?;
+    /// let high = Probability::new(0.02)?;
     /// let noise = prob_fn(
-    ///     |gate| {
-    ///         gate.and_then(|g| g.angle())
-    ///             .map(|a| 0.01 * a.to_radians().abs())
-    ///             .unwrap_or(0.01)
-    ///     },
+    ///     move |gate| if gate.is_some_and(|g| g.angle().is_some()) { high } else { low },
     ///     pauli(),
     /// );
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn prob_fn<F, P>(probability_fn: F, inner: P) -> ProbFn<F, P>
     where
-        F: Fn(Option<&GateInfo>) -> f64 + Send + Sync,
+        F: Fn(Option<&GateInfo>) -> Probability + Send + Sync,
         P: Primitive,
     {
         ProbFn::new(probability_fn, inner)
@@ -1385,10 +1446,15 @@ pub mod primitives {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // T1 relaxation: 0.001 error per time unit
-    /// let t1_noise = prob_linear(0.001, pauli());
+    /// let t1_noise = prob_linear(0.001, pauli()).unwrap();
     /// ```
-    #[must_use]
-    pub fn prob_linear<P: Primitive>(rate_per_time_unit: f64, inner: P) -> ProbLinear<P> {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn prob_linear<P: Primitive>(
+        rate_per_time_unit: f64,
+        inner: P,
+    ) -> ValidationResult<ProbLinear<P>> {
         ProbLinear::new(rate_per_time_unit, inner)
     }
 
@@ -1402,10 +1468,15 @@ pub mod primitives {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // T2 dephasing
-    /// let t2_noise = prob_quadratic(0.01, inject_z());
+    /// let t2_noise = prob_quadratic(0.01, inject_z()).unwrap();
     /// ```
-    #[must_use]
-    pub fn prob_quadratic<P: Primitive>(rate_per_time_unit: f64, inner: P) -> ProbQuadratic<P> {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn prob_quadratic<P: Primitive>(
+        rate_per_time_unit: f64,
+        inner: P,
+    ) -> ValidationResult<ProbQuadratic<P>> {
         ProbQuadratic::new(rate_per_time_unit, inner)
     }
 
@@ -1479,8 +1550,10 @@ pub mod primitives {
     /// Weighted sample (homogeneous types).
     ///
     /// For heterogeneous types, use the `sample!` macro.
-    #[must_use]
-    pub fn sample_uniform<P: Primitive>(branches: Vec<(f64, P)>) -> Sample<P> {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities, weights, or noise configuration.
+    pub fn sample_uniform<P: Primitive>(branches: Vec<(f64, P)>) -> ValidationResult<Sample<P>> {
         Sample::new(branches)
     }
 
@@ -1518,8 +1591,8 @@ pub mod primitives {
     /// # use pecos_neo::noise::composite::prelude::*;
     /// // Asymmetric measurement noise
     /// let meas_noise = seq![
-    ///     on_outcome(false, prob(0.02, flip_outcome())),  // 2% error on 0
-    ///     on_outcome(true, prob(0.05, flip_outcome())),   // 5% error on 1
+    ///     on_outcome(false, prob(0.02, flip_outcome()).unwrap()),  // 2% error on 0
+    ///     on_outcome(true, prob(0.05, flip_outcome()).unwrap()),   // 5% error on 1
     /// ];
     /// ```
     #[must_use]
@@ -1567,59 +1640,73 @@ pub mod primitives {
     /// Probability scaled by gate angle: p = `base_prob` * |angle/π|^power.
     ///
     /// This models angle-dependent error rates for parameterized gates like
-    /// RZZ, RXX, RYY. The scaling factor is |θ/π|^power, which:
-    /// - Is 0 when angle = 0 (no error for identity-like gates)
+    /// RZZ, RXX, RYY. The angle is the signed principal representative in
+    /// (-π, π]. The scaling factor |θ/π|^power:
+    /// - Is 0 when angle = 0 and power > 0 (no error for identity-like gates)
+    /// - Is 1 for every angle when power = 0
+    /// - Negative powers are rejected: their probability is unbounded near zero.
     /// - Is 1 when angle = π (full error for maximally-entangling gates)
     ///
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::composite::prelude::*;
     ///
     /// // Linear angle scaling: p = 0.01 * |angle/π|
-    /// let noise = prob_angle_scaled(0.01, 1.0, pauli());
+    /// let noise = prob_angle_scaled(0.01, 1.0, pauli())?;
     ///
     /// // Quadratic angle scaling: p = 0.01 * |angle/π|^2
-    /// let noise = prob_angle_scaled(0.01, 2.0, pauli());
+    /// let noise = prob_angle_scaled(0.01, 2.0, pauli())?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
+    ///
+    /// # Errors
+    /// Rejects non-finite or out-of-range base probabilities and non-finite or negative powers.
     pub fn prob_angle_scaled<P: Primitive>(
         base_probability: f64,
         power: f64,
         inner: P,
-    ) -> ProbFn<impl Fn(Option<&GateInfo>) -> f64 + Send + Sync, P> {
-        ProbFn::new(
+    ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
+        validate_probability(base_probability, "base_probability")?;
+        crate::noise::validation::validate_rate(power, "power")?;
+        Ok(ProbFn::new(
             move |gate: Option<&GateInfo>| {
                 let scale = gate
                     .and_then(crate::noise::context::GateInfo::angle)
                     .map_or(1.0, |a| {
-                        (a.to_radians().abs() / std::f64::consts::PI).powf(power)
+                        (a.to_radians_signed().abs() / std::f64::consts::PI).powf(power)
                     });
-                (base_probability * scale).min(1.0)
+                Probability(base_probability * scale)
             },
             inner,
-        )
+        ))
     }
 
     /// Probability with linear angle scaling: p = `base_prob` * |angle/π|.
     ///
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 1.0, inner)`.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Rejects non-finite base probabilities or values outside [0, 1].
     pub fn prob_angle_linear<P: Primitive>(
         base_probability: f64,
         inner: P,
-    ) -> ProbFn<impl Fn(Option<&GateInfo>) -> f64 + Send + Sync, P> {
+    ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
         prob_angle_scaled(base_probability, 1.0, inner)
     }
 
     /// Probability with quadratic angle scaling: p = `base_prob` * |angle/π|^2.
     ///
     /// Convenience wrapper for `prob_angle_scaled(base_prob, 2.0, inner)`.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Rejects non-finite base probabilities or values outside [0, 1].
     pub fn prob_angle_quadratic<P: Primitive>(
         base_probability: f64,
         inner: P,
-    ) -> ProbFn<impl Fn(Option<&GateInfo>) -> f64 + Send + Sync, P> {
+    ) -> ValidationResult<ProbFn<impl Fn(Option<&GateInfo>) -> Probability + Send + Sync, P>> {
         prob_angle_scaled(base_probability, 2.0, inner)
     }
 
@@ -1643,7 +1730,7 @@ pub mod primitives {
     ///
     /// // Two-stage emission with partner depolarizing
     /// let noise = two_stage(
-    ///     prob(0.01, sample_emission()),           // Stage 1: sample emission
+    ///     prob(0.01, sample_emission()).unwrap(),           // Stage 1: sample emission
     ///     when(partner_only_fired(), pauli(), nothing())  // Stage 2: partner depolarizing
     /// );
     /// ```
@@ -1676,12 +1763,37 @@ mod tests {
     }
 
     #[test]
+    fn quadratic_boundary_probability_is_finite_and_applied() {
+        use crate::noise::validation::{MAX_ANGLE_RATE, MAX_DURATION};
+        let noise = prob_quadratic(MAX_ANGLE_RATE / 2.0, inject_z())
+            .unwrap()
+            .with_factor(2.0)
+            .unwrap();
+        let angle = (noise.rate_per_time_unit * noise.coherent_to_incoherent_factor) * MAX_DURATION;
+        assert!(angle.is_finite());
+        let probability = angle.sin().powi(2);
+        assert!(probability.is_finite());
+        assert!((0.0..=1.0).contains(&probability));
+        let mut ctx = NoiseContext::new();
+        ctx.set_current_idle(pecos_core::TimeUnits::new(u64::MAX));
+        let mut rng = PecosRng::seed_from_u64(42);
+        let mut expected_rng = rng.clone();
+        for _ in 0..100 {
+            let expected = expected_rng.random::<f64>() < probability;
+            assert_eq!(
+                !noise.apply(QubitId(0), &mut ctx, &mut rng).is_none(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn test_prob_passes() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Probability 1.0 should always pass
-        let prim = prob(1.0, leak());
+        let prim = prob(1.0, leak()).unwrap();
         let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(response.causes_leak());
@@ -1693,7 +1805,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Probability 0.0 should never pass
-        let prim = prob(0.0, leak());
+        let prim = prob(0.0, leak()).unwrap();
         let response = prim.apply(QubitId(0), &mut ctx, &mut rng);
 
         assert!(response.is_none());
@@ -1704,7 +1816,7 @@ mod tests {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let prim = prob(0.3, leak());
+        let prim = prob(0.3, leak()).unwrap();
         let mut leak_count = 0;
 
         for _ in 0..1000 {
@@ -1755,7 +1867,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // 70% inject X, 30% inject Z (homogeneous - both Inject type)
-        let prim = sample_uniform(vec![(0.7, inject_x()), (0.3, inject_z())]);
+        let prim = sample_uniform(vec![(0.7, inject_x()), (0.3, inject_z())]).unwrap();
 
         let mut x_count = 0;
         let mut z_count = 0;
@@ -1818,13 +1930,16 @@ mod tests {
         //     seep(),
         //     pauli()
         //   )
-        // )
+        // ).unwrap()
 
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Heterogeneous sequence - use macro
-        let noise = seq![skip_if_leaked(), prob(0.5, when_leaked(seep(), pauli())),];
+        let noise = seq![
+            skip_if_leaked(),
+            prob(0.5, when_leaked(seep(), pauli())).unwrap(),
+        ];
 
         // Not leaked: should sometimes apply pauli
         let mut pauli_count = 0;
@@ -1852,13 +1967,16 @@ mod tests {
         // CX gets 100% error, H gets 0% error
         let noise = prob_fn(
             |gate| {
-                gate.map_or(0.0, |g| {
-                    if g.gate_type == GateType::CX {
-                        1.0
-                    } else {
-                        0.0
-                    }
+                Probability::new({
+                    gate.map_or(0.0, |g| {
+                        if g.gate_type == GateType::CX {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    })
                 })
+                .unwrap()
             },
             inject_x(),
         );
@@ -1880,6 +1998,26 @@ mod tests {
     }
 
     #[test]
+    fn angle_scaled_probability_uses_signed_magnitude() {
+        let noise = prob_angle_scaled(0.75, 2.0, inject_z()).unwrap();
+        for angle in [
+            Angle64::new(1),
+            pecos_core::radians!(0.73),
+            Angle64::new((1_u64 << 63) - 1),
+        ] {
+            let mut positive = make_test_context();
+            let mut negative = make_test_context();
+            positive.set_current_gate(GateType::RZ, &[angle], 1);
+            negative.set_current_gate(GateType::RZ, &[-angle], 1);
+            let p = (noise.probability_fn)(positive.current_gate()).get();
+            let n = (noise.probability_fn)(negative.current_gate()).get();
+            assert_eq!(p, n);
+            let expected = 0.75 * (angle.to_radians_signed() / std::f64::consts::PI).powi(2);
+            assert_eq!(p, expected);
+        }
+    }
+
+    #[test]
     fn test_prob_fn_angle_dependent() {
         let mut ctx = make_test_context();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1888,8 +2026,11 @@ mod tests {
         // So half turn (pi) = 100% error, quarter turn (pi/2) = 50% error
         let noise = prob_fn(
             |gate| {
-                gate.and_then(crate::noise::context::GateInfo::angle)
-                    .map_or(0.0, |a| a.to_radians() / std::f64::consts::PI)
+                Probability::new({
+                    gate.and_then(crate::noise::context::GateInfo::angle)
+                        .map_or(0.0, |a| a.to_radians_signed().abs() / std::f64::consts::PI)
+                })
+                .unwrap()
             },
             inject_z(),
         );
@@ -1934,9 +2075,7 @@ mod tests {
 
         // Default to 50% when no gate context
         let noise = prob_fn(
-            |gate| {
-                if gate.is_some() { 1.0 } else { 0.5 }
-            },
+            |gate| Probability::new(if gate.is_some() { 1.0 } else { 0.5 }).unwrap(),
             inject_x(),
         );
 
@@ -1965,7 +2104,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Linear rate: 0.1 per time unit
-        let noise = prob_linear(0.1, inject_z());
+        let noise = prob_linear(0.1, inject_z()).unwrap();
 
         // Set idle duration to 10 units -> p = 0.1 * 10 = 1.0 (100%)
         ctx.set_current_idle(pecos_core::TimeUnits::new(10));
@@ -2005,7 +2144,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         // Without idle context, duration is 0 -> p = 0
-        let noise = prob_linear(0.1, inject_z());
+        let noise = prob_linear(0.1, inject_z()).unwrap();
 
         let mut triggered = 0;
         for _ in 0..100 {
@@ -2028,7 +2167,7 @@ mod tests {
         // Quadratic rate for T2 dephasing: p = sin(rate * duration)^2
         // At rate = pi/2 and duration = 1, angle = pi/2, p = sin(pi/2)^2 = 1.0
         let rate = std::f64::consts::FRAC_PI_2;
-        let noise = prob_quadratic(rate, inject_z());
+        let noise = prob_quadratic(rate, inject_z()).unwrap();
 
         // Duration = 1 -> angle = pi/2 -> p = 100%
         ctx.set_current_idle(pecos_core::TimeUnits::new(1));
@@ -2045,7 +2184,7 @@ mod tests {
         // For 50% probability, we need sin(angle)^2 = 0.5, so angle = pi/4
         // Rate = pi/4, duration = 1 -> angle = pi/4 -> p = sin(pi/4)^2 = 0.5
         let rate_half = std::f64::consts::FRAC_PI_4;
-        let noise_half = prob_quadratic(rate_half, inject_z());
+        let noise_half = prob_quadratic(rate_half, inject_z()).unwrap();
         ctx.set_current_idle(pecos_core::TimeUnits::new(1));
         triggered = 0;
         for _ in 0..1000 {
@@ -2069,7 +2208,10 @@ mod tests {
 
         // Base rate pi/4, with factor 2.0 -> effective rate = pi/2
         // At duration = 1, angle = pi/2 -> p = 100%
-        let noise = prob_quadratic(std::f64::consts::FRAC_PI_4, inject_z()).with_factor(2.0);
+        let noise = prob_quadratic(std::f64::consts::FRAC_PI_4, inject_z())
+            .unwrap()
+            .with_factor(2.0)
+            .unwrap();
 
         ctx.set_current_idle(pecos_core::TimeUnits::new(1));
         let mut triggered = 0;

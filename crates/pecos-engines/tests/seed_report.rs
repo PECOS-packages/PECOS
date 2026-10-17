@@ -17,7 +17,8 @@ fn make_test_monte_carlo_engine(seed: u64) -> MonteCarloEngine {
     let mut engine = MonteCarloEngine::new_with_depolarizing_noise(
         Box::new(ExternalClassicalEngine::new_with_circuit(circuit)),
         0.1,
-    );
+    )
+    .unwrap();
     engine.set_seed(seed);
     engine.default_workers = 2;
     engine
@@ -34,7 +35,8 @@ fn depolarizing_constructor_applies_requested_noise_probability() {
     for (probability, expect_ones) in [(0.0, false), (0.5, true)] {
         let controller = ExternalClassicalEngine::new_with_circuit(circuit.clone());
         let mut engine =
-            MonteCarloEngine::new_with_depolarizing_noise(Box::new(controller), probability);
+            MonteCarloEngine::new_with_depolarizing_noise(Box::new(controller), probability)
+                .unwrap();
         engine.set_seed(42);
         let results = engine.run_with_workers(128, 1).unwrap();
         assert_eq!(results.len(), 128);

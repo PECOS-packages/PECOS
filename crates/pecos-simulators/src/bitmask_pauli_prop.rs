@@ -522,7 +522,7 @@ mod tests {
     }
 
     fn sparse_prop_from_dense(input: &str) -> PauliProp {
-        let mut prop = PauliProp::with_sign_tracking(input.len());
+        let mut prop = PauliProp::with_sign_tracking();
         for (q, p) in input.chars().enumerate() {
             match p {
                 'I' => {}
@@ -561,7 +561,7 @@ mod tests {
             apply_bitmask(&mut bitmask);
             assert_eq!(
                 bitmask.dense_string(),
-                sparse.dense_string(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "{name}: {input}"
             );
         }
@@ -593,7 +593,7 @@ mod tests {
             );
             assert_eq!(
                 bitmask.dense_string(),
-                sparse.dense_string(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "{name}: {input} frame"
             );
         }
@@ -612,7 +612,7 @@ mod tests {
             apply_bitmask(&mut bitmask, &pair);
             assert_eq!(
                 bitmask.dense_string(),
-                sparse.dense_string(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "{name}: {input}"
             );
         }
@@ -643,7 +643,7 @@ mod tests {
                 apply_bitmask(&mut bitmask, &pairs);
                 assert_eq!(
                     bitmask.dense_string(),
-                    sparse.dense_string(),
+                    sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                     "{name}: pair {pair:?}, input {input}"
                 );
             }
@@ -1282,7 +1282,7 @@ mod tests {
     fn word_boundary_propagation_matches_sparse_pauli_prop() {
         let qubits = [63, 64, 65];
         let qids = qubits.map(QubitId);
-        let mut sparse = PauliProp::with_sign_tracking(66);
+        let mut sparse = PauliProp::with_sign_tracking();
         let mut bitmask = BitmaskPauliProp::with_num_qubits(66);
 
         sparse.track_z(&qubits);
@@ -1290,7 +1290,10 @@ mod tests {
         sparse.h(&qids);
         bitmask.h(&qids);
 
-        assert_eq!(bitmask.dense_string(), sparse.dense_string());
+        assert_eq!(
+            bitmask.dense_string(),
+            sparse.dense_string_width(bitmask.num_qubits()).unwrap()
+        );
 
         let sparse_meas = sparse.mz(&qids);
         let bitmask_meas = bitmask.mz(&qids);
@@ -1339,7 +1342,7 @@ mod tests {
             sequence(&mut sparse, &mut bitmask);
             assert_eq!(
                 bitmask.dense_string(),
-                sparse.dense_string(),
+                sparse.dense_string_width(bitmask.num_qubits()).unwrap(),
                 "sequential composition: {input}"
             );
         }

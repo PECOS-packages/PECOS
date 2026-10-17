@@ -13,7 +13,7 @@
 //! A Pauli stabilizer group: commuting Pauli strings with [`Sign`] phases.
 //!
 //! A [`PauliStabilizerGroup`] wraps [`PauliGroup`] with the additional constraint
-//! that all generators have [`Sign`] phases (`{+1, -1}`).
+//! that all generators have [`Sign`] phases (`{+1, -1}`) and do not generate `-I`.
 //! The commutativity constraint is inherited from [`PauliGroup`].
 //!
 //! [`PauliGroup`]: crate::PauliGroup
@@ -53,22 +53,39 @@ use std::str::FromStr;
 /// Errors that can occur when constructing a [`PauliStabilizerGroup`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PauliStabilizerGroupError {
+    /// Invalid dimensions or group operation arguments.
+    Group(PauliGroupError),
+    /// The mask selects a generator that does not exist.
+    InvalidMask { mask: u64, count: usize },
     /// Generators at indices (i, j) anticommute.
     NonCommuting(usize, usize),
     /// Generator at index i has non-real phase (not +1 or -1).
-    NonRealPhase(usize),
+    NonRealPhase { index: usize, phase: QuarterPhase },
+    /// The generators generate -I, so the code space is empty.
+    GeneratesMinusIdentity { generators: Vec<String> },
 }
 
 impl fmt::Display for PauliStabilizerGroupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Group(error) => write!(f, "{error}"),
+            Self::InvalidMask { mask, count } => write!(
+                f,
+                "mask {mask} exceeds {count} generators; use a mask less than 2^{count}"
+            ),
             Self::NonCommuting(i, j) => {
                 write!(f, "generators {i} and {j} anticommute")
             }
-            Self::NonRealPhase(i) => {
+            Self::GeneratesMinusIdentity { generators } => {
                 write!(
                     f,
-                    "generator {i} has non-real phase (stabilizers must have phase +1 or -1)"
+                    "generators {generators:?} generate -I, which stabilizes no state (empty code space); remove contradictory generators or correct their phases"
+                )
+            }
+            Self::NonRealPhase { index, phase } => {
+                write!(
+                    f,
+                    "generator {index} has non-real phase {phase:?}; stabilizers must have phase +1 or -1"
                 )
             }
         }
@@ -77,15 +94,24 @@ impl fmt::Display for PauliStabilizerGroupError {
 
 impl std::error::Error for PauliStabilizerGroupError {}
 
+impl From<PauliGroupError> for PauliStabilizerGroupError {
+    fn from(error: PauliGroupError) -> Self {
+        match error {
+            PauliGroupError::NonCommuting(a, b) => Self::NonCommuting(a, b),
+            error => Self::Group(error),
+        }
+    }
+}
+
 /// A Pauli stabilizer group: commuting Pauli generators with [`Sign`] phases.
 ///
 /// This is a validated wrapper around [`PauliGroup`] adding the constraint that
-/// all generators have [`Sign`] phase (`{+1, -1}`). The commutativity constraint
-/// is inherited from [`PauliGroup`].
+/// all generators have [`Sign`] phase (`{+1, -1}`) and do not generate `-I`.
+/// The commutativity constraint is inherited from [`PauliGroup`].
 ///
-/// These are the standard requirements for a stabilizer group in QEC: each
-/// stabilizer must square to `+I` (which requires real phase), and all
-/// stabilizers must commute to define a consistent code space.
+/// Stabilizer generators must commute, have real phases, and not generate `-I`.
+/// Since `-I|psi> = |psi>` forces `psi = 0`, a group containing `-I`
+/// stabilizes no state and has an empty code space.
 ///
 /// [`PauliGroup`]: crate::PauliGroup
 /// [`Sign`]: pecos_core::Sign
@@ -113,25 +139,52 @@ pub struct PauliStabilizerGroup {
 
 impl PauliStabilizerGroup {
     /// Creates a new `PauliStabilizerGroup`, validating that all generators commute
-    /// and have real phases.
+    /// and have real phases, and that the group does not contain `-I`.
     ///
     /// # Errors
     ///
     /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator has phase +i or -i.
+    /// Returns [`PauliStabilizerGroupError::GeneratesMinusIdentity`] if they generate `-I`.
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair of generators anticommute.
     pub fn new(generators: Vec<PauliString>) -> Result<Self, PauliStabilizerGroupError> {
-        // Validate real phases
-        for (i, generator) in generators.iter().enumerate() {
-            match generator.phase() {
-                QuarterPhase::PlusOne | QuarterPhase::MinusOne => {}
-                _ => return Err(PauliStabilizerGroupError::NonRealPhase(i)),
-            }
-        }
+        Self::validate_real_phases(&generators, 0)?;
 
         // PauliGroup::new validates mutual commutativity
-        let inner = PauliGroup::new(generators).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
-        })?;
+        let inner = PauliGroup::new(generators).map_err(PauliStabilizerGroupError::from)?;
+        Self::from_group_with_real_phases(inner)
+    }
+
+    pub(crate) fn validate_real_phases(
+        generators: &[PauliString],
+        start_index: usize,
+    ) -> Result<(), PauliStabilizerGroupError> {
+        for (index, generator) in generators.iter().enumerate() {
+            if matches!(
+                generator.phase(),
+                QuarterPhase::PlusI | QuarterPhase::MinusI
+            ) {
+                return Err(PauliStabilizerGroupError::NonRealPhase {
+                    index: start_index + index,
+                    phase: generator.phase(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks the remaining stabilizer condition after real phases are validated.
+    pub(crate) fn from_group_with_real_phases(
+        inner: PauliGroup,
+    ) -> Result<Self, PauliStabilizerGroupError> {
+        if inner.contains_minus_identity() {
+            return Err(PauliStabilizerGroupError::GeneratesMinusIdentity {
+                generators: inner
+                    .generators()
+                    .iter()
+                    .map(PauliString::to_sparse_str)
+                    .collect(),
+            });
+        }
         Ok(Self { inner })
     }
 
@@ -140,8 +193,8 @@ impl PauliStabilizerGroup {
     /// # Safety
     ///
     /// The caller must ensure that the generators mutually commute and have
-    /// real phases. This is intended for internal use where the generators
-    /// are known to be valid (e.g., extracted from a simulator tableau).
+    /// real phases, and that their group does not generate `-I`. This is intended
+    /// for internal use with valid generators (e.g., from a simulator tableau).
     #[must_use]
     pub fn from_generators_unchecked(generators: Vec<PauliString>) -> Self {
         Self {
@@ -164,13 +217,14 @@ impl PauliStabilizerGroup {
     /// Creates a `PauliStabilizerGroup` from a [`PauliSet`], row-reducing to
     /// independent generators.
     ///
-    /// This validates commutativity and real phases, then reduces to a minimal
-    /// generating set.
+    /// Validates commutativity, real phases, and absence of `-I`, then reduces
+    /// to a minimal generating set.
     ///
     /// # Errors
     ///
+    /// Returns [`PauliStabilizerGroupError::GeneratesMinusIdentity`] if they generate `-I`.
     /// Returns [`PauliStabilizerGroupError::NonCommuting`] if any pair anticommute.
-    /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any reduced generator
+    /// Returns [`PauliStabilizerGroupError::NonRealPhase`] if any generator
     /// has a non-real phase.
     pub fn try_from_set(set: &PauliSet) -> Result<Self, PauliStabilizerGroupError> {
         Self::try_from(set.to_sequence())
@@ -236,10 +290,8 @@ impl PauliStabilizerGroup {
     ///
     /// Each bit in `mask` selects a generator: bit 0 = generator 0, bit 1 = generator 1, etc.
     /// `mask = 0` returns the identity (product of zero generators).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `mask` references a generator index >= `num_generators()`.
+    /// Different masks can yield the same element for dependent generators.
+    /// Only the first 64 generators can be selected by this mask.
     ///
     /// # Examples
     ///
@@ -251,34 +303,31 @@ impl PauliStabilizerGroup {
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
     ///
     /// // Identity (no generators selected)
-    /// assert_eq!(stab.element(0b00).weight(), 0);
+    /// assert_eq!(stab.element(0b00).unwrap().weight(), 0);
     ///
     /// // First generator: ZZI
-    /// assert_eq!(stab.element(0b01), Zs(&[0, 1]));
+    /// assert_eq!(stab.element(0b01).unwrap(), Zs(&[0, 1]));
     ///
     /// // Both generators: ZZI * IZZ = ZIZ
-    /// assert_eq!(stab.element(0b11), Zs(&[0, 2]));
+    /// assert_eq!(stab.element(0b11).unwrap(), Zs(&[0, 2]));
     /// ```
-    #[must_use]
-    pub fn element(&self, mask: u64) -> PauliString {
+    ///
+    /// # Errors
+    /// Returns an error if the mask selects an index beyond the stored generators.
+    pub fn element(&self, mask: u64) -> Result<PauliString, PauliStabilizerGroupError> {
         let n = self.num_generators();
-        assert!(
-            mask < (1u64 << n),
-            "mask {mask} exceeds number of generators ({n})"
-        );
+        if n < 64 && mask >= (1u64 << n) {
+            return Err(PauliStabilizerGroupError::InvalidMask { mask, count: n });
+        }
         let exponents: Vec<u32> = (0..n)
-            .map(|idx| u32::from(mask & (1u64 << idx) != 0))
+            .map(|idx| u32::from(idx < 64 && mask & (1u64 << idx) != 0))
             .collect();
-        self.inner.element(&exponents)
+        self.inner.element(&exponents).map_err(Into::into)
     }
 
     /// Multiplies a Pauli string by the generator at the given index.
     ///
     /// Returns `generators[index] * pauli`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_generators()`.
     ///
     /// # Examples
     ///
@@ -290,26 +339,27 @@ impl PauliStabilizerGroup {
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
     ///
     /// // Multiply Z(0) by generator 0 (ZZI): ZII * ZZI = IZI
-    /// let result = stab.multiply_by(0, &Z(0));
+    /// let result = stab.multiply_by(0, &Z(0)).unwrap();
     /// assert_eq!(result.weight(), 1);
     /// ```
-    #[must_use]
-    pub fn multiply_by(&self, index: usize, pauli: &PauliString) -> PauliString {
-        self.inner.multiply_by(index, pauli)
+    /// # Errors
+    /// Returns a generator-index error when `index` is out of range.
+    pub fn multiply_by(
+        &self,
+        index: usize,
+        pauli: &PauliString,
+    ) -> Result<PauliString, PauliStabilizerGroupError> {
+        self.inner.multiply_by(index, pauli).map_err(Into::into)
     }
 
     /// Returns an iterator over all elements of the stabilizer group.
     ///
-    /// For `r` generators, this yields `2^r` elements (every product of a subset
-    /// of generators, including the identity for the empty subset).
+    /// Yields each of the `2^rank` distinct elements exactly once, in the order
+    /// specified by [`PauliGroup::elements`].
     ///
     /// **Warning**: The group size is exponential in the number of generators.
     /// For large groups, prefer [`contains`](Self::contains) or
     /// [`contains_with_phase`](Self::contains_with_phase) for membership testing.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the group has more than 30 generators (2^30 > 10^9 elements).
     ///
     /// # Examples
     ///
@@ -318,12 +368,17 @@ impl PauliStabilizerGroup {
     /// use pecos_core::pauli::*;
     ///
     /// let stab = PauliStabilizerGroup::new(vec![Zs(&[0, 1]), Zs(&[1, 2])]).unwrap();
-    /// let elements: Vec<_> = stab.elements().collect();
+    /// let elements: Vec<_> = stab.elements().unwrap().collect();
     /// // 2 generators -> 2^2 = 4 elements: I, ZZI, IZZ, ZIZ
     /// assert_eq!(elements.len(), 4);
     /// ```
-    pub fn elements(&self) -> impl Iterator<Item = PauliString> + '_ {
-        self.inner.elements()
+    ///
+    /// # Errors
+    /// Returns an error if enumeration would yield more than 2^30 elements.
+    pub fn elements(
+        &self,
+    ) -> Result<impl Iterator<Item = PauliString> + '_, PauliStabilizerGroupError> {
+        self.inner.elements().map_err(Into::into)
     }
 
     /// Returns the binary symplectic matrix representation.
@@ -340,7 +395,8 @@ impl PauliStabilizerGroup {
         self.inner.commutation_matrix()
     }
 
-    /// Returns the generators in row-reduced form, removing redundant generators.
+    /// Returns independent bodies in row-reduced form.
+    /// Phases of zero-body dependencies are discarded, as in [`PauliSequence::row_reduce`].
     #[must_use]
     pub fn row_reduce(&self) -> PauliSequence {
         self.inner.row_reduce()
@@ -353,6 +409,7 @@ impl PauliStabilizerGroup {
 
     /// Returns the dense string representation, one stabilizer per line.
     ///
+    /// Includes phase prefixes and pads each line to the group width.
     /// Delegates to [`PauliSequence::to_dense_str`].
     #[must_use]
     pub fn to_dense_str(&self) -> String {
@@ -370,8 +427,9 @@ impl PauliStabilizerGroup {
     /// Transforms all generators by a Clifford gate: each `g_i` -> `C g_i C†`.
     ///
     /// Returns a new `PauliStabilizerGroup` with the transformed generators.
-    /// Clifford gates preserve commutation relations and real phases, so the
-    /// result is always a valid stabilizer group.
+    /// Clifford gates preserve commutation relations and real phases. Unitary
+    /// conjugation maps `-I` to `-I`, preserving its absence in both directions,
+    /// so the result is always a valid stabilizer group.
     ///
     /// # Examples
     ///
@@ -401,7 +459,7 @@ impl PauliStabilizerGroup {
         &self,
         clifford: &pecos_core::clifford_rep::CliffordRep,
     ) -> PauliStabilizerGroup {
-        // Clifford conjugation preserves commutation and real phases.
+        // Clifford conjugation also preserves the absence of -I.
         PauliStabilizerGroup {
             inner: self.inner.apply_clifford(clifford),
         }
@@ -414,42 +472,41 @@ impl PauliStabilizerGroup {
     /// Adds a generator to the stabilizer group.
     ///
     /// The new generator must commute with all existing generators and have
-    /// a real phase (+1 or -1).
+    /// a real phase (+1 or -1). The combined group must not generate `-I`.
     ///
     /// # Errors
     ///
     /// Returns an error if the generator has non-real phase or anticommutes
-    /// with any existing generator.
+    /// with any existing generator, or if the combined generators generate `-I`.
+    /// On error, the group is unchanged.
     pub fn add_generator(
         &mut self,
         generator: PauliString,
     ) -> Result<(), PauliStabilizerGroupError> {
-        match generator.phase() {
-            QuarterPhase::PlusOne | QuarterPhase::MinusOne => {}
-            _ => {
-                return Err(PauliStabilizerGroupError::NonRealPhase(
-                    self.num_generators(),
-                ));
-            }
-        }
-
-        self.inner.add_generator(generator).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
-        })
+        Self::validate_real_phases(std::slice::from_ref(&generator), self.num_generators())?;
+        let mut candidate = self.inner.clone();
+        candidate
+            .add_generator(generator)
+            .map_err(PauliStabilizerGroupError::from)?;
+        *self = Self::from_group_with_real_phases(candidate)?;
+        Ok(())
     }
 
     /// Removes the generator at the given index.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_generators()`.
-    pub fn remove_generator(&mut self, index: usize) -> PauliString {
-        self.inner.remove_generator(index)
+    /// # Errors
+    /// Returns a generator-index error when `index` is out of range.
+    pub fn remove_generator(
+        &mut self,
+        index: usize,
+    ) -> Result<PauliString, PauliStabilizerGroupError> {
+        self.inner.remove_generator(index).map_err(Into::into)
     }
 
     /// Merges another stabilizer group into this one.
     ///
-    /// All generators from `other` must commute with all generators in `self`.
+    /// All generators from `other` must commute with all generators in `self`,
+    /// and the combined group must not generate `-I`.
     /// The resulting group acts on `max(self.num_qubits(), other.num_qubits())` qubits.
     ///
     /// This is useful for lattice surgery: merging two code blocks by adding
@@ -458,11 +515,17 @@ impl PauliStabilizerGroup {
     /// # Errors
     ///
     /// Returns an error if any generator from `other` anticommutes with a
-    /// generator from `self`.
+    /// generator from `self`, or if the combined generators generate `-I`.
+    /// On error, the group is unchanged.
     pub fn merge(&mut self, other: &PauliStabilizerGroup) -> Result<(), PauliStabilizerGroupError> {
-        self.inner.merge(&other.inner).map_err(|e| match e {
-            PauliGroupError::NonCommuting(a, b) => PauliStabilizerGroupError::NonCommuting(a, b),
-        })
+        // Custom CliffordRep images are not guaranteed to have real phases.
+        Self::validate_real_phases(other.stabilizers(), self.num_generators())?;
+        let mut candidate = self.inner.clone();
+        candidate
+            .merge(&other.inner)
+            .map_err(PauliStabilizerGroupError::from)?;
+        *self = Self::from_group_with_real_phases(candidate)?;
+        Ok(())
     }
 }
 
@@ -472,7 +535,7 @@ impl FromStr for PauliStabilizerGroup {
     /// Parses a `PauliStabilizerGroup` from newline-delimited Pauli strings.
     ///
     /// Each line is parsed via [`PauliString::from_str`]. The resulting generators
-    /// are validated for mutual commutativity and real phases.
+    /// are validated for mutual commutativity, real phases, and absence of `-I`.
     ///
     /// # Examples
     ///
@@ -501,6 +564,20 @@ mod tests {
     use super::*;
     use pecos_core::pauli::*;
     use pecos_core::{Pauli, PauliOperator};
+
+    #[test]
+    fn sparse_rejects_duplicate_qubits_in_element() {
+        assert!("Z2\nX0 Z0".parse::<PauliStabilizerGroup>().is_err());
+    }
+
+    #[test]
+    fn test_signed_dense_roundtrip() {
+        let original: PauliStabilizerGroup = "-XX\n+ZZ".parse().unwrap();
+        assert_eq!(original.to_dense_str(), "-XX\n+ZZ");
+        assert_eq!(original.to_string(), original.to_dense_str());
+        let parsed: PauliStabilizerGroup = original.to_dense_str().parse().unwrap();
+        assert_eq!(parsed.stabilizers(), original.stabilizers());
+    }
 
     #[test]
     fn test_repetition_code() {
@@ -539,7 +616,10 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            PauliStabilizerGroupError::NonRealPhase(0)
+            PauliStabilizerGroupError::NonRealPhase {
+                index: 0,
+                phase: pecos_core::QuarterPhase::PlusI
+            }
         );
     }
 
@@ -567,7 +647,7 @@ mod tests {
     fn test_display() {
         let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
         let s = format!("{stab}");
-        assert_eq!(s, "ZZI\nIZZ");
+        assert_eq!(s, "+ZZI\n+IZZ");
     }
 
     #[test]
@@ -608,7 +688,7 @@ mod tests {
     #[test]
     fn test_to_dense_str() {
         let stab = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
-        assert_eq!(stab.to_dense_str(), "ZZI\nIZZ");
+        assert_eq!(stab.to_dense_str(), "+ZZI\n+IZZ");
     }
 
     #[test]
@@ -619,11 +699,12 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let original = PauliStabilizerGroup::from_strs(&["ZZI", "IZZ"]).unwrap();
+        let original = PauliStabilizerGroup::from_strs(&["-ZZI", "+IZZ"]).unwrap();
         let s = original.to_dense_str();
         let roundtripped: PauliStabilizerGroup = s.parse().unwrap();
         assert_eq!(roundtripped.rank(), original.rank());
         assert_eq!(roundtripped.num_qubits(), original.num_qubits());
+        assert_eq!(roundtripped.stabilizers(), original.stabilizers());
     }
 
     // ========================================================================
@@ -647,22 +728,22 @@ mod tests {
     #[test]
     fn test_element_identity() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        let id = stab.element(0b00);
+        let id = stab.element(0b00).unwrap();
         assert!(id.is_identity());
     }
 
     #[test]
     fn test_element_single_generator() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        assert_eq!(stab.element(0b01), Zs([0, 1]));
-        assert_eq!(stab.element(0b10), Zs([1, 2]));
+        assert_eq!(stab.element(0b01).unwrap(), Zs([0, 1]));
+        assert_eq!(stab.element(0b10).unwrap(), Zs([1, 2]));
     }
 
     #[test]
     fn test_element_product() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         // ZZI * IZZ = ZIZ
-        let product = stab.element(0b11);
+        let product = stab.element(0b11).unwrap();
         assert_eq!(product.get(0), Pauli::Z);
         assert_eq!(product.get(1), Pauli::I);
         assert_eq!(product.get(2), Pauli::Z);
@@ -672,7 +753,7 @@ mod tests {
     fn test_multiply_by() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         // generator[0] (ZZI) * Z(0) = IZI
-        let result = stab.multiply_by(0, &Z(0));
+        let result = stab.multiply_by(0, &Z(0)).unwrap();
         assert_eq!(result.get(0), Pauli::I);
         assert_eq!(result.get(1), Pauli::Z);
         assert_eq!(result.weight(), 1);
@@ -682,21 +763,21 @@ mod tests {
     fn test_multiply_by_identity() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         let id = PauliString::identity();
-        let result = stab.multiply_by(0, &id);
+        let result = stab.multiply_by(0, &id).unwrap();
         assert_eq!(result, Zs([0, 1]));
     }
 
     #[test]
     fn test_elements_count() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        let elements: Vec<_> = stab.elements().collect();
+        let elements: Vec<_> = stab.elements().unwrap().collect();
         assert_eq!(elements.len(), 4); // 2^2
     }
 
     #[test]
     fn test_elements_all_in_group() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        for elem in stab.elements() {
+        for elem in stab.elements().unwrap() {
             assert!(stab.contains_with_phase(&elem));
         }
     }
@@ -704,14 +785,14 @@ mod tests {
     #[test]
     fn test_elements_contains_identity() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
-        let elements: Vec<_> = stab.elements().collect();
+        let elements: Vec<_> = stab.elements().unwrap().collect();
         assert!(elements.iter().any(pecos_core::PauliString::is_identity));
     }
 
     #[test]
     fn test_elements_single_generator() {
         let stab = PauliStabilizerGroup::new(vec![Z(0)]).unwrap();
-        let elements: Vec<_> = stab.elements().collect();
+        let elements: Vec<_> = stab.elements().unwrap().collect();
         assert_eq!(elements.len(), 2); // I, Z
         assert!(elements.iter().any(pecos_core::PauliString::is_identity));
         assert!(elements.iter().any(|e| *e == Z(0)));
@@ -721,12 +802,12 @@ mod tests {
     fn test_element_with_negative_phase() {
         // -ZZ is a valid stabilizer generator
         let stab = PauliStabilizerGroup::new(vec![-Zs([0, 1])]).unwrap();
-        let elem = stab.element(0b1);
+        let elem = stab.element(0b1).unwrap();
         assert_eq!(elem.phase(), QuarterPhase::MinusOne);
         assert_eq!(elem.weight(), 2);
 
         // Product with itself: (-ZZ)(-ZZ) = +II = identity
-        let elements: Vec<_> = stab.elements().collect();
+        let elements: Vec<_> = stab.elements().unwrap().collect();
         assert_eq!(elements.len(), 2);
         assert!(elements.iter().any(pecos_core::PauliString::is_identity));
     }
@@ -736,7 +817,7 @@ mod tests {
         // For a valid stabilizer group, the product of any two elements
         // should also be an element
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        let elements: Vec<_> = stab.elements().collect();
+        let elements: Vec<_> = stab.elements().unwrap().collect();
         for a in &elements {
             for b in &elements {
                 let product = a.clone() * b.clone();
@@ -755,7 +836,7 @@ mod tests {
     fn test_elements_self_inverse() {
         // Every stabilizer element squares to identity
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        for elem in stab.elements() {
+        for elem in stab.elements().unwrap() {
             let squared = elem.clone() * elem;
             assert!(
                 squared.is_identity(),
@@ -769,7 +850,7 @@ mod tests {
     fn test_multiply_by_non_group_element() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         // Multiply X(0) by generator ZZ: ZZ * X(0) = -Y(0)Z(1) (different from stabilizer)
-        let result = stab.multiply_by(0, &X(0));
+        let result = stab.multiply_by(0, &X(0)).unwrap();
         assert!(!stab.contains(&result));
     }
 
@@ -778,15 +859,14 @@ mod tests {
         let stab = PauliStabilizerGroup::new(vec![]).unwrap();
         assert_eq!(stab.rank(), 0);
         assert_eq!(stab.num_qubits(), 0);
-        assert_eq!(stab.elements().count(), 1); // just identity
+        assert_eq!(stab.elements().unwrap().count(), 1); // just identity
     }
 
     #[test]
-    #[should_panic(expected = "exceeds number of generators")]
-    fn test_element_out_of_range_panics() {
+    fn test_element_out_of_range_returns_error() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1])]).unwrap();
         // mask 0b11 = 3 but only 1 generator, so bit 1 is out of range
-        let _ = stab.element(0b11);
+        assert!(stab.element(0b11).is_err());
     }
 
     // ========================================================================
@@ -932,7 +1012,7 @@ mod tests {
         let mut group = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
         assert_eq!(group.num_generators(), 2);
 
-        let removed = group.remove_generator(0);
+        let removed = group.remove_generator(0).unwrap();
         assert_eq!(group.num_generators(), 1);
         assert_eq!(removed.weight(), 2);
     }
@@ -968,20 +1048,20 @@ mod tests {
         let group = stab.as_group();
 
         // mask 0b01 = generator 0 only
-        assert_eq!(stab.element(0b01), group.element(&[1, 0]));
+        assert_eq!(stab.element(0b01).unwrap(), group.element(&[1, 0]).unwrap());
         // mask 0b10 = generator 1 only
-        assert_eq!(stab.element(0b10), group.element(&[0, 1]));
+        assert_eq!(stab.element(0b10).unwrap(), group.element(&[0, 1]).unwrap());
         // mask 0b11 = both generators
-        assert_eq!(stab.element(0b11), group.element(&[1, 1]));
+        assert_eq!(stab.element(0b11).unwrap(), group.element(&[1, 1]).unwrap());
         // mask 0b00 = identity
-        assert_eq!(stab.element(0b00), group.element(&[0, 0]));
+        assert_eq!(stab.element(0b00).unwrap(), group.element(&[0, 0]).unwrap());
     }
 
     #[test]
     fn elements_match_group_elements() {
         let stab = PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        let stab_elems: Vec<_> = stab.elements().collect();
-        let group_elems: Vec<_> = stab.as_group().elements().collect();
+        let stab_elems: Vec<_> = stab.elements().unwrap().collect();
+        let group_elems: Vec<_> = stab.as_group().elements().unwrap().collect();
         assert_eq!(stab_elems.len(), group_elems.len());
         // Every stabilizer element should be in the group
         for elem in &stab_elems {
@@ -1017,7 +1097,7 @@ mod tests {
         stab.add_generator(Z(1)).unwrap();
         assert_eq!(stab.num_generators(), 2);
 
-        let removed = stab.remove_generator(0);
+        let removed = stab.remove_generator(0).unwrap();
         assert_eq!(removed, Z(0));
         assert_eq!(stab.num_generators(), 1);
 

@@ -26,7 +26,7 @@
 //! let map = DagFaultInfluenceMap::with_capacity(0);
 //! let noise = NoiseConfig::uniform(0.001);
 //!
-//! let decoder = LookupDecoder::build(&map, &noise, 3);
+//! let decoder = LookupDecoder::build(&map, &noise, 3).unwrap();
 //! let result = decoder.decode(&[]);
 //! assert!(result.known_syndrome);
 //! assert!(result.corrections.is_empty());
@@ -71,8 +71,14 @@ impl LookupDecoder {
     /// Uses the standard per-gate circuit noise model: each gate faults with
     /// probability p, and each non-identity Pauli is equally likely (p/3 for
     /// 1-qubit, p/15 for 2-qubit). Idle gates with T1/T2 use biased noise.
-    #[must_use]
-    pub fn build(map: &DagFaultInfluenceMap, noise: &NoiseConfig, max_weight: usize) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if a fault location contains duplicate qubits.
+    pub fn build(
+        map: &DagFaultInfluenceMap,
+        noise: &NoiseConfig,
+        max_weight: usize,
+    ) -> Result<Self, pecos_core::ParsePauliStringError> {
         let observable_ids = observable_ids(map);
         let num_observables = observable_ids.len();
 
@@ -93,7 +99,7 @@ impl LookupDecoder {
         for loc in &locs {
             let p = gate_location_prob(loc, &loc_probs, &map.locations);
 
-            let events = loc.all_events();
+            let events = loc.all_events()?;
             let num_physical_events = events.len();
 
             // For idle gates with T1/T2, compute biased per-Pauli probabilities
@@ -137,7 +143,19 @@ impl LookupDecoder {
             } else if let Some(weights) = custom_weights {
                 events
                     .iter()
-                    .map(|event| p * weights.weight_for(&event.pauli))
+                    .map(|event| {
+                        let weight = if n_qubits == 2 {
+                            weights.two_qubit_weight_for_on(
+                                loc.clifford,
+                                &event.pauli,
+                                [loc.qubits[0], loc.qubits[1]],
+                                noise.p2_replacement_approximation,
+                            )
+                        } else {
+                            weights.weight_for(&event.pauli)
+                        };
+                        p * weight
+                    })
                     .collect()
             } else {
                 // Event count is a small integer; precision loss is not a concern.
@@ -236,12 +254,12 @@ impl LookupDecoder {
             })
             .collect();
 
-        Self {
+        Ok(Self {
             table,
             observable_ids,
             max_weight,
             accounted_probability,
-        }
+        })
     }
 
     /// Decode a syndrome given as detector indices.
@@ -493,7 +511,7 @@ mod tests {
         assert_eq!(map.num_tracked_paulis(), 1);
         assert_eq!(map.num_observables(), 1);
 
-        let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 1);
+        let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 1).unwrap();
         assert_eq!(decoder.observable_ids(), &[0]);
     }
 
@@ -512,7 +530,7 @@ mod tests {
             .expect("circuit is replayable");
         assert_eq!(map.num_observables(), 0);
 
-        let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 0);
+        let decoder = LookupDecoder::build(&map, &NoiseConfig::uniform(0.01), 0).unwrap();
         assert_eq!(decoder.num_observables(), 0);
         assert!(decoder.accounted_probability() > 0.0);
         assert!(decoder.truncation_bound() < 1.0);

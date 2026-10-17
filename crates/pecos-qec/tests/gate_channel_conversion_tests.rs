@@ -368,3 +368,118 @@ fn identical_gate_configuration_produces_byte_identical_dem_text() {
         assert_eq!(build().as_bytes(), expected.as_bytes());
     }
 }
+
+#[test]
+fn sampler_rejects_repeated_qubits_in_public_influence_map() {
+    use pecos_qec::fault_tolerance::dem_builder::{DemBuilderError, SamplingEngine};
+
+    let mut influence = synthetic_two_qubit_influence();
+    influence.locations[1].qubits = influence.locations[0].qubits.clone();
+    let result =
+        SamplingEngine::from_influence_map(&influence, &[0.1, 0.1], &NoiseConfig::default());
+    assert!(
+        matches!(result, Err(DemBuilderError::ConfigurationError(message))
+        if message.contains("node 0 qubits [QubitId(0), QubitId(0)]")
+            && message.contains("duplicate qubits [0]"))
+    );
+}
+
+fn check_operand_relative_weights(check_decoder: bool) {
+    use pecos_core::PauliString;
+    use pecos_qec::fault_tolerance::dem_builder::{
+        DemSamplerBuilder, PauliWeights, SamplingEngine,
+    };
+    use pecos_qec::fault_tolerance::lookup_decoder::LookupDecoder;
+
+    for operands in [[0, 1], [1, 0], [3, 2]] {
+        let mut influence = synthetic_two_qubit_influence();
+        for (location, qubit) in influence.locations.iter_mut().zip(operands) {
+            location.qubits = vec![QubitId(qubit)];
+        }
+        // Four independent output bits distinguish every non-identity Pauli.
+        // Mirror them as logical outputs to expose the decoder's nonzero weights
+        // through its corrections (zero-weight syndromes have false corrections).
+        influence.influences.dem_outputs_x = influence.influences.detectors_x.clone();
+        influence.influences.dem_outputs_y = influence.influences.detectors_y.clone();
+        influence.influences.dem_outputs_z = influence.influences.detectors_z.clone();
+        influence.detectors = influence
+            .measurements
+            .iter()
+            .map(|&(tick, qubit, basis)| {
+                pecos_qec::fault_tolerance::propagator::DetectorId::single(
+                    pecos_qec::fault_tolerance::propagator::MeasurementId { tick, qubit, basis },
+                )
+            })
+            .collect();
+        for a in ['I', 'X', 'Y', 'Z'] {
+            for b in ['I', 'X', 'Y', 'Z'] {
+                if (a, b) == ('I', 'I') {
+                    continue;
+                }
+                let label = format!("{a}{b}");
+                let noise = NoiseConfig::new(0.0, 0.1, 0.0, 0.0).set_p2_weights(PauliWeights::new(
+                    [(PauliString::from_dense_str(&label).unwrap(), 1.0)],
+                ));
+                let expected: Vec<u32> = [(a, 0), (b, 2)]
+                    .into_iter()
+                    .flat_map(|(p, offset)| match p {
+                        'X' => vec![offset],
+                        'Y' => vec![offset, offset + 1],
+                        'Z' => vec![offset + 1],
+                        _ => vec![],
+                    })
+                    .collect();
+                let reference = build_synthetic_dem(&influence, noise.clone())
+                    .to_mechanisms()
+                    .0;
+                assert_eq!(reference.len(), 1, "{operands:?} {label}");
+                assert_eq!(reference[0].1, expected, "{operands:?} {label}");
+                assert!((reference[0].0 - 0.1).abs() < 1e-12);
+                if check_decoder {
+                    let decoder = LookupDecoder::build(&influence, &noise, 1).unwrap();
+                    for mask in 1..16 {
+                        let syndrome: Vec<u32> = (0..4).filter(|i| mask & (1 << i) != 0).collect();
+                        let corrections: Vec<_> = (0..4)
+                            .map(|i| syndrome == expected && expected.contains(&i))
+                            .collect();
+                        assert_eq!(
+                            decoder.decode(&syndrome).corrections,
+                            corrections,
+                            "{operands:?} {label}, syndrome {syndrome:?}"
+                        );
+                    }
+                } else {
+                    let engine =
+                        SamplingEngine::from_influence_map(&influence, &[0.1, 0.1], &noise)
+                            .unwrap();
+                    let actual = engine.to_detector_error_model().to_mechanisms().0;
+                    assert_eq!(actual.len(), 1, "{operands:?} {label}");
+                    assert_eq!(actual[0].1, reference[0].1, "{operands:?} {label}");
+                    assert!((actual[0].0 - reference[0].0).abs() < 1e-9);
+                    let built = DemSamplerBuilder::new(&influence)
+                        .with_noise_config(noise)
+                        .with_detectors_json(FOUR_DETECTORS)
+                        .unwrap()
+                        .build()
+                        .unwrap()
+                        .to_detector_error_model()
+                        .to_mechanisms()
+                        .0;
+                    assert_eq!(built.len(), 1, "builder {operands:?} {label}");
+                    assert_eq!(built[0].1, reference[0].1, "builder {operands:?} {label}");
+                    assert!((built[0].0 - reference[0].0).abs() < 1e-9);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sampler_operand_relative_weights_match_dem_builder() {
+    check_operand_relative_weights(false);
+}
+
+#[test]
+fn decoder_operand_relative_weights_match_dem_builder() {
+    check_operand_relative_weights(true);
+}

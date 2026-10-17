@@ -42,7 +42,7 @@ pecos run <PROGRAM> [OPTIONS]
 
 - `.qasm` - OpenQASM 2.0 circuits
 - `.phir.json` or `.json` - PHIR/JSON programs
-- `.ll` - QIS programs in LLVM IR format (requires `--features llvm`)
+- `.ll` - QIS programs in LLVM IR format (requires `--features runtime` and `--qubits N` for every QIS program)
 
 **Options:**
 
@@ -51,6 +51,7 @@ pecos run <PROGRAM> [OPTIONS]
 | `-s, --shots <N>` | Number of simulation shots | 1 |
 | `-w, --workers <N>` | Parallel workers | 1 |
 | `-d, --seed <N>` | Random seed for reproducibility | random |
+| `--qubits <N>` | Fixed simulator capacity; required for every QIS program | inferred for static programs |
 | `-S, --sim <TYPE>` | Simulator: `statevector` or `stabilizer` | statevector |
 | `-m, --model <TYPE>` | Noise model: `depolarizing` or `general` | depolarizing |
 | `-p, --noise <P>` | Noise probability (0-1) | none |

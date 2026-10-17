@@ -642,18 +642,43 @@ impl GeneralNoiseModel {
 
     // Reject durations whose scaled idle calculations could become non-finite.
     pub(crate) fn validate_frame_idle(&self, duration: f64) -> Result<(), PecosError> {
-        let linear = self.p_idle_linear_rate * duration;
-        let stochastic = self
-            .p_idle_sin_squared_model
-            .values()
-            .all(|m| (self.p_idle_sin_squared_rate * m * duration).is_finite());
-        let coherent = self.p_idle_coherent_model.values().all(|m| {
-            (std::f64::consts::TAU * self.p_idle_coherent_rate * m * duration).is_finite()
-        });
-        if !linear.is_finite() || !stochastic || !coherent {
-            return Err(PecosError::Input(
-                "idle arithmetic exceeds runtime profile".into(),
-            ));
+        Self::validate_idle_products(
+            duration,
+            "idle gate duration",
+            self.p_idle_linear_rate,
+            self.p_idle_sin_squared_rate,
+            &self.p_idle_sin_squared_model,
+            self.p_idle_coherent_rate,
+            &self.p_idle_coherent_model,
+        )
+        .map_err(PecosError::Input)
+    }
+
+    // Shared by fixed-duration builder validation and variable-duration execution.
+    fn validate_idle_products(
+        duration: f64,
+        duration_source: &str,
+        linear_rate: f64,
+        sine_rate: f64,
+        sine_model: &BTreeMap<String, f64>,
+        coherent_rate: f64,
+        coherent_model: &BTreeMap<String, f64>,
+    ) -> Result<(), String> {
+        let check = |family: &str, rate: f64, axis: &str, multiplier: f64| {
+            let product = rate * multiplier * duration;
+            if !product.is_finite() {
+                return Err(format!(
+                    "{family} scaled rate {rate} * {axis} multiplier {multiplier} * {duration_source} {duration} produces {product}; reduce the rate, multiplier, idle duration, or scale factors to keep the product finite"
+                ));
+            }
+            Ok(())
+        };
+        check("p_idle_linear", linear_rate, "total", 1.0)?;
+        for (axis, multiplier) in sine_model {
+            check("p_idle_sin_squared", sine_rate, axis, *multiplier)?;
+        }
+        for (axis, multiplier) in coherent_model {
+            check("p_idle_coherent", coherent_rate, axis, *multiplier)?;
         }
         Ok(())
     }
@@ -841,7 +866,7 @@ impl GeneralNoiseModel {
             // decide whether to add the original gate based on error models
             match gate.gate_type {
                 GateType::Idle => {
-                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder);
+                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder)?;
                 }
                 GateType::PZ => {
                     for &q in &gate.qubits {
@@ -1153,14 +1178,20 @@ impl GeneralNoiseModel {
         Ok(ops_builder.build())
     }
 
+    /// Apply idle faults after validating the duration and computed angles.
+    ///
+    /// # Errors
+    /// Returns an input error if idle arithmetic is not finite.
     pub fn apply_idle_faults(
         &mut self,
         gate: &Gate,
         linear_rate: f64,
         builder: &mut ByteMessageBuilder,
-    ) {
+    ) -> Result<(), PecosError> {
+        self.validate_frame_idle(gate.idle_duration())?;
         let qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
         self.apply_idle_faults_for_duration(linear_rate, gate.idle_duration(), &qubits, builder);
+        Ok(())
     }
 
     fn apply_idle_faults_for_duration(
@@ -1291,13 +1322,13 @@ impl GeneralNoiseModel {
 
             match axis {
                 "RX" => {
-                    builder.rx(Angle64::from_radians(angle), &affected);
+                    builder.rx(Angle64::try_from_radians(angle).expect("build-time validation checks fixed idle_after_2q products; validate_frame_idle checks variable durations"), &affected);
                 }
                 "RY" => {
-                    builder.ry(Angle64::from_radians(angle), &affected);
+                    builder.ry(Angle64::try_from_radians(angle).expect("build-time validation checks fixed idle_after_2q products; validate_frame_idle checks variable durations"), &affected);
                 }
                 "RZ" => {
-                    builder.rz(Angle64::from_radians(angle), &affected);
+                    builder.rz(Angle64::try_from_radians(angle).expect("build-time validation checks fixed idle_after_2q products; validate_frame_idle checks variable durations"), &affected);
                 }
                 _ => unreachable!("coherent-family model was validated by the builder"),
             }
@@ -2302,6 +2333,93 @@ mod tests {
     use crate::byte_message::ByteMessageBuilder;
     use crate::byte_message::GateType;
     use pecos_core::Angle64;
+
+    #[test]
+    fn build_rejects_overflowing_linear_after_two_qubit_idle() {
+        let error = GeneralNoiseModel::builder()
+            .with_p_idle_linear(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
+            .with_idle_after_2q(1e10)
+            .try_build()
+            .unwrap_err();
+        let variable_model = GeneralNoiseModel::builder()
+            .with_p_idle_linear(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
+            .try_build()
+            .unwrap();
+        let runtime_message = variable_model
+            .validate_frame_idle(1e10)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            runtime_message.contains("idle gate duration"),
+            "{runtime_message}"
+        );
+        assert!(
+            !runtime_message.contains("idle_after_2q"),
+            "{runtime_message}"
+        );
+        assert_eq!(
+            error
+                .to_string()
+                .replace("idle_after_2q", "idle gate duration"),
+            runtime_message
+        );
+        let message = error.to_string();
+        assert!(message.contains("p_idle_linear"), "{message}");
+        assert!(message.contains("idle_after_2q"), "{message}");
+        assert!(message.contains("inf"), "{message}");
+        assert!(message.contains("reduce"), "{message}");
+    }
+
+    #[test]
+    fn build_rejects_overflowing_sine_after_two_qubit_idle() {
+        let multipliers = BTreeMap::from([("X".to_string(), 1.0)]);
+        let error = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(1e300, &multipliers)
+            .with_idle_after_2q(1e10)
+            .try_build()
+            .unwrap_err();
+        let variable_model = GeneralNoiseModel::builder()
+            .with_p_idle_sin_squared(1e300, &BTreeMap::from([("X".to_string(), 1.0)]))
+            .try_build()
+            .unwrap();
+        let runtime_message = variable_model
+            .validate_frame_idle(1e10)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            runtime_message.contains("idle gate duration"),
+            "{runtime_message}"
+        );
+        assert!(
+            !runtime_message.contains("idle_after_2q"),
+            "{runtime_message}"
+        );
+        assert_eq!(
+            error
+                .to_string()
+                .replace("idle_after_2q", "idle gate duration"),
+            runtime_message
+        );
+        let message = error.to_string();
+        assert!(message.contains("p_idle_sin_squared"), "{message}");
+        assert!(message.contains("idle_after_2q"), "{message}");
+        assert!(message.contains("inf"), "{message}");
+        assert!(message.contains("reduce"), "{message}");
+    }
+
+    #[test]
+    fn build_rejects_overflowing_after_two_qubit_idle() {
+        let coherent = BTreeMap::from([("RZ".to_string(), 1.0)]);
+        let error = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(1e300, &coherent)
+            .with_idle_after_2q(1e10)
+            .try_build()
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("idle_after_2q"), "{message}");
+        assert!(message.contains("inf"), "{message}");
+        assert!(message.contains("reduce"), "{message}");
+    }
 
     fn assert_float_eq(actual: f64, expected: f64) {
         assert!(
@@ -3925,8 +4043,11 @@ mod tests {
         );
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // RZ fractions use exact significand-ratio rounding, independently checked
+    // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
-    fn quadratic_migration_r_times_pi_keeps_captured_legacy_bytes() {
+    fn quadratic_migration_r_times_pi_keeps_captured_gate_sequence() {
         let legacy_rate = 0.2;
         let z_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let mut model = GeneralNoiseModel::builder()
@@ -3943,7 +4064,7 @@ mod tests {
             .unwrap()
             .into_bytes();
         let captured_legacy_bytes = vec![
-            83, 67, 69, 80, 1, 0, 0, 0, 5, 0, 0, 0, 100, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
+            83, 67, 69, 80, 5, 0, 0, 0, 5, 0, 0, 0, 100, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
             0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0,
             0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
             10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0,
@@ -4045,8 +4166,11 @@ mod tests {
         );
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // RZ fractions use exact significand-ratio rounding, independently checked
+    // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
-    fn single_pair_tq_leakage_keeps_captured_legacy_bytes() {
+    fn single_pair_tq_leakage_keeps_captured_gate_sequence() {
         let mut model = GeneralNoiseModel::builder()
             .with_seed(4242)
             .with_p2_emission_ratio(1.0)
@@ -4058,7 +4182,7 @@ mod tests {
         model.apply_tq_faults(&Gate::cz(&[(0, 1)]), 1.0, &mut builder);
         let output = builder.build().into_bytes();
         let captured_legacy_bytes = vec![
-            83, 67, 69, 80, 1, 0, 0, 0, 1, 0, 0, 0, 32, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 134, 1,
+            83, 67, 69, 80, 5, 0, 0, 0, 1, 0, 0, 0, 32, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 134, 1,
             0, 0, 0, 0, 0, 0,
         ];
 
@@ -4153,6 +4277,20 @@ mod tests {
     }
 
     #[test]
+    fn overflowing_coherent_idle_angle_is_an_error() {
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_idle_coherent(f64::MAX, &BTreeMap::from([("RZ".to_string(), 1.0)]))
+            .build();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.idle(2.0, &[0]);
+        let error = model
+            .apply_noise_on_start(&input.build())
+            .err()
+            .expect("overflow must fail");
+        assert!(error.contains("inf"), "{error}");
+    }
+
+    #[test]
     fn coherent_idle_angle_is_rate_times_multiplier_times_duration() {
         let rate = 0.25;
         let multiplier = 1.4;
@@ -4171,7 +4309,7 @@ mod tests {
         assert_eq!(gates[0].gate_type, GateType::RY);
         assert_eq!(
             gates[0].angles,
-            [Angle64::from_radians(expected_angle)].into()
+            [Angle64::try_from_radians(expected_angle).unwrap()].into()
         );
     }
 
@@ -4193,13 +4331,16 @@ mod tests {
             gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
             [GateType::RX, GateType::RY, GateType::RZ]
         );
-        assert_eq!(gates[0].angles, [Angle64::from_radians(0.1)].into());
-        assert_eq!(gates[1].angles, [Angle64::from_radians(0.2)].into());
+        assert_eq!(gates[0].angles, [pecos_core::radians!(0.1)].into());
+        assert_eq!(gates[1].angles, [pecos_core::radians!(0.2)].into());
         assert_eq!(
             gates[2].angles,
-            [Angle64::from_radians(
-                GeneralNoiseModel::coherent_rotation_angle(0.2, 3.0, 0.5),
-            )]
+            [
+                Angle64::try_from_radians(GeneralNoiseModel::coherent_rotation_angle(
+                    0.2, 3.0, 0.5
+                ),)
+                .unwrap()
+            ]
             .into()
         );
     }
@@ -4210,8 +4351,8 @@ mod tests {
         let gates = coherent_idle_gates(0.2, &model, 0.5, 424);
 
         assert_eq!(gates.len(), 2);
-        assert_eq!(gates[0].angles, [Angle64::from_radians(0.1)].into());
-        assert_eq!(gates[1].angles, [Angle64::from_radians(0.1)].into());
+        assert_eq!(gates[0].angles, [pecos_core::radians!(0.1)].into());
+        assert_eq!(gates[1].angles, [pecos_core::radians!(0.1)].into());
     }
 
     #[test]
@@ -4276,7 +4417,7 @@ mod tests {
         assert_eq!(gates[0].gate_type, GateType::CX);
         assert_eq!(gates[1].gate_type, GateType::RZ);
         assert_eq!(gates[1].qubits, [QubitId(0), QubitId(1)].into());
-        assert_eq!(gates[1].angles, [Angle64::from_radians(0.3)].into());
+        assert_eq!(gates[1].angles, [pecos_core::radians!(0.3)].into());
     }
 
     #[test]
@@ -4301,7 +4442,7 @@ mod tests {
             gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
             [GateType::X, GateType::Z, GateType::RY]
         );
-        assert_eq!(gates[2].angles, [Angle64::from_radians(0.25)].into());
+        assert_eq!(gates[2].angles, [pecos_core::radians!(0.25)].into());
     }
 
     #[test]
@@ -4324,8 +4465,11 @@ mod tests {
         assert_eq!(gates[0].qubits, [QubitId(0)].into());
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // RZ fractions use exact significand-ratio rounding, independently checked
+    // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
-    fn family_only_configuration_keeps_captured_pre_removal_bytes() {
+    fn family_only_configuration_keeps_captured_gate_sequence() {
         let linear_model = BTreeMap::from([("Z".to_string(), 1.0)]);
         let sine_model = BTreeMap::from([("X".to_string(), 1.0)]);
         let coherent_model = BTreeMap::from([("RZ".to_string(), 2.0)]);
@@ -4342,14 +4486,14 @@ mod tests {
             .apply_noise_on_start(&input_builder.build())
             .unwrap()
             .into_bytes();
-        let captured_pre_removal_bytes = vec![
-            83, 67, 69, 80, 1, 0, 0, 0, 4, 0, 0, 0, 96, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
+        let captured_v5_bytes = vec![
+            83, 67, 69, 80, 5, 0, 0, 0, 4, 0, 0, 0, 96, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0,
             0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0,
             0, 1, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 20, 0, 0, 0, 32, 2, 1, 0, 0, 0, 0,
-            0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 224, 63,
+            0, 1, 0, 0, 0, 222, 130, 200, 201, 109, 48, 95, 20,
         ];
 
-        assert_eq!(output, captured_pre_removal_bytes);
+        assert_eq!(output, captured_v5_bytes);
     }
 
     #[test]
@@ -4551,8 +4695,11 @@ mod tests {
         assert!(first_outputs.iter().any(|output| output.len() > 16));
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // RZ fractions use exact significand-ratio rounding, independently checked
+    // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
-    fn linear_and_sine_families_keep_their_pre_removal_bytes() {
+    fn linear_and_sine_families_keep_their_captured_gate_sequences() {
         let mut input_builder = ByteMessage::quantum_operations_builder();
         for _ in 0..8 {
             input_builder.idle(0.75, &[0, 1, 2, 3]);
@@ -4572,7 +4719,7 @@ mod tests {
 
         let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
         let expected = vec![
-            83, 67, 69, 80, 1, 0, 0, 0, 10, 0, 0, 0, 176, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1,
+            83, 67, 69, 80, 5, 0, 0, 0, 10, 0, 0, 0, 176, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1,
             0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 8, 0,
             0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0, 10, 0,
             0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0,
@@ -4583,8 +4730,11 @@ mod tests {
         assert_eq!(output, expected);
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // RZ fractions use exact significand-ratio rounding, independently checked
+    // with Python Fraction (f64 radians / f64 TAU * 2^64).
     #[test]
-    fn linear_and_coherent_families_keep_their_pre_removal_bytes() {
+    fn linear_and_coherent_families_keep_their_captured_gate_sequences() {
         let mut input_builder = ByteMessage::quantum_operations_builder();
         for _ in 0..8 {
             input_builder.idle(0.75, &[0, 1, 2, 3]);
@@ -4604,23 +4754,23 @@ mod tests {
 
         let output = model.apply_noise_on_start(&input).unwrap().into_bytes();
         let expected = vec![
-            83, 67, 69, 80, 1, 0, 0, 0, 16, 0, 0, 0, 176, 1, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4,
-            1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213,
-            63, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0,
-            0, 82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0, 1, 0, 0, 0,
-            10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0,
-            0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213, 63, 10,
-            0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0,
-            0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213, 63, 10, 0,
-            0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0,
-            0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0,
-            0, 8, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 3, 0, 0, 0,
-            10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
-            82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0, 3, 0, 0, 0,
-            10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
-            82, 99, 190, 111, 139, 28, 213, 63, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
-            10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
-            82, 99, 190, 111, 139, 28, 213, 63,
+            83, 67, 69, 80, 5, 0, 0, 0, 16, 0, 0, 0, 176, 1, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4,
+            1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112,
+            13, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0,
+            0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0, 1, 0, 0,
+            0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1,
+            0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
+            10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0,
+            0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
+            10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0,
+            0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
+            10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
+            3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0,
+            3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 8, 0, 0, 0, 3, 1, 0, 0,
+            3, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0,
+            3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
+            2, 0, 0, 0, 10, 0, 0, 0, 28, 0, 0, 0, 32, 4, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0,
+            3, 0, 0, 0, 229, 112, 61, 10, 215, 163, 112, 13,
         ];
         assert_eq!(output, expected);
     }
@@ -4647,7 +4797,7 @@ mod tests {
         };
 
         // Apply idle faults - should use coherent dephasing (RZ gates)
-        model.apply_idle_faults(&gate, 0.0, &mut builder);
+        model.apply_idle_faults(&gate, 0.0, &mut builder).unwrap();
 
         // Get the message and verify it contains RZ gates
         let message = builder.build();
@@ -4671,7 +4821,9 @@ mod tests {
             channel: None,
         };
 
-        model.apply_idle_faults(&multi_qubit_gate, 0.0, &mut builder);
+        model
+            .apply_idle_faults(&multi_qubit_gate, 0.0, &mut builder)
+            .unwrap();
 
         let message = builder.build();
         let gates = message.quantum_ops().unwrap();
@@ -4720,7 +4872,7 @@ mod tests {
             .build();
 
         // Apply idle faults with incoherent dephasing.
-        model.apply_idle_faults(&gate, 0.0, &mut builder);
+        model.apply_idle_faults(&gate, 0.0, &mut builder).unwrap();
 
         // The message may contain Z gates or be empty depending on random outcomes
         let message = builder.build();
@@ -4843,7 +4995,7 @@ mod tests {
         // Create an RZ gate (noiseless - should not have noise applied)
         let rz_gate = Gate {
             gate_type: GateType::RZ,
-            angles: vec![Angle64::from_radians(0.1)].into(),
+            angles: vec![pecos_core::radians!(0.1)].into(),
             qubits: vec![QubitId(0)].into(),
             params: vec![].into(),
             meas_ids: vec![].into(),

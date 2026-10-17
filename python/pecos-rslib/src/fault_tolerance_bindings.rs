@@ -260,10 +260,7 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
         let pauli = if let Some(pauli) = pauli {
             pauli
         } else if replacement {
-            pecos_core::PauliString::with_phase_and_paulis(
-                pecos_core::QuarterPhase::PlusOne,
-                Vec::new(),
-            )
+            pecos_core::PauliString::identity()
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "plain p2_weights cannot contain identity pair 'II'; use '~II' (or ':replace:II') for a replacement branch that only omits the gate",
@@ -1137,9 +1134,17 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_x(mut slf: PyRefMut<'_, Self>, qubits: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_tracked_x(
+        mut slf: PyRefMut<'_, Self>,
+        qubits: Vec<usize>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        if let Some(&qubit) = pecos_core::duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string(),
+            ));
+        }
         slf.tracked_x_qubits = qubits;
-        slf
+        Ok(slf)
     }
 
     /// Add a Z-string tracked Pauli.
@@ -1151,9 +1156,17 @@ impl PyInfluenceBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    fn with_tracked_z(mut slf: PyRefMut<'_, Self>, qubits: Vec<usize>) -> PyRefMut<'_, Self> {
+    fn with_tracked_z(
+        mut slf: PyRefMut<'_, Self>,
+        qubits: Vec<usize>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        if let Some(&qubit) = pecos_core::duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                pecos_core::ParsePauliStringError::DuplicateQubit { qubit }.to_string(),
+            ));
+        }
         slf.tracked_z_qubits = qubits;
-        slf
+        Ok(slf)
     }
 
     /// Add a tracked Pauli.
@@ -1183,11 +1196,13 @@ impl PyInfluenceBuilder {
                 Ok((pauli, pecos_core::QubitId::from(*qubit)))
             })
             .collect::<PyResult<_>>()?;
-        slf.tracked_paulis
-            .push(pecos_core::PauliString::with_phase_and_paulis(
+        slf.tracked_paulis.push(
+            pecos_core::PauliString::with_phase_and_paulis(
                 pecos_core::QuarterPhase::PlusOne,
                 paulis,
-            ));
+            )
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        );
         Ok(slf)
     }
 
@@ -1224,10 +1239,14 @@ impl PyInfluenceBuilder {
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
         if !self.tracked_x_qubits.is_empty() {
-            builder = builder.with_x(&self.tracked_x_qubits);
+            builder = builder
+                .with_x(&self.tracked_x_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
         if !self.tracked_z_qubits.is_empty() {
-            builder = builder.with_z(&self.tracked_z_qubits);
+            builder = builder
+                .with_z(&self.tracked_z_qubits)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         }
 
         if self.use_circuit_tracked_paulis {

@@ -281,9 +281,9 @@ struct ComposableNoiseConfig {
 impl ComposableNoiseConfig {
     fn build(&self) -> ComposableNoiseModel {
         ComposableNoiseModel::new()
-            .add_channel(SingleQubitChannel::depolarizing(self.p1))
-            .add_channel(TwoQubitChannel::depolarizing(self.p2))
-            .add_channel(MeasurementChannel::symmetric(self.p_meas))
+            .add_channel(SingleQubitChannel::depolarizing(self.p1).unwrap())
+            .add_channel(TwoQubitChannel::depolarizing(self.p2).unwrap())
+            .add_channel(MeasurementChannel::symmetric(self.p_meas).unwrap())
     }
 }
 

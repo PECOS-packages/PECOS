@@ -236,14 +236,14 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
     for gate in [
         Gate::t(&[0]),
         Gate::tdg(&[0]),
-        Gate::rz(Angle64::from_turns(0.125), &[0]),
-        Gate::rz(Angle64::from_turns(-0.125), &[0]),
-        Gate::rz(Angle64::from_turns(0.1), &[0]),
+        Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]),
+        Gate::rz(Angle64::from_turn_ratio(7, 8), &[0]),
+        Gate::rz(pecos_core::turns!(0.1), &[0]),
         Gate::u(Angle64::HALF_TURN, Angle64::ZERO, Angle64::ZERO, &[0]),
         Gate::u(
             Angle64::ZERO,
             Angle64::ZERO,
-            Angle64::from_turns(0.125),
+            Angle64::from_turn_ratio(1, 8),
             &[0],
         ),
     ] {
@@ -260,7 +260,7 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
     assert_eq!(
         apply_gate(
             &mut prop,
-            &Gate::rxy1q(Angle64::from_turns(0.1), Angle64::ZERO, &[0]),
+            &Gate::rxy1q(pecos_core::turns!(0.1), Angle64::ZERO, &[0]),
             Direction::Forward
         ),
         PauliPropagationOutcome::Unsupported
@@ -393,7 +393,7 @@ fn bare_t_is_rejected_by_every_circuit_dem_entry_point() {
 fn non_clifford_rz_is_rejected_with_its_gate_and_location() {
     let mut circuit = DagCircuit::new();
     circuit.pz(&[0]);
-    circuit.rz(Angle64::from_turns(0.1), &[0]);
+    circuit.rz(pecos_core::turns!(0.1), &[0]);
     circuit.mz(&[0]);
 
     let error = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap_err();
@@ -407,7 +407,7 @@ fn non_clifford_rz_is_rejected_with_its_gate_and_location() {
 
 #[test]
 fn positive_eighth_turn_rz_is_rejected_by_every_dem_family() {
-    let angle = Angle64::from_turns(0.125);
+    let angle = Angle64::from_turn_ratio(1, 8);
     assert_rotation_rejected_by_every_dem_family(
         GateType::RZ,
         &|c| {
@@ -421,7 +421,7 @@ fn positive_eighth_turn_rz_is_rejected_by_every_dem_family() {
 
 #[test]
 fn negative_eighth_turn_rz_is_rejected_by_every_dem_family() {
-    let angle = Angle64::from_turns(-0.125);
+    let angle = Angle64::from_turn_ratio(7, 8);
     assert_rotation_rejected_by_every_dem_family(
         GateType::RZ,
         &|c| {
@@ -438,7 +438,7 @@ fn negative_eighth_turn_rz_is_rejected_by_every_dem_family() {
 /// gets its own end-to-end guard rather than relying on the `RZ` cases.
 #[test]
 fn non_clifford_rxy1q_is_rejected_by_every_dem_family() {
-    let theta = Angle64::from_turns(0.1);
+    let theta = pecos_core::turns!(0.1);
     let phi = Angle64::ZERO;
     assert_rotation_rejected_by_every_dem_family(
         GateType::RXY1Q,
@@ -588,11 +588,13 @@ fn clifford_rotation_replay_matches_named_gates(
     let raw_map = InfluenceBuilder::new(&raw)
         .unwrap()
         .with_z(&[0, 1])
+        .unwrap()
         .build()
         .unwrap();
     let lowered_map = InfluenceBuilder::new(&lowered)
         .unwrap()
         .with_z(&[0, 1])
+        .unwrap()
         .build()
         .unwrap();
     if distinguishes_identity {
@@ -600,6 +602,7 @@ fn clifford_rotation_replay_matches_named_gates(
         let removed_map = InfluenceBuilder::new(&removed)
             .unwrap()
             .with_z(&[0, 1])
+            .unwrap()
             .build()
             .unwrap();
         // Measurement ordinals keep this comparison independent of shifted DAG node IDs.
@@ -693,7 +696,7 @@ fn clifford_rotation_replay_rxy1q_sydg() {
 fn clifford_rotation_replay_rxy1q_identity() {
     // Gate noise is excluded because a zero rotation is a noise location while named identity is not.
     clifford_rotation_replay_matches_named_gates(
-        &Gate::rxy1q(Angle64::ZERO, Angle64::from_radians(0.3), &[0]),
+        &Gate::rxy1q(Angle64::ZERO, pecos_core::radians!(0.3), &[0]),
         Gate::simple(GateType::I, vec![0.into()]),
         &[],
         &[],
@@ -1044,11 +1047,11 @@ fn sampler_configuration_errors_retain_their_category() {
 #[test]
 fn unsupported_rotation_diagnostic_includes_angles() {
     let mut circuit = DagCircuit::new();
-    circuit.add_gate_auto_wire(Gate::rzz(Angle64::from_turns(0.125), &[(0, 1)]));
+    circuit.add_gate_auto_wire(Gate::rzz(Angle64::from_turn_ratio(1, 8), &[(0, 1)]));
     let error = DagFaultAnalyzer::new(&circuit)
         .build_influence_map()
         .unwrap_err();
-    assert_eq!(error.angles, vec![Angle64::from_turns(0.125)]);
+    assert_eq!(error.angles, vec![Angle64::from_turn_ratio(1, 8)]);
     assert_eq!(
         error.to_string(),
         "unsupported gate RZZ(0.125000 turns) at DAG node 0 on qubits [0, 1]"
@@ -1092,7 +1095,7 @@ fn mem_builder_invalid_probabilities_return_configuration_error() {
 #[test]
 fn tick_dem_unsupported_rotation_diagnostic_preserves_angles() {
     let mut circuit = TickCircuit::new();
-    circuit.tick().rz(Angle64::from_turns(0.125), &[0]);
+    circuit.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
     let error = DemSampler::from_tick_circuit(&circuit, &NoiseConfig::default()).unwrap_err();
     assert!(error.to_string().contains("RZ(0.125000 turns)"));
 }
@@ -1101,7 +1104,7 @@ fn tick_dem_unsupported_rotation_diagnostic_preserves_angles() {
 fn fault_catalog_unsupported_rotation_diagnostic_preserves_angles() {
     use pecos_qec::fault_tolerance::fault_sampler::FaultCatalog;
     let mut circuit = TickCircuit::new();
-    circuit.tick().rz(Angle64::from_turns(0.125), &[0]);
+    circuit.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
     let error = FaultCatalog::from_circuit(&circuit).unwrap_err();
     assert!(error.to_string().contains("RZ(0.125000 turns)"));
 }
@@ -1119,7 +1122,7 @@ fn symbolic_history_arity_diagnostic_preserves_angles() {
 fn symbolic_history_unsupported_rotation_diagnostic_preserves_angles() {
     use pecos_qec::fault_tolerance::fault_sampler::symbolic_measurement_history;
     let mut circuit = TickCircuit::new();
-    circuit.tick().rz(Angle64::from_turns(0.125), &[0]);
+    circuit.tick().rz(Angle64::from_turn_ratio(1, 8), &[0]);
     let error = symbolic_measurement_history(&circuit).unwrap_err();
     assert!(error.to_string().contains("RZ(0.125000 turns)"));
 }
@@ -1756,7 +1759,7 @@ fn rxyxy2q_dem_mem_and_noise_locations_match_ryy() {
 
 #[test]
 fn rxyxy2q_non_clifford_dem_preflight_is_structured() {
-    let non_clifford = Angle64::from_radians(0.123);
+    let non_clifford = pecos_core::radians!(0.123);
     for gate in [
         Gate::rxyxy2q(Angle64::QUARTER_TURN, non_clifford, &[(0, 1)]),
         Gate::rxyxy2q(non_clifford, Angle64::ZERO, &[(0, 1)]),

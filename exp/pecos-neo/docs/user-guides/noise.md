@@ -5,7 +5,7 @@
 One-liner on `sim_neo`:
 
 ```rust
-sim_neo(circuit).auto().depolarizing(0.01).sampling(monte_carlo(1000)).run();
+sim_neo(circuit).auto().depolarizing(0.01)?.sampling(monte_carlo(1000)).run();
 ```
 
 ## Per-Channel Control
@@ -17,7 +17,7 @@ sim_neo(circuit).auto()
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
         .with_p2(0.01)
-        .with_p_meas_symmetric(0.005))
+        .with_p_meas_symmetric(0.005).build()?)
     .sampling(monte_carlo(1000))
     .run();
 ```
@@ -41,26 +41,33 @@ Cargo feature on `pecos-neo`:
 
 ```rust
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
+use pecos_core::QubitId;
+
+// Two-qubit device: each qubit is the other's neighbor.
+fn neighbors(active: &[QubitId]) -> Vec<QubitId> {
+    [QubitId(0), QubitId(1)].into_iter().filter(|q| !active.contains(q)).collect()
+}
 
 let noise = CompositeNoiseModelBuilder::new()
     // Gate errors
-    .with_p1(0.001)                     // Single-qubit error rate
-    .with_p2(0.01)                      // Two-qubit error rate
-    .with_p1_emission_ratio(0.1)        // Fraction of errors that leak (vs Pauli)
+    .with_p1(0.001)?                     // Single-qubit error rate
+    .with_p2(0.01)?                      // Two-qubit error rate
+    .with_p1_emission_ratio(0.1)?        // Fraction of errors that leak (vs Pauli)
 
     // Measurement
-    .with_p_meas(0.02, 0.03)           // Asymmetric: P(report 1|true 0), P(report 0|true 1)
+    .with_p_meas(0.02, 0.03)?           // Asymmetric: P(report 1|true 0), P(report 0|true 1)
 
     // Preparation
-    .with_p_prep(0.001)                // Prep error rate
+    .with_p_prep(0.001)?                // Prep error rate
 
     // Leakage
-    .with_leakage(0.001, 0.1)         // Leak rate, seepage rate
+    .with_leakage(0.001, 0.1)?         // Leak rate, seepage rate
 
     // Crosstalk
-    .with_measurement_crosstalk(0.001, 0.01)  // Global, local rates
+    .with_p_meas_crosstalk(0.001, 0.01)?  // Global, local rates
+    .with_p_meas_crosstalk_local_fn(neighbors)
 
-    .build();
+    .build()?;
 ```
 
 ## Common Presets
@@ -68,25 +75,25 @@ let noise = CompositeNoiseModelBuilder::new()
 **Ion trap style:**
 ```rust
 CompositeNoiseModelBuilder::new()
-    .with_p1(0.0001).with_p2(0.001)
-    .with_p1_emission_ratio(0.1).with_p2_emission_ratio(0.1)
-    .with_leakage(0.0001, 0.1)
-    .with_p_meas(0.001, 0.01)
-    .build();
+    .with_p1(0.0001)?.with_p2(0.001)?
+    .with_p1_emission_ratio(0.1)?.with_p2_emission_ratio(0.1)?
+    .with_leakage(0.0001, 0.1)?
+    .with_p_meas(0.001, 0.01)?
+    .build()?;
 ```
 
 **Superconducting style:**
 ```rust
 CompositeNoiseModelBuilder::new()
-    .with_p1(0.001).with_p2(0.01)
-    .with_idle_t1_t2(50e-6, 30e-6)
-    .with_p_meas_symmetric(0.02)
-    .build();
+    .with_p1(0.001)?.with_p2(0.01)?
+    .with_idle_t1_t2(50e-6, 30e-6)?
+    .with_p_meas_symmetric(0.02)?
+    .build()?;
 ```
 
 **Pure depolarizing (testing):**
 ```rust
-CompositeNoiseModelBuilder::new().with_p1(p).with_p2(p).build();
+CompositeNoiseModelBuilder::new().with_p1(p)?.with_p2(p)?.build()?;
 ```
 
 ## Going Deeper

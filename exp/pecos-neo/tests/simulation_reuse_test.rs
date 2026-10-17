@@ -36,6 +36,7 @@ fn builder(classical: bool) -> SimNeoBuilder {
     builder
         .quantum(sparse_stab())
         .depolarizing(0.07)
+        .unwrap()
         .seed(12345)
 }
 
@@ -89,7 +90,9 @@ fn seeded_importance_outcomes_and_weights_match_exactly_across_workers_and_reuse
             .sampling(
                 importance_sampling(12)
                     .with_uniform_error(0.01)
+                    .unwrap()
                     .with_boost(10.0)
+                    .unwrap()
                     .workers(workers),
             )
             .build()

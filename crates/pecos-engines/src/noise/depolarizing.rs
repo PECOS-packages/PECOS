@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use super::utils::panic_on_noise_error;
+use super::utils::{ensure_probability_in_range, panic_on_noise_error};
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType};
 use crate::engine_system::{ControlEngine, EngineStage};
@@ -119,10 +119,10 @@ impl DepolarizingNoiseModel {
     /// Returns `PecosError::Input` if any probability is outside [0, 1], including NaN.
     pub fn try_new(p_prep: f64, p_meas: f64, p1: f64, p2: f64) -> Result<Self, PecosError> {
         // Validate all probabilities
-        Self::try_validate_probability(p_prep)?;
-        Self::try_validate_probability(p_meas)?;
-        Self::try_validate_probability(p1)?;
-        Self::try_validate_probability(p2)?;
+        Self::try_validate_probability(p_prep, "p_prep")?;
+        Self::try_validate_probability(p_meas, "p_meas")?;
+        Self::try_validate_probability(p1, "p1")?;
+        Self::try_validate_probability(p2, "p2")?;
 
         Ok(Self {
             p_prep,
@@ -153,6 +153,7 @@ impl DepolarizingNoiseModel {
     /// # Errors
     /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
     pub fn try_new_uniform(probability: f64) -> Result<Self, PecosError> {
+        Self::try_validate_probability(probability, "uniform depolarizing probability")?;
         Self::try_new(probability, probability, probability, probability)
     }
 
@@ -164,10 +165,10 @@ impl DepolarizingNoiseModel {
 
     /// Set all probabilities of error
     pub fn set_probabilities(&mut self, p_prep: f64, p_meas: f64, p1: f64, p2: f64) {
-        Self::validate_probability(p_prep);
-        Self::validate_probability(p_meas);
-        Self::validate_probability(p1);
-        Self::validate_probability(p2);
+        Self::validate_probability(p_prep, "p_prep");
+        Self::validate_probability(p_meas, "p_meas");
+        Self::validate_probability(p1, "p1");
+        Self::validate_probability(p2, "p2");
 
         self.p_prep = p_prep;
         self.p_meas = p_meas;
@@ -183,6 +184,7 @@ impl DepolarizingNoiseModel {
 
     /// Set a uniform probability for all error types
     pub fn set_uniform_probability(&mut self, probability: f64) {
+        Self::validate_probability(probability, "uniform depolarizing probability");
         self.set_probabilities(probability, probability, probability, probability);
     }
 
@@ -496,6 +498,7 @@ pub struct DepolarizingNoiseModelBuilder {
     p1: Option<f64>,
     p2: Option<f64>,
     seed: Option<u64>,
+    setter_error: Option<String>,
 }
 
 impl Default for DepolarizingNoiseModelBuilder {
@@ -514,17 +517,25 @@ impl DepolarizingNoiseModelBuilder {
             p1: None,
             p2: None,
             seed: None,
+            setter_error: None,
         }
     }
 
     /// Set the same probability for all error types
     ///
     /// This is a convenience method to set all probabilities to the same value.
+    /// Invalid values are recorded and reported by `validate_configuration` or `try_build`.
     ///
     /// # Arguments
     /// * `probability` - The probability value to set for all error types
     #[must_use]
     pub fn with_uniform_probability(mut self, probability: f64) -> Self {
+        if let Err(message) =
+            ensure_probability_in_range(probability, "uniform depolarizing probability")
+        {
+            self.setter_error.get_or_insert(message);
+            return self;
+        }
         self.p_prep = Some(probability);
         self.p_meas = Some(probability);
         self.p1 = Some(probability);
@@ -581,6 +592,9 @@ impl DepolarizingNoiseModelBuilder {
     }
 
     fn configured_probabilities(&self) -> Result<[f64; 4], PecosError> {
+        if let Some(error) = &self.setter_error {
+            return Err(PecosError::Input(error.clone()));
+        }
         Ok([
             self.p_prep.ok_or_else(|| {
                 PecosError::Input("Preparation probability must be set".to_string())
@@ -602,8 +616,11 @@ impl DepolarizingNoiseModelBuilder {
     /// # Errors
     /// Returns `PecosError::Input` for the first missing field or invalid probability.
     pub fn validate_configuration(&self) -> Result<(), PecosError> {
-        for probability in self.configured_probabilities()? {
-            DepolarizingNoiseModel::try_validate_probability(probability)?;
+        for (name, probability) in ["p_prep", "p_meas", "p1", "p2"]
+            .into_iter()
+            .zip(self.configured_probabilities()?)
+        {
+            DepolarizingNoiseModel::try_validate_probability(probability, name)?;
         }
         Ok(())
     }
@@ -855,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Probability must be between 0.0 and 1.0")]
+    #[should_panic(expected = "p1 must be between 0.0 and 1.0")]
     fn test_invalid_probability_panics() {
         let mut noise = DepolarizingNoiseModel::new(0.1, 0.2, 0.3, 0.4);
         noise.set_probabilities(0.1, 0.2, 1.1, 0.4); // Should panic
@@ -948,8 +965,10 @@ mod tests {
         assert!((p2 - 0.5).abs() < f64::EPSILON);
     }
 
+    // Captured gate order and randomness retained; bytes migrated to version 5.
+    // This sequence contains no angle words; only the protocol version byte changed.
     #[test]
-    fn field_name_setters_match_pre_removal_alias_bytes() {
+    fn field_name_setters_match_captured_alias_gate_sequence() {
         let mut noise = DepolarizingNoiseModel::builder()
             .with_p_prep(0.0)
             .with_p_meas(0.0)
@@ -968,7 +987,7 @@ mod tests {
         assert_eq!(
             output.as_bytes(),
             [
-                83, 67, 69, 80, 1, 0, 0, 0, 4, 0, 0, 0, 84, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1,
+                83, 67, 69, 80, 5, 0, 0, 0, 4, 0, 0, 0, 84, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1,
                 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 12,
                 0, 0, 0, 50, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0,
                 1, 0, 0, 0,

@@ -34,6 +34,11 @@ fn run_pecos(config: PecosTestConfig) -> Result<String, Box<dyn std::error::Erro
         .arg("-d")
         .arg(config.seed.to_string());
 
+    // All QIS fixtures in this helper are two-qubit Bell programs.
+    if config.file_path.extension().and_then(|s| s.to_str()) == Some("ll") {
+        cmd.args(["--qubits", "2"]);
+    }
+
     // Add simulator parameter if specified
     if let Some(sim) = config.simulator {
         cmd.arg("-S").arg(sim);
@@ -876,4 +881,24 @@ fn test_simulator_engines() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     Ok(())
+}
+
+#[cfg(feature = "runtime")]
+#[test]
+fn qis_requires_capacity_for_both_simulators() {
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/llvm/bell.ll");
+    for simulator in ["statevector", "stabilizer"] {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
+            .arg("run")
+            .arg(&file)
+            .args(["--sim", simulator])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("--qubits N") && error.contains("no configured qubit capacity"),
+            "{error}"
+        );
+    }
 }

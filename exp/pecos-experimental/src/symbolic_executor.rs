@@ -680,7 +680,7 @@ mod tests {
         use pecos_core::{Angle64, Gate};
 
         let mut circuit = DagCircuit::new();
-        circuit.add_gate(Gate::rz(Angle64::from_turns(0.125), &[0])); // Non-Clifford RZ
+        circuit.add_gate(Gate::rz(Angle64::from_turn_ratio(1, 8), &[0])); // Non-Clifford RZ
 
         let mut sim = SymbolicSparseStab::new(1);
         let result = execute_circuit_symbolic(&mut sim, &circuit);
@@ -922,11 +922,10 @@ mod tests {
 
     #[test]
     fn rxy1q_snaps_both_angles() {
-        use pecos_core::Angle64;
         assert_rotation_matches(
             &Gate::rxy1q(
-                Angle64::from_turns(0.25 + 1e-12),
-                Angle64::from_turns(0.5 - 1e-12),
+                pecos_core::turns!(0.25 + 1e-12),
+                pecos_core::turns!(0.5 - 1e-12),
                 &[0],
             ),
             &[Gate::sxdg(&[0])],
@@ -936,7 +935,7 @@ mod tests {
     #[test]
     fn non_clifford_rotations_preserve_original_error() {
         use pecos_core::Angle64;
-        let angle = Angle64::from_turns(0.125);
+        let angle = Angle64::from_turn_ratio(1, 8);
         for gate in [
             Gate::rx(angle, &[0]),
             Gate::ry(angle, &[0]),
@@ -945,11 +944,7 @@ mod tests {
             Gate::ryy(angle, &[(0, 1)]),
             Gate::rzz(angle, &[(0, 1)]),
             Gate::rxy1q(angle, Angle64::ZERO, &[0]),
-            Gate::rxy1q(
-                Angle64::QUARTER_TURN,
-                Angle64::from_turns(0.25 + 1e-7),
-                &[0],
-            ),
+            Gate::rxy1q(Angle64::QUARTER_TURN, pecos_core::turns!(0.25 + 1e-7), &[0]),
             Gate::rxyxy2q(angle, Angle64::ZERO, &[(0, 1)]),
             Gate::u(Angle64::ZERO, Angle64::ZERO, angle, &[0]),
         ] {

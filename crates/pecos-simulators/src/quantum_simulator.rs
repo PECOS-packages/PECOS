@@ -39,5 +39,11 @@ pub trait QuantumSimulator {
     fn reset(&mut self) -> &mut Self;
 
     /// Returns the number of qubits in the simulator.
+    ///
+    /// For Pauli trackers this describes support extent rather than a state register:
+    /// `PauliProp` returns the current support extent, which can shrink to zero.
+    /// `BitmaskPauliProp` retains its configured width or the largest extent reached
+    /// by tracking and gate operations, whichever is greater; clearing support or
+    /// resetting does not shrink it.
     fn num_qubits(&self) -> usize;
 }

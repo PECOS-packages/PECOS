@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) enum ScheduledTransport {
     #[default]
     Off,
-    V3,
-    V4,
+    V6,
+    V7,
 }
 impl ScheduledTransport {
     pub(crate) fn enabled(self) -> bool {
@@ -23,10 +23,7 @@ fn error(s: &str) -> PecosError {
     PecosError::Input(s.into())
 }
 fn angle(a: f64) -> Result<Angle64, PecosError> {
-    if !a.is_finite() {
-        return Err(error("nonfinite scheduled angle"));
-    }
-    Ok(Angle64::from_radians(a))
+    Ok(Angle64::try_from_radians(a)?)
 }
 fn q(q: u64) -> Result<usize, PecosError> {
     usize::try_from(q).map_err(|_| error("scheduled target overflow"))
@@ -36,7 +33,7 @@ fn encode(
     batches: Vec<ScheduledBatch>,
     shot: u64,
 ) -> Result<(ByteMessage, Vec<usize>), PecosError> {
-    encode_mode(batches, shot, ScheduledTransport::V3)
+    encode_mode(batches, shot, ScheduledTransport::V6)
 }
 pub(crate) fn encode_mode(
     batches: Vec<ScheduledBatch>,
@@ -45,15 +42,15 @@ pub(crate) fn encode_mode(
 ) -> Result<(ByteMessage, Vec<usize>), PecosError> {
     match mode {
         ScheduledTransport::Off => Err(error("scheduled transport disabled")),
-        ScheduledTransport::V3 => encode_v3(batches, shot),
-        ScheduledTransport::V4 => encode_v4(batches, shot),
+        ScheduledTransport::V6 => encode_v6(batches, shot),
+        ScheduledTransport::V7 => encode_v7(batches, shot),
     }
 }
-/// Collection uses a lower bound across transports; V4 admission uses its exact layout.
+/// Collection uses a lower bound across transports; V7 admission uses its exact layout.
 #[derive(Clone, Copy)]
 pub(crate) enum BudgetLayout {
     Minimum,
-    V4,
+    V7,
 }
 
 /// Incremental accounting shared by scheduled collection and transport admission.
@@ -81,11 +78,11 @@ impl EventBudget {
             return Err(error("scheduled event operation count limit"));
         }
         let mut payload = 0usize;
-        // V3 carries only batch framing and gates. Custom records have only a
-        // V4 representation; including their cost still gives a lower bound.
+        // V6 carries only batch framing and gates. Custom records have only a
+        // V7 representation; including their cost still gives a lower bound.
         let framing = match self.layout {
             BudgetLayout::Minimum => 40,
-            BudgetLayout::V4 => 80 + measurements * 24,
+            BudgetLayout::V7 => 80 + measurements * 24,
         };
         self.size = self
             .size
@@ -116,7 +113,7 @@ impl EventBudget {
 }
 fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
     // Before conversion allocations, including for custom QisRuntime implementations.
-    let mut budget = EventBudget::new(BudgetLayout::V4);
+    let mut budget = EventBudget::new(BudgetLayout::V7);
     for batch in batches {
         budget.charge(&batch.operations, batch.measurements.len())?;
     }
@@ -206,7 +203,7 @@ impl MeasurementAdmission {
         })
     }
 }
-fn encode_v3(
+fn encode_v6(
     batches: Vec<ScheduledBatch>,
     shot: u64,
 ) -> Result<(ByteMessage, Vec<usize>), PecosError> {
@@ -231,7 +228,7 @@ fn encode_v3(
     }
     Ok((encode_timed_batches(&wire)?, admission.ids))
 }
-fn encode_v4(
+fn encode_v7(
     batches: Vec<ScheduledBatch>,
     shot: u64,
 ) -> Result<(ByteMessage, Vec<usize>), PecosError> {
@@ -289,8 +286,8 @@ mod tests {
         minimum
             .charge(&batch.operations, batch.measurements.len())
             .unwrap();
-        let (v3, _) = encode_v3(vec![batch.clone()], 7).unwrap();
-        assert_eq!(minimum.size, v3.as_bytes().len());
+        let (v6, _) = encode_v6(vec![batch.clone()], 7).unwrap();
+        assert_eq!(minimum.size, v6.as_bytes().len());
         assert_eq!(minimum.size, 16 + 40 + 40);
 
         batch.operations.push(Op::Custom {
@@ -302,12 +299,12 @@ mod tests {
             .charge(&batch.operations, batch.measurements.len())
             .unwrap();
         assert_eq!(minimum.size, 16 + 40 + 40 + 24 + 3);
-        let mut exact = EventBudget::new(BudgetLayout::V4);
+        let mut exact = EventBudget::new(BudgetLayout::V7);
         exact
             .charge(&batch.operations, batch.measurements.len())
             .unwrap();
-        let (v4, _) = encode_v4(vec![batch], 7).unwrap();
-        assert_eq!(exact.size, v4.as_bytes().len());
+        let (v7, _) = encode_v7(vec![batch], 7).unwrap();
+        assert_eq!(exact.size, v7.as_bytes().len());
         assert_eq!(exact.size, minimum.size + 40 + 24);
     }
 
@@ -351,13 +348,13 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_v4_rejects_measurement_mapping_on_custom_event() {
+    fn scheduled_v7_rejects_measurement_mapping_on_custom_event() {
         let mut batch = measured();
         batch.operations = vec![Op::Custom {
             tag: 42,
             data: vec![1],
         }];
-        let result = encode_mode(vec![batch.clone()], 7, ScheduledTransport::V4);
+        let result = encode_mode(vec![batch.clone()], 7, ScheduledTransport::V7);
         let Err(error) = result else {
             panic!("mapping on custom event was silently dropped")
         };
@@ -369,7 +366,7 @@ mod tests {
 
         // The custom event itself is valid transport input when it has no mapping.
         batch.measurements.clear();
-        let (message, ids) = encode_mode(vec![batch], 7, ScheduledTransport::V4).unwrap();
+        let (message, ids) = encode_mode(vec![batch], 7, ScheduledTransport::V7).unwrap();
         assert!(ids.is_empty(), "expected no measurement IDs, got {ids:?}");
         let decoded = pecos_engines::scheduled_events::decode_event_batches(&message).unwrap();
         assert_eq!(decoded.len(), 1);
@@ -380,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_v4_bounds_precede_gate_conversion() {
+    fn scheduled_v7_bounds_precede_gate_conversion() {
         use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
         let mut b = measured();
         b.measurements.clear();
@@ -395,7 +392,7 @@ mod tests {
             },
         ];
         assert!(
-            encode_v4(vec![b.clone()], 7)
+            encode_v7(vec![b.clone()], 7)
                 .err()
                 .unwrap()
                 .to_string()
@@ -409,7 +406,7 @@ mod tests {
             MAX_BATCH_OPERATIONS + 1
         ];
         assert!(
-            encode_v4(vec![b], 7)
+            encode_v7(vec![b], 7)
                 .err()
                 .unwrap()
                 .to_string()
@@ -418,7 +415,7 @@ mod tests {
         let mut b = measured();
         b.measurements.push(b.measurements[0].clone());
         assert!(
-            encode_v4(vec![b], 7)
+            encode_v7(vec![b], 7)
                 .err()
                 .unwrap()
                 .to_string()
@@ -426,7 +423,7 @@ mod tests {
         );
     }
     #[test]
-    fn scheduled_v4_aggregate_budget_accepts_exactly_64_mib() {
+    fn scheduled_v7_aggregate_budget_accepts_exactly_64_mib() {
         use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
         use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
         let mut b = measured();
@@ -459,7 +456,7 @@ mod tests {
         };
         batches.push(batches[1].clone());
         assert!(
-            encode_v4(batches, 7)
+            encode_v7(batches, 7)
                 .err()
                 .unwrap()
                 .to_string()
@@ -513,11 +510,9 @@ mod tests {
                 for op in &b.operations {
                     out.push(match op {
                         ScheduledEventOp::Gate(g) => g.as_ref().clone(),
-                        ScheduledEventOp::Custom { .. } => Gate::rxy1q(
-                            Angle64::from_radians(std::f64::consts::PI),
-                            Angle64::from_radians(0.0),
-                            &[0],
-                        ),
+                        ScheduledEventOp::Custom { .. } => {
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])
+                        }
                     })?;
                 }
                 Ok(())
@@ -534,7 +529,7 @@ mod tests {
         );
         b.measurements[0].operation_index = 1;
         assert!(encode(vec![b.clone()], 7).is_err());
-        let (commands, ids) = encode_mode(vec![b], 7, ScheduledTransport::V4).unwrap();
+        let (commands, ids) = encode_mode(vec![b], 7, ScheduledTransport::V7).unwrap();
         assert_eq!(ids, vec![91]);
         let decoded = decode_event_batches(&commands).unwrap();
         assert_eq!(decoded[0].measurements[0].runtime_result, 23);

@@ -2628,7 +2628,8 @@ mod tests {
     fn test_with_noise() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0).unwrap());
 
         let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2803,7 +2804,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0));
+        let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0).unwrap());
 
         let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2818,8 +2819,10 @@ mod tests {
     fn coherent_idle_without_rotation_support_fails_during_configuration() {
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
@@ -2847,15 +2850,20 @@ mod tests {
                 "NoiseModelBuilder::with_coherent_idle(..)",
                 NoiseModelBuilder::new()
                     .with_idle_noise(0.0, 0.25)
+                    .unwrap()
                     .with_coherent_idle(1.0)
-                    .build(),
+                    .unwrap()
+                    .build()
+                    .unwrap(),
             ),
             (
                 "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
                 CompositeNoiseModelBuilder::new()
                     .with_p_idle_quadratic(0.25)
+                    .unwrap()
                     .with_p_idle_coherent(true)
-                    .build(),
+                    .build()
+                    .unwrap(),
             ),
             (
                 "IdleChannel::with_coherent_dephasing(true)",
@@ -2896,8 +2904,10 @@ mod tests {
             .build();
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let mut state = StateVec::with_seed(1, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations()
@@ -2916,7 +2926,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(CompositeChannelBuilder::idle(
             "coherent_idle",
-            prob(1.0, coherent_rz(0.25)),
+            prob(1.0, coherent_rz(0.25).unwrap()).unwrap(),
         ));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
@@ -3037,11 +3047,15 @@ mod tests {
 
         let gates = GateDefinitions::builder()
             .with_category_noise(GateCategory::SingleQubitUnitary, 0.0)
+            .unwrap()
             .with_category_noise(GateCategory::TwoQubitUnitary, 0.0)
+            .unwrap()
             .build_or_panic();
 
         let noise = ComposableNoiseModel::new().add_channel(
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0)
+                .unwrap(),
         );
 
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
@@ -3068,7 +3082,9 @@ mod tests {
         );
 
         let noise = ComposableNoiseModel::new().add_channel(
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0)
+                .unwrap(),
         );
 
         let runner = CircuitRunner::<SparseStab>::with_definitions(gates).with_noise(noise);
@@ -3404,7 +3420,7 @@ mod tests {
         // decomposition.
         let circuit = crate::command::CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(0.123))
+            .rz(&[0], pecos_core::radians!(0.123))
             .mz(&[0])
             .build();
 
@@ -3439,8 +3455,8 @@ mod tests {
         assert_eq!(actual.stab_tableau(), expected.stab_tableau());
         assert_eq!(actual.destab_tableau(), expected.destab_tableau());
         for (theta, phi) in [
-            (Angle64::from_radians(0.3), Angle64::ZERO),
-            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123)),
+            (pecos_core::radians!(0.3), Angle64::ZERO),
+            (Angle64::QUARTER_TURN, pecos_core::radians!(0.123)),
         ] {
             let commands = CommandBuilder::new().rxyxy2q(&[(0, 1)], theta, phi).build();
             assert!(matches!(
@@ -3478,7 +3494,7 @@ mod tests {
 
     #[test]
     fn multi_angle_non_clifford_rotations_get_specific_error() {
-        let non_clifford = Angle64::from_radians(0.123);
+        let non_clifford = pecos_core::radians!(0.123);
         let commands = [
             GateCommand::with_angles(
                 GateType::RXY1Q,
@@ -3611,7 +3627,7 @@ mod tests {
 
         let circuit = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .rz(&[0], Angle64::QUARTER_TURN)
             .mz(&[0])
             .build();
 
@@ -3630,7 +3646,7 @@ mod tests {
         // fast path executes RZ(pi/2) = S and |0> stays |0> (measure 0).
         let control = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .rz(&[0], Angle64::QUARTER_TURN)
             .mz(&[0])
             .build();
         let mut state = SparseStab::with_seed(1, 42);

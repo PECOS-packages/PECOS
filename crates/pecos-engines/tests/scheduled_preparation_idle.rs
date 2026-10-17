@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 fn batches() -> Vec<TimedBatch> {
     let rotation = |sign| {
         Gate::rxy1q(
-            Angle64::from_radians(sign * std::f64::consts::FRAC_PI_2),
+            Angle64::try_from_radians(sign * std::f64::consts::FRAC_PI_2).unwrap(),
             Angle64::ZERO,
             &[0],
         )

@@ -17,7 +17,7 @@ pub mod core {
     pub use pecos_core::*;
 }
 #[cfg(feature = "core")]
-pub use pecos_core::{QubitId, errors::PecosError};
+pub use pecos_core::{QubitId, errors::PecosError, radians, turns};
 
 // Internal modules
 #[cfg(feature = "sim")]

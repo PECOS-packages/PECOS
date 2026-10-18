@@ -1,6 +1,6 @@
 //! Shared JSON validation for classical declarations and Result references.
 use super::{
-    ast::{ArgItem, infer_size},
+    ast::{ArgItem, infer_size, register_size},
     environment::{DataType, Environment},
 };
 use pecos_core::errors::PecosError;
@@ -90,7 +90,7 @@ pub(crate) fn result_field(op: &Value, field: &str) -> Result<Vec<ArgItem>, Peco
         .collect()
 }
 
-/// Validate Result syntax and boolean declarations before AST/schema decoding.
+/// Validate Result syntax, declaration size fields and bool widths before AST/schema decoding.
 ///
 /// # Errors
 /// Returns the same errors as direct Result/declaration validation.
@@ -101,23 +101,20 @@ pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
                 result_field(op, "args")?;
                 result_field(op, "returns")?;
             }
-            if op.get("data").and_then(Value::as_str) == Some("cvar_define")
-                && op.get("data_type").and_then(Value::as_str) == Some("bool")
+            let data = op.get("data").and_then(Value::as_str);
+            if matches!(data, Some("cvar_define" | "qvar_define"))
                 && let Some(name) = op.get("variable").and_then(Value::as_str)
             {
-                let size = match op.get("size") {
-                    None => infer_size("bool", None),
-                    Some(value) => value
-                        .as_u64()
-                        .and_then(|size| usize::try_from(size).ok())
-                        .ok_or_else(|| {
-                            PecosError::Input(format!(
-                                "Register {} has invalid bool size {value}; use size 1",
-                                serde_json::json!(name)
-                            ))
-                        })?,
-                };
-                Environment::validate_variable_size(name, &DataType::Bool, size)?;
+                let size = register_size(name, op.get("size"))?;
+                if data == Some("cvar_define")
+                    && op.get("data_type").and_then(Value::as_str) == Some("bool")
+                {
+                    Environment::validate_variable_size(
+                        name,
+                        &DataType::Bool,
+                        infer_size("bool", size),
+                    )?;
+                }
             }
             if op.get("block").is_some() {
                 for field in ["ops", "true_branch", "false_branch"] {

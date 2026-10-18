@@ -26,7 +26,7 @@ impl PHIRProgram {
     /// Decode a program after shared validation of classical JSON inputs.
     ///
     /// # Errors
-    /// Rejects invalid JSON, Result references, and boolean declaration sizes.
+    /// Rejects invalid JSON, Result references, and declaration sizes.
     pub fn from_json(json: &str) -> Result<Self, PecosError> {
         let value: serde_json::Value = serde_json::from_str(json)
             .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))?;
@@ -381,7 +381,8 @@ impl<'de> Deserialize<'de> for Operation {
                         })
                     })
                     .transpose()?;
-                let raw_size = obj.get("size").and_then(serde_json::Value::as_u64);
+                let raw_size =
+                    register_size(&variable, obj.get("size")).map_err(D::Error::custom)?;
                 let (data_type, size) = if data == "qvar_define" {
                     let (_, size) = validate_quantum_declaration(&variable, data_type, raw_size)
                         .map_err(D::Error::custom)?;
@@ -389,10 +390,7 @@ impl<'de> Deserialize<'de> for Operation {
                 } else {
                     let data_type =
                         data_type.ok_or_else(|| D::Error::custom("missing data_type"))?;
-                    (
-                        data_type.to_string(),
-                        raw_size.and_then(|n| usize::try_from(n).ok()),
-                    )
+                    (data_type.to_string(), raw_size)
                 };
                 Ok(Operation::VariableDefinition {
                     data,
@@ -492,6 +490,28 @@ pub(crate) fn declaration_size(
         validate_quantum_declaration(name, Some(data_type), size).map(|(_, size)| size)
     } else {
         Ok(infer_size(data_type, size))
+    }
+}
+
+/// Decode a declaration size, treating JSON null and an absent field alike.
+///
+/// Zero and register-width limits are checked by the declaration's owner.
+///
+/// # Errors
+/// Returns a named input error if the supplied value is not a non-negative integer.
+pub(crate) fn register_size(
+    variable: &str,
+    value: Option<&serde_json::Value>,
+) -> Result<Option<usize>, PecosError> {
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value::<usize>(value.clone())
+            .map(Some)
+            .map_err(|_| {
+                PecosError::Input(format!(
+                    "Register '{variable}' has invalid size {value}; use a non-negative integer size"
+                ))
+            }),
     }
 }
 

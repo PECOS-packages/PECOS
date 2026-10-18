@@ -572,7 +572,7 @@ fn assignment_unknown_target_names_the_operation() {
 fn converter_rejects_present_noninteger_register_sizes() {
     let mut failures = Vec::new();
     for data in ["cvar_define", "qvar_define"] {
-        for size in [json!(-1), json!("8"), json!(1.5), json!(null), json!(true)] {
+        for size in [json!(-1), json!("8"), json!(1.5), json!(true)] {
             let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[{
                 "data": data, "data_type": if data == "cvar_define" { "u32" } else { "qubits" },
                 "variable": "bad_size", "size": size
@@ -584,6 +584,110 @@ fn converter_rejects_present_noninteger_register_sizes() {
             match phir_json_to_module(&source) {
                 Err(pecos_core::errors::PecosError::Input(message)) if message == expected => {}
                 result => failures.push(format!("{data} size={size}: {result:?}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn declaration_size_invalid_values_agree() {
+    use pecos_phir_json::v0_1::{
+        ast::Operation, classical_interpreter::PhirClassicalInterpreter,
+        classical_validation::validate_classical_inputs,
+    };
+    let mut failures = Vec::new();
+    for (data, dtype) in [
+        ("cvar_define", "u32"),
+        ("cvar_define", "bool"),
+        ("qvar_define", "qubits"),
+    ] {
+        for size in [json!(-1), json!("8"), json!(1.5), json!(true)] {
+            let declaration = json!({"data":data,"data_type":dtype,"variable":"a","size":size});
+            let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[declaration]});
+            let encoded = source.to_string();
+            let expected = format!(
+                "Input error: Register 'a' has invalid size {size}; use a non-negative integer size"
+            );
+            let mut interpreter = PhirClassicalInterpreter::new();
+            for (path, result) in [
+                ("native", PhirJsonEngine::from_json(&encoded).map(|_| ())),
+                ("interpreter", interpreter.init(&encoded, None).map(|_| ())),
+                ("converter", phir_json_to_module(&encoded).map(|_| ())),
+                ("validation", validate_classical_inputs(&source)),
+            ] {
+                println!("{dtype} size={size} {path}: {result:?}");
+                if !matches!(&result, Err(error) if error.to_string() == expected) {
+                    failures.push(format!("{dtype} size={size} {path}: {result:?}"));
+                }
+            }
+            // Exercise D::Error::custom independently of shared program validation.
+            let ast_error = serde_json::from_value::<Operation>(declaration)
+                .err()
+                .map(|error| error.to_string());
+            if ast_error.as_deref() != Some(&expected) {
+                failures.push(format!("{dtype} size={size} AST: {ast_error:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn null_declaration_sizes_match_omission() {
+    use pecos_phir_json::v0_1::{
+        classical_interpreter::PhirClassicalInterpreter,
+        classical_validation::validate_classical_inputs,
+    };
+    let mut failures = Vec::new();
+    for (data, dtype) in [
+        ("cvar_define", "u32"),
+        ("cvar_define", "bool"),
+        ("qvar_define", "qubits"),
+    ] {
+        let omitted = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+            {"data":data,"data_type":dtype,"variable":"a"}
+        ]});
+        let mut explicit_null = omitted.clone();
+        explicit_null["ops"][0]["size"] = Value::Null;
+        for source in [&omitted, &explicit_null] {
+            if let Err(error) = validate_classical_inputs(source) {
+                failures.push(format!(
+                    "{dtype} validation rejected omission/null: {error}"
+                ));
+            }
+        }
+        let run = |source: &Value| {
+            let mut interpreter = PhirClassicalInterpreter::new();
+            let encoded = source.to_string();
+            [
+                ("native", PhirJsonEngine::from_json(&encoded).map(|_| ())),
+                ("interpreter", interpreter.init(&encoded, None).map(|_| ())),
+                ("converter", phir_json_to_module(&encoded).map(|_| ())),
+            ]
+            .map(|(path, result)| (path, result.map_err(|error| error.to_string())))
+        };
+        let before = run(&omitted);
+        let after = run(&explicit_null);
+        if before != after {
+            failures.push(format!("{dtype} omitted={before:?}, null={after:?}"));
+        }
+        for (path, result) in after {
+            if data == "qvar_define" {
+                // Null is absent, so the existing required-size rule still applies.
+                if !matches!(&result, Err(error) if error.contains("Quantum register 'a' requires a size"))
+                {
+                    failures.push(format!("{path}: {result:?}"));
+                }
+            } else if let Err(error) = result {
+                failures.push(format!("{dtype} {path}: {error}"));
+            }
+        }
+        if data == "cvar_define" {
+            let a = phir_json_to_module(&omitted.to_string());
+            let b = phir_json_to_module(&explicit_null.to_string());
+            if let (Ok(a), Ok(b)) = (a, b) {
+                assert_eq!(a, b, "null and omitted sizes must infer identical modules");
             }
         }
     }

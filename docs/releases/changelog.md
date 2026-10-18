@@ -266,6 +266,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   against declarations when results arrive, including rejection of bool/float
   indices.
   Direct get_bit calls do not require program declaration metadata.
+  PyPHIR treats an explicit `"size": null` classical declaration as omitted,
+  like the schema and the Rust paths, instead of failing later on a `None` size.
 - PyPHIR classical-input validation leaves angles and metadata untouched,
   accepting scalar metadata in parsed PHIR dictionaries without requiring the
   entire program to be JSON-serializable. Structural errors remain the schema
@@ -507,10 +509,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
-- JSON-to-module conversion rejects explicitly supplied noninteger or negative
-  classical and quantum register sizes instead of treating them as omitted,
-  naming the register and invalid JSON value. Omitted sizes retain their existing
-  inference or required-size checks.
+- Native PHIR-JSON loading, the Rust interpreter, shared input validation and
+  JSON-to-module conversion use the same declaration-size decoder. Negative,
+  string, fractional and boolean sizes produce a named input error. JSON null
+  means omitted: classical sizes are inferred and quantum sizes remain required.
+  Existing zero-size and register-width checks are unchanged.
 - The public `ResultReferenceError` implements `std::error::Error`.
 
 - Omitted-size bool declarations infer one bit in the native PHIR-JSON engine,

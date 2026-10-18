@@ -1847,3 +1847,21 @@ def test_python_invalid_result_is_validated_on_every_execution(monkeypatch) -> N
         with pytest.raises(ValueError, match="Result"):
             interpreter.handle_cops(operation)
     assert counts == [(2, 1), (2, 1)]
+
+
+@pytest.mark.parametrize("dtype", ["u32", "bool"])
+@pytest.mark.parametrize("size_fields", [{"size": -1}, {"size": None}, {}], ids=["negative", "null", "omitted"])
+def test_default_python_declaration_size_optional_semantics(dtype: str, size_fields: dict) -> None:
+    """The schema-validating Python path rejects negatives and infers null/omitted sizes."""
+    declaration = {"data": "cvar_define", "data_type": dtype, "variable": "a", **size_fields}
+    source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
+    interpreter = PhirClassicalInterpreter()
+    assert interpreter.phir_validate
+    if size_fields.get("size") == -1:
+        with pytest.raises(ValueError, match=r"(?s)size.*-1"):
+            interpreter.init(source)
+    else:
+        interpreter.init(source)
+        assert interpreter.cvar_meta[0].size == (1 if dtype == "bool" else 32)
+        interpreter.receive_results([{("a", 0): 1}])
+        assert interpreter.results() == {"a": 1}

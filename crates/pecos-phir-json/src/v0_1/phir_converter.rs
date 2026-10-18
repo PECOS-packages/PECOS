@@ -187,7 +187,7 @@ impl ImprovedConverter {
                 let (name, size) = super::ast::validate_quantum_declaration(
                     name,
                     data_type,
-                    Self::register_size(name, op.get("size"))?,
+                    super::ast::register_size(name, op.get("size"))?,
                 )?;
                 self.environment.add_quantum_register(name, size)?;
             }
@@ -425,18 +425,6 @@ impl ImprovedConverter {
         )))
     }
 
-    fn register_size(variable: &str, value: Option<&Value>) -> Result<Option<usize>, PecosError> {
-        value
-            .map(|value| {
-                serde_json::from_value::<usize>(value.clone()).map_err(|_| {
-                    PecosError::Input(format!(
-                        "Register '{variable}' has invalid size {value}; use a non-negative integer size"
-                    ))
-                })
-            })
-            .transpose()
-    }
-
     fn convert_variable_definition(
         &mut self,
         obj: &serde_json::Map<String, Value>,
@@ -456,7 +444,7 @@ impl ImprovedConverter {
                 })
             })
             .transpose()?;
-        let raw_size = Self::register_size(variable, obj.get("size"))?;
+        let raw_size = super::ast::register_size(variable, obj.get("size"))?;
         let (data_type, size) = if data == "qvar_define" {
             let (_, size) =
                 super::ast::validate_quantum_declaration(variable, data_type, raw_size)?;

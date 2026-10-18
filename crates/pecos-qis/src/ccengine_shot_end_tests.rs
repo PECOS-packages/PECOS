@@ -151,6 +151,7 @@ fn empty_shot_end_preserves_completion_trace_shape() {
     };
     let ends = Arc::clone(&runtime.ends);
     let mut engine = QisEngine::with_runtime(Box::new(runtime));
+    engine.last_runtime_shot_id = Some(0);
     let trace = Arc::new(Mutex::new(Vec::new()));
     engine.set_operation_trace_collector(Arc::clone(&trace));
     engine.dynamic_state = Some(DynamicExecutionState {
@@ -188,6 +189,7 @@ fn shot_end_tail_is_delivered_before_completion() {
         let runtime = EndTail::default();
         let ends = Arc::clone(&runtime.ends);
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine.last_runtime_shot_id = Some(0);
         engine.scheduled_transport = mode;
         let trace = Arc::new(Mutex::new(Vec::new()));
         engine.set_operation_trace_collector(Arc::clone(&trace));
@@ -295,6 +297,7 @@ fn terminal_failures_latch_and_require_reset() {
             };
             let ends = Arc::clone(&runtime.ends);
             let mut engine = QisEngine::with_runtime(Box::new(runtime));
+            engine.last_runtime_shot_id = Some(0);
             engine.scheduled_transport = mode;
             let state = || DynamicExecutionState {
                 execution_complete: true,

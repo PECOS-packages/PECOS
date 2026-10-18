@@ -11,7 +11,7 @@ use pecos_engines::scheduled_events::{
 };
 use pecos_engines::scheduled_frame::ScheduledIdleZ;
 use pecos_engines::{
-    ByteMessage, ClassicalControlEngineBuilder, ControlEngine, Engine, EngineStage,
+    ByteMessage, ClassicalControlEngineBuilder, ClassicalEngine, ControlEngine, Engine, EngineStage,
 };
 
 use std::sync::{
@@ -20,6 +20,13 @@ use std::sync::{
 };
 
 type EndFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type StartFn = unsafe extern "C" fn(*mut c_void, u64, u64) -> i32;
+static REAL_START: Mutex<Option<StartFn>> = Mutex::new(None);
+static STARTS: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::new());
+unsafe extern "C" fn start(instance: *mut c_void, shot: u64, seed: u64) -> i32 {
+    STARTS.lock().unwrap().push((shot, seed));
+    unsafe { REAL_START.lock().unwrap().unwrap()(instance, shot, seed) }
+}
 // The upstream repr(C) handle is non_exhaustive; the callback uses the local
 // ABI mirror, as the production descriptor bridge does.
 type NextFn = unsafe extern "C" fn(*mut c_void, SeleneRuntimeGetOperationHandle) -> i32;
@@ -89,6 +96,8 @@ fn install_descriptor() -> (
     let mut descriptor =
         Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
     *REAL_END.lock().unwrap() = Some(descriptor.shot_end_fn);
+    *REAL_START.lock().unwrap() = Some(descriptor.shot_start_fn);
+    descriptor.shot_start_fn = start;
     let real_next: NextFn = unsafe { std::mem::transmute(descriptor.get_next_operations_fn) };
     *REAL_NEXT.lock().unwrap() = Some(real_next);
     *REAL_BARRIER.lock().unwrap() = Some(descriptor.global_barrier_fn);
@@ -114,6 +123,7 @@ fn install_descriptor() -> (
 }
 
 fn reset_shim(mode: usize) {
+    STARTS.lock().unwrap().clear();
     ENDED.store(false, Ordering::SeqCst);
     EMITTED.store(false, Ordering::SeqCst);
     CALLS.store(0, Ordering::SeqCst);
@@ -307,10 +317,20 @@ fn native_end_tail_executes_before_engine_completion() {
     let program = pecos_programs::Qis::from_string(
         r#"
         define i64 @qmain(i64 %shot) #0 {
+            ; Guppy RNG(42) uses this stream, independently of runtime IDs/seeds.
+            call void @random_seed(i64 42)
+            %random = call i32 @random_int()
+            %valid = icmp eq i32 %random, 1085446021
+            br i1 %valid, label %gates, label %bad_rng
+        bad_rng:
+            ret i64 77
+        gates:
             call void @__quantum__qis__x__body(i64 0)
             %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
             ret i64 0
         }
+        declare void @random_seed(i64)
+        declare i32 @random_int()
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
         attributes #0 = { "EntryPoint" }
@@ -336,6 +356,8 @@ fn native_end_tail_executes_before_engine_completion() {
             ScheduledTransport::V7 => builder.scheduled_event_batches(true),
         };
         let mut engine = builder.build().unwrap();
+        engine.set_seed(123);
+        let mut expected_rng = pecos_random::PecosRng::seed_from_u64(123);
         let mut quantum = quantum_system(transport);
         for (shot, mode) in [0, 0, 4, 4, 1, 0, 2, 0].into_iter().enumerate() {
             reset_shim(mode);
@@ -349,6 +371,11 @@ fn native_end_tail_executes_before_engine_completion() {
                 })
                 .unwrap();
             let result = finish_engine_shot(&mut engine, &mut quantum);
+            assert_eq!(
+                *STARTS.lock().unwrap(),
+                [(u64::try_from(shot).unwrap(), expected_rng.next_u64())],
+                "{transport:?}, mode {mode}: native ID and seed",
+            );
             assert_eq!(
                 CALLS.load(Ordering::SeqCst),
                 1,

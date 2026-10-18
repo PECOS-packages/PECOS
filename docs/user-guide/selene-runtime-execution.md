@@ -6,6 +6,31 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## Shot identity and randomness
+
+`QisEngine` calls runtime `shot_start` with IDs `0, 1, 2, ...` per engine
+instance. Reset and reseeding retain the sequence; a template clone starts its
+own sequence at zero. A failed `shot_start` consumes its ID because the plugin
+may already have observed it. Exhaustion returns an error instead of wrapping.
+Scheduled envelopes use that same runtime ID, including terminal batches.
+Operation trace `shot_index` remains one-based for compatibility.
+
+These runtime IDs are local to each worker engine. Monte Carlo derives seeds
+from the global shot index independently of worker partitioning, and its host
+`ShotContext` identifies the run, worker and local shot separately. Changing the
+runtime ID origin does not change PECOS's seed derivation or consume extra RNG
+draws. A plugin that uses the ID itself to choose a random stream can nevertheless
+produce different results; record the PECOS revision when comparing old runs.
+Selene's own driver uses component base seeds plus the shot ID, so matching IDs
+alone does not establish identical random streams between the two drivers.
+
+Program-seeded Guppy RNGs use their explicit seed separately from simulator and
+noise seeds. Program-visible shot queries are a separate, unfinished contract:
+the direct `get_current_shot` and `___set_random_index` imports are unsupported,
+and the PECOS `selene_get_current_shot` adapter currently returns zero. Do not
+infer support for shot-dependent program RNGs or WASM behavior from the runtime
+callback IDs. See [issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
+
 ## Native gate lowering
 
 All Selene runtimes receive gates through their native entry points. Flat,

@@ -95,14 +95,21 @@ jobs:
         # exit status of a pipeline is `tee`'s, so a failing pytest would be reported
         # as a passing step and this lane could never go red.
         shell: bash
+        # A step timeout below the job's lets the always() steps below publish the
+        # log when the suite runs long; a job timeout cancels them and the log is lost.
+        # The suite takes about 12 minutes on a warm runner.
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           # The whole suite, not just `-m slow`: --require-full-noise-coverage fails
           # the session unless every required channel had a PASSING test, and the fast
           # cases carry evidence for several channels. The package's own addopts filter
           # is overridden so nothing is silently deselected.
+          # faulthandler_timeout dumps every thread's stack when one test runs past
+          # five minutes, so a stalled test names itself in the log.
           pytest python/selene-plugins/pecos-selene-general-noise/tests \
             --override-ini=addopts= --require-full-noise-coverage \
+            -o faulthandler_timeout=300 --durations=30 \
             -v --tb=short | tee general-noise-semantic-results.txt
 
       - name: Publish channel coverage summary

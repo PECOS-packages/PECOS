@@ -55,7 +55,12 @@ def test_quantum_size_schema_remains_enforced(fields: dict) -> None:
         "version": "0.1.0",
         "ops": [{"data": "qvar_define", "variable": "q", **fields}],
     }
-    with pytest.raises(ValueError, match="Quantum register 'q' requires a positive integer size"):
+    message = (
+        "Quantum register 'q' requires a positive integer size"
+        if not fields or (fields["size"] == 0 and not isinstance(fields["size"], bool))
+        else "Register 'q' has invalid size"
+    )
+    with pytest.raises(ValueError, match=message):
         PyPHIR.from_phir(program)
     with pytest.raises(ValueError, match="size"):
         PhirClassicalInterpreter().init(program)
@@ -181,3 +186,14 @@ def test_unreachable_redeclaration() -> None:
     }
     with pytest.raises(ValueError, match="Variable 'a' is already declared as quantum; cannot redeclare as classical"):
         PyPHIR.from_phir(program)
+
+
+def test_qc2phir_does_not_emit_null_quantum_size() -> None:
+    """Unknown metadata widths stay absent, never becoming explicit JSON null."""
+    circuit = pecos.QuantumCircuit(qvar_spec={"q": None})
+    expected = {"data": "qvar_define", "data_type": "qubits", "variable": "q"}
+    assert circuit.to_phir_dict()["ops"] == [expected]
+    assert json.loads(circuit.to_phir_json())["ops"] == [expected]
+    # Quantum sizes remain required: omission does not invent a register width.
+    with pytest.raises(ValueError, match="Quantum register 'q' requires a positive integer size"):
+        PyPHIR.from_phir(circuit.to_phir_dict())

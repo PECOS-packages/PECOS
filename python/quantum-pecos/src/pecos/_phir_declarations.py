@@ -44,7 +44,7 @@ def validate_declaration_names(operations: list[dict]) -> None:
 
 
 def validate_classical_inputs(program: dict) -> None:
-    """Validate classical fields without serializing quantum data or metadata.
+    """Validate declaration and Result fields without serializing quantum ops or metadata.
 
     Metadata need not be JSON-serializable. Only declaration and Result fields
     are relevant here; structural errors belong to the schema/parser.
@@ -59,7 +59,7 @@ def validate_classical_inputs(program: dict) -> None:
                 continue
             if node.get("cop") == "Result":
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
-            elif node.get("data") == "cvar_define" and node.get("data_type") == "bool":
+            elif node.get("data") in ("cvar_define", "qvar_define"):
                 inputs.append({key: node[key] for key in ("data", "data_type", "variable", "size") if key in node})
             if "block" in node:
                 for field in ("ops", "true_branch", "false_branch"):

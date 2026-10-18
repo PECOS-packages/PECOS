@@ -1849,19 +1849,49 @@ def test_python_invalid_result_is_validated_on_every_execution(monkeypatch) -> N
     assert counts == [(2, 1), (2, 1)]
 
 
+@pytest.mark.parametrize("validate", [False, True])
 @pytest.mark.parametrize("dtype", ["u32", "bool"])
 @pytest.mark.parametrize("size_fields", [{"size": -1}, {"size": None}, {}], ids=["negative", "null", "omitted"])
-def test_default_python_declaration_size_optional_semantics(dtype: str, size_fields: dict) -> None:
-    """The schema-validating Python path rejects negatives and infers null/omitted sizes."""
+def test_python_declaration_sizes_reject_explicit_null(dtype: str, size_fields: dict, validate: bool) -> None:
+    """Shared validation rejects present invalid sizes with or without schema checking."""
+    from pecos.reps.pyphir import PyPHIR
+
     declaration = {"data": "cvar_define", "data_type": dtype, "variable": "a", **size_fields}
     source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
     interpreter = PhirClassicalInterpreter()
-    assert interpreter.phir_validate
-    if size_fields.get("size") == -1:
-        with pytest.raises(ValueError, match=r"(?s)size.*-1"):
-            interpreter.init(source)
+    interpreter.phir_validate = validate
+    if "size" in size_fields:
+        expected = (
+            f"PHIR interpreter failed: Register 'a' has invalid size {json.dumps(size_fields['size'])}; "
+            "use a non-negative integer size"
+        )
+        for reader in [interpreter.init, PyPHIR.from_phir]:
+            with pytest.raises(ValueError, match="invalid size") as error:
+                reader(source)
+            assert str(error.value) == expected
     else:
         interpreter.init(source)
         assert interpreter.cvar_meta[0].size == (1 if dtype == "bool" else 32)
         interpreter.receive_results([{("a", 0): 1}])
         assert interpreter.results() == {"a": 1}
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_python_quantum_null_size_has_shared_error(validate: bool) -> None:
+    from pecos.reps.pyphir import PyPHIR
+
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "variable": "q", "size": None},
+        ],
+    }
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    for reader in [interpreter.init, PyPHIR.from_phir]:
+        with pytest.raises(ValueError, match="invalid size null") as error:
+            reader(source)
+        assert str(error.value) == (
+            "PHIR interpreter failed: Register 'q' has invalid size null; use a non-negative integer size"
+        )

@@ -257,8 +257,8 @@ without losing the others. Result cannot overwrite quantum registers or read
 unknown sources. Measurement destinations must be declared classical registers,
 and their bit indices must be below the declared size (excluding the sign bit).
 All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
-measurements. Declaration sizes use one shared Rust decoder: JSON null and an
-absent field both mean omitted; negative, string, fractional and boolean size
+measurements. Declaration sizes use one shared Rust decoder: only an absent
+field means omitted. JSON null, negative, string, fractional and boolean size
 values are rejected with a named input error. Classical sizes are inferred when
 omitted; quantum declarations still require a positive size. Bool has one-bit
 backing storage: use size 1 or omit size; declarations with size greater than 1

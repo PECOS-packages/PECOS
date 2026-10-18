@@ -73,6 +73,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- PHIR declaration sizes must be non-negative integers when present; explicit
+  null is rejected with the shared register-name/value diagnostic, including
+  when `phir_validate=False`. Omit the field to request classical size inference.
+
 - Signed whole-register PHIR Result copies now sign-extend to i64, agreeing
   with `=` regardless of source backing type. Native output changes: copying
   i8 -8 to u64 now yields 18446744073709551608, rather than 248.
@@ -255,6 +259,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- QuantumCircuit's PHIR exporter omits an unspecified (`None`) quantum-register
+  size instead of emitting null. Consumers still require an explicit quantum size.
+
 - PHIR bool declarations without a size use one bit on all execution paths.
   The converter preserves the inferred size in executable variable declarations.
   The Python interpreter checks declarations and Result reference syntax at load.
@@ -266,8 +273,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   against declarations when results arrive, including rejection of bool/float
   indices.
   Direct get_bit calls do not require program declaration metadata.
-  PyPHIR treats an explicit `"size": null` classical declaration as omitted,
-  like the schema and the Rust paths, instead of failing later on a `None` size.
 - PyPHIR classical-input validation leaves angles and metadata untouched,
   accepting scalar metadata in parsed PHIR dictionaries without requiring the
   entire program to be JSON-serializable. Structural errors remain the schema
@@ -511,8 +516,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - Native PHIR-JSON loading, the Rust interpreter, shared input validation and
   JSON-to-module conversion use the same declaration-size decoder. Negative,
-  string, fractional and boolean sizes produce a named input error. JSON null
-  means omitted: classical sizes are inferred and quantum sizes remain required.
+  string, fractional, boolean and JSON null sizes produce a named input error.
+  Only an absent size field means omitted: classical sizes are inferred and
+  quantum sizes remain required.
   Existing zero-size and register-width checks are unchanged.
 - The public `ResultReferenceError` implements `std::error::Error`.
 

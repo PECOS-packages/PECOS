@@ -250,14 +250,14 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
     for sym, size in qc.metadata.get("qvar_spec", {}).items():
         if size == 0:
             continue
-        ops.append(
-            {
-                "data": "qvar_define",
-                "data_type": "qubits",
-                "variable": sym,
-                "size": size,
-            },
-        )
+        declaration = {
+            "data": "qvar_define",
+            "data_type": "qubits",
+            "variable": sym,
+        }
+        if size is not None:
+            declaration["size"] = size
+        ops.append(declaration)
 
     for sym, size in qc.metadata.get("cvar_spec", {}).items():
         if size == 0:

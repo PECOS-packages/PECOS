@@ -305,7 +305,7 @@ class PyPHIR:
                 if name == "cvar_define":
                     data_type = o["data_type"]
                     type_width = 1 if data_type == "bool" else int(data_type[1:])
-                    if o.get("size") is not None:
+                    if "size" in o:
                         size = o["size"]
                     elif data_type in signed_data_types:
                         # A signed size-S register is an i(S+1) integer, so the

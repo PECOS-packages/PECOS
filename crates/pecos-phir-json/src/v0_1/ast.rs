@@ -493,7 +493,7 @@ pub(crate) fn declaration_size(
     }
 }
 
-/// Decode a declaration size, treating JSON null and an absent field alike.
+/// Decode a declaration size; only an absent field means omitted.
 ///
 /// Zero and register-width limits are checked by the declaration's owner.
 ///
@@ -504,7 +504,7 @@ pub(crate) fn register_size(
     value: Option<&serde_json::Value>,
 ) -> Result<Option<usize>, PecosError> {
     match value {
-        None | Some(serde_json::Value::Null) => Ok(None),
+        None => Ok(None),
         Some(value) => serde_json::from_value::<usize>(value.clone())
             .map(Some)
             .map_err(|_| {

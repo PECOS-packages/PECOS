@@ -48,6 +48,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a rotation around the Y-axis by an angle `theta`.
@@ -66,8 +69,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.szdg(qubits).rx(theta, qubits).sz(qubits)
     }
 
@@ -89,6 +96,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a general single-qubit unitary U(theta, phi, lambda) gate.
@@ -109,6 +119,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn u(
         &mut self,
@@ -117,6 +130,7 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         lambda: Angle64,
         qubits: &[QubitId],
     ) -> &mut Self {
+        self.validate_qubits(qubits);
         // Use the signed principal values independently. Adding the fixed-point
         // angles before halving can wrap at 2*pi and lose a compensating pi.
         let phase = lambda.signed_half() + phi.signed_half();
@@ -132,8 +146,14 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// At phi = pi, the principal-value convention gives both inverse Z
     /// rotations the same sign. Each ion contributes a minus sign, so the
     /// two-qubit global phase still cancels.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxyxy2q(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         // These basis changes implement one RXYXY2Q gate inside the simulator.
         // Noise models still see a single two-qubit gate.
         for &(q0, q1) in pairs {
@@ -163,8 +183,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         let z = -phi + Angle64::QUARTER_TURN;
         self.rz(z, qubits).ry(theta, qubits).rz(-z, qubits);
         if z == Angle64::HALF_TURN {
@@ -183,8 +207,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
             .apply_global_phase(Angle64::QUARTER_TURN / 4u64, qubits)
     }
@@ -198,8 +226,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 4u64), qubits)
     }
@@ -216,8 +248,14 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.h(&q1s).h(&q2s).rzz(theta, pairs).h(&q1s).h(&q2s)
@@ -241,8 +279,14 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.sx(&q1s)
@@ -280,6 +324,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
     /// Applies a composite rotation gate using RXX, RYY, and RZZ gates.
@@ -293,6 +340,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     ///
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxxryyrzz(
         &mut self,
@@ -301,6 +351,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         lambda: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         self.rxx(theta, pairs).ryy(phi, pairs).rzz(lambda, pairs)
     }
 
@@ -315,6 +368,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn u2q(
         &mut self,
@@ -323,6 +379,10 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         after: [[Angle64; 3]; 2],
         pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
+
         for &(q0, q1) in pairs {
             let q0s = &[q0];
             let q1s = &[q1];

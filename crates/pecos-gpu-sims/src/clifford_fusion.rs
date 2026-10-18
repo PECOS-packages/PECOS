@@ -99,16 +99,25 @@ fn simplify_pair(first: u32, second: u32) -> Option<Option<u32>> {
 ///
 /// Accumulates gates and fuses consecutive single-qubit gates on the same qubit.
 pub struct CliffordFuser {
+    num_qubits: usize,
     /// Pending gate sequence for each qubit
-    pending: HashMap<u32, GateSequence>,
+    pending: HashMap<usize, GateSequence>,
     /// Output gate queue (packed gates)
     output: Vec<u32>,
 }
 
 impl CliffordFuser {
-    /// Create a new gate fuser
-    pub fn new() -> Self {
+    /// Create a new gate fuser.
+    ///
+    /// # Panics
+    /// Panics if `num_qubits` exceeds the 14-bit packed register capacity.
+    pub fn new(num_qubits: usize) -> Self {
+        assert!(
+            num_qubits <= crate::qubit_validation::PACKED_QUBIT_CAPACITY,
+            "GpuStab fuser: register size {num_qubits} exceeds the packed capacity; use at most 16384 qubits"
+        );
         Self {
+            num_qubits,
             pending: HashMap::new(),
             output: Vec::new(),
         }
@@ -125,7 +134,18 @@ impl CliffordFuser {
     /// Add a gate to the fuser
     ///
     /// Returns true if the gate was absorbed (fused with pending), false if it was emitted.
-    pub fn add_gate(&mut self, gate_type: u32, target: u32, control: u32) -> bool {
+    ///
+    /// # Panics
+    /// Panics if a gate operand is outside the register, before accumulating it.
+    pub fn add_gate(&mut self, gate_type: u32, target: usize, control: usize) -> bool {
+        // Validate through the packer before even a cancelling gate can accumulate.
+        let packed = crate::qubit_validation::pack_gate(
+            gate_type,
+            target,
+            (!Self::is_single_qubit(gate_type)).then_some(control),
+            self.num_qubits,
+            "GpuStab",
+        );
         if Self::is_single_qubit(gate_type) {
             // Single-qubit gate - try to fuse
             let seq = self.pending.entry(target).or_default();
@@ -137,19 +157,24 @@ impl CliffordFuser {
             self.flush_qubit(control);
 
             // Emit the two-qubit gate
-            let packed = pack_gate(gate_type, target, control);
             self.output.push(packed);
             false
         }
     }
 
     /// Flush pending gates for a specific qubit
-    fn flush_qubit(&mut self, qubit: u32) {
+    fn flush_qubit(&mut self, qubit: usize) {
         if let Some(seq) = self.pending.remove(&qubit)
             && !seq.is_empty()
         {
             for gate_type in seq.into_gates() {
-                let packed = pack_gate(gate_type, qubit, 0);
+                let packed = crate::qubit_validation::pack_gate(
+                    gate_type,
+                    qubit,
+                    None,
+                    self.num_qubits,
+                    "GpuStab",
+                );
                 self.output.push(packed);
             }
         }
@@ -157,23 +182,12 @@ impl CliffordFuser {
 
     /// Flush all pending gates and return the optimized gate queue
     pub fn flush_all(&mut self) -> Vec<u32> {
-        let qubits: Vec<u32> = self.pending.keys().copied().collect();
+        let qubits: Vec<usize> = self.pending.keys().copied().collect();
         for qubit in qubits {
             self.flush_qubit(qubit);
         }
         std::mem::take(&mut self.output)
     }
-}
-
-impl Default for CliffordFuser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Pack a gate into the queue format
-fn pack_gate(gate_type: u32, target: u32, control: u32) -> u32 {
-    (gate_type & 0xF) | ((target & 0x3FFF) << 4) | ((control & 0x3FFF) << 18)
 }
 
 /// Unpack a gate from the queue format
@@ -186,12 +200,12 @@ fn unpack_gate(packed: u32) -> (u32, u32, u32) {
 }
 
 #[cfg(test)]
-mod tests {
+mod gpu_free_tests {
     use super::*;
 
     #[test]
     fn test_identity_fusion() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // H * H = I
         fuser.add_gate(GATE_H, 0, 0);
@@ -203,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_s_s_fusion() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // S * S = Z
         fuser.add_gate(GATE_S, 0, 0);
@@ -217,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_s_sdg_cancel() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // S * Sdg = I
         fuser.add_gate(GATE_S, 0, 0);
@@ -229,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_two_qubit_flushes() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // H on qubit 0, then CX(1, 0) should flush H first
         fuser.add_gate(GATE_H, 0, 0);
@@ -241,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_different_qubits() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // Gates on different qubits don't fuse
         fuser.add_gate(GATE_H, 0, 0);
@@ -253,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_pauli_fusion() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // X * Z = Y
         fuser.add_gate(GATE_X, 0, 0);
@@ -267,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_triple_cancel() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // X * X * H = H (X*X cancels)
         fuser.add_gate(GATE_X, 0, 0);
@@ -282,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_s_z_fusion() {
-        let mut fuser = CliffordFuser::new();
+        let mut fuser = CliffordFuser::new(16384);
 
         // S * Z = Sdg
         fuser.add_gate(GATE_S, 0, 0);
@@ -292,5 +306,26 @@ mod tests {
         assert_eq!(gates.len(), 1, "S*Z should fuse to Sdg");
         let (gate_type, _, _) = unpack_gate(gates[0]);
         assert_eq!(gate_type, GATE_SDG, "S*Z should be Sdg");
+    }
+}
+
+#[cfg(test)]
+mod gpu_free_bounds {
+    use super::*;
+    use crate::qubit_validation::gpu_free_tests::assert_bounds_panic;
+
+    #[test]
+    fn fusion_checks_before_accumulating() {
+        for bad in [2, 16383, 16384, usize::MAX] {
+            let mut fuser = CliffordFuser::new(2);
+            assert_bounds_panic("GpuStab", bad, 2, || {
+                fuser.add_gate(GATE_H, bad, 0);
+            });
+            assert_eq!(fuser.flush_all(), Vec::<u32>::new());
+            assert_bounds_panic("GpuStab", bad, 2, || {
+                fuser.add_gate(6, 0, bad);
+            });
+            assert_eq!(fuser.flush_all(), Vec::<u32>::new());
+        }
     }
 }

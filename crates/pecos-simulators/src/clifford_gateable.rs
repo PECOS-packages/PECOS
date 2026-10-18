@@ -123,6 +123,15 @@ pub struct MeasurementResult {
 ///   <https://arxiv.org/abs/quant-ph/9807006>
 #[expect(clippy::min_ident_chars)]
 pub trait CliffordGateable: QuantumSimulator {
+    /// Validate operands before a default gate decomposition applies any operations.
+    ///
+    /// Fixed-register backends override this hook. The default imposes no bound,
+    /// preserving the support-growing behavior of Pauli trackers.
+    ///
+    /// # Panics
+    /// Fixed-register GPU backends panic if an operand is outside their register.
+    fn validate_qubits(&self, _qubits: &[QubitId]) {}
+
     /// Applies the scalar `exp(i * phase)` once for every target qubit.
     ///
     /// The default is a no-op, which is correct for representations where global
@@ -137,8 +146,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
-    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
+    fn apply_global_phase(&mut self, _phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self
     }
 
@@ -151,8 +164,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
-    fn identity(&mut self, _qubits: &[QubitId]) -> &mut Self {
+    fn identity(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self
     }
 
@@ -178,8 +195,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.h(qubits).z(qubits).h(qubits)
     }
 
@@ -208,8 +229,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// The default `Z`-then-`X` decomposition evaluates to `X * Z = -i Y`;
     /// [`Self::apply_global_phase`] supplies the compensating `i`.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.z(qubits)
             .x(qubits)
             .apply_global_phase(Angle64::QUARTER_TURN, qubits)
@@ -237,8 +262,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sz(qubits).sz(qubits)
     }
 
@@ -265,8 +294,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.h(qubits).sz(qubits).h(qubits)
     }
 
@@ -293,8 +326,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sxdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.h(qubits).szdg(qubits).h(qubits)
     }
 
@@ -324,8 +361,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// The default `Z`-then-`H` decomposition evaluates to `RY(pi/2)`;
     /// [`Self::apply_global_phase`] supplies the named gate's `exp(i*pi/4)`.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.z(qubits)
             .h(qubits)
             .apply_global_phase(Angle64::QUARTER_TURN / 2u64, qubits)
@@ -357,8 +398,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// The default `H`-then-`Z` decomposition evaluates to `RY(-pi/2)`;
     /// [`Self::apply_global_phase`] supplies the named gate's `exp(-i*pi/4)`.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.h(qubits)
             .z(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
@@ -387,6 +432,9 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies the adjoint (inverse) of the square root of Z gate.
@@ -412,8 +460,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.z(qubits).sz(qubits)
     }
 
@@ -440,6 +492,9 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies the H2 variant of the Hadamard gate to the specified qubits.
@@ -466,8 +521,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sy(qubits)
             .z(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
@@ -497,8 +556,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sz(qubits)
             .y(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
@@ -528,8 +591,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sz(qubits)
             .x(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
@@ -559,8 +626,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sx(qubits)
             .z(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
@@ -590,8 +661,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sx(qubits)
             .y(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
@@ -621,8 +696,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sx(qubits)
             .sz(qubits)
             .apply_global_phase(Angle64::QUARTER_TURN, qubits)
@@ -652,8 +731,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.szdg(qubits)
             .sxdg(qubits)
             .apply_global_phase(-Angle64::QUARTER_TURN, qubits)
@@ -683,8 +766,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sxdg(qubits)
             .sy(qubits)
             .apply_global_phase(Angle64::HALF_TURN, qubits)
@@ -714,8 +801,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sydg(qubits)
             .sx(qubits)
             .apply_global_phase(Angle64::HALF_TURN, qubits)
@@ -745,8 +836,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sxdg(qubits)
             .sz(qubits)
             .apply_global_phase(Angle64::HALF_TURN, qubits)
@@ -776,8 +871,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.szdg(qubits)
             .sx(qubits)
             .apply_global_phase(Angle64::HALF_TURN, qubits)
@@ -807,8 +906,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sz(qubits)
             .sx(qubits)
             .apply_global_phase(Angle64::QUARTER_TURN, qubits)
@@ -838,8 +941,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.sxdg(qubits)
             .szdg(qubits)
             .apply_global_phase(-Angle64::QUARTER_TURN, qubits)
@@ -872,6 +979,9 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
     /// Applies a controlled-Y operation between qubit pairs.
@@ -901,8 +1011,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let targets: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         // CY = (I ⊗ S†) CX (I ⊗ S) because S†XS = Y
         // Circuit order: S† on target, then CX, then S on target
@@ -936,8 +1052,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let targets: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.h(&targets).cx(pairs).h(&targets)
     }
@@ -969,8 +1091,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.sx(&q1s).sx(&q2s).sydg(&q1s).cx(pairs).sy(&q1s)
@@ -1003,8 +1131,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.x(&q1s).x(&q2s).sxx(pairs)
@@ -1036,8 +1170,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.szdg(&q1s).szdg(&q2s).sxx(pairs).sz(&q1s).sz(&q2s)
@@ -1070,8 +1210,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.y(&q1s).y(&q2s).syy(pairs)
@@ -1104,8 +1250,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.h(&q1s).h(&q2s).sxx(pairs).h(&q1s).h(&q2s)
@@ -1138,8 +1290,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.z(&q1s).z(&q2s).szz(pairs)
@@ -1170,8 +1328,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         // For SWAP, we need to apply cx in both directions
         // SWAP = CX(a,b) CX(b,a) CX(a,b)
         let reversed: PairBuf = pairs.iter().map(|&(a, b)| (b, a)).collect();
@@ -1203,7 +1367,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         let reversed: PairBuf = pairs.iter().map(|&(a, b)| (b, a)).collect();
@@ -1241,8 +1411,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn g(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.cz(pairs).h(&q1s).h(&q2s).cz(pairs)
@@ -1257,8 +1433,14 @@ pub trait CliffordGateable: QuantumSimulator {
     /// ZI → IZ     (same as iSWAP)
     /// IZ → ZI     (same as iSWAP)
     /// ```
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn iswapdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         let reversed: PairBuf = pairs.iter().map(|&(a, b)| (b, a)).collect();
@@ -1271,8 +1453,14 @@ pub trait CliffordGateable: QuantumSimulator {
     }
 
     /// Applies the dagger of the G gate. G is Hermitian (self-inverse), so Gdg = G.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn gdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         self.g(pairs)
     }
 
@@ -1288,8 +1476,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if projected to |-⟩, false if projected to |+⟩
     ///   - `is_deterministic`: true if state was already in an X eigenstate
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         self.h(qubits);
         let results = self.mz(qubits);
         self.h(qubits);
@@ -1308,8 +1500,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if projected to |+⟩, false if projected to |-⟩
     ///   - `is_deterministic`: true if state was already in an X eigenstate
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mnx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         self.h(qubits).x(qubits);
         let results = self.mz(qubits);
         self.x(qubits).h(qubits);
@@ -1328,8 +1524,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if projected to |-i⟩, false if projected to |+i⟩
     ///   - `is_deterministic`: true if state was already in a Y eigenstate
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn my(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         self.sx(qubits);
         let results = self.mz(qubits);
         self.sxdg(qubits);
@@ -1348,8 +1548,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if projected to |+i⟩, false if projected to |-i⟩
     ///   - `is_deterministic`: true if state was already in a Y eigenstate
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mny(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         self.sxdg(qubits);
         let results = self.mz(qubits);
         self.sx(qubits);
@@ -1368,6 +1572,9 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if projected to |1⟩, false if projected to |0⟩
     ///   - `is_deterministic`: true if state was already in a Z eigenstate
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult>;
 
     /// Measures the -Z Pauli operator, projecting to the measured eigenstate.
@@ -1382,8 +1589,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if projected to |0⟩, false if projected to |1⟩
     ///   - `is_deterministic`: true if state was already in a Z eigenstate
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         self.x(qubits);
         let results = self.mz(qubits);
         self.x(qubits);
@@ -1399,8 +1610,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn px(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.mpx(qubits);
         self
     }
@@ -1414,8 +1629,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn pnx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.mpnx(qubits);
         self
     }
@@ -1429,8 +1648,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn py(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.mpy(qubits);
         self
     }
@@ -1444,8 +1667,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn pny(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.mpny(qubits);
         self
     }
@@ -1459,8 +1686,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn pz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.mpz(qubits);
         self
     }
@@ -1474,8 +1705,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn pnz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.mpnz(qubits);
         self
     }
@@ -1492,8 +1727,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if Z correction was needed
     ///   - `is_deterministic`: true if state was already |+⟩
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mpx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         let results = self.mx(qubits);
         let corrections: QubitBuf = qubits
             .iter()
@@ -1519,8 +1758,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if Z correction was needed
     ///   - `is_deterministic`: true if state was already |-⟩
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mpnx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         let results = self.mnx(qubits);
         let corrections: QubitBuf = qubits
             .iter()
@@ -1546,8 +1789,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if Z correction was needed
     ///   - `is_deterministic`: true if state was already |+i⟩
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mpy(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         let results = self.my(qubits);
         let corrections: QubitBuf = qubits
             .iter()
@@ -1573,8 +1820,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if Z correction was needed
     ///   - `is_deterministic`: true if state was already |-i⟩
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mpny(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         let results = self.mny(qubits);
         let corrections: QubitBuf = qubits
             .iter()
@@ -1600,8 +1851,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if X correction was needed
     ///   - `is_deterministic`: true if state was already |0⟩
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mpz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         let results = self.mz(qubits);
         let corrections: QubitBuf = qubits
             .iter()
@@ -1627,8 +1882,12 @@ pub trait CliffordGateable: QuantumSimulator {
     /// * `Vec<MeasurementResult>` - One result per qubit containing:
     ///   - `outcome`: true if X correction was needed
     ///   - `is_deterministic`: true if state was already |1⟩
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn mpnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.validate_qubits(qubits);
         let results = self.mnz(qubits);
         let corrections: QubitBuf = qubits
             .iter()

@@ -373,6 +373,24 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust bug fixes
 
+- GPU simulators reject out-of-range qubit indices before narrowing, packing, or GPU work,
+  including fused gates, compiled circuits, measurements, and Pauli queries.
+  `CircuitExecutor` checks operands before applying any gates only for simulators with
+  a fixed capacity; Pauli trackers grow to accommodate operands.
+  `GpuNoisySampler::sample` returns `Err` for invalid operands.
+  `GpuStab` and `GpuStabMulti` automatically flush their gate queues at 262144 and
+  65536 gates, respectively, instead of panicking or dropping gates.
+  `GpuStabMulti` executes queued measurements before a gate capacity flush,
+  preserving their position in the circuit.
+  `GpuStab` preserves each batch-mode dispatch's upload instead of executing the
+  last upload repeatedly, and `begin_batch` preserves accumulated work.
+  Compiled circuits execute after previously queued gates, and reset discards
+  pending fused gates so they cannot affect the new state. Deferred measurement
+  queues support more than 32768 results. Gate dispatch memory stays bounded by
+  limiting recorded passes and dispatches, including in batch mode with parallel
+  execution. Parallel gate partitions serialize S/Sdg phase updates so disjoint
+  phase gates cannot race on shared stabilizer signs.
+
 - Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
   a `TickCircuit`, could be placed before existing gates on the same qubit.
   After a removal an append could also panic, or wire from an unrelated gate

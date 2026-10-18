@@ -104,6 +104,10 @@ impl PauliProp {
 }
 
 impl QuantumSimulator for PauliProp {
+    fn qubit_capacity(&self) -> Option<usize> {
+        None
+    }
+
     /// Returns the extent of the current support, not a register size.
     /// Empty trackers return zero; otherwise this is one past the highest tracked qubit.
     fn num_qubits(&self) -> usize {

@@ -81,7 +81,7 @@ fn calculate_shots_per_batch(
     let max_dispatch_shots = max_invocations / u64::from(num_qubits);
     if max_dispatch_shots == 0 {
         return Err(format!(
-            "GpuStabMulti: {num_qubits} qubits need {num_qubits} invocations per shot, exceeding the device dispatch limit of {max_invocations} invocations ({max_workgroups} workgroups of {WORKGROUP_SIZE})"
+            "GpuStabMulti: the largest dispatch for {num_qubits} qubits needs {num_qubits} invocations per shot, exceeding the device dispatch limit of {max_invocations} invocations ({max_workgroups} workgroups of {WORKGROUP_SIZE})"
         ));
     }
     let shots = u64::from(num_shots.max(1))
@@ -2563,27 +2563,34 @@ mod gpu_free_tests {
             calculate_shots_per_batch(16_384, 10, LARGE_LIMIT, LARGE_LIMIT, 63, LARGE_LIMIT)
                 .unwrap_err();
         assert!(error.contains("16384 qubits"));
+        assert!(error.contains("16128 invocations")); // 63 * 256
         assert!(error.contains("63 workgroups"));
     }
 
     #[test]
     fn test_workgroup_size_matches_shaders() {
-        for shader in [
-            include_str!("stab_gate_shader_multi.wgsl"),
-            include_str!("stab_meas_shader_multi.wgsl"),
+        // Host dispatch counts assume every entry point is WORKGROUP_SIZE x 1 x 1.
+        for (name, source) in [
+            (
+                "stab_gate_shader_multi.wgsl",
+                include_str!("stab_gate_shader_multi.wgsl"),
+            ),
+            (
+                "stab_meas_shader_multi.wgsl",
+                include_str!("stab_meas_shader_multi.wgsl"),
+            ),
         ] {
-            let sizes: Vec<_> = shader
-                .match_indices("@workgroup_size(")
-                .map(|(start, marker)| {
-                    let rest = &shader[start + marker.len()..];
-                    &rest[..rest.find(')').expect("workgroup_size attribute is closed")]
-                })
-                .collect();
-            assert_ne!(sizes.len(), 0, "shader declares no workgroup size");
-            assert!(
-                sizes.iter().all(|&size| size == WORKGROUP_SIZE.to_string()),
-                "shader workgroup sizes {sizes:?} must equal WORKGROUP_SIZE"
-            );
+            let module = wgpu::naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
+            assert_ne!(module.entry_points.len(), 0, "{name} has no entry points");
+            for entry_point in &module.entry_points {
+                assert_eq!(
+                    entry_point.workgroup_size,
+                    [WORKGROUP_SIZE, 1, 1],
+                    "{name}::{}",
+                    entry_point.name
+                );
+            }
         }
     }
 

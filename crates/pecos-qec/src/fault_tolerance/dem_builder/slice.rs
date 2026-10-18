@@ -162,12 +162,16 @@ impl DemSliceContribution {
 }
 
 /// Declares one detector identity produced by each instance of a slice.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DemSliceDetector {
     /// Slice-local detector identity used by relative targets.
     pub id: u32,
     /// Optional cached slice-local spatial coordinates. Time is supplied by the instance.
     pub coords: Option<[f64; 2]>,
+    /// Optional fault sector carried by the emitted detector declaration.
+    ///
+    /// A port entry declares no detector, so composition ignores its label.
+    pub fault_sector: Option<String>,
     /// Whether an instance emits this detector at its owning round.
     ///
     /// A non-emitting entry is a port identity only. Contributions may target it in an
@@ -182,6 +186,7 @@ impl DemSliceDetector {
         Self {
             id,
             coords: None,
+            fault_sector: None,
             emitted: true,
         }
     }
@@ -192,8 +197,16 @@ impl DemSliceDetector {
         Self {
             id,
             coords: None,
+            fault_sector: None,
             emitted: false,
         }
+    }
+
+    /// Attach a fault sector to the emitted detector declaration.
+    #[must_use]
+    pub fn with_fault_sector(mut self, fault_sector: impl Into<String>) -> Self {
+        self.fault_sector = Some(fault_sector.into());
+        self
     }
 
     /// Attach cached slice-local spatial coordinates.
@@ -433,7 +446,7 @@ impl DemSlice {
             }
         }
 
-        let mut local_detectors: BTreeMap<u32, (bool, Option<[f64; 2]>)> = BTreeMap::new();
+        let mut local_detectors: BTreeMap<u32, DemSliceDetector> = BTreeMap::new();
         for (&source_detector, target) in &source_map.detectors {
             let declaration = source_detectors.get(&source_detector).ok_or_else(|| {
                 DemSliceComposeError::UnknownSourceDetector {
@@ -445,17 +458,26 @@ impl DemSlice {
             let emitted = target.round_offset == 0;
             match local_detectors.entry(target.detector) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert((emitted, coords));
+                    entry.insert(DemSliceDetector {
+                        id: target.detector,
+                        coords,
+                        emitted,
+                        fault_sector: if emitted {
+                            declaration.fault_sector.clone()
+                        } else {
+                            None
+                        },
+                    });
                 }
                 std::collections::btree_map::Entry::Occupied(mut entry) => {
-                    let (already_emitted, existing_coords) = entry.get_mut();
-                    if emitted && *already_emitted {
+                    let existing = entry.get_mut();
+                    if emitted && existing.emitted {
                         return Err(DemSliceComposeError::DuplicateEmittedSourceDetector {
                             slice: name,
                             local_detector: target.detector,
                         });
                     }
-                    if let (Some(existing), Some(incoming)) = (*existing_coords, coords)
+                    if let (Some(existing), Some(incoming)) = (existing.coords, coords)
                         && !spatial_coords_equal(existing, incoming)
                     {
                         return Err(DemSliceComposeError::ConflictingLocalDetectorCoordinates {
@@ -463,22 +485,18 @@ impl DemSlice {
                             local_detector: target.detector,
                         });
                     }
-                    *already_emitted |= emitted;
-                    if existing_coords.is_none() {
-                        *existing_coords = coords;
+                    existing.emitted |= emitted;
+                    if emitted {
+                        existing.fault_sector.clone_from(&declaration.fault_sector);
+                    }
+                    if existing.coords.is_none() {
+                        existing.coords = coords;
                     }
                 }
             }
         }
 
-        let detectors = local_detectors
-            .into_iter()
-            .map(|(id, (emitted, coords))| DemSliceDetector {
-                id,
-                coords,
-                emitted,
-            })
-            .collect();
+        let detectors = local_detectors.into_values().collect();
 
         let mut contributions = Vec::new();
         for contribution in model.contributions() {
@@ -1476,7 +1494,7 @@ impl DemComposer {
         let commit_end = self.spec.commit_end()?;
         let end_round = self.spec.end()?;
 
-        let mut declarations: BTreeMap<ComposedDetectorAddress, Option<[f64; 2]>> = BTreeMap::new();
+        let mut declarations = BTreeMap::new();
         for instance in instances {
             if instance.round < self.spec.start_round || instance.round >= end_round {
                 continue;
@@ -1496,8 +1514,9 @@ impl DemComposer {
                     stream_id: placement.stream_id,
                 };
                 let coords = placement.coords.or(detector.coords);
-                if let Some(existing) = declarations.insert(address, coords)
-                    && existing != coords
+                if let Some((existing_coords, existing_fault_sector)) =
+                    declarations.insert(address, (coords, detector.fault_sector.clone()))
+                    && (existing_coords != coords || existing_fault_sector != detector.fault_sector)
                 {
                     return Err(DemSliceComposeError::ConflictingDetectorDeclaration { address });
                 }
@@ -1518,11 +1537,12 @@ impl DemComposer {
                 .unwrap_or(address.stream_id);
             (address.round, order, address.stream_id)
         });
-        for (index, (address, coords)) in declarations.into_iter().enumerate() {
+        for (index, (address, (coords, fault_sector))) in declarations.into_iter().enumerate() {
             let id = u32::try_from(index).map_err(|_| DemSliceComposeError::TooManyDetectors)?;
             address_to_id.insert(address, id);
             detector_addresses.push(address);
             let mut detector = DetectorDef::new(id);
+            detector.fault_sector = fault_sector;
             if let Some([x, y]) = coords {
                 detector.coords = Some([x, y, round_coordinate(address.round)?]);
             }
@@ -1883,7 +1903,8 @@ pub enum DemSliceComposeError {
     MissingDemOutputMapping { slice: String, output: u32 },
     /// An instance does not map one of its slice's PECOS tracked Paulis.
     MissingTrackedPauliMapping { slice: String, output: u32 },
-    /// Two instances declare different coordinates for the same algorithm-wide detector.
+    /// Two instances declare different coordinates or fault sectors for the same
+    /// algorithm-wide detector.
     ConflictingDetectorDeclaration { address: ComposedDetectorAddress },
     /// A contribution targets an in-window detector no instance declared.
     MissingDetectorDeclaration {
@@ -2786,6 +2807,100 @@ mod tests {
         assert_eq!(components[0].detectors.as_slice(), &[0, 1]);
         assert_eq!(components[0].dem_outputs.as_slice(), &[6]);
         assert_eq!(components[0].tracked_paulis.as_slice(), &[8]);
+    }
+
+    #[test]
+    fn fault_sectors_survive_extraction_and_composition() {
+        // Exercise both source orders: a port must neither supply nor replace a label.
+        for emitted_id in [10, 11] {
+            let mut source = DetectorErrorModel::new();
+            for id in [10, 11, 12] {
+                let mut detector = DetectorDef::new(id);
+                detector.fault_sector = Some(if id == emitted_id { "X" } else { "port" }.into());
+                source.add_detector(detector);
+            }
+            let source_map = DemSliceModelMap::new()
+                .with_detector(10, target(0, i32::from(emitted_id != 10)))
+                .with_detector(11, target(0, i32::from(emitted_id != 11)))
+                .with_detector(12, target(1, 1));
+            let slice = Arc::new(
+                DemSlice::from_detector_error_model(
+                    "labelled",
+                    &source,
+                    &source_map,
+                    DemTemporalHorizon::new(0, 1),
+                )
+                .unwrap(),
+            );
+            assert_eq!(slice.detectors()[0].fault_sector.as_deref(), Some("X"));
+            assert_eq!(slice.detectors()[1].fault_sector, None);
+            let composed = DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+                .compose(&[DemSliceInstance::identity(slice, 0)])
+                .unwrap();
+            assert_eq!(composed.model.detectors.len(), 1);
+            assert_eq!(
+                composed.model.detectors[0].fault_sector.as_deref(),
+                Some("X")
+            );
+        }
+    }
+
+    #[test]
+    fn fault_sectors_survive_windows_with_halo_and_buffer() {
+        let slice = Arc::new(
+            DemSlice::new(
+                "labelled",
+                vec![DemSliceDetector::new(0).with_fault_sector("Z")],
+                vec![],
+                DemTemporalHorizon::new(0, 0),
+            )
+            .unwrap(),
+        );
+        let instances: Vec<_> = (0..5)
+            .map(|round| DemSliceInstance::identity(Arc::clone(&slice), round))
+            .collect();
+        // Round 0 is a look-behind halo and round 4 lies past the soft buffer.
+        let composed = DemComposer::new(DemWindowSpec::new(1, 2, 1, DemBoundaryKind::Soft))
+            .compose(&instances)
+            .unwrap();
+        assert_eq!(composed.model.detectors.len(), 3);
+        assert!(
+            composed
+                .model
+                .detectors
+                .iter()
+                .all(|detector| detector.fault_sector.as_deref() == Some("Z"))
+        );
+    }
+
+    #[test]
+    fn conflicting_fault_sectors_reject_detector_declarations() {
+        for other in [Some("Z"), None] {
+            let instances: Vec<_> = [Some("X"), other]
+                .into_iter()
+                .map(|label| {
+                    let mut detector = DemSliceDetector::new(0).with_coords([1.0, 2.0]);
+                    if let Some(label) = label {
+                        detector = detector.with_fault_sector(label);
+                    }
+                    let slice = Arc::new(
+                        DemSlice::new(
+                            "labelled",
+                            vec![detector],
+                            vec![],
+                            DemTemporalHorizon::new(0, 0),
+                        )
+                        .unwrap(),
+                    );
+                    DemSliceInstance::identity(slice, 0)
+                })
+                .collect();
+            assert!(matches!(
+                DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+                    .compose(&instances),
+                Err(DemSliceComposeError::ConflictingDetectorDeclaration { .. })
+            ));
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Execution core and Python result for `SampleBatch.decode`.
 
-use super::{PyDecodeStats, decoder_build_error_to_py};
+use super::{PyDecodeStats, PyProjectionReport, decoder_build_error_to_py};
 use crate::batch_decoder_spec::DecoderBuildError;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoders::batch::ExecutionPlan;
@@ -9,6 +9,9 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 pub(super) struct BatchExecutionOutput {
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
+    pub(super) projection: Option<pecos_decoder_core::graphlike_projection::ProjectionReport>,
     pub(super) num_errors: usize,
     pub(super) predictions: Option<Vec<ObsMask>>,
     pub(super) per_shot_seconds: Option<Vec<f64>>,
@@ -46,6 +49,10 @@ impl BatchExecutionError {
 /// Result of decoding and scoring one `SampleBatch`.
 #[pyclass(name = "DecodeResult", module = "pecos_rslib.qec", skip_from_py_object)]
 pub struct PyDecodeResult {
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
+    #[pyo3(get)]
+    projection: Option<PyProjectionReport>,
     #[pyo3(get)]
     num_shots: usize,
     #[pyo3(get)]
@@ -75,6 +82,7 @@ impl PyDecodeResult {
                 reproducibility_warnings: result.reproducibility_warnings,
             },
             BatchExecutionOutput {
+                projection: result.projection,
                 num_errors: result.num_errors,
                 predictions: result.predictions,
                 per_shot_seconds: result.per_shot_seconds,
@@ -129,6 +137,7 @@ impl PyDecodeResult {
             })
             .transpose()?;
         Ok(Self {
+            projection: output.projection.map(Into::into),
             num_shots,
             num_errors: output.num_errors,
             logical_error_rate,

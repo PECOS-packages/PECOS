@@ -482,3 +482,31 @@ def test_tesseract_trellis_defaults_and_repr() -> None:
     assert repr(tesseract_trellis(merge_errors=False)) == "tesseract_trellis(merge_errors=False)"
     assert not defaults.history_dependent
     assert not defaults.wall_clock_dependent
+
+
+# contract: typed graph policy matches the string grammar and appears only when non-default.
+def test_graph_irreducible_policy() -> None:
+    spec = pymatching(correlated=True, irreducible="drop")
+    assert spec == DecoderSpec.parse("pymatching:irreducible=drop")
+    assert repr(spec) == 'pymatching(correlated=True, irreducible="drop")'
+    assert "irreducible" not in repr(pymatching(correlated=True))
+
+
+# contract: every graph builder validates the policy at construction.
+@pytest.mark.parametrize(
+    "builder",
+    [
+        lambda **kw: pymatching(correlated=True, **kw),
+        fusion_blossom,
+        pecos_uf,
+        belief_matching,
+        k_mwpm,
+        astar,
+        perturbed_fb_corr,
+    ],
+)
+def test_graph_builders_validate_irreducible(builder: Callable[..., DecoderSpec]) -> None:
+    assert 'irreducible="drop"' in repr(builder(irreducible="drop"))
+    assert "irreducible" not in repr(builder(irreducible="refuse"))
+    with pytest.raises(ValueError, match=r"refuse\|drop"):
+        builder(irreducible="unknown")

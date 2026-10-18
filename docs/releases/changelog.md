@@ -6,7 +6,29 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- Shot corpus format v2 stores detector fault-sector labels, and `SampleBatch.save`
+  accepts a `DetectorErrorModel`. New readers accept v1 (unlabelled) and v2;
+  every save writes v2, which older PECOS installations reject. Loaded batches
+  report the version on disk; resaving does not mutate the source batch.
+
 ### Decoder changes
+
+- Graph decoders project raw hyperedges using `fault_sector` labels, with
+  `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
+  `^` input whose components are all graphlike is used as given.
+- DEMs that `LogicalCircuitBuilder` composes from cached slices keep detector
+  `fault_sector` labels, matching the full compile. Its public methods still
+  return DEM text, which does not carry labels. Rust: `DemSliceDetector` gains
+  `fault_sector` and is no longer `Copy`.
+- Perturbed ensembles keep zero-probability errors at exactly zero in every
+  perturbed copy; previously they were raised to `1e-15`.
+- Rust: `DecoderFactory::decode_model` returns `Result<PreparedModel, _>` and
+  `DecodeResult` carries `projection`. The `AStar` and `PecosUf` spec variants
+  take config structs; `StructuredDem::try_new` takes detector fault sectors.
+  `DetectorErrorModel::to_structured_decoder_dem` now parses the model's standard
+  text and overlays labels: probabilities are those of the text (rounded, see
+  #1260) rather than exact, and tracked-Pauli outputs are omitted rather than
+  rejected.
 
 - `windowed` specs with a buffer previously returned the result of a monolithic
   decode by `sandwich_phase2` (correlated PyMatching by default). Callers who want
@@ -22,6 +44,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python additions
+
+- Decode APIs and `build_decoder` accept a `DetectorErrorModel` object as standard
+  text plus labels. Graph specs accept the `irreducible` keyword, and results
+  expose a `ProjectionReport` via `.projection` when preparation shares a projection.
 
 - Rendered surface-code SZ teleportation uses `correction="physical"` by default
   to execute the conditional logical Z (the Guppy/Helios idiom), or
@@ -46,6 +72,27 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   first decision from program results.
 
 ### Python breaking changes
+
+- Removed `pecos.execute_llvm`; use `pecos_rslib.hugr_lowering.compile_hugr_to_qis`
+  for lowering and `pecos.sim` for execution.
+- Removed `pecos.compilation_pipeline.compile_guppy_to_llvm`; compose
+  `compile_guppy_to_hugr` with `compile_hugr_to_qis` instead.
+- Removed `pecos.engines.compile_hugr_to_qis`; use
+  `pecos_rslib.hugr_lowering.compile_hugr_to_qis` instead.
+- Removed `pecos.engines.get_compilation_backends`; use `compile_hugr_to_qis`
+  directly to compile with the required compiler.
+- Removed `pecos.get_guppy_backends`; use `pecos.sim` directly to run programs.
+- Removed the HUGR converters from `pecos.circuit_converters`: `hugr_to_dag`,
+  `guppy_to_dag`, `dag_to_gate_sequence`, `UnsupportedHugrStructureError`,
+  `hugr_to_ast` and `guppy_to_ast`. For a DAG, use the QIS trace route
+  `trace_program_to_tick_circuit(...).to_dag_circuit()`; to run a program, use
+  `pecos.sim`. SLR AST conversion is unchanged.
+- Guppy compilation (`compile_guppy_to_hugr`, `pecos.Guppy`, `pecos.sim`) accepts
+  only `@guppy` function definitions (`guppylang.defs.GuppyFunctionDefinition`) and
+  raises `ValueError` for anything else. Objects returned by `with_opt_level(...)`
+  or `with_minimal_opt()` are no longer accepted.
+- Removed `pecos.protocols.GuppyCallable`; annotate Guppy definitions with
+  `guppylang.defs.GuppyFunctionDefinition` and use `compile_guppy_to_hugr` or `pecos.sim`.
 
 - Seeded samples change for every engine on the shared Monte Carlo loop (including
   QIS/Guppy, QASM and PHIR). A seed now determines each shot from its global index,
@@ -163,6 +210,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   execution failures remain `RuntimeError`.
 
 ### Python bug fixes
+
+- `quantum-pecos` now requires `tket~=0.15.9` and `selene-hugr-qis-compiler~=0.4.3`
+  (also the floor of `pecos-rslib`'s `hugr` extra). Earlier tket releases fail to
+  compile some Guppy programs that convert a measurement result to a number and use
+  it as a gate parameter, such as `rz(q, angle(0.5 * float(int(measure(a).read()))))`,
+  with a `PyTK1DecodeError` while decoding a pytket `Barrier`. The fixed tket needs a
+  newer `hugr`, whose float operations `selene-hugr-qis-compiler` 0.4.2 cannot load.
 
 - Fixed Guppy result tags binding to the wrong measurement when HUGR node order
   differed from runtime order, such as with inlined helpers. Tags now bind from

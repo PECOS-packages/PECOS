@@ -201,6 +201,22 @@ fn observable_errors_name_bad_values() -> TestResult {
         let message = error.to_string();
         assert!(message.contains("observable 1") && message.contains("record 0"));
     }
+
+    // The reported record is a declared record that is also a random source:
+    // here record 2. Record 1 is declared but deterministic, and record 0 is a
+    // source that is not declared.
+    let mut tc2 = TickCircuit::new();
+    tc2.tick().h(&[0, 1]);
+    tc2.tick().mz(&[0]);
+    tc2.tick().mz(&[0]);
+    tc2.tick().mz(&[1]);
+    assert!(matches!(
+        discover_detectors(&tc2, &[vec![1, 2]]),
+        Err(DetectorDiscoveryError::NonDeterministicObservable {
+            observable: 0,
+            record: 2
+        })
+    ));
     assert!(matches!(
         discover_detectors(&tc, &[vec![]]),
         Err(DetectorDiscoveryError::EmptyObservable { observable: 0 })
@@ -274,7 +290,8 @@ fn later_qubits_and_long_gaps_do_not_change_local_relations() -> TestResult {
     assert_eq!(discover_detectors(&tc, &[])?.detectors, expected);
 
     // A high-index qubit first used inside the search window: the purified
-    // reference register is sized from the whole circuit, so it cannot collide.
+    // reference register must cover every qubit the window replays, or this
+    // replay goes out of range.
     let mut tc = TickCircuit::new();
     tc.tick().px(&[0]);
     tc.tick().mz(&[0]);

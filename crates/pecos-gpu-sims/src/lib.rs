@@ -84,7 +84,7 @@ pub use gpu_noisy_sampler::{
 pub use gpu_pauli_prop::GpuPauliProp;
 pub use gpu_sampler::{GpuMeasurementSampler, GpuSampleResult};
 pub use gpu_stab::GpuStab;
-pub use gpu_stab_multi::GpuStabMulti;
+pub use gpu_stab_multi::{DEFAULT_MEMORY_BUDGET_BYTES, GpuStabMulti};
 pub use state_access::{GpuDensityMatrixHostAccess, GpuStateVectorHostAccess};
 
 /// Default GPU stabilizer simulator using `PecosRng`

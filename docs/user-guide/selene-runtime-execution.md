@@ -24,12 +24,88 @@ produce different results; record the PECOS revision when comparing old runs.
 Selene's own driver uses component base seeds plus the shot ID, so matching IDs
 alone does not establish identical random streams between the two drivers.
 
+### Program-visible shot indices
+
+The QIS `get_current_shot()` import and `selene_get_current_shot` adapter both
+return the job-wide program index. Monte Carlo assigns `0..shots-1` independently
+of worker partitioning, after reset and before program execution. Every new run
+starts at zero; seed-report replay uses each worker's recorded `first_shot`
+offset, including nonzero offsets. The value survives measurement feedback and
+the compiled wrapper's local shot-start hook. Each invocation still executes
+one shot, so `selene_shot_count` returns one.
+
+Direct Rust `QisEngine` callers default to the engine's local runtime ID. Hosts
+can assign the next invocation with `ClassicalEngine::set_program_shot` after
+reset. The override is consumed when an admitted start is attempted, including
+execution failure. A successful reset or template clone clears it. The override
+does not change runtime callback IDs, trace indices or seed derivation.
+
 Program-seeded Guppy RNGs use their explicit seed separately from simulator and
-noise seeds. Program-visible shot queries are a separate, unfinished contract:
-the direct `get_current_shot` and `___set_random_index` imports are unsupported,
-and the PECOS `selene_get_current_shot` adapter currently returns zero. Do not
-infer support for shot-dependent program RNGs or WASM behavior from the runtime
-callback IDs. See [issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
+noise seeds. `RNG(seed)` restarts the same stream on each invocation;
+`RNG(seed + get_current_shot())` selects a shot-dependent stream that is invariant
+to worker partitioning. Querying the index does not consume RNG state. This also
+supports parameter-array selection by shot index. Program indices alone do not
+make simulator/noise streams identical between PECOS and Selene.
+
+The legacy `___set_random_index` import and broader WASM RNG integration remain
+unsupported by this change. See the remaining work in
+[issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
+
+### Guppy RNG compatibility coverage
+
+The live Selene comparisons in `tests/guppy/test_qis_classical_rng.py` cover both
+Guppy RNG implementations:
+
+- `guppylang.std.qsystem.random.RNG`: signed integers, bounded sampling, floats,
+  random angles, Clifford angles, forward/backward jumps, shuffle and discrete
+  distributions. Tests include signed seed boundaries, large jumps, rejection
+  sampling, handle recreation and multiple live handles.
+- `guppylang.std.random.seeded_pcg32`: native Guppy integer and bounded draws,
+  with interleaved generators and a platform RNG to check state independence.
+
+The platform RNG has shared state within one program execution; multiple handles
+must not be assumed to provide independent streams. Native Guppy PCG32 values
+keep their state locally. See the [Guppy RNG guide](https://docs.quantinuum.com/guppy/language_guide/random.html).
+
+Comparisons preserve repeated output labels so every draw in a loop is checked.
+Additional tests cover shot-dependent seeds, quantum measurement feedback,
+invalid distribution weights, oversized bounds and a valid simulation after an
+aborted invocation. These are functional comparisons using the installed Guppy,
+compiler and Selene versions; they do not establish a speed advantage or equality
+of simulator/noise RNG streams.
+
+
+The expanded RNG test file passed 44 tests in each of these local environments
+on October 18, 2026 (live Selene controls plus PECOS validation/recovery tests):
+
+| Stack | Guppy | Selene | HUGR-QIS compiler |
+| --- | --- | --- | --- |
+| Pinned | 1.0.1 | 0.3.4 | 0.4.3 |
+| Isolated newer stack | 1.1.3 | 0.3.5 | 0.5.1 |
+
+Both used selene-core 0.3.3, HUGR 0.18.8 and tket 0.15.11. The newer-stack
+experiment used PECOS source imports and the same local native extension; it does
+not change package dependency constraints or certify the whole package on those
+versions. It emits compiler API deprecation warnings.
+
+Boundary coverage includes signed jump extremes, unsigned native seed extremes,
+empty/singleton shuffles, deterministic distributions and reset/reuse after an
+RNG error following measurement feedback. The shuffle tests inspect length,
+elements and subsequent draws: Selene rejects empty-array output, and PECOS
+presents a single-element result as a scalar, so raw output layouts differ.
+
+Known limitations and intentional validation differences:
+
+- PECOS rejects nonpositive platform bounds with a Python exception. In both
+  tested Selene versions, zero aborts the reference subprocess and negative
+  bounds are reinterpreted as unsigned. Those reference behaviors are outside
+  the valid input domain and are not a compatibility target.
+- Native Guppy PCG32 handles a zero bound by exiting the shot. PECOS terminates
+  the shot, but its result omits the exit reason/code that Selene exposes. This
+  diagnostic gap is tracked in [issue #1371](https://github.com/PECOS-packages/PECOS/issues/1371).
+  A missing sample is not evidence of a successful RNG draw.
+- This suite does not establish exhaustive behavior for all invalid inputs,
+  other dependency versions, WASM integration or simulation speed.
 
 ## Native gate lowering
 

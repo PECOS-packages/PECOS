@@ -697,6 +697,7 @@ pub struct QisHeliosInterface {
     /// Shared with sync handles; replacing this Arc leaves older handles valid.
     execution_context: Option<Arc<ExecutionContextPtr>>,
     dynamic_mode: bool,
+    program_shot: u64,
 }
 
 impl QisHeliosInterface {
@@ -710,6 +711,7 @@ impl QisHeliosInterface {
             metadata: BTreeMap::new(),
             execution_context: None,
             dynamic_mode: false,
+            program_shot: 0,
         }
     }
 
@@ -1929,6 +1931,19 @@ entry:
         unsafe { reset_fn() };
 
         let execution = (|| {
+            // Assign through the same cdylib/context as the program's queries.
+            let set_shot: Symbol<unsafe extern "C" fn(*mut ExecutionContext, u64) -> i32> = unsafe {
+                pecos_qis_lib
+                    .get(b"pecos_set_program_shot_with_context\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!("Missing program shot setter: {e}"))
+                    })?
+            };
+            check_context_status(
+                unsafe { set_shot(ctx, self.program_shot) },
+                "set program shot",
+            )?;
+
             // Step 2b: Pre-populate the execution context before the program
             // reads its measurement futures.
             if let Some(measurements) = measurements {
@@ -2202,6 +2217,10 @@ impl QisInterface for QisHeliosInterface {
         self.execute_program(Some(&measurements))
     }
 
+    fn set_program_shot(&mut self, shot: u64) {
+        self.program_shot = shot;
+    }
+
     fn metadata(&self) -> BTreeMap<String, String> {
         self.metadata.clone()
     }
@@ -2213,6 +2232,7 @@ impl QisInterface for QisHeliosInterface {
     fn reset(&mut self) -> Result<(), InterfaceError> {
         // Subsequent collection must use a fresh context, including after cancellation.
         self.dynamic_mode = false;
+        self.program_shot = 0;
         Ok(())
     }
 
@@ -3193,7 +3213,8 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn link_error_preserves_diagnostics_from_both_streams() {
-        let symbol = b"program.obj : error LNK2019: unresolved external symbol get_current_shot";
+        let symbol =
+            b"program.obj : error LNK2019: unresolved external symbol pecos_test_missing_import";
         let summary = b"clang: error: linker command failed with exit code 1120";
         // MSVC's linker reports unresolved names on stdout, while clang puts
         // its exit-code summary on stderr. Other linkers use stderr instead.
@@ -3202,7 +3223,7 @@ attributes #0 = { "EntryPoint" }
             (summary.as_slice(), symbol.as_slice()),
         ] {
             let message = link_error_message(stdout, stderr);
-            assert!(message.contains("get_current_shot"), "{message}");
+            assert!(message.contains("pecos_test_missing_import"), "{message}");
             assert!(message.contains("exit code 1120"), "{message}");
         }
     }
@@ -3380,9 +3401,9 @@ attributes #0 = { "EntryPoint" }
             let error = interface
                 .load_program(
                     br"
-                        declare i64 @get_current_shot()
+                        declare i64 @pecos_test_missing_import()
                         define i64 @qmain(i64 %arg) {
-                            %shot = call i64 @get_current_shot()
+                            %shot = call i64 @pecos_test_missing_import()
                             ret i64 %shot
                         }
                     ",
@@ -3391,7 +3412,10 @@ attributes #0 = { "EntryPoint" }
                 .expect_err("an undefined program import must fail at load time");
             // The linker rejects it before any library is published or opened.
             assert!(error.to_string().contains("Linking failed"), "{error}");
-            assert!(error.to_string().contains("get_current_shot"), "{error}");
+            assert!(
+                error.to_string().contains("pecos_test_missing_import"),
+                "{error}"
+            );
             return;
         }
 
@@ -3723,9 +3747,9 @@ attributes #0 = { "EntryPoint" }
         // Linking and dialect validation fail at different points of the load.
         let failing_programs: [&[u8]; 2] = [
             br"
-                declare i64 @get_current_shot()
+                declare i64 @pecos_test_missing_import()
                 define i64 @qmain(i64 %arg) {
-                    %shot = call i64 @get_current_shot()
+                    %shot = call i64 @pecos_test_missing_import()
                     ret i64 %shot
                 }
             ",

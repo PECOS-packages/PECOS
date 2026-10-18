@@ -522,6 +522,9 @@ pub struct QisEngine {
     /// and from Monte Carlo's global indices used to derive seeds.
     last_runtime_shot_id: Option<u64>,
 
+    /// One-shot scheduler override for the program-visible global index.
+    program_shot: Option<u64>,
+
     /// 1-based shot index for operation traces.
     trace_shot_index: usize,
 
@@ -640,6 +643,7 @@ impl QisEngine {
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             last_runtime_shot_id: None,
+            program_shot: None,
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
@@ -744,6 +748,7 @@ impl QisEngine {
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             last_runtime_shot_id: None,
+            program_shot: None,
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
@@ -1339,6 +1344,7 @@ impl Clone for QisEngine {
             operation_trace_collector: self.operation_trace_collector.clone(),
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             last_runtime_shot_id: None,
+            program_shot: None,
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
@@ -2207,6 +2213,7 @@ impl QisEngine {
         self.measurement_results.clear();
         self.pending_measurements.clear();
         self.current_shot_seed = None;
+        self.program_shot = None;
         debug!("QisEngine: reset() completed, cleared measurement_results");
         Ok(())
     }
@@ -2342,6 +2349,10 @@ impl ClassicalEngine for QisEngine {
     fn set_num_qubits_hint(&mut self, num_qubits: usize) {
         self.num_qubits_hint = Some(num_qubits);
         self.runtime.set_num_qubits(num_qubits);
+    }
+
+    fn set_program_shot(&mut self, shot: u64) {
+        self.program_shot = Some(shot);
     }
 
     fn set_seed(&mut self, seed: u64) {
@@ -2519,6 +2530,7 @@ impl ControlEngine for QisEngine {
         self.scheduled_drain_round = 0;
         self.runtime_end_delivered = false;
         self.scheduled_drain_feedback = false;
+        let program_shot = self.program_shot.take();
         let attempt = (|| {
             // Check exhaustion before consuming RNG state or touching the runtime.
             let shot_id = self.next_runtime_shot_id()?;
@@ -2558,6 +2570,12 @@ impl ControlEngine for QisEngine {
                 .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
 
             self.started = true;
+            // The scheduler supplies a global job index. Direct engine callers
+            // use the local sequence; never infer it from a trace counter.
+            self.interface
+                .as_mut()
+                .expect("validated interface")
+                .set_program_shot(program_shot.unwrap_or(shot_id));
 
             // Start LLVM program in worker thread
             self.start_dynamic_worker()?;
@@ -5661,3 +5679,7 @@ mod shot_end_delivery_tests;
 #[cfg(test)]
 #[path = "ccengine_shot_identity_tests.rs"]
 mod shot_identity_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_program_shot_tests.rs"]
+mod program_shot_tests;

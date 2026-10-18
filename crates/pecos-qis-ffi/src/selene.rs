@@ -523,7 +523,7 @@ pub unsafe extern "C-unwind" fn selene_get_tc(_instance: *mut SeleneInstance) ->
     }
 }
 
-/// Return the operation collection mode constant.
+/// Return the host-assigned job-wide program shot index.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard
@@ -534,7 +534,7 @@ pub unsafe extern "C-unwind" fn selene_get_current_shot(
 ) -> SeleneU64Result {
     SeleneU64Result {
         error_code: 0,
-        value: 0,
+        value: unsafe { ffi::get_current_shot() },
     }
 }
 
@@ -554,6 +554,8 @@ pub unsafe extern "C-unwind" fn selene_shot_count(
 }
 
 /// Reset the random stream and release outstanding program allocations.
+/// The host executes one program shot per invocation and owns its global index;
+/// the compiled wrapper's local shot argument must not overwrite that identity.
 ///
 /// # Safety
 /// Instance pointers are ignored. Execution must obey the non-nested guard

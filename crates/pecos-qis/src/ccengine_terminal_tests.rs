@@ -201,6 +201,15 @@ fn terminal_measurement_adds_no_empty_batch() {
 }
 
 #[test]
+fn empty_shot_end_tail_adds_no_trace_chunk() {
+    for soft in [false, true] {
+        let output = run(soft, &program("", true, true), true);
+        assert!(!output.trace.iter().any(|chunk| chunk.stage == "shot_end"));
+        assert_eq!(output.trace.last().unwrap().stage, "trace_complete");
+    }
+}
+
+#[test]
 fn simple_runtime_has_no_deferred_terminal_pulse() {
     for read_result in [false, true] {
         let output = run(false, &program(PULSE_TAIL, true, read_result), true);

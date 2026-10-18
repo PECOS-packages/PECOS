@@ -265,6 +265,37 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         })
     }
 
+    /// End the shot and return every final flat operation before certification.
+    /// The caller executes the returned work before reporting completion. Terminal
+    /// measurements are unsupported by `QisEngine` and cause a sticky failure.
+    /// Override this if the ordinary drain submits work that is illegal after end.
+    /// Non-lowering runtimes must not generate quantum work in their end hook.
+    ///
+    /// # Errors
+    /// Returns end-hook or final-drain errors; callers must not retry a failed end.
+    fn finish_operations(&mut self) -> Result<Vec<LoweredQuantumOp>> {
+        self.shot_end()?;
+        if self.supports_operation_lowering() {
+            self.drain_pending_operations()
+                .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// End the shot and return its complete final native batches, with original
+    /// timing and identities. The end hook must release all remaining work;
+    /// terminal feedback is unsupported. The default calls
+    /// `drain_pending_scheduled_operations` after `shot_end`; override this when
+    /// that drain submits a barrier or is otherwise invalid after end.
+    ///
+    /// # Errors
+    /// Returns end-hook or final-drain errors. A partial drain cannot be retried.
+    fn finish_scheduled_operations(&mut self) -> Result<Vec<crate::scheduled::ScheduledBatch>> {
+        self.shot_end()?;
+        self.drain_pending_scheduled_operations()
+    }
+
     /// Check if program execution is complete
     fn is_complete(&self) -> bool;
 

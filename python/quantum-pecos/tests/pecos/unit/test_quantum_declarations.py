@@ -34,7 +34,7 @@ def test_optional_quantum_type(explicit_type: bool) -> None:
 
 @pytest.mark.parametrize("data_type", ["u32", None])
 def test_wrong_quantum_type(data_type: str | None) -> None:
-    """A present wrong type retains the reference reader's existing rejection."""
+    """A present non-qubits type is rejected by the reader; null by the shared check."""
     program = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
@@ -333,3 +333,25 @@ def test_projection_rejects_non_json_declaration_fields(validate: bool, field: s
             reader(source)
         assert stand_in in str(error.value)
         assert ("Declaration cvar_define" if field == "variable" else "Register 'a'") in str(error.value)
+
+
+def test_projection_accepts_json_scalar_subclasses() -> None:
+    """Int and str subclasses are JSON scalars, so the shared check accepts them."""
+    from enum import IntEnum, StrEnum
+
+    class Width(IntEnum):
+        W8 = 8
+
+    class Name(StrEnum):
+        A = "a"
+
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [{"data": "cvar_define", "variable": Name.A, "data_type": "u32", "size": Width.W8}],
+    }
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = False
+    PyPHIR.from_phir(source)
+    interpreter.init(source)
+    assert interpreter.csym2id == {"a": 0}

@@ -280,8 +280,9 @@ executed Result operation until the next init or full reset. Later shots do not
 repeat JSON/FFI validation. Measurement destinations are checked against declarations when results
 arrive. Shot resets do not repeat declaration checks. PyPHIR's classical-input
 validation does not serialize unrelated metadata in parsed Python programs.
-Declaration fields that cannot be represented as finite JSON scalars use a bounded
-non-string stand-in for named Rust diagnostics. Invalid declaration-name and size
+In the Python readers (PyPHIR and the Python interpreter), declaration fields
+that are not finite JSON scalars use a bounded non-string stand-in for named
+Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
 values are rendered with at most 80 characters, including an ellipsis.
 Exports use U32 through 32 bits and U64 for wider registers.
 Without Result mappings, all declared classical registers are exported.

@@ -46,13 +46,15 @@ def validate_declaration_names(operations: list[dict]) -> None:
 
 
 def _json_declaration_value(value: object) -> object:
-    """Keep native finite JSON scalars; mark other values for named Rust rejection."""
-    if value is None or type(value) in (str, bool):
+    """Normalize finite JSON scalars (subclasses included); mark other values for named Rust rejection."""
+    if value is None or isinstance(value, bool):
         return value
-    if type(value) is int and -(2**63) <= value < 2**64:
-        return value
-    if type(value) is float and math.isfinite(value):
-        return value
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, int) and -(2**63) <= value < 2**64:
+        return int(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return float(value)
     return {"python": reprlib.repr(value)}
 
 

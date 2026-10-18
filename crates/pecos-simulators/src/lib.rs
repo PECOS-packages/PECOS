@@ -39,6 +39,7 @@ pub mod stab_vec;
 // pub mod paulis;
 pub mod prelude;
 pub mod quantum_simulator;
+pub mod qubit_validation;
 pub mod qudit;
 pub mod rotation_test_utils;
 pub mod sign_algebra;

@@ -101,6 +101,10 @@ impl Debug for GpuStab {
 }
 
 impl GpuStab {
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_qubits, "GpuStab");
+    }
+
     /// Creates a new GPU-optimized stabilizer simulator.
     ///
     /// All qubits are initialized in the |0⟩ state.
@@ -634,8 +638,18 @@ impl QuantumSimulator for GpuStab {
     }
 }
 
+/// # Panics
+/// Panics if any qubit operand is outside the register.
 impl CliffordGateable for GpuStab {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
+    }
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.apply_h(q.index());
         }
@@ -643,6 +657,9 @@ impl CliffordGateable for GpuStab {
     }
 
     fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.apply_x(q.index());
         }
@@ -650,6 +667,9 @@ impl CliffordGateable for GpuStab {
     }
 
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.apply_y(q.index());
         }
@@ -657,6 +677,9 @@ impl CliffordGateable for GpuStab {
     }
 
     fn z(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.apply_z(q.index());
         }
@@ -664,6 +687,9 @@ impl CliffordGateable for GpuStab {
     }
 
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.apply_s(q.index());
         }
@@ -671,6 +697,9 @@ impl CliffordGateable for GpuStab {
     }
 
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         for &q in qubits {
             self.apply_sdg(q.index());
         }
@@ -678,6 +707,10 @@ impl CliffordGateable for GpuStab {
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(control, target) in pairs {
             self.apply_cx(control.index(), target.index());
         }
@@ -685,6 +718,10 @@ impl CliffordGateable for GpuStab {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        for (a, b) in pairs {
+            self.check_qubit(a.index());
+            self.check_qubit(b.index());
+        }
         for &(q0, q1) in pairs {
             self.apply_cz(q0.index(), q1.index());
         }
@@ -692,6 +729,9 @@ impl CliffordGateable for GpuStab {
     }
 
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        for q in qubits {
+            self.check_qubit(q.index());
+        }
         let mut results = Vec::with_capacity(qubits.len());
 
         for &q in qubits {
@@ -796,8 +836,11 @@ impl GpuStab {
 
 use crate::stabilizer_test_utils::{ForcedMeasurement, StabilizerSimulator};
 
+/// # Panics
+/// Panics if the qubit is outside the register.
 impl ForcedMeasurement for GpuStab {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
+        self.check_qubit(qubit);
         if self.is_deterministic(qubit) {
             self.deterministic_meas(qubit)
         } else {
@@ -848,5 +891,31 @@ mod tests {
     fn test_gpu_stab_full_suite() {
         let mut sim = GpuStab::with_seed(8, 42);
         run_full_stabilizer_test_suite(&mut sim, 8);
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(
+        expected = "GpuStab: qubit 2 is out of range for a 2-qubit register; use a qubit index below 2, or construct the simulator with more qubits"
+    )]
+    fn cpu_gpu_layout_checks_bounds() {
+        GpuStab::new(2).h(&[QubitId(2)]);
+    }
+
+    #[test]
+    fn default_decomposition_checks_both_operands_first() {
+        let mut sim = GpuStab::new(2);
+        let before = sim.stab_tableau();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sim.sxx(&[(QubitId(0), QubitId(2))]);
+            }))
+            .is_err()
+        );
+        assert_eq!(sim.stab_tableau(), before);
     }
 }

@@ -187,6 +187,10 @@ impl BitmaskPauliProp {
 }
 
 impl QuantumSimulator for BitmaskPauliProp {
+    fn qubit_capacity(&self) -> Option<usize> {
+        None
+    }
+
     #[inline]
     fn reset(&mut self) -> &mut Self {
         self.label = PauliBitmaskSmall::identity();

@@ -17,7 +17,7 @@ import json
 import pytest
 from pecos.qec import BivariateBicycleCode, bb_memory_circuit
 from pecos_rslib import DagCircuit
-from pecos_rslib.qec import DetectorErrorModel
+from pecos_rslib.qec import DemSampler, DetectorErrorModel
 
 A_TERMS = [(3, 0), (0, 1), (0, 2)]
 B_TERMS = [(0, 3), (1, 0), (2, 0)]
@@ -81,5 +81,11 @@ def test_dem_detector_without_fault_sector_has_no_basis() -> None:
         p_meas=0.001,
         p_prep=0.0,
     )
+    with pytest.raises(ValueError, match="detector D0 is undefined or has no fault sector"):
+        dem.detector_bases()
+
+
+def test_dem_mechanism_target_without_definition_has_no_basis() -> None:
+    dem = DemSampler.from_dem_string("error(0.1) D0").to_detector_error_model()
     with pytest.raises(ValueError, match="detector D0 is undefined or has no fault sector"):
         dem.detector_bases()

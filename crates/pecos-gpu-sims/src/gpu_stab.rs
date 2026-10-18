@@ -1749,9 +1749,9 @@ impl<R: Rng + SeedableRng + Debug> GpuStab<R> {
     ///
     /// Panics if the hash doesn't correspond to a compiled circuit.
     pub fn execute_compiled(&mut self, hash: u64) {
+        self.sync();
         // Pipelines are private and can only be inserted after compile_circuit validates
         // all operands against this immutable register size.
-        self.sync();
         let Some(pipeline) = self.compiled_pipelines.get(&hash) else {
             panic!(
                 "GpuStab: circuit hash {hash:#x} is not compiled; call compile_circuit on this simulator first"

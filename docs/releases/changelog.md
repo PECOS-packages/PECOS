@@ -334,9 +334,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   pending fused gates so they cannot affect the new state. Deferred measurement
   queues support more than 32768 results. Gate dispatch memory stays bounded by
   limiting recorded passes and dispatches, including in batch mode with parallel
-  execution. Parallel gate partitions
-  serialize S/Sdg phase updates so disjoint phase gates cannot race on shared
-  stabilizer signs.
+  execution. Parallel gate partitions serialize S/Sdg phase updates so disjoint
+  phase gates cannot race on shared stabilizer signs.
 
 - Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
   a `TickCircuit`, could be placed before existing gates on the same qubit.

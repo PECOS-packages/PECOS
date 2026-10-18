@@ -22,7 +22,12 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
-from pecos_rslib import validate_phir_result_counts
+from pecos_rslib import (
+    validate_phir_classical_declaration,
+    validate_phir_classical_inputs,
+    validate_phir_result_counts,
+    validate_phir_result_reference,
+)
 
 from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
 from pecos.reps.pyphir import types as pt
@@ -129,6 +134,9 @@ class PhirClassicalInterpreter:
         else:
             self.program = self.program.to_phir_dict()
 
+        if isinstance(self.program, dict):
+            validate_phir_classical_inputs(json.dumps(self.program))
+
         # Assume PHIR dict format, validate PHIR
         if isinstance(self.program, dict) and self.phir_validate:
             PhirModel.model_validate(self.program)
@@ -189,6 +197,9 @@ class PhirClassicalInterpreter:
         bit), so ``S + 1`` must fit the backing width N. An unsigned size-S
         register is a ``u(S)`` and must satisfy ``S <= N``.
         """
+        if data_type == "bool":
+            validate_phir_classical_declaration(variable, data_type, size)
+            return
         needed = size + 1 if data_type in signed_data_types else size
         if needed > type_width:
             kind = "signed" if data_type in signed_data_types else "unsigned"
@@ -300,22 +311,23 @@ class PhirClassicalInterpreter:
             The bit value (0 or 1).
         """
         cval = self.get_cval(cvar)
-        dtype = type(cval)
+        dtype = self.cid2dtype[self.csym2id[cvar]]
 
         # Get bit width using Rust-backed dtype system
-        bit_width = dtype.itemsize * 8
+        is_bool = self.cvar_meta[self.csym2id[cvar]].data_type == "bool"
+        bit_width = 1 if is_bool else dtype.itemsize * 8
 
         # Check if idx is within the valid range for the data type
-        if idx >= bit_width:
+        if idx >= bit_width or (is_bool and idx < 0):
             msg = f"Bit index {idx} out of range for {dtype} (max {bit_width - 1})"
             raise ValueError(
                 msg,
             )
 
-        # Use Rust-backed bitwise operations
+        if is_bool:
+            return int(cval)
         one = dtype(1)
         mask = one << dtype(idx)
-
         return (cval & mask) >> dtype(idx)
 
     def eval_expr(
@@ -460,18 +472,12 @@ class PhirClassicalInterpreter:
         if isinstance(cvar, tuple | list):
             cvar, i = cvar
 
+        self._validate_assignment_target(cvar if i is None else (cvar, i))
         cid = self.csym2id[cvar]
         dtype = self.cid2dtype[cid]
-
-        cval = self.cenv[cid]
-        val = dtype(val)
-        if i is None:
-            cval = val
-        else:
-            one = dtype(1)
-            i = dtype(i)
-            cval &= ~(one << i)
-            cval |= (val & one) << i
+        cval = int(self.cenv[cid])
+        val = int(val)
+        cval = val if i is None else (cval & ~(1 << i)) | ((val & 1) << i)
 
         # Wrap the value to the register's declared width. In PHIR a signed
         # size-S register means an i(S+1) integer -- S data bits plus a sign
@@ -488,8 +494,22 @@ class PhirClassicalInterpreter:
             raw -= 1 << width
         self.cenv[cid] = dtype(raw)
 
+    def _validate_assignment_target(self, target: str | list | tuple) -> None:
+        """Reject undeclared targets and bit writes beyond the declared size."""
+        name, index = (target, None) if isinstance(target, str) else target
+        meta = self._classical_meta(name)
+        if index is not None and not 0 <= index < meta.size:
+            msg = (
+                f"PHIR interpreter failed: Assignment write {name}[{index}] is out of range "
+                f"for a register of declared size {meta.size}; use an index below {meta.size}"
+            )
+            raise ValueError(msg)
+
     def handle_cops(self, op: pt.opt.COp) -> None:
         """Handle the processing of classical operations."""
+        if op.name == "=" or isinstance(op, pt.opt.FFCall):
+            for target in op.returns or []:
+                self._validate_assignment_target(target)
         if op.name == "=":
             args = [self.eval_expr(a) for a in op.args]
 
@@ -498,22 +518,22 @@ class PhirClassicalInterpreter:
 
         elif op.name == "Result":
             validate_phir_result_counts(len(op.args), len(op.returns or []))
-            sources = [self._result_reference(ref) for ref in op.args]
-            destinations = [self._result_reference(ref) for ref in op.returns]
+            sources = [self._result_reference(ref, "args") for ref in op.args]
+            destinations = [self._result_reference(ref, "returns") for ref in op.returns]
             for name, index in sources:
                 self._classical_meta(name)
                 self._check_result_index(name, index)
             for name, index in destinations:
                 if name in self.program.qvar_meta:
                     msg = (
-                        f"PHIR interpreter failed: Result: destination {json.dumps(name)} is quantum; "
+                        f"PHIR interpreter failed: Result: destination {json.dumps(name, ensure_ascii=False)} "
+                        "is quantum; "
                         "use a classical variable or a new export name"
                     )
                     raise ValueError(msg)
                 self._check_result_index(name, index)
             for (source, source_index), (destination, destination_index) in zip(sources, destinations, strict=True):
-                source_dtype = self.cid2dtype[self.csym2id[source]]
-                value = int(self.get_cval(source)) & ((1 << (source_dtype.itemsize * 8)) - 1)
+                value = int(self.get_cval(source))
                 if source_index is not None:
                     value = (value >> source_index) & 1
                 if destination not in self.csym2id:
@@ -557,33 +577,25 @@ class PhirClassicalInterpreter:
         """Resolve a declared classical Result or measurement register."""
         if name not in self.csym2id:
             msg = (
-                f"PHIR interpreter failed: Result or measurement: unknown classical variable {json.dumps(name)}; "
+                "PHIR interpreter failed: Result or measurement: unknown classical variable "
+                f"{json.dumps(name, ensure_ascii=False)}; "
                 "declare it with cvar_define before use"
             )
             raise ValueError(msg)
         return self.cvar_meta[self.csym2id[name]]
 
     @staticmethod
-    def _result_reference(reference: str | list | tuple) -> tuple[str, int | None]:
-        """Decode whole-register and bit references without discarding the index."""
-        if isinstance(reference, str):
-            return reference, None
-        if (
-            isinstance(reference, list | tuple)
-            and len(reference) == 2
-            and isinstance(reference[0], str)
-            and isinstance(reference[1], int)
-        ):
-            return reference[0], reference[1]
-        msg = f"Result: invalid reference {reference!r}; supply a variable name or [name, bit index]"
-        raise TypeError(msg)
+    def _result_reference(reference: str | list | tuple, field: str = "returns") -> tuple[str, int | None]:
+        """Decode references with native JSON diagnostics and exception types."""
+        return validate_phir_result_reference(json.dumps(reference), field)
 
     def _check_result_index(self, name: str, index: int | None) -> None:
         """Check an indexed Result against declared storage or a new u64 destination."""
         size = self._classical_meta(name).size if name in self.csym2id else 64
         if index is not None and not 0 <= index < size:
             msg = (
-                f"PHIR interpreter failed: Result: bit index {index} is invalid for register {json.dumps(name)} "
+                f"PHIR interpreter failed: Result: bit index {index} is invalid for register "
+                f"{json.dumps(name, ensure_ascii=False)} "
                 f"of declared size {size}; use an index below {size}"
             )
             raise ValueError(msg)

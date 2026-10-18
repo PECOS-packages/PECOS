@@ -1200,10 +1200,17 @@ impl PhirProcessor {
                 instruction,
             )?,
             other => {
-                return Err(PhirError::internal(format!(
-                    "{}: expected integer operand, got {other}; use an integer operand",
-                    instruction.operation.name()
-                )));
+                return Err(Box::new(crate::error::ValidationError::InvalidStructure {
+                    message: format!(
+                        "{}: expected integer operand, got {other}; use an integer operand",
+                        instruction.operation.name()
+                    ),
+                    location: instruction
+                        .location
+                        .clone()
+                        .unwrap_or_else(crate::error::SourceLocation::unknown),
+                })
+                .into());
             }
         };
         self.ssa_values.insert(res_id, result);

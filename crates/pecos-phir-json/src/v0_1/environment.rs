@@ -245,23 +245,20 @@ pub struct VariableInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct ResultReference {
     pub name: String,
-    pub index: Option<usize>,
+    pub index: Option<u32>,
 }
 
 impl ResultReference {
     pub(crate) fn from_arg(arg: &super::ast::ArgItem, field: &str) -> Result<Self, PecosError> {
-        match arg {
-            super::ast::ArgItem::Simple(name) => Ok(Self {
-                name: name.clone(),
-                index: None,
-            }),
+        let value = serde_json::to_value(arg)
+            .expect("PHIR arguments contain only JSON-serializable values");
+        match super::classical_validation::result_reference(&value, field)? {
+            super::ast::ArgItem::Simple(name) => Ok(Self { name, index: None }),
             super::ast::ArgItem::Indexed((name, index)) => Ok(Self {
-                name: name.clone(),
-                index: Some(*index),
+                name,
+                index: Some(u32::try_from(index).expect("validated Result indices fit u32")),
             }),
-            _ => Err(PecosError::Input(format!(
-                "Result: invalid {field} entry {arg:?}; supply a variable name or [name, bit index]"
-            ))),
+            _ => unreachable!("Result reference validation returns only whole or indexed names"),
         }
     }
 }
@@ -600,11 +597,17 @@ impl Environment {
         Ok(())
     }
 
-    fn validate_variable_size(
+    pub(crate) fn validate_variable_size(
         name: &str,
         data_type: &DataType,
         size: usize,
     ) -> Result<(), PecosError> {
+        if *data_type == DataType::Bool && size > 1 {
+            return Err(PecosError::Input(format!(
+                "Register {} declares bool with size {size}; use size 1 or an unsigned integer type",
+                serde_json::json!(name)
+            )));
+        }
         // A signed size-S register is an `i(S+1)` integer (S data bits + a sign
         // bit), so `S + 1` must fit the backing width N. An unsigned size-S
         // register is a `u(S)` and needs `S <= N`. Fail fast otherwise.
@@ -753,7 +756,7 @@ impl Environment {
         self.get_variable_info_opt(name)
             .filter(|info| info.data_type != DataType::Qubits)
             .ok_or_else(|| PecosError::Input(format!(
-                "Result or measurement: unknown classical variable {name:?}; declare it with cvar_define before use"
+                "Result or measurement: unknown classical variable {}; declare it with cvar_define before use", serde_json::json!(name)
             )))
     }
 
@@ -763,11 +766,44 @@ impl Environment {
         name: &str,
         index: usize,
     ) -> Result<(), PecosError> {
+        self.validate_classical_write(name, index, "Measurement")
+    }
+
+    fn validate_classical_write(
+        &self,
+        name: &str,
+        index: usize,
+        operation: &str,
+    ) -> Result<(), PecosError> {
         let size = self.classical_info(name)?.size;
         if index >= size {
             return Err(PecosError::Input(format!(
-                "Measurement write {name}[{index}] is out of range for a register of declared size {size}; use an index below {size}"
+                "{operation} write {name}[{index}] is out of range for a register of declared size {size}; use an index below {size}"
             )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_assignment_targets(
+        &self,
+        returns: &[super::ast::ArgItem],
+    ) -> Result<(), PecosError> {
+        for target in returns {
+            match target {
+                super::ast::ArgItem::Simple(name) => {
+                    self.classical_info(name)?;
+                }
+                super::ast::ArgItem::Indexed((name, index)) => {
+                    self.validate_classical_write(name, *index, "Assignment")?;
+                }
+                _ => {
+                    return Err(PecosError::Input(format!(
+                        "Assignment: invalid target {}; supply a declared variable name or [name, bit index]",
+                        serde_json::to_value(target)
+                            .expect("PHIR arguments contain only JSON-serializable values")
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -777,10 +813,10 @@ impl Environment {
             let size = self
                 .get_variable_info_opt(&reference.name)
                 .map_or(64, |info| info.size);
-            if index >= size {
+            if index as usize >= size {
                 return Err(PecosError::Input(format!(
-                    "Result: bit index {index} is invalid for register {:?} of declared size {size}; use an index below {size}",
-                    reference.name
+                    "Result: bit index {index} is invalid for register {} of declared size {size}; use an index below {size}",
+                    serde_json::json!(reference.name)
                 )));
             }
         }
@@ -809,8 +845,8 @@ impl Environment {
         for destination in &destinations {
             if self.quantum_registers.contains_key(&destination.name) {
                 return Err(PecosError::Input(format!(
-                    "Result: destination {:?} is quantum; use a classical variable or a new export name",
-                    destination.name
+                    "Result: destination {} is quantum; use a classical variable or a new export name",
+                    serde_json::json!(destination.name)
                 )));
             }
             self.validate_result_index(destination)?;
@@ -826,7 +862,7 @@ impl Environment {
     ) -> Result<(), PecosError> {
         if !self.has_variable(&destination.name) {
             let (data_type, size) = if let Some(index) = destination.index {
-                (DataType::U64, (index + 1).max(32))
+                (DataType::U64, (index as usize + 1).max(32))
             } else {
                 let info = self.classical_info(&source.name)?;
                 (info.data_type.clone(), info.size)
@@ -856,20 +892,23 @@ impl Environment {
         destination: &ResultReference,
     ) -> Result<(), PecosError> {
         let value = if let Some(index) = source.index {
-            u64::from(self.get_bit(&source.name, index)?.0)
+            u64::from(self.get_bit(&source.name, index as usize)?.0)
         } else {
-            self.get(&source.name)
-                .ok_or_else(|| {
-                    PecosError::Input(format!(
-                        "Result: source {:?} has no value; declare it with cvar_define before use",
-                        source.name
-                    ))
-                })?
-                .as_u64()
+            let value = self.get(&source.name).ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Result: source {} has no value; declare it with cvar_define before use",
+                    serde_json::json!(source.name)
+                ))
+            })?;
+            if self.classical_info(&source.name)?.data_type.is_signed() {
+                u64::from_ne_bytes(value.as_i64().to_ne_bytes())
+            } else {
+                value.as_u64()
+            }
         };
         self.prepare_result_destination(source, destination)?;
         if let Some(index) = destination.index {
-            self.set_bit(&destination.name, index, value & 1)?;
+            self.set_bit(&destination.name, index as usize, value & 1)?;
         } else {
             self.set(&destination.name, value)?;
         }

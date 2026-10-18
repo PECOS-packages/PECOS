@@ -126,11 +126,7 @@ impl PhirJsonEngine {
     /// }
     /// ```
     pub fn from_json(json_str: &str) -> Result<Self, PecosError> {
-        let program: PHIRProgram = serde_json::from_str(json_str).map_err(|e| {
-            PecosError::Input(format!(
-                "Failed to parse PHIR program: Invalid JSON format: {e}"
-            ))
-        })?;
+        let program = PHIRProgram::from_json(json_str)?;
 
         if program.format != "PHIR/JSON" {
             return Err(PecosError::Input(format!(

@@ -40,6 +40,8 @@ pub fn phir_json_to_module(json_str: &str) -> Result<Module, PecosError> {
     let json_value: Value = serde_json::from_str(json_str)
         .map_err(|e| PecosError::Input(format!("Failed to parse PHIR-JSON: {e}")))?;
 
+    super::classical_validation::validate_classical_inputs(&json_value)?;
+
     let obj = json_value
         .as_object()
         .ok_or_else(|| PecosError::Input("PHIR-JSON must be an object".to_string()))?;
@@ -693,7 +695,7 @@ impl ImprovedConverter {
     }
 
     // SSA register values contain declared-width bits. Native signed values also
-    // extend the sign bit to their backing type before a whole-register copy.
+    // extend the sign bit to a complete i64 before a whole-register copy.
     fn result_source_bits(
         &mut self,
         value: SSAValue,
@@ -701,8 +703,7 @@ impl ImprovedConverter {
         instructions: &mut Vec<Instruction>,
     ) -> Result<SSAValue, PecosError> {
         let width = Self::register_width(info);
-        let backing = info.data_type.bit_width();
-        if !info.data_type.is_signed() || width == backing {
+        if !info.data_type.is_signed() || width == 64 {
             return Ok(value);
         }
         let shift = u32::try_from(64 - width).map_err(|_| {
@@ -716,15 +717,7 @@ impl ImprovedConverter {
             self.append_classical(ClassicalOp::Bitcast, vec![value], &storage, instructions)?;
         let value =
             self.append_classical(ClassicalOp::Shl(shift), vec![value], &storage, instructions)?;
-        let value =
-            self.append_classical(ClassicalOp::Shr(shift), vec![value], &storage, instructions)?;
-        if backing == 64 {
-            return Ok(value);
-        }
-        let mask = i64::from_ne_bytes(((1_u64 << backing) - 1).to_ne_bytes());
-        let mask =
-            self.append_classical(ClassicalOp::ConstInt(mask), vec![], &storage, instructions)?;
-        self.append_classical(ClassicalOp::And, vec![value, mask], &storage, instructions)
+        self.append_classical(ClassicalOp::Shr(shift), vec![value], &storage, instructions)
     }
 
     fn convert_result_operation(
@@ -732,25 +725,8 @@ impl ImprovedConverter {
         op: &Value,
         instructions: &mut Vec<Instruction>,
     ) -> Result<Vec<String>, PecosError> {
-        let references = |field: &str| -> Result<Vec<super::ast::ArgItem>, PecosError> {
-            let value = op.get(field).ok_or_else(|| PecosError::Input(format!(
-                "Result: missing {field}; supply an array of variable names or [name, bit index] references"
-            )))?;
-            let values = value.as_array().ok_or_else(|| {
-                PecosError::Input(format!(
-                    "Result: invalid {field} {value}; supply an array of variable references"
-                ))
-            })?;
-            values.iter().map(|value| {
-                let arg = serde_json::from_value::<super::ast::ArgItem>(value.clone()).map_err(|_| PecosError::Input(format!(
-                    "Result: invalid {field} entry {value}; supply a variable name or [name, bit index]"
-                )))?;
-                super::environment::ResultReference::from_arg(&arg, field)?;
-                Ok(arg)
-            }).collect()
-        };
-        let args = references("args")?;
-        let returns = references("returns")?;
+        let args = super::classical_validation::result_field(op, "args")?;
+        let returns = super::classical_validation::result_field(op, "returns")?;
         let pairs = self.environment.validate_result(&args, &returns)?;
         let mut export_names = Vec::new();
         for (source, destination) in pairs {
@@ -758,7 +734,7 @@ impl ImprovedConverter {
             let source_info = self.environment.classical_info(&source.name)?.clone();
             let source_type = Self::storage_type(&source_info);
             let source_width = if source_info.data_type.is_signed() {
-                source_info.data_type.bit_width()
+                64
             } else {
                 Self::register_width(&source_info)
             };
@@ -766,11 +742,6 @@ impl ImprovedConverter {
                 value = self.result_source_bits(value, &source_info, instructions)?;
             }
             if let Some(index) = source.index {
-                let index = u32::try_from(index).map_err(|_| {
-                    PecosError::Input(format!(
-                        "Result: bit index {index} is too large; use an index below {source_width}"
-                    ))
-                })?;
                 value = self.append_classical(
                     ClassicalOp::LShr(index),
                     vec![value],
@@ -808,15 +779,10 @@ impl ImprovedConverter {
                         instructions,
                     )?
                 };
-                let bit_index = u32::try_from(index).map_err(|_| {
-                    PecosError::Input(format!(
-                        "Result: bit index {index} is too large; use an index below {width}"
-                    ))
-                })?;
                 value = self.replace_bit(
                     current,
                     &BitIndexedWrite {
-                        bit_index,
+                        bit_index: index,
                         ssa_value: value,
                     },
                     &value_type,

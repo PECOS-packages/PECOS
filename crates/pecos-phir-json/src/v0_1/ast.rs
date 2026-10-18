@@ -1,5 +1,5 @@
 use pecos_core::errors::PecosError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
@@ -23,6 +23,18 @@ fn deserialize_program_operations<'de, D: serde::Deserializer<'de>>(
 }
 
 impl PHIRProgram {
+    /// Decode a program after shared validation of classical JSON inputs.
+    ///
+    /// # Errors
+    /// Rejects invalid JSON, Result references, and boolean declaration sizes.
+    pub fn from_json(json: &str) -> Result<Self, PecosError> {
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))?;
+        super::classical_validation::validate_classical_inputs(&value)?;
+        serde_json::from_value(value)
+            .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))
+    }
+
     /// Collect the names of all foreign functions invoked by `ffcall` classical
     /// operations anywhere in the program, including inside `if`/`sequence`
     /// blocks. Mirrors `PyPHIR.foreign_func_calls` and is used to fail fast when
@@ -409,7 +421,7 @@ pub enum QubitArg {
 }
 
 /// Represents an argument to a classical operation
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ArgItem {
     /// Indexed argument (var, idx)
@@ -425,7 +437,7 @@ pub enum ArgItem {
 }
 
 /// Represents a classical expression
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Expression {
     /// Operation with operator and arguments

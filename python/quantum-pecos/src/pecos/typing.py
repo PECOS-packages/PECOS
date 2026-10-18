@@ -77,20 +77,22 @@ from pecos._phir_declarations import validate_declaration_names
 
 
 class _PecosCVarDefine(_CVarDefine):
-    """CVarDefine extended with 8-bit and 16-bit integer data types.
+    """CVarDefine extended with small integers and one-bit bool storage.
 
     The upstream PHIR spec's ``CVarDefine`` only accepts ``i32``, ``i64``,
     ``u32``, ``u64``. PECOS additionally supports ``i8``, ``u8``, ``i16``,
-    ``u16`` for classical registers. The parent class's ``check_size``
+    ``u16`` and ``bool`` for classical registers. The parent class's ``check_size``
     validator covers 32 and 64-bit cases; this subclass adds the matching
     check for 8-bit and 16-bit sizes.
     """
 
-    data_type: Literal["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]  # type: ignore[assignment]
+    data_type: Literal["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool"]  # type: ignore[assignment]
 
     @model_validator(mode="after")
     def _check_size_small(self) -> _PecosCVarDefine:
         """Check that ``size`` fits within 8-bit and 16-bit data types."""
+        if self.data_type == "bool":
+            prs.validate_phir_classical_declaration(self.variable, "bool", self.size if self.size is not None else 1)
         msg = "`size` is greater than what `data_type` can handle"
         if self.size:
             match self.data_type:
@@ -122,8 +124,8 @@ class ResultCOp(_Op):
     """
 
     cop: Literal["Result"]
-    args: list[str]
-    returns: list[str]
+    args: list[str | tuple[str, int]]
+    returns: list[str | tuple[str, int]]
 
 
 class RXYXY2QOp(_TQOp):

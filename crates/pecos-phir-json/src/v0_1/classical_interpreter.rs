@@ -110,8 +110,7 @@ impl PhirClassicalInterpreter {
         json: &str,
         foreign_object: Option<Box<dyn ForeignObject>>,
     ) -> Result<usize, PecosError> {
-        let program: PHIRProgram = serde_json::from_str(json)
-            .map_err(|e| PecosError::Input(format!("Failed to parse PHIR JSON: {e}")))?;
+        let program = PHIRProgram::from_json(json)?;
 
         // Validate format
         if program.format != "PHIR/JSON" && program.format != "PHIR" {
@@ -567,6 +566,9 @@ impl PhirClassicalInterpreter {
         returns: &[ArgItem],
         function: &Option<String>,
     ) -> Result<(), PecosError> {
+        if matches!(cop, "=" | "ffcall") {
+            self.environment.validate_assignment_targets(returns)?;
+        }
         match cop {
             "=" => {
                 // Evaluate ALL args first (before any assignment),

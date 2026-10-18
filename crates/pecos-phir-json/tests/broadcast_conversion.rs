@@ -393,29 +393,53 @@ fn interpreter_indexed_results_match_native() {
 }
 
 #[test]
-fn result_copies_preserve_signed_backing_bits_when_widened() {
-    for dtype in ["i8", "i16", "i32", "i64"] {
-        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
-            {"data":"qvar_define","variable":"q","size":1},
-            {"data":"cvar_define","data_type":"u8","variable":"a","size":4},
-            {"data":"cvar_define","data_type":dtype,"variable":"s","size":3},
-            {"data":"cvar_define","data_type":"u64","variable":"out","size":64},
-            {"qop":"X","args":[["q",0]]},
-            {"qop":"Measure","args":[["q",0]],"returns":[["a",3]]},
-            {"cop":"Result","args":["a","s"],"returns":["s","out"]}
-        ]})
-        .to_string();
-        let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
-        let converted = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
-        for name in ["s", "out"] {
-            let expected =
-                u64::from_str_radix(&native.register_to_binary_string(name).unwrap(), 2).unwrap();
-            let actual = match converted.data[name] {
-                pecos_engines::Data::U32(v) => u64::from(v),
-                pecos_engines::Data::U64(v) => v,
-                ref other => panic!("unexpected {other:?}"),
-            };
-            assert_eq!(actual, expected, "{dtype} {name}");
+fn result_copies_sign_extend_to_i64_when_widened() {
+    for (dtype, max_size) in [("i8", 7), ("i16", 15), ("i32", 31), ("i64", 63)] {
+        for size in [3, max_size] {
+            for destination in ["i64", "u64"] {
+                let mut ops = vec![
+                    json!({"data":"qvar_define","variable":"q","size":1}),
+                    json!({"data":"cvar_define","data_type":"u64","variable":"a","size":64}),
+                    json!({"data":"cvar_define","data_type":dtype,"variable":"s","size":size}),
+                    json!({"data":"cvar_define","data_type":destination,"variable":"out","size":if destination=="i64" {63} else {64}}),
+                    json!({"qop":"X","args":[["q",0]]}),
+                ];
+                // Set the declared-width two's-complement pattern for -8 using
+                // measurements, so this also exercises the converter's supported path.
+                for bit in 3..=size {
+                    ops.push(json!({"qop":"Measure","args":[["q",0]],"returns":[["a",bit]]}));
+                }
+                ops.push(json!({"cop":"Result","args":["a","s"],"returns":["s","out"]}));
+                let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":ops}).to_string();
+                let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+                let converted =
+                    run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+                for name in ["s", "out"] {
+                    let expected =
+                        u64::from_str_radix(&native.register_to_binary_string(name).unwrap(), 2)
+                            .unwrap();
+                    let actual = match converted.data[name] {
+                        pecos_engines::Data::U32(v) => u64::from(v),
+                        pecos_engines::Data::U64(v) => v,
+                        ref other => panic!("unexpected {other:?}"),
+                    };
+                    let width_mask = if size == 63 {
+                        u64::MAX
+                    } else {
+                        (1_u64 << (size + 1)) - 1
+                    };
+                    assert_eq!(
+                        expected,
+                        if name == "s" {
+                            (u64::MAX - 7) & width_mask
+                        } else {
+                            u64::MAX - 7
+                        },
+                        "native {dtype} {size} {destination} {name}"
+                    );
+                    assert_eq!(actual, expected, "{dtype} {size} {destination} {name}");
+                }
+            }
         }
     }
 }

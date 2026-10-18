@@ -47,6 +47,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- Signed whole-register PHIR Result copies now sign-extend to i64, agreeing
+  with `=` regardless of source backing type. Native output changes: copying
+  i8 -8 to u64 now yields 18446744073709551608, rather than 248.
+- PHIR bool declarations reject sizes above 1; use size 1 or omit the size.
+  Assignment and ffcall returns must name declared classical registers, and
+  indexed writes must be below the declared size. Invalid writes raise
+  `ValueError` instead of being dropped or creating undeclared targets.
+- Malformed Result entries use shared JSON diagnostics: wrong types (including
+  bool indices) raise `TypeError`; negative indices raise `ValueError`, on
+  native/legacy execution and both HybridEngine interpreters, even when schema
+  validation is disabled.
+
 - PHIR measurement destinations must be declared classical registers. The native
   engine (including `sim(PhirJson(...))` and `PhirJsonEngine`) no longer creates
   undeclared destinations. Both HybridEngine interpreters raise `ValueError`
@@ -197,6 +209,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- PyPHIR parses bool declarations, and the Python interpreter supports their
+  one-bit measurement and assignment storage. Optional schema validation accepts
+  bool declarations and valid indexed Result references.
+
 - Both PHIR interpreters preserve indexed Result sources and destinations and
   narrow whole-register copies to the destination width. Indexed copies no
   longer disappear or copy the entire register.
@@ -232,6 +248,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
+
+- `Environment::copy_variable` preserves destination widths (narrowing when
+  required) and rejects quantum destinations. Whole signed Result/copy_variable
+  copies sign-extend to i64 as specified by PHIR, matching assignment. Native
+  output for widening a negative source no longer depends on its backing type.
+- Bool classical declarations reject sizes greater than 1. Assignment and
+  ffcall destinations must be declared; indexed writes outside their declared
+  size now error instead of being dropped. Undeclared targets are not created.
+- Result reference errors now quote the offending JSON value consistently;
+  malformed references are validated before AST decoding. Noninteger unary
+  module operands report an input validation error rather than an internal error.
 
 - Native PHIR-JSON measurements no longer create undeclared destination
   registers. Native execution, the Rust interpreter and JSON-to-module conversion
@@ -414,8 +441,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - JSON-to-module conversion supports the spec's indexed Result sources and
   destinations. Native execution and the Rust interpreter share Result copying
   and validation, preserving bit indices, source order and destination widths.
-  Chained copies through signed registers retain the native backing-bit pattern
-  when widened; Python copies follow the same rule.
+  Whole signed copies sign-extend to i64 before destination-width masking,
+  as required by the PHIR spec; native, converter and Python paths agree.
 - The converter uses one register metadata store for type and declared size;
   signed measurement bounds no longer include the extra sign bit.
 

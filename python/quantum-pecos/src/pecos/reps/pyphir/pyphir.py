@@ -21,7 +21,7 @@ import json
 import math
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from pecos_rslib import validate_phir_qop
+from pecos_rslib import validate_phir_classical_inputs, validate_phir_qop
 
 import pecos as pc
 from pecos._phir_declarations import validate_declaration_names
@@ -49,6 +49,7 @@ unsigned_data_types = {
     "u16": pc.dtypes.u16,
     "u32": pc.dtypes.u32,
     "u64": pc.dtypes.u64,
+    "bool": pc.dtypes.bool_,
 }
 
 
@@ -292,6 +293,7 @@ class PyPHIR:
             name_resolver=name_resolver,
         )
 
+        validate_phir_classical_inputs(json.dumps(phir))
         validate_declaration_names(phir["ops"])
 
         next_qvar_int = 0
@@ -302,7 +304,7 @@ class PyPHIR:
 
                 if name == "cvar_define":
                     data_type = o["data_type"]
-                    type_width = int(data_type[1:])
+                    type_width = 1 if data_type == "bool" else int(data_type[1:])
                     if "size" in o:
                         size = o["size"]
                     elif data_type in signed_data_types:

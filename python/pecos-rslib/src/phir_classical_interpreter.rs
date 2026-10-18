@@ -16,7 +16,7 @@
 //! for `pecos.classical_interpreters.PhirClassicalInterpreter`.
 
 use pecos_core::errors::PecosError;
-use pecos_phir_json::v0_1::ast::{Operation, PHIRProgram};
+use pecos_phir_json::v0_1::ast::{ArgItem, Operation, PHIRProgram};
 use pecos_phir_json::v0_1::classical_interpreter::{
     MeasKey, PhirClassicalInterpreter as RustInterpreter, QOpArgs, ResultValue, YieldedOp,
 };
@@ -201,6 +201,8 @@ impl PyPhirClassicalInterpreter {
                 program.get_type().name()?,
             )));
         };
+
+        validate_phir_classical_inputs(&json_str)?;
 
         // Honor `phir_validate` (matching the Python interpreter): schema-validate
         // the PHIR dict against the pydantic `PhirModel` before running. The
@@ -1084,9 +1086,7 @@ pub fn run_phir_sim(
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
 
     // Parse and create the classical engine
-    let mut engine = PhirJsonEngine::from_json(phir_json).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("Failed to parse PHIR: {e}"))
-    })?;
+    let mut engine = PhirJsonEngine::from_json(phir_json).map_err(pecos_error_to_pyerr)?;
 
     // Set foreign object if provided (WASM or Python ForeignObjectProtocol)
     if let Some(fo) = foreign_object {
@@ -1197,9 +1197,95 @@ pub fn validate_phir_result_counts(args: usize, returns: usize) -> PyResult<()> 
         .map_err(pecos_error_to_pyerr)
 }
 
+/// Validate classical JSON input before optional Python schema validation.
+#[pyfunction]
+pub fn validate_phir_classical_inputs(program_json: &str) -> PyResult<()> {
+    let value: serde_json::Value = serde_json::from_str(program_json).map_err(|error| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid PHIR JSON: {error}; supply a JSON program"
+        ))
+    })?;
+    pecos_phir_json::v0_1::classical_validation::validate_classical_inputs(&value)
+        .map_err(pecos_error_to_pyerr)
+}
+
+/// Decode a Result reference with shared JSON diagnostics and exception types.
+#[pyfunction]
+pub fn validate_phir_result_reference(
+    reference_json: &str,
+    field: &str,
+) -> PyResult<(String, Option<usize>)> {
+    let value: serde_json::Value = serde_json::from_str(reference_json).map_err(|error| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid Result JSON: {error}; supply a JSON reference"
+        ))
+    })?;
+    match pecos_phir_json::v0_1::classical_validation::result_reference(&value, field)
+        .map_err(pecos_error_to_pyerr)?
+    {
+        ArgItem::Simple(name) => Ok((name, None)),
+        ArgItem::Indexed((name, index)) => Ok((name, Some(index))),
+        _ => unreachable!("Result reference validation returns only whole or indexed names"),
+    }
+}
+
+/// Validate a classical declaration using native register storage rules.
+#[pyfunction]
+pub fn validate_phir_classical_declaration(
+    name: &str,
+    data_type: &str,
+    size: usize,
+) -> PyResult<()> {
+    let mut environment = pecos_phir_json::v0_1::environment::Environment::new();
+    environment
+        .add_variable(name, data_type.parse().map_err(pecos_error_to_pyerr)?, size)
+        .map_err(pecos_error_to_pyerr)
+}
+
 #[cfg(test)]
 mod validation_tests {
     use super::*;
+
+    #[test]
+    fn classical_validation_preserves_python_error_categories() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            for (entry, wrong_type) in [
+                ("7", true),
+                ("null", true),
+                (r#"["a",true]"#, true),
+                (r#"["a",-1]"#, false),
+            ] {
+                let error = validate_phir_result_reference(entry, "args").unwrap_err();
+                assert_eq!(
+                    error.is_instance_of::<pyo3::exceptions::PyTypeError>(py),
+                    wrong_type
+                );
+                assert_eq!(
+                    error.is_instance_of::<pyo3::exceptions::PyValueError>(py),
+                    !wrong_type
+                );
+                let input = format!(
+                    r#"{{"format":"PHIR/JSON","version":"0.1.0","ops":[{{"cop":"Result","args":[{entry}],"returns":["out"]}}]}}"#
+                );
+                let program_error = validate_phir_classical_inputs(&input).unwrap_err();
+                assert_eq!(error.to_string(), program_error.to_string());
+                let bridge_error =
+                    crate::phir_json_bridge::PhirJsonEngine::py_new(&input).unwrap_err();
+                assert_eq!(error.to_string(), bridge_error.to_string());
+                let core_error = pecos_phir_json::PhirJsonEngine::from_json(&input).unwrap_err();
+                let wrapped = PecosError::with_context(core_error, "build context");
+                assert_eq!(
+                    error.to_string(),
+                    crate::errors::simulation_error(wrapped, "Simulation failed").to_string()
+                );
+            }
+            validate_phir_classical_declaration("flag", "bool", 1).unwrap();
+            let error = validate_phir_classical_declaration("flag", "bool", 4).unwrap_err();
+            assert!(error.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(error.to_string().contains("bool with size 4; use size 1"));
+        });
+    }
 
     #[test]
     fn shared_phir_validation_maps_bad_values_and_types() {

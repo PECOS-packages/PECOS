@@ -28,6 +28,9 @@ impl Clone for PhirJsonEngine {
 }
 
 fn python_error(error: PecosError) -> PyErr {
+    if matches!(error, PecosError::External(_)) {
+        return crate::errors::simulation_error(error, "PHIR interpreter failed");
+    }
     PyValueError::new_err(format!(
         "{error}; supply a valid program or measurement batch supported by the native PHIR-JSON engine"
     ))

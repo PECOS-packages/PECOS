@@ -213,6 +213,18 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_classical_inputs,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_result_reference,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_classical_declaration,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
         phir_classical_interpreter::validate_phir_result_counts,
         m
     )?)?;

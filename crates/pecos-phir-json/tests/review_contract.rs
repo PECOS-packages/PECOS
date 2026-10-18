@@ -375,3 +375,157 @@ fn result_reference_errors_agree_across_rust_paths() {
         assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
     }
 }
+
+#[test]
+fn bool_size_is_rejected_at_declaration() {
+    let source =
+        program(&json!({"data":"cvar_define","data_type":"bool","variable":"flag","size":4}));
+    let error = native_error(&source);
+    assert!(
+        error.contains("bool") && error.contains("size 4") && error.contains("size 1"),
+        "{error}"
+    );
+    assert_eq!(error, interpreter_error(&source));
+    assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
+}
+
+#[test]
+fn malformed_result_entries_have_identical_json_errors() {
+    for entry in [
+        json!(7),
+        json!(null),
+        json!(true),
+        json!({"bad":true}),
+        json!(["a", -1]),
+        json!(["a", true]),
+        json!(["a", 1.5]),
+        json!(["a"]),
+    ] {
+        for field in ["args", "returns"] {
+            let mut op = json!({"cop":"Result","args":["a"],"returns":["out"]});
+            op[field] = json!([entry]);
+            let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+                {"data":"cvar_define","data_type":"u32","variable":"a","size":3}, op
+            ]})
+            .to_string();
+            let error = match PhirJsonEngine::from_json(&source) {
+                Err(error) => error.to_string(),
+                Ok(mut engine) => engine
+                    .generate_commands()
+                    .err()
+                    .expect("invalid Result must fail")
+                    .to_string(),
+            };
+            assert!(
+                error.contains(&format!("Result: invalid {field} entry {entry}")),
+                "{error}"
+            );
+            assert_eq!(error, interpreter_error(&source));
+            assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
+        }
+    }
+}
+
+#[test]
+fn assignment_and_ffcall_validate_all_destinations_before_execution() {
+    use pecos_phir_json::v0_1::{
+        ast::ArgItem, classical_interpreter::PhirClassicalInterpreter,
+        operations::OperationProcessor,
+    };
+    for cop in ["=", "ffcall"] {
+        for target in [
+            json!(["a", 5]),
+            json!(["a", 3]),
+            json!(["missing", 0]),
+            json!("missing"),
+            json!(["非ASCII", 0]),
+        ] {
+            let returns: Vec<ArgItem> = serde_json::from_value(json!([target])).unwrap();
+            let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+                {"data":"cvar_define","data_type":"u32","variable":"a","size":3}
+            ]})
+            .to_string();
+            let mut native = OperationProcessor::new();
+            native.add_classical_variable("a", "u32", 3).unwrap();
+            let native_error = native
+                .handle_classical_op(cop, &[ArgItem::Integer(1)], &returns, &[], 0)
+                .unwrap_err()
+                .to_string();
+            let mut interpreter = PhirClassicalInterpreter::new();
+            interpreter.init(&source, None).unwrap();
+            let error = interpreter
+                .handle_cop(cop, &[ArgItem::Integer(1)], &returns, &Some("f".into()))
+                .unwrap_err()
+                .to_string();
+            assert_eq!(error, native_error);
+            assert!(
+                error.contains("declare it") || error.contains("use an index below 3"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn result_and_assignment_sign_extend_identically() {
+    use pecos_phir_json::v0_1::{
+        ast::ArgItem,
+        classical_interpreter::{PhirClassicalInterpreter, ResultValue},
+        operations::OperationProcessor,
+    };
+    for (dtype, max_size) in [("i8", 7), ("i16", 15), ("i32", 31), ("i64", 63)] {
+        for size in [3, max_size] {
+            for destination in ["i64", "u64"] {
+                let destination_size = if destination == "i64" { 63 } else { 64 };
+                let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
+                    {"data":"cvar_define","data_type":dtype,"variable":"s","size":size},
+                    {"data":"cvar_define","data_type":destination,"variable":"assigned","size":destination_size},
+                    {"data":"cvar_define","data_type":destination,"variable":"copied","size":destination_size}
+                ]}).to_string();
+                let mut native = OperationProcessor::new();
+                native.add_classical_variable("s", dtype, size).unwrap();
+                for name in ["assigned", "copied"] {
+                    native
+                        .add_classical_variable(name, destination, destination_size)
+                        .unwrap();
+                }
+                let mut interpreter = PhirClassicalInterpreter::new();
+                interpreter.init(&source, None).unwrap();
+                for (cop, args, returns) in [
+                    (
+                        "=",
+                        vec![ArgItem::Integer(-8)],
+                        vec![ArgItem::Simple("s".into())],
+                    ),
+                    (
+                        "=",
+                        vec![ArgItem::Simple("s".into())],
+                        vec![ArgItem::Simple("assigned".into())],
+                    ),
+                    (
+                        "Result",
+                        vec![ArgItem::Simple("s".into())],
+                        vec![ArgItem::Simple("copied".into())],
+                    ),
+                ] {
+                    native
+                        .handle_classical_op(cop, &args, &returns, &[], 0)
+                        .unwrap();
+                    interpreter.handle_cop(cop, &args, &returns, &None).unwrap();
+                }
+                for name in ["assigned", "copied"] {
+                    assert_eq!(
+                        native.environment.get(name).unwrap().as_u64(),
+                        u64::MAX - 7,
+                        "{dtype} {size} {destination}"
+                    );
+                    match &interpreter.results(true)[name] {
+                        ResultValue::Int(value, _) => assert_eq!(*value, -8),
+                        ResultValue::UInt(value, _) => assert_eq!(*value, u64::MAX - 7),
+                        other @ ResultValue::BitString(_) => panic!("unexpected {other:?}"),
+                    }
+                }
+            }
+        }
+    }
+}

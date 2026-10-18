@@ -1153,29 +1153,16 @@ impl OperationProcessor {
             }
         };
 
+        if matches!(cop, "=" | "ffcall") {
+            self.environment.validate_assignment_targets(returns)?;
+        }
         // For most operations, validate all variable accesses
         if cop == "Result" {
-            validate_result_counts(args.len(), returns.len())?;
             self.environment.validate_result(args, returns)?;
         } else if cop == "ffcall" {
             debug!("Processing ffcall operation: {:?}", ops.get(current_op));
         } else if cop == "=" {
             // For assignment, we evaluate the expression and assign to the variable
-
-            // Validate return variables (target of assignment)
-            for ret in returns {
-                match ret {
-                    ArgItem::Simple(_var) | ArgItem::Indexed((_var, _)) => {
-                        // For assignment, we don't need to validate the variable exists
-                        // It might be created by this operation
-                    }
-                    _ => {
-                        return Err(PecosError::Input(
-                            "Assignment target must be a variable reference".to_string(),
-                        ));
-                    }
-                }
-            }
 
             // Evaluate arguments (source of assignment)
             // For now, we only support a single argument
@@ -1190,32 +1177,12 @@ impl OperationProcessor {
                     // Set the bit at position idx to value & 1
                     let bit_value = value & 1;
 
-                    // Update in environment if the variable exists there
-                    if self.environment.has_variable(&var) {
-                        // Set the bit in environment
-                        // bit_value is already masked with & 1, so it's guaranteed to be 0 or 1
-                        self.environment.set_bit(
-                            &var,
-                            idx,
-                            u64::try_from(bit_value).unwrap_or(0),
-                        )?;
-                        log::debug!("Set bit {var}[{idx}] = {bit_value} in environment");
-                    }
-                    // `set_bit` above already updates the full 64-bit value in the
-                    // environment; do not recompute the whole register here (a u32
-                    // recompute both truncated bits 32-63 and panicked on idx >= 32).
+                    self.environment.set_bit(&var, idx, bit_value != 0)?;
                 } else {
                     // For whole variable assignment, store in environment
                     log::debug!("Storing assignment value {value} in variable {var}");
 
-                    // Make sure variable exists in environment and update it
-                    if !self.environment.has_variable(&var) {
-                        self.environment
-                            .ensure_classical_variable(&var, DataType::I32, 31)?;
-                    }
-                    // Convert to u64 safely - we're working with raw bit patterns
-                    #[allow(clippy::cast_sign_loss)]
-                    let value_u64 = u64::from_ne_bytes((value as u64).to_ne_bytes());
+                    let value_u64 = u64::from_ne_bytes(value.to_ne_bytes());
                     self.environment.set(&var, value_u64)?;
                     log::debug!("Updated variable {var} = {value} in environment");
 
@@ -1344,23 +1311,10 @@ impl OperationProcessor {
                                                                     u32::try_from(result[i])
                                                                         .unwrap_or(0);
 
-                                                                // Update primary storage in environment
-                                                                if !self
-                                                                    .environment
-                                                                    .has_variable(var)
-                                                                {
-                                                                    let _ = self
-                                                                        .environment
-                                                                        .ensure_classical_variable(
-                                                                            var,
-                                                                            DataType::I32,
-                                                                            31,
-                                                                        );
-                                                                }
-                                                                let _ = self.environment.set(
+                                                                self.environment.set(
                                                                     var,
                                                                     u64::from(result_value),
-                                                                );
+                                                                )?;
 
                                                                 // All values stored in environment
                                                             }
@@ -1370,26 +1324,12 @@ impl OperationProcessor {
                                                                     u32::try_from(result[i] & 1)
                                                                         .unwrap_or(0);
 
-                                                                // Update primary storage in environment
-                                                                if !self
-                                                                    .environment
-                                                                    .has_variable(var)
-                                                                {
-                                                                    let _ = self
-                                                                        .environment
-                                                                        .ensure_classical_variable(
-                                                                            var,
-                                                                            DataType::I32,
-                                                                            31,
-                                                                        );
-                                                                }
-
                                                                 // Set the bit in environment
-                                                                let _ = self.environment.set_bit(
+                                                                self.environment.set_bit(
                                                                     var,
                                                                     *idx,
                                                                     u64::from(bit_value),
-                                                                );
+                                                                )?;
 
                                                                 // Environment is the single source of truth - no need for additional storage
                                                             }
@@ -1444,23 +1384,10 @@ impl OperationProcessor {
                                                                         u32::try_from(result[i])
                                                                             .unwrap_or(0);
 
-                                                                    // Update primary storage in environment
-                                                                    if !self
-                                                                        .environment
-                                                                        .has_variable(var)
-                                                                    {
-                                                                        let _ = self
-                                                                            .environment
-                                                                            .ensure_classical_variable(
-                                                                                var,
-                                                                                DataType::I32,
-                                                                                31,
-                                                                            );
-                                                                    }
-                                                                    let _ = self.environment.set(
+                                                                    self.environment.set(
                                                                         var,
                                                                         u64::from(result_value),
-                                                                    );
+                                                                    )?;
 
                                                                     // Environment is the single source of truth for all variable data
                                                                 }
@@ -1471,27 +1398,12 @@ impl OperationProcessor {
                                                                     )
                                                                     .unwrap_or(0);
 
-                                                                    // Update primary storage in environment
-                                                                    if !self
-                                                                        .environment
-                                                                        .has_variable(var)
-                                                                    {
-                                                                        let _ = self
-                                                                            .environment
-                                                                            .ensure_classical_variable(
-                                                                                var,
-                                                                                DataType::I32,
-                                                                                31,
-                                                                            );
-                                                                    }
-
                                                                     // Set the bit in environment
-                                                                    let _ =
-                                                                        self.environment.set_bit(
-                                                                            var,
-                                                                            *idx,
-                                                                            u64::from(bit_value),
-                                                                        );
+                                                                    self.environment.set_bit(
+                                                                        var,
+                                                                        *idx,
+                                                                        u64::from(bit_value),
+                                                                    )?;
 
                                                                     // Environment is the single source of truth for all variable data
                                                                 }
@@ -1555,16 +1467,6 @@ impl OperationProcessor {
                                     // Store whole variable value in environment
                                     let result_value = u64::try_from(result[i]).unwrap_or(0);
 
-                                    // Make sure the variable exists
-                                    if !self.environment.has_variable(var) {
-                                        // Create if needed
-                                        self.environment.ensure_classical_variable(
-                                            var,
-                                            DataType::I32,
-                                            31,
-                                        )?;
-                                    }
-
                                     // Set value in environment (single source of truth)
                                     self.environment.set(var, result_value)?;
                                     debug!("Set variable {var} = {result_value}");
@@ -1572,16 +1474,6 @@ impl OperationProcessor {
                                 ArgItem::Indexed((var, idx)) => {
                                     // Set specific bit in variable
                                     let bit_value = result[i] & 1;
-
-                                    // Make sure the variable exists
-                                    if !self.environment.has_variable(var) {
-                                        // Create if needed
-                                        self.environment.ensure_classical_variable(
-                                            var,
-                                            DataType::I32,
-                                            31,
-                                        )?;
-                                    }
 
                                     // Set bit in environment (single source of truth)
                                     self.environment.set_bit(

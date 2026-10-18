@@ -4335,3 +4335,12 @@ def validate_phir_qop(
 def validate_phir_result_counts(args: int, returns: int) -> None:
     """Require equal, nonzero Result argument and destination counts."""
     ...
+
+def validate_phir_classical_inputs(program_json: str) -> None:
+    """Validate Result JSON references and boolean declaration sizes."""
+
+def validate_phir_result_reference(reference_json: str, field: str) -> tuple[str, int | None]:
+    """Decode a Result reference with shared diagnostics."""
+
+def validate_phir_classical_declaration(name: str, data_type: str, size: int) -> None:
+    """Validate classical register type and size using native storage rules."""

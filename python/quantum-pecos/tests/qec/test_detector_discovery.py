@@ -84,7 +84,7 @@ def test_binding_defaults_sequences_and_errors() -> None:
     declared = discover_detectors(tc, ((1,),))
     assert declared.detectors == []
     assert declared.observables == [([0, 1], 1)]
-    with pytest.raises(ValueError, match="observable 1 is non-deterministic"):
+    with pytest.raises(ValueError, match="observable 1 is non-deterministic: declared record 0"):
         discover_detectors(tc, ((1,), (0,)))
     with pytest.raises(ValueError, match="observable 0 is empty"):
         discover_detectors(tc, ((),))

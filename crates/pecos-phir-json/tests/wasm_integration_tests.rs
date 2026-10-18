@@ -8,7 +8,6 @@ mod tests {
     use pecos_phir_json::v0_1::foreign_objects::ForeignObject;
     use pecos_phir_json::v0_1::wasm_foreign_object::WasmtimeForeignObject;
     use std::boxed::Box;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn setup_test_environment() -> Result<(Box<WasmtimeForeignObject>, PhirJsonEngine), PecosError>
     {
@@ -23,29 +22,21 @@ mod tests {
         )
         "#;
 
-        // Create a unique temporary file name to prevent conflicts between tests
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+        // Each test gets its own file: tests run in parallel, and a timestamp-derived
+        // name collides on platforms with coarse clocks (macOS reports microseconds),
+        // letting one test read the file while another is rewriting it.
+        let wat_file = tempfile::Builder::new()
+            .prefix("add_test_")
+            .suffix(".wat")
+            .tempfile()?;
+        std::fs::write(wat_file.path(), wat_content)?;
 
-        let temp_dir = std::env::temp_dir();
-        let wasm_path = temp_dir.join(format!("add_test_{timestamp}.wat"));
-        std::fs::write(&wasm_path, wat_content).map_err(|e| {
-            PecosError::IO(std::io::Error::other(format!(
-                "Failed to write temporary WAT file: {e}"
-            )))
-        })?;
-
-        // Create a WebAssembly foreign object
-        let mut foreign_object = WasmtimeForeignObject::new(&wasm_path)?;
+        // Create a WebAssembly foreign object; it reads the file eagerly, so the
+        // temporary file can be removed when it goes out of scope.
+        let mut foreign_object = WasmtimeForeignObject::new(wat_file.path())?;
 
         // Initialize the foreign object
         foreign_object.init()?;
-
-        // Important: We deliberately don't delete the file here to avoid issues
-        // with the file being removed while it's still needed by the WasmtimeForeignObject.
-        // Instead, we rely on the operating system to clean up temporary files eventually.
 
         // Wrap in Box after initialization
         let foreign_object = Box::new(foreign_object);

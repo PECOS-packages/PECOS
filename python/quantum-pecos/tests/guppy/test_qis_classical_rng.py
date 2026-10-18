@@ -402,3 +402,116 @@ def test_multiple_platform_rng_handles_match_live_selene() -> None:
     expected = {"draw": [shot["draw"] for shot in reference]}
     assert all(len(draws) == 12 for draws in expected["draw"])
     assert run_pecos(main, 987, workers=2) == expected
+
+
+@pytest.mark.parametrize("delta", [0, 1, -1, 2**63 - 1, -(2**63)])
+def test_rng_jump_boundaries_match_live_selene(delta: int) -> None:
+    """Extreme signed jumps compose modulo 2**64, including the self-inverse minimum."""
+    reverse = delta if delta == -(2**63) else -delta
+
+    @guppy
+    def main() -> None:
+        rng = RNG(42)
+        result("first", rng.random_int())
+        rng.random_advance(delta)
+        result("jumped", rng.random_int())
+        rng.random_advance(-1)
+        rng.random_advance(reverse)
+        result("restored", rng.random_int())
+        rng.discard()
+
+    reference = run_selene(main, 1)
+    expected = {key: [shot[key] for shot in reference] for key in reference[0]}
+    assert expected["first"] == [1085446021] * 3
+    assert expected["restored"] == [176895750] * 3
+    assert run_pecos(main, 987, workers=2) == expected
+
+
+@pytest.mark.parametrize("seed", [0, 2**63 - 1, 2**63, 2**64 - 1])
+def test_native_rng_unsigned_seed_boundaries(seed: int) -> None:
+    """Native PCG32 handles the unsigned seed boundaries, including the high bit."""
+    high, low = divmod(seed, 2**32)
+
+    @guppy
+    def main() -> None:
+        rng = seeded_pcg32((nat(high) << nat(32)) | nat(low))
+        result("integers", array(rng.next_int() for _ in range(16)))
+        result("unit_bound", rng.next_int_bounded(nat(1)))
+        result("max_bound", array(rng.next_int_bounded(nat(2147483647)) for _ in range(8)))
+
+    reference = run_selene(main, 1)
+    expected = {key: [shot[key] for shot in reference] for key in reference[0]}
+    for shot in reference:
+        assert shot["unit_bound"] == 0
+        assert all(0 <= value < 2147483647 for value in shot["max_bound"])
+    assert run_pecos(main, 987, workers=2) == expected
+
+
+@pytest.mark.parametrize("size", [0, 1])
+def test_rng_degenerate_helpers_match_live_selene(size: int) -> None:
+    """Empty/singleton shuffles and deterministic distributions retain stream behavior."""
+
+    @guppy
+    def main() -> None:
+        rng = RNG(42)
+        values = array(i for i in range(size))
+        rng.shuffle(values)
+        # Check the operation without relying on empty-array output (unsupported
+        # by Selene) or singleton-array presentation (scalar in PECOS).
+        result("length", len(values))
+        if size == 1:
+            result("element", values[0])
+        single = make_discrete_distribution(array(3.0))
+        sparse = make_discrete_distribution(array(0.0, 2.0, 0.0))
+        result("single", array(single.sample(rng) for _ in range(8)))
+        result("sparse", array(sparse.sample(rng) for _ in range(8)))
+        result("after_helpers", rng.random_int())
+        rng.discard()
+
+    reference = run_selene(main, 1)
+    expected = {key: [shot[key] for shot in reference] for key in reference[0]}
+    for shot in reference:
+        assert shot["length"] == size
+        if size == 1:
+            assert shot["element"] == 0
+        assert shot["single"] == [0] * 8
+        assert shot["sparse"] == [1] * 8
+    assert run_pecos(main, 987, workers=2) == expected
+
+
+@pytest.mark.parametrize("bound", [0, -1, -(2**31)])
+def test_nonpositive_platform_rng_bounds_fail_cleanly(bound: int) -> None:
+    """Do not emulate Selene's crash/unsigned reinterpretation for invalid bounds."""
+
+    @guppy
+    def main() -> None:
+        rng = RNG(42)
+        result("sample", rng.random_int_bounded(bound))
+        rng.discard()
+
+    with pytest.raises(RuntimeError, match=r"random_rng.*bound must be positive"):
+        run_pecos(main, 1, shots=1)
+    assert run_pecos(rng_program(42), 1, shots=1) == {key: [value] for key, value in EXPECTED.items()}
+
+
+def test_reusable_simulation_recovers_from_rng_error_after_feedback() -> None:
+    """An error on the second global shot must not poison a reset simulation."""
+
+    @guppy
+    def main() -> None:
+        shot = get_current_shot()
+        rng = RNG(42 + shot)
+        q = qubit()
+        x(q)
+        observed = measure(q).read()
+        if observed and shot == 1:
+            result("invalid", rng.random_int_bounded(0))
+        result("value", rng.random_int())
+        rng.discard()
+
+    simulation = sim(Guppy(main)).classical(selene_engine()).qubits(1).seed(42).workers(1).build()
+    with pytest.raises(RuntimeError, match=r"random_rng.*bound must be positive"):
+        simulation.run(3)
+    simulation.reset()
+    assert simulation.run(1).to_dict() == {"value": [1085446021]}
+    assert simulation.run(1).to_dict() == {"value": [1085446021]}

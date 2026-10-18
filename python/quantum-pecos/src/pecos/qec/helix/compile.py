@@ -46,8 +46,11 @@ def min_cost_words(generators: Mapping[str, Matrix], costs: Mapping[str, int]) -
         raise ValueError(msg)
     symplectic = tuple(tuple(int((i + size // 2) % size == j) for j in range(size)) for i in range(size))
     for name, matrix in generators.items():
-        if not isinstance(name, str) or not name:
-            msg = f"Invalid generator name {name!r}"
+        if not isinstance(name, str):
+            msg = f"Generator names must be strings, got {name!r}"
+            raise TypeError(msg)
+        if not name:
+            msg = "Generator names must be nonempty"
             raise ValueError(msg)
         if not isinstance(matrix, tuple) or any(
             not isinstance(row, tuple) or any(type(bit) is not int for bit in row) for row in matrix
@@ -61,8 +64,14 @@ def min_cost_words(generators: Mapping[str, Matrix], costs: Mapping[str, int]) -
         if _multiply(_multiply(transpose, symplectic), matrix) != symplectic:
             msg = f"Generator {name!r} is not symplectic: {matrix!r}"
             raise ValueError(msg)
-        if name not in costs or type(costs[name]) is not int or costs[name] < 0:
-            msg = f"Generator {name!r}: expected nonnegative integer cost, got {costs.get(name)!r}"
+        if name not in costs:
+            msg = f"Generator {name!r} has no cost"
+            raise ValueError(msg)
+        if type(costs[name]) is not int:
+            msg = f"Generator {name!r}: expected an int cost, got {costs[name]!r}"
+            raise TypeError(msg)
+        if costs[name] < 0:
+            msg = f"Generator {name!r}: expected a nonnegative cost, got {costs[name]!r}"
             raise ValueError(msg)
     if extra := sorted(set(costs) - set(generators), key=repr):
         msg = f"costs name unknown generators {extra!r}"
@@ -85,7 +94,10 @@ def min_cost_words(generators: Mapping[str, Matrix], costs: Mapping[str, int]) -
 
 def parse_signed_logical_pauli(image: str, size: int) -> tuple[int, tuple[int, ...]]:
     """Return (sign bit, symplectic bits) for a canonical signed logical Pauli on size qubits."""
-    if not isinstance(image, str) or not image or image[0] not in "+-":
+    if not isinstance(image, str):
+        msg = f"Expected a signed logical Pauli string, got {image!r}"
+        raise TypeError(msg)
+    if not image or image[0] not in "+-":
         msg = f"Expected signed logical Pauli, got {image!r}"
         raise ValueError(msg)
     factors = re.findall(r"([XYZ])(0|[1-9][0-9]*)", image[1:])

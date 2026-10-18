@@ -16,8 +16,8 @@ from pecos.qec.helix.compile import Matrix, parse_signed_logical_pauli
 class LogicalGate:
     """Physical operations in time order; swap denotes a virtual relabel.
 
-    Indices name physical positions at the moment each op runs, so an op after
-    swap(a, b) acts on the state that was at b. A relabel renderer must route
+    Indices name physical positions at the moment each op runs, so an op on a
+    after swap(a, b) acts on the state that was at b. A relabel renderer must route
     later indices through the accumulated permutation instead of moving qubits.
     """
 
@@ -72,7 +72,10 @@ def logical_action(code: HelixCode, gate: LogicalGate) -> dict[str, str]:
         if op not in arities or len(qubits) != arities[op] or len(set(qubits)) != len(qubits):
             msg = f"Gate {gate.name}: invalid operation {(op, qubits)!r}"
             raise ValueError(msg)
-        if any(type(q) is not int or not 0 <= q < code.n for q in qubits):
+        if any(type(q) is not int for q in qubits):
+            msg = f"Gate {gate.name}: qubit indices must be ints, got {qubits!r}"
+            raise TypeError(msg)
+        if any(not 0 <= q < code.n for q in qubits):
             msg = f"Gate {gate.name}: invalid qubits {qubits!r} for n={code.n}"
             raise ValueError(msg)
         clifford = getattr(CliffordRep, op)(*qubits).compose(clifford)

@@ -19,8 +19,8 @@ class HelixCode:
     k: int
     distance: int
     stabilizers: tuple[str, ...]
-    logical_x: tuple[str, str]
-    logical_z: tuple[str, str]
+    logical_x: tuple[str, ...]
+    logical_z: tuple[str, ...]
     blocks: tuple[tuple[int, ...], ...]
 
 

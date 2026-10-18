@@ -16,6 +16,7 @@ from pecos.qec.helix import (
     logical_action,
     logical_pauli_fixup,
     min_cost_words,
+    parse_signed_logical_pauli,
     symplectic_action,
 )
 from pecos.testing import group_contains
@@ -157,10 +158,11 @@ def multiply(left, right):
 
 def pauli_ops(spelling, code):
     """Physical representative; global phase of Y is irrelevant to conjugation."""
+    _, bits = parse_signed_logical_pauli("+" + spelling, code.k)
     ops = []
     for j in range(code.k):
-        for letter, rows in (("X", code.logical_x), ("Z", code.logical_z)):
-            if f"{letter}{j}" in spelling or f"Y{j}" in spelling:
+        for has, rows in ((bits[j], code.logical_x), (bits[code.k + j], code.logical_z)):
+            if has:
                 ops.extend((p.lower(), (q,)) for q, p in enumerate(rows[j]) if p != "I")
     return tuple(ops)
 
@@ -194,16 +196,17 @@ def test_physical_round_trips(compiled):
         for label, representative in zip(("X0", "X1", "Z0", "Z1"), code.logical_x + code.logical_z, strict=True):
             image = corrected.apply(PauliString.from_str(representative))
             desired = PauliString.I()
+            sign, bits = parse_signed_logical_pauli(target[label], code.k)
             for j in range(code.k):
                 x = PauliString.from_str(code.logical_x[j])
                 z = PauliString.from_str(code.logical_z[j])
-                if f"Y{j}" in target[label]:
+                if bits[j] and bits[code.k + j]:
                     desired = desired * PauliString(phase=1) * x * z
-                elif f"X{j}" in target[label]:
+                elif bits[j]:
                     desired = desired * x
-                elif f"Z{j}" in target[label]:
+                elif bits[code.k + j]:
                     desired = desired * z
-            if target[label][0] == "-":
+            if sign:
                 desired = -desired
             assert group.contains_with_phase(image * desired)
 
@@ -282,6 +285,9 @@ def gate_permutation(gate):
 
 
 def test_relabels_follow_paper_operator_products():
+    # SWAP's logical action is the same under either reading of the listing, so
+    # this permutation check is its only time-order guard. The reading itself is
+    # confirmed independently by CNOT_SWAP's signed images (CNOT then SWAP).
     gates = c4_helix_gates()
     swap_listing = (
         [(4 * i, 2 + 4 * i) for i in range(5)]
@@ -300,11 +306,36 @@ def test_boolean_and_unknown_inputs_rejected():
         min_cost_words({"h": h, "g": ((0, True), (1, 0))}, {"h": 0, "g": 0})
     with pytest.raises(ValueError, match="2x2 matrix of bits"):
         min_cost_words({"h": h, "g": ((0, 2), (1, 0))}, {"h": 0, "g": 0})
-    with pytest.raises(ValueError, match="nonnegative integer cost"):
-        min_cost_words({"h": h}, {"h": True})
+    for bad_cost in (True, 1.0, "1"):
+        with pytest.raises(TypeError, match="expected an int cost"):
+            min_cost_words({"h": h}, {"h": bad_cost})
+    with pytest.raises(ValueError, match="has no cost"):
+        min_cost_words({"h": h}, {})
     with pytest.raises(ValueError, match="unknown generators"):
         min_cost_words({"h": h}, {"h": 0, "g": 1})
     with pytest.raises(TypeError, match="expected a tuple matrix"):
         min_cost_words({"h": [[0, 1], [1, 0]]}, {"h": 0})
-    with pytest.raises(ValueError, match="invalid qubits"):
+    with pytest.raises(TypeError, match="names must be strings"):
+        min_cost_words({1: h}, {1: 0})
+    with pytest.raises(TypeError, match="qubit indices must be ints"):
         logical_action(c4_helix_code(), LogicalGate("bool", (("h", (True,)),)))
+    with pytest.raises(ValueError, match="invalid qubits"):
+        logical_action(c4_helix_code(), LogicalGate("range", (("h", (20,)),)))
+    with pytest.raises(TypeError, match="logical Pauli string"):
+        parse_signed_logical_pauli(None, 2)
+
+
+def test_pauli_ops_including_y():
+    """A logical Y0 built with y on the X0/Z0 overlap flips X0 and Z0 only."""
+    code = c4_helix_code()
+    x_support = {q for q, p in enumerate(code.logical_x[0]) if p != "I"}
+    z_support = {q for q, p in enumerate(code.logical_z[0]) if p != "I"}
+    overlap = x_support & z_support
+    assert len(overlap) % 2 == 1
+    ops = (
+        tuple(("y", (q,)) for q in sorted(overlap))
+        + tuple(("x", (q,)) for q in sorted(x_support - overlap))
+        + tuple(("z", (q,)) for q in sorted(z_support - overlap))
+    )
+    expected = {"X0": "-X0", "X1": "+X1", "Z0": "-Z0", "Z1": "+Z1"}
+    assert logical_action(code, LogicalGate("Y0", ops)) == expected

@@ -22,6 +22,13 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from pecos_rslib import (
+    validate_phir_classical_declaration,
+    validate_phir_result_counts,
+    validate_phir_result_reference,
+)
+
+from pecos._phir_declarations import validate_classical_inputs
 from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
 from pecos.reps.pyphir import types as pt
 from pecos.typing import PhirModel
@@ -89,6 +96,7 @@ class PhirClassicalInterpreter:
         self.cid2dtype = None
         self.csym2id = None
         self.cvar_meta = None
+        self._result_references = {}
 
         self.phir_validate = True
 
@@ -102,6 +110,7 @@ class PhirClassicalInterpreter:
         """Reset the state to that at initialization."""
         self.program = None
         self.foreign_obj = None
+        self._result_references = {}
         self._reset_env()
 
     def init(
@@ -127,6 +136,9 @@ class PhirClassicalInterpreter:
         else:
             self.program = self.program.to_phir_dict()
 
+        if isinstance(self.program, dict):
+            validate_classical_inputs(self.program)
+
         # Assume PHIR dict format, validate PHIR
         if isinstance(self.program, dict) and self.phir_validate:
             PhirModel.model_validate(self.program)
@@ -147,6 +159,10 @@ class PhirClassicalInterpreter:
 
         self.csym2id = dict(self.program.csym2id)
         self.cvar_meta = list(self.program.cvar_meta)
+        self._result_references = {}
+        for cvar in self.cvar_meta:
+            dtype = data_type_map[cvar.data_type]
+            self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
 
         self.initialize_cenv()
 
@@ -187,6 +203,9 @@ class PhirClassicalInterpreter:
         bit), so ``S + 1`` must fit the backing width N. An unsigned size-S
         register is a ``u(S)`` and must satisfy ``S <= N``.
         """
+        if data_type == "bool":
+            validate_phir_classical_declaration(variable, data_type, size)
+            return
         needed = size + 1 if data_type in signed_data_types else size
         if needed > type_width:
             kind = "signed" if data_type in signed_data_types else "unsigned"
@@ -207,7 +226,6 @@ class PhirClassicalInterpreter:
             for cvar in self.cvar_meta:
                 cvar: pt.data.CVarDefine
                 dtype = data_type_map[cvar.data_type]
-                self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
 
@@ -300,20 +318,21 @@ class PhirClassicalInterpreter:
         cval = self.get_cval(cvar)
         dtype = type(cval)
 
-        # Get bit width using Rust-backed dtype system
-        bit_width = dtype.itemsize * 8
+        # Bit reads need only the value, including for direct API callers.
+        is_bool = isinstance(cval, bool)
+        bit_width = 1 if is_bool else dtype.itemsize * 8
 
         # Check if idx is within the valid range for the data type
-        if idx >= bit_width:
+        if idx >= bit_width or (is_bool and idx < 0):
             msg = f"Bit index {idx} out of range for {dtype} (max {bit_width - 1})"
             raise ValueError(
                 msg,
             )
 
-        # Use Rust-backed bitwise operations
+        if is_bool:
+            return int(cval)
         one = dtype(1)
         mask = one << dtype(idx)
-
         return (cval & mask) >> dtype(idx)
 
     def eval_expr(
@@ -458,18 +477,15 @@ class PhirClassicalInterpreter:
         if isinstance(cvar, tuple | list):
             cvar, i = cvar
 
-        cid = self.csym2id[cvar]
-        dtype = self.cid2dtype[cid]
+        self._validate_assignment_target(cvar if i is None else (cvar, i))
+        self._assign_value(self.csym2id[cvar], i, val)
 
-        cval = self.cenv[cid]
-        val = dtype(val)
-        if i is None:
-            cval = val
-        else:
-            one = dtype(1)
-            i = dtype(i)
-            cval &= ~(one << i)
-            cval |= (val & one) << i
+    def _assign_value(self, cid: int, i: int | None, val: int) -> None:
+        """Store a value at an already validated classical destination."""
+        dtype = self.cid2dtype[cid]
+        cval = int(self.cenv[cid])
+        val = int(val)
+        cval = val if i is None else (cval & ~(1 << i)) | ((val & 1) << i)
 
         # Wrap the value to the register's declared width. In PHIR a signed
         # size-S register means an i(S+1) integer -- S data bits plus a sign
@@ -486,8 +502,26 @@ class PhirClassicalInterpreter:
             raw -= 1 << width
         self.cenv[cid] = dtype(raw)
 
+    def _validate_assignment_target(self, target: str | list | tuple) -> None:
+        """Reject undeclared targets and bit writes beyond the declared size."""
+        name, index = (target, None) if isinstance(target, str) else target
+        self._validate_classical_write(name, index, "Assignment")
+
+    def _validate_classical_write(self, name: str, index: int | None, operation: str) -> None:
+        """Check a write against a declared classical register's bit count."""
+        meta = self._classical_meta(name, operation)
+        if index is not None and not 0 <= index < meta.size:
+            msg = (
+                f"PHIR interpreter failed: {operation} write {name}[{index}] is out of range "
+                f"for a register of declared size {meta.size}; use an index below {meta.size}"
+            )
+            raise ValueError(msg)
+
     def handle_cops(self, op: pt.opt.COp) -> None:
         """Handle the processing of classical operations."""
+        if op.name == "=" or isinstance(op, pt.opt.FFCall):
+            for target in op.returns or []:
+                self._validate_assignment_target(target)
         if op.name == "=":
             args = [self.eval_expr(a) for a in op.args]
 
@@ -495,26 +529,42 @@ class PhirClassicalInterpreter:
                 self.assign_int(r, a)
 
         elif op.name == "Result":
-            # The "Result" instruction maps internal register names to external ones
-            # For example: {"cop": "Result", "args": ["m"], "returns": ["c"]}
-            # maps the "m" register to "c" for user-facing results
-            for src_reg, dst_reg in zip(op.args, op.returns, strict=False):
-                if isinstance(src_reg, str) and src_reg in self.csym2id:
-                    # If source register exists, copy its value to the destination register
-                    src_id = self.csym2id[src_reg]
-                    src_val = self.cenv[src_id]
-                    src_size = self.cvar_meta[src_id].size
-                    src_type = self.cvar_meta[src_id].data_type
-
-                    # Create destination register if it doesn't exist yet
-                    if dst_reg not in self.csym2id:
-                        # Use the correct method to create a new variable
-                        dtype = data_type_map[src_type]
-                        self.add_cvar(dst_reg, dtype, src_size)
-
-                    # Copy the value
-                    dst_id = self.csym2id[dst_reg]
-                    self.cenv[dst_id] = src_val
+            # After first execution, mutating op.args or op.returns is unsupported.
+            decoded = self._result_references.get(op)
+            if decoded is None:
+                # Counts depend on execution, like native PHIR. Cache only a
+                # successful decode, including for COp objects supplied directly.
+                validate_phir_result_counts(len(op.args), len(op.returns or []))
+                sources = tuple(self._result_reference(ref, "args") for ref in op.args)
+                destinations = tuple(self._result_reference(ref, "returns") for ref in op.returns)
+                decoded = sources, destinations
+                self._result_references[op] = decoded
+            sources, destinations = decoded
+            for name, index in sources:
+                self._classical_meta(name)
+                self._check_result_index(name, index)
+            for name, index in destinations:
+                if name in self.program.qvar_meta:
+                    msg = (
+                        f"PHIR interpreter failed: Result: destination {json.dumps(name, ensure_ascii=False)} "
+                        "is quantum; "
+                        "use a classical variable or a new export name"
+                    )
+                    raise ValueError(msg)
+                self._check_result_index(name, index)
+            for (source, source_index), (destination, destination_index) in zip(sources, destinations, strict=True):
+                value = int(self.get_cval(source))
+                if source_index is not None:
+                    value = (value >> source_index) & 1
+                if destination not in self.csym2id:
+                    if destination_index is None:
+                        meta = self._classical_meta(source)
+                        self.add_cvar(destination, data_type_map[meta.data_type], meta.size)
+                    else:
+                        self.add_cvar(destination, data_type_map["u64"], max(32, destination_index + 1))
+                self._check_result_index(destination, destination_index)
+                target = destination if destination_index is None else (destination, destination_index)
+                self.assign_int(target, value)
 
         elif isinstance(op, pt.opt.FFCall):
             args = []
@@ -543,11 +593,61 @@ class PhirClassicalInterpreter:
             msg = f"Unsupported COp: {op}"
             raise Exception(msg)
 
+    def _classical_meta(self, name: str, operation: str = "Result or measurement") -> pt.data.CVarDefine:
+        """Resolve a declared classical Result or measurement register."""
+        if name not in self.csym2id:
+            msg = (
+                f"PHIR interpreter failed: {operation}: unknown classical variable "
+                f"{json.dumps(name, ensure_ascii=False)}; "
+                "declare it with cvar_define before use"
+            )
+            raise ValueError(msg)
+        return self.cvar_meta[self.csym2id[name]]
+
+    @staticmethod
+    def _result_reference(reference: str | list | tuple, field: str = "returns") -> tuple[str, int | None]:
+        """Decode references with native JSON diagnostics and exception types."""
+        return validate_phir_result_reference(json.dumps(reference), field)
+
+    def _check_result_index(self, name: str, index: int | None) -> None:
+        """Check an indexed Result against declared storage or a new u64 destination."""
+        size = self._classical_meta(name).size if name in self.csym2id else 64
+        if index is not None and not 0 <= index < size:
+            msg = (
+                f"PHIR interpreter failed: Result: bit index {index} is invalid for register "
+                f"{json.dumps(name, ensure_ascii=False)} "
+                f"of declared size {size}; use an index below {size}"
+            )
+            raise ValueError(msg)
+
+    @staticmethod
+    def _measurement_reference(reference: str | tuple | list) -> tuple[str, int | None]:
+        """Decode a measurement key without a Result diagnostic or an FFI call."""
+        if isinstance(reference, str):
+            name, index = reference, None
+        elif (
+            isinstance(reference, tuple | list)
+            and len(reference) == 2
+            and isinstance(reference[0], str)
+            and isinstance(reference[1], int)
+            and not isinstance(reference[1], bool)
+        ):
+            name, index = reference
+        else:
+            msg = (
+                f"PHIR interpreter failed: Measurement: invalid destination {reference!r}; "
+                "use a declared classical name or [name, integer bit index]"
+            )
+            raise TypeError(msg)
+        return name, index
+
     def receive_results(self, qsim_results: list[dict]) -> None:
-        """Receive measurement results and assign as needed."""
+        """Validate measurement destinations against declarations when results arrive."""
         for meas in qsim_results:
             for cvar, val in meas.items():
-                self.assign_int(cvar, val)
+                name, index = self._measurement_reference(cvar)
+                self._validate_classical_write(name, index, "Measurement")
+                self._assign_value(self.csym2id[name], index, val)
 
     def results(self, *, return_int: bool = True) -> dict:
         """Dumps program final results."""

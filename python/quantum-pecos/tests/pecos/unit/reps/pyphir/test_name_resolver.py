@@ -13,6 +13,7 @@
 
 import pecos as pc
 import pytest
+from pecos.reps.pyphir import PyPHIR
 from pecos.reps.pyphir.name_resolver import sim_name_resolver
 from pecos.reps.pyphir.op_types import QOp
 
@@ -79,13 +80,25 @@ def test_rxyxy2q_passes_through(angles) -> None:
 
 @pytest.mark.parametrize("angles", [None, (), (-0.73,), (-0.73, 0.41, 0.2)])
 def test_rxyxy2q_rejects_wrong_angles(angles) -> None:
-    """The resolver rejects missing and extra angles."""
-    with pytest.raises(ValueError, match="exactly two angles"):
-        sim_name_resolver(QOp(name="RXYXY2Q", angles=angles, args=[(2, 0)]))
+    """PHIR validation rejects missing and extra angles before name resolution."""
+    with pytest.raises(ValueError, match="exactly 2 angles"):
+        PyPHIR.from_phir(_rxyxy2q_program(angles, [[["q", 2], ["q", 0]]]))
 
 
 @pytest.mark.parametrize("args", [[], [2], [(2,)], [(2, 0, 1)]])
 def test_rxyxy2q_rejects_wrong_qubits(args) -> None:
-    """The resolver rejects incomplete qubit pairs."""
-    with pytest.raises(ValueError, match="complete qubit pairs"):
-        sim_name_resolver(QOp(name="RXYXY2Q", angles=(-0.73, 0.41), args=args))
+    """PHIR validation rejects incomplete qubit pairs before name resolution."""
+    symbolic = [[["q", q] for q in arg] if isinstance(arg, tuple) else ["q", arg] for arg in args]
+    with pytest.raises(ValueError, match="supply"):
+        PyPHIR.from_phir(_rxyxy2q_program((-0.73, 0.41), symbolic))
+
+
+def _rxyxy2q_program(angles, args):
+    op = {"qop": "RXYXY2Q", "args": args}
+    if angles is not None:
+        op["angles"] = [list(angles), "rad"]
+    return {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [{"data": "qvar_define", "variable": "q", "size": 3}, op],
+    }

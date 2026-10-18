@@ -36,6 +36,7 @@ impl PhirJsonEngineProgram {
         let version = detect_version(json)?;
         let program: serde_json::Value =
             serde_json::from_str(json).map_err(|e| PecosError::Input(e.to_string()))?;
+        crate::v0_1::classical_validation::validate_classical_inputs(&program)?;
         if let Some(ops) = program.get("ops").and_then(serde_json::Value::as_array) {
             crate::v0_1::declarations::validate_json_operations(ops)?;
         }
@@ -382,7 +383,7 @@ mod tests {
             "metadata": {},
             "ops": [
                 {"data": "cvar_define", "data_type": "u32", "variable": "result", "size": 1},
-                {"cop": "Result", "args": [0], "returns": [["result", 0]]}
+                {"cop": "Result", "args": ["result"], "returns": [["result", 0]]}
             ]
         }"#;
 
@@ -405,7 +406,7 @@ mod tests {
                 {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
                 {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 2},
                 {"data": "cvar_define", "data_type": "u32", "variable": "result", "size": 1},
-                {"cop": "Result", "args": [0], "returns": [["result", 0]]}
+                {"cop": "Result", "args": ["result"], "returns": [["result", 0]]}
             ]
         }"#;
 

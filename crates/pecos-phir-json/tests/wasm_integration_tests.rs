@@ -88,6 +88,7 @@ mod tests {
                 "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
             },
             "ops": [
+                {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
                 {"cop": "ffcall", "function": "add", "args": [5, 7], "returns": ["result"]},
                 {"cop": "Result", "args": ["result"], "returns": ["output"]}
             ]
@@ -227,6 +228,7 @@ mod tests {
                 "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
             },
             "ops": [
+                {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
                 {"cop": "ffcall", "function": "add", "args": [123, 456], "returns": ["result"]},
                 {"cop": "Result", "args": ["result"], "returns": ["output"]}
             ]
@@ -279,6 +281,7 @@ mod tests {
                 "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
             },
             "ops": [
+                {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
                 {"cop": "ffcall", "function": "non_existent_function", "args": [1, 2], "returns": ["result"]},
                 {"cop": "Result", "args": ["result"], "returns": ["output"]}
             ]

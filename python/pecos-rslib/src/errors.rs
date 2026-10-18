@@ -2,12 +2,36 @@
 
 use pecos_core::errors::PecosError;
 use pyo3::PyErr;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 
 pub(crate) fn simulation_error(error: PecosError, context: &str) -> PyErr {
+    if let Some(reference) = result_reference_error(&error) {
+        let message = format!("PHIR interpreter failed: {reference}");
+        return if reference.wrong_type {
+            PyTypeError::new_err(message)
+        } else {
+            PyValueError::new_err(message)
+        };
+    }
     match error {
         PecosError::Input(message) => PyValueError::new_err(format!("{context}: {message}")),
         error => PyRuntimeError::new_err(format!("{context}: {error}")),
+    }
+}
+
+pub(crate) fn result_reference_error(
+    error: &PecosError,
+) -> Option<pecos_phir_json::v0_1::classical_validation::ResultReferenceError> {
+    match error {
+        PecosError::Input(message) => {
+            pecos_phir_json::v0_1::classical_validation::ResultReferenceError::from_input_message(
+                message,
+            )
+        }
+        PecosError::WithContext { source, .. } => source
+            .downcast_ref::<PecosError>()
+            .and_then(result_reference_error),
+        _ => None,
     }
 }
 

@@ -126,11 +126,7 @@ impl PhirJsonEngine {
     /// }
     /// ```
     pub fn from_json(json_str: &str) -> Result<Self, PecosError> {
-        let program: PHIRProgram = serde_json::from_str(json_str).map_err(|e| {
-            PecosError::Input(format!(
-                "Failed to parse PHIR program: Invalid JSON format: {e}"
-            ))
-        })?;
+        let program = PHIRProgram::from_json(json_str)?;
 
         if program.format != "PHIR/JSON" {
             return Err(PecosError::Input(format!(
@@ -341,7 +337,7 @@ impl PhirJsonEngine {
                         return Ok(Some(self.message_builder.build()));
                     }
                     // Pass the op itself so an ffcall can find its function name.
-                    let ended = self.processor.handle_classical_op(
+                    self.processor.handle_classical_op(
                         cop,
                         args,
                         returns,
@@ -349,9 +345,6 @@ impl PhirJsonEngine {
                         0,
                     )?;
                     self.advance_cursor();
-                    if ended {
-                        return Ok(Some(self.message_builder.build()));
-                    }
                 }
                 Operation::Block {
                     block,

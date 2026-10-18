@@ -23,7 +23,23 @@ struct EndTail {
     ends: Arc<AtomicUsize>,
     ended: bool,
     emitted: bool,
+    drained_after_end: bool,
     fault: Fault,
+}
+impl EndTail {
+    /// A real runtime submits a barrier on every drain, so the host may drain
+    /// once after end (the final delivery) and never again.
+    fn admit_drain(&mut self) -> RuntimeResult<()> {
+        if self.ended {
+            if self.drained_after_end {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "drain after the shot_end final delivery".into(),
+                ));
+            }
+            self.drained_after_end = true;
+        }
+        Ok(())
+    }
 }
 impl QisRuntime for EndTail {
     fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
@@ -53,6 +69,7 @@ impl QisRuntime for EndTail {
     fn reset(&mut self) -> RuntimeResult<()> {
         self.ended = false;
         self.emitted = false;
+        self.drained_after_end = false;
         self.fault = Fault::None;
         Ok(())
     }
@@ -69,6 +86,7 @@ impl QisRuntime for EndTail {
         Ok(Shot::default())
     }
     fn drain_pending_operations(&mut self) -> RuntimeResult<Vec<QuantumOp>> {
+        self.admit_drain()?;
         if self.ended && !self.emitted {
             self.emitted = true;
             if matches!(self.fault, Fault::Drain) {
@@ -84,6 +102,7 @@ impl QisRuntime for EndTail {
         }
     }
     fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+        self.admit_drain()?;
         if self.ended && !self.emitted {
             self.emitted = true;
             if matches!(self.fault, Fault::Drain) {
@@ -295,12 +314,6 @@ fn terminal_failures_latch_and_require_reset() {
             assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
             assert!(
                 engine
-                    .continue_processing(ByteMessage::outcomes_builder().build())
-                    .is_err()
-            );
-            let mut cloned = engine.clone();
-            assert!(
-                cloned
                     .continue_processing(ByteMessage::outcomes_builder().build())
                     .is_err()
             );

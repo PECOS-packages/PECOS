@@ -136,6 +136,11 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
                     })
                 };
                 assert_eq!(result.is_err(), mode != 0 || legacy);
+                if mode == 3 {
+                    // Must fail on the extraction bound, not on any later check.
+                    let message = result.as_ref().unwrap_err().to_string();
+                    assert!(message.contains("budget exceeded"), "{message}");
+                }
                 assert_eq!(CALLS.load(Ordering::SeqCst), 1);
                 if mode != 0 || legacy {
                     assert!(runtime.shot_end().is_err());

@@ -285,8 +285,9 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
 
     /// End the shot and return its complete final native batches, with original
     /// timing and identities. The end hook must release all remaining work;
-    /// terminal feedback is unsupported. Do not submit a barrier after native end.
-    /// Override this when the ordinary drain is not valid after end.
+    /// terminal feedback is unsupported. The default calls
+    /// `drain_pending_scheduled_operations` after `shot_end`; override this when
+    /// that drain submits a barrier or is otherwise invalid after end.
     ///
     /// # Errors
     /// Returns end-hook or final-drain errors. A partial drain cannot be retried.

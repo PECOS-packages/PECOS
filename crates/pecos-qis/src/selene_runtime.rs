@@ -49,7 +49,7 @@ impl RuntimeOperationBatch {
             .extraction_budget
             .is_some_and(|(limit, _)| self.operations.len().saturating_add(additional) > limit)
         {
-            self.callback_error = Some("scheduled operation budget exceeded");
+            self.callback_error = Some("runtime operation budget exceeded");
         }
         if self.callback_error.is_some() {
             return false;
@@ -212,7 +212,7 @@ unsafe extern "C" fn runtime_batch_custom(
         .extraction_budget
         .is_some_and(|(_, limit)| data_len > limit.saturating_sub(batch.payload_bytes))
     {
-        batch.callback_error = Some("scheduled payload budget exceeded");
+        batch.callback_error = Some("runtime payload budget exceeded");
         return;
     }
     if !batch.reserve_operations(1) {

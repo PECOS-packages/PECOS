@@ -174,14 +174,25 @@ observable_masks = [mask for _, mask in evaluated]
 batch = SampleBatch(detector_events, observable_masks)
 
 pymatching_errors = batch.decode(
-    dem.to_string_source_graphlike_decomposed(),
+    dem,
     pymatching(correlated=True),
 ).num_errors
 tesseract_errors = batch.decode(
-    dem.to_string_source_graphlike_decomposed(),
+    dem,
     tesseract(preset="fast"),
 ).num_errors
 ```
+
+Built-in specs accept the DEM object and retain its fault-sector labels. Graph
+specs project raw hyperedges during decoder preparation. Inspect the returned
+`DecodeResult.projection` (`None` when no projection was needed or when a composition
+without a shared policy projects inside its members, with no shared report); an irreducible
+fault raises by default. Explicit `pymatching(correlated=True, irreducible="drop")` removes such
+faults from the decoder model and records their indices in `projection.dropped_indices`.
+Sampling still uses the original model.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 
 `rec[-k]` is deliberately **not** interpreted against the runtime's final gate
 order. PECOS first resolves it to the canonical Guppy result ID, then follows

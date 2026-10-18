@@ -570,14 +570,6 @@ class QECCProtocol(Protocol):
         ...
 
 
-class GuppyCallable(Protocol):
-    """Protocol for Guppy-decorated functions."""
-
-    def compile(self) -> dict:
-        """Compile the Guppy function to HUGR."""
-        ...
-
-
 class QuantumBackend(Protocol):
     """Protocol for quantum simulator backends with gate operations."""
 
@@ -621,7 +613,6 @@ __all__ = [
     "ErrorGenerator",
     "ErrorModelProtocol",
     "ForeignObjectProtocol",
-    "GuppyCallable",
     "LogicalGateProtocol",
     "LogicalInstructionProtocol",
     "MachineProtocol",

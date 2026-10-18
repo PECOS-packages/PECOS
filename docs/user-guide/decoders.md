@@ -463,31 +463,54 @@ retry telemetry; the unified batch result returns predictions and aggregate scor
 
 ## Hyperedge models and matching decoders
 
-Matching-style decoders (PyMatching, Fusion Blossom and its perturbed
-correlated variant, PECOS UF, K-MWPM, belief matching, and `astar` -- though
-not `astar_full`, which consumes the full check matrix) represent a model as a
-graph whose edges touch at most two detectors. Given a model containing
-mechanisms that touch three or more, they reject it rather than silently
-ignoring those mechanisms:
+Graph decoder specs (PyMatching, Fusion Blossom and its perturbed correlated
+variant, PECOS UF, K-MWPM, non-hybrid belief matching, and `astar`) project raw
+hyperedges themselves. Projection uses disjoint components already present as
+standalone faults in the model, preserving probabilities and observable effects.
+A DetectorErrorModel object decodes its standard text plus its `fault_sector` labels.
+Those labels guide the choice of graphlike components.
+Use `batch.decode(dem, spec)` or `dem.build_decoder(spec)` to preserve them.
+Saving with `batch.save(path, dem=dem)` also preserves the object's labels in
+corpus format v2. `SampleBatch.load(path).decode(None, spec)` uses the stored
+text and labels. A labelled embedded model has object semantics, including
+provider refusal; passing `loaded.dem` explicitly decodes unlabelled text.
+All-null labels (including v1 corpora) retain text semantics and provider support.
+`loaded.dem_fault_sectors` returns a fresh, dense list of labels or `None` entries;
+batches without an embedded model return `None`. Corpus identity checks only text.
+Resaving with equal embedded text preserves labels, including with
+`allow_dem_mismatch=True`; different text writes all-null labels. An object
+always supplies its own labels. Saving never changes the source batch.
+Every save writes v2; new readers accept v1 and v2, while older installations
+reject v2 files. `loaded.format_version` reports the version actually loaded.
+Both results expose `.projection`. It is `None` when no projection was needed or
+when a composition without a shared policy projects inside its members and has
+no shared report. Text input has no fault-sector labels.
 
-```
-Invalid configuration: fusion_blossom needs a graphlike model, but this DEM has
-113 mechanism(s) touching three or more detectors. Decoding it here would
-silently ignore them. Pass a decomposed model
-(DetectorErrorModel.to_string_terminal_graphlike_decomposed() or
-to_string_source_graphlike_decomposed()), or use a decoder that accepts
-hyperedges such as bp_osd or tesseract.
-```
+The default `irreducible="refuse"` rejects faults that cannot be decomposed and
+reports their count and input indices. To remove those faults from the decoder's
+model explicitly, use `pymatching(correlated=True, irreducible="drop")` or the
+string `"pymatching:irreducible=drop"`. Sampling still uses the original model.
+Shots that fire a dropped fault can make some graph decoders fail on detectors
+left without edges ([#1266](https://github.com/PECOS-packages/PECOS/issues/1266)).
+Alternatively, use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()`.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
 
-For graph matchers, prefer `DetectorErrorModel.to_string_source_graphlike_decomposed()`
-and check for residual hyperedges. It uses source provenance to choose components.
-The terminal projection mentioned in the diagnostic is a coordinate-based
-approximation: it invents components that need not be physical mechanisms and
-can decode less accurately even when their observable labels are consistent.
+Supplied `^` decompositions remain supported and are used verbatim when every
+component touches at most two detectors. Mixing them with raw hyperedges is an
+error. Hybrid belief matching still takes separate full and decomposed models.
+Windowed decoding projects the full model using the inner spec's policy before
+windowing; beam search still requires graphlike input in its phase-1 windows.
+A graph decoder in beam phase 2 projects the full residual model under Refuse.
+Drop is rejected in compositions without a shared projection report, including
+beam search and mixed graph/hypergraph ensembles. Every graph member must share
+the policy and the composition must resolve to a shared projection before Drop
+is allowed. Phase 2 may use a hyperedge-capable decoder selected through Rust
+`BeamSearchConfig.phase2` or `pecos_rslib.decoders.beamsearch(phase2=...)`;
+the beamsearch string grammar has no `phase2` key.
 
-Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
-decomposed projection (a model written with `^` separators passes: each component is graphlike). See
+See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,
 and for provenance-based decomposition of a hyperedge model into a graphlike

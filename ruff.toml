@@ -162,11 +162,6 @@ ignore = [
     "PLC0415",  # Import inside function - optional guppylang check
     "SLF001",   # Private member access - accessing _to_program() on program wrappers
 ]
-# HUGR to DAG converter - lazy hugr imports, hugr private API access
-"python/quantum-pecos/src/pecos/circuit_converters/hugr_to_dag.py" = [
-    "PLC0415",  # Import inside function - hugr not always available
-    "SLF001",   # Private member access - hugr._extension is the only way to get extension name
-]
 # QuantumCircuit - internal API access for tick/gate management
 "python/quantum-pecos/src/pecos/circuits/quantum_circuit.py" = [
     "SLF001",   # Private member access - accessing internal _inner, _iter_tick, _add_gate_to_tick
@@ -370,17 +365,12 @@ ignore = [
 # Hatch build hooks - standalone build scripts, not packages
 "python/selene-plugins/*/hatch_build.py" = ["ARG002", "INP001", "PLC0415", "S603", "S607"]  # Build scripts call cargo, version arg required by interface, conditional imports for macOS
 
-# Raise inside try (TRY301)
-"python/quantum-pecos/src/pecos/_compilation/guppy.py" = ["TRY301"]  # serialization failure raised inside the compile try
-
-
 # Stub files (.pyi) - type stubs need flexibility
 "**/*.pyi" = ["ANN401", "PYI021", "PYI048"]  # Any types and stub-specific issues allowed
 
 # Optional dependency imports (PLC0415) - These files load dependencies lazily for performance
 # and to handle optional features gracefully
 "python/quantum-pecos/src/pecos/compilation_pipeline.py" = ["PLC0415"]  # Multiple optional backends
-"python/quantum-pecos/src/pecos/execute_llvm.py" = ["PLC0415"]  # Optional LLVM backends
 "python/quantum-pecos/src/pecos/qeccs/plot.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
 "python/quantum-pecos/src/pecos/tools/pseudo_threshold_tools.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
 

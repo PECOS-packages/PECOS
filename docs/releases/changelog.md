@@ -17,8 +17,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
   `^` input whose components are all graphlike is used as given.
 - DEMs that `LogicalCircuitBuilder` composes from cached slices keep detector
-  `fault_sector` labels, matching the full compile. Its public methods still
-  return DEM text, which does not carry labels. Rust: `DemSliceDetector` gains
+  `fault_sector` labels, matching the full compile. Rust: `DemSliceDetector` gains
   `fault_sector` and is no longer `Copy`.
 - Perturbed ensembles keep zero-probability errors at exactly zero in every
   perturbed copy; previously they were raised to `1e-15`.
@@ -73,6 +72,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- `LogicalCircuitBuilder.build_dem` returns a `DetectorErrorModel` object; use
+  `str(dem)` for text. Graph decoders given the object apply its detectors'
+  `fault_sector` labels, so their predictions can differ from decoding the text.
+  Python decoder providers take text only: they reject the object, and they
+  reject a corpus saved from it when it is decoded with `dem=None`.
 - Removed `pecos.execute_llvm`; use `pecos_rslib.hugr_lowering.compile_hugr_to_qis`
   for lowering and `pecos.sim` for execution.
 - Removed `pecos.compilation_pipeline.compile_guppy_to_llvm`; compose

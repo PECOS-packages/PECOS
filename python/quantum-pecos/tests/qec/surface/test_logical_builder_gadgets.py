@@ -1398,7 +1398,7 @@ def test_disjoint_terminal_bases():
     assert len(builder.operations) == 2
     assert builder.operations[0].basis == "Y"
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(lowered)
-    assert builder.build_dem()
+    assert str(builder.build_dem())
     with pytest.raises(
         ValueError,
         match=(

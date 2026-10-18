@@ -2079,7 +2079,10 @@ impl QisEngine {
                 ));
             }
             let lowered = self.quantum_ops_to_lowered_commands(ops)?;
-            self.trace_operations_chunk("shot_end", &[], None, Some(&lowered));
+            // Preserve the trace shape for runtimes with no terminal work.
+            if !lowered.is_empty {
+                self.trace_operations_chunk("shot_end", &[], None, Some(&lowered));
+            }
             Ok((!lowered.is_empty).then_some(lowered.commands))
         }
     }

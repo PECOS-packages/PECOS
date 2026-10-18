@@ -125,6 +125,37 @@ impl QisRuntime for EndTail {
 }
 
 #[test]
+fn empty_shot_end_preserves_completion_trace_shape() {
+    let runtime = EndTail {
+        emitted: true, // This runtime has no terminal work to release.
+        ..Default::default()
+    };
+    let ends = Arc::clone(&runtime.ends);
+    let mut engine = QisEngine::with_runtime(Box::new(runtime));
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    engine.set_operation_trace_collector(Arc::clone(&trace));
+    engine.dynamic_state = Some(DynamicExecutionState {
+        execution_complete: true,
+        terminal_error: None,
+        finalized: false,
+        terminal_lowering_flushed: true,
+        sync_handle: None,
+    });
+    for _ in 0..2 {
+        assert!(matches!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .unwrap(),
+            EngineStage::Complete(_)
+        ));
+    }
+    assert_eq!(ends.load(Ordering::SeqCst), 1);
+    let trace = trace.lock().unwrap();
+    let stages: Vec<_> = trace.iter().map(|chunk| chunk.stage.as_str()).collect();
+    assert_eq!(stages, ["trace_complete"]);
+}
+
+#[test]
 fn shot_end_tail_is_delivered_before_completion() {
     use pecos_engines::noise::IntoNoiseModel;
     use pecos_engines::runtime_frame::ShotContext;
@@ -139,6 +170,8 @@ fn shot_end_tail_is_delivered_before_completion() {
         let ends = Arc::clone(&runtime.ends);
         let mut engine = QisEngine::with_runtime(Box::new(runtime));
         engine.scheduled_transport = mode;
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        engine.set_operation_trace_collector(Arc::clone(&trace));
         engine.dynamic_state = Some(DynamicExecutionState {
             execution_complete: true,
             terminal_error: None,
@@ -192,6 +225,13 @@ fn shot_end_tail_is_delivered_before_completion() {
             .process(measure.build())
             .unwrap();
         assert_eq!(values.outcomes().unwrap(), vec![1]);
+        if mode == ScheduledTransport::Off {
+            let trace = trace.lock().unwrap();
+            let stages: Vec<_> = trace.iter().map(|chunk| chunk.stage.as_str()).collect();
+            assert_eq!(stages, ["shot_end", "trace_complete"]);
+            assert_eq!(trace[0].lowered_quantum_ops.len(), 1);
+            assert_eq!(trace[0].lowered_quantum_ops[0].gate_type, "X");
+        }
     }
 }
 

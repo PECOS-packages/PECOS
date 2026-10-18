@@ -109,6 +109,11 @@ pub trait QisInterface: Send + Sync {
         measurements: BTreeMap<usize, bool>,
     ) -> Result<OperationCollector, InterfaceError>;
 
+    /// Assign the job-wide index for the next program execution. This is not a
+    /// seed or the native runtime's per-worker shot ID. Interfaces without a
+    /// program-visible shot query may ignore it.
+    fn set_program_shot(&mut self, _shot: u64) {}
+
     /// Get metadata about the implementation
     fn metadata(&self) -> BTreeMap<String, String> {
         BTreeMap::new()

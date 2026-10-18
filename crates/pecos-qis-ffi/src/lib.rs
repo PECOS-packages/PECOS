@@ -32,6 +32,7 @@ use std::sync::{Condvar, Mutex};
 pub mod ffi;
 mod random;
 mod selene;
+mod shot;
 
 #[cfg(test)]
 mod test_env;
@@ -110,6 +111,8 @@ pub struct ExecutionContext {
     pub program_error: Mutex<Option<ProgramError>>,
     /// Program-seeded classical RNG; absent until seeded in the current shot.
     program_rng: Mutex<Option<pecos_random::PCGRandom>>,
+    /// Host-assigned job-wide shot index, separate from all random seeds.
+    program_shot: AtomicU64,
     /// Live libc allocations owned by this program execution, keyed by address.
     pub program_allocations: Mutex<BTreeSet<usize>>,
     /// Number of allocations actually freed for this context.
@@ -167,6 +170,7 @@ impl ExecutionContext {
             pending_result_reads: Mutex::new(Vec::new()),
             program_error: Mutex::new(None),
             program_rng: Mutex::new(None),
+            program_shot: AtomicU64::new(0),
             program_allocations: Mutex::new(BTreeSet::new()),
             program_allocation_frees: AtomicUsize::new(0),
         }
@@ -197,6 +201,7 @@ impl ExecutionContext {
             results.clear();
         }
         self.reset_program_rng();
+        self.program_shot.store(0, Ordering::SeqCst);
         self.release_program_allocations();
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();

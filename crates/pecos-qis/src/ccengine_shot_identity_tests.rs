@@ -149,7 +149,9 @@ fn failed_start_consumes_identity_and_template_clone_restarts_at_zero() {
     let mut engine = engine(runtime);
     finish(&mut engine);
     fail.store(true, Ordering::SeqCst);
+    engine.set_program_shot(77);
     assert!(engine.start(()).is_err());
+    assert!(engine.program_shot.is_none());
     fail.store(false, Ordering::SeqCst);
     engine.reset_all().unwrap();
     finish(&mut engine);

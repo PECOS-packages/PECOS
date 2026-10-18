@@ -12,6 +12,7 @@
 //! destructors, so unwinding support does not relax that lifetime requirement.
 
 pub use crate::random::*;
+pub use crate::shot::*;
 
 use crate::{Operation, QuantumOp, TraceMetadata, with_interface};
 use log::debug;

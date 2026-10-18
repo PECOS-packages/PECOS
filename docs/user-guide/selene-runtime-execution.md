@@ -24,12 +24,32 @@ produce different results; record the PECOS revision when comparing old runs.
 Selene's own driver uses component base seeds plus the shot ID, so matching IDs
 alone does not establish identical random streams between the two drivers.
 
+### Program-visible shot indices
+
+The QIS `get_current_shot()` import and `selene_get_current_shot` adapter both
+return the job-wide program index. Monte Carlo assigns `0..shots-1` independently
+of worker partitioning, after reset and before program execution. Every new run
+starts at zero; seed-report replay uses each worker's recorded `first_shot`
+offset, including nonzero offsets. The value survives measurement feedback and
+the compiled wrapper's local shot-start hook. Each invocation still executes
+one shot, so `selene_shot_count` returns one.
+
+Direct Rust `QisEngine` callers default to the engine's local runtime ID. Hosts
+can assign the next invocation with `ClassicalEngine::set_program_shot` after
+reset. The override is consumed when an admitted start is attempted, including
+execution failure. A successful reset or template clone clears it. The override
+does not change runtime callback IDs, trace indices or seed derivation.
+
 Program-seeded Guppy RNGs use their explicit seed separately from simulator and
-noise seeds. Program-visible shot queries are a separate, unfinished contract:
-the direct `get_current_shot` and `___set_random_index` imports are unsupported,
-and the PECOS `selene_get_current_shot` adapter currently returns zero. Do not
-infer support for shot-dependent program RNGs or WASM behavior from the runtime
-callback IDs. See [issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
+noise seeds. `RNG(seed)` restarts the same stream on each invocation;
+`RNG(seed + get_current_shot())` selects a shot-dependent stream that is invariant
+to worker partitioning. Querying the index does not consume RNG state. This also
+supports parameter-array selection by shot index. Program indices alone do not
+make simulator/noise streams identical between PECOS and Selene.
+
+The legacy `___set_random_index` import and broader WASM RNG integration remain
+unsupported by this change. See the remaining work in
+[issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
 
 ## Native gate lowering
 

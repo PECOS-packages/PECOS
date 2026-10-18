@@ -6,6 +6,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.qsystem.random import RNG, make_discrete_distribution
+from guppylang.std.qsystem.utils import get_current_shot
 from pecos import Guppy, selene_engine, sim
 from pecos.compilation_pipeline import compile_guppy_to_hugr
 from selene_sim import build
@@ -54,9 +55,9 @@ def helper_program(seed: int) -> object:
     return main
 
 
-def run_pecos(program: object, seed: int, shots: int = 3) -> dict:
+def run_pecos(program: object, seed: int, shots: int = 3, workers: int = 1) -> dict:
     """Return the QIS route's named result columns."""
-    return sim(Guppy(program)).classical(selene_engine()).qubits(1).seed(seed).run(shots).to_dict()
+    return sim(Guppy(program)).classical(selene_engine()).qubits(1).seed(seed).workers(workers).run(shots).to_dict()
 
 
 def run_selene(program: object, seed: int, shots: int = 3) -> list[dict]:
@@ -167,3 +168,33 @@ def test_same_named_guppy_programs_keep_their_own_constants() -> None:
     second = constant_program(29)
     assert run_pecos(first, 1) == {"x": [[13] * 32] * 3}
     assert run_pecos(second, 1) == {"x": [[29] * 32] * 3}
+
+
+def shot_rng_program() -> object:
+    """Use the program index both as an RNG stream and an array subscript."""
+
+    @guppy
+    def main() -> None:
+        shot = get_current_shot()
+        rng = RNG(42 + shot)
+        value = rng.random_int()
+        rng.discard()
+        parameters = array(11, 23, 37, 41, 59, 67, 79)
+        result("shot", shot)
+        result("rng", value)
+        result("parameter", parameters[shot])
+
+    return main
+
+
+@pytest.mark.parametrize("instance_seed", [1, 987])
+def test_program_shot_rng_and_parameters_match_live_selene(instance_seed: int) -> None:
+    """Global indices select the same parameters and RNG streams with any worker count."""
+    program = shot_rng_program()
+    reference = run_selene(program, instance_seed, shots=7)
+    expected = {key: [shot[key] for shot in reference] for key in reference[0]}
+    assert expected["shot"] == list(range(7))
+    assert expected["parameter"] == [11, 23, 37, 41, 59, 67, 79]
+    assert len(set(expected["rng"])) == 7
+    for workers in (1, 2, 3):
+        assert run_pecos(program, instance_seed, shots=7, workers=workers) == expected

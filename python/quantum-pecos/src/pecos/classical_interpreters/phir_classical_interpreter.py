@@ -110,6 +110,7 @@ class PhirClassicalInterpreter:
         """Reset the state to that at initialization."""
         self.program = None
         self.foreign_obj = None
+        self._result_references = {}
         self._reset_env()
 
     def init(
@@ -528,6 +529,7 @@ class PhirClassicalInterpreter:
                 self.assign_int(r, a)
 
         elif op.name == "Result":
+            # After first execution, mutating op.args or op.returns is unsupported.
             if op not in self._result_references:
                 # Counts depend on execution, like native PHIR. Cache only a
                 # successful decode, including for COp objects supplied directly.

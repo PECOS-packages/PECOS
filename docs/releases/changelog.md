@@ -94,7 +94,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   undeclared destinations. Both HybridEngine interpreters raise `ValueError`
   rather than `KeyError` for undeclared measurement registers, and reject writes
   outside the declared size instead of dropping the bit. Signed register sizes
-  exclude the sign bit from measurement destinations.
+  exclude the sign bit from measurement destinations. JSON-to-module conversion
+  checks destinations when it compiles, including in branches that never run;
+  the native engine and both interpreters check them when the measurement runs.
 - Result rejects quantum destinations, unknown classical sources and out-of-range
   indexed references with named errors. Declare classical sources and use a
   classical destination or a new export name.
@@ -258,6 +260,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   execution failures remain `RuntimeError`.
 
 ### Python bug fixes
+
+- The Python PHIR interpreter releases cached Result operations on a full reset.
+  Declaration size diagnostics now state the platform integer upper bound on all
+  PHIR paths, including when JSON parses an oversized integer as a float.
 
 - QuantumCircuit's PHIR exporter omits an unspecified (`None`) quantum-register
   size instead of emitting null. Consumers still require an explicit quantum size.

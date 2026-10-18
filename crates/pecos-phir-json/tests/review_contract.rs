@@ -572,14 +572,23 @@ fn assignment_unknown_target_names_the_operation() {
 fn converter_rejects_present_noninteger_register_sizes() {
     let mut failures = Vec::new();
     for data in ["cvar_define", "qvar_define"] {
-        for size in [json!(-1), json!("8"), json!(1.5), json!(true), json!(null)] {
+        for size in [
+            json!(-1),
+            json!("8"),
+            json!(1.0),
+            json!(1.5),
+            json!(true),
+            json!(null),
+            serde_json::from_str("18446744073709551616").unwrap(),
+        ] {
             let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[{
                 "data": data, "data_type": if data == "cvar_define" { "u32" } else { "qubits" },
                 "variable": "bad_size", "size": size
             }]})
             .to_string();
             let expected = format!(
-                "Register 'bad_size' has invalid size {size}; use a non-negative integer size"
+                "Register 'bad_size' has invalid size {size}; use a non-negative integer size up to {}",
+                usize::MAX
             );
             match phir_json_to_module(&source) {
                 Err(pecos_core::errors::PecosError::Input(message)) if message == expected => {}
@@ -602,12 +611,21 @@ fn declaration_size_invalid_values_agree() {
         ("cvar_define", "bool"),
         ("qvar_define", "qubits"),
     ] {
-        for size in [json!(-1), json!("8"), json!(1.5), json!(true), json!(null)] {
+        for size in [
+            json!(-1),
+            json!("8"),
+            json!(1.0),
+            json!(1.5),
+            json!(true),
+            json!(null),
+            serde_json::from_str("18446744073709551616").unwrap(),
+        ] {
             let declaration = json!({"data":data,"data_type":dtype,"variable":"a","size":size});
             let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[declaration]});
             let encoded = source.to_string();
             let expected = format!(
-                "Input error: Register 'a' has invalid size {size}; use a non-negative integer size"
+                "Input error: Register 'a' has invalid size {size}; use a non-negative integer size up to {}",
+                usize::MAX
             );
             let mut interpreter = PhirClassicalInterpreter::new();
             for (path, result) in [
@@ -616,7 +634,6 @@ fn declaration_size_invalid_values_agree() {
                 ("converter", phir_json_to_module(&encoded).map(|_| ())),
                 ("validation", validate_classical_inputs(&source)),
             ] {
-                println!("{dtype} size={size} {path}: {result:?}");
                 if !matches!(&result, Err(error) if error.to_string() == expected) {
                     failures.push(format!("{dtype} size={size} {path}: {result:?}"));
                 }

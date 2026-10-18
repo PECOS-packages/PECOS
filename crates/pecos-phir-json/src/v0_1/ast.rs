@@ -509,7 +509,7 @@ pub(crate) fn register_size(
             .map(Some)
             .map_err(|_| {
                 PecosError::Input(format!(
-                    "Register '{variable}' has invalid size {value}; use a non-negative integer size"
+                    "Register '{variable}' has invalid size {value}; use a non-negative integer size up to {}", usize::MAX
                 ))
             }),
     }

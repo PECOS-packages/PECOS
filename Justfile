@@ -1088,11 +1088,15 @@ sync-deps:
     # installed package has its dependencies, which `pecos python build`
     # refuses at the end. The check is inexact so the extension crates that
     # maturin installed do not count as drift, and it skips the remaining
-    # `reinstall-package` entries, which uv always reports as outdated.
+    # `reinstall-package` entries, which uv always reports as outdated. Those
+    # two are only checked for presence, one `uv pip show` each because it
+    # succeeds when any one of several names is installed.
     if uv sync "${SYNC_ARGS[@]}" --inexact \
         --no-install-package pecos-rslib-cuda \
         --no-install-package pecos-selene-general-noise \
         --check >/dev/null 2>&1 \
+        && uv pip show pecos-rslib-cuda >/dev/null 2>&1 \
+        && uv pip show pecos-selene-general-noise >/dev/null 2>&1 \
         && uv pip check >/dev/null 2>&1; then
         exit 0
     fi

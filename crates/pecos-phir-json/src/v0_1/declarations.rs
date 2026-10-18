@@ -89,13 +89,23 @@ pub(crate) fn validate_operations(ops: &[super::ast::Operation]) -> Result<(), P
     Declarations::default().validate_operations(ops)
 }
 
+/// Render at most 80 characters of an offending JSON value, including an ellipsis.
+pub(crate) fn render_json_value(value: &serde_json::Value) -> String {
+    let rendered = value.to_string();
+    if rendered.chars().count() <= 80 {
+        rendered
+    } else {
+        format!("{}...", rendered.chars().take(77).collect::<String>())
+    }
+}
+
 /// Decode a declaration name before validating its other fields.
 pub(crate) fn declaration_name<'a>(
     data: &str,
     value: Option<&'a serde_json::Value>,
 ) -> Result<&'a str, PecosError> {
     value.and_then(serde_json::Value::as_str).ok_or_else(|| {
-        let bad = value.map_or_else(|| "<missing>".to_owned(), ToString::to_string);
+        let bad = value.map_or_else(|| "<missing>".to_owned(), render_json_value);
         PecosError::Input(format!(
             "Declaration {data} has invalid variable {bad}; use a string variable name"
         ))
@@ -129,5 +139,23 @@ pub(crate) fn declaration_kind(data: &str) -> Option<DeclarationKind> {
         "qvar_define" => Some(DeclarationKind::Quantum),
         "cvar_define" => Some(DeclarationKind::Classical),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn json_namespace_validation_rejects_invalid_names_directly() {
+        for data in ["cvar_define", "qvar_define"] {
+            let op = serde_json::json!({"data":data,"variable":5,"size":null});
+            assert_eq!(
+                super::validate_json_operations(&[op])
+                    .unwrap_err()
+                    .to_string(),
+                format!(
+                    "Input error: Declaration {data} has invalid variable 5; use a string variable name"
+                )
+            );
+        }
     }
 }

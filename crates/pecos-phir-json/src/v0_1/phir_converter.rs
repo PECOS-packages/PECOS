@@ -20,7 +20,9 @@ use pecos_phir::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::declarations::{DeclarationKind, Declarations, declaration_name};
+use super::declarations::{
+    DeclarationKind, Declarations, declaration_kind, declaration_name, render_json_value,
+};
 use super::environment::{DataType, Environment, VariableInfo};
 
 /// Information about a bit-indexed write
@@ -177,7 +179,7 @@ impl ImprovedConverter {
                     .map(|value| {
                         value.as_str().ok_or_else(|| {
                             PecosError::Input(format!(
-                                "Register '{name}' has invalid data_type {value}"
+                                "Register '{name}' has invalid data_type {}; use a string data_type", render_json_value(value)
                             ))
                         })
                     })
@@ -428,21 +430,17 @@ impl ImprovedConverter {
         obj: &serde_json::Map<String, Value>,
         data: &str,
     ) -> Result<Option<Instruction>, PecosError> {
-        if data != "qvar_define" && data != "cvar_define" {
+        let Some(kind) = declaration_kind(data) else {
             return Err(Self::unsupported_operation("data", data));
-        }
-        let variable = declaration_name(data, obj.get("variable"))?;
-        let kind = if data == "qvar_define" {
-            DeclarationKind::Quantum
-        } else {
-            DeclarationKind::Classical
         };
+        let variable = declaration_name(data, obj.get("variable"))?;
         let data_type = obj
             .get("data_type")
             .map(|value| {
                 value.as_str().ok_or_else(|| {
                     PecosError::Input(format!(
-                        "Register '{variable}' has invalid data_type {value}"
+                        "Register '{variable}' has invalid data_type {}; use a string data_type",
+                        render_json_value(value)
                     ))
                 })
             })
@@ -464,11 +462,6 @@ impl ImprovedConverter {
                 let var_define_op =
                     VarDefineOp::new(variable.to_string(), data_type.to_string(), size);
 
-                let kind = if data == "qvar_define" {
-                    DeclarationKind::Quantum
-                } else {
-                    DeclarationKind::Classical
-                };
                 self.declarations.register(variable, kind)?;
                 let var_id = self.get_ssa_id(variable)?;
 
@@ -807,6 +800,21 @@ impl ImprovedConverter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn direct_declaration_conversion_rejects_invalid_names() {
+        for data in ["cvar_define", "qvar_define"] {
+            let op = serde_json::json!({"data":data,"variable":5,"size":null});
+            let error = ImprovedConverter::new()
+                .convert_variable_definition(op.as_object().unwrap(), data)
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Input error: Declaration {data} has invalid variable 5; use a string variable name"
+                )
+            );
+        }
+    }
 
     #[test]
     fn declaration_ssa_aliasing_regression() {

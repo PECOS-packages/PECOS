@@ -40,8 +40,9 @@ def test_wrong_quantum_type(data_type: str | None) -> None:
         "version": "0.1.0",
         "ops": [{"data": "qvar_define", "variable": "q", "data_type": data_type, "size": 2}],
     }
+    expected = "invalid data_type null" if data_type is None else "Do not know handle qvar type"
     for reader in [PyPHIR.from_phir, PhirClassicalInterpreter().init]:
-        with pytest.raises(Exception, match="Do not know handle qvar type"):
+        with pytest.raises(Exception, match=expected):
             reader(program)
 
 
@@ -195,12 +196,12 @@ def test_unreachable_redeclaration() -> None:
         PyPHIR.from_phir(program)
 
 
-@pytest.mark.parametrize("kind", ["qvar_spec", "cvar_spec"])
-def test_qc2phir_rejects_unknown_register_size(kind: str) -> None:
+@pytest.mark.parametrize(("kind", "guidance"), [("qvar_spec", "qubit count"), ("cvar_spec", "0 to 64")])
+def test_qc2phir_rejects_unknown_register_size(kind: str, guidance: str) -> None:
     """Unknown widths fail at export with metadata-specific repair guidance."""
     circuit = pecos.QuantumCircuit(**{kind: {"a": None}})
     for export in (circuit.to_phir_dict, circuit.to_phir_json):
-        with pytest.raises(ValueError, match=rf"{kind}\['a'\].*None.*use"):
+        with pytest.raises(ValueError, match=rf"{kind}\['a'\].*None.*use.*{guidance}"):
             export()
 
 
@@ -242,9 +243,8 @@ def test_projection_names_non_json_sizes(kind: str, size_case: str) -> None:
     for reader in (PyPHIR.from_phir, PhirClassicalInterpreter().init):
         with pytest.raises(ValueError, match="invalid size") as error:
             reader(source)
-        expected = (
-            f"PHIR interpreter failed: Register 'a' has invalid size {json.dumps(reprlib.repr(size))}; use {hint}"
-        )
+        stand_in = json.dumps({"python": reprlib.repr(size)}, separators=(",", ":"))
+        expected = f"PHIR interpreter failed: Register 'a' has invalid size {stand_in}; use {hint}"
         assert str(error.value) == expected
         assert len(str(error.value)) < 200
 
@@ -254,22 +254,31 @@ def test_projection_names_non_json_sizes(kind: str, size_case: str) -> None:
     "fields",
     [{}, {"variable": 5}, {"variable": None}, {"variable": True}, {"variable": []}, {"variable": {}}],
 )
-def test_invalid_declaration_names_precede_size_errors(kind: str, fields: dict) -> None:
+@pytest.mark.parametrize("validate", [False, True])
+def test_invalid_declaration_names_precede_size_errors(kind: str, fields: dict, validate: bool) -> None:
     """Every reader names malformed declarations before considering their invalid size."""
     declaration = {"data": kind, "data_type": "u32" if kind == "cvar_define" else "qubits", "size": None, **fields}
     program = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
-    bad = json.dumps(fields["variable"], separators=(",", ":")) if "variable" in fields else "<missing>"
+    value = fields.get("variable")
+    if isinstance(value, (list, dict)):
+        value = {"python": reprlib.repr(value)}
+    bad = json.dumps(value, separators=(",", ":")) if "variable" in fields else "<missing>"
     expected = f"Declaration {kind} has invalid variable {bad}; use a string variable name"
     interpreter = PhirClassicalInterpreter()
-    interpreter.phir_validate = False
+    interpreter.phir_validate = validate
     for reader in (
         PyPHIR.from_phir,
         interpreter.init,
-        RustPhirClassicalInterpreter().init,
     ):
         with pytest.raises(ValueError, match="invalid variable") as error:
             reader(program)
         assert str(error.value) == f"PHIR interpreter failed: {expected}"
+    # Native JSON readers see the original JSON value, not the Python stand-in.
+    bad = json.dumps(fields["variable"], separators=(",", ":")) if "variable" in fields else "<missing>"
+    expected = f"Declaration {kind} has invalid variable {bad}; use a string variable name"
+    with pytest.raises(ValueError, match="invalid variable") as error:
+        RustPhirClassicalInterpreter().init(program)
+    assert str(error.value) == f"PHIR interpreter failed: {expected}"
     with pytest.raises(ValueError, match="invalid variable") as error:
         PhirJsonEngine(json.dumps(program))
     assert str(error.value) == (
@@ -292,3 +301,35 @@ def test_schema_null_guard_is_internal_invariant(monkeypatch: pytest.MonkeyPatch
     }
     with pytest.raises(RuntimeError, match="Internal invariant violated: shared size check accepted an explicit null"):
         PhirModel.model_validate(source)
+
+
+@pytest.mark.parametrize("validate", [False, True])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("variable", b"m"),
+        ("variable", float("nan")),
+        ("variable", float("inf")),
+        ("variable", object()),
+        ("variable", {1, 2}),
+        ("size", 10**400),
+        ("data_type", b"u32"),
+    ],
+)
+def test_projection_rejects_non_json_declaration_fields(validate: bool, field: str, value: object) -> None:
+    """Non-JSON declaration fields get named diagnostics before schema or parser errors."""
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 1, field: value},
+        ],
+    }
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    stand_in = json.dumps({"python": reprlib.repr(value)}, separators=(",", ":"))
+    for reader in (PyPHIR.from_phir, interpreter.init):
+        with pytest.raises(ValueError, match=f"invalid {field}") as error:
+            reader(source)
+        assert stand_in in str(error.value)
+        assert ("Declaration cvar_define" if field == "variable" else "Register 'a'") in str(error.value)

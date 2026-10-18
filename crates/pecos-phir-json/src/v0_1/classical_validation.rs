@@ -1,7 +1,7 @@
 //! Shared JSON validation for classical declarations and Result references.
 use super::{
     ast::{ArgItem, infer_size, register_size},
-    declarations::{DeclarationKind, declaration_kind, declaration_name},
+    declarations::{DeclarationKind, declaration_kind, declaration_name, render_json_value},
     environment::{DataType, Environment},
 };
 use pecos_core::errors::PecosError;
@@ -107,6 +107,14 @@ pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
                 && let Some(kind) = declaration_kind(data)
             {
                 let name = declaration_name(data, op.get("variable"))?;
+                if let Some(value) = op.get("data_type")
+                    && !value.is_string()
+                {
+                    return Err(PecosError::Input(format!(
+                        "Register '{name}' has invalid data_type {}; use a string data_type",
+                        render_json_value(value)
+                    )));
+                }
                 let size = register_size(name, kind, op.get("size"))?;
                 if kind == DeclarationKind::Classical
                     && op.get("data_type").and_then(Value::as_str) == Some("bool")

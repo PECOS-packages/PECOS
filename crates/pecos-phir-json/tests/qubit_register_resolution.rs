@@ -431,21 +431,28 @@ fn omitted_quantum_data_type_defaults_to_qubits() {
 }
 
 #[test]
-fn converter_requires_quantum_variable_and_size() {
-    for (field, error) in [
-        (
-            "variable",
-            "Declaration qvar_define has invalid variable <missing>; use a string variable name",
-        ),
-        ("size", "requires a size"),
-    ] {
-        let mut input = program(&[("q", 1)], vec![]);
-        let declaration = input["ops"][0].as_object_mut().unwrap();
-        declaration.remove("data_type");
-        declaration.remove(field);
-        let result = phir_json_to_module(&input.to_string()).unwrap_err();
-        assert!(result.to_string().contains(error), "{result}");
-    }
+fn converter_entry_point_runs_shared_name_validation() {
+    let mut input = program(&[("q", 1)], vec![]);
+    input["ops"][0].as_object_mut().unwrap().remove("variable");
+    let shared =
+        pecos_phir_json::v0_1::classical_validation::validate_classical_inputs(&input).unwrap_err();
+    let converted = phir_json_to_module(&input.to_string()).unwrap_err();
+    assert_eq!(converted.to_string(), shared.to_string());
+    assert!(
+        converted
+            .to_string()
+            .contains("Declaration qvar_define has invalid variable <missing>")
+    );
+}
+
+#[test]
+fn converter_requires_quantum_size() {
+    let mut input = program(&[("q", 1)], vec![]);
+    let declaration = input["ops"][0].as_object_mut().unwrap();
+    declaration.remove("data_type");
+    declaration.remove("size");
+    let result = phir_json_to_module(&input.to_string()).unwrap_err();
+    assert!(result.to_string().contains("requires a size"), "{result}");
 }
 
 #[test]

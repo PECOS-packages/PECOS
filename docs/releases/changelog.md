@@ -76,8 +76,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - PHIR declaration sizes reject explicit null, including with
   `phir_validate=False`. The PECOS schema is deliberately stricter than upstream
   PHIR, which permits null classical sizes. Omit classical sizes for inference;
-  quantum sizes remain required. Non-JSON and non-finite sizes report the register
-  and a bounded representation of the invalid value. Missing or non-string
+  quantum sizes remain required. Non-JSON or non-finite declaration fields and
+  oversized Python integers report the register or directive and a bounded
+  representation of the invalid value. Missing or non-string
   declaration names report the declaration kind and offending value before size
   validation. QuantumCircuit export rejects None widths in qvar_spec and cvar_spec
   with instructions to supply a qubit count or a classical width from 0 to 64.

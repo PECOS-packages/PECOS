@@ -12,6 +12,7 @@
 """The program-wide declaration namespace specified by PHIR-JSON v0.1."""
 
 import json
+import math
 import reprlib
 
 from pecos_rslib import validate_phir_classical_inputs
@@ -44,6 +45,17 @@ def validate_declaration_names(operations: list[dict]) -> None:
     register_names(operations)
 
 
+def _json_declaration_value(value: object) -> object:
+    """Keep native finite JSON scalars; mark other values for named Rust rejection."""
+    if value is None or type(value) in (str, bool):
+        return value
+    if type(value) is int and -(2**63) <= value < 2**64:
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    return {"python": reprlib.repr(value)}
+
+
 def validate_classical_inputs(program: dict) -> None:
     """Validate declaration and Result fields without serializing quantum ops or metadata.
 
@@ -62,12 +74,9 @@ def validate_classical_inputs(program: dict) -> None:
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
             elif node.get("data") in ("cvar_define", "qvar_define"):
                 declaration = {key: node[key] for key in ("data", "data_type", "variable", "size") if key in node}
-                if "size" in declaration:
-                    try:
-                        json.dumps(declaration["size"], allow_nan=False)
-                    except (TypeError, ValueError):
-                        # Not JSON-serializable or not finite: pass a bounded repr to the shared check.
-                        declaration["size"] = reprlib.repr(declaration["size"])
+                for field in ("data_type", "variable", "size"):
+                    if field in declaration:
+                        declaration[field] = _json_declaration_value(declaration[field])
                 inputs.append(declaration)
             if "block" in node:
                 for field in ("ops", "true_branch", "false_branch"):

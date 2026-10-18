@@ -743,3 +743,54 @@ fn declaration_names_are_validated_before_sizes() {
         }
     }
 }
+
+#[test]
+fn declaration_diagnostics_bound_json_values() {
+    use pecos_phir_json::v0_1::classical_validation::validate_classical_inputs;
+    let value = json!(vec!["λ"; 100]);
+    let rendered = value.to_string();
+    let bounded = format!("{}...", rendered.chars().take(77).collect::<String>());
+    for field in ["variable", "size"] {
+        let mut declaration =
+            json!({"data":"cvar_define","data_type":"u32","variable":"a","size":1});
+        declaration[field] = value.clone();
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[declaration]});
+        let expected = if field == "variable" {
+            format!(
+                "Input error: Declaration cvar_define has invalid variable {bounded}; use a string variable name"
+            )
+        } else {
+            format!(
+                "Input error: Register 'a' has invalid size {bounded}; use a positive integer size that fits the data type"
+            )
+        };
+        assert_eq!(
+            validate_classical_inputs(&source).unwrap_err().to_string(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn non_declaration_data_errors_name_the_directive() {
+    use pecos_phir_json::v0_1::ast::Operation;
+    for (data, fix) in [
+        ("cvar_export", "supply the required variables array"),
+        ("future_data", "use a string variable name"),
+    ] {
+        let error = serde_json::from_value::<Operation>(json!({"data":data}))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!("Data directive '{data}' has invalid variable <missing>; {fix}")
+        );
+        assert!(matches!(
+            serde_json::from_value::<Operation>(
+                json!({"data":data,"variable":"a","data_type":"u32"})
+            )
+            .unwrap(),
+            Operation::VariableDefinition { .. }
+        ));
+    }
+}

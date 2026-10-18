@@ -1,4 +1,4 @@
-use super::declarations::{DeclarationKind, declaration_name};
+use super::declarations::{DeclarationKind, declaration_kind, declaration_name, render_json_value};
 use pecos_core::errors::PecosError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -360,34 +360,49 @@ impl<'de> Deserialize<'de> for Operation {
                 .as_str()
                 .ok_or_else(|| D::Error::custom("data must be a string"))?
                 .to_string();
-            if obj.contains_key("variables") && data != "qvar_define" && data != "cvar_define" {
+            let kind = declaration_kind(&data);
+            if obj.contains_key("variables") && kind.is_none() {
                 // DataExport
                 let variables: Vec<String> = serde_json::from_value(obj["variables"].clone())
                     .map_err(|e| D::Error::custom(format!("variables: {e}")))?;
                 Ok(Operation::DataExport { data, variables })
             } else {
                 // VariableDefinition
-                let variable = declaration_name(&data, obj.get("variable"))
-                    .map_err(D::Error::custom)?
-                    .to_owned();
-                let kind = if data == "qvar_define" {
-                    DeclarationKind::Quantum
+                let variable = if kind.is_some() {
+                    declaration_name(&data, obj.get("variable")).map_err(D::Error::custom)?
                 } else {
-                    DeclarationKind::Classical
-                };
+                    obj.get("variable")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            let bad = obj
+                                .get("variable")
+                                .map_or_else(|| "<missing>".to_owned(), render_json_value);
+                            let fix = if data == "cvar_export" {
+                                "supply the required variables array"
+                            } else {
+                                "use a string variable name"
+                            };
+                            D::Error::custom(format!(
+                                "Data directive '{data}' has invalid variable {bad}; {fix}"
+                            ))
+                        })?
+                }
+                .to_owned();
+                // Other data directives historically use classical VariableDefinition decoding.
+                let size_kind = kind.unwrap_or(DeclarationKind::Classical);
                 let data_type = obj
                     .get("data_type")
                     .map(|value| {
                         value.as_str().ok_or_else(|| {
                             D::Error::custom(format!(
-                                "Register '{variable}' has invalid data_type {value}"
+                                "Register '{variable}' has invalid data_type {}; use a string data_type", render_json_value(value)
                             ))
                         })
                     })
                     .transpose()?;
-                let raw_size =
-                    register_size(&variable, kind, obj.get("size")).map_err(D::Error::custom)?;
-                let (data_type, size) = if data == "qvar_define" {
+                let raw_size = register_size(&variable, size_kind, obj.get("size"))
+                    .map_err(D::Error::custom)?;
+                let (data_type, size) = if kind == Some(DeclarationKind::Quantum) {
                     let (_, size) = validate_quantum_declaration(&variable, data_type, raw_size)
                         .map_err(D::Error::custom)?;
                     ("qubits".to_string(), Some(size))
@@ -518,7 +533,8 @@ pub(crate) fn register_size(
             .map(Some)
             .map_err(|_| {
                 PecosError::Input(format!(
-                    "Register '{variable}' has invalid size {value}; use {hint}"
+                    "Register '{variable}' has invalid size {}; use {hint}",
+                    render_json_value(value)
                 ))
             }),
     }

@@ -472,10 +472,6 @@ class TestQuantumCircuitIf:
         assert "{'H': {0}}" in str(generate(prog))
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_repeated_mx_and_my_agree() -> None:
     """MX and MY leave the qubit in the measured eigenstate."""
     qc = QuantumCircuit()
@@ -489,3 +485,7 @@ def test_repeated_mx_and_my_agree() -> None:
     samples = SlrConverter(slr_prog).stim().compile_sampler(seed=7).sample(200)
     assert (samples[:, 0] == samples[:, 1]).all()
     assert (samples[:, 2] == samples[:, 3]).all()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -258,6 +258,8 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
                     ops.append(qubit.Measure(q[loc[0]]) > c[idx])
                     idx += 1
     elif gate_upper == "MX":
+        # Rotate into Z, measure, rotate back so the qubit is left in the
+        # measured X eigenstate (MY below does the same for Y).
         if c is not None:
             idx = measurement_offset
             for loc in locations:

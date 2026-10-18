@@ -7,13 +7,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ## Unreleased
 
 - MX leaves the measured qubit in its X-basis eigenstate everywhere, as
-  `CliffordGateable::mx` specifies. The sparse-stabilizer, stab-vec,
+  `CliffordGateable::mx` specifies. The stabilizer, sparse-stabilizer, stab-vec,
   density-matrix and state-vector engines, `CircuitExecutor`, the `pecos-qec`
   replays (`InfluenceBuilder`, `symbolic_measurement_history`, the fault-check
   runner, the DEM builder's crosstalk replay) and the SLR converters from Stim
-  and `QuantumCircuit` (MX and MY) previously left it in a Z eigenstate. Results
-  change only for circuits that reuse a qubit after MX without a reset: such
-  reuse now gives the correct outcomes and detectors.
+  and `QuantumCircuit` (MX and MY) previously left it in a Z eigenstate. Outcomes
+  change only for circuits that reuse a qubit after MX (or, in the SLR
+  converters, MY) without a reset: such reuse now gives the correct outcomes
+  and detectors.
 
 - Shot corpus format v2 stores detector fault-sector labels, and `SampleBatch.save`
   accepts a `DetectorErrorModel`. New readers accept v1 (unlabelled) and v2;

@@ -20,7 +20,8 @@ fn noiseless(model: CczModel) {
         // [kill: skip the X correction] Diagnostics must also remain zero.
         // [kill: use H_Z^T or M_Z^T] Orientation is essential to repair and correction.
         for code in codes() {
-            let protocol = NoisyCcz::new(&code, 0.0, model, meta_checks).unwrap();
+            let protocol =
+                NoisyCcz::new(&code, 0.0, model, NoiseModel::CircuitLevel, meta_checks).unwrap();
             let result = protocol.run(16, 8108).unwrap();
             let residual = result
                 .outcomes
@@ -97,10 +98,17 @@ fn forced_measurement_and_data_faults() {
                         qubit: 3 * n + index,
                         kind: GateType::X,
                     }];
-                    let result = NoisyCcz::build(&code, 0.0, model, meta_checks, &faults)
-                        .unwrap()
-                        .run(4, 71)
-                        .unwrap();
+                    let result = NoisyCcz::build(
+                        &code,
+                        0.0,
+                        model,
+                        NoiseModel::CircuitLevel,
+                        meta_checks,
+                        &faults,
+                    )
+                    .unwrap()
+                    .run(4, 71)
+                    .unwrap();
                     assert_eq!(
                         result.counts.accepted, 4,
                         "n={n}, ancilla={index}, model={model:?}"
@@ -118,10 +126,17 @@ fn forced_measurement_and_data_faults() {
                     qubit: n + 2,
                     kind: GateType::Z,
                 }];
-                let result = NoisyCcz::build(&code, 0.0, model, meta_checks, &faults)
-                    .unwrap()
-                    .run(16, 72)
-                    .unwrap();
+                let result = NoisyCcz::build(
+                    &code,
+                    0.0,
+                    model,
+                    NoiseModel::CircuitLevel,
+                    meta_checks,
+                    &faults,
+                )
+                .unwrap()
+                .run(16, 72)
+                .unwrap();
                 assert_eq!(result.counts.repair_failures, 0);
                 assert_eq!(result.counts.accepted, 0);
                 assert!(
@@ -160,10 +175,17 @@ fn image_check_even_for_zero_meta_syndrome() {
             })
             .collect::<Vec<_>>();
         for model in [CczModel::Exact, CczModel::PaperSurrogate] {
-            let result = NoisyCcz::build(&code, 0.0, model, MetaChecks::Paper, &faults)
-                .unwrap()
-                .run(8, 77)
-                .unwrap();
+            let result = NoisyCcz::build(
+                &code,
+                0.0,
+                model,
+                NoiseModel::CircuitLevel,
+                MetaChecks::Paper,
+                &faults,
+            )
+            .unwrap()
+            .run(8, 77)
+            .unwrap();
             assert_eq!(result.counts.repair_failures, 8);
             assert_eq!(result.counts.accepted, 0);
             for outcome in result.outcomes {
@@ -198,13 +220,28 @@ fn supports_and_probabilities() {
         let code = &codes()[0];
         for p in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert_eq!(
-                NoisyCcz::new(code, p, CczModel::Exact, meta_checks)
-                    .err()
-                    .unwrap(),
+                NoisyCcz::new(
+                    code,
+                    p,
+                    CczModel::Exact,
+                    NoiseModel::CircuitLevel,
+                    meta_checks
+                )
+                .err()
+                .unwrap(),
                 "p must be finite and in [0,1]"
             );
         }
-        assert!(NoisyCcz::new(code, 1.0, CczModel::Exact, meta_checks).is_ok());
+        assert!(
+            NoisyCcz::new(
+                code,
+                1.0,
+                CczModel::Exact,
+                NoiseModel::CircuitLevel,
+                meta_checks
+            )
+            .is_ok()
+        );
     }
 }
 
@@ -214,7 +251,8 @@ fn reproducibility_and_statistical_smoke() {
         let code = &codes()[0];
         for model in [CczModel::Exact, CczModel::PaperSurrogate] {
             // [contract] Decoder state and all RNG streams restart on each run.
-            let protocol = NoisyCcz::new(code, 0.01, model, meta_checks).unwrap();
+            let protocol =
+                NoisyCcz::new(code, 0.01, model, NoiseModel::CircuitLevel, meta_checks).unwrap();
             assert_eq!(
                 protocol.run(32, 2026).unwrap(),
                 protocol.run(32, 2026).unwrap()
@@ -226,7 +264,7 @@ fn reproducibility_and_statistical_smoke() {
             );
             assert_eq!(protocol.run_counts(0, 2026).unwrap(), Counts::default());
             // [contract] Nontrivial acceptance and internally consistent counts.
-            let result = NoisyCcz::new(code, 0.001, model, meta_checks)
+            let result = NoisyCcz::new(code, 0.001, model, NoiseModel::CircuitLevel, meta_checks)
                 .unwrap()
                 .run(256, 2027)
                 .unwrap();
@@ -383,10 +421,17 @@ fn residual_x_is_diagnostic_only() {
             qubit: 0,
             kind: GateType::X,
         }];
-        let result = NoisyCcz::build(code, 0.0, CczModel::PaperSurrogate, meta_checks, &faults)
-            .unwrap()
-            .run(16, 90)
-            .unwrap();
+        let result = NoisyCcz::build(
+            code,
+            0.0,
+            CczModel::PaperSurrogate,
+            NoiseModel::CircuitLevel,
+            meta_checks,
+            &faults,
+        )
+        .unwrap()
+        .run(16, 90)
+        .unwrap();
         assert_eq!(result.counts.accepted, 16);
         assert_eq!(result.counts.accepted_with_residual_x, 16);
         assert_eq!(result.counts.accepted_z_clean, 0);
@@ -406,18 +451,25 @@ fn exact_logical_pivot_x_is_not_z_clean() {
             qubit: pivot,
             kind: GateType::X,
         }];
-        let result = NoisyCcz::build(code, 0.0, CczModel::Exact, meta_checks, &faults)
-            .unwrap()
-            .run(500, 2026)
-            .unwrap();
-        println!(
-            "logical pivot={pivot}, attempted=500, accepted={}, raw logical failures={}",
-            result.counts.accepted, result.counts.logical_failures
-        );
+        let result = NoisyCcz::build(
+            code,
+            0.0,
+            CczModel::Exact,
+            NoiseModel::CircuitLevel,
+            meta_checks,
+            &faults,
+        )
+        .unwrap()
+        .run(500, 2026)
+        .unwrap();
         assert_eq!(result.counts.repair_failures, 0);
         assert_eq!(result.outcomes.len(), 500);
         assert!(result.counts.accepted > 0);
-        assert!(result.counts.logical_failures > 0);
+        assert!(
+            result.counts.logical_failures > 0,
+            "logical pivot={pivot}, counts={:?}",
+            result.counts
+        );
         assert!(
             result
                 .outcomes
@@ -444,7 +496,7 @@ fn preparation_schedule_and_noise() {
         let n = code.num_qubits();
         let m_z = code.hz().num_checks();
         let total = 3 * (n + m_z);
-        let circuit = preparation(&code, 0.01, total).unwrap();
+        let circuit = preparation(&code, 0.01, total, NoiseModel::CircuitLevel).unwrap();
         let mut prepared = vec![0; total];
         let mut pairs = BTreeSet::new();
         let mut cx_ticks = BTreeSet::new();
@@ -582,62 +634,77 @@ fn prefix_noise_content_and_placement() {
     // [contract] Full Pauli content and exact timing, including prep and readout.
     // [kill] Data-prep Z -> X; pre-MZ X -> Z; Depolarizing2 -> 1q Depolarizing.
     let p = 0.037;
-    for code in codes() {
-        let n = code.num_qubits();
-        let m_z = code.hz().num_checks();
-        let total = 3 * (n + m_z);
-        let mut circuit = preparation(&code, p, total).unwrap();
-        circuit.tick().mz(&(3 * n..total).collect::<Vec<_>>());
-        let prep = gates_at(&circuit, 0);
-        assert_eq!(prep.len(), 2);
-        for gate in prep {
-            let expected = match gate.gate_type {
-                GateType::PX => (0..3 * n).collect::<Vec<_>>(),
-                GateType::PZ => (3 * n..total).collect::<Vec<_>>(),
-                kind => panic!("unexpected prep {kind:?}"),
-            };
+    for noise_model in [NoiseModel::CircuitLevel, NoiseModel::Paper] {
+        for code in codes() {
+            let n = code.num_qubits();
+            let m_z = code.hz().num_checks();
+            let total = 3 * (n + m_z);
+            let mut circuit = preparation(&code, p, total, noise_model).unwrap();
+            circuit.tick().mz(&(3 * n..total).collect::<Vec<_>>());
+            let prep = gates_at(&circuit, 0);
+            assert_eq!(prep.len(), 2);
+            for gate in prep {
+                let expected = match gate.gate_type {
+                    GateType::PX => (0..3 * n).collect::<Vec<_>>(),
+                    GateType::PZ => (3 * n..total).collect::<Vec<_>>(),
+                    kind => panic!("unexpected prep {kind:?}"),
+                };
+                assert_eq!(
+                    gate.qubits.iter().map(|q| q.0).collect::<Vec<_>>(),
+                    expected
+                );
+            }
+            let noise = gates_at(&circuit, 1);
+            match noise_model {
+                NoiseModel::CircuitLevel => {
+                    assert_eq!(noise.len(), total);
+                    for (q, gate) in noise.into_iter().enumerate() {
+                        assert_binary_channel(gate, &[q], p, q >= 3 * n, q < 3 * n);
+                    }
+                }
+                NoiseModel::Paper => {
+                    assert_eq!(noise.len(), total - 3 * n);
+                    for (q, gate) in (3 * n..total).zip(noise) {
+                        assert_depolarizing_channel(gate, &[q], p);
+                    }
+                }
+            }
+            assert_eq!(circuit.num_ticks(), 12);
+            for color in 0..4 {
+                let cx_tick = 2 + 2 * color;
+                let cx = gates_at(&circuit, cx_tick);
+                assert!(cx.iter().all(|g| g.gate_type == GateType::CX));
+                let pairs = cx
+                    .iter()
+                    .flat_map(|g| g.qubits.as_chunks::<2>().0)
+                    .map(|pair| [pair[0].0, pair[1].0])
+                    .collect::<Vec<_>>();
+                let noise = gates_at(&circuit, cx_tick + 1);
+                assert_eq!(noise.len(), pairs.len());
+                for (gate, pair) in noise.into_iter().zip(pairs) {
+                    assert_depolarizing_channel(gate, &pair, p);
+                }
+            }
+            let noise = gates_at(&circuit, 10);
+            assert_eq!(noise.len(), 3 * m_z);
+            for (q, gate) in (3 * n..total).zip(noise) {
+                match noise_model {
+                    NoiseModel::CircuitLevel => assert_binary_channel(gate, &[q], p, true, false),
+                    NoiseModel::Paper => assert_depolarizing_channel(gate, &[q], p),
+                }
+            }
+            let measurement = gates_at(&circuit, 11);
+            assert_eq!(measurement.len(), 1);
+            assert_eq!(measurement[0].gate_type, GateType::MZ);
             assert_eq!(
-                gate.qubits.iter().map(|q| q.0).collect::<Vec<_>>(),
-                expected
+                measurement[0]
+                    .qubits
+                    .iter()
+                    .map(|q| q.0)
+                    .collect::<Vec<_>>(),
+                (3 * n..total).collect::<Vec<_>>()
             );
         }
-        let noise = gates_at(&circuit, 1);
-        assert_eq!(noise.len(), total);
-        for (q, gate) in noise.into_iter().enumerate() {
-            assert_binary_channel(gate, &[q], p, q >= 3 * n, q < 3 * n);
-        }
-        assert_eq!(circuit.num_ticks(), 12);
-        for color in 0..4 {
-            let cx_tick = 2 + 2 * color;
-            let cx = gates_at(&circuit, cx_tick);
-            assert!(cx.iter().all(|g| g.gate_type == GateType::CX));
-            let pairs = cx
-                .iter()
-                .flat_map(|g| g.qubits.as_chunks::<2>().0)
-                .map(|pair| [pair[0].0, pair[1].0])
-                .collect::<Vec<_>>();
-            let noise = gates_at(&circuit, cx_tick + 1);
-            assert_eq!(noise.len(), pairs.len());
-            for (gate, pair) in noise.into_iter().zip(pairs) {
-                assert_depolarizing_channel(gate, &pair, p);
-            }
-        }
-        let noise = gates_at(&circuit, 10);
-        assert_eq!(noise.len(), 3 * m_z);
-        for (q, gate) in (3 * n..total).zip(noise) {
-            assert_binary_channel(gate, &[q], p, true, false);
-        }
-        let measurement = gates_at(&circuit, 11);
-        assert_eq!(measurement.len(), 1);
-        assert_eq!(measurement[0].gate_type, GateType::MZ);
-        assert_eq!(
-            measurement[0]
-                .qubits
-                .iter()
-                .map(|q| q.0)
-                .collect::<Vec<_>>(),
-            (3 * n..total).collect::<Vec<_>>()
-        );
     }
 }
 
@@ -646,56 +713,63 @@ fn suffix_noise_content_and_placement() {
     // [contract] Exact CCZ depolarization, surrogate weights, and final dephasing.
     // [kill] Remove depolarizing3; remove/change readout Z; set surrogate p=0.
     let p = 0.037;
-    for code in codes() {
-        let n = code.num_qubits();
-        for model in [CczModel::Exact, CczModel::PaperSurrogate] {
-            let mut circuit = TickCircuit::new();
-            ccz_stage(&mut circuit, &code, p, model);
-            match model {
-                CczModel::Exact => {
-                    assert_eq!(circuit.num_ticks(), 4);
-                    for (layer, triples) in code.cup_product_ccz().iter().enumerate() {
-                        let gates = gates_at(&circuit, 2 * layer);
-                        assert!(gates.iter().all(|g| g.gate_type == GateType::CCZ));
-                        let expected = triples
-                            .iter()
-                            .map(|&[a, b, c]| [a, n + b, 2 * n + c])
-                            .collect::<Vec<_>>();
-                        let actual = gates
-                            .iter()
-                            .flat_map(|g| g.qubits.as_chunks::<3>().0)
-                            .map(|qs| qs.map(|q| q.0))
-                            .collect::<Vec<_>>();
-                        assert_eq!(actual, expected);
-                        let noise = gates_at(&circuit, 2 * layer + 1);
-                        assert_eq!(noise.len(), triples.len());
-                        for (gate, triple) in noise.into_iter().zip(expected) {
-                            assert_depolarizing_channel(gate, &triple, p);
+    for noise_model in [NoiseModel::CircuitLevel, NoiseModel::Paper] {
+        for code in codes() {
+            let n = code.num_qubits();
+            for model in [CczModel::Exact, CczModel::PaperSurrogate] {
+                let mut circuit = TickCircuit::new();
+                ccz_stage(&mut circuit, &code, p, model);
+                match model {
+                    CczModel::Exact => {
+                        assert_eq!(circuit.num_ticks(), 4);
+                        for (layer, triples) in code.cup_product_ccz().iter().enumerate() {
+                            let gates = gates_at(&circuit, 2 * layer);
+                            assert!(gates.iter().all(|g| g.gate_type == GateType::CCZ));
+                            let expected = triples
+                                .iter()
+                                .map(|&[a, b, c]| [a, n + b, 2 * n + c])
+                                .collect::<Vec<_>>();
+                            let actual = gates
+                                .iter()
+                                .flat_map(|g| g.qubits.as_chunks::<3>().0)
+                                .map(|qs| qs.map(|q| q.0))
+                                .collect::<Vec<_>>();
+                            assert_eq!(actual, expected);
+                            let noise = gates_at(&circuit, 2 * layer + 1);
+                            assert_eq!(noise.len(), triples.len());
+                            for (gate, triple) in noise.into_iter().zip(expected) {
+                                assert_depolarizing_channel(gate, &triple, p);
+                            }
+                        }
+                    }
+                    CczModel::PaperSurrogate => {
+                        assert_eq!(circuit.num_ticks(), 3 * n);
+                        for (tick, support) in surrogate_supports(&code).iter().enumerate() {
+                            let noise = gates_at(&circuit, tick);
+                            assert_eq!(noise.len(), 1);
+                            assert_binary_channel(noise[0], support, p, false, true);
                         }
                     }
                 }
-                CczModel::PaperSurrogate => {
-                    assert_eq!(circuit.num_ticks(), 3 * n);
-                    for (tick, support) in surrogate_supports(&code).iter().enumerate() {
-                        let noise = gates_at(&circuit, tick);
-                        assert_eq!(noise.len(), 1);
-                        assert_binary_channel(noise[0], support, p, false, true);
+                let readout_tick = circuit.num_ticks();
+                readout(&mut circuit, &code, p, model, noise_model).unwrap();
+                let noise = gates_at(&circuit, readout_tick);
+                assert_eq!(noise.len(), 3 * n);
+                for (q, gate) in noise.into_iter().enumerate() {
+                    match noise_model {
+                        NoiseModel::CircuitLevel => {
+                            assert_binary_channel(gate, &[q], p, false, true);
+                        }
+                        NoiseModel::Paper => assert_depolarizing_channel(gate, &[q], p),
                     }
                 }
-            }
-            let readout_tick = circuit.num_ticks();
-            readout(&mut circuit, &code, p, model).unwrap();
-            let noise = gates_at(&circuit, readout_tick);
-            assert_eq!(noise.len(), 3 * n);
-            for (q, gate) in noise.into_iter().enumerate() {
-                assert_binary_channel(gate, &[q], p, false, true);
-            }
-            // The rest of readout is ideal; no further channels or preparations.
-            for tick in readout_tick + 1..circuit.num_ticks() {
-                assert!(gates_at(&circuit, tick).iter().all(|g| !matches!(
-                    g.gate_type,
-                    GateType::Channel | GateType::PX | GateType::PZ
-                )));
+                // The rest of readout is ideal; no further channels or preparations.
+                for tick in readout_tick + 1..circuit.num_ticks() {
+                    assert!(gates_at(&circuit, tick).iter().all(|g| !matches!(
+                        g.gate_type,
+                        GateType::Channel | GateType::PX | GateType::PZ
+                    )));
+                }
             }
         }
     }
@@ -704,7 +778,14 @@ fn suffix_noise_content_and_placement() {
 #[test]
 fn complete_meta_checks_span_left_kernel() {
     for code in codes() {
-        let protocol = NoisyCcz::new(&code, 0.0, CczModel::Exact, MetaChecks::Complete).unwrap();
+        let protocol = NoisyCcz::new(
+            &code,
+            0.0,
+            CczModel::Exact,
+            NoiseModel::CircuitLevel,
+            MetaChecks::Complete,
+        )
+        .unwrap();
         let meta = protocol.meta_matrix();
         let paper = code.meta_z().rows();
         let rows = meta
@@ -737,7 +818,14 @@ fn complete_meta_checks_detect_kernel_but_not_image_error() {
             .find(|s| solver.solve(s).is_none())
             .unwrap();
         for meta_checks in [MetaChecks::Paper, MetaChecks::Complete] {
-            let protocol = NoisyCcz::new(&code, 0.0, CczModel::Exact, meta_checks).unwrap();
+            let protocol = NoisyCcz::new(
+                &code,
+                0.0,
+                CczModel::Exact,
+                NoiseModel::CircuitLevel,
+                meta_checks,
+            )
+            .unwrap();
             let sigma = protocol
                 .meta_matrix()
                 .dot(&Array1::from_vec(outside.clone()));

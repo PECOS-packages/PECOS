@@ -590,6 +590,9 @@ def generate_guppy_source(
         source_label: str | None = None,
         host_label: str | None = None,
     ) -> None:
+        if op_type == OpType.RELABEL:
+            msg = "_append_szz_flow_gate does not support RELABEL steps"
+            raise ValueError(msg)
         op_name = {
             OpType.H: "h",
             OpType.SX: "v",
@@ -633,6 +636,9 @@ def generate_guppy_source(
         hosted metadata only to the physical pulse so scheduling diagnostics
         track the operation that must remain adjacent to its SZZ/SZZdg host.
         """
+        if op_type == OpType.RELABEL:
+            msg = "_append_szz_physical_prefix_gate does not support RELABEL steps"
+            raise ValueError(msg)
         _append_szz_gate_trace_metadata(
             target,
             indent,

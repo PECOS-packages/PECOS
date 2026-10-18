@@ -22,8 +22,8 @@ from pecos.qec.surface import (
 )
 from pecos.qec.surface._twirl_config import TwirlConfig
 from pecos.qec.surface.circuit_builder import (
+    CircuitStep,
     OpType,
-    SurfaceCircuitStep,
     TickCircuitRenderer,
     build_surface_code_circuit,
     tick_circuit_to_stim,
@@ -232,7 +232,7 @@ def test_memory_renderer_computes_reference_from_gates():
     patch = SurfacePatch.create(3)
     steps, allocation = build_surface_code_circuit(patch, 1, "Z")
     final = next(i for i, step in enumerate(steps) if step.label == "final[0]")
-    steps.insert(final, SurfaceCircuitStep(OpType.X, [allocation.data_qubits[0]]))
+    steps.insert(final, CircuitStep(OpType.X, [allocation.data_qubits[0]]))
     tc = TickCircuitRenderer().render(steps, allocation, patch, 1, "Z")
     assert json.loads(tc.get_meta("observables"))[0]["reference"] == 1
     circuit = stim.Circuit(tick_circuit_to_stim(tc))
@@ -456,7 +456,7 @@ def test_reader_round_trip_reference(producer, reference):
         steps, allocation = build_surface_code_circuit(patch, 1, "Z")
         if reference:
             final = next(i for i, step in enumerate(steps) if step.label == "final[0]")
-            steps.insert(final, SurfaceCircuitStep(OpType.X, [allocation.data_qubits[0]]))
+            steps.insert(final, CircuitStep(OpType.X, [allocation.data_qubits[0]]))
         tc = TickCircuitRenderer().render(steps, allocation, patch, 1, "Z")
     metadata = json.loads(tc.get_meta("observables"))
     resolved = tc.circuit_definitions()["observables"]

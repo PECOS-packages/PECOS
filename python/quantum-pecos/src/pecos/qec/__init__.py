@@ -102,6 +102,7 @@ from pecos.qec.analysis import (
     syndrome_difference,
     syndrome_to_detection_events,
 )
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.color import (
     ColorCode488,
     ColorCode488Builder,
@@ -159,6 +160,8 @@ from pecos.qec.surface import (
 from pecos.qec.surface._detection_events import MissingObservableReferenceError
 
 __all__ = [
+    "CircuitStep",
+    "OpType",
     "MissingObservableReferenceError",
     # Submodules
     "analysis",

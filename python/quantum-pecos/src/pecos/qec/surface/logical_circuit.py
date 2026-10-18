@@ -44,7 +44,7 @@ from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, _build_ob
 
 if TYPE_CHECKING:
     from pecos.qec import DetectorErrorModel
-    from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
+    from pecos.qec.surface.circuit_builder import CircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 PatchSnapshot = dict[str, bool]
@@ -2974,7 +2974,7 @@ class _CircuitGenerator:
             [q + ps.qubit_offset for q in allocation.z_ancilla_qubits],
         )
 
-    def _emit_steps(self, step_lists: list[tuple[SurfaceCircuitStep, ...]]) -> dict[tuple[int, int], int]:
+    def _emit_steps(self, step_lists: list[tuple[CircuitStep, ...]]) -> dict[tuple[int, int], int]:
         """Split different-type conflicts within TICK groups, then zip with padding.
 
         Each TICK-delimited group, including a comment-only group, produces
@@ -2997,6 +2997,9 @@ class _CircuitGenerator:
             group_used = set()
             layer_label = "unnamed"
             for step in steps:
+                if step.op_type == OpType.RELABEL:
+                    msg = "_CircuitGenerator._emit_steps does not support RELABEL steps"
+                    raise ValueError(msg)
                 if step.op_type == OpType.COMMENT:
                     layer_label = step.label
                     continue

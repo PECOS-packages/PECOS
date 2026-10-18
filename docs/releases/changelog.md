@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- `SurfaceCircuitStep` is renamed to `CircuitStep` and moves, with `OpType`, to
+  `pecos.qec.circuit_steps`; both remain exported from `pecos.qec.surface`. The
+  old name is gone. New `OpType.RELABEL` is a virtual exchange of two qubit
+  roles with no physical operation; the surface renderers reject it.
+
 - Shot corpus format v2 stores detector fault-sector labels, and `SampleBatch.save`
   accepts a `DetectorErrorModel`. New readers accept v1 (unlabelled) and v2;
   every save writes v2, which older PECOS installations reject. Loaded batches

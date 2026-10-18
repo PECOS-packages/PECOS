@@ -1515,23 +1515,41 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
 ) -> Result<MeasurementHistory, MeasurementHistoryError> {
-    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
-    use pecos_simulators::SymbolicSparseStab;
+    let sim = pecos_simulators::SymbolicSparseStab::new(measurement_history_num_qubits(tc));
+    replay_measurement_history(tc, 0..tc.num_ticks(), sim)
+}
 
-    let num_qubits = tc
-        .iter_gate_batches()
+/// Use the full circuit, including qubits first touched after a replay window.
+pub(crate) fn measurement_history_num_qubits(tc: &TickCircuit) -> usize {
+    tc.iter_gate_batches()
         .flat_map(|g| g.as_gate().qubits.iter())
         .map(|q| q.index() + 1)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
 
-    let mut sim = SymbolicSparseStab::new(num_qubits);
+/// Record-aligned replay shared by full histories and detector suffix probes.
+/// The supplied simulator has no measurements yet; it may be Bell-purified.
+/// Tick locations in errors remain absolute, while record columns start at zero.
+pub(crate) fn replay_measurement_history(
+    tc: &TickCircuit,
+    ticks: std::ops::Range<usize>,
+    mut sim: pecos_simulators::SymbolicSparseStab,
+) -> Result<MeasurementHistory, MeasurementHistoryError> {
+    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
+
+    debug_assert_eq!(
+        sim.measurement_count(),
+        0,
+        "replay columns start at zero, so the supplied simulator must not have measured yet"
+    );
     // Simulator measurement index -> record column, for the measurements that
     // consume a record; and the leaked ones, which consume none.
     let mut column_of: BTreeMap<usize, usize> = BTreeMap::new();
     let mut leaked_sites: BTreeMap<usize, (usize, Vec<usize>)> = BTreeMap::new();
 
-    for (tick_idx, tick) in tc.iter_ticks() {
+    for (offset, tick) in tc.ticks()[ticks.clone()].iter().enumerate() {
+        let tick_idx = ticks.start + offset;
         for gate in tick.iter_gate_batches() {
             let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();

@@ -249,6 +249,9 @@ fn terminal_failures_latch_and_require_reset() {
                 engine.continue_processing(ByteMessage::outcomes_builder().build())
             }));
             assert!(matches!(outcome, Err(_) | Ok(Err(_))));
+            // The failure itself must latch, panics included; a retry that
+            // fails for another reason would not prove the shot is poisoned.
+            assert!(engine.terminal_failure_error().is_some());
             assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
             assert!(
                 engine

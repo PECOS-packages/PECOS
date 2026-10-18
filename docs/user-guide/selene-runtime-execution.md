@@ -98,7 +98,6 @@ shot explicitly. End-hook, extraction, admission and custom-event failures remai
 sticky until reset; no completed trace is emitted on failure. Native final
 extraction uses the existing per-batch and aggregate transport retention bounds.
 
-
 ## Allocation lifetimes and capacity
 
 Every qubit handle stays alive through ordinary and leakage-aware measurements.

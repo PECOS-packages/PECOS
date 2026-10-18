@@ -2045,6 +2045,45 @@ impl QisEngine {
         }
     }
 
+    /// Invoke the runtime end hook once and lower its final operations for
+    /// execution. Terminal measurements are unsupported: nothing could feed
+    /// their outcomes back after end.
+    fn deliver_runtime_end(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if self.scheduled_transport.enabled() {
+            let batches = self
+                .runtime
+                .finish_scheduled_operations()
+                .map_err(|e| PecosError::Generic(format!("runtime shot_end failed: {e}")))?;
+            let empty = batches.is_empty();
+            let shot = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
+            if !ids.is_empty() {
+                return Err(PecosError::Input(
+                    "measurements emitted by shot_end are unsupported".into(),
+                ));
+            }
+            Ok((!empty).then_some(commands))
+        } else {
+            let ops = self
+                .runtime
+                .finish_operations()
+                .map_err(|e| PecosError::Generic(format!("runtime shot_end failed: {e}")))?;
+            if ops
+                .iter()
+                .any(|op| matches!(op.op, QuantumOp::Measure(..) | QuantumOp::MeasureLeaked(..)))
+            {
+                return Err(PecosError::Input(
+                    "measurements emitted by shot_end are unsupported".into(),
+                ));
+            }
+            let lowered = self.quantum_ops_to_lowered_commands(ops)?;
+            self.trace_operations_chunk("shot_end", &[], None, Some(&lowered));
+            Ok((!lowered.is_empty).then_some(lowered.commands))
+        }
+    }
+
     /// Run the shot-completion gates in order: sticky terminal check, drain
     /// verification, the runtime's own `shot_end` finalization hook and delivery
     /// of its final operations, then the named-result and terminal trace markers.
@@ -2076,54 +2115,23 @@ impl QisEngine {
             )));
         }
         if !self.runtime_end_delivered {
-            // Latch before calling user/native code, including a caught unwind.
-            self.latch_terminal_error(
-                "runtime shot_end delivery did not complete; reset required".into(),
-            );
-            let delivery = (|| -> Result<Option<ByteMessage>, PecosError> {
-                if self.scheduled_transport.enabled() {
-                    let batches = self.runtime.finish_scheduled_operations().map_err(|e| {
-                        PecosError::Generic(format!("runtime shot_end failed: {e}"))
-                    })?;
-                    let empty = batches.is_empty();
-                    let shot = u64::try_from(self.trace_shot_index)
-                        .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
-                    let (commands, ids) = crate::scheduled_transport::encode_mode(
-                        batches,
-                        shot,
-                        self.scheduled_transport,
-                    )?;
-                    if !ids.is_empty() {
-                        return Err(PecosError::Input(
-                            "measurements emitted by shot_end are unsupported".into(),
-                        ));
-                    }
-                    self.measurement_mapping.clear();
-                    Ok((!empty).then_some(commands))
-                } else {
-                    let ops = self.runtime.finish_operations().map_err(|e| {
-                        PecosError::Generic(format!("runtime shot_end failed: {e}"))
-                    })?;
-                    if ops.iter().any(|op| {
-                        matches!(op.op, QuantumOp::Measure(..) | QuantumOp::MeasureLeaked(..))
-                    }) {
-                        return Err(PecosError::Input(
-                            "measurements emitted by shot_end are unsupported".into(),
-                        ));
-                    }
-                    let lowered = self.quantum_ops_to_lowered_commands(ops)?;
-                    self.trace_operations_chunk("shot_end", &[], None, Some(&lowered));
-                    Ok((!lowered.is_empty).then_some(lowered.commands))
+            // The end hook may have run before a panic, so an unwind must
+            // poison the shot exactly like an error return.
+            let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.deliver_runtime_end()
+            }));
+            let commands = match delivery {
+                Ok(result) => result.map_err(|e| {
+                    self.latch_terminal_error(format!("runtime final delivery failed: {e}"))
+                })?,
+                Err(payload) => {
+                    self.latch_terminal_error(
+                        "runtime shot_end delivery panicked; reset required".into(),
+                    );
+                    std::panic::resume_unwind(payload)
                 }
-            })();
-            let commands = delivery.map_err(|e| {
-                self.latch_terminal_error(format!("runtime final delivery failed: {e}"))
-            })?;
+            };
             self.runtime_end_delivered = true;
-            self.shot_lifecycle = ShotLifecycle::Running;
-            if let Some(state) = self.dynamic_state.as_mut() {
-                state.terminal_error = None;
-            }
             if commands.is_some() {
                 return Ok(commands);
             }
@@ -2591,9 +2599,6 @@ impl ControlEngine for QisEngine {
             )));
         }
 
-        if let Some(error) = self.terminal_failure_error() {
-            return Err(error);
-        }
         // Verify dynamic state exists (set by start())
         if self.dynamic_state.is_none() {
             return Err(PecosError::Generic(

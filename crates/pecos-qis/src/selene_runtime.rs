@@ -930,15 +930,18 @@ impl SeleneRuntime {
         Ok(())
     }
 
-    fn end_native_shot(&mut self) -> Result<Shot> {
+    /// Run the native end hook and return the identity of the shot it ended,
+    /// or `None` when no native shot was active (the hook released nothing).
+    fn end_native_shot(&mut self) -> Result<Option<(u64, u64)>> {
         self.check_end_admission()?;
         // Only end a shot the plugin actually started. The descriptor end hook
         // receives the native instance; scheduled final delivery retains the
-        // saved shot identity while extracting its emitted batches.
+        // returned shot identity while extracting its emitted batches.
         // `take()` clears the active shot unconditionally: a clone that
         // inherited `active_shot` without a loaded plugin has no FFI shot to
         // end, but must not carry the stale identity forward.
-        if let Some((_shot_id, _seed)) = self.active_shot.take()
+        let mut ended = None;
+        if let Some(identity) = self.active_shot.take()
             && let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
@@ -964,17 +967,10 @@ impl SeleneRuntime {
                 self.latch_batch_failure(error.clone());
                 return Err(error);
             }
+            ended = Some(identity);
         }
         self.pending_shot_start = None;
-
-        // Return the shot with measurements and registers
-        let shot = Shot {
-            measurements: self.state.measurements.clone(),
-            registers: self.state.registers.clone(),
-            ..Default::default()
-        };
-
-        Ok(shot)
+        Ok(ended)
     }
 
     fn drain_native_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
@@ -3439,7 +3435,9 @@ impl QisRuntime for SeleneRuntime {
         self.check_end_admission()?;
         self.select_output_mode(false)?;
         self.with_native_mutation(|runtime| {
-            runtime.end_native_shot()?;
+            if runtime.end_native_shot()?.is_none() {
+                return Ok(Vec::new());
+            }
             // Poll only: the native end hook, not a new barrier, releases this tail.
             runtime
                 .drain_runtime_operations_bounded(true)
@@ -3450,13 +3448,11 @@ impl QisRuntime for SeleneRuntime {
     fn finish_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
         self.check_end_admission()?;
         self.with_native_mutation(|runtime| {
-            let identity = runtime.active_shot;
-            runtime.end_native_shot()?;
-            if runtime.instance.is_none() {
+            let Some(identity) = runtime.end_native_shot()? else {
                 return Ok(Vec::new());
-            }
+            };
             // Retain the identity only for this bounded, synchronous extraction.
-            runtime.active_shot = identity;
+            runtime.active_shot = Some(identity);
             let result = runtime.collect_scheduled(Self::drain_runtime_operations);
             runtime.active_shot = None;
             result

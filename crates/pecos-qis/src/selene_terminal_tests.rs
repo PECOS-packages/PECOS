@@ -6,13 +6,8 @@ use std::sync::{
 };
 
 type EndFn = unsafe extern "C" fn(*mut c_void) -> i32;
-// The upstream repr(C) handle is non_exhaustive; the local ABI mirror is used
-// by the callback, as in the production descriptor bridge.
-#[allow(improper_ctypes_definitions)]
-type NativeNextFn = unsafe extern "C" fn(
-    *mut c_void,
-    selene_core::operation::plugin::RuntimeGetOperationHandle,
-) -> i32;
+// The upstream repr(C) handle is non_exhaustive; the callback uses the local
+// ABI mirror, as the production descriptor bridge does.
 type NextFn = unsafe extern "C" fn(*mut c_void, SeleneRuntimeGetOperationHandle) -> i32;
 static REAL_END: Mutex<Option<EndFn>> = Mutex::new(None);
 static REAL_NEXT: Mutex<Option<NextFn>> = Mutex::new(None);
@@ -80,13 +75,19 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
     let mut descriptor =
         Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
     *REAL_END.lock().unwrap() = Some(descriptor.shot_end_fn);
-    *REAL_NEXT.lock().unwrap() = Some(unsafe {
-        std::mem::transmute::<NativeNextFn, NextFn>(descriptor.get_next_operations_fn)
-    });
+    let real_next: NextFn = unsafe { std::mem::transmute(descriptor.get_next_operations_fn) };
+    *REAL_NEXT.lock().unwrap() = Some(real_next);
     *REAL_BARRIER.lock().unwrap() = Some(descriptor.global_barrier_fn);
     descriptor.shot_end_fn = end;
-    descriptor.get_next_operations_fn =
-        unsafe { std::mem::transmute::<NextFn, NativeNextFn>(next) };
+    descriptor.get_next_operations_fn = unsafe {
+        std::mem::transmute::<
+            NextFn,
+            unsafe extern "C" fn(
+                *mut c_void,
+                selene_core::operation::plugin::RuntimeGetOperationHandle,
+            ) -> i32,
+        >(next)
+    };
     descriptor.global_barrier_fn = barrier;
     let fixture = unsafe { libloading::Library::new(&path).unwrap() };
     unsafe {
@@ -139,8 +140,11 @@ fn native_end_tail_preserves_identity_timing_and_strict_rejection() {
                 if mode != 0 || legacy {
                     assert!(runtime.shot_end().is_err());
                     assert!(runtime.clone().shot_end().is_err());
-                    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                } else {
+                    // No native shot remains, so a repeated end releases nothing.
+                    assert!(runtime.shot_end().is_ok());
                 }
+                assert_eq!(CALLS.load(Ordering::SeqCst), 1);
             }
         }
     }

@@ -81,8 +81,29 @@ impl<'a> CircuitExecutor<'a> {
     /// # Errors
     ///
     /// Returns an error when a gate has the wrong angle arity, a rotation is
-    /// non-Clifford, or the simulator does not support the gate.
+    /// non-Clifford, an operand exceeds simulator capacity, or the simulator does not support
+    /// the gate. Capacity is checked for the whole circuit before any gate is applied.
     pub fn run<S: CliffordGateable>(&self, sim: &mut S) -> Result<Vec<MeasurementResult>, String> {
+        if let Some(capacity) = sim.qubit_capacity() {
+            for (_, tick) in self.circuit.iter_ticks() {
+                for batch in tick.iter_gate_batches() {
+                    let gate = batch.as_gate();
+                    for qubit in &gate.qubits {
+                        if qubit.index() >= capacity {
+                            return Err(format!(
+                                "Gate {:?} targets qubit {} but the simulator holds {capacity} qubits; {}",
+                                gate.gate_type,
+                                qubit.index(),
+                                crate::qubit_validation::qubit_index_remedy(
+                                    qubit.index(),
+                                    capacity
+                                )
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         let mut measurements = Vec::new();
 
         for (_tick_idx, tick) in self.circuit.iter_ticks() {
@@ -416,5 +437,79 @@ mod tests {
             panic!("unsupported gates must fail without panicking");
         };
         assert!(err.contains('T'));
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    use crate::{QuantumSimulator, SparseStab, StabilizerTableauSimulator};
+
+    #[test]
+    fn empty_register_reports_constructible_remedy() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[3]);
+        let mut sim = crate::CoinToss::new(0);
+        let Err(error) = CircuitExecutor::new(&circuit).run(&mut sim) else {
+            panic!("empty fixed registers must reject operands");
+        };
+        assert_eq!(
+            error,
+            "Gate X targets qubit 3 but the simulator holds 0 qubits; construct it with at least 4 qubits"
+        );
+    }
+
+    #[test]
+    fn growing_pauli_tracker_accepts_circuits() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        let mut sim = crate::PauliProp::new();
+        assert_eq!(sim.qubit_capacity(), None);
+        assert!(CircuitExecutor::new(&circuit).run(&mut sim).is_ok());
+        assert_eq!(sim.qubit_capacity(), None);
+    }
+
+    #[test]
+    fn growing_bitmask_tracker_accepts_circuits() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[0]);
+        circuit.tick().cx(&[(0, 1)]);
+        let mut sim = crate::BitmaskPauliProp::new();
+        assert_eq!(sim.qubit_capacity(), None);
+        assert!(CircuitExecutor::new(&circuit).run(&mut sim).is_ok());
+        assert_eq!(sim.num_qubits(), 2);
+        assert_eq!(sim.qubit_capacity(), None);
+    }
+
+    #[test]
+    fn capacity_preflight_applies_nothing() {
+        for bad in [2, 16383, 16384, usize::MAX] {
+            for pair in [(0, bad), (bad, 0)] {
+                let mut sim = SparseStab::new(2);
+                let before = sim.full_tableau();
+                let mut circuit = TickCircuit::new();
+                circuit.tick().x(&[0]);
+                circuit.tick().cx(&[pair]);
+                let Err(error) = CircuitExecutor::new(&circuit).run(&mut sim) else {
+                    panic!("invalid circuit must fail");
+                };
+                assert!(error.contains("CX"), "{error}");
+                assert!(error.contains(&format!("qubit {bad}")), "{error}");
+                assert!(error.contains("holds 2 qubits"), "{error}");
+                assert!(error.contains("construct the simulator"), "{error}");
+                assert_eq!(sim.full_tableau(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn capacity_checks_every_operand_in_a_batch() {
+        let mut sim = SparseStab::new(2);
+        let before = sim.full_tableau();
+        let mut circuit = TickCircuit::new();
+        circuit.tick().x(&[0, 2]);
+        assert!(CircuitExecutor::new(&circuit).run(&mut sim).is_err());
+        assert_eq!(sim.full_tableau(), before);
     }
 }

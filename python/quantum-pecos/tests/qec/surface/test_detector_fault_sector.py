@@ -6,10 +6,14 @@
 import json
 
 import pytest
+import stim
 from pecos.qec.dem_spec import surface_memory_dem_spec
-from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
+from pecos.qec.surface.logical_circuit import LogicalGateType
 from pecos.qec.surface.teleportation_decision import t_teleportation_decision_model
+from pecos_rslib.decoders import pymatching
+from pecos_rslib.qec import DetectorErrorModel, SampleBatch
 
 from qec.surface.test_logical_builder_gadgets import make_builder
 
@@ -27,20 +31,47 @@ def test_surface_fault_sectors_and_native_forward(source, basis):
 
 @pytest.mark.parametrize(
     "shape",
-    ["d3_mem_X", "d3_mem_Z", "d3_h_z_to_x", "d3_h_x_to_z", "d3_h_zero_final", "d3_cx_zz", "d3_cx_xx"],
+    [
+        "d3_mem_X",
+        "d3_mem_Z",
+        "d3_h_z_to_x",
+        "d3_h_x_to_z",
+        "d3_h_zero_final",
+        "d3_hh",
+        "d3_h_cx_h",
+        "d2_h_even",
+        "d5_h",
+        "d3_cx_zz",
+        "d3_cx_xx",
+    ],
 )
-def test_logical_fault_sectors_follow_current_family(shape):
-    circuit = make_builder(shape).to_tick_circuit()
+def test_logical_fault_sectors_follow_code_family(shape):
+    builder = make_builder(shape)
+    circuit = builder.to_tick_circuit()
+    swapped = dict.fromkeys((patch for op in builder.operations for patch in op.patches), False)
+    segment_swaps = {}
+    segment = 0
+    for op in builder.operations:
+        if op.gate_type == LogicalGateType.TRANSVERSAL_H:
+            for patch in op.patches:
+                swapped[patch] = not swapped[patch]
+        if op.is_segment:
+            for patch in op.patches:
+                segment_swaps[patch, segment] = swapped[patch]
+            segment += 1
     keys = json.loads(circuit.get_meta("measurement_keys"))["stabilizer"]
-    by_record = {ordinal: (family, segment, rnd) for _, family, _, segment, rnd, ordinal in keys}
+    by_record = {
+        ordinal: ({"X": "Z", "Z": "X"}[family] if segment_swaps[patch, segment] else family)
+        for patch, family, _, segment, _, ordinal in keys
+    }
     detectors = json.loads(circuit.get_meta("detectors"))
     for detector in detectors:
-        # The latest syndrome record is the current family, including round 0 after H.
+        # Map the latest syndrome record back through its own measurement frame.
         current = max(record for record in detector["meas_ids"] if record in by_record)
-        expected = by_record[current][0]
+        expected = by_record[current]
         if shape == "d3_h_zero_final" and any(record not in by_record for record in detector["meas_ids"]):
-            # With no syndrome round after H, the current X family is read on data.
-            expected = "X"
+            # The final X data readout after H reads the code's Z family.
+            expected = "Z"
         assert detector["fault_sector"] == expected
 
 
@@ -166,3 +197,49 @@ def test_clifford_deformed_surface_keeps_undeformed_family_sectors(policy, basis
     deformed = sectors(policy)
     assert deformed == sectors(None)
     assert set(deformed) == {"X", "Z"}
+
+
+def _h_memory_builder():
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(distance=3), "A")
+    builder.add_memory("A", 3, "Z")
+    builder.add_transversal_h("A")
+    builder.add_memory("A", 3, "X")
+    return builder
+
+
+def test_logical_fault_sectors_constant_across_h():
+    circuit = _h_memory_builder().to_tick_circuit()
+    detectors = json.loads(circuit.get_meta("detectors"))
+    before = {tuple(d["coords"][:2]): d["fault_sector"] for d in detectors if d["coords"][2] == 2}
+    after = {tuple(d["coords"][:2]): d["fault_sector"] for d in detectors if d["coords"][2] == 3}
+    assert len(before) == len(after) == 8
+    assert set(before.values()) == {"X", "Z"}
+    assert before == after
+
+
+def test_logical_h_single_faults_decode_with_code_family_sectors():
+    model = DetectorErrorModel.from_circuit(
+        _h_memory_builder().to_tick_circuit(),
+        p1=0.004,
+        p2=0.004,
+        p_meas=0.004,
+        p_prep=0.004,
+    )
+    raw = stim.DetectorErrorModel(model.to_string()).flattened()
+    mechanisms = []
+    truths_by_detectors = {}
+    for instruction in raw:
+        if instruction.type != "error":
+            continue
+        targets = instruction.targets_copy()
+        detectors = frozenset(t.val for t in targets if t.is_relative_detector_id())
+        truth = sum(1 << t.val for t in targets if t.is_logical_observable_id())
+        mechanisms.append((detectors, truth))
+        truths_by_detectors.setdefault(detectors, set()).add(truth)
+    unambiguous = [(ds, truth) for ds, truth in mechanisms if len(truths_by_detectors[ds]) == 1]
+    assert unambiguous
+    shots = [[int(d in ds) for d in range(raw.num_detectors)] for ds, _ in unambiguous]
+    batch = SampleBatch(shots, [truth for _, truth in unambiguous], num_observables=raw.num_observables)
+    result = batch.decode(model, pymatching(correlated=False), workers=1, predictions=True)
+    assert result.num_errors == 0

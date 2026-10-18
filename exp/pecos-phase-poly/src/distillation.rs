@@ -279,7 +279,7 @@ fn count_as_f64(value: u64) -> f64 {
     f64::from(high).mul_add(4_294_967_296.0, f64::from(low))
 }
 
-fn validate_probability(p: f64) -> Result<(), String> {
+pub(crate) fn validate_probability(p: f64) -> Result<(), String> {
     if !p.is_finite() || !(0.0..=1.0).contains(&p) {
         return Err("p must be finite and in [0,1]".into());
     }

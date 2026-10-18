@@ -5,10 +5,8 @@ This module converts PHIR (PECOS High-level IR) to MLIR text format.
 The generated MLIR can be processed by MLIR tools (mlir-opt, mlir-translate)
 to produce LLVM IR.
 
-TODO: This is currently a stub implementation. Need to implement:
-1. PHIR -> MLIR conversion
-2. Proper MLIR dialect support
-3. Quantum operation mapping
+Only allocation, H, CX, measurement and return are supported. Unsupported
+operations and control-flow structures return an error instead of losing code.
 */
 
 use crate::{
@@ -41,17 +39,31 @@ impl fmt::Display for MlirModule {
 pub fn lower_phir_to_mlir(module: &Module, _config: &PhirConfig) -> Result<MlirModule> {
     let mut content = String::new();
 
+    if module.body.blocks.len() > 1 {
+        return Err(PhirError::internal(format!(
+            "Module {} has {} blocks; use one module block for MLIR lowering",
+            module.name,
+            module.body.blocks.len()
+        )));
+    }
     // Always use standard dialect - it will be converted to LLVM by mlir-opt
-    writeln!(&mut content, "module @{} {{", module.name).unwrap();
+    writeln!(&mut content, "module @{} {{", module.name).expect("writing to a String cannot fail");
 
-    // Convert module body
-    if let Some(block) = module.body.blocks.first() {
+    // Visit every top-level operation; none may be silently dropped.
+    for block in &module.body.blocks {
+        if let Some(terminator) = &block.terminator {
+            return Err(PhirError::internal(format!(
+                "Unsupported module terminator {terminator:?}; put Return in a function body"
+            )));
+        }
         for instruction in &block.operations {
             if let crate::ops::Operation::Builtin(crate::builtin_ops::BuiltinOp::Func(func)) =
                 &instruction.operation
             {
                 content.push_str(&convert_function_to_mlir(func)?);
                 content.push('\n');
+            } else {
+                return Err(unsupported(&instruction.operation));
             }
         }
     }
@@ -67,6 +79,14 @@ pub fn lower_phir_to_mlir(module: &Module, _config: &PhirConfig) -> Result<MlirM
 /// Convert a PHIR function to MLIR text
 fn convert_function_to_mlir(func: &crate::builtin_ops::FuncOp) -> Result<String> {
     let mut output = String::new();
+    if func.body.len() != 1 || func.body[0].blocks.len() != 1 {
+        return Err(PhirError::internal(format!(
+            "Function {} has {} regions and block counts {:?}; MLIR lowering requires one region with one block",
+            func.name,
+            func.body.len(),
+            func.body.iter().map(|r| r.blocks.len()).collect::<Vec<_>>()
+        )));
+    }
 
     // Add function declarations for QIR intrinsics - using i64 for PECOS compatibility
     output.push_str("  func private @__quantum__qis__h__body(i64)\n");
@@ -78,7 +98,7 @@ fn convert_function_to_mlir(func: &crate::builtin_ops::FuncOp) -> Result<String>
     output.push('\n');
 
     // Function signature (using older MLIR syntax for compatibility)
-    write!(&mut output, "  func @{}(", func.name).unwrap();
+    write!(&mut output, "  func @{}(", func.name).expect("writing to a String cannot fail");
 
     // Input types - convert qubit types to i64 for PECOS compatibility
     let input_types: Vec<String> = func
@@ -127,7 +147,7 @@ fn convert_function_to_mlir(func: &crate::builtin_ops::FuncOp) -> Result<String>
 
         // Convert terminator
         if let Some(terminator) = &block.terminator {
-            output.push_str(&convert_terminator_to_mlir(terminator));
+            output.push_str(&convert_terminator_to_mlir(terminator)?);
             output.push('\n');
         }
     }
@@ -156,6 +176,26 @@ fn convert_instruction_to_mlir_with_mapping(
 ) -> Result<String> {
     use crate::ops::{Operation, QuantumOp};
 
+    if !instruction.regions.is_empty() {
+        return Err(unsupported(&instruction.operation));
+    }
+    let (operands, max_results, min_results) = match instruction.operation {
+        Operation::Quantum(QuantumOp::Alloc) => (0, 1, 1),
+        Operation::Quantum(QuantumOp::H) => (1, 1, 0),
+        Operation::Quantum(QuantumOp::CX) => (2, 2, 0),
+        Operation::Quantum(QuantumOp::Measure) => (1, 1, 1),
+        _ => return Err(unsupported(&instruction.operation)),
+    };
+    if instruction.operands.len() != operands
+        || !(min_results..=max_results).contains(&instruction.results.len())
+    {
+        return Err(PhirError::internal(format!(
+            "{} has {} operands and {} results; supply {operands} operands and {min_results}..={max_results} results for MLIR lowering",
+            instruction.operation.name(),
+            instruction.operands.len(),
+            instruction.results.len()
+        )));
+    }
     let mut output = String::new();
 
     // Helper to resolve SSA value to actual qubit
@@ -173,7 +213,7 @@ fn convert_instruction_to_mlir_with_mapping(
                             &mut output,
                             "    %{result_id} = call @__quantum__rt__qubit_allocate() : () -> i64"
                         )
-                        .unwrap();
+                        .expect("writing to a String cannot fail");
                         // This SSA value represents an actual qubit
                         ssa_to_qubit.insert(result_id, result_id);
                     }
@@ -189,7 +229,7 @@ fn convert_instruction_to_mlir_with_mapping(
                         &mut output,
                         "    call @__quantum__qis__h__body(%{qubit_id}) : (i64) -> ()"
                     )
-                    .unwrap();
+                    .expect("writing to a String cannot fail");
 
                     // Map output SSA values to the same qubit
                     if !instruction.results.is_empty() {
@@ -206,7 +246,7 @@ fn convert_instruction_to_mlir_with_mapping(
 
                     write!(&mut output,
                         "    call @__quantum__qis__cx__body(%{control_qubit}, %{target_qubit}) : (i64, i64) -> ()"
-                    ).unwrap();
+                    ).expect("writing to a String cannot fail");
 
                     // Map output SSA values to the same qubits
                     if !instruction.results.is_empty() {
@@ -226,10 +266,10 @@ fn convert_instruction_to_mlir_with_mapping(
 
                     if !instruction.results.is_empty() {
                         // Allocate a result register
-                        let result_reg_id = 900 + instruction.results[0].id; // Use high numbers to avoid conflicts
+                        let result_reg_id = instruction.results[0].id.checked_add(900).ok_or_else(|| PhirError::internal(format!("Measure result ID {} is too large; use an ID at most {} for MLIR lowering", instruction.results[0].id, u32::MAX - 900)))?; // Use high numbers to avoid conflicts
                         writeln!(&mut output,
                             "    %{result_reg_id} = call @__quantum__rt__result_allocate() : () -> i64"
-                        ).unwrap();
+                        ).expect("writing to a String cannot fail");
 
                         // Perform measurement
                         write!(
@@ -237,32 +277,30 @@ fn convert_instruction_to_mlir_with_mapping(
                             "    %{} = call @__quantum__qis__m__body(%{}, %{}) : (i64, i64) -> i32",
                             instruction.results[0].id, qubit_id, result_reg_id
                         )
-                        .unwrap();
+                        .expect("writing to a String cannot fail");
                     }
                 }
-                _ => {
-                    write!(&mut output, "    // TODO: quantum op {quantum_op:?}").unwrap();
-                }
+                _ => return Err(unsupported(&instruction.operation)),
             }
         }
-        _ => {
-            write!(
-                &mut output,
-                "    // TODO: operation {:?}",
-                instruction.operation
-            )
-            .unwrap();
-        }
+        _ => return Err(unsupported(&instruction.operation)),
     }
 
     Ok(output)
 }
 
+fn unsupported(operation: &crate::ops::Operation) -> PhirError {
+    PhirError::internal(format!(
+        "Unsupported operation {} ({operation:?}); use Alloc, H, CX, Measure and Return for MLIR lowering",
+        operation.name()
+    ))
+}
+
 /// Convert PHIR terminator to MLIR text
-fn convert_terminator_to_mlir(terminator: &crate::phir::Terminator) -> String {
+fn convert_terminator_to_mlir(terminator: &crate::phir::Terminator) -> Result<String> {
     use crate::phir::Terminator;
 
-    match terminator {
+    Ok(match terminator {
         Terminator::Return { values } => {
             if values.is_empty() {
                 "    return".to_string()
@@ -278,8 +316,12 @@ fn convert_terminator_to_mlir(terminator: &crate::phir::Terminator) -> String {
                 )
             }
         }
-        _ => format!("    // TODO: terminator {terminator:?}"),
-    }
+        _ => {
+            return Err(PhirError::internal(format!(
+                "Unsupported terminator {terminator:?}; use Return for MLIR lowering"
+            )));
+        }
+    })
 }
 
 /// Convert PHIR Module to MLIR text string

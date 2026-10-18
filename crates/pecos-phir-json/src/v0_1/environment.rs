@@ -241,6 +241,28 @@ pub struct VariableInfo {
     pub metadata: Option<BTreeMap<String, serde_json::Value>>,
 }
 
+/// A whole-register or indexed reference in a Result mapping.
+#[derive(Debug, Clone)]
+pub(crate) struct ResultReference {
+    pub name: String,
+    pub index: Option<u32>,
+}
+
+impl ResultReference {
+    pub(crate) fn from_arg(arg: &super::ast::ArgItem, field: &str) -> Result<Self, PecosError> {
+        let value = serde_json::to_value(arg)
+            .expect("PHIR arguments contain only JSON-serializable values");
+        match super::classical_validation::result_reference(&value, field)? {
+            super::ast::ArgItem::Simple(name) => Ok(Self { name, index: None }),
+            super::ast::ArgItem::Indexed((name, index)) => Ok(Self {
+                name,
+                index: Some(u32::try_from(index).expect("validated Result indices fit u32")),
+            }),
+            _ => unreachable!("Result reference validation returns only whole or indexed names"),
+        }
+    }
+}
+
 /// A variable value stored as a fixed-width integer using `BitUInt`.
 ///
 /// All values are stored as `BitUInt` (unsigned) with the declared bit width.
@@ -575,11 +597,17 @@ impl Environment {
         Ok(())
     }
 
-    fn validate_variable_size(
+    pub(crate) fn validate_variable_size(
         name: &str,
         data_type: &DataType,
         size: usize,
     ) -> Result<(), PecosError> {
+        if *data_type == DataType::Bool && size > 1 {
+            return Err(PecosError::Input(format!(
+                "Register {} declares bool with size {size}; use size 1 or an unsigned integer type",
+                serde_json::json!(name)
+            )));
+        }
         // A signed size-S register is an `i(S+1)` integer (S data bits + a sign
         // bit), so `S + 1` must fit the backing width N. An unsigned size-S
         // register is a `u(S)` and needs `S <= N`. Fail fast otherwise.
@@ -661,14 +689,15 @@ impl Environment {
     /// # Errors
     /// Returns an error for an unknown quantum register or an out-of-bounds index.
     pub fn resolve_qubit(&self, name: &str, index: usize) -> Result<usize, PecosError> {
-        let range = self
-            .quantum_registers
-            .get(name)
-            .ok_or_else(|| PecosError::Input(format!("Unknown quantum register '{name}'")))?;
+        let range = self.quantum_registers.get(name).ok_or_else(|| {
+            PecosError::Input(format!(
+                "Unknown quantum register '{name}'; declare it with qvar_define before use"
+            ))
+        })?;
         let size = range.end - range.start;
         if index >= size {
             return Err(PecosError::Input(format!(
-                "Index {index} out of bounds for quantum register '{name}' of size {size}"
+                "Index {index} out of bounds for quantum register '{name}' of size {size}; use an index below {size}"
             )));
         }
         Ok(range.start + index)
@@ -720,6 +749,178 @@ impl Environment {
                 name: name.to_string(),
             })
         }
+    }
+
+    /// Resolve a declared classical register for Result or measurement operations.
+    pub(crate) fn classical_info(&self, name: &str) -> Result<&VariableInfo, PecosError> {
+        self.classical_info_for(name, "Result or measurement")
+    }
+
+    pub(crate) fn classical_info_for(
+        &self,
+        name: &str,
+        operation: &str,
+    ) -> Result<&VariableInfo, PecosError> {
+        self.get_variable_info_opt(name)
+            .filter(|info| info.data_type != DataType::Qubits)
+            .ok_or_else(|| PecosError::Input(format!(
+                "{operation}: unknown classical variable {}; declare it with cvar_define before use", serde_json::json!(name)
+            )))
+    }
+
+    /// Validate a measurement against the declared size, not the backing integer width.
+    pub(crate) fn validate_measurement_write(
+        &self,
+        name: &str,
+        index: usize,
+    ) -> Result<(), PecosError> {
+        self.validate_classical_write(name, index, "Measurement")
+    }
+
+    fn validate_classical_write(
+        &self,
+        name: &str,
+        index: usize,
+        operation: &str,
+    ) -> Result<(), PecosError> {
+        let size = self.classical_info_for(name, operation)?.size;
+        if index >= size {
+            return Err(PecosError::Input(format!(
+                "{operation} write {name}[{index}] is out of range for a register of declared size {size}; use an index below {size}"
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_assignment_targets(
+        &self,
+        returns: &[super::ast::ArgItem],
+    ) -> Result<(), PecosError> {
+        for target in returns {
+            match target {
+                super::ast::ArgItem::Simple(name) => {
+                    self.classical_info_for(name, "Assignment")?;
+                }
+                super::ast::ArgItem::Indexed((name, index)) => {
+                    self.validate_classical_write(name, *index, "Assignment")?;
+                }
+                _ => {
+                    return Err(PecosError::Input(format!(
+                        "Assignment: invalid target {}; supply a declared variable name or [name, bit index]",
+                        serde_json::to_value(target)
+                            .expect("PHIR arguments contain only JSON-serializable values")
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_result_index(&self, reference: &ResultReference) -> Result<(), PecosError> {
+        if let Some(index) = reference.index {
+            let size = self
+                .get_variable_info_opt(&reference.name)
+                .map_or(64, |info| info.size);
+            if index as usize >= size {
+                return Err(PecosError::Input(format!(
+                    "Result: bit index {index} is invalid for register {} of declared size {size}; use an index below {size}",
+                    serde_json::json!(reference.name)
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate all sources before any copies, then validate destination names and indices.
+    pub(crate) fn validate_result(
+        &self,
+        args: &[super::ast::ArgItem],
+        returns: &[super::ast::ArgItem],
+    ) -> Result<Vec<(ResultReference, ResultReference)>, PecosError> {
+        super::operations::validate_result_counts(args.len(), returns.len())?;
+        let sources = args
+            .iter()
+            .map(|arg| ResultReference::from_arg(arg, "args"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let destinations = returns
+            .iter()
+            .map(|arg| ResultReference::from_arg(arg, "returns"))
+            .collect::<Result<Vec<_>, _>>()?;
+        for source in &sources {
+            self.classical_info(&source.name)?;
+            self.validate_result_index(source)?;
+        }
+        for destination in &destinations {
+            if self.quantum_registers.contains_key(&destination.name) {
+                return Err(PecosError::Input(format!(
+                    "Result: destination {} is quantum; use a classical variable or a new export name",
+                    serde_json::json!(destination.name)
+                )));
+            }
+            self.validate_result_index(destination)?;
+        }
+        Ok(sources.into_iter().zip(destinations).collect())
+    }
+
+    /// Create Result destinations with the native whole-register or indexed storage rules.
+    pub(crate) fn prepare_result_destination(
+        &mut self,
+        source: &ResultReference,
+        destination: &ResultReference,
+    ) -> Result<(), PecosError> {
+        if !self.has_variable(&destination.name) {
+            let (data_type, size) = if let Some(index) = destination.index {
+                (DataType::U64, (index as usize + 1).max(32))
+            } else {
+                let info = self.classical_info(&source.name)?;
+                (info.data_type.clone(), info.size)
+            };
+            self.ensure_classical_variable(&destination.name, data_type, size)?;
+        }
+        // Earlier pairs may have created this destination with a smaller size.
+        self.validate_result_index(destination)
+    }
+
+    /// Copy Result values in source order, preserving bit indices and destination widths.
+    pub(crate) fn apply_result(
+        &mut self,
+        args: &[super::ast::ArgItem],
+        returns: &[super::ast::ArgItem],
+    ) -> Result<(), PecosError> {
+        for (source, destination) in self.validate_result(args, returns)? {
+            self.copy_result_pair(&source, &destination)?;
+            self.add_mapping(&destination.name, &destination.name)?;
+        }
+        Ok(())
+    }
+
+    fn copy_result_pair(
+        &mut self,
+        source: &ResultReference,
+        destination: &ResultReference,
+    ) -> Result<(), PecosError> {
+        let value = if let Some(index) = source.index {
+            u64::from(self.get_bit(&source.name, index as usize)?.0)
+        } else {
+            let value = self.get(&source.name).ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Result: source {} has no value; declare it with cvar_define before use",
+                    serde_json::json!(source.name)
+                ))
+            })?;
+            if self.classical_info(&source.name)?.data_type.is_signed() {
+                u64::from_ne_bytes(value.as_i64().to_ne_bytes())
+            } else {
+                value.as_u64()
+            }
+        };
+        self.prepare_result_destination(source, destination)?;
+        if let Some(index) = destination.index {
+            self.set_bit(&destination.name, index as usize, value & 1)?;
+        } else {
+            self.set(&destination.name, value)?;
+        }
+        Ok(())
     }
 
     /// Gets metadata for a variable
@@ -899,37 +1100,17 @@ impl Environment {
         results
     }
 
-    /// Copy a variable value to another variable
-    /// Used for Result operation in Python implementation
+    /// Copy a whole classical register, retaining the destination's declared width.
     ///
     /// # Errors
-    /// Returns an error if the source variable doesn't exist.
+    /// Returns an error for an unknown classical source or a quantum destination.
     pub fn copy_variable(&mut self, src_name: &str, dst_name: &str) -> Result<(), PecosError> {
-        // Check if source exists
-        if let Some(src_idx) = self.name_to_index.get(src_name) {
-            let src_value = self.values[*src_idx].clone();
-            let src_info = &self.metadata[*src_idx];
-
-            // If destination doesn't exist, create it
-            if !self.has_variable(dst_name) {
-                self.add_variable(dst_name, src_info.data_type.clone(), src_info.size)?;
-            }
-
-            // Set the destination value
-            if let Some(dst_idx) = self.name_to_index.get(dst_name) {
-                self.values[*dst_idx] = src_value;
-                Ok(())
-            } else {
-                // This should never happen as we just created the variable if it didn't exist
-                Err(PecosError::Input(format!(
-                    "Failed to copy '{src_name}' to '{dst_name}': destination not found after creation"
-                )))
-            }
-        } else {
-            Err(PecosError::Input(format!(
-                "Failed to copy '{src_name}' to '{dst_name}': source not found"
-            )))
+        let args = [super::ast::ArgItem::Simple(src_name.to_string())];
+        let returns = [super::ast::ArgItem::Simple(dst_name.to_string())];
+        for (source, destination) in self.validate_result(&args, &returns)? {
+            self.copy_result_pair(&source, &destination)?;
         }
+        Ok(())
     }
 }
 

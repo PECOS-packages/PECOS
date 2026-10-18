@@ -13,6 +13,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
+- `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
+  stabilizer family across a transversal H; previously post-H detectors were
+  labelled with the measured family, which made graph decoders' labelled
+  projection misdecode some single faults on transversal-H circuits.
 - Graph decoders project raw hyperedges using `fault_sector` labels, with
   `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
   `^` input whose components are all graphlike is used as given.
@@ -77,6 +81,65 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `fault_sector` labels, so their predictions can differ from decoding the text.
   Python decoder providers take text only: they reject the object, and they
   reject a corpus saved from it when it is decoded with `dem=None`.
+
+- PHIR declaration sizes reject explicit null, including with
+  `phir_validate=False`. The PECOS schema is deliberately stricter than upstream
+  PHIR, which permits null classical sizes. Omit classical sizes for inference;
+  quantum sizes remain required. In PyPHIR and the Python interpreter,
+  non-JSON or non-finite declaration fields and oversized Python integers report
+  the register or directive and a bounded representation of the invalid value;
+  int, str and float subclasses are accepted. Missing or non-string
+  declaration names report the declaration kind and offending value before size
+  validation. QuantumCircuit export rejects None widths in qvar_spec and cvar_spec
+  with instructions to supply a qubit count or a classical width from 0 to 64.
+
+- Signed whole-register PHIR Result copies now sign-extend to i64, agreeing
+  with `=` regardless of source backing type. Native output changes: copying
+  i8 -8 to u64 now yields 18446744073709551608, rather than 248.
+- PHIR bool declarations reject sizes above 1; use size 1 or omit the size.
+  Assignment and ffcall returns must name declared classical registers, and
+  indexed writes must be below the declared size. Invalid writes raise
+  `ValueError` instead of being dropped or creating undeclared targets.
+- Malformed Result entries use shared JSON diagnostics: wrong types (including
+  bool indices) raise `TypeError`; negative indices raise `ValueError`, on
+  native/legacy execution and both HybridEngine interpreters, even when schema
+  validation is disabled.
+
+- PHIR measurement destinations must be declared classical registers. The native
+  engine (including `sim(PhirJson(...))` and `PhirJsonEngine`) no longer creates
+  undeclared destinations. Both HybridEngine interpreters raise `ValueError`
+  rather than `KeyError` for undeclared measurement registers, and reject writes
+  outside the declared size instead of dropping the bit. Signed register sizes
+  exclude the sign bit from measurement destinations. JSON-to-module conversion,
+  which supports only straight-line programs, checks each measurement destination
+  when it compiles. Native execution and both interpreters check destinations
+  when the measurement runs.
+- Result rejects quantum destinations, unknown classical sources and out-of-range
+  indexed references with named errors. Declare classical sources and use a
+  classical destination or a new export name.
+
+- `sim(PhirJson(...))` and `PhirJsonEngine` reject repeated qubit IDs within
+  one qop and incorrect angle counts, including angles on gates that take none
+  (for example, H with angles). Put sequential uses of a qubit in separate qops
+  and supply only the angles specified for that gate. Two-qubit argument groups
+  must be pairs. HybridEngine's default Rust interpreter and `cinterp="python"`
+  reject empty qop args and repeated qubits, even with `phir_validate=False`.
+  Both use native validation and raise the same `ValueError` messages for invalid
+  gate names, grouping, counts or targets. Omit zero-target qops.
+- Result operations require equally sized, nonempty args and returns arrays;
+  mismatched or empty mappings raise `ValueError` instead of silently truncating.
+- Seeded noisy samples change for QuantumCircuits with consecutive same-type
+  gates on overlapping qubits: qc2phir now keeps them in separate operations.
+  Previously, noise was applied after the whole merged operation.
+
+- PyPHIR rejects unknown angle units with `ValueError` (and nonstring units with
+  `TypeError`); use `rad`, `pi`, or `deg`.
+- The legacy `PhirJsonEngine` uses native validation and execution exclusively.
+  Python interpreter fallbacks and pytest-dependent outcome rewriting are removed.
+  Scalar measurement outcomes are buffered until the whole native batch is
+  available. Deliver all outcomes from `process_program()` before requesting
+  the next batch.
+  Results that cannot fit its u32 dictionary API now raise `ValueError`.
 - Removed `pecos.execute_llvm`; use `pecos_rslib.hugr_lowering.compile_hugr_to_qis`
   for lowering and `pecos.sim` for execution.
 - Removed `pecos.compilation_pipeline.compile_guppy_to_llvm`; compose
@@ -215,6 +278,50 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python bug fixes
 
+- The Python PHIR interpreter releases cached Result operations on a full reset.
+  Declaration size diagnostics now give quantum or classical size guidance on all
+  PHIR paths, including when JSON parses an oversized integer as a float.
+
+- PHIR bool declarations without a size use one bit on all execution paths.
+  The converter preserves the inferred size in executable variable declarations.
+  The Python interpreter checks declarations and Result reference syntax at load.
+  Result counts are checked when the Result executes, like native and the Rust
+  interpreter; unexecuted branches do not raise count errors. Successful decoding
+  is cached per Result until the next init or full reset, including Results passed
+  directly to handle_cops or execute. Later shots avoid JSON/FFI validation for these Results,
+  measured bits and declaration resets. Measurement destinations are checked
+  against declarations when results arrive, including rejection of bool/float
+  indices.
+  Direct get_bit calls do not require program declaration metadata.
+- PyPHIR classical-input validation leaves angles and metadata untouched,
+  accepting scalar metadata in parsed PHIR dictionaries without requiring the
+  entire program to be JSON-serializable. Structural errors remain the schema
+  or parser's responsibility; validation projections skip malformed structures.
+- `run_phir_sim` retains `ValueError("Failed to parse PHIR: ...")` for ordinary
+  parse failures. The legacy bridge retains ValueError for unrelated external
+  failures; only malformed Result references use the documented shared
+  TypeError/ValueError classification.
+
+- PyPHIR parses bool declarations, and the Python interpreter supports their
+  one-bit measurement and assignment storage. Optional schema validation accepts
+  bool declarations and valid indexed Result references.
+
+- Both PHIR interpreters preserve indexed Result sources and destinations and
+  narrow whole-register copies to the destination width. Indexed copies no
+  longer disappear or copy the entire register.
+
+- `QuantumCircuit.to_phir_json()` merges consecutive quantum operations only
+  when all targets are disjoint. Repeated H/Measure operations and CX ladders
+  retain their order and measurement destinations across ticks. Compaction no
+  longer crashes with `KeyError('args')` when an export precedes a quantum
+  operation, or `KeyError('returns')` when an unnamed measurement precedes a named
+  one. Tracking accumulated qubits makes compaction linear in the number of targets.
+  Zero-target quantum gates are omitted so both HybridEngine interpreter paths
+  accept the exported circuit.
+
+- The legacy PHIR-JSON bridge now uses the native command generator, preserving
+  all targets and pairs in broadcast gates and all measurement destinations.
+- PyPHIR converts degree angles to radians consistently with the native engine.
 - `quantum-pecos` now requires `tket~=0.15.9` and `selene-hugr-qis-compiler~=0.4.3`
   (also the floor of `pecos-rslib`'s `hugr` extra). Earlier tket releases fail to
   compile some Guppy programs that convert a measurement result to a number and use
@@ -240,6 +347,56 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   qubit in the Rust PHIR-JSON engine, not only the first.
 
 ### Rust breaking changes
+
+- `Environment::copy_variable` preserves destination widths (narrowing when
+  required) and rejects quantum destinations. Whole signed Result/copy_variable
+  copies sign-extend to i64 as specified by PHIR, matching assignment. Native
+  output for widening a negative source no longer depends on its backing type.
+- Bool classical declarations reject sizes greater than 1. Assignment and
+  ffcall destinations must be declared; indexed writes outside their declared
+  size now error instead of being dropped. Undeclared targets are not created.
+- Result reference errors now quote the offending JSON value consistently;
+  malformed references are validated before AST decoding. Noninteger unary
+  module operands report an input validation error rather than an internal error.
+
+- Native PHIR-JSON measurements no longer create undeclared destination
+  registers. Native execution, the Rust interpreter and JSON-to-module conversion
+  reject unknown classical destinations and bit indices outside the declared
+  size, including a signed register's sign-bit position. Declare measurement
+  registers with `cvar_define` and use indices below their declared size.
+- Result rejects quantum destinations, unknown classical sources and indexed
+  references outside the declared size with named errors. This also prevents
+  indexed writes from silently disappearing beyond a destination's width.
+- JSON-to-module exports retain register widths: exports above 32 bits use U64,
+  and programs without Result export all declared classical registers.
+
+- The native PHIR-JSON engine rejects repeated qubit IDs within one qop,
+  incorrect angle counts (including H with angles), and two-qubit argument
+  groups that are not pairs. Split sequential qubit uses into separate qops,
+  provide the specified angles, and use one two-qubit pair per argument group.
+- The Rust-backed Python `PhirJsonEngine` has no Python fallback interpreter;
+  its scalar measurement adapter buffers outcomes per native batch. Supply every
+  outcome before advancing `process_program()`.
+- `phir_json_to_module` errors on unsupported blocks (including qparallel and
+  if), machine/meta operations, data directives and classical operations instead
+  of silently dropping them. Use the native PHIR-JSON engine for supported PHIR
+  programs that need these operations.
+  Known limitation ([#1323](https://github.com/PECOS-packages/PECOS/issues/1323)):
+  `cvar_export` remains unsupported by this converter. The native engine currently
+  ignores it; lowering it to Result would change which registers are returned.
+- JSON-to-module conversion rejects CPhase, matching the other PHIR paths;
+  lower it to supported gates before emitting PHIR JSON. Lower-level PHIR IR
+  CPhase support is unchanged.
+- All PHIR execution paths reject empty or mismatched Result argument/return
+  arrays. Supply one destination for each source, with at least one pair.
+
+- `phir_to_mlir` returns errors for unsupported operations and terminators instead
+  of emitting TODO comments or silently omitting operations. Supported operations
+  reject incorrect arity.
+- The PHIR processor rejects incorrect operand and result counts, including
+  previously ignored extra operands on Measure, Reset, preparations and Dealloc.
+  Custom, ControlFlow and Parsing operations retain their lowering-stage skip
+  contract and do not consume operands or results.
 
 - Seeded samples change for every engine on the shared Monte Carlo loop. Each shot
   is reseeded from the run seed and its global index before resetting the engine.
@@ -376,6 +533,78 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- Native PHIR-JSON loading, the Rust interpreter, shared input validation and
+  JSON-to-module conversion use the same declaration-size decoder. Negative,
+  string, fractional, boolean and JSON null sizes produce a named input error.
+  Only an absent size field means omitted: classical sizes are inferred and
+  quantum sizes remain required.
+  Existing zero-size and register-width checks are unchanged.
+- The public `ResultReferenceError` implements `std::error::Error`.
+
+- Omitted-size bool declarations infer one bit in the native PHIR-JSON engine,
+  Rust interpreter and JSON-to-module converter. Shared input validation uses
+  the same size inference. Malformed Result references are `PecosError::Input`
+  (with the standard `Input error:` display prefix), preserving Python's
+  wrong-type/bad-value distinction. Converter Result diagnostics use JSON quoting
+  for register names; assignment and measurement diagnostics name their operation.
+
+- The PHIR processor stores U8/U16 integer results and evaluates their shifts
+  and bitwise operations. JSON-to-module measurements and Result narrowing now
+  work for every supported classical type, including u8/u16 and bool.
+- JSON-to-module conversion supports the spec's indexed Result sources and
+  destinations. Native execution and the Rust interpreter share Result copying
+  and validation, preserving bit indices, source order and destination widths.
+  Whole signed copies sign-extend to i64 before destination-width masking,
+  as required by the PHIR spec; native, converter and Python paths agree.
+- The converter uses one register metadata store for type and declared size;
+  signed measurement bounds no longer include the extra sign bit.
+
+- JSON-to-module conversion splits multi-entry Results into individual named
+  exports, preserving copy order, register widths and values captured before
+  later measurements. Repeated bit writes replace earlier bits, including zero.
+  Native Result processing continues to subsequent operations instead of emitting
+  an empty batch that could signal premature completion.
+- Quantum register resolution precedes signature checks on all PHIR paths, so
+  inputs with both an invalid index and invalid angle count report the same error.
+
+- Native PHIR-JSON, the Rust classical interpreter, and JSON-to-module conversion
+  share validation and actionable errors for malformed two-qubit argument groups
+  (including RXYXY2Q) and repeated qubit IDs. RXYXY2Q gate validation now runs at
+  execution/conversion, like other gates, rather than during AST deserialization.
+- JSON-to-module Result conversion rejects entries that are neither register
+  names nor `[name, bit]` references instead of silently dropping them, and
+  requires args/returns arrays.
+  Unsupported block, machine and meta
+  operation names are printed without JSON quotes.
+
+- The native PHIR-JSON engine and JSON-to-module converter now support every
+  quantum gate and alias in PHIR v0.1, including CZ, RZZ/ZZPhase, CY, SWAP,
+  RX/RY, RXX/RYY, SY/SYdg, SZ/SZdg, F/Fdg, T/Tdg and identity. Broadcasts
+  preserve all targets and pairs, including across byte-message payload limits.
+  Quantum operations reject repeated qubit IDs and incorrect angle counts.
+
+- PHIR-JSON conversion splits broadcast gates, preparations and measurements into
+  instructions of canonical arity, preserving angles, pair order and classical
+  measurement destinations. RZ and preparation conversion are now supported.
+
+- GPU simulators reject out-of-range qubit indices before narrowing, packing, or GPU work,
+  including fused gates, compiled circuits, measurements, and Pauli queries.
+  `CircuitExecutor` checks operands before applying any gates only for simulators with
+  a fixed capacity; Pauli trackers grow to accommodate operands.
+  `GpuNoisySampler::sample` returns `Err` for invalid operands.
+  `GpuStab` and `GpuStabMulti` automatically flush their gate queues at 262144 and
+  65536 gates, respectively, instead of panicking or dropping gates.
+  `GpuStabMulti` executes queued measurements before a gate capacity flush,
+  preserving their position in the circuit.
+  `GpuStab` preserves each batch-mode dispatch's upload instead of executing the
+  last upload repeatedly, and `begin_batch` preserves accumulated work.
+  Compiled circuits execute after previously queued gates, and reset discards
+  pending fused gates so they cannot affect the new state. Deferred measurement
+  queues support more than 32768 results. Gate dispatch memory stays bounded by
+  limiting recorded passes and dispatches, including in batch mode with parallel
+  execution. Parallel gate partitions serialize S/Sdg phase updates so disjoint
+  phase gates cannot race on shared stabilizer signs.
 
 - Gates appended to a `DagCircuit` after `remove_gate`, or after converting from
   a `TickCircuit`, could be placed before existing gates on the same qubit.

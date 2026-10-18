@@ -4,9 +4,139 @@ use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
 use pecos_core::errors::PecosError;
-use pecos_core::{Angle64, Gate};
+use pecos_core::{Angle64, Gate, gate_type::GateType};
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Validate the one-to-one, nonempty mapping of a PHIR Result operation.
+///
+/// # Errors
+/// Returns an input error naming both counts when they differ or are zero.
+pub fn validate_result_counts(args: usize, returns: usize) -> Result<(), PecosError> {
+    if args == 0 || args != returns {
+        return Err(PecosError::Input(format!(
+            "Result: invalid counts {args} args and {returns} returns; supply equally sized nonempty arrays"
+        )));
+    }
+    Ok(())
+}
+
+/// PHIR v0.1 spellings and aliases, plus the existing native extensions.
+/// Keep format-specific aliases here; core gate names serve other formats too.
+pub(crate) fn quantum_gate_type(name: &str) -> Result<GateType, PecosError> {
+    Ok(match name {
+        "Init" | "Prep" => GateType::PZ,
+        "Measure" => GateType::MZ,
+        "R1XY" | "U1q" | "RXY1Q" => GateType::RXY1Q,
+        "SZ" | "S" => GateType::SZ,
+        "SZdg" | "Sdg" => GateType::SZdg,
+        "CX" | "CNOT" => GateType::CX,
+        "RZZ" | "ZZPhase" => GateType::RZZ,
+        "R2XXYYZZ" | "RXXYYZZ" | "RXXRYYRZZ" => GateType::RXXRYYRZZ,
+        "SZZ" | "ZZ" | "ZZMax" => GateType::SZZ,
+        "I" => GateType::I,
+        "X" => GateType::X,
+        "Y" => GateType::Y,
+        "Z" => GateType::Z,
+        "RX" => GateType::RX,
+        "RY" => GateType::RY,
+        "RZ" => GateType::RZ,
+        "SX" => GateType::SX,
+        "SXdg" => GateType::SXdg,
+        "SY" => GateType::SY,
+        "SYdg" => GateType::SYdg,
+        "H" => GateType::H,
+        "F" => GateType::F,
+        "Fdg" => GateType::Fdg,
+        "T" => GateType::T,
+        "Tdg" => GateType::Tdg,
+        "CY" => GateType::CY,
+        "CZ" => GateType::CZ,
+        "RXX" => GateType::RXX,
+        "RYY" => GateType::RYY,
+        "SXX" => GateType::SXX,
+        "SXXdg" => GateType::SXXdg,
+        "SYY" => GateType::SYY,
+        "SYYdg" => GateType::SYYdg,
+        "SZZdg" => GateType::SZZdg,
+        "SWAP" => GateType::SWAP,
+        "U" => GateType::U,
+        "RXYXY2Q" => GateType::RXYXY2Q,
+        _ => {
+            return Err(PecosError::Input(format!(
+                "Unsupported quantum gate {name:?}; use a PHIR v0.1 gate name or a supported native extension"
+            )));
+        }
+    })
+}
+
+/// Validate PHIR grouping before any path flattens or resolves its arguments.
+pub(crate) fn validate_quantum_args(
+    name: &str,
+    arity: usize,
+    args: &[QubitArg],
+) -> Result<(), PecosError> {
+    if args.is_empty() {
+        return Err(PecosError::Input(format!(
+            "Invalid quantum operation {name:?} has 0 arguments; supply at least one qubit or complete qubit pair"
+        )));
+    }
+    for arg in args {
+        match arg {
+            QubitArg::MultipleQubits(qubits) => validate_quantum_arg_group(name, arity, qubits)?,
+            QubitArg::SingleQubit(qubit) if name == "RXYXY2Q" => {
+                validate_quantum_arg_group(name, arity, std::slice::from_ref(qubit))?;
+            }
+            QubitArg::SingleQubit(_) => {}
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_quantum_arg_group(
+    name: &str,
+    arity: usize,
+    qubits: &[(String, usize)],
+) -> Result<(), PecosError> {
+    if arity > 1 && qubits.len() != arity {
+        return Err(PecosError::Input(format!(
+            "{name}: argument group {qubits:?} has invalid size; supply groups of {arity} qubits"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_quantum_qubits(name: &str, qubits: &[usize]) -> Result<(), PecosError> {
+    let duplicates = pecos_core::duplicate_qubits(qubits.iter().copied());
+    if !duplicates.is_empty() {
+        return Err(PecosError::Input(format!(
+            "gate {name:?} repeats qubit IDs {duplicates:?}; use distinct qubits within one PHIR quantum operation"
+        )));
+    }
+    if let Some(qubit) = qubits.iter().find(|&&q| u32::try_from(q).is_err()) {
+        return Err(PecosError::Input(format!(
+            "gate {name:?} has qubit ID {qubit}; use an ID at most {} for ByteMessage",
+            u32::MAX
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_quantum_signature(
+    name: &str,
+    gate: GateType,
+    qubits: usize,
+    angles: usize,
+) -> Result<(), PecosError> {
+    let arity = gate.quantum_arity();
+    let angle_arity = gate.angle_arity();
+    if qubits == 0 || !qubits.is_multiple_of(arity) || angles != angle_arity {
+        return Err(PecosError::Input(format!(
+            "gate {name:?} got {qubits} qubits and {angles} angles; supply the expected nonzero multiple of {arity} qubits and exactly {angle_arity} angles"
+        )));
+    }
+    Ok(())
+}
 
 /// Represents the result of processing a meta instruction
 #[derive(Debug, Clone)]
@@ -1023,33 +1153,16 @@ impl OperationProcessor {
             }
         };
 
+        if matches!(cop, "=" | "ffcall") {
+            self.environment.validate_assignment_targets(returns)?;
+        }
         // For most operations, validate all variable accesses
         if cop == "Result" {
-            // For Result operation, only validate the source variables (args)
-            // The return variables are outputs and don't need to be defined
-            for arg in args {
-                let (var, idx) = extract_var_idx(arg)?;
-                self.validate_variable_access(&var, idx)?;
-            }
+            self.environment.validate_result(args, returns)?;
         } else if cop == "ffcall" {
             debug!("Processing ffcall operation: {:?}", ops.get(current_op));
         } else if cop == "=" {
             // For assignment, we evaluate the expression and assign to the variable
-
-            // Validate return variables (target of assignment)
-            for ret in returns {
-                match ret {
-                    ArgItem::Simple(_var) | ArgItem::Indexed((_var, _)) => {
-                        // For assignment, we don't need to validate the variable exists
-                        // It might be created by this operation
-                    }
-                    _ => {
-                        return Err(PecosError::Input(
-                            "Assignment target must be a variable reference".to_string(),
-                        ));
-                    }
-                }
-            }
 
             // Evaluate arguments (source of assignment)
             // For now, we only support a single argument
@@ -1064,32 +1177,12 @@ impl OperationProcessor {
                     // Set the bit at position idx to value & 1
                     let bit_value = value & 1;
 
-                    // Update in environment if the variable exists there
-                    if self.environment.has_variable(&var) {
-                        // Set the bit in environment
-                        // bit_value is already masked with & 1, so it's guaranteed to be 0 or 1
-                        self.environment.set_bit(
-                            &var,
-                            idx,
-                            u64::try_from(bit_value).unwrap_or(0),
-                        )?;
-                        log::debug!("Set bit {var}[{idx}] = {bit_value} in environment");
-                    }
-                    // `set_bit` above already updates the full 64-bit value in the
-                    // environment; do not recompute the whole register here (a u32
-                    // recompute both truncated bits 32-63 and panicked on idx >= 32).
+                    self.environment.set_bit(&var, idx, bit_value != 0)?;
                 } else {
                     // For whole variable assignment, store in environment
                     log::debug!("Storing assignment value {value} in variable {var}");
 
-                    // Make sure variable exists in environment and update it
-                    if !self.environment.has_variable(&var) {
-                        self.environment
-                            .ensure_classical_variable(&var, DataType::I32, 31)?;
-                    }
-                    // Convert to u64 safely - we're working with raw bit patterns
-                    #[allow(clippy::cast_sign_loss)]
-                    let value_u64 = u64::from_ne_bytes((value as u64).to_ne_bytes());
+                    let value_u64 = u64::from_ne_bytes(value.to_ne_bytes());
                     self.environment.set(&var, value_u64)?;
                     log::debug!("Updated variable {var} = {value} in environment");
 
@@ -1132,9 +1225,9 @@ impl OperationProcessor {
             );
 
             // Use our improved method that handles bit indexing and uses the environment
-            self.process_result_op(args, returns)?;
+            self.environment.apply_result(args, returns)?;
 
-            // Return true to indicate we've handled this operation
+            // Return true to indicate this operation was handled.
             return Ok(true);
         } else if cop == "ffcall" {
             // Process foreign function call
@@ -1218,23 +1311,10 @@ impl OperationProcessor {
                                                                     u32::try_from(result[i])
                                                                         .unwrap_or(0);
 
-                                                                // Update primary storage in environment
-                                                                if !self
-                                                                    .environment
-                                                                    .has_variable(var)
-                                                                {
-                                                                    let _ = self
-                                                                        .environment
-                                                                        .ensure_classical_variable(
-                                                                            var,
-                                                                            DataType::I32,
-                                                                            31,
-                                                                        );
-                                                                }
-                                                                let _ = self.environment.set(
+                                                                self.environment.set(
                                                                     var,
                                                                     u64::from(result_value),
-                                                                );
+                                                                )?;
 
                                                                 // All values stored in environment
                                                             }
@@ -1244,26 +1324,12 @@ impl OperationProcessor {
                                                                     u32::try_from(result[i] & 1)
                                                                         .unwrap_or(0);
 
-                                                                // Update primary storage in environment
-                                                                if !self
-                                                                    .environment
-                                                                    .has_variable(var)
-                                                                {
-                                                                    let _ = self
-                                                                        .environment
-                                                                        .ensure_classical_variable(
-                                                                            var,
-                                                                            DataType::I32,
-                                                                            31,
-                                                                        );
-                                                                }
-
                                                                 // Set the bit in environment
-                                                                let _ = self.environment.set_bit(
+                                                                self.environment.set_bit(
                                                                     var,
                                                                     *idx,
                                                                     u64::from(bit_value),
-                                                                );
+                                                                )?;
 
                                                                 // Environment is the single source of truth - no need for additional storage
                                                             }
@@ -1318,23 +1384,10 @@ impl OperationProcessor {
                                                                         u32::try_from(result[i])
                                                                             .unwrap_or(0);
 
-                                                                    // Update primary storage in environment
-                                                                    if !self
-                                                                        .environment
-                                                                        .has_variable(var)
-                                                                    {
-                                                                        let _ = self
-                                                                            .environment
-                                                                            .ensure_classical_variable(
-                                                                                var,
-                                                                                DataType::I32,
-                                                                                31,
-                                                                            );
-                                                                    }
-                                                                    let _ = self.environment.set(
+                                                                    self.environment.set(
                                                                         var,
                                                                         u64::from(result_value),
-                                                                    );
+                                                                    )?;
 
                                                                     // Environment is the single source of truth for all variable data
                                                                 }
@@ -1345,27 +1398,12 @@ impl OperationProcessor {
                                                                     )
                                                                     .unwrap_or(0);
 
-                                                                    // Update primary storage in environment
-                                                                    if !self
-                                                                        .environment
-                                                                        .has_variable(var)
-                                                                    {
-                                                                        let _ = self
-                                                                            .environment
-                                                                            .ensure_classical_variable(
-                                                                                var,
-                                                                                DataType::I32,
-                                                                                31,
-                                                                            );
-                                                                    }
-
                                                                     // Set the bit in environment
-                                                                    let _ =
-                                                                        self.environment.set_bit(
-                                                                            var,
-                                                                            *idx,
-                                                                            u64::from(bit_value),
-                                                                        );
+                                                                    self.environment.set_bit(
+                                                                        var,
+                                                                        *idx,
+                                                                        u64::from(bit_value),
+                                                                    )?;
 
                                                                     // Environment is the single source of truth for all variable data
                                                                 }
@@ -1429,16 +1467,6 @@ impl OperationProcessor {
                                     // Store whole variable value in environment
                                     let result_value = u64::try_from(result[i]).unwrap_or(0);
 
-                                    // Make sure the variable exists
-                                    if !self.environment.has_variable(var) {
-                                        // Create if needed
-                                        self.environment.ensure_classical_variable(
-                                            var,
-                                            DataType::I32,
-                                            31,
-                                        )?;
-                                    }
-
                                     // Set value in environment (single source of truth)
                                     self.environment.set(var, result_value)?;
                                     debug!("Set variable {var} = {result_value}");
@@ -1446,16 +1474,6 @@ impl OperationProcessor {
                                 ArgItem::Indexed((var, idx)) => {
                                     // Set specific bit in variable
                                     let bit_value = result[i] & 1;
-
-                                    // Make sure the variable exists
-                                    if !self.environment.has_variable(var) {
-                                        // Create if needed
-                                        self.environment.ensure_classical_variable(
-                                            var,
-                                            DataType::I32,
-                                            31,
-                                        )?;
-                                    }
 
                                     // Set bit in environment (single source of truth)
                                     self.environment.set_bit(
@@ -1503,156 +1521,40 @@ impl OperationProcessor {
         angles: Option<&Vec<f64>>, // Now just Vec<f64> in radians, no unit string
         args: &[QubitArg],
     ) -> Result<(String, Vec<usize>, Vec<f64>), PecosError> {
-        // Validate that we have at least one qubit argument
-        if args.is_empty() {
-            return Err(PecosError::Input(format!(
-                "Invalid quantum operation: Operation '{qop}' requires at least one qubit argument"
-            )));
-        }
-
-        if qop == "RXYXY2Q" {
-            crate::v0_1::ast::validate_rxyxy2q_args(angles.map(Vec::as_slice), args)
-                .map_err(PecosError::ValidationInvalidGateParameters)?;
-        }
-
+        let gate = quantum_gate_type(qop)?;
+        validate_quantum_args(qop, gate.quantum_arity(), args)?;
         // Validate and extract qubit arguments
         let mut qubit_args = Vec::new();
 
         for qubit_arg in args {
             match qubit_arg {
                 QubitArg::SingleQubit((var, idx)) => {
-                    // Validate the qubit
-                    self.validate_variable_access(var, *idx)?;
                     qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 QubitArg::MultipleQubits(qubits) => {
                     for (var, idx) in qubits {
-                        // Validate each qubit
-                        self.validate_variable_access(var, *idx)?;
                         qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                     }
                 }
             }
         }
 
-        // Process based on gate type
-        match qop {
-            "U" => {
-                let angles = angles.filter(|angles| angles.len() == 3).ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(
-                        "U gate requires exactly three angles (theta, phi, lambda)".to_string(),
-                    )
-                })?;
-                Ok((qop.to_string(), qubit_args, angles.clone()))
-            }
-            // Single-qubit rotation gates
-            "RZ" => {
-                let theta = angles
-                    .as_ref()
-                    .and_then(|angles| angles.first().copied())
-                    .ok_or_else(|| {
-                        PecosError::ValidationInvalidGateParameters(format!(
-                            "Missing rotation angle for '{qop}' gate"
-                        ))
-                    })?;
-                Ok((qop.to_string(), qubit_args, vec![theta]))
-            }
-            "R1XY" => {
-                // Get angles safely
-                let angles_ref = angles.as_ref().ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires two angles (theta, phi)"
-                    ))
-                })?;
-
-                if angles_ref.len() < 2 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires two angles (theta, phi), but only {} provided",
-                        angles_ref.len()
-                    )));
-                }
-
-                // R1XY convention: angles[0] = theta (rotation angle), angles[1] = phi (axis angle)
-                // See: R1XY = RZ(-phi + pi/2) * RY(theta) * RZ(phi - pi/2) (the two Z angles sum to zero)
-                let theta = angles_ref[0];
-                let phi = angles_ref[1];
-                Ok((qop.to_string(), qubit_args, vec![theta, phi]))
-            }
-
-            "RXYXY2Q" => {
-                let angles = angles.ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(
-                        "RXYXY2Q requires two angles".to_string(),
-                    )
-                })?;
-                Ok((qop.to_string(), qubit_args, angles.clone()))
-            }
-
-            // Two-qubit rotation gate: RXXRYYRZZ (3 angles)
-            "RXXRYYRZZ" | "R2XXYYZZ" | "RXXYYZZ" => {
-                let angles_ref = angles.as_ref().ok_or_else(|| {
-                    PecosError::ValidationInvalidGateParameters(
-                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma)".to_string(),
-                    )
-                })?;
-                if angles_ref.len() < 3 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "RXXRYYRZZ gate requires three angles (alpha, beta, gamma), but only {} provided",
-                        angles_ref.len()
-                    )));
-                }
-                if qubit_args.len() < 2 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "RXXRYYRZZ gate requires exactly two qubits, but found {}",
-                        qubit_args.len()
-                    )));
-                }
-                // Always return canonical name
-                Ok((
-                    "RXXRYYRZZ".to_string(),
-                    qubit_args,
-                    vec![angles_ref[0], angles_ref[1], angles_ref[2]],
-                ))
-            }
-
-            // Two-qubit gates
-            "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg" | "ZZ" => {
-                if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires complete qubit pairs, but found {} qubits",
-                        qubit_args.len()
-                    )));
-                }
-                let canonical = if qop == "ZZ" { "SZZ" } else { qop };
-                Ok((canonical.to_string(), qubit_args, vec![]))
-            }
-            "CX" | "CNOT" => {
-                // Verify we have exactly 2 qubits
-                if qubit_args.len() < 2 {
-                    return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires control and target qubits (2 qubits total), but found {}",
-                        qubit_args.len()
-                    )));
-                }
-                // Always return the canonical name CX
-                Ok(("CX".to_string(), qubit_args, vec![]))
-            }
-
-            // Single-qubit Clifford gates, Initialization, and Measurement
-            "H" | "X" | "Y" | "Z" | "SX" | "SXdg" | "Measure" | "Init" => {
-                Ok((qop.to_string(), qubit_args, vec![]))
-            }
-
-            _ => Err(PecosError::Processing(format!(
-                "Unsupported quantum gate operation: Gate type '{qop}' is not implemented"
-            ))),
-        }
+        let angle_args = angles.map_or(&[][..], Vec::as_slice);
+        validate_quantum_signature(qop, gate, qubit_args.len(), angle_args.len())?;
+        validate_quantum_qubits(qop, &qubit_args)?;
+        let name = match gate {
+            GateType::PZ => "Init".to_string(),
+            GateType::MZ => "Measure".to_string(),
+            GateType::RXY1Q => "R1XY".to_string(),
+            _ => gate.to_string(),
+        };
+        Ok((name, qubit_args, angle_args.to_vec()))
     }
 
-    /// Add quantum operation to byte message builder
+    /// Add a quantum operation using the existing native gate representation.
     ///
     /// # Errors
-    /// Returns an error if the gate type is not supported.
+    /// Returns an actionable error for unknown gates, invalid counts or angles.
     pub fn add_quantum_operation_to_builder(
         &self,
         builder: &mut ByteMessageBuilder,
@@ -1660,165 +1562,42 @@ impl OperationProcessor {
         qubit_args: &[usize],
         angle_args: &[f64],
     ) -> Result<(), PecosError> {
-        let signature = match gate_type {
-            "U" => Some((1, 3)),
-            "RZ" => Some((1, 1)),
-            "R1XY" => Some((1, 2)),
-            "RXYXY2Q" => Some((2, 2)),
-            "RXXRYYRZZ" => Some((2, 3)),
-            "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg" | "CX" => Some((2, 0)),
-            "H" | "X" | "Y" | "Z" | "SX" | "SXdg" | "Measure" | "Init" => Some((1, 0)),
-            _ => None,
+        let gate = quantum_gate_type(gate_type)?;
+        validate_quantum_signature(gate_type, gate, qubit_args.len(), angle_args.len())?;
+        validate_quantum_qubits(gate_type, qubit_args)?;
+        let angles = angle_args
+            .iter()
+            .map(|&angle| {
+                Angle64::try_from_radians(angle).map_err(|error| {
+                    PecosError::ValidationInvalidGateParameters(format!(
+                        "{gate_type}: {error}; supply finite angles in radians"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Preserve one command per preparation/measurement. Other broadcasts
+        // fit the wire header's u8 qubit count and split on gate boundaries.
+        let chunk_size = if matches!(gate, GateType::PZ | GateType::MZ) {
+            1
+        } else {
+            usize::from(u8::MAX) / gate.quantum_arity() * gate.quantum_arity()
         };
-        if let Some((arity, angles)) = signature {
-            let valid_qubits = !qubit_args.is_empty() && qubit_args.len().is_multiple_of(arity);
-            if !valid_qubits || angle_args.len() != angles {
-                return Err(PecosError::ValidationInvalidGateParameters(format!(
-                    "gate '{gate_type}' expected a nonzero multiple of {arity} qubits and {angles} angles, got {} qubits and {} angles; supply the expected counts",
-                    qubit_args.len(),
-                    angle_args.len()
-                )));
-            }
-        }
-        let pairs = || {
-            if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
-                return Err(PecosError::ValidationInvalidGateParameters(format!(
-                    "'{gate_type}' gate requires complete qubit pairs, but found {} qubits",
-                    qubit_args.len()
-                )));
-            }
-            Ok(qubit_args
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| (pair[0], pair[1]))
-                .collect::<Vec<_>>())
-        };
-        match gate_type {
-            "U" => {
-                let [theta, phi, lambda] = angle_args else {
-                    return Err(PecosError::ValidationInvalidGateParameters(
-                        "U gate requires exactly three angles (theta, phi, lambda)".to_string(),
-                    ));
-                };
-                builder.u(
-                    Angle64::try_from_radians(*theta).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(*phi).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(*lambda).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    qubit_args,
-                );
-            }
-            "SX" => {
-                builder.sx(qubit_args);
-            }
-            "SXdg" => {
-                builder.sxdg(qubit_args);
-            }
-            "RZ" => {
-                builder.rz(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    qubit_args,
-                );
-            }
-            "R1XY" => {
-                builder.rxy1q(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    qubit_args,
-                );
-            }
-            "RXYXY2Q" => {
-                crate::v0_1::ast::validate_rxyxy2q(Some(angle_args), qubit_args.len())
-                    .map_err(PecosError::ValidationInvalidGateParameters)?;
-                builder.rxyxy2q(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    &pairs()?,
-                );
-            }
-            "RXXRYYRZZ" => {
-                let pairs = pairs()?;
-                let gate = Gate::rxxryyrzz(
-                    Angle64::try_from_radians(angle_args[0]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[1]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    Angle64::try_from_radians(angle_args[2]).map_err(|error| {
-                        PecosError::ValidationInvalidGateParameters(error.to_string())
-                    })?,
-                    &pairs,
-                );
-                builder.add_gate_command(&gate);
-            }
-            "SXX" => {
-                builder.sxx(&pairs()?);
-            }
-            "SXXdg" => {
-                builder.sxxdg(&pairs()?);
-            }
-            "SYY" => {
-                builder.syy(&pairs()?);
-            }
-            "SYYdg" => {
-                builder.syydg(&pairs()?);
-            }
-            "SZZ" => {
-                builder.szz(&pairs()?);
-            }
-            "SZZdg" => {
-                builder.szzdg(&pairs()?);
-            }
-            "CX" => {
-                builder.cx(&pairs()?);
-            }
-            "H" => {
-                builder.h(qubit_args);
-            }
-            "X" => {
-                builder.x(qubit_args);
-            }
-            "Y" => {
-                builder.y(qubit_args);
-            }
-            "Z" => {
-                builder.z(qubit_args);
-            }
-            "Measure" => {
-                // Measure every qubit in the op (one outcome per qubit, in
-                // order), not just the first, so multi-qubit Measure works and
-                // the outcomes align with the recorded return registers.
-                builder.mz(qubit_args);
-            }
-            "Init" => {
-                // Initialize qubit to |0⟩ state using the Prep gate
-                for &qubit in qubit_args {
-                    // The Prep gate initializes a qubit to the |0⟩ state
-                    builder.pz(&[qubit]);
-                }
-            }
-            _ => {
-                return Err(PecosError::Processing(format!(
-                    "Unsupported quantum gate operation: Gate type '{gate_type}' is not implemented"
-                )));
-            }
+        for chunk in qubit_args.chunks(chunk_size) {
+            use pecos_engines::byte_message::protocol::{GateHeader, MessageHeader};
+            // All fields and the starting batch header are aligned to four bytes.
+            let bytes = size_of::<MessageHeader>()
+                + size_of::<GateHeader>()
+                + chunk.len() * size_of::<u32>()
+                + angles.len() * size_of::<u64>();
+            builder.validate_append_capacity(1, bytes)?;
+            let qubits: Vec<_> = chunk.iter().copied().map(Into::into).collect();
+            let command = Gate::try_with_angles(gate, angles.clone(), qubits).map_err(|error| {
+                PecosError::ValidationInvalidGateParameters(format!(
+                    "{gate_type}: {error}; supply exactly {} angles",
+                    gate.angle_arity()
+                ))
+            })?;
+            builder.add_gate_command(&command);
         }
         Ok(())
     }
@@ -1837,31 +1616,8 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         log::debug!("PHIR: Storing measurement result {var_name}[{var_idx}] = {outcome}");
 
-        // Step 1: Ensure the main variable exists in the environment with appropriate size
-        if !self.environment.has_variable(var_name) {
-            // Determine appropriate size (at least large enough to hold this
-            // bit). Measurement registers are unsigned bit collections, so use
-            // an unsigned type -- `u64` is valid for any size up to 64, whereas
-            // a signed `i32` could not hold e.g. bit index 31 (size 32).
-            let var_size = std::cmp::max(var_idx + 1, 32);
-            self.environment
-                .ensure_classical_variable(var_name, DataType::U64, var_size)?;
-            log::debug!("Created variable {var_name} with size {var_size}");
-        }
-
-        // Step 2: Update the specific bit directly. An out-of-range write is a
-        // hard error -- fail fast rather than silently dropping the outcome.
-        // `Environment::set_bit` only bounds-checks the backing integer width
-        // and then re-masks to the declared width, which would silently drop a
-        // bit between the declared size and the backing width -- so check the
-        // declared size here.
-        let declared_size = self.environment.get_variable_info(var_name)?.size;
-        if var_idx >= declared_size {
-            return Err(PecosError::Input(format!(
-                "Measurement write {var_name}[{var_idx}] is out of range for a register of \
-                 declared size {declared_size}"
-            )));
-        }
+        self.environment
+            .validate_measurement_write(var_name, var_idx)?;
         let bit_value = u64::from(outcome != 0);
         self.environment.set_bit(var_name, var_idx, bit_value)?;
         log::debug!("Set bit {var_name}[{var_idx}] = {bit_value} in environment");
@@ -1931,146 +1687,6 @@ impl OperationProcessor {
             );
             for (source, dest) in mappings {
                 log::debug!("PHIR: Mapping {source} -> {dest}");
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Helper method to extract variable name and optional index from an argument
-    fn extract_arg_info(arg: &ArgItem) -> Result<(String, Option<usize>), PecosError> {
-        match arg {
-            ArgItem::Simple(name) => Ok((name.clone(), None)),
-            ArgItem::Indexed((name, idx)) => Ok((name.clone(), Some(*idx))),
-            _ => Err(PecosError::Input(format!(
-                "Invalid argument for Result operation: {arg:?}"
-            ))),
-        }
-    }
-
-    /// Get a variable value from the environment
-    ///
-    /// This simplified implementation treats the environment as the single source of truth
-    /// for retrieving variable values.
-    fn get_variable_value(&self, var_name: &str, index: Option<usize>) -> Result<u64, PecosError> {
-        log::debug!("Getting variable value for {var_name}[{index:?}]");
-
-        // Ensure the variable exists in the environment
-        if !self.environment.has_variable(var_name) {
-            return Err(PecosError::Input(format!(
-                "Variable not found in environment: {var_name}[{index:?}]"
-            )));
-        }
-
-        // Handle bit access if an index is provided
-        if let Some(idx) = index {
-            // Try to get the specific bit using the environment's bit accessor
-            match self.environment.get_bit(var_name, idx) {
-                Ok(bit_value) => {
-                    log::debug!("Found bit value in environment: {var_name}[{idx}] = {bit_value}");
-                    return Ok(u64::from(bit_value.0));
-                }
-                Err(_) => {
-                    // Fall back to extracting bit from full u64 value
-                    if let Some(full_val) = self.environment.get(var_name) {
-                        let raw = full_val.as_u64();
-                        let bit_value = (raw >> idx) & 1;
-                        log::debug!("Extracted bit from variable: {var_name}[{idx}] = {bit_value}");
-                        return Ok(bit_value);
-                    }
-                }
-            }
-            // If we couldn't get the bit, return an error
-            return Err(PecosError::Input(format!(
-                "Could not access bit {var_name}[{idx}] in environment"
-            )));
-        }
-
-        // Handle whole variable access
-        if let Some(val) = self.environment.get(var_name) {
-            log::debug!("Got value from environment: {var_name} = {val}");
-            return Ok(val.as_u64());
-        }
-
-        // If we get here, the variable exists but has no value
-        Err(PecosError::Input(format!(
-            "Variable exists in environment but has no value: {var_name}"
-        )))
-    }
-
-    /// Process a Result operation which maps source variables to destination variables
-    ///
-    /// This method:
-    /// 1. Creates mappings between source and destination variables in the environment
-    /// 2. Gets values from the source variables
-    /// 3. Stores values in the destination variables, handling both whole variables and bit access
-    fn process_result_op(
-        &mut self,
-        args: &[ArgItem],
-        returns: &[ArgItem],
-    ) -> Result<(), PecosError> {
-        log::debug!(
-            "Processing Result operation with {} args and {} returns",
-            args.len(),
-            returns.len()
-        );
-
-        // Process each source -> destination mapping
-        for (i, src) in args.iter().enumerate() {
-            if i < returns.len() {
-                let dst = &returns[i];
-
-                // Extract source and destination information
-                let (src_name, src_index) = Self::extract_arg_info(src)?;
-                let (dst_name, dst_index) = Self::extract_arg_info(dst)?;
-
-                log::debug!(
-                    "Result mapping: {src_name}[{src_index:?}] -> {dst_name}[{dst_index:?}]"
-                );
-
-                // Get the source value from the environment (single source of truth).
-                let value = self.get_variable_value(&src_name, src_index)?;
-
-                log::debug!("Got value for {src_name}: {value}");
-
-                // Create destination variable if needed
-                if !self.environment.has_variable(&dst_name) {
-                    let (var_type, var_size) = if let Some(idx) = dst_index {
-                        // An indexed destination is an unsigned bit collection;
-                        // it must be wide enough for `idx` regardless of the
-                        // source's type/size (inheriting a small or signed
-                        // source would drop the bit).
-                        (DataType::U64, std::cmp::max(idx + 1, 32))
-                    } else {
-                        // Whole-register copy: mirror the source, else default.
-                        self.environment
-                            .get_variable_info_opt(&src_name)
-                            .map_or((DataType::U64, 32), |info| {
-                                (info.data_type.clone(), info.size)
-                            })
-                    };
-                    self.environment
-                        .ensure_classical_variable(&dst_name, var_type, var_size)?;
-                }
-
-                // Store the value in the destination, failing loudly on error
-                // (e.g. a bit index that does not fit the backing type).
-                if let Some(idx) = dst_index {
-                    self.environment.set_bit(&dst_name, idx, value & 1)?;
-                    log::debug!("Set bit {dst_name}[{idx}] = {}", value & 1);
-                } else {
-                    self.environment.set(&dst_name, value)?;
-                    log::debug!("Set variable {dst_name} = {value}");
-                }
-
-                // Export the destination register, which now holds the copied
-                // (whole-register `set`) or accumulated (indexed `set_bit`)
-                // value. Measurement ordering is handled by the engine (classical
-                // ops are deferred until batch measurements are applied), so the
-                // destination is correct at this point -- mapping it to itself is
-                // correct even when multiple Results (whole-register and/or
-                // indexed) target the same destination.
-                let _ = self.environment.add_mapping(&dst_name, &dst_name);
             }
         }
 

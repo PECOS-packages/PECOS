@@ -359,8 +359,6 @@ fn ssa_exhaustion_at_instruction_emission() {
         json!({"qop":"X", "args":[["q",0]]}),
         json!({"qop":"X", "args":[["q",0]], "returns":["result"]}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
-        json!({"cop":"Result", "args":["source"], "returns":[]}),
-        json!({"cop":"Result", "args":[], "returns":["destination"]}),
     ] {
         // The qvar declaration consumes the last available allocation.
         assert_ssa_exhausted(&program(&[("q", max - 1)], vec![op]));
@@ -374,19 +372,19 @@ fn ssa_exhaustion_at_measurement_combining_emission() {
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
     ];
-    // Two declarations and one measurement fit, but the combining zero constant does not.
+    // Two declarations and one measurement fit, but the combining bitcast does not.
     assert_ssa_exhausted(&program(&[("q", max - 3)], single));
 
     let multiple = vec![
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0],["q",1]], "returns":[["m",0],["m",1]]}),
     ];
-    // After two declarations and two measurement results, exhaust at each
-    // generated constant, cast, shift, and OR (including the bit-zero branch).
-    for available in 4..10 {
+    // Two declarations, two measurement results, five replacement operations
+    // per bit, then the export bitcast: exhaust at each allocation boundary.
+    for available in 4..15 {
         assert_ssa_exhausted(&program(&[("q", max - available)], multiple.clone()));
     }
-    assert!(phir_json_to_module(&program(&[("q", max - 10)], multiple).to_string()).is_ok());
+    assert!(phir_json_to_module(&program(&[("q", max - 15)], multiple).to_string()).is_ok());
 }
 
 #[test]
@@ -433,18 +431,28 @@ fn omitted_quantum_data_type_defaults_to_qubits() {
 }
 
 #[test]
-fn converter_requires_quantum_variable_and_size() {
-    for (field, error) in [
-        ("variable", "requires a variable name"),
-        ("size", "requires a size"),
-    ] {
-        let mut input = program(&[("q", 1)], vec![]);
-        let declaration = input["ops"][0].as_object_mut().unwrap();
-        declaration.remove("data_type");
-        declaration.remove(field);
-        let result = phir_json_to_module(&input.to_string()).unwrap_err();
-        assert!(result.to_string().contains(error), "{result}");
-    }
+fn converter_entry_point_runs_shared_name_validation() {
+    let mut input = program(&[("q", 1)], vec![]);
+    input["ops"][0].as_object_mut().unwrap().remove("variable");
+    let shared =
+        pecos_phir_json::v0_1::classical_validation::validate_classical_inputs(&input).unwrap_err();
+    let converted = phir_json_to_module(&input.to_string()).unwrap_err();
+    assert_eq!(converted.to_string(), shared.to_string());
+    assert!(
+        converted
+            .to_string()
+            .contains("Declaration qvar_define has invalid variable <missing>")
+    );
+}
+
+#[test]
+fn converter_requires_quantum_size() {
+    let mut input = program(&[("q", 1)], vec![]);
+    let declaration = input["ops"][0].as_object_mut().unwrap();
+    declaration.remove("data_type");
+    declaration.remove("size");
+    let result = phir_json_to_module(&input.to_string()).unwrap_err();
+    assert!(result.to_string().contains("requires a size"), "{result}");
 }
 
 #[test]

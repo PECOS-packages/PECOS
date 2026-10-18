@@ -134,7 +134,7 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
     assert_eq!(batch.operations, []);
     assert_eq!(
         batch.callback_error,
-        Some("scheduled payload budget exceeded")
+        Some("runtime payload budget exceeded")
     );
     let mut batch = RuntimeOperationBatch {
         extraction_budget: Some((1, 0)),
@@ -148,7 +148,7 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
     assert_eq!(batch.operations.len(), 1);
     assert_eq!(
         batch.callback_error,
-        Some("scheduled operation budget exceeded")
+        Some("runtime operation budget exceeded")
     );
 }
 

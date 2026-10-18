@@ -46,4 +46,13 @@ pub trait QuantumSimulator {
     /// by tracking and gate operations, whichever is greater; clearing support or
     /// resetting does not shrink it.
     fn num_qubits(&self) -> usize;
+
+    /// Returns the fixed register size, or `None` when the simulator grows to
+    /// accommodate qubit indices as operations arrive.
+    ///
+    /// Unlike `num_qubits`, this describes an operand limit, not current support
+    /// extent. Growable simulators must override the default to return `None`.
+    fn qubit_capacity(&self) -> Option<usize> {
+        Some(self.num_qubits())
+    }
 }

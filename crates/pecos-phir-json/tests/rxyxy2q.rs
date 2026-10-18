@@ -84,7 +84,13 @@ fn rxyxy2q_json_units_and_execution() {
 fn rxyxy2q_json_rejects_wrong_counts() {
     for values in [json!([]), json!([-0.73]), json!([-0.73, 0.41, 0.2])] {
         let json = program(json!([values, "rad"]), json!([[["q", 2], ["q", 0]]]));
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
     }
     for args in [
@@ -93,7 +99,13 @@ fn rxyxy2q_json_rejects_wrong_counts() {
         json!([[["q", 2], ["q", 0], ["q", 1]]]),
     ] {
         let json = program(json!([[-0.73, 0.41], "rad"]), args);
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
     }
     let processor = OperationProcessor::new();
@@ -109,10 +121,11 @@ fn rxyxy2q_json_rejects_wrong_counts() {
 
 #[test]
 fn rxyxy2q_json_preserves_multiple_pairs() {
-    let json = program(
+    let mut json = program(
         serde_json::json!([[-0.73, 0.41], "rad"]),
-        serde_json::json!([[["q", 2], ["q", 0]], [["q", 0], ["q", 1]]]),
+        serde_json::json!([[["q", 2], ["q", 0]], [["q", 3], ["q", 1]]]),
     );
+    json["ops"][0]["size"] = serde_json::json!(4);
     let source = json.to_string();
     let theta = THETA_RAD;
     let phi = PHI;
@@ -161,7 +174,7 @@ fn rxyxy2q_json_preserves_multiple_pairs() {
             .all(|instruction| !instruction.results.is_empty())
     );
     let mut engine = PhirEngine::new(module).unwrap();
-    let expected: Vec<_> = [(2, 0), (0, 1)]
+    let expected: Vec<_> = [(2, 0), (3, 1)]
         .into_iter()
         .map(|pair| Gate::rxyxy2q(theta, phi, &[pair]))
         .collect();
@@ -179,7 +192,13 @@ fn rxyxy2q_json_rejects_mixed_or_flat_grouping() {
     ] {
         let mut json = program(json!([[-0.73, 0.41], "rad"]), args.clone());
         json["ops"][0]["size"] = json!(4);
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
         let args: Vec<pecos_phir_json::v0_1::ast::QubitArg> = serde_json::from_value(args).unwrap();
         let mut processor = OperationProcessor::new();

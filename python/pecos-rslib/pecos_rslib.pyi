@@ -4430,3 +4430,24 @@ def scheduled_event_local_noise(
     profile: ScheduledLocalNoise,
     adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
 ) -> ScheduledEventLocalNoise: ...
+def validate_phir_qop(
+    name: str,
+    args_json: str,
+    angles: Sequence[float] | None,
+    registers: Sequence[tuple[str, int]],
+) -> None:
+    """Validate a quantum operation with the native PHIR rules."""
+    ...
+
+def validate_phir_result_counts(args: int, returns: int) -> None:
+    """Require equal, nonzero Result argument and destination counts."""
+    ...
+
+def validate_phir_classical_inputs(program_json: str) -> None:
+    """Validate Result JSON references and boolean declaration sizes."""
+
+def validate_phir_result_reference(reference_json: str, field: str) -> tuple[str, int | None]:
+    """Decode a Result reference with shared diagnostics."""
+
+def validate_phir_classical_declaration(name: str, data_type: str, size: int) -> None:
+    """Validate classical register type and size using native storage rules."""

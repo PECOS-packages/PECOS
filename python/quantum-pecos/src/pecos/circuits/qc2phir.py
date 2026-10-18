@@ -119,10 +119,17 @@ def conv_expr(expr: dict[str, Any]) -> dict[str, Any]:
     return new_expr
 
 
+def _qop_qubits(op: dict[str, Any]) -> set[tuple[str, int]]:
+    """Collect register/index identities from single targets and every pair."""
+    return {tuple(qubit) for arg in op["args"] for qubit in ([arg] if isinstance(arg[0], str) else arg)}
+
+
 def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
     """Creates a json str representation of the QuantumCircuit listing all the gates.
 
     It does not preserve ticks or parallel gating of different gate types.
+    Consecutive identical quantum operations compact only across disjoint qubits,
+    tracking accumulated targets in linear time.
     """
     prog = {
         "format": "PHIR/JSON",
@@ -173,6 +180,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                 qs.append(qsym)
         return qs
 
+    last_qop_qubits: set[tuple[str, int]] = set()
+
     def flush_ops_buffer(
         ops: list[dict[str, Any]],
         ops_buffer: list[dict[str, Any]],
@@ -213,46 +222,52 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         *,
         compact_gates: bool = True,
     ) -> list[dict[str, Any]]:
-        # TODO: When you do that make sure gates don't overlap
-
+        nonlocal last_qop_qubits
+        current_qubits = _qop_qubits(current_op) if "qop" in current_op else set()
         if ops_buffer and compact_gates:
             last_op = ops_buffer[-1]
-            if (
-                ("qop" in last_op and "qop" in current_op and last_op["qop"] == current_op["qop"])
-                or (last_op.get("data") == last_op.get("data") == "cvar_export")
-            ) and last_op.get("metadata") == current_op.get("metadata"):
-                if "args" in current_op:
-                    # TODO: Check no overlap!
-                    last_op["args"].extend(current_op["args"])
+            same_qop = (
+                "qop" in current_op
+                and last_op.get("qop") == current_op["qop"]
+                and last_op.get("angles") == current_op.get("angles")
+                and ("returns" in last_op) == ("returns" in current_op)
+                and last_qop_qubits.isdisjoint(current_qubits)
+            )
+            same_export = last_op.get("data") == current_op.get("data") == "cvar_export"
+            if (same_qop or same_export) and last_op.get("metadata") == current_op.get("metadata"):
+                for field in ("args", "variables", "returns"):
+                    if field in current_op:
+                        last_op[field].extend(current_op[field])
+                last_qop_qubits.update(current_qubits)
+                return ops_buffer
 
-                if "variables" in current_op:
-                    last_op["variables"].extend(current_op["variables"])
-
-                if "returns" in current_op:
-                    last_op["returns"].extend(current_op["returns"])
-            else:
-                ops_buffer.append(current_op)
-
-        else:
-            ops_buffer.append(current_op)
-
+        last_qop_qubits = current_qubits
+        ops_buffer.append(current_op)
         return ops_buffer
 
     ops = prog["ops"]
 
     for sym, size in qc.metadata.get("qvar_spec", {}).items():
+        if size is None:
+            msg = (
+                f"qvar_spec[{sym!r}] has invalid size None; "
+                "use a non-negative integer qubit count (0 omits the register)"
+            )
+            raise ValueError(msg)
         if size == 0:
             continue
-        ops.append(
-            {
-                "data": "qvar_define",
-                "data_type": "qubits",
-                "variable": sym,
-                "size": size,
-            },
-        )
+        declaration = {
+            "data": "qvar_define",
+            "data_type": "qubits",
+            "variable": sym,
+            "size": size,
+        }
+        ops.append(declaration)
 
     for sym, size in qc.metadata.get("cvar_spec", {}).items():
+        if size is None:
+            msg = f"cvar_spec[{sym!r}] has invalid size None; use an integer width from 0 to 64 (0 omits the register)"
+            raise ValueError(msg)
         if size == 0:
             continue
         ops.append(
@@ -316,6 +331,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
                 print("!!!!!", qubits, metadata)
 
         else:  # qop
+            if not qubits:
+                continue
             op.update(
                 {
                     "qop": qsym_conv.get(sym, sym),

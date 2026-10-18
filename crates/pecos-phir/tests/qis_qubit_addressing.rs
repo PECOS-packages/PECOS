@@ -408,7 +408,12 @@ fn index_boundary_and_allocation_result() {
         } else {
             vec![50]
         };
-        let instruction = quantum(op, &operands, &[60]);
+        let results = if op == QuantumOp::Dealloc {
+            vec![]
+        } else {
+            vec![60]
+        };
+        let instruction = quantum(op, &operands, &results);
         for &operand in &operands {
             for value in [
                 TypedValue::U32(u32::MAX),

@@ -97,18 +97,18 @@ def test_phir_minimal() -> None:
 
     # Extract the measurement key
     assert len(results) > 0, "Expected at least one measurement result"
-    measurement_key = next(iter(results.keys()))
+    measurement_key = "m"
 
     # Verify the result
-    assert results[measurement_key] == 0, f"Expected {measurement_key} to have value 0"
+    assert results[measurement_key] == 1, f"Expected {measurement_key} to preserve outcome 1"
 
 
 def test_phir_invalid_json() -> None:
     """Test PHIR-JSON engine handling of invalid JSON input."""
     invalid_json = '{"format": "PHIR/JSON", "invalid": }'
     with pytest.raises(
-        json.decoder.JSONDecodeError,
-        match=r"Expecting value: line 1 column 36 \(char 35\)",
+        ValueError,
+        match="(?i)parse|json",
     ):
         PhirJsonEngine(invalid_json)
 
@@ -153,8 +153,10 @@ def test_phir_full_circuit() -> None:
     # Create engine
     engine = PhirJsonEngine(phir)
 
-    # Handle example measurements
+    # Generate a batch before delivering outcomes in command order.
+    engine.process_program()
     engine.handle_measurement(1)
+    engine.handle_measurement(0)
 
     # Get final results
     results = engine.get_results()
@@ -196,13 +198,7 @@ def test_phir_full() -> None:
 
 
 def test_register_mapping_simulation() -> None:
-    """Test basic measurement and register operations.
-
-    This test verifies that measurements correctly populate registers.
-    Note: The Python interpreter may yield commands in an unexpected order
-    due to its internal implementation.
-    """
-    # Create a simpler test program that works with the Python interpreter
+    """A native batch accepts scalar outcomes in order without rewriting them."""
     phir = json.dumps(
         {
             "format": "PHIR/JSON",
@@ -216,7 +212,6 @@ def test_register_mapping_simulation() -> None:
                     "size": 2,
                 },
                 {"data": "cvar_define", "data_type": "i64", "variable": "m", "size": 2},
-                # Just measure the qubits without gates to avoid interpreter issues
                 {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
                 {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
             ],
@@ -229,32 +224,40 @@ def test_register_mapping_simulation() -> None:
     # Process the program to get quantum commands
     commands = engine.process_program()
 
-    # We expect at least 1 measurement command
-    assert len(commands) >= 1, f"Expected at least 1 quantum command, got {len(commands)}"
+    assert [command["qubits"] for command in commands] == [[0], [1]]
+    assert all(command["gate_type"] == "Measure" for command in commands)
+    engine.handle_measurement(1)
+    with pytest.raises(ValueError, match="1 of 2"):
+        engine.process_program()
+    engine.handle_measurement(0)
+    assert engine.process_program() == []
+    assert engine.get_results()["m"] == 1
 
-    # Verify we have a measurement
-    assert commands[0]["gate_type"] == "Measure", "First command should be Measure"
-    assert commands[0]["qubits"] == [0], "First measure should be on qubit 0"
 
-    # Handle first measurement
-    engine.handle_measurement(0)  # First qubit measures 0
-
-    # Try to get more commands
-    more_commands = engine.process_program()
-
-    # If we get another measurement, handle it
-    if len(more_commands) > 0 and more_commands[0]["gate_type"] == "Measure" and more_commands[0]["qubits"] == [1]:
-        engine.handle_measurement(0)  # Second qubit measures 0
-
-    # Get results
-    results = engine.get_results()
-
-    # Verify we got results
-    assert results is not None, "Expected measurement results"
-    assert len(results) > 0, "Expected non-empty results"
-
-    # Check that we have results for the "m" register
-    assert "m" in results, "Expected 'm' register in results"
-
-    # The value should be 0 as per the test's special handling
-    assert results["m"] == 0, f"Expected m=0, got m={results['m']}"
+def test_broadcast_measurement_destinations() -> None:
+    """Scalar delivery preserves every target and reversed classical destination."""
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 4},
+            {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 4},
+            {"qop": "X", "args": [["q", 0], ["q", 2]]},
+            {"qop": "CX", "args": [[["q", 0], ["q", 1]], [["q", 2], ["q", 3]]]},
+            {
+                "qop": "Measure",
+                "args": [["q", index] for index in range(4)],
+                "returns": [["m", 3 - index] for index in range(4)],
+            },
+            {"cop": "Result", "args": ["m"], "returns": ["out"]},
+        ],
+    }
+    engine = PhirJsonEngine(json.dumps(source))
+    commands = engine.process_program()
+    cx_qubits = [qubit for command in commands if command["gate_type"] == "CX" for qubit in command["qubits"]]
+    assert cx_qubits == [0, 1, 2, 3]
+    for outcome in [1, 0, 1, 1]:
+        engine.handle_measurement(outcome)
+    assert engine.process_program() == []
+    assert engine.get_results()["out"] == 11
+    assert engine.results_dict == engine.get_results()

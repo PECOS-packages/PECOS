@@ -89,15 +89,26 @@ pub(crate) fn validate_operations(ops: &[super::ast::Operation]) -> Result<(), P
     Declarations::default().validate_operations(ops)
 }
 
+/// Decode a declaration name before validating its other fields.
+pub(crate) fn declaration_name<'a>(
+    data: &str,
+    value: Option<&'a serde_json::Value>,
+) -> Result<&'a str, PecosError> {
+    value.and_then(serde_json::Value::as_str).ok_or_else(|| {
+        let bad = value.map_or_else(|| "<missing>".to_owned(), ToString::to_string);
+        PecosError::Input(format!(
+            "Declaration {data} has invalid variable {bad}; use a string variable name"
+        ))
+    })
+}
+
 pub(crate) fn validate_json_operations(ops: &[serde_json::Value]) -> Result<(), PecosError> {
     fn visit(ops: &[serde_json::Value], declarations: &mut Declarations) -> Result<(), PecosError> {
         for op in ops {
-            if let Some(kind) = op
-                .get("data")
-                .and_then(serde_json::Value::as_str)
-                .and_then(declaration_kind)
-                && let Some(name) = op.get("variable").and_then(serde_json::Value::as_str)
+            if let Some(data) = op.get("data").and_then(serde_json::Value::as_str)
+                && let Some(kind) = declaration_kind(data)
             {
+                let name = declaration_name(data, op.get("variable"))?;
                 declarations.register(name, kind)?;
             }
             if op.get("block").is_some() {
@@ -113,7 +124,7 @@ pub(crate) fn validate_json_operations(ops: &[serde_json::Value]) -> Result<(), 
     visit(ops, &mut Declarations::default())
 }
 
-fn declaration_kind(data: &str) -> Option<DeclarationKind> {
+pub(crate) fn declaration_kind(data: &str) -> Option<DeclarationKind> {
     match data {
         "qvar_define" => Some(DeclarationKind::Quantum),
         "cvar_define" => Some(DeclarationKind::Classical),

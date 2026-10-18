@@ -591,7 +591,7 @@ fn converter_rejects_present_noninteger_register_sizes() {
                 if data == "qvar_define" {
                     "a positive integer size"
                 } else {
-                    "a non-negative integer size that fits the data type"
+                    "a positive integer size that fits the data type"
                 }
             );
             match phir_json_to_module(&source) {
@@ -632,7 +632,7 @@ fn declaration_size_invalid_values_agree() {
                 if data == "qvar_define" {
                     "a positive integer size"
                 } else {
-                    "a non-negative integer size that fits the data type"
+                    "a positive integer size that fits the data type"
                 }
             );
             let mut interpreter = PhirClassicalInterpreter::new();
@@ -695,6 +695,50 @@ fn omitted_declaration_sizes_keep_inference_and_quantum_requirement() {
             assert_eq!(
                 phir_json_to_module(&encoded).unwrap(),
                 phir_json_to_module(&explicit.to_string()).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn declaration_names_are_validated_before_sizes() {
+    use pecos_phir_json::v0_1::{
+        ast::Operation, classical_interpreter::PhirClassicalInterpreter,
+        classical_validation::validate_classical_inputs,
+    };
+    for data in ["cvar_define", "qvar_define"] {
+        for variable in [
+            None,
+            Some(json!(5)),
+            Some(json!(null)),
+            Some(json!(true)),
+            Some(json!([])),
+            Some(json!({})),
+        ] {
+            let mut declaration = json!({"data":data,"data_type":if data == "cvar_define" {"u32"} else {"qubits"},"size":null});
+            if let Some(value) = &variable {
+                declaration["variable"] = value.clone();
+            }
+            let bad = variable.map_or_else(|| "<missing>".to_owned(), |value| value.to_string());
+            let expected = format!(
+                "Input error: Declaration {data} has invalid variable {bad}; use a string variable name"
+            );
+            let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[declaration]});
+            let encoded = source.to_string();
+            let mut interpreter = PhirClassicalInterpreter::new();
+            for result in [
+                PhirJsonEngine::from_json(&encoded).map(|_| ()),
+                interpreter.init(&encoded, None).map(|_| ()),
+                phir_json_to_module(&encoded).map(|_| ()),
+                validate_classical_inputs(&source),
+            ] {
+                assert_eq!(result.unwrap_err().to_string(), expected);
+            }
+            assert_eq!(
+                serde_json::from_value::<Operation>(declaration)
+                    .unwrap_err()
+                    .to_string(),
+                expected
             );
         }
     }

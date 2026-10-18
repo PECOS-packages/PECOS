@@ -433,7 +433,10 @@ fn omitted_quantum_data_type_defaults_to_qubits() {
 #[test]
 fn converter_requires_quantum_variable_and_size() {
     for (field, error) in [
-        ("variable", "requires a variable name"),
+        (
+            "variable",
+            "Declaration qvar_define has invalid variable <missing>; use a string variable name",
+        ),
         ("size", "requires a size"),
     ] {
         let mut input = program(&[("q", 1)], vec![]);

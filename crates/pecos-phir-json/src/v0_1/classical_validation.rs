@@ -1,6 +1,7 @@
 //! Shared JSON validation for classical declarations and Result references.
 use super::{
     ast::{ArgItem, infer_size, register_size},
+    declarations::{DeclarationKind, declaration_kind, declaration_name},
     environment::{DataType, Environment},
 };
 use pecos_core::errors::PecosError;
@@ -102,11 +103,12 @@ pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
                 result_field(op, "returns")?;
             }
             let data = op.get("data").and_then(Value::as_str);
-            if let Some(kind @ ("cvar_define" | "qvar_define")) = data
-                && let Some(name) = op.get("variable").and_then(Value::as_str)
+            if let Some(data) = data
+                && let Some(kind) = declaration_kind(data)
             {
+                let name = declaration_name(data, op.get("variable"))?;
                 let size = register_size(name, kind, op.get("size"))?;
-                if data == Some("cvar_define")
+                if kind == DeclarationKind::Classical
                     && op.get("data_type").and_then(Value::as_str) == Some("bool")
                 {
                     Environment::validate_variable_size(

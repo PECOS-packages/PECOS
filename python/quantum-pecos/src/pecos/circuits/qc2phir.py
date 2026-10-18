@@ -249,7 +249,10 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
 
     for sym, size in qc.metadata.get("qvar_spec", {}).items():
         if size is None:
-            msg = f"qvar_spec[{sym!r}] has invalid size None; use a positive integer size"
+            msg = (
+                f"qvar_spec[{sym!r}] has invalid size None; "
+                "use a non-negative integer qubit count (0 omits the register)"
+            )
             raise ValueError(msg)
         if size == 0:
             continue
@@ -257,13 +260,13 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             "data": "qvar_define",
             "data_type": "qubits",
             "variable": sym,
+            "size": size,
         }
-        declaration["size"] = size
         ops.append(declaration)
 
     for sym, size in qc.metadata.get("cvar_spec", {}).items():
         if size is None:
-            msg = f"cvar_spec[{sym!r}] has invalid size None; use a non-negative integer size that fits the data type"
+            msg = f"cvar_spec[{sym!r}] has invalid size None; use an integer width from 0 to 64 (0 omits the register)"
             raise ValueError(msg)
         if size == 0:
             continue

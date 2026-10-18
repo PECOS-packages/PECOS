@@ -20,7 +20,7 @@ use pecos_phir::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::declarations::{DeclarationKind, Declarations};
+use super::declarations::{DeclarationKind, Declarations, declaration_name};
 use super::environment::{DataType, Environment, VariableInfo};
 
 /// Information about a bit-indexed write
@@ -171,9 +171,7 @@ impl ImprovedConverter {
         // Reserve those IDs before allocating SSA IDs for registers and values.
         for op in ops {
             if op.get("data").and_then(Value::as_str) == Some("qvar_define") {
-                let name = op.get("variable").and_then(Value::as_str).ok_or_else(|| {
-                    PecosError::Input("Quantum register requires a variable name".to_string())
-                })?;
+                let name = declaration_name("qvar_define", op.get("variable"))?;
                 let data_type = op
                     .get("data_type")
                     .map(|value| {
@@ -187,7 +185,7 @@ impl ImprovedConverter {
                 let (name, size) = super::ast::validate_quantum_declaration(
                     name,
                     data_type,
-                    super::ast::register_size(name, "qvar_define", op.get("size"))?,
+                    super::ast::register_size(name, DeclarationKind::Quantum, op.get("size"))?,
                 )?;
                 self.environment.add_quantum_register(name, size)?;
             }
@@ -433,7 +431,12 @@ impl ImprovedConverter {
         if data != "qvar_define" && data != "cvar_define" {
             return Err(Self::unsupported_operation("data", data));
         }
-        let variable = obj.get("variable").and_then(Value::as_str).unwrap_or("");
+        let variable = declaration_name(data, obj.get("variable"))?;
+        let kind = if data == "qvar_define" {
+            DeclarationKind::Quantum
+        } else {
+            DeclarationKind::Classical
+        };
         let data_type = obj
             .get("data_type")
             .map(|value| {
@@ -444,7 +447,7 @@ impl ImprovedConverter {
                 })
             })
             .transpose()?;
-        let raw_size = super::ast::register_size(variable, data, obj.get("size"))?;
+        let raw_size = super::ast::register_size(variable, kind, obj.get("size"))?;
         let (data_type, size) = if data == "qvar_define" {
             let (_, size) =
                 super::ast::validate_quantum_declaration(variable, data_type, raw_size)?;

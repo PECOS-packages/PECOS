@@ -275,9 +275,9 @@ Rust classifies these as `PecosError::Input`. The Python interpreter validates
 Result reference syntax and declarations at load. It checks Result counts when
 that Result executes, like native and the Rust interpreter, and caches successful
 reference decoding until the next init or full reset. Result arguments and returns
-are treated as immutable after first execution; cached decoding does not retain
-operations after their callers release them. Later shots do not repeat JSON/FFI
-validation. Measurement destinations are checked against declarations when results
+are treated as immutable after first execution. Successful decoding holds each
+executed Result operation until the next init or full reset. Later shots do not
+repeat JSON/FFI validation. Measurement destinations are checked against declarations when results
 arrive. Shot resets do not repeat declaration checks. PyPHIR's classical-input
 validation does not serialize unrelated metadata in parsed Python programs.
 Exports use U32 through 32 bits and U64 for wider registers.

@@ -12,6 +12,7 @@
 """The program-wide declaration namespace specified by PHIR-JSON v0.1."""
 
 import json
+import reprlib
 
 from pecos_rslib import validate_phir_classical_inputs
 
@@ -65,8 +66,8 @@ def validate_classical_inputs(program: dict) -> None:
                     try:
                         json.dumps(declaration["size"], allow_nan=False)
                     except (TypeError, ValueError):
-                        # Not a JSON integer: pass its repr so the shared check names it.
-                        declaration["size"] = repr(declaration["size"])
+                        # Not JSON-serializable or not finite: pass a bounded repr to the shared check.
+                        declaration["size"] = reprlib.repr(declaration["size"])
                 inputs.append(declaration)
             if "block" in node:
                 for field in ("ops", "true_branch", "false_branch"):

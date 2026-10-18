@@ -1883,7 +1883,7 @@ def test_python_declaration_sizes_reject_explicit_null(dtype: str, size_fields: 
     if "size" in size_fields:
         expected = (
             f"PHIR interpreter failed: Register 'a' has invalid size {json.dumps(size_fields['size'])}; "
-            "use a non-negative integer size that fits the data type"
+            "use a positive integer size that fits the data type"
         )
         for reader in [interpreter.init, PyPHIR.from_phir]:
             with pytest.raises(ValueError, match="invalid size") as error:
@@ -1915,3 +1915,20 @@ def test_python_quantum_null_size_has_shared_error(validate: bool) -> None:
         assert str(error.value) == (
             "PHIR interpreter failed: Register 'q' has invalid size null; use a positive integer size"
         )
+
+
+def test_python_full_reset_releases_direct_result_operation() -> None:
+    """A directly supplied Result stays cached until a full reset forgets it."""
+    from weakref import ref
+
+    from pecos.reps.pyphir.op_types import COp
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
+    operation = COp("Result", ["a"], ["out"])
+    retained = ref(operation)
+    interpreter.handle_cops(operation)
+    del operation
+    assert retained() is not None
+    interpreter.reset()
+    assert retained() is None

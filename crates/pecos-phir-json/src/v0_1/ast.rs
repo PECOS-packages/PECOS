@@ -1,3 +1,4 @@
+use super::declarations::{DeclarationKind, declaration_name};
 use pecos_core::errors::PecosError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -366,11 +367,14 @@ impl<'de> Deserialize<'de> for Operation {
                 Ok(Operation::DataExport { data, variables })
             } else {
                 // VariableDefinition
-                let variable: String = obj
-                    .get("variable")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| D::Error::custom("missing variable"))?
-                    .to_string();
+                let variable = declaration_name(&data, obj.get("variable"))
+                    .map_err(D::Error::custom)?
+                    .to_owned();
+                let kind = if data == "qvar_define" {
+                    DeclarationKind::Quantum
+                } else {
+                    DeclarationKind::Classical
+                };
                 let data_type = obj
                     .get("data_type")
                     .map(|value| {
@@ -382,7 +386,7 @@ impl<'de> Deserialize<'de> for Operation {
                     })
                     .transpose()?;
                 let raw_size =
-                    register_size(&variable, &data, obj.get("size")).map_err(D::Error::custom)?;
+                    register_size(&variable, kind, obj.get("size")).map_err(D::Error::custom)?;
                 let (data_type, size) = if data == "qvar_define" {
                     let (_, size) = validate_quantum_declaration(&variable, data_type, raw_size)
                         .map_err(D::Error::custom)?;
@@ -501,13 +505,12 @@ pub(crate) fn declaration_size(
 /// Returns a named input error if the supplied value is not a non-negative integer.
 pub(crate) fn register_size(
     variable: &str,
-    kind: &str,
+    kind: DeclarationKind,
     value: Option<&serde_json::Value>,
 ) -> Result<Option<usize>, PecosError> {
-    let hint = if kind == "qvar_define" {
-        "a positive integer size"
-    } else {
-        "a non-negative integer size that fits the data type"
+    let hint = match kind {
+        DeclarationKind::Quantum => "a positive integer size",
+        DeclarationKind::Classical => "a positive integer size that fits the data type",
     };
     match value {
         None => Ok(None),

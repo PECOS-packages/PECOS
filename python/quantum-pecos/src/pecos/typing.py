@@ -90,9 +90,12 @@ class _PecosCVarDefine(_CVarDefine):
 
     @model_validator(mode="after")
     def _check_size_small(self) -> _PecosCVarDefine:
-        """Check that ``size`` fits within 8-bit and 16-bit data types."""
+        """Reject explicit null sizes and check bool, 8-bit and 16-bit widths."""
+        # PECOS deliberately rejects explicit null sizes, which upstream PHIR allows.
         if "size" in self.model_fields_set and self.size is None:
             validate_classical_inputs({"ops": [{"data": "cvar_define", "variable": self.variable, "size": None}]})
+            msg = "Internal invariant violated: shared size check accepted an explicit null"
+            raise RuntimeError(msg)
         if self.data_type == "bool":
             prs.validate_phir_classical_declaration(self.variable, "bool", self.size if self.size is not None else 1)
         msg = "`size` is greater than what `data_type` can handle"
@@ -197,7 +200,7 @@ class PhirModel(_PHIRModel):
     @model_validator(mode="after")
     def _check_declaration_names(self) -> PhirModel:
         """Enforce PHIR-JSON v0.1's unique-name rule for both declaration kinds."""
-        validate_declaration_names(self.model_dump(exclude_unset=True)["ops"])
+        validate_declaration_names(self.model_dump()["ops"])
         return self
 
 

@@ -73,15 +73,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
-- The PECOS schema rejects explicit null declaration sizes, a stricter rule than
-  the upstream PHIR schema, which allows null for classical sizes. Omitted
-  classical sizes remain inferred. Non-JSON and non-finite declaration sizes
-  report the register and invalid value. QuantumCircuit export rejects None
-  widths in qvar_spec and cvar_spec with instructions to supply a valid size.
-
-- PHIR declaration sizes must be non-negative integers when present; explicit
-  null is rejected with the shared register-name/value diagnostic, including
-  when `phir_validate=False`. Omit the field to request classical size inference.
+- PHIR declaration sizes reject explicit null, including with
+  `phir_validate=False`. The PECOS schema is deliberately stricter than upstream
+  PHIR, which permits null classical sizes. Omit classical sizes for inference;
+  quantum sizes remain required. Non-JSON and non-finite sizes report the register
+  and a bounded representation of the invalid value. Missing or non-string
+  declaration names report the declaration kind and offending value before size
+  validation. QuantumCircuit export rejects None widths in qvar_spec and cvar_spec
+  with instructions to supply a qubit count or a classical width from 0 to 64.
 
 - Signed whole-register PHIR Result copies now sign-extend to i64, agreeing
   with `=` regardless of source backing type. Native output changes: copying
@@ -272,16 +271,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Declaration size diagnostics now give quantum or classical size guidance on all
   PHIR paths, including when JSON parses an oversized integer as a float.
 
-- QuantumCircuit's PHIR exporter omits an unspecified (`None`) quantum-register
-  size instead of emitting null. Consumers still require an explicit quantum size.
-
 - PHIR bool declarations without a size use one bit on all execution paths.
   The converter preserves the inferred size in executable variable declarations.
   The Python interpreter checks declarations and Result reference syntax at load.
   Result counts are checked when the Result executes, like native and the Rust
   interpreter; unexecuted branches do not raise count errors. Successful decoding
-  is cached per Result until the next init, including Results passed directly to
-  handle_cops or execute. Later shots avoid JSON/FFI validation for these Results,
+  is cached per Result until the next init or full reset, including Results passed
+  directly to handle_cops or execute. Later shots avoid JSON/FFI validation for these Results,
   measured bits and declaration resets. Measurement destinations are checked
   against declarations when results arrive, including rejection of bool/float
   indices.

@@ -187,7 +187,7 @@ impl ImprovedConverter {
                 let (name, size) = super::ast::validate_quantum_declaration(
                     name,
                     data_type,
-                    op.get("size").and_then(Value::as_u64),
+                    Self::register_size(name, op.get("size"))?,
                 )?;
                 self.environment.add_quantum_register(name, size)?;
             }
@@ -425,6 +425,18 @@ impl ImprovedConverter {
         )))
     }
 
+    fn register_size(variable: &str, value: Option<&Value>) -> Result<Option<usize>, PecosError> {
+        value
+            .map(|value| {
+                serde_json::from_value::<usize>(value.clone()).map_err(|_| {
+                    PecosError::Input(format!(
+                        "Register '{variable}' has invalid size {value}; use a non-negative integer size"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
     fn convert_variable_definition(
         &mut self,
         obj: &serde_json::Map<String, Value>,
@@ -444,7 +456,7 @@ impl ImprovedConverter {
                 })
             })
             .transpose()?;
-        let raw_size = obj.get("size").and_then(Value::as_u64);
+        let raw_size = Self::register_size(variable, obj.get("size"))?;
         let (data_type, size) = if data == "qvar_define" {
             let (_, size) =
                 super::ast::validate_quantum_declaration(variable, data_type, raw_size)?;
@@ -453,14 +465,7 @@ impl ImprovedConverter {
             let data_type = data_type.ok_or_else(|| {
                 PecosError::Input(format!("Register '{variable}' requires data_type"))
             })?;
-            let explicit_size = raw_size.map(usize::try_from).transpose().map_err(|_| {
-                PecosError::Input(format!(
-                    "Register {} has size {}; use at most 64 bits",
-                    serde_json::json!(variable),
-                    obj["size"]
-                ))
-            })?;
-            (data_type, super::ast::infer_size(data_type, explicit_size))
+            (data_type, super::ast::infer_size(data_type, raw_size))
         };
 
         match data {

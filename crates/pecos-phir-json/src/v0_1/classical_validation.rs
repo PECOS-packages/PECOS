@@ -20,6 +20,8 @@ impl fmt::Display for ResultReferenceError {
     }
 }
 
+impl std::error::Error for ResultReferenceError {}
+
 /// Decode a Result reference without losing the offending JSON value.
 ///
 /// # Errors

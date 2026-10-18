@@ -257,10 +257,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - PHIR bool declarations without a size use one bit on all execution paths.
   The converter preserves the inferred size in executable variable declarations.
-  The Python interpreter checks declarations and decodes static Result references
-  at load, avoiding JSON/FFI validation per Result, measured bit, or shot reset.
-  Measurement destination errors are checked only when executed, including
-  rejection of bool/float indices that compare equal to cached integer keys.
+  The Python interpreter checks declarations and Result reference syntax at load.
+  Result counts are checked when the Result executes, like native and the Rust
+  interpreter; unexecuted branches do not raise count errors. Successful decoding
+  is cached per Result until the next init, including Results passed directly to
+  handle_cops or execute. Later shots avoid JSON/FFI validation for these Results,
+  measured bits and declaration resets. Measurement destinations are checked
+  against declarations when results arrive, including rejection of bool/float
+  indices.
   Direct get_bit calls do not require program declaration metadata.
 - PyPHIR classical-input validation leaves angles and metadata untouched,
   accepting scalar metadata in parsed PHIR dictionaries without requiring the
@@ -502,6 +506,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with ties away from zero on the signed principal representative.
 
 ### Rust bug fixes
+
+- JSON-to-module conversion rejects explicitly supplied noninteger or negative
+  classical and quantum register sizes instead of treating them as omitted,
+  naming the register and invalid JSON value. Omitted sizes retain their existing
+  inference or required-size checks.
+- The public `ResultReferenceError` implements `std::error::Error`.
 
 - Omitted-size bool declarations infer one bit in the native PHIR-JSON engine,
   Rust interpreter and JSON-to-module converter. Shared input validation uses

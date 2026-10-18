@@ -265,9 +265,11 @@ before destination-width masking, independently of the source backing type,
 matching `=`. Malformed Result entries report the offending JSON value; Python
 uses TypeError for wrong types and ValueError for invalid integer indices.
 Rust classifies these as `PecosError::Input`. The Python interpreter validates
-static Result counts/references and declarations at load. Measurement destinations
-are checked at execution, using declaration-time lookup tables after checking
-index types. Shot resets do not repeat declaration checks. PyPHIR's classical-input
+Result reference syntax and declarations at load. It checks Result counts when
+that Result executes, like native and the Rust interpreter, and caches successful
+reference decoding until the next init. Later shots do not repeat JSON/FFI
+validation. Measurement destinations are checked against declarations when results
+arrive. Shot resets do not repeat declaration checks. PyPHIR's classical-input
 validation does not serialize unrelated metadata in parsed Python programs.
 Exports use U32 through 32 bits and U64 for wider registers.
 Without Result mappings, all declared classical registers are exported.

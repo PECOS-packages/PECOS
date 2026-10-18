@@ -1646,7 +1646,7 @@ def test_malformed_result_json_errors_match_all_paths(entry, exception, field: s
 
 @pytest.mark.parametrize("reset", [False, True])
 def test_python_measurements_and_shot_reset_do_not_revalidate(monkeypatch, reset: bool) -> None:
-    """Shots use cached destinations without JSON, FFI, or declaration checks."""
+    """Decode each executed Result once per init; later shots do no JSON/FFI work."""
     from types import SimpleNamespace
 
     import pecos.classical_interpreters.phir_classical_interpreter as implementation
@@ -1657,16 +1657,50 @@ def test_python_measurements_and_shot_reset_do_not_revalidate(monkeypatch, reset
     )
     interpreter = PhirClassicalInterpreter()
     interpreter.init(source)
+    calls = {"counts": 0, "references": 0, "json": 0}
+
+    def counted(name, function):
+        def wrapper(*args, **kwargs):
+            calls[name] += 1
+            return function(*args, **kwargs)
+
+        return wrapper
+
+    # Patch this module's JSON reference, leaving shared load-time validation intact.
+    with monkeypatch.context() as first_use:
+        first_use.setattr(implementation, "json", SimpleNamespace(dumps=counted("json", json.dumps)))
+        first_use.setattr(
+            implementation,
+            "validate_phir_result_counts",
+            counted("counts", implementation.validate_phir_result_counts),
+        )
+        first_use.setattr(
+            implementation,
+            "validate_phir_result_reference",
+            counted("references", implementation.validate_phir_result_reference),
+        )
+        interpreter.handle_cops(interpreter.program.ops[0])
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert calls == {"counts": 1, "references": 2, "json": 2}
+    interpreter.init(source)
+    # A new init discards the successful decode from the previous program.
+    with monkeypatch.context() as new_load:
+        new_load.setattr(
+            implementation,
+            "validate_phir_result_counts",
+            counted("counts", implementation.validate_phir_result_counts),
+        )
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert calls["counts"] == 2
 
     def unexpected(*_args, **_kwargs):
-        pytest.fail("per-shot processing must not serialize or validate declarations/destinations")
+        pytest.fail("later shots must not serialize or validate Result syntax or declarations")
 
     monkeypatch.setattr(implementation, "json", SimpleNamespace(dumps=unexpected))
     monkeypatch.setattr(implementation, "validate_phir_result_counts", unexpected)
     monkeypatch.setattr(implementation, "validate_phir_result_reference", unexpected)
     monkeypatch.setattr(implementation, "validate_phir_classical_declaration", unexpected)
     monkeypatch.setattr(interpreter, "_check_register_width", unexpected)
-    monkeypatch.setattr(interpreter, "_measurement_target", unexpected, raising=False)
     for _shot in range(10):
         if reset:
             interpreter.shot_reinit()
@@ -1739,7 +1773,13 @@ def test_python_parsed_phir_preserves_scalar_metadata(validate: bool) -> None:
 
 @pytest.mark.parametrize(
     "ops",
-    [[7], [None], ["unexpected"], [{"block": "if", "true_branch": 7}], [{"block": "sequence", "ops": {}}]],
+    [
+        [7],
+        [None],
+        ["unexpected"],
+        [{"block": "if", "condition": {"cop": "==", "args": [0, 1]}, "true_branch": 7}],
+        [{"block": "sequence", "ops": {}}],
+    ],
 )
 def test_classical_projection_preserves_schema_errors(ops) -> None:
     from pecos._phir_declarations import validate_classical_inputs
@@ -1749,3 +1789,61 @@ def test_classical_projection_preserves_schema_errors(ops) -> None:
     validate_classical_inputs(source)
     with pytest.raises(ValidationError):
         PhirClassicalInterpreter().init(source)
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_unexecuted_result_count_mismatch_matches_native(validate: bool) -> None:
+    from pecos_rslib import run_phir_sim
+
+    source = _make_classical_program(
+        [("a", "u32", 3)],
+        [
+            {
+                "block": "if",
+                "condition": {"cop": "==", "args": [0, 1]},
+                "true_branch": [{"cop": "Result", "args": ["a", "a"], "returns": ["x"]}],
+            },
+        ],
+    )
+    native = run_phir_sim(json.dumps(source))
+    for interpreter in (RustPhirClassicalInterpreter(), PhirClassicalInterpreter()):
+        interpreter.phir_validate = validate
+        actual = HybridEngine(cinterp=interpreter).run(source, return_int=True)
+        assert actual == {"a": [0]}
+        assert actual == {name: [int(value) for value in values] for name, values in native.items()}
+
+
+@pytest.mark.parametrize("method", ["handle_cops", "execute"])
+def test_python_direct_result_decodes_on_first_execution(method: str) -> None:
+    from pecos.reps.pyphir.op_types import COp
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
+    interpreter.assign_int("a", 5)
+    operation = COp("Result", ["a"], ["out"])
+    if method == "handle_cops":
+        interpreter.handle_cops(operation)
+    else:
+        assert list(interpreter.execute([operation])) == []
+    assert interpreter.results() == {"a": 5, "out": 5}
+
+
+def test_python_invalid_result_is_validated_on_every_execution(monkeypatch) -> None:
+    import pecos.classical_interpreters.phir_classical_interpreter as implementation
+    from pecos.reps.pyphir.op_types import COp
+
+    interpreter = PhirClassicalInterpreter()
+    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
+    operation = COp("Result", ["a", "a"], ["out"])
+    validate_counts = implementation.validate_phir_result_counts
+    counts = []
+
+    def record_counts(*args):
+        counts.append(args)
+        return validate_counts(*args)
+
+    monkeypatch.setattr(implementation, "validate_phir_result_counts", record_counts)
+    for _attempt in range(2):
+        with pytest.raises(ValueError, match="Result"):
+            interpreter.handle_cops(operation)
+    assert counts == [(2, 1), (2, 1)]

@@ -96,6 +96,7 @@ class PhirClassicalInterpreter:
         self.cid2dtype = None
         self.csym2id = None
         self.cvar_meta = None
+        self._result_references = {}
 
         self.phir_validate = True
 
@@ -157,12 +158,10 @@ class PhirClassicalInterpreter:
 
         self.csym2id = dict(self.program.csym2id)
         self.cvar_meta = list(self.program.cvar_meta)
-        self._measurement_targets = {}
-        for cid, cvar in enumerate(self.cvar_meta):
+        self._result_references = {}
+        for cvar in self.cvar_meta:
             dtype = data_type_map[cvar.data_type]
             self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
-            self._register_measurement_targets(cvar.variable, cid, cvar.size)
-        self._prepare_result_operations(self.program.ops)
 
         self.initialize_cenv()
 
@@ -236,7 +235,6 @@ class PhirClassicalInterpreter:
             self._check_register_width(cvar, data_type, size, dtype.itemsize * 8)
             cid = len(self.csym2id)
             self.csym2id[cvar] = cid
-            self._register_measurement_targets(cvar, cid, size)
             self.cenv.append(dtype(0))
             self.cid2dtype.append(dtype)
             self.cvar_meta.append(
@@ -530,6 +528,13 @@ class PhirClassicalInterpreter:
                 self.assign_int(r, a)
 
         elif op.name == "Result":
+            if op not in self._result_references:
+                # Counts depend on execution, like native PHIR. Cache only a
+                # successful decode, including for COp objects supplied directly.
+                validate_phir_result_counts(len(op.args), len(op.returns or []))
+                sources = tuple(self._result_reference(ref, "args") for ref in op.args)
+                destinations = tuple(self._result_reference(ref, "returns") for ref in op.returns)
+                self._result_references[op] = sources, destinations
             sources, destinations = self._result_references[op]
             for name, index in sources:
                 self._classical_meta(name)
@@ -611,12 +616,6 @@ class PhirClassicalInterpreter:
             )
             raise ValueError(msg)
 
-    def _register_measurement_targets(self, name: str, cid: int, size: int) -> None:
-        """Cache whole-register and bit destinations when a register is declared."""
-        self._measurement_targets[name] = (cid, None)
-        for index in range(size):
-            self._measurement_targets[name, index] = (cid, index)
-
     @staticmethod
     def _measurement_reference(reference: str | tuple | list) -> tuple[str, int | None]:
         """Decode a measurement key without a Result diagnostic or an FFI call."""
@@ -638,48 +637,13 @@ class PhirClassicalInterpreter:
             raise TypeError(msg)
         return name, index
 
-    def _measurement_target(self, reference: str | tuple | list) -> tuple[int, int | None]:
-        """Diagnose invalid measurement destinations when results arrive."""
-        name, index = self._measurement_reference(reference)
-        self._validate_classical_write(name, index, "Measurement")
-        return self.csym2id[name], index
-
-    @staticmethod
-    def _all_operations(operations: list) -> Generator:
-        """Visit every branch without evaluating classical conditions."""
-        for operation in operations:
-            if isinstance(operation, pt.block.SeqBlock):
-                yield from PhirClassicalInterpreter._all_operations(operation.ops)
-            elif isinstance(operation, pt.block.IfBlock):
-                yield from PhirClassicalInterpreter._all_operations(operation.true_branch)
-                yield from PhirClassicalInterpreter._all_operations(operation.false_branch or [])
-            else:
-                yield operation
-
-    def _prepare_result_operations(self, operations: list) -> None:
-        """Validate and decode static Result counts and references once per load."""
-        self._result_references = {}
-        for operation in self._all_operations(operations):
-            if isinstance(operation, pt.opt.COp) and operation.name == "Result":
-                validate_phir_result_counts(len(operation.args), len(operation.returns or []))
-                sources = tuple(self._result_reference(ref, "args") for ref in operation.args)
-                destinations = tuple(self._result_reference(ref, "returns") for ref in operation.returns)
-                self._result_references[operation] = sources, destinations
-
     def receive_results(self, qsim_results: list[dict]) -> None:
-        """Assign measurement results, validating key types before cache lookup."""
+        """Validate measurement destinations against declarations when results arrive."""
         for meas in qsim_results:
             for cvar, val in meas.items():
-                # bool/float indices compare equal to ints, so type validation
-                # must precede lookup even for a key that appears cached.
-                self._measurement_reference(cvar)
-                if cvar not in self._measurement_targets:
-                    # Only invalid/external results reach this diagnostic path.
-                    self._measurement_target(cvar)
-                    msg = f"Measurement destination {cvar!r} was not registered at declaration"
-                    raise RuntimeError(msg)
-                cid, index = self._measurement_targets[cvar]
-                self._assign_value(cid, index, val)
+                name, index = self._measurement_reference(cvar)
+                self._validate_classical_write(name, index, "Measurement")
+                self._assign_value(self.csym2id[name], index, val)
 
     def results(self, *, return_int: bool = True) -> dict:
         """Dumps program final results."""

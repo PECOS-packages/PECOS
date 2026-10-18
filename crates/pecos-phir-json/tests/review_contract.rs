@@ -567,3 +567,25 @@ fn assignment_unknown_target_names_the_operation() {
         "Input error: Assignment: unknown classical variable \"非ASCII\"; declare it with cvar_define before use"
     );
 }
+
+#[test]
+fn converter_rejects_present_noninteger_register_sizes() {
+    let mut failures = Vec::new();
+    for data in ["cvar_define", "qvar_define"] {
+        for size in [json!(-1), json!("8"), json!(1.5), json!(null), json!(true)] {
+            let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[{
+                "data": data, "data_type": if data == "cvar_define" { "u32" } else { "qubits" },
+                "variable": "bad_size", "size": size
+            }]})
+            .to_string();
+            let expected = format!(
+                "Register 'bad_size' has invalid size {size}; use a non-negative integer size"
+            );
+            match phir_json_to_module(&source) {
+                Err(pecos_core::errors::PecosError::Input(message)) if message == expected => {}
+                result => failures.push(format!("{data} size={size}: {result:?}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

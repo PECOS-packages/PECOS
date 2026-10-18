@@ -489,3 +489,48 @@ fn omitted_bool_size_supports_measurement_on_every_rust_path() {
         ResultValue::UInt(1, _) | ResultValue::Int(1, _)
     ));
 }
+
+#[test]
+fn wide_register_results_preserve_explicit_and_inferred_widths() {
+    for explicit in [false, true] {
+        let mut unsigned = json!({"data":"cvar_define","data_type":"u64","variable":"wide"});
+        if explicit {
+            unsigned["size"] = json!(64);
+        }
+        let mut ops = vec![
+            json!({"data":"qvar_define","variable":"q","size":1}),
+            unsigned,
+            json!({"data":"cvar_define","data_type":"u32","variable":"bits"}),
+            json!({"data":"cvar_define","data_type":"i32","variable":"signed"}),
+            json!({"qop":"X","args":[["q",0]]}),
+        ];
+        for bit in [0, 2, 40] {
+            ops.push(json!({"qop":"Measure","args":[["q",0]],"returns":[["wide",bit]]}));
+        }
+        // Build -7's full i32 pattern without requiring the unsupported cop '='.
+        for bit in [0].into_iter().chain(3..32) {
+            ops.push(json!({"qop":"Measure","args":[["q",0]],"returns":[["bits",bit]]}));
+        }
+        ops.push(json!({"cop":"Result","args":["bits","wide","signed"],"returns":["signed","uout","sout"]}));
+        let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":ops}).to_string();
+        let native = run(&mut PhirJsonEngine::from_json(&source).unwrap());
+        let converted = run(&mut PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap());
+        for (name, expected) in [
+            ("uout", (1_u64 << 40) + 5),
+            ("sout", u64::from(u32::MAX - 6)),
+        ] {
+            let native_bits =
+                u64::from_str_radix(&native.register_to_binary_string(name).unwrap(), 2).unwrap();
+            let converted_bits = match converted.data[name] {
+                pecos_engines::Data::U32(value) => u64::from(value),
+                pecos_engines::Data::U64(value) => value,
+                ref other => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(native_bits, expected, "native {name}, explicit={explicit}");
+            assert_eq!(
+                converted_bits, expected,
+                "converter {name}, explicit={explicit}"
+            );
+        }
+    }
+}

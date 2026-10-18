@@ -51,6 +51,29 @@ The legacy `___set_random_index` import and broader WASM RNG integration remain
 unsupported by this change. See the remaining work in
 [issue #941](https://github.com/PECOS-packages/PECOS/issues/941).
 
+### Guppy RNG compatibility coverage
+
+The live Selene comparisons in `tests/guppy/test_qis_classical_rng.py` cover both
+Guppy RNG implementations:
+
+- `guppylang.std.qsystem.random.RNG`: signed integers, bounded sampling, floats,
+  random angles, Clifford angles, forward/backward jumps, shuffle and discrete
+  distributions. Tests include signed seed boundaries, large jumps, rejection
+  sampling, handle recreation and multiple live handles.
+- `guppylang.std.random.seeded_pcg32`: native Guppy integer and bounded draws,
+  with interleaved generators and a platform RNG to check state independence.
+
+The platform RNG has shared state within one program execution; multiple handles
+must not be assumed to provide independent streams. Native Guppy PCG32 values
+keep their state locally. See the [Guppy RNG guide](https://docs.quantinuum.com/guppy/language_guide/random.html).
+
+Comparisons preserve repeated output labels so every draw in a loop is checked.
+Additional tests cover shot-dependent seeds, quantum measurement feedback,
+invalid distribution weights, oversized bounds and a valid simulation after an
+aborted invocation. These are functional comparisons using the installed Guppy,
+compiler and Selene versions; they do not establish a speed advantage or equality
+of simulator/noise RNG streams.
+
 ## Native gate lowering
 
 All Selene runtimes receive gates through their native entry points. Flat,

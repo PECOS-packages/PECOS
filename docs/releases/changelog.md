@@ -13,6 +13,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Decoder changes
 
+- `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
+  stabilizer family across a transversal H; previously post-H detectors were
+  labelled with the measured family, which made graph decoders' labelled
+  projection misdecode some single faults on transversal-H circuits.
 - Graph decoders project raw hyperedges using `fault_sector` labels, with
   `irreducible="refuse"` by default and `"drop"` on request. Already-decomposed
   `^` input whose components are all graphlike is used as given.

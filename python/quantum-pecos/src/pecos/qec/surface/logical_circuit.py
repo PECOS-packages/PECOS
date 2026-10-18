@@ -724,6 +724,10 @@ class PatchState:
     x_z_swapped: bool = False
     stabilizers_by_index: dict[str, dict[int, Stabilizer]] = field(default_factory=dict)
 
+    def code_family(self, measured_family: str) -> str:
+        """Map a measured check family to its invariant code-frame family."""
+        return ("Z" if measured_family == "X" else "X") if self.x_z_swapped else measured_family
+
     @property
     def current_x_stabilizers(self) -> list[Stabilizer]:
         """Stabilizers currently measuring X-type checks."""
@@ -3184,9 +3188,7 @@ class _CircuitGenerator:
         curr_meas_indices: list[int],
     ) -> None:
         """Compare the current check with its backwards-propagated measurements."""
-        base_family = stab_type
-        if self.patches[patch_label].x_z_swapped:
-            base_family = "Z" if stab_type == "X" else "X"
+        base_family = self.patches[patch_label].code_family(stab_type)
         cache_key = (patch_label, base_family, self.segment_idx)
         if cache_key not in self._boundary_terms:
             self._boundary_terms[cache_key] = _propagate_stabilizer_terms(
@@ -3291,7 +3293,7 @@ class _CircuitGenerator:
         ps = self.patches[patch_label]
         geom = ps.patch.geometry
         cx, cy = ps.coord_offset
-        base_family = ("Z" if stab_type == "X" else "X") if ps.x_z_swapped else stab_type
+        base_family = ps.code_family(stab_type)
         s = ps.stabilizers_by_index[base_family].get(stab_index)
         if s is None:
             msg = f"Patch '{patch_label}' has no {base_family} stabilizer with index {stab_index}"
@@ -3308,6 +3310,7 @@ class _CircuitGenerator:
         stab_index: int,
         meas_indices: list[int],
     ) -> None:
+        base_family = self.patches[patch_label].code_family(stab_type)
         anc_x, anc_y = self._ancilla_spatial_coords(patch_label, stab_type, stab_index)
         # Store absolute indices; convert to relative offsets in generate()
         self._det_json.append(
@@ -3315,11 +3318,12 @@ class _CircuitGenerator:
                 "id": len(self._det_json),
                 "coords": [anc_x, anc_y, self.round_time],
                 "abs_records": list(meas_indices),
-                # Keep the current family key: base_family flips after transversal H.
+                # Labels follow the code family: transversal H conjugates both
+                # the error and the check, leaving the code-frame family invariant.
                 # Fold rounds introduce Z-partner terms via _fold_maps. Their
                 # fault sectors are unverified, including comparisons across a fold.
                 # The first measurements after physical SZ/SZdg are also untyped.
-                "fault_sector": None if self._untyped_measurements.intersection(meas_indices) else stab_type,
+                "fault_sector": None if self._untyped_measurements.intersection(meas_indices) else base_family,
             },
         )
 

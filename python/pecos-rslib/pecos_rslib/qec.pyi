@@ -24,6 +24,18 @@ from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, Qis, Stabili
 
 DEM_SLICE_ROUND_ATTRIBUTE: str
 
+class DiscoveredDetectors:
+    """Record parities with integer noiseless references (0 or 1)."""
+
+    @property
+    def detectors(self) -> list[tuple[list[int], int]]: ...
+    @property
+    def observables(self) -> list[tuple[list[int], int]]: ...
+
+def discover_detectors(tc: TickCircuit, observables: Sequence[Sequence[int]] = ()) -> DiscoveredDetectors:
+    """Discover detectors; undeclared deterministic logical parities become detectors."""
+    ...
+
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
 

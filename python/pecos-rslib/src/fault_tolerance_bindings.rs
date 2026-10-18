@@ -8213,6 +8213,66 @@ impl PyBivariateBicycleCode {
     }
 }
 
+/// Discovered record parities and their noiseless reference bits.
+#[pyclass(name = "DiscoveredDetectors", module = "pecos_rslib.qec")]
+pub struct PyDiscoveredDetectors {
+    #[pyo3(get)]
+    detectors: Vec<(Vec<usize>, u8)>,
+    #[pyo3(get)]
+    observables: Vec<(Vec<usize>, u8)>,
+}
+
+#[pymethods]
+impl PyDiscoveredDetectors {
+    fn __repr__(&self) -> String {
+        format!(
+            "DiscoveredDetectors(detectors={}, observables={})",
+            self.detectors.len(),
+            self.observables.len()
+        )
+    }
+}
+
+/// Discover Clifford circuit detectors and complete declared terminal observables.
+/// Undeclared deterministic logical parities become detectors.
+#[pyfunction]
+#[pyo3(signature = (tc, observables = Vec::new()), text_signature = "(tc, observables=())")]
+fn discover_detectors(
+    py: Python<'_>,
+    tc: &PyTickCircuit,
+    observables: Vec<Vec<Py<PyAny>>>,
+) -> PyResult<PyDiscoveredDetectors> {
+    let observables = observables
+        .iter()
+        .enumerate()
+        .map(|(observable, records)| {
+            records
+                .iter()
+                .map(|record| match record.extract::<usize>(py) {
+                    Ok(index) => Ok(index),
+                    Err(_) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "observable {observable} record {} must be a nonnegative integer that fits a record index",
+                        record.bind(py).repr()?
+                    ))),
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let discovered =
+        pecos_qec::fault_tolerance::detector_discovery::discover_detectors(&tc.inner, &observables)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+    let convert = |relations: Vec<(Vec<usize>, bool)>| {
+        relations
+            .into_iter()
+            .map(|(records, reference)| (records, u8::from(reference)))
+            .collect()
+    };
+    Ok(PyDiscoveredDetectors {
+        detectors: convert(discovered.detectors),
+        observables: convert(discovered.observables),
+    })
+}
+
 /// Build the Table 5 bivariate-bicycle memory circuit.
 #[pyfunction]
 fn bb_memory_circuit(
@@ -8366,6 +8426,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(certified_stabilizer_coset_weight, &qec)?)?;
     qec.add_function(wrap_pyfunction!(logical_generator_coset_weights, &qec)?)?;
     qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
+    qec.add_class::<PyDiscoveredDetectors>()?;
+    qec.add_function(wrap_pyfunction!(discover_detectors, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(transform_two_patch_pauli, &qec)?)?;

@@ -233,7 +233,10 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// Start a new shot
     ///
     /// This resets the runtime state for a new execution of the program.
-    /// Inspired by Selene's `shot_start()`.
+    /// Inspired by Selene's `shot_start()`. `QisEngine` supplies zero-based,
+    /// increasing IDs per engine instance, retained across resets. Template
+    /// clones start a new sequence. IDs are not global Monte Carlo indices and
+    /// are independent of the supplied seed. Direct callers choose their IDs.
     ///
     /// # Errors
     /// Returns an error if the shot cannot be started.

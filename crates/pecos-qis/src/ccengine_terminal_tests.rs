@@ -492,10 +492,8 @@ fn scheduled_midshot_reset_discards_aborted_shot_and_reuses_worker() {
         assert_eq!(trace.lock().unwrap().len(), 0);
         // Probe admission before start() performs its own reset: otherwise that
         // reset could mask an abandoned scheduled shot here.
-        engine
-            .runtime
-            .shot_start(u64::try_from(engine.trace_shot_index + 1).unwrap(), None)
-            .unwrap();
+        let next_id = engine.next_runtime_shot_id().unwrap();
+        engine.runtime.shot_start(next_id, None).unwrap();
         engine.operation_trace_collector = None;
         let profile = ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap();
         let noise = if mode == ScheduledTransport::V7 {
@@ -1582,6 +1580,7 @@ fn pending_measurement_counts_preserve_leakage_and_reset_each_shot() {
             ..DeferredReadRuntime::default()
         }));
         engine.scheduled_transport = mode;
+        engine.last_runtime_shot_id = Some(0);
         engine.runtime.shot_start(0, None).unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
@@ -1634,6 +1633,7 @@ fn unimported_measurement_emissions_latch_a_terminal_error() {
             ..DeferredReadRuntime::default()
         }));
         engine.scheduled_transport = mode;
+        engine.last_runtime_shot_id = Some(0);
         engine.runtime.shot_start(0, None).unwrap();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,

@@ -205,7 +205,8 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
                 if measurement_offset + i < len(c):
                     ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
     elif gate_name in ["MX", "MY"]:
-        # Basis measurements - add basis change before measurement
+        # Basis measurements: rotate into Z, measure, rotate back so the qubit
+        # is left in the measured X or Y eigenstate.
         if c is not None:
             for i, idx in enumerate(qubit_targets):
                 if measurement_offset + i < len(c):
@@ -215,6 +216,9 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
                         ops.append(qubit.SZdg(q[idx]))
                         ops.append(qubit.H(q[idx]))
                     ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+                    ops.append(qubit.H(q[idx]))
+                    if gate_name == "MY":
+                        ops.append(qubit.SZ(q[idx]))
     elif gate_name in ["R", "RZ"]:
         # Reset
         ops.extend(qubit.PZ(q[idx]) for idx in qubit_targets)

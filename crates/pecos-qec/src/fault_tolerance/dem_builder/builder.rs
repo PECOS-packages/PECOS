@@ -1308,6 +1308,7 @@ impl<'a> DemBuilder<'a> {
                 require(1)?;
                 sim.h(qubits);
                 sim.mz(qubits);
+                sim.h(qubits);
             }
             GateType::MZ | GateType::MeasureFree => {
                 require(1)?;
@@ -3646,6 +3647,31 @@ impl std::error::Error for DemBuilderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mx_crosstalk_replay_restores_x_eigenstate() {
+        for prepared in [false, true] {
+            let mut sim = SymbolicSparseStab::new(1);
+            if prepared {
+                sim.h(&[0]);
+            }
+            let gate = pecos_core::Gate::mx(&[0]);
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate).unwrap();
+            DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 1, &gate).unwrap();
+            let history = sim.measurement_history();
+            let first = history.get(0).unwrap();
+            let second = history.get(1).unwrap();
+            assert_eq!(first.is_deterministic, prepared);
+            assert!(second.is_deterministic);
+            assert_eq!(second.outcome, first.outcome);
+            assert_eq!(second.flip, first.flip);
+            if prepared {
+                assert!(second.outcome.is_empty());
+            } else {
+                assert_eq!(second.outcome.iter().collect::<Vec<_>>(), [0]);
+            }
+        }
+    }
 
     #[test]
     fn map_only_records_are_bounded() {

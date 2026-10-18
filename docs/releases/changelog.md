@@ -73,6 +73,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- The PECOS schema rejects explicit null declaration sizes, a stricter rule than
+  the upstream PHIR schema, which allows null for classical sizes. Omitted
+  classical sizes remain inferred. Non-JSON and non-finite declaration sizes
+  report the register and invalid value. QuantumCircuit export rejects None
+  widths in qvar_spec and cvar_spec with instructions to supply a valid size.
+
 - PHIR declaration sizes must be non-negative integers when present; explicit
   null is rejected with the shared register-name/value diagnostic, including
   when `phir_validate=False`. Omit the field to request classical size inference.
@@ -94,9 +100,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   undeclared destinations. Both HybridEngine interpreters raise `ValueError`
   rather than `KeyError` for undeclared measurement registers, and reject writes
   outside the declared size instead of dropping the bit. Signed register sizes
-  exclude the sign bit from measurement destinations. JSON-to-module conversion
-  checks destinations when it compiles, including in branches that never run;
-  the native engine and both interpreters check them when the measurement runs.
+  exclude the sign bit from measurement destinations. JSON-to-module conversion,
+  which supports only straight-line programs, checks each measurement destination
+  when it compiles. Native execution and both interpreters check destinations
+  when the measurement runs.
 - Result rejects quantum destinations, unknown classical sources and out-of-range
   indexed references with named errors. Declare classical sources and use a
   classical destination or a new export name.
@@ -262,7 +269,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ### Python bug fixes
 
 - The Python PHIR interpreter releases cached Result operations on a full reset.
-  Declaration size diagnostics now state the platform integer upper bound on all
+  Declaration size diagnostics now give quantum or classical size guidance on all
   PHIR paths, including when JSON parses an oversized integer as a float.
 
 - QuantumCircuit's PHIR exporter omits an unspecified (`None`) quantum-register

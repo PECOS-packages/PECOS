@@ -587,8 +587,12 @@ fn converter_rejects_present_noninteger_register_sizes() {
             }]})
             .to_string();
             let expected = format!(
-                "Register 'bad_size' has invalid size {size}; use a non-negative integer size up to {}",
-                usize::MAX
+                "Register 'bad_size' has invalid size {size}; use {}",
+                if data == "qvar_define" {
+                    "a positive integer size"
+                } else {
+                    "a non-negative integer size that fits the data type"
+                }
             );
             match phir_json_to_module(&source) {
                 Err(pecos_core::errors::PecosError::Input(message)) if message == expected => {}
@@ -624,8 +628,12 @@ fn declaration_size_invalid_values_agree() {
             let source = json!({"format":"PHIR/JSON","version":"0.1.0","ops":[declaration]});
             let encoded = source.to_string();
             let expected = format!(
-                "Input error: Register 'a' has invalid size {size}; use a non-negative integer size up to {}",
-                usize::MAX
+                "Input error: Register 'a' has invalid size {size}; use {}",
+                if data == "qvar_define" {
+                    "a positive integer size"
+                } else {
+                    "a non-negative integer size that fits the data type"
+                }
             );
             let mut interpreter = PhirClassicalInterpreter::new();
             for (path, result) in [

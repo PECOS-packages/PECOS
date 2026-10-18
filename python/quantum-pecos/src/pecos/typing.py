@@ -73,7 +73,7 @@ from phir.model import (
 )
 from pydantic import model_validator
 
-from pecos._phir_declarations import validate_declaration_names
+from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
 
 
 class _PecosCVarDefine(_CVarDefine):
@@ -91,6 +91,8 @@ class _PecosCVarDefine(_CVarDefine):
     @model_validator(mode="after")
     def _check_size_small(self) -> _PecosCVarDefine:
         """Check that ``size`` fits within 8-bit and 16-bit data types."""
+        if "size" in self.model_fields_set and self.size is None:
+            validate_classical_inputs({"ops": [{"data": "cvar_define", "variable": self.variable, "size": None}]})
         if self.data_type == "bool":
             prs.validate_phir_classical_declaration(self.variable, "bool", self.size if self.size is not None else 1)
         msg = "`size` is greater than what `data_type` can handle"
@@ -195,7 +197,7 @@ class PhirModel(_PHIRModel):
     @model_validator(mode="after")
     def _check_declaration_names(self) -> PhirModel:
         """Enforce PHIR-JSON v0.1's unique-name rule for both declaration kinds."""
-        validate_declaration_names(self.model_dump()["ops"])
+        validate_declaration_names(self.model_dump(exclude_unset=True)["ops"])
         return self
 
 

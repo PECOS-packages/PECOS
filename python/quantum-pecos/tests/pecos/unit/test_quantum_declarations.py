@@ -45,25 +45,31 @@ def test_wrong_quantum_type(data_type: str | None) -> None:
 
 
 @pytest.mark.parametrize(
-    "fields",
-    [{}, {"size": 0}, {"size": -1}, {"size": True}, {"size": False}, {"size": 2.0}, {"size": "2"}, {"size": None}],
+    ("fields", "expected"),
+    [
+        ({}, "Quantum register 'q' requires a positive integer size"),
+        ({"size": 0}, "Quantum register 'q' requires a positive integer size"),
+        ({"size": -1}, "Register 'q' has invalid size"),
+        ({"size": True}, "Register 'q' has invalid size"),
+        ({"size": False}, "Register 'q' has invalid size"),
+        ({"size": 2.0}, "Register 'q' has invalid size"),
+        ({"size": "2"}, "Register 'q' has invalid size"),
+        ({"size": None}, "Register 'q' has invalid size"),
+    ],
 )
-def test_quantum_size_schema_remains_enforced(fields: dict) -> None:
+def test_quantum_size_schema_remains_enforced(fields: dict, expected: str) -> None:
     """The full upstream schema still rejects missing, zero and malformed sizes."""
     program = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [{"data": "qvar_define", "variable": "q", **fields}],
     }
-    message = (
-        "Quantum register 'q' requires a positive integer size"
-        if not fields or (fields["size"] == 0 and not isinstance(fields["size"], bool))
-        else "Register 'q' has invalid size"
-    )
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=expected):
         PyPHIR.from_phir(program)
     with pytest.raises(ValueError, match="size"):
         PhirClassicalInterpreter().init(program)
+    with pytest.raises(ValueError, match="size"):
+        PhirModel.model_validate(program)
 
 
 @pytest.mark.parametrize("size", [2, 3])
@@ -188,12 +194,48 @@ def test_unreachable_redeclaration() -> None:
         PyPHIR.from_phir(program)
 
 
-def test_qc2phir_does_not_emit_null_quantum_size() -> None:
-    """Unknown metadata widths stay absent, never becoming explicit JSON null."""
-    circuit = pecos.QuantumCircuit(qvar_spec={"q": None})
-    expected = {"data": "qvar_define", "data_type": "qubits", "variable": "q"}
-    assert circuit.to_phir_dict()["ops"] == [expected]
-    assert json.loads(circuit.to_phir_json())["ops"] == [expected]
-    # Quantum sizes remain required: omission does not invent a register width.
-    with pytest.raises(ValueError, match="Quantum register 'q' requires a positive integer size"):
-        PyPHIR.from_phir(circuit.to_phir_dict())
+@pytest.mark.parametrize("kind", ["qvar_spec", "cvar_spec"])
+def test_qc2phir_rejects_unknown_register_size(kind: str) -> None:
+    circuit = pecos.QuantumCircuit(**{kind: {"a": None}})
+    for export in (circuit.to_phir_dict, circuit.to_phir_json):
+        with pytest.raises(ValueError, match=rf"{kind}\['a'\].*None.*use"):
+            export()
+
+
+@pytest.mark.parametrize("dtype", ["u32", "bool"])
+def test_schema_rejects_null_classical_size_but_accepts_omitted(dtype: str) -> None:
+    declaration = {"data": "cvar_define", "data_type": dtype, "variable": "a"}
+    source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
+    PhirModel.model_validate(source)
+    declaration["size"] = None
+    with pytest.raises(ValueError, match="Register 'a' has invalid size null"):
+        PhirModel.model_validate(source)
+
+
+@pytest.mark.parametrize("kind", ["cvar_define", "qvar_define"])
+@pytest.mark.parametrize("size_case", ["numpy", "nan", "inf", "decimal", "rust"])
+def test_projection_names_non_json_sizes(kind: str, size_case: str) -> None:
+    from decimal import Decimal
+
+    import numpy as np
+
+    size = {
+        "numpy": np.int64(2),
+        "nan": float("nan"),
+        "inf": float("inf"),
+        "decimal": Decimal(2),
+        "rust": pecos.i64(2),
+    }[size_case]
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": kind, "data_type": "u32" if kind == "cvar_define" else "qubits", "variable": "a", "size": size},
+        ],
+    }
+    hint = "a positive integer size" if kind == "qvar_define" else "a non-negative integer size that fits the data type"
+    for reader in (PyPHIR.from_phir, PhirClassicalInterpreter().init):
+        with pytest.raises(ValueError, match="invalid size") as error:
+            reader(source)
+        expected = f"PHIR interpreter failed: Register 'a' has invalid size {json.dumps(repr(size))}; use {hint}"
+        assert str(error.value) == expected

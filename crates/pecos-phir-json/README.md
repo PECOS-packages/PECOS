@@ -256,9 +256,9 @@ indexed destinations replace one bit
 without losing the others. Result cannot overwrite quantum registers or read
 unknown sources. Measurement destinations must be declared classical registers,
 and their bit indices must be below the declared size (excluding the sign bit).
-JSON-to-module conversion checks destinations when it compiles, including in
-branches that never run; native execution and both interpreters check them when
-the measurement runs.
+JSON-to-module conversion, which supports only straight-line programs, checks each
+measurement destination when it compiles. Native execution and both interpreters
+check destinations when the measurement runs.
 All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
 measurements. Declaration sizes use one shared Rust decoder: only an absent
 field means omitted. JSON null, negative, string, fractional and boolean size
@@ -275,7 +275,8 @@ Rust classifies these as `PecosError::Input`. The Python interpreter validates
 Result reference syntax and declarations at load. It checks Result counts when
 that Result executes, like native and the Rust interpreter, and caches successful
 reference decoding until the next init or full reset. Result arguments and returns
-are treated as immutable after first execution. Later shots do not repeat JSON/FFI
+are treated as immutable after first execution; cached decoding does not retain
+operations after their callers release them. Later shots do not repeat JSON/FFI
 validation. Measurement destinations are checked against declarations when results
 arrive. Shot resets do not repeat declaration checks. PyPHIR's classical-input
 validation does not serialize unrelated metadata in parsed Python programs.

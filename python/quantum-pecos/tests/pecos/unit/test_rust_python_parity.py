@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import random
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1830,14 +1829,17 @@ def test_python_direct_result_decodes_on_first_execution(method: str) -> None:
 
 
 def test_python_full_reset_releases_result_operations() -> None:
-    """Forgetting the program also releases operations retained by successful decoding."""
+    """Forgetting the program releases its operations and their cached decoding."""
     from weakref import ref
 
-    from pecos.reps.pyphir.op_types import COp
-
     interpreter = PhirClassicalInterpreter()
-    interpreter.init(_make_classical_program([("a", "u32", 3)], []))
-    operation = COp("Result", ["a"], ["out"])
+    interpreter.init(
+        _make_classical_program(
+            [("a", "u32", 3)],
+            [{"cop": "Result", "args": ["a"], "returns": ["out"]}],
+        ),
+    )
+    operation = interpreter.program.ops[0]
     retained = ref(operation)
     interpreter.handle_cops(operation)
     del operation
@@ -1881,7 +1883,7 @@ def test_python_declaration_sizes_reject_explicit_null(dtype: str, size_fields: 
     if "size" in size_fields:
         expected = (
             f"PHIR interpreter failed: Register 'a' has invalid size {json.dumps(size_fields['size'])}; "
-            f"use a non-negative integer size up to {2 * sys.maxsize + 1}"
+            "use a non-negative integer size that fits the data type"
         )
         for reader in [interpreter.init, PyPHIR.from_phir]:
             with pytest.raises(ValueError, match="invalid size") as error:
@@ -1911,6 +1913,5 @@ def test_python_quantum_null_size_has_shared_error(validate: bool) -> None:
         with pytest.raises(ValueError, match="invalid size null") as error:
             reader(source)
         assert str(error.value) == (
-            "PHIR interpreter failed: Register 'q' has invalid size null; "
-            f"use a non-negative integer size up to {2 * sys.maxsize + 1}"
+            "PHIR interpreter failed: Register 'q' has invalid size null; use a positive integer size"
         )

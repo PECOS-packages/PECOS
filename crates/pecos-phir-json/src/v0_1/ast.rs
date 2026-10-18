@@ -382,7 +382,7 @@ impl<'de> Deserialize<'de> for Operation {
                     })
                     .transpose()?;
                 let raw_size =
-                    register_size(&variable, obj.get("size")).map_err(D::Error::custom)?;
+                    register_size(&variable, &data, obj.get("size")).map_err(D::Error::custom)?;
                 let (data_type, size) = if data == "qvar_define" {
                     let (_, size) = validate_quantum_declaration(&variable, data_type, raw_size)
                         .map_err(D::Error::custom)?;
@@ -501,15 +501,21 @@ pub(crate) fn declaration_size(
 /// Returns a named input error if the supplied value is not a non-negative integer.
 pub(crate) fn register_size(
     variable: &str,
+    kind: &str,
     value: Option<&serde_json::Value>,
 ) -> Result<Option<usize>, PecosError> {
+    let hint = if kind == "qvar_define" {
+        "a positive integer size"
+    } else {
+        "a non-negative integer size that fits the data type"
+    };
     match value {
         None => Ok(None),
         Some(value) => serde_json::from_value::<usize>(value.clone())
             .map(Some)
             .map_err(|_| {
                 PecosError::Input(format!(
-                    "Register '{variable}' has invalid size {value}; use a non-negative integer size up to {}", usize::MAX
+                    "Register '{variable}' has invalid size {value}; use {hint}"
                 ))
             }),
     }

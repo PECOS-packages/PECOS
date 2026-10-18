@@ -102,10 +102,10 @@ pub fn validate_classical_inputs(program: &Value) -> Result<(), PecosError> {
                 result_field(op, "returns")?;
             }
             let data = op.get("data").and_then(Value::as_str);
-            if matches!(data, Some("cvar_define" | "qvar_define"))
+            if let Some(kind @ ("cvar_define" | "qvar_define")) = data
                 && let Some(name) = op.get("variable").and_then(Value::as_str)
             {
-                let size = register_size(name, op.get("size"))?;
+                let size = register_size(name, kind, op.get("size"))?;
                 if data == Some("cvar_define")
                     && op.get("data_type").and_then(Value::as_str) == Some("bool")
                 {

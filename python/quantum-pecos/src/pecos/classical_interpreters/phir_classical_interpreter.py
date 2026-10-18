@@ -530,14 +530,16 @@ class PhirClassicalInterpreter:
 
         elif op.name == "Result":
             # After first execution, mutating op.args or op.returns is unsupported.
-            if op not in self._result_references:
+            decoded = self._result_references.get(op)
+            if decoded is None:
                 # Counts depend on execution, like native PHIR. Cache only a
                 # successful decode, including for COp objects supplied directly.
                 validate_phir_result_counts(len(op.args), len(op.returns or []))
                 sources = tuple(self._result_reference(ref, "args") for ref in op.args)
                 destinations = tuple(self._result_reference(ref, "returns") for ref in op.returns)
-                self._result_references[op] = sources, destinations
-            sources, destinations = self._result_references[op]
+                decoded = sources, destinations
+                self._result_references[op] = decoded
+            sources, destinations = decoded
             for name, index in sources:
                 self._classical_meta(name)
                 self._check_result_index(name, index)

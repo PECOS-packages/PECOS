@@ -60,7 +60,14 @@ def validate_classical_inputs(program: dict) -> None:
             if node.get("cop") == "Result":
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
             elif node.get("data") in ("cvar_define", "qvar_define"):
-                inputs.append({key: node[key] for key in ("data", "data_type", "variable", "size") if key in node})
+                declaration = {key: node[key] for key in ("data", "data_type", "variable", "size") if key in node}
+                if "size" in declaration:
+                    try:
+                        json.dumps(declaration["size"], allow_nan=False)
+                    except (TypeError, ValueError):
+                        # Not a JSON integer: pass its repr so the shared check names it.
+                        declaration["size"] = repr(declaration["size"])
+                inputs.append(declaration)
             if "block" in node:
                 for field in ("ops", "true_branch", "false_branch"):
                     collect(node.get(field) or [])

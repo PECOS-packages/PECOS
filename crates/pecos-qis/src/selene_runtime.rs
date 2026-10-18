@@ -49,7 +49,7 @@ impl RuntimeOperationBatch {
             .extraction_budget
             .is_some_and(|(limit, _)| self.operations.len().saturating_add(additional) > limit)
         {
-            self.callback_error = Some("scheduled operation budget exceeded");
+            self.callback_error = Some("runtime operation budget exceeded");
         }
         if self.callback_error.is_some() {
             return false;
@@ -212,7 +212,7 @@ unsafe extern "C" fn runtime_batch_custom(
         .extraction_budget
         .is_some_and(|(_, limit)| data_len > limit.saturating_sub(batch.payload_bytes))
     {
-        batch.callback_error = Some("scheduled payload budget exceeded");
+        batch.callback_error = Some("runtime payload budget exceeded");
         return;
     }
     if !batch.reserve_operations(1) {
@@ -909,6 +909,68 @@ impl SeleneRuntime {
                 std::panic::resume_unwind(payload)
             }
         }
+    }
+
+    fn check_end_admission(&mut self) -> Result<()> {
+        self.check_batch_failure()?;
+        if self
+            .emitted_measurements
+            .values()
+            .any(|pending| !pending.is_empty())
+        {
+            return Err(self.latch_batch_failure(RuntimeError::ExecutionError(
+                "shot ended with native measurements awaiting outcomes".into(),
+            )));
+        }
+        if self.scheduled_mode == Some(true) && !self.scheduled_drained {
+            return Err(RuntimeError::ExecutionError(
+                "scheduled shot requires a successful drain before shot_end".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Run the native end hook and return the identity of the shot it ended,
+    /// or `None` when no native shot was active (the hook released nothing).
+    fn end_native_shot(&mut self) -> Result<Option<(u64, u64)>> {
+        self.check_end_admission()?;
+        // Only end a shot the plugin actually started. The descriptor end hook
+        // receives the native instance; scheduled final delivery retains the
+        // returned shot identity while extracting its emitted batches.
+        // `take()` clears the active shot unconditionally: a clone that
+        // inherited `active_shot` without a loaded plugin has no FFI shot to
+        // end, but must not carry the stale identity forward.
+        let mut ended = None;
+        if let Some(identity) = self.active_shot.take()
+            && let Some(lib) = &self.library
+            && let Some(instance) = self.instance
+        {
+            // Missing shot_end fails closed like the other lifecycle hooks: the
+            // plugin's own finalization validation is part of what shot
+            // completion certifies.
+            let finalized = unsafe {
+                Self::runtime_plugin_descriptor(lib).and_then(|descriptor| {
+                    let errno = (descriptor.shot_end_fn)(instance);
+                    if errno == 0 {
+                        Ok(())
+                    } else {
+                        Err(RuntimeError::FfiError(format!(
+                            "selene_runtime_shot_end failed with errno {errno}"
+                        )))
+                    }
+                })
+            };
+            if let Err(error) = finalized {
+                // The active shot is already taken and the plugin may have
+                // finalized part of it, so a retry must not certify the shot:
+                // block every operation until a reset succeeds.
+                self.latch_batch_failure(error.clone());
+                return Err(error);
+            }
+            ended = Some(identity);
+        }
+        self.pending_shot_start = None;
+        Ok(ended)
     }
 
     fn drain_native_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
@@ -2139,11 +2201,16 @@ impl SeleneRuntime {
     }
 
     fn drain_runtime_operations(&mut self) -> Result<Vec<QuantumOp>> {
+        self.drain_runtime_operations_bounded(false)
+    }
+
+    fn drain_runtime_operations_bounded(&mut self, terminal: bool) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
         if self.instance.is_none() {
             return Ok(Vec::new());
         }
         let mut lowered_ops = Vec::new();
+        let mut terminal_budget = crate::scheduled_transport::EventBudget::default();
 
         loop {
             if self.scheduled_mode == Some(true) && self.scheduled_output.is_none() {
@@ -2152,7 +2219,7 @@ impl SeleneRuntime {
                 ));
             }
             let mut batch = RuntimeOperationBatch::default();
-            if self.scheduled_output.is_some() {
+            if terminal || self.scheduled_output.is_some() {
                 batch.extraction_budget = Some((MAX_OPERATIONS, MAX_PAYLOAD_BYTES));
             }
             let errno = {
@@ -2190,6 +2257,11 @@ impl SeleneRuntime {
                 break;
             }
 
+            if terminal {
+                terminal_budget.charge(&batch.operations, 0).map_err(|e| {
+                    self.latch_batch_failure(RuntimeError::ExecutionError(e.to_string()))
+                })?;
+            }
             if self.scheduled_output.is_some() {
                 if let Err(error) = self.retain_scheduled_batch(batch) {
                     return Err(self.latch_batch_failure(error));
@@ -3359,65 +3431,52 @@ impl QisRuntime for SeleneRuntime {
         Ok(())
     }
 
+    fn finish_operations(&mut self) -> Result<Vec<LoweredQuantumOp>> {
+        self.check_end_admission()?;
+        self.select_output_mode(false)?;
+        self.with_native_mutation(|runtime| {
+            if runtime.end_native_shot()?.is_none() {
+                return Ok(Vec::new());
+            }
+            // Poll only: the native end hook, not a new barrier, releases this tail.
+            runtime
+                .drain_runtime_operations_bounded(true)
+                .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
+        })
+    }
+
+    fn finish_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
+        self.check_end_admission()?;
+        self.with_native_mutation(|runtime| {
+            let Some(identity) = runtime.end_native_shot()? else {
+                return Ok(Vec::new());
+            };
+            // Retain the identity only for this bounded, synchronous extraction.
+            runtime.active_shot = Some(identity);
+            let result = runtime.collect_scheduled(Self::drain_runtime_operations);
+            runtime.active_shot = None;
+            result
+        })
+    }
+
     fn shot_end(&mut self) -> Result<Shot> {
-        self.check_batch_failure()?;
-        if self
-            .emitted_measurements
-            .values()
-            .any(|pending| !pending.is_empty())
-        {
+        // Legacy callers cannot execute returned work. Fail closed rather than
+        // silently discarding a native final batch; use the finish APIs instead.
+        let empty = if self.scheduled_mode == Some(true) {
+            self.finish_scheduled_operations()?.is_empty()
+        } else {
+            self.finish_operations()?.is_empty()
+        };
+        if !empty {
             return Err(self.latch_batch_failure(RuntimeError::ExecutionError(
-                "shot ended with native measurements awaiting outcomes".into(),
+                "shot_end emitted operations; use the final-delivery API".into(),
             )));
         }
-        if self.scheduled_mode == Some(true) && !self.scheduled_drained {
-            return Err(RuntimeError::ExecutionError(
-                "scheduled shot requires a successful drain before shot_end".into(),
-            ));
-        }
-        // Only end a shot the plugin actually started; the pinned Selene ABI
-        // is `selene_runtime_shot_end(instance, shot_id, seed)`, mirroring
-        // shot_start, so the delivered identity pair is replayed here.
-        // `take()` clears the active shot unconditionally: a clone that
-        // inherited `active_shot` without a loaded plugin has no FFI shot to
-        // end, but must not carry the stale identity forward.
-        if let Some((_shot_id, _seed)) = self.active_shot.take()
-            && let Some(lib) = &self.library
-            && let Some(instance) = self.instance
-        {
-            // Missing shot_end fails closed like the other lifecycle hooks: the
-            // plugin's own finalization validation is part of what shot
-            // completion certifies.
-            let finalized = unsafe {
-                Self::runtime_plugin_descriptor(lib).and_then(|descriptor| {
-                    let errno = (descriptor.shot_end_fn)(instance);
-                    if errno == 0 {
-                        Ok(())
-                    } else {
-                        Err(RuntimeError::FfiError(format!(
-                            "selene_runtime_shot_end failed with errno {errno}"
-                        )))
-                    }
-                })
-            };
-            if let Err(error) = finalized {
-                // The active shot is already taken and the plugin may have
-                // finalized part of it, so a retry must not certify the shot:
-                // block every operation until a reset succeeds.
-                self.latch_batch_failure(error.clone());
-                return Err(error);
-            }
-        }
-        self.pending_shot_start = None;
-
-        // Return the shot with measurements and registers
-        let shot = Shot {
+        Ok(Shot {
             measurements: self.state.measurements.clone(),
             registers: self.state.registers.clone(),
             ..Default::default()
-        };
-
-        Ok(shot)
+        })
     }
 
     fn reset(&mut self) -> Result<()> {
@@ -6299,3 +6358,7 @@ mod scheduled_tests;
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "selene_native_tests.rs"]
 mod native_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "selene_terminal_tests.rs"]
+mod terminal_tests;

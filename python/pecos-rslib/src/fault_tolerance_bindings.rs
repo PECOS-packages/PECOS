@@ -2521,6 +2521,24 @@ impl PyDetectorErrorModel {
             .collect()
     }
 
+    /// Detector X/Z families in detector id order, read from the fault sectors.
+    fn detector_bases(&self) -> PyResult<Vec<&'static str>> {
+        use pecos_decoder_core::dem_views::DetectorBasis;
+
+        self.inner
+            .detector_bases()
+            .map(|bases| {
+                bases
+                    .into_iter()
+                    .map(|basis| match basis {
+                        DetectorBasis::X => "X",
+                        DetectorBasis::Z => "Z",
+                    })
+                    .collect()
+            })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
     /// Build a decoder from this object's standard text plus its `fault_sector` labels.
     ///
     /// Windowed and beam-search specifications consume the structured model directly;

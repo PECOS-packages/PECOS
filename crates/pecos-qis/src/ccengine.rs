@@ -472,6 +472,8 @@ pub struct QisEngine {
     shot_lifecycle: ShotLifecycle,
     /// Terminal scheduled drains require feedback before releasing more work.
     scheduled_drain_round: usize,
+    /// End-hook output has been delivered; do not submit or finalize again.
+    runtime_end_delivered: bool,
     scheduled_drain_feedback: bool,
 
     /// RNG for generating per-shot seeds
@@ -616,6 +618,7 @@ impl QisEngine {
             reset_failure: None,
             shot_lifecycle: ShotLifecycle::Idle,
             scheduled_drain_round: 0,
+            runtime_end_delivered: false,
             scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
@@ -718,6 +721,7 @@ impl QisEngine {
             reset_failure: None,
             shot_lifecycle: ShotLifecycle::Idle,
             scheduled_drain_round: 0,
+            runtime_end_delivered: false,
             scheduled_drain_feedback: false,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
@@ -1308,6 +1312,7 @@ impl Clone for QisEngine {
             reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
             shot_lifecycle: ShotLifecycle::Idle,
             scheduled_drain_round: 0,
+            runtime_end_delivered: false,
             scheduled_drain_feedback: false,
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
@@ -1886,6 +1891,9 @@ impl QisEngine {
     }
 
     fn drain_terminal_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if self.runtime_end_delivered {
+            return Ok(None);
+        }
         self.drain_commands(true)
             .map(|drained| drained.map(|(commands, _)| commands))
     }
@@ -2037,13 +2045,56 @@ impl QisEngine {
         }
     }
 
+    /// Invoke the runtime end hook once and lower its final operations for
+    /// execution. Terminal measurements are unsupported: nothing could feed
+    /// their outcomes back after end.
+    fn deliver_runtime_end(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if self.scheduled_transport.enabled() {
+            let batches = self
+                .runtime
+                .finish_scheduled_operations()
+                .map_err(|e| PecosError::Generic(format!("runtime shot_end failed: {e}")))?;
+            let empty = batches.is_empty();
+            let shot = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
+            if !ids.is_empty() {
+                return Err(PecosError::Input(
+                    "measurements emitted by shot_end are unsupported".into(),
+                ));
+            }
+            Ok((!empty).then_some(commands))
+        } else {
+            let ops = self
+                .runtime
+                .finish_operations()
+                .map_err(|e| PecosError::Generic(format!("runtime shot_end failed: {e}")))?;
+            if ops
+                .iter()
+                .any(|op| matches!(op.op, QuantumOp::Measure(..) | QuantumOp::MeasureLeaked(..)))
+            {
+                return Err(PecosError::Input(
+                    "measurements emitted by shot_end are unsupported".into(),
+                ));
+            }
+            let lowered = self.quantum_ops_to_lowered_commands(ops)?;
+            // Preserve the trace shape for runtimes with no terminal work.
+            if !lowered.is_empty {
+                self.trace_operations_chunk("shot_end", &[], None, Some(&lowered));
+            }
+            Ok((!lowered.is_empty).then_some(lowered.commands))
+        }
+    }
+
     /// Run the shot-completion gates in order: sticky terminal check, drain
-    /// verification, the runtime's own `shot_end` finalization hook, then the
-    /// named-result traces and terminal trace marker. A runtime that only
+    /// verification, the runtime's own `shot_end` finalization hook and delivery
+    /// of its final operations, then the named-result and terminal trace markers.
+    /// Returned commands must be executed before the next completion poll. A runtime that only
     /// detects an invalid final schedule at shot end therefore fails the shot
     /// instead of receiving a certified trace. Failures latch sticky and
     /// success is one-shot.
-    fn finalize_shot_for_certification(&mut self) -> Result<(), PecosError> {
+    fn finalize_shot_for_certification(&mut self) -> Result<Option<ByteMessage>, PecosError> {
         if let Some(err) = self.terminal_failure_error() {
             return Err(err);
         }
@@ -2055,17 +2106,38 @@ impl QisEngine {
             .as_ref()
             .is_some_and(|state| state.finalized)
         {
-            return Ok(());
+            return Ok(None);
         }
-        self.verify_runtime_drained()?;
+        if !self.runtime_end_delivered {
+            self.verify_runtime_drained()?;
+        }
         if !self.pending_measurements.is_empty() {
             let slots: Vec<_> = self.pending_measurements.keys().copied().collect();
             return Err(self.latch_terminal_error(format!(
                 "runtime dropped imported measurements for result slots {slots:?}"
             )));
         }
-        if let Err(e) = self.runtime.shot_end() {
-            return Err(self.latch_terminal_error(format!("runtime shot_end failed: {e}")));
+        if !self.runtime_end_delivered {
+            // The end hook may have run before a panic, so an unwind must
+            // poison the shot exactly like an error return.
+            let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.deliver_runtime_end()
+            }));
+            let commands = match delivery {
+                Ok(result) => result.map_err(|e| {
+                    self.latch_terminal_error(format!("runtime final delivery failed: {e}"))
+                })?,
+                Err(payload) => {
+                    self.latch_terminal_error(
+                        "runtime shot_end delivery panicked; reset required".into(),
+                    );
+                    std::panic::resume_unwind(payload)
+                }
+            };
+            self.runtime_end_delivered = true;
+            if commands.is_some() {
+                return Ok(commands);
+            }
         }
         self.trace_named_result_traces_from_dynamic_handle();
         self.trace_complete_chunk();
@@ -2073,7 +2145,7 @@ impl QisEngine {
             state.finalized = true;
         }
         self.shot_lifecycle = ShotLifecycle::Finalized;
-        Ok(())
+        Ok(None)
     }
 
     /// The one complete reset behind `Engine::reset`, `ClassicalEngine::reset`
@@ -2107,6 +2179,7 @@ impl QisEngine {
         self.reset_failure = None;
         self.shot_lifecycle = ShotLifecycle::Idle;
         self.scheduled_drain_round = 0;
+        self.runtime_end_delivered = false;
         self.scheduled_drain_feedback = false;
         self.current_operations = None;
         self.started = false;
@@ -2424,6 +2497,7 @@ impl ControlEngine for QisEngine {
         }
         self.shot_lifecycle = ShotLifecycle::Running;
         self.scheduled_drain_round = 0;
+        self.runtime_end_delivered = false;
         self.scheduled_drain_feedback = false;
         let attempt = (|| {
             // Clear previous shot's measurement state
@@ -2498,7 +2572,9 @@ impl ControlEngine for QisEngine {
                 if let Some(commands) = self.drain_terminal_commands()? {
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
-                self.finalize_shot_for_certification()?;
+                if let Some(commands) = self.finalize_shot_for_certification()? {
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
                 let shot = self.get_results()?;
                 return Ok(EngineStage::Complete(shot));
             }
@@ -2560,7 +2636,9 @@ impl ControlEngine for QisEngine {
             if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
-            self.finalize_shot_for_certification()?;
+            if let Some(commands) = self.finalize_shot_for_certification()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
+            }
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -2615,7 +2693,9 @@ impl ControlEngine for QisEngine {
             if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
-            self.finalize_shot_for_certification()?;
+            if let Some(commands) = self.finalize_shot_for_certification()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
+            }
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -4957,6 +5037,10 @@ mod scheduled_completion_tests {
             }
             Ok(crate::runtime::Shot::default())
         }
+        fn finish_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+            self.shot_end()?;
+            Ok(vec![])
+        }
         fn lower_scheduled_operations(
             &mut self,
             operations: &[Operation],
@@ -5108,7 +5192,8 @@ mod scheduled_completion_tests {
         assert_eq!(
             engine
                 .finalize_shot_for_certification()
-                .unwrap_err()
+                .err()
+                .unwrap()
                 .to_string(),
             error
         );
@@ -5529,3 +5614,7 @@ mod terminal_lowering_tests;
 #[cfg(test)]
 #[path = "ccengine_lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "ccengine_shot_end_tests.rs"]
+mod shot_end_delivery_tests;

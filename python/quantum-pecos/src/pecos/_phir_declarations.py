@@ -21,7 +21,11 @@ def validate_declaration_names(operations: list[dict]) -> None:
     declarations = {}
 
     def register_names(ops: list[dict]) -> None:
+        if not isinstance(ops, list):
+            return
         for node in ops:
+            if not isinstance(node, dict):
+                continue
             kind = {"qvar_define": "quantum", "cvar_define": "classical"}.get(node.get("data"))
             if kind is not None:
                 variable = node["variable"]
@@ -42,13 +46,17 @@ def validate_declaration_names(operations: list[dict]) -> None:
 def validate_classical_inputs(program: dict) -> None:
     """Validate classical fields without serializing quantum data or metadata.
 
-    QuantumCircuit dictionaries may carry Rust scalar angles and arbitrary
-    metadata. Neither is part of classical declaration/Result validation.
+    Metadata need not be JSON-serializable. Only declaration and Result fields
+    are relevant here; structural errors belong to the schema/parser.
     """
     inputs = []
 
     def collect(operations: list[dict]) -> None:
+        if not isinstance(operations, list):
+            return
         for node in operations:
+            if not isinstance(node, dict):
+                continue
             if node.get("cop") == "Result":
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
             elif node.get("data") == "cvar_define" and node.get("data_type") == "bool":

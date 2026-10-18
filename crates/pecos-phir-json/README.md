@@ -265,10 +265,10 @@ before destination-width masking, independently of the source backing type,
 matching `=`. Malformed Result entries report the offending JSON value; Python
 uses TypeError for wrong types and ValueError for invalid integer indices.
 Rust classifies these as `PecosError::Input`. The Python interpreter validates
-measurement destinations and declarations at load, or when a Result creates a
-new destination; shot resets and valid measurement writes reuse that validation.
-PyPHIR's classical-input validation does not serialize unrelated angles or
-metadata in parsed Python programs.
+static Result counts/references and declarations at load. Measurement destinations
+are checked at execution, using declaration-time lookup tables after checking
+index types. Shot resets do not repeat declaration checks. PyPHIR's classical-input
+validation does not serialize unrelated metadata in parsed Python programs.
 Exports use U32 through 32 bits and U64 for wider registers.
 Without Result mappings, all declared classical registers are exported.
 CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.

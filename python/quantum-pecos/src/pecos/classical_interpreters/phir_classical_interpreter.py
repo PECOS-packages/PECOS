@@ -162,7 +162,7 @@ class PhirClassicalInterpreter:
             dtype = data_type_map[cvar.data_type]
             self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
             self._register_measurement_targets(cvar.variable, cid, cvar.size)
-        self._validate_measurement_operations(self.program.ops)
+        self._prepare_result_operations(self.program.ops)
 
         self.initialize_cenv()
 
@@ -247,8 +247,6 @@ class PhirClassicalInterpreter:
                     variable=cvar,
                 ),
             )
-            for reference in self._pending_measurement_targets.pop(cvar, []):
-                self._measurement_target(reference)
 
     def _flatten_blocks(self, seq: Sequence) -> Generator[Any, None, None]:
         """Flattens the ops of blocks to be processed by the execute() method."""
@@ -319,10 +317,10 @@ class PhirClassicalInterpreter:
             The bit value (0 or 1).
         """
         cval = self.get_cval(cvar)
-        dtype = self.cid2dtype[self.csym2id[cvar]]
+        dtype = type(cval)
 
-        # Get bit width using Rust-backed dtype system
-        is_bool = self.cvar_meta[self.csym2id[cvar]].data_type == "bool"
+        # Bit reads need only the value, including for direct API callers.
+        is_bool = isinstance(cval, bool)
         bit_width = 1 if is_bool else dtype.itemsize * 8
 
         # Check if idx is within the valid range for the data type
@@ -508,10 +506,14 @@ class PhirClassicalInterpreter:
     def _validate_assignment_target(self, target: str | list | tuple) -> None:
         """Reject undeclared targets and bit writes beyond the declared size."""
         name, index = (target, None) if isinstance(target, str) else target
-        meta = self._classical_meta(name, "Assignment")
+        self._validate_classical_write(name, index, "Assignment")
+
+    def _validate_classical_write(self, name: str, index: int | None, operation: str) -> None:
+        """Check a write against a declared classical register's bit count."""
+        meta = self._classical_meta(name, operation)
         if index is not None and not 0 <= index < meta.size:
             msg = (
-                f"PHIR interpreter failed: Assignment write {name}[{index}] is out of range "
+                f"PHIR interpreter failed: {operation} write {name}[{index}] is out of range "
                 f"for a register of declared size {meta.size}; use an index below {meta.size}"
             )
             raise ValueError(msg)
@@ -528,9 +530,7 @@ class PhirClassicalInterpreter:
                 self.assign_int(r, a)
 
         elif op.name == "Result":
-            validate_phir_result_counts(len(op.args), len(op.returns or []))
-            sources = [self._result_reference(ref, "args") for ref in op.args]
-            destinations = [self._result_reference(ref, "returns") for ref in op.returns]
+            sources, destinations = self._result_references[op]
             for name, index in sources:
                 self._classical_meta(name)
                 self._check_result_index(name, index)
@@ -639,15 +639,9 @@ class PhirClassicalInterpreter:
         return name, index
 
     def _measurement_target(self, reference: str | tuple | list) -> tuple[int, int | None]:
-        """Validate measurement destinations at load, or diagnose invalid results."""
+        """Diagnose invalid measurement destinations when results arrive."""
         name, index = self._measurement_reference(reference)
-        meta = self._classical_meta(name, "Measurement")
-        if index is not None and not 0 <= index < meta.size:
-            msg = (
-                f"PHIR interpreter failed: Measurement write {name}[{index}] is out of range "
-                f"for a register of declared size {meta.size}; use an index below {meta.size}"
-            )
-            raise ValueError(msg)
+        self._validate_classical_write(name, index, "Measurement")
         return self.csym2id[name], index
 
     @staticmethod
@@ -662,29 +656,23 @@ class PhirClassicalInterpreter:
             else:
                 yield operation
 
-    def _validate_measurement_operations(self, operations: list) -> None:
-        """Check declared destinations now, and Result-created ones at declaration."""
-        operations = list(self._all_operations(operations))
-        result_names = {
-            self._result_reference(reference)[0]
-            for operation in operations
-            if isinstance(operation, pt.opt.COp) and operation.name == "Result"
-            for reference in operation.returns or []
-        }
-        self._pending_measurement_targets = {}
-        for operation in operations:
-            if isinstance(operation, pt.opt.QOp) and operation.name == "Measure":
-                for reference in operation.returns or []:
-                    name, _ = self._measurement_reference(reference)
-                    if name not in self.csym2id and name in result_names:
-                        self._pending_measurement_targets.setdefault(name, []).append(reference)
-                    else:
-                        self._measurement_target(reference)
+    def _prepare_result_operations(self, operations: list) -> None:
+        """Validate and decode static Result counts and references once per load."""
+        self._result_references = {}
+        for operation in self._all_operations(operations):
+            if isinstance(operation, pt.opt.COp) and operation.name == "Result":
+                validate_phir_result_counts(len(operation.args), len(operation.returns or []))
+                sources = tuple(self._result_reference(ref, "args") for ref in operation.args)
+                destinations = tuple(self._result_reference(ref, "returns") for ref in operation.returns)
+                self._result_references[operation] = sources, destinations
 
     def receive_results(self, qsim_results: list[dict]) -> None:
-        """Assign measurement results using destinations validated at load."""
+        """Assign measurement results, validating key types before cache lookup."""
         for meas in qsim_results:
             for cvar, val in meas.items():
+                # bool/float indices compare equal to ints, so type validation
+                # must precede lookup even for a key that appears cached.
+                self._measurement_reference(cvar)
                 if cvar not in self._measurement_targets:
                     # Only invalid/external results reach this diagnostic path.
                     self._measurement_target(cvar)

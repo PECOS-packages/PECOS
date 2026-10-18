@@ -457,7 +457,26 @@ fn omitted_bool_size_supports_measurement_on_every_rust_path() {
     ]})
     .to_string();
     let mut native = PhirJsonEngine::from_json(&source).unwrap();
-    let mut converted = PhirEngine::new(phir_json_to_module(&source).unwrap()).unwrap();
+    let module = phir_json_to_module(&source).unwrap();
+    let definition = module.body.blocks[0]
+        .operations
+        .iter()
+        .find_map(|instruction| {
+            if let Operation::Builtin(pecos_phir::builtin_ops::BuiltinOp::VarDefine(definition)) =
+                &instruction.operation
+                && definition.name == "flag"
+            {
+                Some(definition)
+            } else {
+                None
+            }
+        })
+        .expect("converted module declares flag");
+    assert_eq!(
+        definition.size, 1,
+        "the executable declaration must retain the inferred width"
+    );
+    let mut converted = PhirEngine::new(module).unwrap();
     assert_eq!(run(&mut native).data["flag"].as_u32(), Some(1));
     assert_eq!(run(&mut converted).data["flag"].as_u32(), Some(1));
     let mut interpreter = PhirClassicalInterpreter::new();

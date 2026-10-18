@@ -19,7 +19,6 @@ impl fmt::Display for ResultReferenceError {
         f.write_str(&self.message)
     }
 }
-impl std::error::Error for ResultReferenceError {}
 
 /// Decode a Result reference without losing the offending JSON value.
 ///

@@ -453,10 +453,14 @@ impl ImprovedConverter {
             let data_type = data_type.ok_or_else(|| {
                 PecosError::Input(format!("Register '{variable}' requires data_type"))
             })?;
-            (
-                data_type,
-                raw_size.and_then(|n| usize::try_from(n).ok()).unwrap_or(0),
-            )
+            let explicit_size = raw_size.map(usize::try_from).transpose().map_err(|_| {
+                PecosError::Input(format!(
+                    "Register {} has size {}; use at most 64 bits",
+                    serde_json::json!(variable),
+                    obj["size"]
+                ))
+            })?;
+            (data_type, super::ast::infer_size(data_type, explicit_size))
         };
 
         match data {
@@ -473,13 +477,6 @@ impl ImprovedConverter {
                 let var_id = self.get_ssa_id(variable)?;
 
                 if data == "cvar_define" {
-                    let explicit_size =
-                        raw_size.map(usize::try_from).transpose().map_err(|_| {
-                            PecosError::Input(format!(
-                                "Register '{variable}' has size {raw_size:?}; use at most 64 bits"
-                            ))
-                        })?;
-                    let size = super::ast::infer_size(data_type, explicit_size);
                     let native_type: super::environment::DataType = data_type.parse()?;
                     self.environment
                         .add_classical_variable(variable, native_type.clone(), size)?;

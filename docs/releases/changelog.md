@@ -256,13 +256,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 ### Python bug fixes
 
 - PHIR bool declarations without a size use one bit on all execution paths.
-  The Python interpreter checks declarations and measurement destinations at
-  load (or when Result declares a destination), avoiding JSON/FFI validation
-  per measured bit and per shot reset. Measurement and assignment errors name
-  the relevant operation.
+  The converter preserves the inferred size in executable variable declarations.
+  The Python interpreter checks declarations and decodes static Result references
+  at load, avoiding JSON/FFI validation per Result, measured bit, or shot reset.
+  Measurement destination errors are checked only when executed, including
+  rejection of bool/float indices that compare equal to cached integer keys.
+  Direct get_bit calls do not require program declaration metadata.
 - PyPHIR classical-input validation leaves angles and metadata untouched,
-  accepting Rust scalar values in parsed PHIR dictionaries without requiring
-  the entire program to be JSON-serializable.
+  accepting scalar metadata in parsed PHIR dictionaries without requiring the
+  entire program to be JSON-serializable. Structural errors remain the schema
+  or parser's responsibility; validation projections skip malformed structures.
 - `run_phir_sim` retains `ValueError("Failed to parse PHIR: ...")` for ordinary
   parse failures. The legacy bridge retains ValueError for unrelated external
   failures; only malformed Result references use the documented shared
@@ -504,8 +507,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Rust interpreter and JSON-to-module converter. Shared input validation uses
   the same size inference. Malformed Result references are `PecosError::Input`
   (with the standard `Input error:` display prefix), preserving Python's
-  wrong-type/bad-value distinction. Register names use consistent JSON quoting;
-  assignment and measurement diagnostics name their operation.
+  wrong-type/bad-value distinction. Converter Result diagnostics use JSON quoting
+  for register names; assignment and measurement diagnostics name their operation.
 
 - The PHIR processor stores U8/U16 integer results and evaluates their shifts
   and bitwise operations. JSON-to-module measurements and Result narrowing now

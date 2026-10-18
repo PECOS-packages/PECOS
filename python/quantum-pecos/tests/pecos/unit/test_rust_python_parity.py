@@ -1647,16 +1647,22 @@ def test_malformed_result_json_errors_match_all_paths(entry, exception, field: s
 @pytest.mark.parametrize("reset", [False, True])
 def test_python_measurements_and_shot_reset_do_not_revalidate(monkeypatch, reset: bool) -> None:
     """Shots use cached destinations without JSON, FFI, or declaration checks."""
+    from types import SimpleNamespace
+
     import pecos.classical_interpreters.phir_classical_interpreter as implementation
 
-    source = _make_classical_program([("flag", "bool", 1), ("a", "u32", 3)], [])
+    source = _make_classical_program(
+        [("flag", "bool", 1), ("a", "u32", 3), ("out", "u32", 3)],
+        [{"cop": "Result", "args": ["a"], "returns": ["out"]}],
+    )
     interpreter = PhirClassicalInterpreter()
     interpreter.init(source)
 
     def unexpected(*_args, **_kwargs):
         pytest.fail("per-shot processing must not serialize or validate declarations/destinations")
 
-    monkeypatch.setattr(implementation.json, "dumps", unexpected)
+    monkeypatch.setattr(implementation, "json", SimpleNamespace(dumps=unexpected))
+    monkeypatch.setattr(implementation, "validate_phir_result_counts", unexpected)
     monkeypatch.setattr(implementation, "validate_phir_result_reference", unexpected)
     monkeypatch.setattr(implementation, "validate_phir_classical_declaration", unexpected)
     monkeypatch.setattr(interpreter, "_check_register_width", unexpected)
@@ -1665,21 +1671,17 @@ def test_python_measurements_and_shot_reset_do_not_revalidate(monkeypatch, reset
         if reset:
             interpreter.shot_reinit()
         interpreter.receive_results([{("flag", 0): 1, ("a", 2): 1}])
-        assert interpreter.results() == {"flag": True, "a": 4}
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert interpreter.results() == {"flag": True, "a": 4, "out": 4}
         interpreter.receive_results([{("flag", 0): 0, ("a", 2): 0}])
-        assert interpreter.results() == {"flag": False, "a": 0}
+        interpreter.handle_cops(interpreter.program.ops[0])
+        assert interpreter.results() == {"flag": False, "a": 0, "out": 0}
 
 
-@pytest.mark.parametrize(
-    ("reference", "exception", "message"),
-    [
-        (["flag", 1], ValueError, r"Measurement write flag\[1\]"),
-        (["missing", 0], ValueError, r'Measurement: unknown classical variable "missing"'),
-        (7, TypeError, "Measurement: invalid destination 7"),
-        (["flag", True], TypeError, "Measurement: invalid destination"),
-    ],
-)
-def test_python_measurement_destinations_are_validated_at_load(reference, exception, message: str) -> None:
+@pytest.mark.parametrize("reference", [["flag", 1], ["missing", 0]])
+def test_unexecuted_measurement_destinations_match_native(reference) -> None:
+    from pecos_rslib import run_phir_sim
+
     source = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
@@ -1688,17 +1690,24 @@ def test_python_measurement_destinations_are_validated_at_load(reference, except
             {"data": "cvar_define", "data_type": "bool", "variable": "flag"},
             {
                 "block": "if",
-                "condition": 0,
+                "condition": {"cop": "==", "args": [0, 1]},
                 "true_branch": [
                     {"qop": "Measure", "args": [["q", 0]], "returns": [reference]},
                 ],
             },
         ],
     }
+    python, rust = run_both(source, return_int=True)
+    assert python == rust == {"flag": [0]}
+    assert run_phir_sim(json.dumps(source))["flag"] == ["0"]
+
+
+@pytest.mark.parametrize("index", [True, 1.0])
+def test_measurement_indices_cannot_alias_integer_cache_keys(index) -> None:
     interpreter = PhirClassicalInterpreter()
-    interpreter.phir_validate = False
-    with pytest.raises(exception, match=message):
-        interpreter.init(source)
+    interpreter.init(_make_classical_program([("a", "u32", 2)], []))
+    with pytest.raises(TypeError, match="Measurement: invalid destination"):
+        interpreter.receive_results([{("a", index): 1}])
 
 
 def test_python_malformed_measurement_result_has_measurement_label() -> None:
@@ -1709,8 +1718,8 @@ def test_python_malformed_measurement_result_has_measurement_label() -> None:
 
 
 @pytest.mark.parametrize("validate", [False, True])
-def test_python_parsed_phir_preserves_rust_scalars(validate: bool) -> None:
-    """Classical validation must not serialize unrelated angles or metadata."""
+def test_python_parsed_phir_preserves_scalar_metadata(validate: bool) -> None:
+    """Classical validation must not serialize unrelated metadata."""
     import pecos as pc
     from pecos.reps.pyphir import PyPHIR
 
@@ -1718,7 +1727,6 @@ def test_python_parsed_phir_preserves_rust_scalars(validate: bool) -> None:
     circuit.append("RZ", {0}, angle=0.5)
     source = circuit.to_phir_dict()
     rotation = next(op for op in source["ops"] if op.get("qop") == "RZ")
-    rotation["angles"][0][0] = pc.f64(0.5)
     rotation["metadata"] = {"scalar": pc.i64(7)}
     source["metadata"]["scalar"] = pc.i64(9)
     pyphir = PyPHIR.from_phir(source)
@@ -1729,17 +1737,15 @@ def test_python_parsed_phir_preserves_rust_scalars(validate: bool) -> None:
     assert float(interpreter.program.ops[0].angles[0]) == 0.5
 
 
-def test_measurement_into_result_created_register_is_validated_at_declaration() -> None:
-    source = {
-        "format": "PHIR/JSON",
-        "version": "0.1.0",
-        "ops": [
-            {"data": "qvar_define", "variable": "q", "size": 1},
-            {"data": "cvar_define", "data_type": "bool", "variable": "flag"},
-            {"cop": "Result", "args": ["flag"], "returns": ["out"]},
-            {"qop": "X", "args": [["q", 0]]},
-            {"qop": "Measure", "args": [["q", 0]], "returns": [["out", 0]]},
-        ],
-    }
-    python, rust = run_both(source, shots=2, return_int=True)
-    assert python == rust == {"flag": [0, 0], "out": [1, 1]}
+@pytest.mark.parametrize(
+    "ops",
+    [[7], [None], ["unexpected"], [{"block": "if", "true_branch": 7}], [{"block": "sequence", "ops": {}}]],
+)
+def test_classical_projection_preserves_schema_errors(ops) -> None:
+    from pecos._phir_declarations import validate_classical_inputs
+    from pydantic import ValidationError
+
+    source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": ops}
+    validate_classical_inputs(source)
+    with pytest.raises(ValidationError):
+        PhirClassicalInterpreter().init(source)

@@ -42,13 +42,14 @@
 //! filtered differently between models and is not directly comparable with the
 //! paper's acceptance; only the Z-clean logical-failure ratio is comparable.
 //!
-//! For the three benchmark codes, dim(ker `M_Z` / im `H_Z`) = 3 = k: the boundary-map
-//! meta checks of arXiv:2510.07269, equation (`eq:3D_check_mats`), source line 637,
-//! have three fewer independent rows than the left kernel of `H_Z`. Thus a zero
-//! meta syndrome does not guarantee image membership; repair rejection tests the
-//! corrected syndrome against im `H_Z`. This module keeps the paper's boundary
-//! map; complete meta checks would let the decoder repair such syndrome errors
-//! instead of rejecting them.
+//! For the three benchmark codes, dim(ker `M_Z` / im `H_Z`) = 3 = k: the paper's
+//! boundary map has three fewer independent rows than the left kernel of `H_Z`
+//! (8 versus 11 for C27, 14 versus 17 for C45, and 26 versus 29 for C81).
+//! This module offers both sets: `Paper` uses the boundary map, and `Complete`
+//! appends greedy low-weight completion rows to span the whole left kernel.
+//! With `Complete`, a zero meta syndrome implies image membership, so repair
+//! failures come only from decoder non-convergence. With `Paper`, the image
+//! check also rejects corrected syndromes in ker `M_Z` but outside im `H_Z`.
 //!
 //! Compatibility follows arXiv:2610.06811, Section 6: all noiseless Z measurements
 //! are compatible; syndrome correction prepares an exact code state. Inverse
@@ -88,12 +89,23 @@ pub enum CczModel {
     PaperSurrogate,
 }
 
+/// Meta checks used to repair recorded Z syndromes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetaChecks {
+    /// Paper boundary rows followed by greedy low-weight left-kernel completion rows.
+    Complete,
+    /// Only the paper's boundary map, which can miss errors outside the image of `H_Z`.
+    Paper,
+}
+
 /// Counts over a complete run; logical failures count accepted shots only.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Counts {
     /// Number of requested shots executed.
     pub attempted: usize,
-    /// Rejected because syndrome repair failed, before running the suffix.
+    /// Rejected before the suffix because the corrected syndrome is outside im `H_Z`.
+    /// With complete checks this means decoder non-convergence; paper checks can
+    /// also miss errors in the meta-check kernel but outside the image.
     pub repair_failures: usize,
     /// Shots with successful repair and all X detectors zero.
     pub accepted: usize,
@@ -115,6 +127,8 @@ pub struct Outcome {
     /// Number of nonzero meta syndromes sent to relay-BP.
     pub decoder_calls: usize,
     /// True when the corrected syndrome is outside the image of `H_Z`.
+    /// Complete checks leave only decoder non-convergence; paper checks also
+    /// permit zero meta syndromes outside the image.
     pub repair_failure: bool,
     /// Suffix measurements and annotations; absent on repair failure.
     pub readout: Option<ShotResult>,
@@ -166,11 +180,17 @@ impl NoisyCcz {
     /// # Errors
     /// Rejects invalid p, size overflow, edge-coloring errors, or invalid
     /// generated circuits.
-    pub fn new(code: &BivariateTricycleCode, p: f64, model: CczModel) -> Result<Self, String> {
+    pub fn new(
+        code: &BivariateTricycleCode,
+        p: f64,
+        model: CczModel,
+        meta_checks: MetaChecks,
+    ) -> Result<Self, String> {
         Self::build(
             code,
             p,
             model,
+            meta_checks,
             #[cfg(test)]
             &[],
         )
@@ -180,6 +200,7 @@ impl NoisyCcz {
         code: &BivariateTricycleCode,
         p: f64,
         model: CczModel,
+        meta_checks: MetaChecks,
         #[cfg(test)] faults: &[Fault],
     ) -> Result<Self, String> {
         let started = Instant::now();
@@ -205,7 +226,7 @@ impl NoisyCcz {
         append_faults(&mut suffix, faults, FaultPoint::BeforeCcz, 0, 3 * n)?;
         ccz_stage(&mut suffix, code, p, model);
         let diagnostics_start = readout(&mut suffix, code, p, model)?;
-        let meta_rows = code.meta_z().rows();
+        let meta_rows = meta_check_rows(code, meta_checks);
         let meta = Array2::from_shape_vec((meta_rows.len(), m_z), meta_rows.concat())
             .map_err(|e| e.to_string())?;
         // Min-sum relay-BP is invariant under scaling every log-likelihood
@@ -229,6 +250,17 @@ impl NoisyCcz {
             diagnostics_start,
             construction_times: (build_time, started.elapsed()),
         })
+    }
+
+    /// Number of meta-check rows supplied to the decoder, including dependent rows.
+    #[must_use]
+    pub fn meta_rows(&self) -> usize {
+        self.meta.nrows()
+    }
+
+    #[cfg(test)]
+    fn meta_matrix(&self) -> &Array2<u8> {
+        &self.meta
     }
 
     /// Wall times for circuit/solver construction and program compilation, respectively.
@@ -377,6 +409,29 @@ impl NoisyCcz {
         }
         Ok(counts)
     }
+}
+
+fn meta_check_rows(code: &BivariateTricycleCode, meta_checks: MetaChecks) -> Vec<Vec<u8>> {
+    let mut rows = code.meta_z().rows();
+    if meta_checks == MetaChecks::Complete {
+        let mut basis = F2Matrix::from_rows(code.hz().rows()).transpose().kernel();
+        let dimension = basis.len();
+        basis.sort_by_key(|row| row.iter().filter(|&&bit| bit != 0).count());
+        let mut rank = F2Matrix::from_rows(rows.clone()).row_reduce().1.len();
+        for row in basis {
+            if rank == dimension {
+                break;
+            }
+            rows.push(row);
+            let next_rank = F2Matrix::from_rows(rows.clone()).row_reduce().1.len();
+            if next_rank > rank {
+                rank = next_rank;
+            } else {
+                rows.pop();
+            }
+        }
+    }
+    rows
 }
 
 // Reduce [H_Z | I] once. The right half transforms each syndrome; rows below

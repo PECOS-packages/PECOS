@@ -15,60 +15,62 @@ fn codes() -> [BivariateTricycleCode; 3] {
 }
 
 fn noiseless(model: CczModel) {
-    // [contract] Random Z projection, followed by deterministic corrected readout.
-    // [kill: skip the X correction] Diagnostics must also remain zero.
-    // [kill: use H_Z^T or M_Z^T] Orientation is essential to repair and correction.
-    for code in codes() {
-        let protocol = NoisyCcz::new(&code, 0.0, model).unwrap();
-        let result = protocol.run(16, 8108).unwrap();
-        let residual = result
-            .outcomes
-            .iter()
-            .filter(|o| o.diagnostics.iter().any(|&b| b))
-            .count();
-        let detector_events = result
-            .outcomes
-            .iter()
-            .filter(|o| {
-                o.readout
-                    .as_ref()
-                    .is_some_and(|r| r.detectors.iter().any(|&b| b))
-            })
-            .count();
-        let observable_events = result
-            .outcomes
-            .iter()
-            .filter(|o| {
-                o.readout
-                    .as_ref()
-                    .is_some_and(|r| r.observables.iter().any(|&b| b))
-            })
-            .count();
-        assert_eq!(
-            residual, 0,
-            "model={model:?}, residual={residual}, detector_events={detector_events}, observable_events={observable_events}"
-        );
-        assert_eq!(result.counts.repair_failures, 0);
-        assert_eq!(result.counts.accepted, 16);
-        assert_eq!(result.counts.logical_failures, 0);
-        assert_eq!(result.counts.accepted_with_residual_x, 0);
-        assert!(
-            result
+    for meta_checks in [MetaChecks::Complete, MetaChecks::Paper] {
+        // [contract] Random Z projection, followed by deterministic corrected readout.
+        // [kill: skip the X correction] Diagnostics must also remain zero.
+        // [kill: use H_Z^T or M_Z^T] Orientation is essential to repair and correction.
+        for code in codes() {
+            let protocol = NoisyCcz::new(&code, 0.0, model, meta_checks).unwrap();
+            let result = protocol.run(16, 8108).unwrap();
+            let residual = result
                 .outcomes
                 .iter()
-                .map(|o| &o.syndromes)
-                .collect::<BTreeSet<_>>()
-                .len()
-                >= 2
-        );
-        for outcome in result.outcomes {
-            assert_eq!(outcome.decoder_calls, 0);
-            let readout = outcome.readout.unwrap();
-            assert!(readout.detectors.iter().all(|b| !b));
-            assert!(readout.observables.iter().all(|b| !b));
-            assert!(outcome.diagnostics.iter().all(|b| !b));
-            assert_eq!(readout.detectors.len(), 3 * code.hx().rank());
-            assert_eq!(outcome.diagnostics.len(), 3 * code.hz().rank());
+                .filter(|o| o.diagnostics.iter().any(|&b| b))
+                .count();
+            let detector_events = result
+                .outcomes
+                .iter()
+                .filter(|o| {
+                    o.readout
+                        .as_ref()
+                        .is_some_and(|r| r.detectors.iter().any(|&b| b))
+                })
+                .count();
+            let observable_events = result
+                .outcomes
+                .iter()
+                .filter(|o| {
+                    o.readout
+                        .as_ref()
+                        .is_some_and(|r| r.observables.iter().any(|&b| b))
+                })
+                .count();
+            assert_eq!(
+                residual, 0,
+                "model={model:?}, residual={residual}, detector_events={detector_events}, observable_events={observable_events}"
+            );
+            assert_eq!(result.counts.repair_failures, 0);
+            assert_eq!(result.counts.accepted, 16);
+            assert_eq!(result.counts.logical_failures, 0);
+            assert_eq!(result.counts.accepted_with_residual_x, 0);
+            assert!(
+                result
+                    .outcomes
+                    .iter()
+                    .map(|o| &o.syndromes)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    >= 2
+            );
+            for outcome in result.outcomes {
+                assert_eq!(outcome.decoder_calls, 0);
+                let readout = outcome.readout.unwrap();
+                assert!(readout.detectors.iter().all(|b| !b));
+                assert!(readout.observables.iter().all(|b| !b));
+                assert!(outcome.diagnostics.iter().all(|b| !b));
+                assert_eq!(readout.detectors.len(), 3 * code.hx().rank());
+                assert_eq!(outcome.diagnostics.len(), 3 * code.hz().rank());
+            }
         }
     }
 }
@@ -84,51 +86,54 @@ fn noiseless_surrogate() {
 
 #[test]
 fn forced_measurement_and_data_faults() {
-    // [contract] Single recorded-syndrome errors invoke relay-BP and are repaired.
-    for code in codes() {
-        let n = code.num_qubits();
-        for model in [CczModel::Exact, CczModel::PaperSurrogate] {
-            for index in [0, 5, n + 1, n + 7, 2 * n + 3, 3 * n - 1] {
-                let faults = [Fault {
-                    point: FaultPoint::BeforeAncillaMeasurement,
-                    qubit: 3 * n + index,
-                    kind: GateType::X,
-                }];
-                let result = NoisyCcz::build(&code, 0.0, model, &faults)
-                    .unwrap()
-                    .run(4, 71)
-                    .unwrap();
-                assert_eq!(
-                    result.counts.accepted, 4,
-                    "n={n}, ancilla={index}, model={model:?}"
-                );
-                assert_eq!(result.counts.logical_failures, 0);
-                for outcome in result.outcomes {
-                    assert_eq!(outcome.decoder_calls, 1);
-                    assert!(outcome.diagnostics.iter().all(|b| !b));
+    for meta_checks in [MetaChecks::Complete, MetaChecks::Paper] {
+        // [contract] Single recorded-syndrome errors invoke relay-BP and are repaired.
+        for code in codes() {
+            let n = code.num_qubits();
+            for model in [CczModel::Exact, CczModel::PaperSurrogate] {
+                for index in [0, 5, n + 1, n + 7, 2 * n + 3, 3 * n - 1] {
+                    let faults = [Fault {
+                        point: FaultPoint::BeforeAncillaMeasurement,
+                        qubit: 3 * n + index,
+                        kind: GateType::X,
+                    }];
+                    let result = NoisyCcz::build(&code, 0.0, model, meta_checks, &faults)
+                        .unwrap()
+                        .run(4, 71)
+                        .unwrap();
+                    assert_eq!(
+                        result.counts.accepted, 4,
+                        "n={n}, ancilla={index}, model={model:?}"
+                    );
+                    assert_eq!(result.counts.logical_failures, 0);
+                    assert_eq!(result.counts.repair_failures, 0);
+                    for outcome in result.outcomes {
+                        assert_eq!(outcome.decoder_calls, 1);
+                        assert!(outcome.diagnostics.iter().all(|b| !b));
+                    }
                 }
-            }
-            // [contract] Z data faults always trigger an X-check detector.
-            let faults = [Fault {
-                point: FaultPoint::BeforeCcz,
-                qubit: n + 2,
-                kind: GateType::Z,
-            }];
-            let result = NoisyCcz::build(&code, 0.0, model, &faults)
-                .unwrap()
-                .run(16, 72)
-                .unwrap();
-            assert_eq!(result.counts.repair_failures, 0);
-            assert_eq!(result.counts.accepted, 0);
-            assert!(
-                result.outcomes.iter().all(|o| o
-                    .readout
-                    .as_ref()
+                // [contract] Z data faults always trigger an X-check detector.
+                let faults = [Fault {
+                    point: FaultPoint::BeforeCcz,
+                    qubit: n + 2,
+                    kind: GateType::Z,
+                }];
+                let result = NoisyCcz::build(&code, 0.0, model, meta_checks, &faults)
                     .unwrap()
-                    .detectors
-                    .iter()
-                    .any(|&b| b))
-            );
+                    .run(16, 72)
+                    .unwrap();
+                assert_eq!(result.counts.repair_failures, 0);
+                assert_eq!(result.counts.accepted, 0);
+                assert!(
+                    result.outcomes.iter().all(|o| o
+                        .readout
+                        .as_ref()
+                        .unwrap()
+                        .detectors
+                        .iter()
+                        .any(|&b| b))
+                );
+            }
         }
     }
 }
@@ -155,7 +160,7 @@ fn image_check_even_for_zero_meta_syndrome() {
             })
             .collect::<Vec<_>>();
         for model in [CczModel::Exact, CczModel::PaperSurrogate] {
-            let result = NoisyCcz::build(&code, 0.0, model, &faults)
+            let result = NoisyCcz::build(&code, 0.0, model, MetaChecks::Paper, &faults)
                 .unwrap()
                 .run(8, 77)
                 .unwrap();
@@ -172,108 +177,113 @@ fn image_check_even_for_zero_meta_syndrome() {
 
 #[test]
 fn supports_and_probabilities() {
-    // [contract] Each independently sampled surrogate event has five qubits.
-    for code in codes() {
-        let supports = surrogate_supports(&code);
-        // [kill: exchange the other blocks in surrogate_supports]
-        let n = code.num_qubits();
-        for [a, b, c] in code.cup_product_ccz().concat() {
-            let triple = [a, n + b, 2 * n + c];
-            for q in triple {
-                assert!(triple.iter().all(|member| supports[q].contains(member)));
+    for meta_checks in [MetaChecks::Complete, MetaChecks::Paper] {
+        // [contract] Each independently sampled surrogate event has five qubits.
+        for code in codes() {
+            let supports = surrogate_supports(&code);
+            // [kill: exchange the other blocks in surrogate_supports]
+            let n = code.num_qubits();
+            for [a, b, c] in code.cup_product_ccz().concat() {
+                let triple = [a, n + b, 2 * n + c];
+                for q in triple {
+                    assert!(triple.iter().all(|member| supports[q].contains(member)));
+                }
+            }
+            for (q, support) in supports.iter().enumerate() {
+                assert_eq!(support.len(), 5);
+                assert!(support.contains(&q));
             }
         }
-        for (q, support) in supports.iter().enumerate() {
-            assert_eq!(support.len(), 5);
-            assert!(support.contains(&q));
+        // [contract] Boundary errors retain the ideal-encoder benchmark error text.
+        let code = &codes()[0];
+        for p in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                NoisyCcz::new(code, p, CczModel::Exact, meta_checks)
+                    .err()
+                    .unwrap(),
+                "p must be finite and in [0,1]"
+            );
         }
+        assert!(NoisyCcz::new(code, 1.0, CczModel::Exact, meta_checks).is_ok());
     }
-    // [contract] Boundary errors retain the ideal-encoder benchmark error text.
-    let code = &codes()[0];
-    for p in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_eq!(
-            NoisyCcz::new(code, p, CczModel::Exact).err().unwrap(),
-            "p must be finite and in [0,1]"
-        );
-    }
-    assert!(NoisyCcz::new(code, 1.0, CczModel::Exact).is_ok());
 }
 
 #[test]
 fn reproducibility_and_statistical_smoke() {
-    let code = &codes()[0];
-    for model in [CczModel::Exact, CczModel::PaperSurrogate] {
-        // [contract] Decoder state and all RNG streams restart on each run.
-        let protocol = NoisyCcz::new(code, 0.01, model).unwrap();
-        assert_eq!(
-            protocol.run(32, 2026).unwrap(),
-            protocol.run(32, 2026).unwrap()
-        );
-        // [contract] Counts-only execution uses the same loop and random streams.
-        assert_eq!(
-            protocol.run_counts(32, 2026).unwrap(),
-            protocol.run(32, 2026).unwrap().counts
-        );
-        assert_eq!(protocol.run_counts(0, 2026).unwrap(), Counts::default());
-        // [contract] Nontrivial acceptance and internally consistent counts.
-        let result = NoisyCcz::new(code, 0.001, model)
-            .unwrap()
-            .run(256, 2027)
-            .unwrap();
-        let counts = &result.counts;
-        assert_eq!(counts.attempted, 256);
-        assert!(counts.accepted > 0 && counts.accepted < counts.attempted);
-        assert_eq!(
-            counts.repair_failures,
-            result.outcomes.iter().filter(|o| o.repair_failure).count()
-        );
-        assert_eq!(
-            counts.accepted,
-            result.outcomes.iter().filter(|o| o.accepted()).count()
-        );
-        assert_eq!(
-            counts.logical_failures,
-            result
-                .outcomes
-                .iter()
-                .filter(
-                    |o| o.accepted() && o.readout.as_ref().unwrap().observables.iter().any(|&b| b)
-                )
-                .count()
-        );
-        assert_eq!(
-            counts.accepted_with_residual_x,
-            result
-                .outcomes
-                .iter()
-                .filter(|o| o.accepted() && o.diagnostics.iter().any(|&b| b))
-                .count()
-        );
-        assert_eq!(
-            counts.accepted_z_clean,
-            result
-                .outcomes
-                .iter()
-                .filter(|o| o.accepted() && o.diagnostics.iter().all(|b| !b))
-                .count()
-        );
-        assert_eq!(
-            counts.logical_failures_z_clean,
-            result
-                .outcomes
-                .iter()
-                .filter(|o| o.accepted()
-                    && o.diagnostics.iter().all(|b| !b)
-                    && o.readout.as_ref().unwrap().observables.iter().any(|&b| b))
-                .count()
-        );
-        assert_eq!(
-            counts.accepted_z_clean + counts.accepted_with_residual_x,
-            counts.accepted
-        );
-        assert!(counts.logical_failures_z_clean <= counts.accepted_z_clean);
-        assert!(counts.logical_failures_z_clean <= counts.logical_failures);
-        assert!(counts.accepted + counts.repair_failures <= counts.attempted);
+    for meta_checks in [MetaChecks::Complete, MetaChecks::Paper] {
+        let code = &codes()[0];
+        for model in [CczModel::Exact, CczModel::PaperSurrogate] {
+            // [contract] Decoder state and all RNG streams restart on each run.
+            let protocol = NoisyCcz::new(code, 0.01, model, meta_checks).unwrap();
+            assert_eq!(
+                protocol.run(32, 2026).unwrap(),
+                protocol.run(32, 2026).unwrap()
+            );
+            // [contract] Counts-only execution uses the same loop and random streams.
+            assert_eq!(
+                protocol.run_counts(32, 2026).unwrap(),
+                protocol.run(32, 2026).unwrap().counts
+            );
+            assert_eq!(protocol.run_counts(0, 2026).unwrap(), Counts::default());
+            // [contract] Nontrivial acceptance and internally consistent counts.
+            let result = NoisyCcz::new(code, 0.001, model, meta_checks)
+                .unwrap()
+                .run(256, 2027)
+                .unwrap();
+            let counts = &result.counts;
+            assert_eq!(counts.attempted, 256);
+            assert!(counts.accepted > 0 && counts.accepted < counts.attempted);
+            assert_eq!(
+                counts.repair_failures,
+                result.outcomes.iter().filter(|o| o.repair_failure).count()
+            );
+            assert_eq!(
+                counts.accepted,
+                result.outcomes.iter().filter(|o| o.accepted()).count()
+            );
+            assert_eq!(
+                counts.logical_failures,
+                result
+                    .outcomes
+                    .iter()
+                    .filter(|o| o.accepted()
+                        && o.readout.as_ref().unwrap().observables.iter().any(|&b| b))
+                    .count()
+            );
+            assert_eq!(
+                counts.accepted_with_residual_x,
+                result
+                    .outcomes
+                    .iter()
+                    .filter(|o| o.accepted() && o.diagnostics.iter().any(|&b| b))
+                    .count()
+            );
+            assert_eq!(
+                counts.accepted_z_clean,
+                result
+                    .outcomes
+                    .iter()
+                    .filter(|o| o.accepted() && o.diagnostics.iter().all(|b| !b))
+                    .count()
+            );
+            assert_eq!(
+                counts.logical_failures_z_clean,
+                result
+                    .outcomes
+                    .iter()
+                    .filter(|o| o.accepted()
+                        && o.diagnostics.iter().all(|b| !b)
+                        && o.readout.as_ref().unwrap().observables.iter().any(|&b| b))
+                    .count()
+            );
+            assert_eq!(
+                counts.accepted_z_clean + counts.accepted_with_residual_x,
+                counts.accepted
+            );
+            assert!(counts.logical_failures_z_clean <= counts.accepted_z_clean);
+            assert!(counts.logical_failures_z_clean <= counts.logical_failures);
+            assert!(counts.accepted + counts.repair_failures <= counts.attempted);
+        }
     }
 }
 
@@ -365,61 +375,65 @@ fn wide_pauli_channels() {
 
 #[test]
 fn residual_x_is_diagnostic_only() {
-    // [contract] An accepted surrogate shot can retain a residual X syndrome.
-    let code = &codes()[0];
-    let faults = [Fault {
-        point: FaultPoint::BeforeCcz,
-        qubit: 0,
-        kind: GateType::X,
-    }];
-    let result = NoisyCcz::build(code, 0.0, CczModel::PaperSurrogate, &faults)
-        .unwrap()
-        .run(16, 90)
-        .unwrap();
-    assert_eq!(result.counts.accepted, 16);
-    assert_eq!(result.counts.accepted_with_residual_x, 16);
-    assert_eq!(result.counts.accepted_z_clean, 0);
-    assert_eq!(result.counts.logical_failures, 0);
+    for meta_checks in [MetaChecks::Complete, MetaChecks::Paper] {
+        // [contract] An accepted surrogate shot can retain a residual X syndrome.
+        let code = &codes()[0];
+        let faults = [Fault {
+            point: FaultPoint::BeforeCcz,
+            qubit: 0,
+            kind: GateType::X,
+        }];
+        let result = NoisyCcz::build(code, 0.0, CczModel::PaperSurrogate, meta_checks, &faults)
+            .unwrap()
+            .run(16, 90)
+            .unwrap();
+        assert_eq!(result.counts.accepted, 16);
+        assert_eq!(result.counts.accepted_with_residual_x, 16);
+        assert_eq!(result.counts.accepted_z_clean, 0);
+        assert_eq!(result.counts.logical_failures, 0);
+    }
 }
 
 #[test]
 fn exact_logical_pivot_x_is_not_z_clean() {
-    // [contract] A physical pivot X can produce tensor-undo readout artifacts;
-    // zero Z diagnostics exclude every accepted shot carrying this fault.
-    let code = &codes()[0];
-    let pivot = Encoder::new(code).logical_pivots[0];
-    let faults = [Fault {
-        point: FaultPoint::BeforeCcz,
-        qubit: pivot,
-        kind: GateType::X,
-    }];
-    let result = NoisyCcz::build(code, 0.0, CczModel::Exact, &faults)
-        .unwrap()
-        .run(500, 2026)
-        .unwrap();
-    println!(
-        "logical pivot={pivot}, attempted=500, accepted={}, raw logical failures={}",
-        result.counts.accepted, result.counts.logical_failures
-    );
-    assert_eq!(result.counts.repair_failures, 0);
-    assert_eq!(result.outcomes.len(), 500);
-    assert!(result.counts.accepted > 0);
-    assert!(result.counts.logical_failures > 0);
-    assert!(
-        result
-            .outcomes
-            .iter()
-            .all(|o| o.diagnostics.iter().any(|&b| b))
-    );
-    assert!(
-        result
-            .outcomes
-            .iter()
-            .filter(|o| o.accepted())
-            .all(|o| o.diagnostics.iter().any(|&b| b))
-    );
-    assert_eq!(result.counts.accepted_z_clean, 0);
-    assert_eq!(result.counts.logical_failures_z_clean, 0);
+    for meta_checks in [MetaChecks::Complete, MetaChecks::Paper] {
+        // [contract] A physical pivot X can produce tensor-undo readout artifacts;
+        // zero Z diagnostics exclude every accepted shot carrying this fault.
+        let code = &codes()[0];
+        let pivot = Encoder::new(code).logical_pivots[0];
+        let faults = [Fault {
+            point: FaultPoint::BeforeCcz,
+            qubit: pivot,
+            kind: GateType::X,
+        }];
+        let result = NoisyCcz::build(code, 0.0, CczModel::Exact, meta_checks, &faults)
+            .unwrap()
+            .run(500, 2026)
+            .unwrap();
+        println!(
+            "logical pivot={pivot}, attempted=500, accepted={}, raw logical failures={}",
+            result.counts.accepted, result.counts.logical_failures
+        );
+        assert_eq!(result.counts.repair_failures, 0);
+        assert_eq!(result.outcomes.len(), 500);
+        assert!(result.counts.accepted > 0);
+        assert!(result.counts.logical_failures > 0);
+        assert!(
+            result
+                .outcomes
+                .iter()
+                .all(|o| o.diagnostics.iter().any(|&b| b))
+        );
+        assert!(
+            result
+                .outcomes
+                .iter()
+                .filter(|o| o.accepted())
+                .all(|o| o.diagnostics.iter().any(|&b| b))
+        );
+        assert_eq!(result.counts.accepted_z_clean, 0);
+        assert_eq!(result.counts.logical_failures_z_clean, 0);
+    }
 }
 
 #[test]
@@ -487,7 +501,9 @@ fn preparation_schedule_and_noise() {
 fn meta_check_homology_dimension() {
     // [contract] Boundary-map meta checks omit k image constraints.
     for code in codes() {
-        let kernel_dimension = code.meta_z().num_qubits() - code.meta_z().rank();
+        let rows = meta_check_rows(&code, MetaChecks::Paper);
+        let kernel_dimension =
+            code.hz().num_checks() - F2Matrix::from_rows(rows).row_reduce().1.len();
         assert_eq!(
             kernel_dimension - code.hz().rank(),
             code.num_logical_qubits()
@@ -681,6 +697,54 @@ fn suffix_noise_content_and_placement() {
                     GateType::Channel | GateType::PX | GateType::PZ
                 )));
             }
+        }
+    }
+}
+
+#[test]
+fn complete_meta_checks_span_left_kernel() {
+    for code in codes() {
+        let protocol = NoisyCcz::new(&code, 0.0, CczModel::Exact, MetaChecks::Complete).unwrap();
+        let meta = protocol.meta_matrix();
+        let paper = code.meta_z().rows();
+        let rows = meta
+            .rows()
+            .into_iter()
+            .map(|row| row.to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(&rows[..paper.len()], paper);
+        assert_eq!(rows.len(), paper.len() + 3);
+        assert_eq!(
+            F2Matrix::from_rows(rows.clone()).row_reduce().1.len(),
+            code.hz().num_checks() - code.hz().rank()
+        );
+        let hz = Array2::from_shape_vec(
+            (code.hz().num_checks(), code.num_qubits()),
+            code.hz().rows().concat(),
+        )
+        .unwrap();
+        assert!(meta.dot(&hz).iter().all(|bit| bit % 2 == 0));
+    }
+}
+
+#[test]
+fn complete_meta_checks_detect_kernel_but_not_image_error() {
+    for code in codes() {
+        let solver = SyndromeSolver::new(&F2Matrix::from_rows(code.hz().rows()));
+        let outside = F2Matrix::from_rows(code.meta_z().rows())
+            .kernel()
+            .into_iter()
+            .find(|s| solver.solve(s).is_none())
+            .unwrap();
+        for meta_checks in [MetaChecks::Paper, MetaChecks::Complete] {
+            let protocol = NoisyCcz::new(&code, 0.0, CczModel::Exact, meta_checks).unwrap();
+            let sigma = protocol
+                .meta_matrix()
+                .dot(&Array1::from_vec(outside.clone()));
+            assert_eq!(
+                sigma.iter().any(|bit| bit % 2 != 0),
+                meta_checks == MetaChecks::Complete
+            );
         }
     }
 }
